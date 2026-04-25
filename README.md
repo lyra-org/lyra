@@ -13,15 +13,18 @@ The recommended installation method is to use Cargo:
 cargo +nightly install --locked --git https://github.com/lyra-org/lyra lyra-server
 ```
 
-You may then run the installed binary to run:
+You may then run the installed binary to start the server with `serve`:
 ```bash
 lyra serve
 ```
 
+It is highly recommended that you also grab the plugins in `plugins`, especially the MusicBrainz plugin, and drop them into a `plugins` directory where you run the binary from.
+
 ## Configuration
 
-The runtime configuration is loaded from `config.json` and deserialized by
-`lyra-server/src/config.rs`.
+The runtime configuration is loaded from `config.json`. You can drop it in the same directory as `plugins`.
+
+We recommend that you set the `”kind”` in `”db”` to `”mmap"` or `”file”` for persistence.
 
 ### Schema
 
