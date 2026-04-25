@@ -1,0 +1,111 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Tatsuya Kitani - DEMAGOG (2020) [WEB FLAC] {Sony Music Labels Inc.}/07. 泥中の蓮.flac"
+album = "DEMAGOG"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "泥中の蓮"
+copyright = "2020 Sony Music Labels Inc."
+track = 7
+track_total = 7
+duration_ms = 199986
+
+[[raw_tags]]
+file_path = "Tatsuya Kitani - DEMAGOG (2020) [WEB FLAC] {Sony Music Labels Inc.}/06. デマゴーグ.flac"
+album = "DEMAGOG"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "デマゴーグ"
+copyright = "2020 Sony Music Labels Inc."
+track = 6
+track_total = 7
+duration_ms = 279933
+
+[[raw_tags]]
+file_path = "Tatsuya Kitani - DEMAGOG (2020) [WEB FLAC] {Sony Music Labels Inc.}/05. 悪夢.flac"
+album = "DEMAGOG"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "悪夢"
+copyright = "2020 Sony Music Labels Inc."
+track = 5
+track_total = 7
+duration_ms = 203106
+
+[[raw_tags]]
+file_path = "Tatsuya Kitani - DEMAGOG (2020) [WEB FLAC] {Sony Music Labels Inc.}/04. 人間みたいね.flac"
+album = "DEMAGOG"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "人間みたいね"
+copyright = "2020 Sony Music Labels Inc."
+track = 4
+track_total = 7
+duration_ms = 240306
+
+[[raw_tags]]
+file_path = "Tatsuya Kitani - DEMAGOG (2020) [WEB FLAC] {Sony Music Labels Inc.}/03. デッドウェイト.flac"
+album = "DEMAGOG"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "デッドウェイト"
+copyright = "2020 Sony Music Labels Inc."
+track = 3
+track_total = 7
+duration_ms = 185040
+
+[[raw_tags]]
+file_path = "Tatsuya Kitani - DEMAGOG (2020) [WEB FLAC] {Sony Music Labels Inc.}/02. パノプティコン.flac"
+album = "DEMAGOG"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "パノプティコン"
+copyright = "2020 Sony Music Labels Inc."
+track = 2
+track_total = 7
+duration_ms = 225053
+
+[[raw_tags]]
+file_path = "Tatsuya Kitani - DEMAGOG (2020) [WEB FLAC] {Sony Music Labels Inc.}/01. ハイドアンドシーク.flac"
+album = "DEMAGOG"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "ハイドアンドシーク"
+copyright = "2020 Sony Music Labels Inc."
+track = 1
+track_total = 7
+duration_ms = 220706
+
+[expect.release]
+ids = { release_group_id = "4c72672e-f795-4fa6-9c2c-51f73776a828", release_id = ["1a943dab-dfb4-4974-ade9-4b581cfb940c", "02c5ae6d-f9e0-4426-9b08-5e7a253d9014", "e143f26a-d22f-45b3-af21-4549ea2f4c37"] }
+fields = { release_title = "DEMAGOG", release_date = "2020-08-26" }
+
+[expect.artists."80b3cb83-b7a3-4f79-ad42-8325cefb3626"]
+fields = { artist_name = "キタニタツヤ", sort_name = "Kitani, Tatsuya" }
+
+[expect.tracks."93817a54-6378-4062-bf94-f8aaec682b1f"]
+fields = { disc = 1, track = 2, track_title = "パノプティコン" }
+
+[expect.tracks."9be452b0-aeff-4c00-940a-828049e32a4b"]
+fields = { disc = 1, track = 7, track_title = "泥中の蓮" }
+
+[expect.tracks."a67e3906-9eea-4dbe-ae81-0fd5049af2f4"]
+fields = { disc = 1, track = 3, track_title = "デッドウェイト" }
+
+[expect.tracks."bc492e3e-5d43-4a7f-a777-b1ec08e0991e"]
+fields = { disc = 1, track = 1, track_title = "ハイドアンドシーク" }
+
+[expect.tracks."d78c649e-a0e3-4b6d-bd5b-431dedee2b1b"]
+fields = { disc = 1, track = 6, track_title = "デマゴーグ" }
+
+[expect.tracks."e0ddbe41-756e-49c2-8064-e2db401e2348"]
+fields = { disc = 1, track = 5, track_title = "悪夢" }
+
+[expect.tracks."f8bcf329-d36c-463c-9efe-2110bc417657"]
+fields = { disc = 1, track = 4, track_title = "人間みたいね" }

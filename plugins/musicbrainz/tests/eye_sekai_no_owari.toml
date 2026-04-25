@@ -1,0 +1,179 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Eye (Album)/13 Stargazer.flac"
+album = "Eye"
+album_artists = ["Sekai No Owari"]
+artists = ["Sekai No Owari"]
+title = "Stargazer"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 13
+duration_ms = 235693
+
+[[raw_tags]]
+file_path = "Eye (Album)/12 Witch.flac"
+album = "Eye"
+album_artists = ["Sekai No Owari"]
+artists = ["Sekai No Owari"]
+title = "Witch"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 13
+duration_ms = 214576
+
+[[raw_tags]]
+file_path = "Eye (Album)/11 Subetega Kowareta Yoruni.flac"
+album = "Eye"
+album_artists = ["Sekai No Owari"]
+artists = ["Sekai No Owari"]
+title = "Subetega Kowareta Yoruni"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 13
+duration_ms = 280960
+
+[[raw_tags]]
+file_path = "Eye (Album)/10 Eden.flac"
+album = "Eye"
+album_artists = ["Sekai No Owari"]
+artists = ["Sekai No Owari"]
+title = "Eden"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 13
+duration_ms = 241673
+
+[[raw_tags]]
+file_path = "Eye (Album)/09 Doppelganger.flac"
+album = "Eye"
+album_artists = ["Sekai No Owari"]
+artists = ["Sekai No Owari"]
+title = "Doppelganger"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 13
+duration_ms = 230240
+
+[[raw_tags]]
+file_path = "Eye (Album)/08 Reset.flac"
+album = "Eye"
+album_artists = ["Sekai No Owari"]
+artists = ["Sekai No Owari"]
+title = "Re:set"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 13
+duration_ms = 189641
+
+[[raw_tags]]
+file_path = "Eye (Album)/07 SOS.flac"
+album = "Eye"
+album_artists = ["Sekai No Owari"]
+artists = ["Sekai No Owari"]
+title = "SOS"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 13
+duration_ms = 305748
+
+[[raw_tags]]
+file_path = "Eye (Album)/06 Food.flac"
+album = "Eye"
+album_artists = ["Sekai No Owari"]
+artists = ["Sekai No Owari"]
+title = "Food"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 13
+duration_ms = 163044
+
+[[raw_tags]]
+file_path = "Eye (Album)/05 Monsoon Night.flac"
+album = "Eye"
+album_artists = ["Sekai No Owari"]
+artists = ["Sekai No Owari"]
+title = "Monsoon Night"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 13
+duration_ms = 218821
+
+[[raw_tags]]
+file_path = "Eye (Album)/04 Yozakura.flac"
+album = "Eye"
+album_artists = ["Sekai No Owari"]
+artists = ["Sekai No Owari"]
+title = "Yozakura"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 13
+duration_ms = 230096
+
+[[raw_tags]]
+file_path = "Eye (Album)/03 ANTI-HERO.flac"
+album = "Eye"
+album_artists = ["Sekai No Owari"]
+artists = ["Sekai No Owari"]
+title = "ANTI-HERO"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 13
+duration_ms = 215338
+
+[[raw_tags]]
+file_path = "Eye (Album)/02 Blue Flower.flac"
+album = "Eye"
+album_artists = ["Sekai No Owari"]
+artists = ["Sekai No Owari"]
+title = "Blue Flower"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 13
+duration_ms = 191477
+
+[[raw_tags]]
+file_path = "Eye (Album)/01 LOVE SONG.flac"
+album = "Eye"
+album_artists = ["Sekai No Owari"]
+artists = ["Sekai No Owari"]
+title = "LOVE SONG"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 13
+duration_ms = 239909
+
+[expect.release]
+ids = { release_id = "b6dc8fd2-8d2d-45f7-9c2a-0119831f00d8" }
+fields = { release_title = "Eye", release_date = "2019-02-27" }

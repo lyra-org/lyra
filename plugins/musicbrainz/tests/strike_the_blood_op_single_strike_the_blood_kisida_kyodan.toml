@@ -1,0 +1,64 @@
+plugin = "musicbrainz"
+
+[library]
+directory = "."
+language = "jpn"
+country = "JP"
+
+[[raw_tags]]
+file_path = "Strike the Blood OP Single - Strike the Blood (FLAC)/04. Hangetsu Touge -Instrumental-.flac"
+album = "Strike the Blood OP Single - Strike the Blood"
+artists = ["KISIDA KYODAN & THE AKEBOSI ROCKETS"]
+title = "Hangetsu Touge -Instrumental-"
+genre = "Anime"
+track = 4
+track_total = 4
+duration_ms = 219266
+
+[[raw_tags]]
+file_path = "Strike the Blood OP Single - Strike the Blood (FLAC)/03. Strike the Blood -Instrumental-.flac"
+album = "Strike the Blood OP Single - Strike the Blood"
+artists = ["KISIDA KYODAN & THE AKEBOSI ROCKETS"]
+title = "Strike the Blood -Instrumental-"
+genre = "Anime"
+track = 3
+track_total = 4
+duration_ms = 242666
+
+[[raw_tags]]
+file_path = "Strike the Blood OP Single - Strike the Blood (FLAC)/02. Hangetsu Touge.flac"
+album = "Strike the Blood OP Single - Strike the Blood"
+artists = ["KISIDA KYODAN & THE AKEBOSI ROCKETS"]
+title = "Hangetsu Touge"
+genre = "Anime"
+track = 2
+track_total = 4
+duration_ms = 219720
+
+[[raw_tags]]
+file_path = "Strike the Blood OP Single - Strike the Blood (FLAC)/01. Strike the Blood.flac"
+album = "Strike the Blood OP Single - Strike the Blood"
+artists = ["KISIDA KYODAN & THE AKEBOSI ROCKETS"]
+title = "Strike the Blood"
+genre = "Anime"
+track = 1
+track_total = 4
+duration_ms = 242693
+
+[expect.release]
+ids = { release_group_id = "fd8291a5-4bea-465b-9d56-3f0749b19aa9", release_id = "7b9f7f5b-e308-4925-b161-5f6ee27efeef" }
+fields = { release_title = "ストライク・ザ・ブラッド", release_date = "2013-10-30" }
+
+[expect.artists."1ff9b05a-d340-4a46-ac64-5aa8924e1e46"]
+
+[expect.tracks."09c81ed1-165c-4f6f-b021-d63949f9f2bb"]
+fields = { disc = 1, disc_total = 1, track = 4, track_title = "ハンゲツトウゲ (Instrumental)" }
+
+[expect.tracks."6c0361ba-b13e-4af6-8ea2-aa8adae908ee"]
+fields = { disc = 1, disc_total = 1, track = 3, track_title = "ストライク・ザ・ブラッド (Instrumental)" }
+
+[expect.tracks."b0ed442f-ec32-41de-863d-4b87adff339a"]
+fields = { disc = 1, disc_total = 1, track = 2, track_title = "ハンゲツトウゲ" }
+
+[expect.tracks."bacd9e21-8889-4f71-a035-056b157e68f7"]
+fields = { disc = 1, disc_total = 1, track = 1, track_title = "ストライク・ザ・ブラッド" }

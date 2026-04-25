@@ -1,0 +1,89 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "コブクロ - 蕾（つぼみ）[FLAC]/06. 風見鶏（Instrumental）.flac"
+album = "?(???)"
+album_artists = [""]
+artists = ["????"]
+title = "???(Instrumental)"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 6
+duration_ms = 361786
+
+[[raw_tags]]
+file_path = "コブクロ - 蕾（つぼみ）[FLAC]/05. 彼方へ（Instrumental）.flac"
+album = "?(???)"
+album_artists = [""]
+artists = ["????"]
+title = "???(Instrumental)"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 6
+duration_ms = 254653
+
+[[raw_tags]]
+file_path = "コブクロ - 蕾（つぼみ）[FLAC]/04. 蕾（つぼみ）（Instrumental）.flac"
+album = "?(???)"
+album_artists = [""]
+artists = ["????"]
+title = "?(???)(Instrumental)"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 6
+duration_ms = 364800
+
+[[raw_tags]]
+file_path = "コブクロ - 蕾（つぼみ）[FLAC]/03. 風見鶏.flac"
+album = "?(???)"
+album_artists = [""]
+artists = ["????"]
+title = "???"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 6
+duration_ms = 363346
+
+[[raw_tags]]
+file_path = "コブクロ - 蕾（つぼみ）[FLAC]/02. 彼方へ.flac"
+album = "?(???)"
+album_artists = [""]
+artists = ["????"]
+title = "???"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 6
+duration_ms = 254640
+
+[[raw_tags]]
+file_path = "コブクロ - 蕾（つぼみ）[FLAC]/01. 蕾（つぼみ）.flac"
+album = "?(???)"
+album_artists = [""]
+artists = ["????"]
+title = "?(???)"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 6
+duration_ms = 364973
+
+[expect.release]
+ids = { release_id = "9a7ca12c-d2ee-4f0b-9b28-eefbbdf9686d" }
+
+[expect.artists."1ca30529-e9b1-4478-8455-c885974cb1d7"]

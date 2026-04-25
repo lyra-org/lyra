@@ -1,0 +1,27 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Andora - Palette (Japanese ver) (2024) [WEB FLAC]/1. Andora - Palette (Japanese ver).flac"
+album = "Palette (Japanese ver)"
+album_artists = ["Andora"]
+artists = ["Andora; 梓川"]
+title = "Palette (Japanese ver)"
+copyright = "℗© Andora Records"
+track = 1
+track_total = 1
+duration_ms = 196909
+
+[expect.release]
+ids = { release_group_id = "f4572917-2fc6-43fc-9312-adfbaef3410d", release_id = "d1d667db-a406-4498-8d0d-3d88fc262e9c" }
+fields = { release_title = "Palette (Japanese ver)", release_date = "2024-10-25" }
+
+[expect.artists."1c07f1e6-66f6-4bbf-a75b-e99a733d16f1"]
+fields = { artist_name = "Andora", sort_name = "Andora" }
+
+[expect.tracks."85f625fe-9ef7-4a33-97e6-6b55ed510f0b"]
+fields = { disc = 1, track = 1, track_title = "Palette (Japanese ver)" }

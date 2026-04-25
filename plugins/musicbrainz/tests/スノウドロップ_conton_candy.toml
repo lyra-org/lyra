@@ -1,0 +1,28 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Conton Candy - スノウドロップ (2025-07-06) [WEB FLAC]/1.01. スノウドロップ.flac"
+album = "スノウドロップ"
+album_artists = ["Conton Candy"]
+artists = ["Conton Candy"]
+title = "スノウドロップ"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 179080
+
+[expect.release]
+ids = { release_group_id = "e37f60fa-d732-4ebe-8da8-92f7f3e4544f", release_id = "f2e60021-4747-4d4f-9916-542fe962f70c" }
+fields = { release_title = "スノウドロップ", release_date = "2025-07-06" }
+
+[expect.artists."c7825fee-8c74-4007-aae0-8e5d5117b2db"]
+fields = { artist_name = "Conton Candy", sort_name = "Conton Candy" }
+
+[expect.tracks."e1593a7b-c628-40c5-b732-90d1628e985f"]
+fields = { disc = 1, track = 1, track_title = "スノウドロップ" }

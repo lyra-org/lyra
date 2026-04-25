@@ -1,0 +1,74 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ブランデー戦記 - 悪夢のような1週間 (2024-08-21) [WEB FLAC]/1.05. ストックホルムの箱.flac"
+album = "悪夢のような1週間"
+album_artists = ["ブランデー戦記"]
+artists = ["ブランデー戦記"]
+title = "ストックホルムの箱"
+copyright = "℗ 2024 JORYU RECORDS"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 5
+duration_ms = 161100
+
+[[raw_tags]]
+file_path = "ブランデー戦記 - 悪夢のような1週間 (2024-08-21) [WEB FLAC]/1.04. Twin Ray.flac"
+album = "悪夢のような1週間"
+album_artists = ["ブランデー戦記"]
+artists = ["ブランデー戦記"]
+title = "Twin Ray"
+copyright = "℗ 2024 JORYU RECORDS"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 5
+duration_ms = 189750
+
+[[raw_tags]]
+file_path = "ブランデー戦記 - 悪夢のような1週間 (2024-08-21) [WEB FLAC]/1.03. 悪夢のような.flac"
+album = "悪夢のような1週間"
+album_artists = ["ブランデー戦記"]
+artists = ["ブランデー戦記"]
+title = "悪夢のような"
+copyright = "℗ 2024 JORYU RECORDS"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 5
+duration_ms = 259195
+
+[[raw_tags]]
+file_path = "ブランデー戦記 - 悪夢のような1週間 (2024-08-21) [WEB FLAC]/1.02. 土曜日-高慢.flac"
+album = "悪夢のような1週間"
+album_artists = ["ブランデー戦記"]
+artists = ["ブランデー戦記"]
+title = "土曜日:高慢"
+copyright = "℗ 2024 JORYU RECORDS"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 5
+duration_ms = 181866
+
+[[raw_tags]]
+file_path = "ブランデー戦記 - 悪夢のような1週間 (2024-08-21) [WEB FLAC]/1.01. Coming-of-age Story.flac"
+album = "悪夢のような1週間"
+album_artists = ["ブランデー戦記"]
+artists = ["ブランデー戦記"]
+title = "Coming-of-age Story"
+copyright = "℗ 2024 JORYU RECORDS"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 5
+duration_ms = 214937
+
+[expect.release]
+ids = { release_id = ["fcc77570-8846-4473-b831-c1c91985fce8", "dc4d940a-a309-48ef-94c2-316abf513234"] }

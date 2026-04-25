@@ -1,0 +1,163 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2021.02.10] ずっと真夜中でいいのに。2ndアルバム『ぐされ』／ZUTOMAYO [FLAC]/14. 暗く黒く - Twin Piano Live ver..flac"
+album = "ぐされ"
+album_artists = ["ずっと真夜中でいいのに。", "ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "暗く黒く - Twin Piano Live ver."
+genre = "J-POP"
+disc = 1
+track = 14
+duration_ms = 267546
+
+[[raw_tags]]
+file_path = "[2021.02.10] ずっと真夜中でいいのに。2ndアルバム『ぐされ』／ZUTOMAYO [FLAC]/13. 奥底に眠るルーツ.flac"
+album = "ぐされ"
+album_artists = ["ずっと真夜中でいいのに。", "ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "奥底に眠るルーツ"
+genre = "J-POP"
+disc = 1
+track = 13
+duration_ms = 263840
+
+[[raw_tags]]
+file_path = "[2021.02.10] ずっと真夜中でいいのに。2ndアルバム『ぐされ』／ZUTOMAYO [FLAC]/12. 低血ボルト.flac"
+album = "ぐされ"
+album_artists = ["ずっと真夜中でいいのに。", "ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "低血ボルト"
+genre = "J-POP"
+disc = 1
+track = 12
+duration_ms = 214813
+
+[[raw_tags]]
+file_path = "[2021.02.10] ずっと真夜中でいいのに。2ndアルバム『ぐされ』／ZUTOMAYO [FLAC]/11. 過眠.flac"
+album = "ぐされ"
+album_artists = ["ずっと真夜中でいいのに。", "ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "過眠"
+genre = "J-POP"
+disc = 1
+track = 11
+duration_ms = 253026
+
+[[raw_tags]]
+file_path = "[2021.02.10] ずっと真夜中でいいのに。2ndアルバム『ぐされ』／ZUTOMAYO [FLAC]/10. 繰り返す収穫.flac"
+album = "ぐされ"
+album_artists = ["ずっと真夜中でいいのに。", "ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "繰り返す収穫"
+genre = "J-POP"
+disc = 1
+track = 10
+duration_ms = 234040
+
+[[raw_tags]]
+file_path = "[2021.02.10] ずっと真夜中でいいのに。2ndアルバム『ぐされ』／ZUTOMAYO [FLAC]/09. ろんりねす.flac"
+album = "ぐされ"
+album_artists = ["ずっと真夜中でいいのに。", "ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "ろんりねす"
+genre = "J-POP"
+disc = 1
+track = 9
+duration_ms = 293760
+
+[[raw_tags]]
+file_path = "[2021.02.10] ずっと真夜中でいいのに。2ndアルバム『ぐされ』／ZUTOMAYO [FLAC]/08. MILABO.flac"
+album = "ぐされ"
+album_artists = ["ずっと真夜中でいいのに。", "ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "MILABO"
+genre = "J-POP"
+disc = 1
+track = 8
+duration_ms = 267906
+
+[[raw_tags]]
+file_path = "[2021.02.10] ずっと真夜中でいいのに。2ndアルバム『ぐされ』／ZUTOMAYO [FLAC]/07. 暗く黒く.flac"
+album = "ぐされ"
+album_artists = ["ずっと真夜中でいいのに。", "ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "暗く黒く"
+genre = "J-POP"
+disc = 1
+track = 7
+duration_ms = 250867
+
+[[raw_tags]]
+file_path = "[2021.02.10] ずっと真夜中でいいのに。2ndアルバム『ぐされ』／ZUTOMAYO [FLAC]/06. 機械油.flac"
+album = "ぐされ"
+album_artists = ["ずっと真夜中でいいのに。", "ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "機械油"
+genre = "J-POP"
+disc = 1
+track = 6
+duration_ms = 196360
+
+[[raw_tags]]
+file_path = "[2021.02.10] ずっと真夜中でいいのに。2ndアルバム『ぐされ』／ZUTOMAYO [FLAC]/05. はゔぁ.flac"
+album = "ぐされ"
+album_artists = ["ずっと真夜中でいいのに。", "ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "はゔぁ"
+genre = "J-POP"
+disc = 1
+track = 5
+duration_ms = 218813
+
+[[raw_tags]]
+file_path = "[2021.02.10] ずっと真夜中でいいのに。2ndアルバム『ぐされ』／ZUTOMAYO [FLAC]/04. 勘ぐれい.flac"
+album = "ぐされ"
+album_artists = ["ずっと真夜中でいいのに。", "ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "勘ぐれい"
+genre = "J-POP"
+disc = 1
+track = 4
+duration_ms = 249693
+
+[[raw_tags]]
+file_path = "[2021.02.10] ずっと真夜中でいいのに。2ndアルバム『ぐされ』／ZUTOMAYO [FLAC]/03. お勉強しといてよ.flac"
+album = "ぐされ"
+album_artists = ["ずっと真夜中でいいのに。", "ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "お勉強しといてよ"
+genre = "J-POP"
+disc = 1
+track = 3
+duration_ms = 279026
+
+[[raw_tags]]
+file_path = "[2021.02.10] ずっと真夜中でいいのに。2ndアルバム『ぐされ』／ZUTOMAYO [FLAC]/02. 正しくなれない.flac"
+album = "ぐされ"
+album_artists = ["ずっと真夜中でいいのに。", "ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "正しくなれない"
+genre = "J-POP"
+disc = 1
+track = 2
+duration_ms = 241567
+
+[[raw_tags]]
+file_path = "[2021.02.10] ずっと真夜中でいいのに。2ndアルバム『ぐされ』／ZUTOMAYO [FLAC]/01. 胸の煙.flac"
+album = "ぐされ"
+album_artists = ["ずっと真夜中でいいのに。", "ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "胸の煙"
+genre = "J-POP"
+disc = 1
+track = 1
+duration_ms = 249626
+
+[expect.release]
+ids = { release_id = ["8d5aed30-3387-417b-8ddd-248e8b5ea953", "abaff648-45a4-4cea-9549-f8b1913ae02c"] }

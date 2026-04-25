@@ -1,0 +1,386 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.29. すずめの涙.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["RADWIMPS"]
+title = "すずめの涙"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 29
+track_total = 29
+duration_ms = 275653
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.28. Tamaki.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["RADWIMPS"]
+title = "Tamaki"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 28
+track_total = 29
+duration_ms = 295293
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.27. すずめ (feat. 十明).flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["RADWIMPS"]
+title = "すずめ (feat. 十明)"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 27
+track_total = 29
+duration_ms = 238560
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.26. カナタハルカ.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["RADWIMPS"]
+title = "カナタハルカ"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 26
+track_total = 29
+duration_ms = 355706
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.25. 戸締まり.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["RADWIMPS & 陣内一真"]
+title = "戸締まり"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 25
+track_total = 29
+duration_ms = 232053
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.24. 祈り.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["陣内一真"]
+title = "祈り"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 24
+track_total = 29
+duration_ms = 185013
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.23. 草太の元へ.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["RADWIMPS & 陣内一真"]
+title = "草太の元へ"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 23
+track_total = 29
+duration_ms = 143173
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.22. 丘上の要石.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["陣内一真"]
+title = "丘上の要石"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 22
+track_total = 29
+duration_ms = 103853
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.21. 常世.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["陣内一真 & RADWIMPS"]
+title = "常世"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 21
+track_total = 29
+duration_ms = 68240
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.20. 夢じゃなかった.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["RADWIMPS"]
+title = "夢じゃなかった"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 20
+track_total = 29
+duration_ms = 111346
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.19. 自転車の二人.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["RADWIMPS"]
+title = "自転車の二人"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 19
+track_total = 29
+duration_ms = 102760
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.18. 狐憑き.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["陣内一真"]
+title = "狐憑き"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 18
+track_total = 29
+duration_ms = 84520
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.17. 決意〜旅立ち.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["陣内一真 & RADWIMPS"]
+title = "決意〜旅立ち"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 17
+track_total = 29
+duration_ms = 329853
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.16. 東京上空.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["RADWIMPS"]
+title = "東京上空"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 16
+track_total = 29
+duration_ms = 254933
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.15. 予兆.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["陣内一真"]
+title = "予兆"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 15
+track_total = 29
+duration_ms = 184386
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.14. ミミズの歴史.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["RADWIMPS"]
+title = "ミミズの歴史"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 29
+duration_ms = 86826
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.13. 新幹線の旅.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["陣内一真"]
+title = "新幹線の旅"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 29
+duration_ms = 91840
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.12. 戦士の休息.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["RADWIMPS"]
+title = "戦士の休息"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 29
+duration_ms = 171786
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.11. 廃遊園地.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["陣内一真 & RADWIMPS"]
+title = "廃遊園地"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 29
+duration_ms = 291146
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.10. 子守り.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["陣内一真"]
+title = "子守り"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 29
+duration_ms = 82133
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.09. ドライブ.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["陣内一真"]
+title = "ドライブ"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 29
+duration_ms = 137893
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.08. 二人の時間.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["RADWIMPS"]
+title = "二人の時間"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 29
+duration_ms = 176800
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.07. 廃校の風景.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["陣内一真"]
+title = "廃校の風景"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 29
+duration_ms = 191240
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.06. 猫探し.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["RADWIMPS"]
+title = "猫探し"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 29
+duration_ms = 93160
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.05. 夜のフェリー.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["RADWIMPS"]
+title = "夜のフェリー"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 29
+duration_ms = 113266
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.04. キャットチェース.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["RADWIMPS"]
+title = "キャットチェース"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 29
+duration_ms = 135733
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.03. 手当て.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["RADWIMPS"]
+title = "手当て"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 29
+duration_ms = 84893
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.02. 廃墟の温泉街.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["陣内一真 & RADWIMPS"]
+title = "廃墟の温泉街"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 29
+duration_ms = 237933
+
+[[raw_tags]]
+file_path = "RADWIMPS & 陣内一真 - すずめの戸締まり (2022-11-11) [WEB FLAC]/1.01. 二人の出逢い.flac"
+album = "すずめの戸締まり"
+album_artists = ["RADWIMPS & 陣内一真"]
+artists = ["RADWIMPS"]
+title = "二人の出逢い"
+copyright = "A Muzinto Records release; ℗ 2022 voque ting Co., Ltd., under exclusive license to UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 29
+duration_ms = 62013
+
+[expect.release]
+ids = { release_id = ["a0227bff-8459-4610-a3ed-a6988947d570", "ab858edb-4bbd-4c12-bb95-bfd38a261fa5"] }

@@ -1,0 +1,49 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "2008年07月09日 いきものがかり - ブルーバード/3. ブルーバード (Instrumental).flac"
+album = "ブルーバード"
+artists = ["いきものがかり"]
+title = "ブルーバード (Instrumental)"
+genre = "ジェイポップ"
+track = 3
+duration_ms = 215613
+
+[[raw_tags]]
+file_path = "2008年07月09日 いきものがかり - ブルーバード/2. 夏色惑星.flac"
+album = "ブルーバード"
+artists = ["いきものがかり"]
+title = "夏色惑星"
+genre = "ジェイポップ"
+track = 2
+duration_ms = 257106
+
+[[raw_tags]]
+file_path = "2008年07月09日 いきものがかり - ブルーバード/1. ブルーバード.flac"
+album = "ブルーバード"
+artists = ["いきものがかり"]
+title = "ブルーバード"
+genre = "ジェイポップ"
+track = 1
+duration_ms = 218613
+
+[expect.release]
+ids = { release_group_id = "ed160ce2-48b5-3524-bb61-83f31d17f603", release_id = "122846d8-3cc7-40af-a5c8-673d25fade87" }
+fields = { release_title = "ブルーバード", release_date = "2008-07-09" }
+
+[expect.artists."18191eea-369f-42e8-96ab-c1c24e4d0011"]
+fields = { artist_name = "いきものがかり", sort_name = "ikimonogakari" }
+
+[expect.tracks."6a044a6c-1e0c-48ee-960c-67ff361c90f6"]
+fields = { disc = 1, track = 1, track_title = "ブルーバード" }
+
+[expect.tracks."c1458805-bffa-48ea-9665-e1c75d53120f"]
+fields = { disc = 1, track = 3, track_title = "ブルーバード -instrumental-" }
+
+[expect.tracks."e459bdf4-e6fc-47fd-9865-343e7ed97f7e"]
+fields = { disc = 1, track = 2, track_title = "夏色惑星" }

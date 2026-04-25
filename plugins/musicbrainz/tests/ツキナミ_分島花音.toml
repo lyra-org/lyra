@@ -1,0 +1,98 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ツキナミ(24bit_48kHz)/11_モンスター・スター.flac"
+album = "ツキナミ"
+artists = ["分島花音"]
+title = "モンスター・スター"
+track = 11
+duration_ms = 316240
+
+[[raw_tags]]
+file_path = "ツキナミ(24bit_48kHz)/10_world’s end, girl’s rondo.flac"
+album = "ツキナミ"
+artists = ["分島花音"]
+title = "world’s end, girl’s rondo"
+track = 10
+duration_ms = 268000
+
+[[raw_tags]]
+file_path = "ツキナミ(24bit_48kHz)/09_ナイチンゲール.flac"
+album = "ツキナミ"
+artists = ["分島花音"]
+title = "ナイチンゲール"
+track = 9
+duration_ms = 214000
+
+[[raw_tags]]
+file_path = "ツキナミ(24bit_48kHz)/08_芸術家のかわいい想像たち.flac"
+album = "ツキナミ"
+artists = ["分島花音"]
+title = "芸術家のかわいい想像たち"
+track = 8
+duration_ms = 202000
+
+[[raw_tags]]
+file_path = "ツキナミ(24bit_48kHz)/07_サクラメイキュウ.flac"
+album = "ツキナミ"
+artists = ["分島花音"]
+title = "サクラメイキュウ"
+track = 7
+duration_ms = 275826
+
+[[raw_tags]]
+file_path = "ツキナミ(24bit_48kHz)/06_ファールプレーにくらり.flac"
+album = "ツキナミ"
+artists = ["分島花音"]
+title = "ファールプレーにくらり"
+track = 6
+duration_ms = 267173
+
+[[raw_tags]]
+file_path = "ツキナミ(24bit_48kHz)/05_signal.flac"
+album = "ツキナミ"
+artists = ["分島花音"]
+title = "signal"
+track = 5
+duration_ms = 333000
+
+[[raw_tags]]
+file_path = "ツキナミ(24bit_48kHz)/04_チョコレート.flac"
+album = "ツキナミ"
+artists = ["分島花音"]
+title = "チョコレート"
+track = 4
+duration_ms = 285000
+
+[[raw_tags]]
+file_path = "ツキナミ(24bit_48kHz)/03_さんすくみ.flac"
+album = "ツキナミ"
+artists = ["分島花音"]
+title = "さんすくみ"
+track = 3
+duration_ms = 238000
+
+[[raw_tags]]
+file_path = "ツキナミ(24bit_48kHz)/02_ツキナミ.flac"
+album = "ツキナミ"
+artists = ["分島花音"]
+title = "ツキナミ"
+track = 2
+duration_ms = 293826
+
+[[raw_tags]]
+file_path = "ツキナミ(24bit_48kHz)/01_killy killy JOKER.flac"
+album = "ツキナミ"
+artists = ["分島花音"]
+title = "killy killy JOKER"
+track = 1
+duration_ms = 278506
+
+[expect.release]
+ids = { release_group_id = "dd0bc2b8-4a23-46f1-be53-660dc752a481", release_id = ["aff5bd23-cba2-45d0-aa08-b954306c5b54", "7acfbc66-2dc6-440d-a38e-3954737fc260", "6e5f9960-a156-4ecc-9ec3-ee50f044a9f1"] }
+fields = { release_title = "ツキナミ" }

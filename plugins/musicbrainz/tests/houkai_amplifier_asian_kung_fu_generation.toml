@@ -1,0 +1,63 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "(2003.04.23) (mini album) Houkai Amplifier [flac]/06 - 12.flac"
+album = "Houkai Amplifier"
+artists = ["Asian Kung-Fu Generation"]
+title = "12"
+genre = "Rock"
+track = 6
+duration_ms = 276440
+
+[[raw_tags]]
+file_path = "(2003.04.23) (mini album) Houkai Amplifier [flac]/05 - Sunday.flac"
+album = "Houkai Amplifier"
+artists = ["Asian Kung-Fu Generation"]
+title = "Sunday"
+genre = "Rock"
+track = 5
+duration_ms = 243000
+
+[[raw_tags]]
+file_path = "(2003.04.23) (mini album) Houkai Amplifier [flac]/04 - Song Of Blue.flac"
+album = "Houkai Amplifier"
+artists = ["Asian Kung-Fu Generation"]
+title = "Song Of Blue"
+genre = "Rock"
+track = 4
+duration_ms = 232400
+
+[[raw_tags]]
+file_path = "(2003.04.23) (mini album) Houkai Amplifier [flac]/03 - Powder Snow.flac"
+album = "Houkai Amplifier"
+artists = ["Asian Kung-Fu Generation"]
+title = "Powder Snow"
+genre = "Rock"
+track = 3
+duration_ms = 226133
+
+[[raw_tags]]
+file_path = "(2003.04.23) (mini album) Houkai Amplifier [flac]/02 - Compass.flac"
+album = "Houkai Amplifier"
+artists = ["Asian Kung-Fu Generation"]
+title = "Compass"
+genre = "Rock"
+track = 2
+duration_ms = 152893
+
+[[raw_tags]]
+file_path = "(2003.04.23) (mini album) Houkai Amplifier [flac]/01 - Haruka Kanata.flac"
+album = "Houkai Amplifier"
+artists = ["Asian Kung-Fu Generation"]
+title = "Haruka Kanata"
+genre = "Rock"
+track = 1
+duration_ms = 242666
+
+[expect.release]
+ids = { release_id = ["52198bd5-1730-4b2f-a68b-c71cd1fdf98b", "7e5614bb-6b42-4bf8-9116-1b02b392c1d7", "cac11097-35f1-4598-9cd3-e5504a5a9f37"] }

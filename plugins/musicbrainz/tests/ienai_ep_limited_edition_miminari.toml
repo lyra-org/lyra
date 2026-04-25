@@ -1,0 +1,83 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[yAMABiKo][EAC][20220831][VVCL-2095~6] TV Anime「Rent a Girlfriend 2」ED「Ienai」[FLAC+CUE+LOG+BK+DVD]/04 泣けない.flac"
+album = "Ienai EP [Limited Edition]"
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI feat. Lam Kohana"]
+title = "泣けない"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 207920
+
+[[raw_tags]]
+file_path = "[yAMABiKo][EAC][20220831][VVCL-2095~6] TV Anime「Rent a Girlfriend 2」ED「Ienai」[FLAC+CUE+LOG+BK+DVD]/03 見えない.flac"
+album = "Ienai EP [Limited Edition]"
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI feat. natsumi"]
+title = "見えない"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 194586
+
+[[raw_tags]]
+file_path = "[yAMABiKo][EAC][20220831][VVCL-2095~6] TV Anime「Rent a Girlfriend 2」ED「Ienai」[FLAC+CUE+LOG+BK+DVD]/02 消えない.flac"
+album = "Ienai EP [Limited Edition]"
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI feat. HARUTYA"]
+title = "消えない"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 205106
+
+[[raw_tags]]
+file_path = "[yAMABiKo][EAC][20220831][VVCL-2095~6] TV Anime「Rent a Girlfriend 2」ED「Ienai」[FLAC+CUE+LOG+BK+DVD]/01 言えない.flac"
+album = "Ienai EP [Limited Edition]"
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI feat. asmi"]
+title = "言えない"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 206173
+
+[expect.release]
+ids = { release_id = ["c48fbd2c-da95-4a15-b3f9-ae0e542bbd47", "34c1340a-9b00-4587-af70-7fe3eba7cb5a"] }
+fields = { release_title = "言えない EP" }
+
+[expect.artists."04490e5c-f43e-43f5-9963-4a3a4701ad80"]
+fields = { artist_name = "MIMiNARI", sort_name = "MIMiNARI" }
+
+[expect.artists."5837fcae-b639-41db-ae1d-87fa9141509c"]
+fields = { artist_name = "asmi", sort_name = "asmi" }
+
+[expect.artists."cf0c317e-f489-4082-b41a-e86354b1a91c"]
+fields = { artist_name = "natsumi", sort_name = "natsumi" }
+
+[expect.tracks."4d97512c-6e62-4349-8358-281eb6bf2e6b"]
+fields = { disc = 1, track = 1, track_title = "言えない feat.asmi" }
+
+[expect.tracks."5e232f26-f2a7-49d6-bdcb-a95e3329b20c"]
+fields = { disc = 1, track = 2, track_title = "消えない feat.春茶" }
+
+[expect.tracks."b168c614-aea6-40ee-a54c-707ca70ddd2b"]
+fields = { disc = 1, track = 4, track_title = "泣けない feat.こはならむ" }
+
+[expect.tracks."d1a45503-16c5-4397-bcbd-9f048733a1ef"]
+fields = { disc = 1, track = 3, track_title = "見えない feat.natsumi" }

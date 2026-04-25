@@ -1,0 +1,29 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "なとり - 糸電話 (2024-09-20) [WEB FLAC]/1.01. 糸電話.flac"
+album = "糸電話"
+album_artists = ["なとり"]
+artists = ["なとり"]
+title = "糸電話"
+copyright = "℗ 2024 Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 223300
+
+[expect.release]
+ids = { release_group_id = "982d9749-8af6-4940-8ff0-b0d4ba617b59", release_id = "9be411b0-e9b7-4983-a4b4-034f372a2491" }
+fields = { release_title = "糸電話", release_date = "2024-09-20" }
+
+[expect.artists."cad9e169-893d-4432-a23f-3aa16beb9f0e"]
+fields = { artist_name = "なとり", sort_name = "natori" }
+
+[expect.tracks."3f3fa2be-b241-41e5-8ec0-e2c5dd34ecde"]
+fields = { disc = 1, track = 1, track_title = "糸電話" }

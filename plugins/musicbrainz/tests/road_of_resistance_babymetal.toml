@@ -1,0 +1,24 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Road of Resistance/01_Road of Resistance.flac"
+album = "Road of Resistance"
+artists = ["BABYMETAL"]
+title = "Road of Resistance"
+track = 1
+duration_ms = 318438
+
+[expect.release]
+ids = { release_group_id = "11494d05-7a5d-45f0-8f02-33162f8fc782", release_id = "8c81ae4c-fbd2-4113-b203-c23c431798e5" }
+fields = { release_title = "Road of Resistance", release_date = "2015-01-07" }
+
+[expect.artists."27e2997f-f7a1-4353-bcc4-57b9274fa9a4"]
+fields = { artist_name = "BABYMETAL", sort_name = "BABYMETAL" }
+
+[expect.tracks."6bd09627-bdf3-4821-aed6-da7e33efc506"]
+fields = { disc = 1, track = 1, track_title = "Road of Resistance" }

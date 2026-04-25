@@ -1,0 +1,26 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "YOASOBI - HEART BEAT (2023-12-26) [WEB FLAC]/1.01. HEART BEAT.flac"
+album = "HEART BEAT"
+album_artists = ["YOASOBI"]
+artists = ["YOASOBI"]
+title = "HEART BEAT"
+disc = 1
+track = 1
+duration_ms = 335465
+
+[expect.release]
+ids = { release_group_id = "160ac8ee-d242-458a-bbd1-7158c189dfca", release_id = "1cf017a6-f18b-4092-b54d-99055a90d856" }
+fields = { release_title = "HEART BEAT", release_date = "2023-12-26" }
+
+[expect.artists."df6c619f-4334-43e2-8b6a-4a32af1e4f85"]
+fields = { artist_name = "YOASOBI", sort_name = "YOASOBI" }
+
+[expect.tracks."20e8fe88-1dfa-43c1-80c4-6734d2ae45bf"]
+fields = { disc = 1, track = 1, track_title = "HEART BEAT", work_id = "849e524f-c16e-4b2a-9f21-e27dd6279b5b" }

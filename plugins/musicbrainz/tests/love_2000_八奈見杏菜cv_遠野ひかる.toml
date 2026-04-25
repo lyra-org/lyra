@@ -1,0 +1,26 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[Hi-Res][240714] ｢LOVE 2000｣／八奈見杏菜 [24bit_48kHz] (flac)/01. LOVE 2000.flac"
+album = "LOVE 2000"
+album_artists = ["八奈見杏菜（CV: 遠野ひかる）"]
+artists = ["八奈見杏菜（CV: 遠野ひかる）"]
+title = "LOVE 2000"
+track = 1
+track_total = 1
+duration_ms = 263546
+
+[expect.release]
+ids = { release_group_id = "4e3b5cb6-fe23-4ea0-a908-e79480f2a0a4", release_id = "a22d474d-3a4f-4c30-9fc8-ad927ce35c06" }
+fields = { release_title = "LOVE 2000", genres = ["asian rock", "j-rock", "pop rock", "rock"], release_date = "2024-07-14" }
+
+[expect.artists."4450fa5e-8369-4ad4-ad50-a3c5a526f68f"]
+fields = { artist_name = "八奈見杏菜", sort_name = "Yanami, Anna" }
+
+[expect.tracks."05196c50-9c65-4f9f-a3b1-403e0aeab574"]
+fields = { disc = 1, track = 1, track_title = "LOVE 2000", work_id = "2e06f71a-0690-45b5-98fa-b86f9beba389" }

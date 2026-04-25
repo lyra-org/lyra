@@ -1,0 +1,233 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[201127] End Of The World - Chameleon (FLAC WEB)/13 End Of The World feat. Gabrielle Aplin - Over (feat. Gabrielle Aplin).flac"
+album = "Chameleon"
+album_artists = ["End Of The World"]
+artists = ["End Of The World feat. Gabrielle Aplin"]
+title = "Over (feat. Gabrielle Aplin)"
+copyright = "℗ 2020 Land Music / LAND, Inc. © 2020 Land Music / LAND Inc."
+genre = "Pop"
+disc = 1
+track = 13
+track_total = 13
+duration_ms = 193653
+
+[[raw_tags]]
+file_path = "[201127] End Of The World - Chameleon (FLAC WEB)/12 End Of The World - Bad Day.flac"
+album = "Chameleon"
+album_artists = ["End Of The World"]
+artists = ["End Of The World"]
+title = "Bad Day"
+copyright = "℗ 2020 Land Music / LAND, Inc. © 2020 Land Music / LAND Inc."
+genre = "Pop"
+disc = 1
+track = 12
+track_total = 13
+duration_ms = 236533
+
+[[raw_tags]]
+file_path = "[201127] End Of The World - Chameleon (FLAC WEB)/11 End Of The World - Fangs.flac"
+album = "Chameleon"
+album_artists = ["End Of The World"]
+artists = ["End Of The World"]
+title = "Fangs"
+copyright = "℗ 2020 Land Music / LAND, Inc. © 2020 Land Music / LAND Inc."
+genre = "Pop"
+disc = 1
+track = 11
+track_total = 13
+duration_ms = 199026
+
+[[raw_tags]]
+file_path = "[201127] End Of The World - Chameleon (FLAC WEB)/10 End Of The World - Stargazer (Reimagined).flac"
+album = "Chameleon"
+album_artists = ["End Of The World"]
+artists = ["End Of The World"]
+title = "Stargazer (Reimagined)"
+copyright = "℗ 2020 Land Music / LAND, Inc. © 2020 Land Music / LAND Inc."
+genre = "Pop"
+disc = 1
+track = 10
+track_total = 13
+duration_ms = 224866
+
+[[raw_tags]]
+file_path = "[201127] End Of The World - Chameleon (FLAC WEB)/09 End Of The World - Gone.flac"
+album = "Chameleon"
+album_artists = ["End Of The World"]
+artists = ["End Of The World"]
+title = "Gone"
+copyright = "℗ 2020 Land Music / LAND, Inc. © 2020 Land Music / LAND Inc."
+genre = "Pop"
+disc = 1
+track = 9
+track_total = 13
+duration_ms = 219373
+
+[[raw_tags]]
+file_path = "[201127] End Of The World - Chameleon (FLAC WEB)/08 End Of The World - Birthday.flac"
+album = "Chameleon"
+album_artists = ["End Of The World"]
+artists = ["End Of The World"]
+title = "Birthday"
+copyright = "℗ 2020 Land Music / LAND, Inc. © 2020 Land Music / LAND Inc."
+genre = "Pop"
+disc = 1
+track = 8
+track_total = 13
+duration_ms = 113760
+
+[[raw_tags]]
+file_path = "[201127] End Of The World - Chameleon (FLAC WEB)/07 End Of The World - Rollerskates.flac"
+album = "Chameleon"
+album_artists = ["End Of The World"]
+artists = ["End Of The World"]
+title = "Rollerskates"
+copyright = "℗ 2020 Land Music / LAND, Inc. © 2020 Land Music / LAND Inc."
+genre = "Pop"
+disc = 1
+track = 7
+track_total = 13
+duration_ms = 202693
+
+[[raw_tags]]
+file_path = "[201127] End Of The World - Chameleon (FLAC WEB)/06 End Of The World feat. DNCE - Hollow (feat. DNCE).flac"
+album = "Chameleon"
+album_artists = ["End Of The World"]
+artists = ["End Of The World feat. DNCE"]
+title = "Hollow (feat. DNCE)"
+copyright = "℗ 2020 Land Music / LAND, Inc. © 2020 Land Music / LAND Inc."
+genre = "Pop"
+disc = 1
+track = 6
+track_total = 13
+duration_ms = 184666
+
+[[raw_tags]]
+file_path = "[201127] End Of The World - Chameleon (FLAC WEB)/05 End Of The World feat. NIKI - Forever (feat. NIKI).flac"
+album = "Chameleon"
+album_artists = ["End Of The World"]
+artists = ["End Of The World feat. NIKI"]
+title = "Forever (feat. NIKI)"
+copyright = "℗ 2020 Land Music / LAND, Inc. © 2020 Land Music / LAND Inc."
+genre = "Pop"
+disc = 1
+track = 5
+track_total = 13
+duration_ms = 176186
+
+[[raw_tags]]
+file_path = "[201127] End Of The World - Chameleon (FLAC WEB)/04 End Of The World - My Sleeping Beauty.flac"
+album = "Chameleon"
+album_artists = ["End Of The World"]
+artists = ["End Of The World"]
+title = "My Sleeping Beauty"
+copyright = "℗ 2020 Land Music / LAND, Inc. © 2020 Land Music / LAND Inc."
+genre = "Pop"
+disc = 1
+track = 4
+track_total = 13
+duration_ms = 203066
+
+[[raw_tags]]
+file_path = "[201127] End Of The World - Chameleon (FLAC WEB)/03 End Of The World feat. Clean Bandit - Lost (feat. Clean Bandit).flac"
+album = "Chameleon"
+album_artists = ["End Of The World"]
+artists = ["End Of The World feat. Clean Bandit"]
+title = "Lost (feat. Clean Bandit)"
+copyright = "℗ 2020 Land Music / LAND, Inc. © 2020 Land Music / LAND Inc."
+genre = "Pop"
+disc = 1
+track = 3
+track_total = 13
+duration_ms = 217493
+
+[[raw_tags]]
+file_path = "[201127] End Of The World - Chameleon (FLAC WEB)/02 End Of The World - Dropout Boulevard.flac"
+album = "Chameleon"
+album_artists = ["End Of The World"]
+artists = ["End Of The World"]
+title = "Dropout Boulevard"
+copyright = "℗ 2020 Land Music / LAND, Inc. © 2020 Land Music / LAND Inc."
+genre = "Pop"
+disc = 1
+track = 2
+track_total = 13
+duration_ms = 241160
+
+[[raw_tags]]
+file_path = "[201127] End Of The World - Chameleon (FLAC WEB)/01 End Of The World - Airplane.flac"
+album = "Chameleon"
+album_artists = ["End Of The World"]
+artists = ["End Of The World"]
+title = "Airplane"
+copyright = "℗ 2020 Land Music / LAND, Inc. © 2020 Land Music / LAND Inc."
+genre = "Pop"
+disc = 1
+track = 1
+track_total = 13
+duration_ms = 51880
+
+[expect.release]
+ids = { release_id = "4f9dadca-42f5-4e69-b4d4-8763eff98be2" }
+fields = { release_title = "Chameleon", release_date = "2020-11-27" }
+
+[expect.artists."0073a9e6-b4e5-454d-8d5c-1a0058b40ab5"]
+fields = { artist_name = "NIKI", sort_name = "NIKI" }
+
+[expect.artists."4abebe04-1e85-427b-9950-563945850f2e"]
+fields = { artist_name = "Gabrielle Aplin", sort_name = "Aplin, Gabrielle" }
+
+[expect.artists."b02dc689-7859-461d-b70e-9fe1f64fddce"]
+fields = { artist_name = "DNCE", sort_name = "DNCE" }
+
+[expect.artists."d9dbfe6a-8346-4337-8614-fe96aab63927"]
+fields = { artist_name = "SEKAI NO OWARI", sort_name = "SEKAI NO OWARI" }
+
+[expect.artists."dacc2d64-7e59-42a8-87a9-10c53919aff2"]
+fields = { artist_name = "Clean Bandit", sort_name = "Clean Bandit" }
+
+[expect.tracks."10b54cb0-fb55-477b-adc5-27c85a64ba35"]
+fields = { disc = 1, track = 5, track_title = "Forever" }
+
+[expect.tracks."1c4b136b-aa01-46b9-a52a-e378c31e69bc"]
+fields = { disc = 1, track = 13, track_title = "Over" }
+
+[expect.tracks."3f67a16b-0b88-4d84-a0e1-7e4416c17ae8"]
+fields = { disc = 1, track = 1, track_title = "Airplane" }
+
+[expect.tracks."421d0e96-59eb-4b4a-9280-25772e45cca5"]
+fields = { disc = 1, track = 8, track_title = "Birthday" }
+
+[expect.tracks."4551cce8-f492-4323-903e-76233a7df607"]
+fields = { disc = 1, track = 9, track_title = "Gone" }
+
+[expect.tracks."60336b37-4e2f-483f-b8b9-c843125ff680"]
+fields = { disc = 1, track = 7, track_title = "Rollerskates" }
+
+[expect.tracks."a63ae751-507f-4147-9cd9-eeb11c1f2766"]
+fields = { disc = 1, track = 2, track_title = "Dropout Boulevard" }
+
+[expect.tracks."c7724147-ce33-42a3-bd29-7608a330b180"]
+fields = { disc = 1, track = 12, track_title = "Bad Day" }
+
+[expect.tracks."e450deb2-5506-4f3b-936e-152141f1fb4f"]
+fields = { disc = 1, track = 4, track_title = "My Sleeping Beauty" }
+
+[expect.tracks."e9cf21bd-3172-4e32-9e48-26dc9430524e"]
+fields = { disc = 1, track = 11, track_title = "Fangs" }
+
+[expect.tracks."ecf1fb59-4def-4214-8733-48b40caf616b"]
+fields = { disc = 1, track = 3, track_title = "Lost" }
+
+[expect.tracks."f19654fc-40bb-4463-afdb-5fd93000e912"]
+fields = { disc = 1, track = 10, track_title = "Stargazer (Reimagined)" }
+
+[expect.tracks."f25ab4da-82df-4ccb-bd99-31c1e7cd2164"]
+fields = { disc = 1, track = 6, track_title = "Hollow" }

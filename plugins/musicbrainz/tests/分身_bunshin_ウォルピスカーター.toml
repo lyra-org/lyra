@@ -1,0 +1,112 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ウォルピスカータ - 分身/09.ニンジャライクニンジャ (Instrumental).flac"
+album = "分身 -Bunshin-"
+album_artists = ["ウォルピスカーター"]
+artists = ["ウォルピスカーター"]
+title = "ニンジャライクニンジャ (Instrumental)"
+genre = "J-POP/General"
+disc = 1
+track = 9
+duration_ms = 185666
+
+[[raw_tags]]
+file_path = "ウォルピスカータ - 分身/08.魔法少女幸福論.flac"
+album = "分身 -Bunshin-"
+album_artists = ["ウォルピスカーター"]
+artists = ["ウォルピスカーター"]
+title = "魔法少女幸福論"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 8
+duration_ms = 196413
+
+[[raw_tags]]
+file_path = "ウォルピスカータ - 分身/07.だれかの心臓になれたなら.flac"
+album = "分身 -Bunshin-"
+album_artists = ["ウォルピスカーター"]
+artists = ["ウォルピスカーター"]
+title = "だれかの心臓になれたなら"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 7
+duration_ms = 233440
+
+[[raw_tags]]
+file_path = "ウォルピスカータ - 分身/06.Leia.flac"
+album = "分身 -Bunshin-"
+album_artists = ["ウォルピスカーター"]
+artists = ["ウォルピスカーター"]
+title = "Leia"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 6
+duration_ms = 242160
+
+[[raw_tags]]
+file_path = "ウォルピスカータ - 分身/05.天樂.flac"
+album = "分身 -Bunshin-"
+album_artists = ["ウォルピスカーター"]
+artists = ["ウォルピスカーター"]
+title = "天樂"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 5
+duration_ms = 275586
+
+[[raw_tags]]
+file_path = "ウォルピスカータ - 分身/04.素っ頓狂な夜が来る.flac"
+album = "分身 -Bunshin-"
+album_artists = ["ウォルピスカーター"]
+artists = ["ウォルピスカーター"]
+title = "素っ頓狂な夜が来る"
+genre = "J-POP/General"
+disc = 1
+track = 4
+duration_ms = 198666
+
+[[raw_tags]]
+file_path = "ウォルピスカータ - 分身/03.衝動.flac"
+album = "分身 -Bunshin-"
+album_artists = ["ウォルピスカーター"]
+artists = ["ウォルピスカーター"]
+title = "衝動"
+genre = "J-POP/General"
+disc = 1
+track = 3
+duration_ms = 186466
+
+[[raw_tags]]
+file_path = "ウォルピスカータ - 分身/02.分身.flac"
+album = "分身 -Bunshin-"
+album_artists = ["ウォルピスカーター"]
+artists = ["ウォルピスカーター"]
+title = "分身"
+genre = "J-POP/General"
+disc = 1
+track = 2
+duration_ms = 174920
+
+[[raw_tags]]
+file_path = "ウォルピスカータ - 分身/01.ニンジャライクニンジャ.flac"
+album = "分身 -Bunshin-"
+album_artists = ["ウォルピスカーター"]
+artists = ["ウォルピスカーター"]
+title = "ニンジャライクニンジャ"
+genre = "J-POP/General"
+disc = 1
+track = 1
+duration_ms = 185000
+
+[expect.artists."168b8ecd-f8ac-4528-9838-e7669b6ef63f"]
+fields = { artist_name = "ウォルピスカーター", sort_name = "Wolpis Carter" }

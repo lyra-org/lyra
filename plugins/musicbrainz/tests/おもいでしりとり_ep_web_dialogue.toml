@@ -1,0 +1,48 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "DIALOGUE+ - おもいでしりとり (2021 EP) [Web]/03 おもいでしりとり (Instrumental).flac"
+album = "おもいでしりとり (EP) [Web]"
+album_artists = ["DIALOGUE+"]
+artists = ["DIALOGUE+"]
+title = "おもいでしりとり (Instrumental)"
+genre = "J-Pop "
+disc = 1
+disc_total = 1
+track = 3
+track_total = 3
+duration_ms = 262106
+
+[[raw_tags]]
+file_path = "DIALOGUE+ - おもいでしりとり (2021 EP) [Web]/02 おもいでしりとり (TVサイズ).flac"
+album = "おもいでしりとり (EP) [Web]"
+album_artists = ["DIALOGUE+"]
+artists = ["DIALOGUE+"]
+title = "おもいでしりとり (TVサイズ)"
+genre = "J-Pop "
+disc = 1
+disc_total = 1
+track = 2
+track_total = 3
+duration_ms = 92480
+
+[[raw_tags]]
+file_path = "DIALOGUE+ - おもいでしりとり (2021 EP) [Web]/01 おもいでしりとり.flac"
+album = "おもいでしりとり (EP) [Web]"
+album_artists = ["DIALOGUE+"]
+artists = ["DIALOGUE+"]
+title = "おもいでしりとり"
+genre = "J-Pop "
+disc = 1
+disc_total = 1
+track = 1
+track_total = 3
+duration_ms = 263253
+
+[expect.release]
+ids = { release_id = "778249cd-fb65-4372-a59c-1b39486769c7" }

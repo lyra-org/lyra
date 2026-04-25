@@ -1,0 +1,26 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ツユ - 忠犬ハチ (2021-07-04) [WEB FLAC]/01. 忠犬ハチ.flac"
+album = "忠犬ハチ"
+album_artists = ["ツユ"]
+artists = ["ツユ"]
+title = "忠犬ハチ"
+copyright = "℗© 2021 TUYU Records"
+track = 1
+duration_ms = 180914
+
+[expect.release]
+ids = { release_group_id = "b5601010-6bd8-4e87-84e4-42886affc290", release_id = "9eae9797-11da-4b3a-aca6-1d2d30b2c222" }
+fields = { release_title = "忠犬ハチ", release_date = "2021-07-04" }
+
+[expect.artists."2b0a8be6-bfb8-4f62-b21d-f47a3104157e"]
+fields = { artist_name = "ツユ", sort_name = "TUYU" }
+
+[expect.tracks."7f797aeb-fb8a-4b69-8c82-acfb3084d44c"]
+fields = { disc = 1, track = 1, track_title = "忠犬ハチ" }

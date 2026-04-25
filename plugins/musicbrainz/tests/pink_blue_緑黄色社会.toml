@@ -1,0 +1,165 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "緑黄色社会 - pink blue CD/12 Slow dance.flac"
+album = "pink blue"
+album_artists = ["緑黄色社会 "]
+artists = ["緑黄色社会 "]
+title = "Slow dance"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 12
+duration_ms = 164826
+
+[[raw_tags]]
+file_path = "緑黄色社会 - pink blue CD/11 さもなくば誰がやる.flac"
+album = "pink blue"
+album_artists = ["緑黄色社会 "]
+artists = ["緑黄色社会 "]
+title = "さもなくば誰がやる"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 12
+duration_ms = 232600
+
+[[raw_tags]]
+file_path = "緑黄色社会 - pink blue CD/10 White Rabbit.flac"
+album = "pink blue"
+album_artists = ["緑黄色社会 "]
+artists = ["緑黄色社会 "]
+title = "White Rabbit"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 12
+duration_ms = 275560
+
+[[raw_tags]]
+file_path = "緑黄色社会 - pink blue CD/09 Don!!.flac"
+album = "pink blue"
+album_artists = ["緑黄色社会 "]
+artists = ["緑黄色社会 "]
+title = "Don!!"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 12
+duration_ms = 227506
+
+[[raw_tags]]
+file_path = "緑黄色社会 - pink blue CD/08 湿気っている.flac"
+album = "pink blue"
+album_artists = ["緑黄色社会 "]
+artists = ["緑黄色社会 "]
+title = "湿気っている"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 12
+duration_ms = 297946
+
+[[raw_tags]]
+file_path = "緑黄色社会 - pink blue CD/07 陽はまた昇るから.flac"
+album = "pink blue"
+album_artists = ["緑黄色社会 "]
+artists = ["緑黄色社会 "]
+title = "陽はまた昇るから"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 12
+duration_ms = 264373
+
+[[raw_tags]]
+file_path = "緑黄色社会 - pink blue CD/06 うそつき.flac"
+album = "pink blue"
+album_artists = ["緑黄色社会 "]
+artists = ["緑黄色社会 "]
+title = "うそつき"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 12
+duration_ms = 297933
+
+[[raw_tags]]
+file_path = "緑黄色社会 - pink blue CD/05 ミチヲユケ.flac"
+album = "pink blue"
+album_artists = ["緑黄色社会 "]
+artists = ["緑黄色社会 "]
+title = "ミチヲユケ"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 12
+duration_ms = 214586
+
+[[raw_tags]]
+file_path = "緑黄色社会 - pink blue CD/04 あうん.flac"
+album = "pink blue"
+album_artists = ["緑黄色社会 "]
+artists = ["緑黄色社会 "]
+title = "あうん"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 12
+duration_ms = 221293
+
+[[raw_tags]]
+file_path = "緑黄色社会 - pink blue CD/03 ジブンセイフク.flac"
+album = "pink blue"
+album_artists = ["緑黄色社会 "]
+artists = ["緑黄色社会 "]
+title = "ジブンセイフク"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 12
+duration_ms = 265146
+
+[[raw_tags]]
+file_path = "緑黄色社会 - pink blue CD/02 Starry Drama.flac"
+album = "pink blue"
+album_artists = ["緑黄色社会 "]
+artists = ["緑黄色社会 "]
+title = "Starry Drama"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 12
+duration_ms = 246400
+
+[[raw_tags]]
+file_path = "緑黄色社会 - pink blue CD/01 ピンクブルー.flac"
+album = "pink blue"
+album_artists = ["緑黄色社会 "]
+artists = ["緑黄色社会 "]
+title = "ピンクブルー "
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 12
+duration_ms = 236413
+
+[expect.release]
+ids = { release_id = ["935d11bf-334e-4dbf-94c1-b7e29816dad1", "743487e7-29b0-4ee6-9a99-02859bb76a63", "aaaab675-9f04-440c-8058-fa0b3d02f93d"] }

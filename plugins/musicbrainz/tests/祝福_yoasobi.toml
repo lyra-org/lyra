@@ -1,0 +1,77 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "YOASOBI - 2022 - The Blessing (Limited Edition) [FLAC] (CD)/04 祝福 -Instrumental-.flac"
+album = "祝福"
+album_artists = ["YOASOBI"]
+artists = ["YOASOBI"]
+title = "祝福 -Instrumental-"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 192880
+
+[[raw_tags]]
+file_path = "YOASOBI - 2022 - The Blessing (Limited Edition) [FLAC] (CD)/03 祝福 -Anime Edit-.flac"
+album = "祝福"
+album_artists = ["YOASOBI"]
+artists = ["YOASOBI"]
+title = "祝福 -Anime Edit-"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 90520
+
+[[raw_tags]]
+file_path = "YOASOBI - 2022 - The Blessing (Limited Edition) [FLAC] (CD)/02 The Blessing.flac"
+album = "祝福"
+album_artists = ["YOASOBI"]
+artists = ["YOASOBI"]
+title = "The Blessing"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 194666
+
+[[raw_tags]]
+file_path = "YOASOBI - 2022 - The Blessing (Limited Edition) [FLAC] (CD)/01 祝福.flac"
+album = "祝福"
+album_artists = ["YOASOBI"]
+artists = ["YOASOBI"]
+title = "祝福"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 194173
+
+[expect.release]
+ids = { release_group_id = "554d3370-b4f6-4a3b-b312-8f914843cf5f", release_id = "fc9a49c3-dac1-4a3e-814b-089097de8fc1" }
+fields = { release_title = "祝福", genres = ["j-pop"], release_date = "2022-11-09" }
+
+[expect.artists."df6c619f-4334-43e2-8b6a-4a32af1e4f85"]
+fields = { artist_name = "YOASOBI", sort_name = "YOASOBI" }
+
+[expect.tracks."62f99562-2d0c-475b-8b73-1fe79fba918b"]
+fields = { disc = 1, track = 2, track_title = "The Blessing" }
+
+[expect.tracks."8f2a7065-7b0c-4b68-ab43-2081a74191e2"]
+fields = { disc = 1, track = 3, track_title = "祝福 -Anime Edit-" }
+
+[expect.tracks."9db10563-023b-45a1-ab32-3b7b32e0d8b0"]
+fields = { disc = 1, track = 4, track_title = "祝福 -Instrumental-" }
+
+[expect.tracks."fc6cd4fa-d078-4d3f-baf0-21740080b65a"]
+fields = { disc = 1, track = 1, track_title = "祝福" }

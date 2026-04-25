@@ -1,0 +1,221 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ONE OK ROCK - Nicheシンドローム (2010) [FLAC]/1.13. Nobody's Home.flac"
+album = "Nicheシンドローム"
+album_artists = ["ONE OK ROCK"]
+artists = ["ONE OK ROCK"]
+title = "Nobody's Home"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 13
+duration_ms = 257426
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Nicheシンドローム (2010) [FLAC]/1.12. 未完成交響曲.flac"
+album = "Nicheシンドローム"
+album_artists = ["ONE OK ROCK"]
+artists = ["ONE OK ROCK"]
+title = "未完成交響曲"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 13
+duration_ms = 208053
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Nicheシンドローム (2010) [FLAC]/1.11. アダルトスーツ.flac"
+album = "Nicheシンドローム"
+album_artists = ["ONE OK ROCK"]
+artists = ["ONE OK ROCK"]
+title = "アダルトスーツ"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 13
+duration_ms = 251853
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Nicheシンドローム (2010) [FLAC]/1.10. Riot!!!.flac"
+album = "Nicheシンドローム"
+album_artists = ["ONE OK ROCK"]
+artists = ["ONE OK ROCK"]
+title = "Riot!!!"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 13
+duration_ms = 256093
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Nicheシンドローム (2010) [FLAC]/1.09. Wherever you are.flac"
+album = "Nicheシンドローム"
+album_artists = ["ONE OK ROCK"]
+artists = ["ONE OK ROCK"]
+title = "Wherever you are"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 13
+duration_ms = 295600
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Nicheシンドローム (2010) [FLAC]/1.08. Liar.flac"
+album = "Nicheシンドローム"
+album_artists = ["ONE OK ROCK"]
+artists = ["ONE OK ROCK"]
+title = "Liar"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 13
+duration_ms = 217066
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Nicheシンドローム (2010) [FLAC]/1.07. じぶんROCK.flac"
+album = "Nicheシンドローム"
+album_artists = ["ONE OK ROCK"]
+artists = ["ONE OK ROCK"]
+title = "じぶんROCK"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 13
+duration_ms = 227040
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Nicheシンドローム (2010) [FLAC]/1.06. Shake it down.flac"
+album = "Nicheシンドローム"
+album_artists = ["ONE OK ROCK"]
+artists = ["ONE OK ROCK"]
+title = "Shake it down"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 13
+duration_ms = 193866
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Nicheシンドローム (2010) [FLAC]/1.05. Yes I am.flac"
+album = "Nicheシンドローム"
+album_artists = ["ONE OK ROCK"]
+artists = ["ONE OK ROCK"]
+title = "Yes I am"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 13
+duration_ms = 216533
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Nicheシンドローム (2010) [FLAC]/1.04. 混雑コミュニケーション.flac"
+album = "Nicheシンドローム"
+album_artists = ["ONE OK ROCK"]
+artists = ["ONE OK ROCK"]
+title = "混雑コミュニケーション"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 13
+duration_ms = 199400
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Nicheシンドローム (2010) [FLAC]/1.03. 完全感覚Dreamer.flac"
+album = "Nicheシンドローム"
+album_artists = ["ONE OK ROCK"]
+artists = ["ONE OK ROCK"]
+title = "完全感覚Dreamer"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 13
+duration_ms = 252200
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Nicheシンドローム (2010) [FLAC]/1.02. Never Let This Go.flac"
+album = "Nicheシンドローム"
+album_artists = ["ONE OK ROCK"]
+artists = ["ONE OK ROCK"]
+title = "Never Let This Go"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 13
+duration_ms = 257920
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Nicheシンドローム (2010) [FLAC]/1.01. Introduction.flac"
+album = "Nicheシンドローム"
+album_artists = ["ONE OK ROCK"]
+artists = ["ONE OK ROCK"]
+title = "Introduction"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 13
+duration_ms = 60346
+
+[expect.release]
+ids = { release_group_id = "d540a95f-2462-4c02-992f-8b34fa3c6f37", release_id = "220f4989-ecd6-4d2b-a551-f7f56f8f5673" }
+fields = { release_title = "Nicheシンドローム", release_date = "2010-06-09" }
+
+[expect.artists."6ef00829-fa94-4fee-a5a6-b28e1208e96a"]
+fields = { artist_name = "ONE OK ROCK", sort_name = "ONE OK ROCK" }
+
+[expect.tracks."0354dcba-4f38-444c-a58a-c103416fc4c5"]
+fields = { disc = 1, track = 13, track_title = "Nobody's Home" }
+
+[expect.tracks."166d9527-d416-47e1-a608-42e71ff51b91"]
+fields = { disc = 1, track = 9, track_title = "Wherever you are" }
+
+[expect.tracks."3062f02f-edaa-4f75-9035-f2b0c9f86da0"]
+fields = { disc = 1, track = 11, track_title = "アダルトスーツ" }
+
+[expect.tracks."4bf4607c-da01-4076-a7c9-d95f6d66b9f5"]
+fields = { disc = 1, track = 10, track_title = "Riot!!!" }
+
+[expect.tracks."4c334c28-7648-4816-9713-db54bfd1fa34"]
+fields = { disc = 1, track = 6, track_title = "Shake it down" }
+
+[expect.tracks."5dfdfb62-9b05-481c-9f3a-9a3ee1592bf9"]
+fields = { disc = 1, track = 1, track_title = "Introduction" }
+
+[expect.tracks."77ab7f9a-0964-404b-9e22-65438caf2e97"]
+fields = { disc = 1, track = 3, track_title = "完全感覚Dreamer" }
+
+[expect.tracks."78ce7329-fd90-4753-ae22-b0d69788e350"]
+fields = { disc = 1, track = 7, track_title = "じぶんROCK" }
+
+[expect.tracks."8bc1f506-6edc-4db7-9608-f10cfdf51ea9"]
+fields = { disc = 1, track = 2, track_title = "Never Let This Go" }
+
+[expect.tracks."8e730c69-861e-4dd4-a18a-30876ad3b825"]
+fields = { disc = 1, track = 12, track_title = "未完成交響曲" }
+
+[expect.tracks."9d9128e7-e4b9-4b05-b5a6-2301cd43d0b3"]
+fields = { disc = 1, track = 4, track_title = "混雑コミュニケーション" }
+
+[expect.tracks."c4c75194-3d5c-4461-bd4e-2d593ee9d5d4"]
+fields = { disc = 1, track = 8, track_title = "Liar" }
+
+[expect.tracks."cd81782e-d45a-4baa-94fc-89eb64b572c0"]
+fields = { disc = 1, track = 5, track_title = "Yes I am" }

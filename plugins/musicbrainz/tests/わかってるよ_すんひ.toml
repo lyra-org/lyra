@@ -1,0 +1,30 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "すんひ - わかってるよ。 [FLAC] [16B-44.1kHz]/01. すんひ - わかってるよ。.flac"
+album = "わかってるよ。"
+album_artists = ["すんひ"]
+artists = ["すんひ"]
+title = "わかってるよ。"
+copyright = "℗ 2021 UNIVERSAL MUSIC LLC"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 294006
+
+[expect.release]
+ids = { release_id = "425daa10-9260-4980-a5fa-bc2348473f44" }
+fields = { release_title = "わかってるよ。", release_date = "2021-06-16" }
+
+[expect.artists."8b5167cd-63de-401b-a734-ad9245432dba"]
+fields = { artist_name = "さんひ", sort_name = "Sanghee" }
+
+[expect.tracks."8bac4961-4b9f-44df-8a50-550d30bab2d0"]
+fields = { disc = 1, track = 1, track_title = "わかってるよ。" }

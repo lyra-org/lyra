@@ -1,0 +1,295 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/2.22. I LOVE... (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "I LOVE... (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 2
+disc_total = 2
+track = 22
+track_total = 11
+duration_ms = 356493
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/2.21. 異端なスター (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "異端なスター (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 2
+disc_total = 2
+track = 21
+track_total = 11
+duration_ms = 384106
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/2.20. Pretender (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Pretender (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 2
+disc_total = 2
+track = 20
+track_total = 11
+duration_ms = 344813
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/2.19. Lost In My Room (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Lost In My Room (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 2
+disc_total = 2
+track = 19
+track_total = 11
+duration_ms = 392053
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/2.18. アポトーシス (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "アポトーシス (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 2
+disc_total = 2
+track = 18
+track_total = 11
+duration_ms = 389226
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/2.17. Editorial (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Editorial (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 2
+disc_total = 2
+track = 17
+track_total = 11
+duration_ms = 143906
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/2.16. Cry Baby (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Cry Baby (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 2
+disc_total = 2
+track = 16
+track_total = 11
+duration_ms = 327680
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/2.15. FIRE GROUND (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "FIRE GROUND (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 2
+disc_total = 2
+track = 15
+track_total = 11
+duration_ms = 269413
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/2.14. ノーダウト (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "ノーダウト (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 2
+disc_total = 2
+track = 14
+track_total = 11
+duration_ms = 246080
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/2.13. ブラザーズ (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "ブラザーズ (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 2
+disc_total = 2
+track = 13
+track_total = 11
+duration_ms = 322480
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/2.12. ペンディング・マシーン (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "ペンディング・マシーン (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 2
+disc_total = 2
+track = 12
+track_total = 11
+duration_ms = 243760
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/1.11. Stand By You (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Stand By You (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 1
+disc_total = 2
+track = 11
+track_total = 11
+duration_ms = 312200
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/1.10. Anarchy (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Anarchy (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 1
+disc_total = 2
+track = 10
+track_total = 11
+duration_ms = 279880
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/1.09. フィラメント (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "フィラメント (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 1
+disc_total = 2
+track = 9
+track_total = 11
+duration_ms = 243320
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/1.08. Laughter (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Laughter (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 1
+disc_total = 2
+track = 8
+track_total = 11
+duration_ms = 362280
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/1.07. Bedroom Talk (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Bedroom Talk (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 1
+disc_total = 2
+track = 7
+track_total = 11
+duration_ms = 211640
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/1.06. みどりの雨避け (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "みどりの雨避け (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 1
+disc_total = 2
+track = 6
+track_total = 11
+duration_ms = 241173
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/1.05. Shower (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Shower (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 1
+disc_total = 2
+track = 5
+track_total = 11
+duration_ms = 357333
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/1.04. 115万キロのフィルム (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "115万キロのフィルム (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 1
+disc_total = 2
+track = 4
+track_total = 11
+duration_ms = 377946
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/1.03. 宿命 (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "宿命 (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 1
+disc_total = 2
+track = 3
+track_total = 11
+duration_ms = 304453
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/1.02. HELLO (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "HELLO (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 1
+disc_total = 2
+track = 2
+track_total = 11
+duration_ms = 285000
+
+[[raw_tags]]
+file_path = "Official髭男dism - One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena (2022-10-05) [WEB FLAC]/1.01. Universe (Live).flac"
+album = "One-Man Tour 2021-2022 -Editorial-@Saitama Super Arena"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Universe (Live)"
+copyright = "℗ 2022 PONYCANYON/IRORI Records"
+disc = 1
+disc_total = 2
+track = 1
+track_total = 11
+duration_ms = 340453
+
+[expect.release]
+ids = { release_group_id = "b36f5deb-0165-4147-afbc-f95fd8b3c6c2" }

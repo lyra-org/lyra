@@ -1,0 +1,28 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "indigo la End - 名前は片想い (2023-01-25) [WEB 16bit FLAC]/1.01. 名前は片想い.flac"
+album = "名前は片想い"
+album_artists = ["indigo la End"]
+artists = ["indigo la End"]
+title = "名前は片想い"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 213793
+
+[expect.release]
+ids = { release_group_id = "5b436eb0-a5f7-4701-9efb-b452fe1e6f93", release_id = "afdbbb55-7c7a-4932-a2b2-8e62bb1a1c55" }
+fields = { release_title = "名前は片想い", release_date = "2023-01-25" }
+
+[expect.artists."8d17b65b-8ccf-495c-8b79-1f53d6226448"]
+fields = { artist_name = "indigo la End", sort_name = "indigo la End" }
+
+[expect.tracks."c7573864-658f-4815-a348-10e5bd36da7a"]
+fields = { disc = 1, track = 1, track_title = "名前は片想い" }

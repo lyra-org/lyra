@@ -1,0 +1,37 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2024.06.09] Shine as usual ／ Now, I'm going from underground (48 kHz, 24-bit) [1747836023]/02 - Now, I'm going from underground.flac"
+album = "Shine as usual / Now, I'm going from underground"
+album_artists = ["kessoku band"]
+artists = ["kessoku band"]
+title = "Now, I'm going from underground"
+copyright = "℗ 2024 Aniplex Inc."
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 2
+duration_ms = 258906
+
+[[raw_tags]]
+file_path = "[2024.06.09] Shine as usual ／ Now, I'm going from underground (48 kHz, 24-bit) [1747836023]/01 - Shine as usual.flac"
+album = "Shine as usual / Now, I'm going from underground"
+album_artists = ["kessoku band"]
+artists = ["kessoku band"]
+title = "Shine as usual"
+copyright = "℗ 2024 Aniplex Inc."
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 2
+duration_ms = 247426
+
+[expect.release]
+ids = { release_id = "f48e1328-604d-4de4-9158-a44951f4920e" }

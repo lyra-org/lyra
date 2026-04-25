@@ -1,0 +1,237 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Hoshino Gen - Pop Virus (FLAC)/14 星野源 - Hello Song.flac"
+album = "Pop Virus"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "Hello Song"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 14
+duration_ms = 254133
+
+[[raw_tags]]
+file_path = "Hoshino Gen - Pop Virus (FLAC)/13 星野源 - Nothing.flac"
+album = "Pop Virus"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "Nothing"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 14
+duration_ms = 280933
+
+[[raw_tags]]
+file_path = "Hoshino Gen - Pop Virus (FLAC)/12 星野源 - Family Song.flac"
+album = "Pop Virus"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "Family Song"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 14
+duration_ms = 324266
+
+[[raw_tags]]
+file_path = "Hoshino Gen - Pop Virus (FLAC)/11 星野源 - アイデア.flac"
+album = "Pop Virus"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "アイデア"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 14
+duration_ms = 280666
+
+[[raw_tags]]
+file_path = "Hoshino Gen - Pop Virus (FLAC)/10 星野源 - サピエンス.flac"
+album = "Pop Virus"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "サピエンス"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 14
+duration_ms = 232866
+
+[[raw_tags]]
+file_path = "Hoshino Gen - Pop Virus (FLAC)/09 星野源 - Continues.flac"
+album = "Pop Virus"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "Continues"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 14
+duration_ms = 268400
+
+[[raw_tags]]
+file_path = "Hoshino Gen - Pop Virus (FLAC)/08 星野源 - KIDS.flac"
+album = "Pop Virus"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "KIDS"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 14
+duration_ms = 226133
+
+[[raw_tags]]
+file_path = "Hoshino Gen - Pop Virus (FLAC)/07 星野源 - Dead Leaf.flac"
+album = "Pop Virus"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "Dead Leaf"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 14
+duration_ms = 187000
+
+[[raw_tags]]
+file_path = "Hoshino Gen - Pop Virus (FLAC)/06 星野源 - Present.flac"
+album = "Pop Virus"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "Present"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 14
+duration_ms = 221000
+
+[[raw_tags]]
+file_path = "Hoshino Gen - Pop Virus (FLAC)/05 星野源 - Pair Dancer.flac"
+album = "Pop Virus"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "Pair Dancer"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 14
+duration_ms = 206266
+
+[[raw_tags]]
+file_path = "Hoshino Gen - Pop Virus (FLAC)/04 星野源 - 肌.flac"
+album = "Pop Virus"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "肌"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 14
+duration_ms = 239933
+
+[[raw_tags]]
+file_path = "Hoshino Gen - Pop Virus (FLAC)/03 星野源 - Get a Feel.flac"
+album = "Pop Virus"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "Get a Feel"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 14
+duration_ms = 187000
+
+[[raw_tags]]
+file_path = "Hoshino Gen - Pop Virus (FLAC)/02 星野源 - 恋.flac"
+album = "Pop Virus"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "恋"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 14
+duration_ms = 251266
+
+[[raw_tags]]
+file_path = "Hoshino Gen - Pop Virus (FLAC)/01 星野源 - Pop Virus.flac"
+album = "Pop Virus"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "Pop Virus"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 14
+duration_ms = 182000
+
+[expect.release]
+ids = { release_group_id = "7d7ef13e-5f28-4f47-b404-3bc03e819941", release_id = "c63774bc-77a9-45cb-8c95-e99991a92cad" }
+fields = { release_title = "POP VIRUS", release_date = "2018-12-19" }
+
+[expect.artists."2c6c53ea-09d4-4d98-b174-c9aa83d4fecf"]
+fields = { artist_name = "星野源", sort_name = "Hoshino, Gen" }
+
+[expect.tracks."057ade04-c36b-4af5-b8cb-74ece8e950ef"]
+fields = { disc = 1, track = 12, track_title = "Family Song" }
+
+[expect.tracks."0a6a0178-266e-4653-b5fc-6804addc3583"]
+fields = { disc = 1, track = 13, track_title = "Nothing" }
+
+[expect.tracks."191428b8-c4f2-4a69-b968-7beab4ab5bfc"]
+fields = { disc = 1, track = 6, track_title = "Present" }
+
+[expect.tracks."1981c530-ed14-4c87-9ab3-46cbdb43b6a6"]
+fields = { disc = 1, track = 3, track_title = "Get a Feel" }
+
+[expect.tracks."56a173ad-479e-4103-ab41-36f4c7e6de5e"]
+fields = { disc = 1, track = 14, track_title = "Hello Song" }
+
+[expect.tracks."8d1553b8-a104-40a8-9aec-e346d84b7ded"]
+fields = { disc = 1, track = 4, track_title = "肌" }
+
+[expect.tracks."a2741bc9-01bf-49e4-b612-dfb23da5cac4"]
+fields = { disc = 1, track = 2, track_title = "恋" }
+
+[expect.tracks."a2f1a6d9-c2b7-4107-9422-cdb76b558bbe"]
+fields = { disc = 1, track = 8, track_title = "KIDS" }
+
+[expect.tracks."ad584234-8eec-490a-96b0-ce21cf73ec98"]
+fields = { disc = 1, track = 1, track_title = "Pop Virus" }
+
+[expect.tracks."b274add9-838c-4ca5-8925-d14096af63e0"]
+fields = { disc = 1, track = 9, track_title = "Continues" }
+
+[expect.tracks."bdb6ed99-5d97-40fe-8366-bfdcf29c4f99"]
+fields = { disc = 1, track = 10, track_title = "サピエンス" }
+
+[expect.tracks."d0ebf18f-4f0e-4ece-a942-1a36f8ae9952"]
+fields = { disc = 1, track = 7, track_title = "Dead Leaf" }
+
+[expect.tracks."d50585f0-c94d-43b3-a23a-499e52236f0f"]
+fields = { disc = 1, track = 5, track_title = "Pair Dancer" }
+
+[expect.tracks."f35643d9-4c6e-4f2f-b06a-68a23017bd4f"]
+fields = { disc = 1, track = 11, track_title = "アイデア" }

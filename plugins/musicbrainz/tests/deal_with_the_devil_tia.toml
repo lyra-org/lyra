@@ -1,0 +1,73 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Tia - Deal with the devil/04 Say you love me -Instrumental-.flac"
+album = "Deal with the devil"
+album_artists = ["Tia"]
+artists = ["Tia"]
+title = "Say you love me -Instrumental-"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 270800
+
+[[raw_tags]]
+file_path = "Tia - Deal with the devil/03 Deal with the devil -Instrumental-.flac"
+album = "Deal with the devil"
+album_artists = ["Tia"]
+artists = ["Tia"]
+title = "Deal with the devil -Instrumental-"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 283480
+
+[[raw_tags]]
+file_path = "Tia - Deal with the devil/02 Say you love me.flac"
+album = "Deal with the devil"
+album_artists = ["Tia"]
+artists = ["Tia"]
+title = "Say you love me"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 270480
+
+[[raw_tags]]
+file_path = "Tia - Deal with the devil/01 Deal with the devil.flac"
+album = "Deal with the devil"
+album_artists = ["Tia"]
+artists = ["Tia"]
+title = "Deal with the devil"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 283693
+
+[expect.release]
+ids = { release_group_id = "e900ef1a-5c84-47c0-a414-0d6f0977ba01", release_id = "218ecf80-0f34-4734-90bf-06edd8f42ab2" }
+fields = { release_title = "Deal with the devil", genres = ["pop rock"], release_date = "2017-08-23" }
+
+[expect.artists."b2f213d8-bf96-4bd5-99f0-cad1431a3000"]
+fields = { artist_name = "Tia", sort_name = "Tia" }
+
+[expect.tracks."3622d69e-3bf7-4ddd-8778-abdb1f47a01e"]
+fields = { disc = 1, track = 1, track_title = "Deal with the devil" }
+
+[expect.tracks."4a916952-371c-487d-9651-dcec6f47b94c"]
+fields = { disc = 1, track = 3, track_title = "Deal with the devil –Instrumental–" }
+
+[expect.tracks."56c9a213-2dda-4cd3-95ca-6c09fa34da62"]
+fields = { disc = 1, track = 4, track_title = "Say you love me –Instrumental–" }
+
+[expect.tracks."aacf5503-4132-469c-a93b-df0e91332d24"]
+fields = { disc = 1, track = 2, track_title = "Say you love me" }

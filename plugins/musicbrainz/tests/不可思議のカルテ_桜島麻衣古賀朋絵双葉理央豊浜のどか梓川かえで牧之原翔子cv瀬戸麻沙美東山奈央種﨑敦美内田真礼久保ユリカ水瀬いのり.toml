@@ -1,0 +1,216 @@
+plugin = "musicbrainz"
+
+[library]
+directory = "."
+language = "jpn"
+country = "JP"
+
+[[raw_tags]]
+file_path = "VA - Fukashigi no Karte (2018, SVWC-70368) [CD-FLAC]/04. BABY!-Instrumental-.flac"
+album = "不可思議のカルテ"
+album_artists = ["桜島麻衣、古賀朋絵、双葉理央、豊浜のどか、梓川かえで、牧之原翔子(CV:瀬戸麻沙美、東山奈央、種﨑敦美、内田真礼、久保ユリカ、水瀬いのり)"]
+artists = ["スイートバレット(CV：内田真礼、雨宮 天、うらのねこ、こまりまこ、いちいちご)"]
+title = "BABY!-Instrumental-"
+genre = "anime"
+track = 4
+track_total = 4
+duration_ms = 227533
+
+[[raw_tags]]
+file_path = "VA - Fukashigi no Karte (2018, SVWC-70368) [CD-FLAC]/03. 不可思議のカルテ-Instrumental-.flac"
+album = "不可思議のカルテ"
+album_artists = ["桜島麻衣、古賀朋絵、双葉理央、豊浜のどか、梓川かえで、牧之原翔子(CV:瀬戸麻沙美、東山奈央、種﨑敦美、内田真礼、久保ユリカ、水瀬いのり)"]
+artists = ["桜島麻衣、古賀朋絵、双葉理央、豊浜のどか、梓川かえで、牧之原翔子(CV:瀬戸麻沙美、東山奈央、種﨑敦美、内田真礼、久保ユリカ、水瀬いのり)"]
+title = "不可思議のカルテ-Instrumental-"
+genre = "anime"
+track = 3
+track_total = 4
+duration_ms = 239146
+
+[[raw_tags]]
+file_path = "VA - Fukashigi no Karte (2018, SVWC-70368) [CD-FLAC]/02. BABY!.flac"
+album = "不可思議のカルテ"
+album_artists = ["桜島麻衣、古賀朋絵、双葉理央、豊浜のどか、梓川かえで、牧之原翔子(CV:瀬戸麻沙美、東山奈央、種﨑敦美、内田真礼、久保ユリカ、水瀬いのり)"]
+artists = ["スイートバレット(CV：内田真礼、雨宮 天、うらのねこ、こまりまこ、いちいちご)"]
+title = "BABY!"
+genre = "anime"
+track = 2
+track_total = 4
+duration_ms = 231840
+
+[[raw_tags]]
+file_path = "VA - Fukashigi no Karte (2018, SVWC-70368) [CD-FLAC]/01. 不可思議のカルテ.flac"
+album = "不可思議のカルテ"
+album_artists = ["桜島麻衣、古賀朋絵、双葉理央、豊浜のどか、梓川かえで、牧之原翔子(CV:瀬戸麻沙美、東山奈央、種﨑敦美、内田真礼、久保ユリカ、水瀬いのり)"]
+artists = ["桜島麻衣、古賀朋絵、双葉理央、豊浜のどか、梓川かえで、牧之原翔子(CV:瀬戸麻沙美、東山奈央、種﨑敦美、内田真礼、久保ユリカ、水瀬いのり)"]
+title = "不可思議のカルテ"
+genre = "anime"
+track = 1
+track_total = 4
+duration_ms = 239146
+
+[expect.release]
+ids = { release_group_id = "e88c7d3c-20ee-4a2e-b6b1-9ece0514a5fd", release_id = "8f1c5387-19f3-4ec5-a708-3b1baf35f280" }
+fields = { release_title = "不可思議のカルテ", release_type = "single", release_date = "2018-10-03" }
+
+[expect.artists."f1cd2745-fbcb-456f-8d39-7cafc4d4605f"]
+fields = { artist_name = "桜島麻衣", sort_name = "Sakurajima, Mai", artist_type = "character" }
+
+[expect.artists."8153df53-41f3-4fa8-91c6-340ade834387"]
+fields = { artist_name = "古賀朋絵", sort_name = "Koga, Tomoe", artist_type = "character" }
+
+[expect.artists."3e67bf58-ebcf-4dc8-a029-d210e7b26f25"]
+fields = { artist_name = "双葉理央", sort_name = "Futaba, Rio", artist_type = "character" }
+
+[expect.artists."3e16f7ba-517d-4bd5-8777-dc427e3c501d"]
+fields = { artist_name = "豊浜のどか", sort_name = "Toyohama, Nodoka", artist_type = "character" }
+
+[expect.artists."2354b9b5-32ca-4f57-8cba-4c3fe528f95b"]
+fields = { artist_name = "梓川花楓", sort_name = "Azusagawa, Kaede", artist_type = "character" }
+
+[expect.artists."8b845230-334e-46bd-bce0-238119d4d9d7"]
+fields = { artist_name = "牧之原翔子", sort_name = "Makinohara, Shoko", artist_type = "character" }
+
+[expect.artists."9084a3ef-c551-4f0f-b7c6-a260dd268de9"]
+fields = { artist_name = "瀬戸麻沙美", sort_name = "Seto, Asami", artist_type = "person" }
+
+[expect.artists."73e66826-f426-4f22-aa1f-dec4b9ac8acc"]
+fields = { artist_name = "東山奈央", sort_name = "Tōyama, Nao", artist_type = "person" }
+
+[expect.artists."28b47260-6472-470d-b5e3-fde7bb36af3b"]
+fields = { artist_name = "種﨑敦美", sort_name = "Tanezaki, Atsumi", artist_type = "person" }
+
+[expect.artists."74368b3e-6a26-4e74-a210-e7e616fc49df"]
+fields = { artist_name = "内田真礼", sort_name = "Uchida, Maaya", artist_type = "person" }
+
+[expect.artists."ba8e4d90-e70a-46e0-a0a5-5a6c72d6cbbe"]
+fields = { artist_name = "久保ユリカ", sort_name = "Kubo, Yurika", artist_type = "person" }
+
+[expect.artists."6bb5b751-40aa-40f2-a803-f9abf1530df3"]
+fields = { artist_name = "水瀬いのり", sort_name = "Minase, Inori", artist_type = "person" }
+
+[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa"]
+fields = { disc = 1, disc_total = 1, track = 1, track_title = "不可思議のカルテ" }
+
+[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."f1cd2745-fbcb-456f-8d39-7cafc4d4605f"]
+credit_type = "artist"
+
+[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."8153df53-41f3-4fa8-91c6-340ade834387"]
+credit_type = "artist"
+
+[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."3e67bf58-ebcf-4dc8-a029-d210e7b26f25"]
+credit_type = "artist"
+
+[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."3e16f7ba-517d-4bd5-8777-dc427e3c501d"]
+credit_type = "artist"
+
+[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."2354b9b5-32ca-4f57-8cba-4c3fe528f95b"]
+credit_type = "artist"
+
+[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."8b845230-334e-46bd-bce0-238119d4d9d7"]
+credit_type = "artist"
+
+[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."9084a3ef-c551-4f0f-b7c6-a260dd268de9"]
+credit_type = "vocalist"
+detail = "character voice"
+
+[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."73e66826-f426-4f22-aa1f-dec4b9ac8acc"]
+credit_type = "vocalist"
+detail = "character voice"
+
+[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."28b47260-6472-470d-b5e3-fde7bb36af3b"]
+credit_type = "vocalist"
+detail = "character voice"
+
+[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."74368b3e-6a26-4e74-a210-e7e616fc49df"]
+credit_type = "vocalist"
+detail = "character voice"
+
+[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."ba8e4d90-e70a-46e0-a0a5-5a6c72d6cbbe"]
+credit_type = "vocalist"
+detail = "character voice"
+
+[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."6bb5b751-40aa-40f2-a803-f9abf1530df3"]
+credit_type = "vocalist"
+detail = "character voice"
+
+[expect.tracks."12b88d0e-9601-4d66-b7bd-9d838346090a"]
+fields = { disc = 1, disc_total = 1, track = 2, track_title = "BABY!" }
+
+[expect.tracks."12b88d0e-9601-4d66-b7bd-9d838346090a".credits."74368b3e-6a26-4e74-a210-e7e616fc49df"]
+credit_type = "artist"
+
+[expect.tracks."12b88d0e-9601-4d66-b7bd-9d838346090a".credits."b7f02d15-1c58-458e-95fd-f2477f133095"]
+credit_type = "artist"
+
+[expect.tracks."12b88d0e-9601-4d66-b7bd-9d838346090a".credits."1b76ad6c-a571-4568-90c5-b540f3f1b6bd"]
+credit_type = "artist"
+
+[expect.tracks."12b88d0e-9601-4d66-b7bd-9d838346090a".credits."ed213f0f-d95d-484b-91cc-15fd4934467f"]
+credit_type = "artist"
+
+[expect.tracks."12b88d0e-9601-4d66-b7bd-9d838346090a".credits."d6702b43-36c9-41d8-ade1-828d751b7cd0"]
+credit_type = "artist"
+
+[expect.tracks."b8b0a7f8-f516-47fd-a554-4ed47cf71aad"]
+fields = { disc = 1, disc_total = 1, track = 3, track_title = "不可思議のカルテ -Instrumental-" }
+
+[expect.tracks."b8b0a7f8-f516-47fd-a554-4ed47cf71aad".credits."f1cd2745-fbcb-456f-8d39-7cafc4d4605f"]
+credit_type = "artist"
+
+[expect.tracks."b8b0a7f8-f516-47fd-a554-4ed47cf71aad".credits."8153df53-41f3-4fa8-91c6-340ade834387"]
+credit_type = "artist"
+
+[expect.tracks."b8b0a7f8-f516-47fd-a554-4ed47cf71aad".credits."3e67bf58-ebcf-4dc8-a029-d210e7b26f25"]
+credit_type = "artist"
+
+[expect.tracks."b8b0a7f8-f516-47fd-a554-4ed47cf71aad".credits."3e16f7ba-517d-4bd5-8777-dc427e3c501d"]
+credit_type = "artist"
+
+[expect.tracks."b8b0a7f8-f516-47fd-a554-4ed47cf71aad".credits."2354b9b5-32ca-4f57-8cba-4c3fe528f95b"]
+credit_type = "artist"
+
+[expect.tracks."b8b0a7f8-f516-47fd-a554-4ed47cf71aad".credits."8b845230-334e-46bd-bce0-238119d4d9d7"]
+credit_type = "artist"
+
+[expect.tracks."b8b0a7f8-f516-47fd-a554-4ed47cf71aad".credits."9084a3ef-c551-4f0f-b7c6-a260dd268de9"]
+credit_type = "vocalist"
+detail = "character voice"
+
+[expect.tracks."b8b0a7f8-f516-47fd-a554-4ed47cf71aad".credits."73e66826-f426-4f22-aa1f-dec4b9ac8acc"]
+credit_type = "vocalist"
+detail = "character voice"
+
+[expect.tracks."b8b0a7f8-f516-47fd-a554-4ed47cf71aad".credits."28b47260-6472-470d-b5e3-fde7bb36af3b"]
+credit_type = "vocalist"
+detail = "character voice"
+
+[expect.tracks."b8b0a7f8-f516-47fd-a554-4ed47cf71aad".credits."74368b3e-6a26-4e74-a210-e7e616fc49df"]
+credit_type = "vocalist"
+detail = "character voice"
+
+[expect.tracks."b8b0a7f8-f516-47fd-a554-4ed47cf71aad".credits."ba8e4d90-e70a-46e0-a0a5-5a6c72d6cbbe"]
+credit_type = "vocalist"
+detail = "character voice"
+
+[expect.tracks."b8b0a7f8-f516-47fd-a554-4ed47cf71aad".credits."6bb5b751-40aa-40f2-a803-f9abf1530df3"]
+credit_type = "vocalist"
+detail = "character voice"
+
+[expect.tracks."a3cea9c4-1631-4966-8d40-8a3adc500dfd"]
+fields = { disc = 1, disc_total = 1, track = 4, track_title = "BABY! -Instrumental-" }
+
+[expect.tracks."a3cea9c4-1631-4966-8d40-8a3adc500dfd".credits."74368b3e-6a26-4e74-a210-e7e616fc49df"]
+credit_type = "artist"
+
+[expect.tracks."a3cea9c4-1631-4966-8d40-8a3adc500dfd".credits."b7f02d15-1c58-458e-95fd-f2477f133095"]
+credit_type = "artist"
+
+[expect.tracks."a3cea9c4-1631-4966-8d40-8a3adc500dfd".credits."1b76ad6c-a571-4568-90c5-b540f3f1b6bd"]
+credit_type = "artist"
+
+[expect.tracks."a3cea9c4-1631-4966-8d40-8a3adc500dfd".credits."ed213f0f-d95d-484b-91cc-15fd4934467f"]
+credit_type = "artist"
+
+[expect.tracks."a3cea9c4-1631-4966-8d40-8a3adc500dfd".credits."d6702b43-36c9-41d8-ade1-828d751b7cd0"]
+credit_type = "artist"

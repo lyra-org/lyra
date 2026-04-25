@@ -1,0 +1,43 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "the peggies - Kimi no Sei (Seishun Buta Yarou wa Bunny Girl Senpai no Yume wo Minai OP) [Anime Edition][FLAC+BK]/02. 最終バスと砂時計.flac"
+album = "君のせい"
+artists = ["the peggies"]
+title = "最終バスと砂時計"
+genre = "Anime"
+disc = 1
+disc_total = 2
+track = 2
+track_total = 2
+duration_ms = 316666
+
+[[raw_tags]]
+file_path = "the peggies - Kimi no Sei (Seishun Buta Yarou wa Bunny Girl Senpai no Yume wo Minai OP) [Anime Edition][FLAC+BK]/01. 君のせい.flac"
+album = "君のせい"
+artists = ["the peggies"]
+title = "君のせい"
+genre = "Anime"
+disc = 1
+disc_total = 2
+track = 1
+track_total = 2
+duration_ms = 264666
+
+[expect.release]
+ids = { release_group_id = "11f0976b-bd51-4556-aa4e-59942492d262", release_id = "e8704a27-09af-4e0b-9054-90ea0bd62c55" }
+fields = { release_title = "君のせい", release_date = "2018-11-07" }
+
+[expect.artists."d2418949-fc2f-4b6d-98f8-2188e34cca94"]
+fields = { artist_name = "the peggies", sort_name = "peggies, the" }
+
+[expect.tracks."717388c4-cf69-49c8-a893-c11a77351dc2"]
+fields = { disc = 1, track = 2, track_title = "最終バスと砂時計" }
+
+[expect.tracks."97e29626-005d-4a01-8388-0eecadca7964"]
+fields = { disc = 1, track = 1, track_title = "君のせい" }

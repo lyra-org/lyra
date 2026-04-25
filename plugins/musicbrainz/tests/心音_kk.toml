@@ -1,0 +1,253 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "心音/16 心音.flac"
+album = "心音"
+artists = ["KK"]
+title = "心音"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 16
+track_total = 16
+duration_ms = 150240
+
+[[raw_tags]]
+file_path = "心音/15 Survey Ship.flac"
+album = "心音"
+artists = ["KK"]
+title = "Survey Ship"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 15
+track_total = 16
+duration_ms = 336000
+
+[[raw_tags]]
+file_path = "心音/14 ぼくだけのスタンドバイミー.flac"
+album = "心音"
+artists = ["KK"]
+title = "ぼくだけのスタンドバイミー"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 16
+duration_ms = 279000
+
+[[raw_tags]]
+file_path = "心音/13 Starduster.flac"
+album = "心音"
+artists = ["KK"]
+title = "Starduster"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 16
+duration_ms = 293000
+
+[[raw_tags]]
+file_path = "心音/12 World on Color.flac"
+album = "心音"
+artists = ["KK"]
+title = "World on Color"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 16
+duration_ms = 290000
+
+[[raw_tags]]
+file_path = "心音/11 ペイサージュ.flac"
+album = "心音"
+artists = ["KK"]
+title = "ペイサージュ"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 16
+duration_ms = 279000
+
+[[raw_tags]]
+file_path = "心音/10 いかないで.flac"
+album = "心音"
+artists = ["KK"]
+title = "いかないで"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 16
+duration_ms = 195000
+
+[[raw_tags]]
+file_path = "心音/09 零.flac"
+album = "心音"
+artists = ["KK"]
+title = "零"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 16
+duration_ms = 235000
+
+[[raw_tags]]
+file_path = "心音/08 それがあなたの幸せとしても.flac"
+album = "心音"
+artists = ["KK"]
+title = "それがあなたの幸せとしても"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 16
+duration_ms = 271000
+
+[[raw_tags]]
+file_path = "心音/07 HEAVEN.flac"
+album = "心音"
+artists = ["KK"]
+title = "HEAVEN"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 16
+duration_ms = 288000
+
+[[raw_tags]]
+file_path = "心音/06 林檎売りの泡沫少女.flac"
+album = "心音"
+artists = ["KK"]
+title = "林檎売りの泡沫少女"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 16
+duration_ms = 361000
+
+[[raw_tags]]
+file_path = "心音/05 Solitary Habitat.flac"
+album = "心音"
+artists = ["KK"]
+title = "Solitary Habitat"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 16
+duration_ms = 284000
+
+[[raw_tags]]
+file_path = "心音/04 自傷無色.flac"
+album = "心音"
+artists = ["KK"]
+title = "自傷無色"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 16
+duration_ms = 217000
+
+[[raw_tags]]
+file_path = "心音/03 Velvet tread.flac"
+album = "心音"
+artists = ["KK"]
+title = "Velvet tread"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 16
+duration_ms = 270000
+
+[[raw_tags]]
+file_path = "心音/02 アマテラス.flac"
+album = "心音"
+artists = ["KK"]
+title = "アマテラス"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 16
+duration_ms = 219000
+
+[[raw_tags]]
+file_path = "心音/01 心根.flac"
+album = "心音"
+artists = ["KK"]
+title = "心根"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 16
+duration_ms = 154333
+
+[expect.release]
+ids = { release_group_id = "558ae490-bc8b-4f0c-bc56-d719a4d4295c", release_id = ["22b3a2fb-ba35-4df7-9211-75bfbba487ef", "de6c7ee5-cdbf-4caa-a889-e7f9fae2707e"] }
+fields = { release_title = "心音", release_date = "2014-09-10" }
+
+[expect.artists."bd84ddbb-e822-4884-a302-7c929431805f"]
+fields = { artist_name = "KK", sort_name = "KK" }
+
+[expect.tracks."0813aea3-d135-4839-b4f5-5b01b3f4e468"]
+fields = { disc = 1, track = 12, track_title = "World on Color" }
+
+[expect.tracks."45c9d213-86cb-4536-b4e1-05f928e2fdd7"]
+fields = { disc = 1, track = 7, track_title = "HEAVEN" }
+
+[expect.tracks."47ca0b52-0299-4816-8f06-c9662442911e"]
+fields = { disc = 1, track = 8, track_title = "それがあなたの幸せとしても" }
+
+[expect.tracks."486cd99f-c752-4587-8fe8-82477c4a804d"]
+fields = { disc = 1, track = 11, track_title = "ペイサージュ" }
+
+[expect.tracks."64ca4bde-dab7-40af-ba21-c78a7fd23df1"]
+fields = { disc = 1, track = 9, track_title = "零" }
+
+[expect.tracks."652fd8dc-4b25-4aa6-8ce1-0f32373a4969"]
+fields = { disc = 1, track = 6, track_title = "林檎売りの泡沫少女" }
+
+[expect.tracks."69685f2d-4202-4502-ab34-cabfbe8e769f"]
+fields = { disc = 1, track = 1, track_title = "心根" }
+
+[expect.tracks."ab59b114-55c8-42a7-b3a7-5c6489750345"]
+fields = { disc = 1, track = 13, track_title = "Starduster" }
+
+[expect.tracks."af9610c4-8656-480f-8e98-0f1919d6bb7b"]
+fields = { disc = 1, track = 4, track_title = "自傷無色" }
+
+[expect.tracks."bed83314-863d-499a-9016-107eed5b632f"]
+fields = { disc = 1, track = 3, track_title = "Velvet tread" }
+
+[expect.tracks."c6f3d3bf-535e-40b7-a930-2ef1e15d9003"]
+fields = { disc = 1, track = 15, track_title = "Survey Ship" }
+
+[expect.tracks."ce1aceac-9dd2-4e52-b0dc-b5b8eb766f16"]
+fields = { disc = 1, track = 2, track_title = "アマテラス" }
+
+[expect.tracks."d091df82-bd72-47c1-9c4c-50edaec8dcf4"]
+fields = { disc = 1, track = 16, track_title = "心音" }
+
+[expect.tracks."d6055fe9-0c29-40d7-8d65-4677085160da"]
+fields = { disc = 1, track = 10, track_title = "いかないで" }
+
+[expect.tracks."d689f503-6922-4af2-82c4-e1c8bd730faf"]
+fields = { disc = 1, track = 14, track_title = "ぼくだけのスタンドバイミー" }
+
+[expect.tracks."db185a6a-9fd5-478a-be86-b58ce6d25327"]
+fields = { disc = 1, track = 5, track_title = "Solitary Habitat" }

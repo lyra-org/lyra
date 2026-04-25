@@ -1,0 +1,173 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "鹿乃ーnowhere/10 evergreen.flac"
+album = "nowhere"
+album_artists = ["鹿乃"]
+artists = ["鹿乃"]
+title = "evergreen"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 10
+duration_ms = 267440
+
+[[raw_tags]]
+file_path = "鹿乃ーnowhere/09 Toy-toi.flac"
+album = "nowhere"
+album_artists = ["鹿乃"]
+artists = ["鹿乃"]
+title = "Toy-toi"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 10
+duration_ms = 215293
+
+[[raw_tags]]
+file_path = "鹿乃ーnowhere/08 JUMP! JUMP! JUMP!.flac"
+album = "nowhere"
+album_artists = ["鹿乃"]
+artists = ["鹿乃"]
+title = "JUMP! JUMP! JUMP!"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 10
+duration_ms = 225253
+
+[[raw_tags]]
+file_path = "鹿乃ーnowhere/07 Walk This Way!.flac"
+album = "nowhere"
+album_artists = ["鹿乃"]
+artists = ["鹿乃"]
+title = "Walk This Way!"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 10
+duration_ms = 248480
+
+[[raw_tags]]
+file_path = "鹿乃ーnowhere/06 ヒメコイ.flac"
+album = "nowhere"
+album_artists = ["鹿乃"]
+artists = ["鹿乃"]
+title = "ヒメコイ"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 10
+duration_ms = 268026
+
+[[raw_tags]]
+file_path = "鹿乃ーnowhere/05 今をかける少女.flac"
+album = "nowhere"
+album_artists = ["鹿乃"]
+artists = ["鹿乃"]
+title = "今をかける少女"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 10
+duration_ms = 263493
+
+[[raw_tags]]
+file_path = "鹿乃ーnowhere/04 こそあど言ノ葉.flac"
+album = "nowhere"
+album_artists = ["鹿乃"]
+artists = ["鹿乃"]
+title = "こそあど言ノ葉"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 10
+duration_ms = 264720
+
+[[raw_tags]]
+file_path = "鹿乃ーnowhere/03 ディアブレイブ.flac"
+album = "nowhere"
+album_artists = ["鹿乃"]
+artists = ["鹿乃"]
+title = "ディアブレイブ"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 10
+duration_ms = 259613
+
+[[raw_tags]]
+file_path = "鹿乃ーnowhere/02 Stella-rium.flac"
+album = "nowhere"
+album_artists = ["鹿乃"]
+artists = ["鹿乃"]
+title = "Stella-rium"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 10
+duration_ms = 247026
+
+[[raw_tags]]
+file_path = "鹿乃ーnowhere/01 プリマステラ.flac"
+album = "nowhere"
+album_artists = ["鹿乃"]
+artists = ["鹿乃"]
+title = "プリマステラ"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 10
+duration_ms = 266893
+
+[expect.release]
+ids = { release_id = "dace83c8-d6ab-46c4-99f0-8bef2266a702" }
+fields = { release_title = "nowhere", release_date = "2016-05-11" }
+
+[expect.artists."487cda72-0633-46d5-a80e-f9ee94080080"]
+fields = { artist_name = "鹿乃", sort_name = "Kano" }
+
+[expect.tracks."204047ee-8d37-44c2-a3c6-8dea2e24cdef"]
+fields = { disc = 1, track = 2, track_title = "Stella-rium" }
+
+[expect.tracks."2923b9c3-dfb3-4128-91e6-113cfb1bb5f7"]
+fields = { disc = 1, track = 9, track_title = "Toy-toi" }
+
+[expect.tracks."29788f32-a638-4c5d-92a8-9ed5ae621c98"]
+fields = { disc = 1, track = 5, track_title = "今をかける少女" }
+
+[expect.tracks."3052334d-f2a8-4380-9352-226b2046412a"]
+fields = { disc = 1, track = 8, track_title = "JUMP! JUMP! JUMP!" }
+
+[expect.tracks."52b54c3b-d13d-4cc6-86c7-46735c4ff0e6"]
+fields = { disc = 1, track = 7, track_title = "Walk This Way!" }
+
+[expect.tracks."7deecbd6-4f1c-4a03-839b-20600f10ca51"]
+fields = { disc = 1, track = 10, track_title = "evergreen" }
+
+[expect.tracks."81cddcce-d218-4900-bf66-2afacf5a56d3"]
+fields = { disc = 1, track = 4, track_title = "こそあど言ノ葉" }
+
+[expect.tracks."9f2eff00-d4ac-44c2-89e2-5c5fadeac81f"]
+fields = { disc = 1, track = 3, track_title = "ディアブレイブ" }
+
+[expect.tracks."cdc83fb7-c588-49cf-9c28-323a3a82777b"]
+fields = { disc = 1, track = 1, track_title = "プリマステラ" }
+
+[expect.tracks."ff0d91b2-4d30-46ef-997e-4f4d68560094"]
+fields = { disc = 1, track = 6, track_title = "ヒメコイ" }

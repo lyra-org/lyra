@@ -1,0 +1,443 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/31 Monochrome.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["橘 瑠衣(CV:内田 真礼)"]
+title = "Monochrome"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 31
+track_total = 31
+duration_ms = 248000
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/30 儚いキスで終わらせて.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["橘 陽菜(CV:日笠 陽子)"]
+title = "儚いキスで終わらせて"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 30
+track_total = 31
+duration_ms = 258066
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/29 告白 ～瑠衣の想い～.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "告白 ～瑠衣の想い～"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 29
+track_total = 31
+duration_ms = 104866
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/28 進んでいく時間.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "進んでいく時間"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 28
+track_total = 31
+duration_ms = 145733
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/27 さようなら ～夢のあと～.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "さようなら ～夢のあと～"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 27
+track_total = 31
+duration_ms = 165533
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/26 夏の夜の夢.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "夏の夜の夢"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 26
+track_total = 31
+duration_ms = 160133
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/25 夏生の決心.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "夏生の決心"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 25
+track_total = 31
+duration_ms = 146466
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/24 通じ合うふたり.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "通じ合うふたり"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 24
+track_total = 31
+duration_ms = 205466
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/23 アルのテーマ.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "アルのテーマ"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 23
+track_total = 31
+duration_ms = 104666
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/22 ふたりの距離感.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "ふたりの距離感"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 22
+track_total = 31
+duration_ms = 122400
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/21 文芸部.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "文芸部"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 21
+track_total = 31
+duration_ms = 141200
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/20 凍りつく笑顔.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "凍りつく笑顔"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 20
+track_total = 31
+duration_ms = 142666
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/19 悪い噂.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "悪い噂"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 19
+track_total = 31
+duration_ms = 122733
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/18 メインテーマ(スローVer.) ～ひとりになって～.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "メインテーマ(スローVer.) ～ひとりになって～"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 18
+track_total = 31
+duration_ms = 127466
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/17 悲しい過去.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "悲しい過去"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 17
+track_total = 31
+duration_ms = 125266
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/16 すれ違うふたり.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "すれ違うふたり"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 16
+track_total = 31
+duration_ms = 109066
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/15 ドメカノタンゴ.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "ドメカノタンゴ"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 15
+track_total = 31
+duration_ms = 102466
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/14 おかえり….flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "おかえり…"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 31
+duration_ms = 102400
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/13 戻ってきて.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "戻ってきて"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 31
+duration_ms = 151666
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/12 純喫茶 ラマン.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "純喫茶 ラマン"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 31
+duration_ms = 104400
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/11 許されぬ恋.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "許されぬ恋"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 31
+duration_ms = 137000
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/10 サプライズ!.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "サプライズ!?"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 31
+duration_ms = 91666
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/09 夏生の想い.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "夏生の想い"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 31
+duration_ms = 124333
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/08 メインテーマ(ピアノVer.) ～叶わぬ恋～.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "メインテーマ(ピアノVer.) ～叶わぬ恋～"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 31
+duration_ms = 146600
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/07 親友 ～文哉のテーマ～.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "親友 ～文哉のテーマ～"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 31
+duration_ms = 110000
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/06 期待と不安と….flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "期待と不安と…"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 31
+duration_ms = 124333
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/05 嘘っ! ホント!!.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "嘘っ! ホント!!?"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 31
+duration_ms = 124800
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/04 やすらぎ.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "やすらぎ"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 31
+duration_ms = 108533
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/03 陽のあたる部屋.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "陽のあたる部屋"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 31
+duration_ms = 109466
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/02 それでも青春!.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "それでも青春!"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 31
+duration_ms = 135066
+
+[[raw_tags]]
+file_path = "TVアニメ「ドメスティックな彼女」サウンドコレクション (2019 Mora) [48_24]/01 メインテーマ ～ドメスティックな彼女～.flac"
+album = "TVアニメ「ドメスティックな彼女」サウンドコレクション [48/24]"
+album_artists = ["甲田雅人"]
+artists = ["甲田 雅人"]
+title = "メインテーマ ～ドメスティックな彼女～"
+copyright = "(P)FlyingDog, Inc."
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 31
+duration_ms = 123066
+
+[expect.release]
+ids = { release_group_id = "d6680dd1-bd5b-4911-a7b9-350bc7ffb23d" }

@@ -1,0 +1,13 @@
+[package]
+name = "harmony-json"
+version = "0.0.1"
+edition = "2024"
+license-file = "../LICENSE"
+
+[dependencies]
+harmony-core = { path = "../harmony-core" }
+harmony-luau = { path = "../harmony-luau" }
+anyhow = { workspace = true }
+mlua = { workspace = true, features = ["luau", "anyhow", "serde"] }
+serde = { workspace = true }
+serde_json = { workspace = true }

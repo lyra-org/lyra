@@ -1,0 +1,200 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "土岐麻子 - HOME TOWN ～Cover Songs～ (2021 mora) [48-24]/11 HOME.flac"
+album = "HOME TOWN ～Cover Songs～ [48-24]"
+album_artists = ["土岐麻子", "土岐麻子"]
+artists = ["土岐麻子"]
+title = "HOME"
+copyright = "avex entertainment inc./Sony Music Artists Inc."
+genre = "J-Pop Cover"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 11
+duration_ms = 293966
+
+[[raw_tags]]
+file_path = "土岐麻子 - HOME TOWN ～Cover Songs～ (2021 mora) [48-24]/10 VITAMIN E・P・O.flac"
+album = "HOME TOWN ～Cover Songs～ [48-24]"
+album_artists = ["土岐麻子", "土岐麻子"]
+artists = ["土岐麻子"]
+title = "VITAMIN E・P・O"
+copyright = "avex entertainment inc./Sony Music Artists Inc."
+genre = "J-Pop Cover"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 11
+duration_ms = 274900
+
+[[raw_tags]]
+file_path = "土岐麻子 - HOME TOWN ～Cover Songs～ (2021 mora) [48-24]/09 CHINESE SOUP.flac"
+album = "HOME TOWN ～Cover Songs～ [48-24]"
+album_artists = ["土岐麻子", "土岐麻子"]
+artists = ["土岐麻子"]
+title = "CHINESE SOUP"
+copyright = "avex entertainment inc./Sony Music Artists Inc."
+genre = "J-Pop Cover"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 11
+duration_ms = 200300
+
+[[raw_tags]]
+file_path = "土岐麻子 - HOME TOWN ～Cover Songs～ (2021 mora) [48-24]/08 I Miss You.flac"
+album = "HOME TOWN ～Cover Songs～ [48-24]"
+album_artists = ["土岐麻子", "土岐麻子"]
+artists = ["土岐麻子"]
+title = "I Miss You"
+copyright = "avex entertainment inc./Sony Music Artists Inc."
+genre = "J-Pop Cover"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 11
+duration_ms = 177400
+
+[[raw_tags]]
+file_path = "土岐麻子 - HOME TOWN ～Cover Songs～ (2021 mora) [48-24]/07 白い恋人達.flac"
+album = "HOME TOWN ～Cover Songs～ [48-24]"
+album_artists = ["土岐麻子", "土岐麻子"]
+artists = ["土岐麻子"]
+title = "白い恋人達"
+copyright = "avex entertainment inc./Sony Music Artists Inc."
+genre = "J-Pop Cover"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 11
+duration_ms = 286033
+
+[[raw_tags]]
+file_path = "土岐麻子 - HOME TOWN ～Cover Songs～ (2021 mora) [48-24]/06 Rendez-vous in '58 (sings with Bakarhythm).flac"
+album = "HOME TOWN ～Cover Songs～ [48-24]"
+album_artists = ["土岐麻子", "土岐麻子"]
+artists = ["土岐麻子"]
+title = "Rendez-vous in '58 (sings with Bakarhythm)"
+copyright = "avex entertainment inc./Sony Music Artists Inc."
+genre = "J-Pop Cover"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 11
+duration_ms = 294300
+
+[[raw_tags]]
+file_path = "土岐麻子 - HOME TOWN ～Cover Songs～ (2021 mora) [48-24]/05 楓.flac"
+album = "HOME TOWN ～Cover Songs～ [48-24]"
+album_artists = ["土岐麻子", "土岐麻子"]
+artists = ["土岐麻子"]
+title = "楓"
+copyright = "avex entertainment inc./Sony Music Artists Inc."
+genre = "J-Pop Cover"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 11
+duration_ms = 383166
+
+[[raw_tags]]
+file_path = "土岐麻子 - HOME TOWN ～Cover Songs～ (2021 mora) [48-24]/04 夏夜のマジック.flac"
+album = "HOME TOWN ～Cover Songs～ [48-24]"
+album_artists = ["土岐麻子", "土岐麻子"]
+artists = ["土岐麻子"]
+title = "夏夜のマジック"
+copyright = "avex entertainment inc./Sony Music Artists Inc."
+genre = "J-Pop Cover"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 11
+duration_ms = 304266
+
+[[raw_tags]]
+file_path = "土岐麻子 - HOME TOWN ～Cover Songs～ (2021 mora) [48-24]/03 アイ.flac"
+album = "HOME TOWN ～Cover Songs～ [48-24]"
+album_artists = ["土岐麻子", "土岐麻子"]
+artists = ["土岐麻子"]
+title = "アイ"
+copyright = "avex entertainment inc./Sony Music Artists Inc."
+genre = "J-Pop Cover"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 11
+duration_ms = 321966
+
+[[raw_tags]]
+file_path = "土岐麻子 - HOME TOWN ～Cover Songs～ (2021 mora) [48-24]/02 Jubilee.flac"
+album = "HOME TOWN ～Cover Songs～ [48-24]"
+album_artists = ["土岐麻子", "土岐麻子"]
+artists = ["土岐麻子"]
+title = "Jubilee"
+copyright = "avex entertainment inc./Sony Music Artists Inc."
+genre = "J-Pop Cover"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 11
+duration_ms = 232466
+
+[[raw_tags]]
+file_path = "土岐麻子 - HOME TOWN ～Cover Songs～ (2021 mora) [48-24]/01 ソラニン.flac"
+album = "HOME TOWN ～Cover Songs～ [48-24]"
+album_artists = ["土岐麻子", "土岐麻子"]
+artists = ["土岐麻子"]
+title = "ソラニン"
+copyright = "avex entertainment inc./Sony Music Artists Inc."
+genre = "J-Pop Cover"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 11
+duration_ms = 273500
+
+[expect.release]
+ids = { release_group_id = "efd6f2f1-a56e-4311-be7f-6b6e4e4b3201", release_id = "f4f760e4-6fdd-4cf5-a10d-2ac66893f1fb" }
+fields = { release_title = "HOME TOWN 〜Cover Songs〜", release_date = "2021-02-17" }
+
+[expect.artists."0412cd16-5507-4474-86e2-3c94dd1428f2"]
+fields = { artist_name = "土岐麻子", sort_name = "Toki, Asako" }
+
+[expect.tracks."2ef9e6f2-fc05-4ad5-993c-b68593ad2c64"]
+fields = { disc = 1, track = 9, track_title = "CHINESE SOUP" }
+
+[expect.tracks."34b88050-e2a7-40d6-b874-55a5359f6128"]
+fields = { disc = 1, track = 2, track_title = "Jubilee" }
+
+[expect.tracks."5aba2fa7-7a30-483e-9cb8-20020e34570d"]
+fields = { disc = 1, track = 10, track_title = "VITAMIN E・P・O" }
+
+[expect.tracks."7b693665-091c-4867-ba3e-198b84509e48"]
+fields = { disc = 1, track = 11, track_title = "HOME" }
+
+[expect.tracks."7ef087f6-0882-4da2-abb0-5240c2812fdf"]
+fields = { disc = 1, track = 7, track_title = "白い恋人達" }
+
+[expect.tracks."855ed4bb-d60c-4154-86b5-00797f754699"]
+fields = { disc = 1, track = 4, track_title = "夏夜のマジック" }
+
+[expect.tracks."8d9a5995-978b-4cd4-9a69-ff5afb4d4223"]
+fields = { disc = 1, track = 8, track_title = "I Miss You" }
+
+[expect.tracks."940d1e9b-585a-42cb-b4ef-5d37aaebac9f"]
+fields = { disc = 1, track = 5, track_title = "楓" }
+
+[expect.tracks."b25e4c73-3c8d-4bdf-9b31-7feab686902b"]
+fields = { disc = 1, track = 6, track_title = "Rendez‐vous in ’58" }
+
+[expect.tracks."e9fdefa9-e3aa-4ddc-976c-15f73edb3510"]
+fields = { disc = 1, track = 3, track_title = "アイ" }
+
+[expect.tracks."f245f877-8ec9-4a24-8b9d-edc1820da358"]
+fields = { disc = 1, track = 1, track_title = "ソラニン" }

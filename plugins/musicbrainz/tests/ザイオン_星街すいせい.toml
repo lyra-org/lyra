@@ -1,0 +1,45 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "星街すいせい - ザイオン (2023-11-07) [WEB FLAC]/1.02. ザイオン (Instrumental).flac"
+album = "ザイオン"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "ザイオン (Instrumental)"
+copyright = "℗ 2023 COVER Corp."
+disc = 1
+disc_total = 1
+track = 2
+track_total = 2
+duration_ms = 250000
+
+[[raw_tags]]
+file_path = "星街すいせい - ザイオン (2023-11-07) [WEB FLAC]/1.01. ザイオン.flac"
+album = "ザイオン"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "ザイオン"
+copyright = "℗ 2023 COVER Corp."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 2
+duration_ms = 250000
+
+[expect.release]
+ids = { release_group_id = "000d659f-2ca9-4bbd-af24-cd54d9adfb7d", release_id = "1b2cfca5-6f22-416b-87b3-73ab70a796af" }
+fields = { release_title = "ザイオン", release_date = "2023-11-07" }
+
+[expect.artists."8eeb59f4-0071-4261-b1f8-91d8294622d2"]
+fields = { artist_name = "星街すいせい", sort_name = "Hoshimachi, Suisei" }
+
+[expect.tracks."ccbfbcd0-af4a-4f22-820d-911f916d869d"]
+fields = { disc = 1, track = 2, track_title = "ザイオン (Instrumental)" }
+
+[expect.tracks."ea02df11-4ba6-4b9c-93c6-75364c041b83"]
+fields = { disc = 1, track = 1, track_title = "ザイオン" }

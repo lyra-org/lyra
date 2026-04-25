@@ -1,0 +1,333 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/27 なんでもないや(movie ver.).flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "なんでもないや(movie ver.)"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 27
+track_total = 27
+duration_ms = 344053
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/26 なんでもないや(movie edit.).flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "なんでもないや(movie edit.)"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 26
+track_total = 27
+duration_ms = 196906
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/25 デート2.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "デート2"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 25
+track_total = 27
+duration_ms = 129013
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/24 スパークル(movie ver,).flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "スパークル(movie ver.)"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 24
+track_total = 27
+duration_ms = 537653
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/23 かたわれ時.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "かたわれ時"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 23
+track_total = 27
+duration_ms = 170026
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/22 見えないテーマ.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "見えないテーマ"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 22
+track_total = 27
+duration_ms = 53360
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/21 三葉のテーマ.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "三葉のテーマ"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 21
+track_total = 27
+duration_ms = 246146
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/20 町長説得.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "町長説得"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 20
+track_total = 27
+duration_ms = 169093
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/19 作戦会議.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "作戦会議"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 19
+track_total = 27
+duration_ms = 144093
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/18 口噛み酒トリップ.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "口噛み酒トリップ"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 18
+track_total = 27
+duration_ms = 175106
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/17 御神体へ再び.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "御神体へ再び"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 17
+track_total = 27
+duration_ms = 143253
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/16 旅館の夜.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "旅館の夜"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 16
+track_total = 27
+duration_ms = 93813
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/15 図書館.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "図書館"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 15
+track_total = 27
+duration_ms = 103720
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/14 消えた町.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "消えた町"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 14
+track_total = 27
+duration_ms = 115840
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/13 飛騨探訪.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "飛騨探訪"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 13
+track_total = 27
+duration_ms = 92493
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/12 記憶を呼び起こす瀧.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "記憶を呼び起こす瀧"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 12
+track_total = 27
+duration_ms = 103026
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/11 秋祭り.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "秋祭り"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 11
+track_total = 27
+duration_ms = 67986
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/10 デート.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "デート"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 10
+track_total = 27
+duration_ms = 245906
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/09 御神体.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "御神体"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 9
+track_total = 27
+duration_ms = 207986
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/08 前前前世(movie ver.).flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "前前前世(movie ver.)"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 8
+track_total = 27
+duration_ms = 285880
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/07 ふたりの異変.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "ふたりの異変"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 7
+track_total = 27
+duration_ms = 156746
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/06 奥寺先輩のテーマ.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "奥寺先輩のテーマ"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 6
+track_total = 27
+duration_ms = 127106
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/05 憧れカフェ.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "憧れカフェ"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 5
+track_total = 27
+duration_ms = 92226
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/04 はじめての、東京.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "はじめての、東京"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 4
+track_total = 27
+duration_ms = 79800
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/03 糸守高校.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "糸守高校"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 3
+track_total = 27
+duration_ms = 111560
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/02 三葉の通学.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "三葉の通学"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 2
+track_total = 27
+duration_ms = 68200
+
+[[raw_tags]]
+file_path = "君の名は。 - RADWIMPS (24.08.2016) [FLAC]/01 夢灯籠.flac"
+album = "君の名は。"
+artists = ["RADWIMPS"]
+title = "夢灯籠"
+genre = "Rock"
+disc = 8
+disc_total = 24
+track = 1
+track_total = 27
+duration_ms = 131666
+
+[expect.release]
+ids = { release_group_id = "f2c10017-ead9-47a4-8ef1-928cff3ac1ec" }

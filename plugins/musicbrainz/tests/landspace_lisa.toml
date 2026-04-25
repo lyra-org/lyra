@@ -1,0 +1,169 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "LiSA - LANDSPACE [2013]/12 winding road.flac"
+album = "LANDSPACE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "winding road"
+track = 12
+track_total = 12
+duration_ms = 357146
+
+[[raw_tags]]
+file_path = "LiSA - LANDSPACE [2013]/11 Traumerei.flac"
+album = "LANDSPACE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "Traumerei"
+track = 11
+track_total = 12
+duration_ms = 255373
+
+[[raw_tags]]
+file_path = "LiSA - LANDSPACE [2013]/10 逆光オーケストラ.flac"
+album = "LANDSPACE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "逆光オーケストラ"
+track = 10
+track_total = 12
+duration_ms = 233560
+
+[[raw_tags]]
+file_path = "LiSA - LANDSPACE [2013]/09 うそつきの涙.flac"
+album = "LANDSPACE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "うそつきの涙"
+track = 9
+track_total = 12
+duration_ms = 279760
+
+[[raw_tags]]
+file_path = "LiSA - LANDSPACE [2013]/08 say my nameの片想い.flac"
+album = "LANDSPACE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "say my nameの片想い"
+track = 8
+track_total = 12
+duration_ms = 247213
+
+[[raw_tags]]
+file_path = "LiSA - LANDSPACE [2013]/07 ヒトリワラッテ.flac"
+album = "LANDSPACE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "ヒトリワラッテ"
+track = 7
+track_total = 12
+duration_ms = 163933
+
+[[raw_tags]]
+file_path = "LiSA - LANDSPACE [2013]/06 best day, best way.flac"
+album = "LANDSPACE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "best day, best way"
+track = 6
+track_total = 12
+duration_ms = 283440
+
+[[raw_tags]]
+file_path = "LiSA - LANDSPACE [2013]/05 僕の言葉で.flac"
+album = "LANDSPACE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "僕の言葉で"
+track = 5
+track_total = 12
+duration_ms = 258000
+
+[[raw_tags]]
+file_path = "LiSA - LANDSPACE [2013]/04 DOCTOR.flac"
+album = "LANDSPACE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "DOCTOR"
+track = 4
+track_total = 12
+duration_ms = 184826
+
+[[raw_tags]]
+file_path = "LiSA - LANDSPACE [2013]/03 crossing field.flac"
+album = "LANDSPACE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "crossing field"
+track = 3
+track_total = 12
+duration_ms = 248946
+
+[[raw_tags]]
+file_path = "LiSA - LANDSPACE [2013]/02 コズミックジェットコースター.flac"
+album = "LANDSPACE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "コズミックジェットコースター"
+track = 2
+track_total = 12
+duration_ms = 265040
+
+[[raw_tags]]
+file_path = "LiSA - LANDSPACE [2013]/01 Canvas boy × Palette girl.flac"
+album = "LANDSPACE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "Canvas boy × Palette girl"
+track = 1
+track_total = 12
+duration_ms = 251800
+
+[expect.release]
+ids = { release_group_id = "47eca8de-f468-4fa8-9a51-f3bc33bca9b3", release_id = "870fbd63-b173-474b-b351-975e595b5ade" }
+fields = { release_title = "LANDSPACE", release_date = "2013-10-30" }
+
+[expect.artists."85d76093-9865-4605-97fa-8c910929d366"]
+fields = { artist_name = "LiSA", sort_name = "LiSA" }
+
+[expect.tracks."096fae5b-032c-4055-959d-5f1a7ebc3059"]
+fields = { disc = 1, track = 3, track_title = "crossing field" }
+
+[expect.tracks."0b255080-4fef-4015-b673-74a5eeea6554"]
+fields = { disc = 1, track = 8, track_title = "say my nameの片想い" }
+
+[expect.tracks."0c9ce762-e421-40ad-8c88-c2d90a320905"]
+fields = { disc = 1, track = 2, track_title = "コズミックジェットコースター" }
+
+[expect.tracks."19ce08de-8cb4-4a31-9708-803895742341"]
+fields = { disc = 1, track = 4, track_title = "DOCTOR" }
+
+[expect.tracks."278f82b3-47d6-4adf-8384-8c3ca137603c"]
+fields = { disc = 1, track = 5, track_title = "僕の言葉で" }
+
+[expect.tracks."27cdc451-9311-4d75-afbb-1b6ae2b71944"]
+fields = { disc = 1, track = 7, track_title = "ヒトリワラッテ" }
+
+[expect.tracks."43bbfadb-3257-4f39-af95-9aee03d6092c"]
+fields = { disc = 1, track = 10, track_title = "逆光オーケストラ" }
+
+[expect.tracks."49305948-9a7a-4c19-8bab-0b82283d53a6"]
+fields = { disc = 1, track = 11, track_title = "träumerei" }
+
+[expect.tracks."586ff578-d271-4d25-994d-6d90485ac9f6"]
+fields = { disc = 1, track = 6, track_title = "best day, best way" }
+
+[expect.tracks."edcbcbad-c50f-4cb4-b49d-582fc89920b8"]
+fields = { disc = 1, track = 9, track_title = "うそつきの涙" }
+
+[expect.tracks."f31e59d1-b1aa-441e-8f2d-41a0ed15006b"]
+fields = { disc = 1, track = 12, track_title = "winding road" }
+
+[expect.tracks."f3fd7045-4da1-447b-ae41-64c06c681eed"]
+fields = { disc = 1, track = 1, track_title = "Canvas boy × Palette girl" }

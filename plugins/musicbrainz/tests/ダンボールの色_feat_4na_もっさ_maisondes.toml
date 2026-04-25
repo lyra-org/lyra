@@ -1,0 +1,35 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "MAISONdes - ダンボールの色 (feat. 4na & もっさ) (2022-09-21) [WEB FLAC]/1.01. ダンボールの色 (feat. 4na & もっさ).flac"
+album = "ダンボールの色 (feat. 4na & もっさ)"
+album_artists = ["MAISONdes"]
+artists = ["MAISONdes"]
+title = "ダンボールの色 (feat. 4na & もっさ)"
+copyright = "℗ 2022 Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 227127
+
+[expect.release]
+ids = { release_group_id = "7f21de5d-b23f-45cb-871b-51c6ef566711", release_id = ["290e721d-c134-476d-bba6-de83edb67f3b", "a77f5e42-1a76-4a5d-90e3-d66e34f99aea"] }
+fields = { release_title = "ダンボールの色", release_date = "2022-09-21" }
+
+[expect.artists."4959b5cf-bc79-4d8e-9913-cfc1499664e6"]
+fields = { artist_name = "もっさ", sort_name = "Mossa" }
+
+[expect.artists."5005beb6-9da2-48ba-bfd9-aa8ddc6d0117"]
+fields = { artist_name = "MAISONdes", sort_name = "MAISONdes" }
+
+[expect.artists."7a3f4780-3e71-45cc-b228-3a7126daf962"]
+fields = { artist_name = "4na", sort_name = "4na" }
+
+[expect.tracks."128acd1c-9e24-4f5e-ac65-87420fa838f8"]
+fields = { disc = 1, track = 1, track_title = "ダンボールの色" }

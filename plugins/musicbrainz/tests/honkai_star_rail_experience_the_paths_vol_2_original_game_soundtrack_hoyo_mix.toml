@@ -1,0 +1,295 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/22. HOYO-MiX - Wanna Go Have Some Fun!.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Wanna Go Have Some Fun!"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 22
+track_total = 22
+duration_ms = 84002
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/21. HOYO-MiX - Into the Yawning Chasm.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Into the Yawning Chasm"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 21
+track_total = 22
+duration_ms = 100178
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/20. HOYO-MiX - Rondo Across Countless Kalpas.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Rondo Across Countless Kalpas"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 20
+track_total = 22
+duration_ms = 195333
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/19. HOYO-MiX - Kyoden A Cleave Across the Transient World.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Kyoden: A Cleave Across the Transient World"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 19
+track_total = 22
+duration_ms = 222161
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/18. HOYO-MiX - Your Color.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Your Color"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 18
+track_total = 22
+duration_ms = 158379
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/17. HOYO-MiX - Sparkle Behind the Curtain.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Sparkle: Behind the Curtain"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 17
+track_total = 22
+duration_ms = 164600
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/16. HOYO-MiX - Monodrama.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Monodrama"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 16
+track_total = 22
+duration_ms = 119365
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/15. HOYO-MiX - Welcome to Dreamville!, Part. 3.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Welcome to Dreamville!, Part. 3"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 15
+track_total = 22
+duration_ms = 87660
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/14. HOYO-MiX - Welcome to Dreamville!, Part. 2.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Welcome to Dreamville!, Part. 2"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 22
+duration_ms = 83050
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/13. HOYO-MiX - Welcome to Dreamville!, Part. 1.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Welcome to Dreamville!, Part. 1"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 22
+duration_ms = 108916
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/12. HOYO-MiX - Harmony Greets the New Year.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Harmony Greets the New Year"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 22
+duration_ms = 197313
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/11. HOYO-MiX - Lullaby.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Lullaby"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 22
+duration_ms = 110500
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/10. HOYO-MiX - A Revisiting of Past Dreams.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "A Revisiting of Past Dreams"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 22
+duration_ms = 135707
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/9. HOYO-MiX - A Night of Ever-Flame Scene 33.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "A Night of Ever-Flame: Scene 33"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 22
+duration_ms = 181083
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/8. HOYO-MiX - Supreme Idiocy.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Supreme Idiocy"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 22
+duration_ms = 103163
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/7. HOYO-MiX - In All Does Life Flow.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "In All Does Life Flow"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 22
+duration_ms = 103508
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/6. HOYO-MiX - Transcendent Ruan Tunes, Blushing Mei Blooms.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Transcendent Ruan Tunes, Blushing Mei Blooms"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 22
+duration_ms = 175500
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/5. HOYO-MiX - Crown of the Mundane and Divine.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Crown of the Mundane and Divine"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 22
+duration_ms = 84083
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/4. HOYO-MiX - A Story That Never Grows Dull.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "A Story That Never Grows Dull"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 22
+duration_ms = 87083
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/3. HOYO-MiX - Chivalric Romances.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Chivalric Romances"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 22
+duration_ms = 109469
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/2. HOYO-MiX - Night of Thrills.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Night of Thrills"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 22
+duration_ms = 108443
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack) (2023) [FLAC]/1. HOYO-MiX - The Crepuscule Zone.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 2 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "The Crepuscule Zone"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 22
+duration_ms = 163669
+
+[expect.release]
+ids = { release_id = "05fb4afe-c0b5-4a07-bf2c-3faacf97b182" }

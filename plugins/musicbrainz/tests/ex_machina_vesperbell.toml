@@ -1,0 +1,91 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "VESPERBELL - EX MACHINA - 2021-06-26 (WEB - FLAC - 2448)/06 EX MACHINA (Instrumental).flac"
+album = "EX MACHINA"
+album_artists = ["VESPERBELL"]
+artists = ["VESPERBELL"]
+title = "EX MACHINA (Instrumental)"
+track = 6
+track_total = 6
+duration_ms = 274000
+
+[[raw_tags]]
+file_path = "VESPERBELL - EX MACHINA - 2021-06-26 (WEB - FLAC - 2448)/05 Hurt (Instrumental).flac"
+album = "EX MACHINA"
+album_artists = ["VESPERBELL"]
+artists = ["VESPERBELL"]
+title = "Hurt (Instrumental)"
+track = 5
+track_total = 6
+duration_ms = 221692
+
+[[raw_tags]]
+file_path = "VESPERBELL - EX MACHINA - 2021-06-26 (WEB - FLAC - 2448)/04 ignition (Instrumental).flac"
+album = "EX MACHINA"
+album_artists = ["VESPERBELL"]
+artists = ["VESPERBELL"]
+title = "ignition (Instrumental)"
+track = 4
+track_total = 6
+duration_ms = 237818
+
+[[raw_tags]]
+file_path = "VESPERBELL - EX MACHINA - 2021-06-26 (WEB - FLAC - 2448)/03 EX MACHINA.flac"
+album = "EX MACHINA"
+album_artists = ["VESPERBELL"]
+artists = ["VESPERBELL"]
+title = "EX MACHINA"
+track = 3
+track_total = 6
+duration_ms = 274000
+
+[[raw_tags]]
+file_path = "VESPERBELL - EX MACHINA - 2021-06-26 (WEB - FLAC - 2448)/02 Hurt.flac"
+album = "EX MACHINA"
+album_artists = ["VESPERBELL"]
+artists = ["VESPERBELL"]
+title = "Hurt"
+track = 2
+track_total = 6
+duration_ms = 221692
+
+[[raw_tags]]
+file_path = "VESPERBELL - EX MACHINA - 2021-06-26 (WEB - FLAC - 2448)/01 ignition.flac"
+album = "EX MACHINA"
+album_artists = ["VESPERBELL"]
+artists = ["VESPERBELL"]
+title = "ignition"
+track = 1
+track_total = 6
+duration_ms = 237818
+
+[expect.release]
+ids = { release_group_id = "924b0fd0-a86d-4f04-aad0-3feb27b186ca", release_id = "a1e01dd9-29ce-47de-84e4-08d717e515e8" }
+fields = { release_title = "EX MACHINA", release_date = "2021-06-26" }
+
+[expect.artists."1b2e0427-80bc-42ad-9ab0-0f2521a049c5"]
+fields = { artist_name = "VESPERBELL", sort_name = "VESPERBELL" }
+
+[expect.tracks."011f340d-012f-4dbd-bf5d-04d3f8bca3bd"]
+fields = { disc = 1, track = 5, track_title = "Hurt (Instrumental)" }
+
+[expect.tracks."35c1e36c-b4b3-4dab-a8ba-434dd0a99bf3"]
+fields = { disc = 1, track = 2, track_title = "Hurt" }
+
+[expect.tracks."41b7c173-b181-4279-a2cb-80ecc7da0609"]
+fields = { disc = 1, track = 3, track_title = "EX MACHINA" }
+
+[expect.tracks."8bd71d57-56ff-45bf-a633-eaa10ae112ec"]
+fields = { disc = 1, track = 4, track_title = "ignition (Instrumental)" }
+
+[expect.tracks."d1fa4f01-88a4-4ce2-b4a8-cb233bb8dc06"]
+fields = { disc = 1, track = 6, track_title = "EX MACHINA (Instrumental)" }
+
+[expect.tracks."db72c2c4-9c0e-4b28-810c-7a0903ecd056"]
+fields = { disc = 1, track = 1, track_title = "ignition" }

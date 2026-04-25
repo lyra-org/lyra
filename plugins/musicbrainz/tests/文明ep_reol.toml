@@ -1,0 +1,65 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Reol - 文明EP [FLAC]/04-失楽園.flac"
+album = "文明EP"
+artists = ["Reol"]
+title = "失楽園"
+disc = 1
+track = 4
+track_total = 4
+duration_ms = 254733
+
+[[raw_tags]]
+file_path = "Reol - 文明EP [FLAC]/03-シンカロン.flac"
+album = "文明EP"
+artists = ["Reol"]
+title = "シンカロン"
+disc = 1
+track = 3
+track_total = 4
+duration_ms = 222266
+
+[[raw_tags]]
+file_path = "Reol - 文明EP [FLAC]/02-たい.flac"
+album = "文明EP"
+artists = ["Reol"]
+title = "たい"
+disc = 1
+track = 2
+track_total = 4
+duration_ms = 224666
+
+[[raw_tags]]
+file_path = "Reol - 文明EP [FLAC]/01-ウテナ.flac"
+album = "文明EP"
+artists = ["Reol"]
+title = "ウテナ"
+disc = 1
+track = 1
+track_total = 4
+duration_ms = 198733
+
+[expect.release]
+ids = { release_group_id = "6e816b6d-8985-4401-b016-94302ebee200", release_id = ["41cef98a-2ab4-450b-b289-866ac1bf3f01", "f43f2d49-d11e-4d72-87d0-8353201309d7"] }
+fields = { release_title = "文明EP", release_date = "2019-03-20" }
+
+[expect.artists."aea6ccea-deb0-44bb-886e-d91aa4c358bf"]
+fields = { artist_name = "Reol", sort_name = "Reol" }
+
+[expect.tracks."256a2edd-fed8-4715-99b9-1160185ce775"]
+fields = { disc = 1, track = 2, track_title = "たい" }
+
+[expect.tracks."99438a06-a8a6-4976-83ce-b71f71a1f449"]
+fields = { disc = 1, track = 1, track_title = "ウテナ" }
+
+[expect.tracks."bd8f58dc-a117-4428-969f-1b3d15a37b0e"]
+fields = { disc = 1, track = 4, track_title = "失楽園" }
+
+[expect.tracks."faf12db7-9693-49cb-8307-86d93f8d0421"]
+fields = { disc = 1, track = 3, track_title = "シンカロン" }

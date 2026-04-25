@@ -1,0 +1,57 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "AKASAKI - 薔薇と散る (2025-02-19) [WEB FLAC]/1.04. 薔薇と散る (Instrumental).flac"
+album = "薔薇と散る"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "薔薇と散る (Instrumental)"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 183075
+
+[[raw_tags]]
+file_path = "AKASAKI - 薔薇と散る (2025-02-19) [WEB FLAC]/1.03. 薔薇と散る (Slowed Down).flac"
+album = "薔薇と散る"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "薔薇と散る (Slowed Down)"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 200693
+
+[[raw_tags]]
+file_path = "AKASAKI - 薔薇と散る (2025-02-19) [WEB FLAC]/1.02. 薔薇と散る (Sped Up).flac"
+album = "薔薇と散る"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "薔薇と散る (Sped Up)"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 171237
+
+[[raw_tags]]
+file_path = "AKASAKI - 薔薇と散る (2025-02-19) [WEB FLAC]/1.01. 薔薇と散る.flac"
+album = "薔薇と散る"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "薔薇と散る"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 185900
+
+[expect.release]
+ids = { release_id = "c296c5a8-a459-40a1-9c77-9308929c8b76" }

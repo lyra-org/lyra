@@ -1,0 +1,27 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "音田雅則 - fake face dance music (2023) [WEB FLAC]/01. 音田雅則 - fake face dance music.flac"
+album = "fake face dance music"
+album_artists = ["音田雅則"]
+artists = ["音田雅則"]
+title = "fake face dance music"
+copyright = "℗© 2023 Masanori Otoda"
+genre = "J-POP"
+track = 1
+duration_ms = 151015
+
+[expect.release]
+ids = { release_group_id = "aaf97c49-1ff8-49e7-a4d2-98b4dbc8ddf0", release_id = "497a1f7b-6ffc-4210-a7bc-029183268bcb" }
+fields = { release_title = "fake face dance music", release_date = "2023-07-11" }
+
+[expect.artists."40911b3c-7ac0-4c8b-af90-acb0f8fd5eda"]
+fields = { artist_name = "音田雅則", sort_name = "Otoda, Masanori" }
+
+[expect.tracks."c4c6b62a-90b3-48ca-af21-67334d106593"]
+fields = { disc = 1, track = 1, track_title = "fake face dance music", work_id = "037ab1f1-68aa-430b-9207-2db2295f7a22" }

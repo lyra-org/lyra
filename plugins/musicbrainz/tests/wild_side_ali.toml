@@ -1,0 +1,77 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ALI - Wild Side (2019) [FLAC]/04 - Wild Side -Anime Ver-.flac"
+album = "Wild Side"
+album_artists = ["ALI"]
+artists = ["ALI"]
+title = "Wild Side -Anime Ver-"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 92840
+
+[[raw_tags]]
+file_path = "ALI - Wild Side (2019) [FLAC]/03 - Jungle Love(Instrumental).flac"
+album = "Wild Side"
+album_artists = ["ALI"]
+artists = ["ALI"]
+title = "Jungle Love(Instrumental)"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 189466
+
+[[raw_tags]]
+file_path = "ALI - Wild Side (2019) [FLAC]/02 - Jungle Love.flac"
+album = "Wild Side"
+album_artists = ["ALI"]
+artists = ["ALI"]
+title = "Jungle Love"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 189466
+
+[[raw_tags]]
+file_path = "ALI - Wild Side (2019) [FLAC]/01 - Wild Side.flac"
+album = "Wild Side"
+album_artists = ["ALI"]
+artists = ["ALI"]
+title = "Wild Side"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 158493
+
+[expect.release]
+ids = { release_group_id = "6428bc0b-8604-4a42-aea2-81c362fe3726", release_id = "81537377-981f-41f3-aa3a-51fedbfbae32" }
+fields = { release_title = "Wild Side", release_date = "2019-11-27" }
+
+[expect.artists."a0bb95b8-9fd9-47dd-af28-d4210f7f2a11"]
+fields = { artist_name = "ALI", sort_name = "ALI" }
+
+[expect.tracks."1a3d3898-0658-4bcb-b105-3f516f71d237"]
+fields = { disc = 1, track = 4, track_title = "Wild Side -Anime ver.-" }
+
+[expect.tracks."8a65a86c-4b30-486f-b53e-33d74ae854de"]
+fields = { disc = 1, track = 3, track_title = "Jungle Love(Instrumental)" }
+
+[expect.tracks."b23b64ca-1fe2-4f17-972a-7e9a1cccab95"]
+fields = { disc = 1, track = 2, track_title = "Jungle Love" }
+
+[expect.tracks."ea7ceee4-d66a-45e9-9c8d-4d1d2b5ba1d2"]
+fields = { disc = 1, track = 1, track_title = "Wild Side" }

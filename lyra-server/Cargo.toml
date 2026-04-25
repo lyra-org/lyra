@@ -1,0 +1,62 @@
+[package]
+name = "lyra-server"
+version = "0.0.1"
+edition = "2024"
+default-run = "lyra"
+license-file = "../LICENSE"
+
+[[bin]]
+name = "lyra"
+path = "src/main.rs"
+
+[dependencies]
+harmony-core = { path = "../harmony-core" }
+harmony-crypt = { path = "../harmony-crypt" }
+harmony-globals = { path = "../harmony-globals" }
+harmony-json = { path = "../harmony-json" }
+harmony-http = { path = "../harmony-http" }
+harmony-luau = { path = "../harmony-luau" }
+harmony-macros = { path = "../harmony-macros" }
+harmony-task = { path = "../harmony-task" }
+harmony-net = { path = "../harmony-net" }
+mlua = { workspace = true, features = ["send", "serialize"] }
+agdb = { version = "0.12", features = ["serde"] }
+anyhow = { workspace = true }
+argon2 = { version = "0.5", features = ["std", "password-hash"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio", "macros", "tracing", "ws"] }
+bytes = "1"
+base64 = { workspace = true }
+matchit = "0.8" # pinned to axum's transitive version to avoid a duplicate
+multimap = "0.10"
+gethostname = "1"
+nanoid = "0.4"
+rand = "0.9"
+rayon = "1"
+blurhash = "0.2.3"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { version = "1.2.1", features = ["derive"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal"] }
+tokio-stream = { version = "0.1", default-features = false }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["trace", "fs", "cors"] }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt", "registry", "std"] }
+tracing-appender = { version = "0.2", default-features = false }
+thiserror = { workspace = true }
+walkdir = "2"
+# async-ffmpeg-sidecar = "0.0"
+blake3 = { workspace = true }
+xxh3 = { workspace = true }
+aide = { version = "0.16.0-alpha.2", features = ["axum", "axum-json", "axum-query"] }
+asyncapi-rust = "0.2.0"
+lofty = "=0.24.0"
+lyra-chromaprint = { path = "../lyra-chromaprint" }
+lyra-ffmpeg = { path = "../lyra-ffmpeg" }
+lyra-metadata = { path = "../lyra-metadata" }
+celes = "2.8.2"
+isolang = "2.4.0"
+unicode-normalization = "0.1"
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
+url = { workspace = true }

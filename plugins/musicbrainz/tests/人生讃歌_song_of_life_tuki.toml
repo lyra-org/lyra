@@ -1,0 +1,28 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "tuki. — 人生讃歌 - Song of Life (2025) [WEB-FLAC]/01. 人生讃歌 - Song of Life.flac"
+album = "人生讃歌 - Song of Life"
+album_artists = ["tuki."]
+artists = ["tuki."]
+title = "人生讃歌 - Song of Life"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 231053
+
+[expect.release]
+ids = { release_group_id = "b698a5c4-946b-4ebb-bd44-fc5a6e06a710", release_id = "a741c0cb-36ff-4d84-a41d-922973a970c7" }
+fields = { release_title = "人生讃歌 - Song of Life", release_date = "2025-10-22" }
+
+[expect.artists."1359dfb8-8220-4ebe-aeb9-b759ed737c41"]
+fields = { artist_name = "tuki.", sort_name = "tuki." }
+
+[expect.tracks."d643e23b-7515-401b-a577-6ab8a989e9ef"]
+fields = { disc = 1, track = 1, track_title = "人生讃歌 - Song of Life" }

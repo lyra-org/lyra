@@ -1,0 +1,947 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-20 灼夜に帰す火.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "灼夜に帰す火"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 20
+track_total = 20
+duration_ms = 220155
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-19 龍と勇者の決意.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "龍と勇者の決意"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 19
+track_total = 20
+duration_ms = 112731
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-18 星々の望み.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "星々の望み"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 18
+track_total = 20
+duration_ms = 123910
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-17 遺跡の記憶.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "遺跡の記憶"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 17
+track_total = 20
+duration_ms = 122523
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-16 古国の残夢.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "古国の残夢"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 16
+track_total = 20
+duration_ms = 122534
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-15 星探しの旅.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "星探しの旅"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 15
+track_total = 20
+duration_ms = 82438
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-14 残炎.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "残炎"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 14
+track_total = 20
+duration_ms = 417702
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-13 衆の水の追憶.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "衆の水の追憶"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 13
+track_total = 20
+duration_ms = 87398
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-12 残香.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "残香"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 12
+track_total = 20
+duration_ms = 166449
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-11 過ぎし日のぬくもり.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "過ぎし日のぬくもり"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 11
+track_total = 20
+duration_ms = 161435
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-10 優しい思い.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "優しい思い"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 10
+track_total = 20
+duration_ms = 155334
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-09 燭影の狩人.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "燭影の狩人"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 9
+track_total = 20
+duration_ms = 166598
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-08 熱砂の謎掛.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "熱砂の謎掛"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 8
+track_total = 20
+duration_ms = 165446
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-07 初めての別れ.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "初めての別れ"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 7
+track_total = 20
+duration_ms = 77670
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-06 凶月の懲罰.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "凶月の懲罰"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 6
+track_total = 20
+duration_ms = 155035
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-05 錦を裁つ染羽.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "錦を裁つ染羽"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 5
+track_total = 20
+duration_ms = 122246
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-04 棘薔薇の風格.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "棘薔薇の風格"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 4
+track_total = 20
+duration_ms = 91643
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-03 すべては雨に流されて.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "すべては雨に流されて"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 3
+track_total = 20
+duration_ms = 184635
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-02 骨を刺す戒め.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "骨を刺す戒め"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 2
+track_total = 20
+duration_ms = 81932
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/3-01 ベールに覆われた栄光.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "ベールに覆われた栄光"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 3
+disc_total = 3
+track = 1
+track_total = 20
+duration_ms = 127969
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-21 朝露の....flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "朝露の..."
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 21
+track_total = 21
+duration_ms = 79707
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-20 軸の折れる刻.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "軸の折れる刻"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 20
+track_total = 21
+duration_ms = 24241
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-19 定められた軌跡.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "定められた軌跡"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 19
+track_total = 21
+duration_ms = 34950
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-18 古き宴の新たな歌.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "古き宴の新たな歌"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 18
+track_total = 21
+duration_ms = 49633
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-17 最強オニカブトムシに転生して世界をひっくり返してやった_Instrumental.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "最強オニカブトムシに転生して世界をひっくり返してやった (Instrumental)"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 17
+track_total = 21
+duration_ms = 122470
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-16 贖罪の時.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "贖罪の時"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 16
+track_total = 21
+duration_ms = 156214
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-15 清泉の詩.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "清泉の詩"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 15
+track_total = 21
+duration_ms = 154513
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-14 かつて彼女が夢見た晴れ空.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "かつて彼女が夢見た晴れ空"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 14
+track_total = 21
+duration_ms = 206726
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-13 裂け目の繭.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "裂け目の繭"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 13
+track_total = 21
+duration_ms = 46875
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-12 終わりよければ全てよし.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "終わりよければ全てよし"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 12
+track_total = 21
+duration_ms = 174662
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-11 歓声で、フィナーレを迎えたまえ！.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "歓声で、フィナーレを迎えたまえ！"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 11
+track_total = 21
+duration_ms = 58694
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-10 薄暗き不協和音.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "薄暗き不協和音"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 10
+track_total = 21
+duration_ms = 93531
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-09 果たせぬ告解.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "果たせぬ告解"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 9
+track_total = 21
+duration_ms = 39009
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-08 墜落の予兆.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "墜落の予兆"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 8
+track_total = 21
+duration_ms = 25110
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-07 深海の諭示.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "深海の諭示"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 7
+track_total = 21
+duration_ms = 116145
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-06 決壊.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "決壊"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 6
+track_total = 21
+duration_ms = 121265
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-05 夢の鯨の歌.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "夢の鯨の歌"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 5
+track_total = 21
+duration_ms = 34054
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-04 未決の裁判.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "未決の裁判"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 4
+track_total = 21
+duration_ms = 90779
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-03 薔薇と燭影の舞い.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "薔薇と燭影の舞い"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 3
+track_total = 21
+duration_ms = 108738
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-02 予期せぬ危機.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "予期せぬ危機"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 2
+track_total = 21
+duration_ms = 90890
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/2-01 真夜中のファンタスティック.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "真夜中のファンタスティック"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 2
+disc_total = 3
+track = 1
+track_total = 21
+duration_ms = 168747
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-26 出会い、そして別れ.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "出会い、そして別れ"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 26
+track_total = 26
+duration_ms = 119476
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-25 永遠の約束.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "永遠の約束"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 25
+track_total = 26
+duration_ms = 134229
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-24 魔女のお茶会.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "魔女のお茶会"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 24
+track_total = 26
+duration_ms = 90724
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-23 陽夏の思い出.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "陽夏の思い出"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 23
+track_total = 26
+duration_ms = 132928
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-22 浪に乗って波を追え！.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "浪に乗って波を追え！"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 22
+track_total = 26
+duration_ms = 69241
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-21 夢を讃えて.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "夢を讃えて"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 21
+track_total = 26
+duration_ms = 110945
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-20 夢のような祝福.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "夢のような祝福"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 20
+track_total = 26
+duration_ms = 113430
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-19 闇の先導者.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "闇の先導者"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 19
+track_total = 26
+duration_ms = 102557
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-18 淡き月の下に眠る.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "淡き月の下に眠る"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 18
+track_total = 26
+duration_ms = 89179
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-17 夜が明ける前の思い出.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "夜が明ける前の思い出"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 17
+track_total = 26
+duration_ms = 118509
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-16 まだらな影.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "まだらな影"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 16
+track_total = 26
+duration_ms = 105326
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-15 高原の物語.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "高原の物語"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 15
+track_total = 26
+duration_ms = 119951
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-14 松風に吹かれて.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "松風に吹かれて"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 14
+track_total = 26
+duration_ms = 82337
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-13 ミソサザイの歌.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "ミソサザイの歌"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 13
+track_total = 26
+duration_ms = 82474
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-12 モモンガの行進曲.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "モモンガの行進曲"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 12
+track_total = 26
+duration_ms = 96007
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-11 森の朝の歌.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "森の朝の歌"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 11
+track_total = 26
+duration_ms = 97777
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-10 絵の世界のアソビ.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "絵の世界のアソビ"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 10
+track_total = 26
+duration_ms = 107815
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-09 夕暮れのさんぽ.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "夕暮れのさんぽ"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 9
+track_total = 26
+duration_ms = 93538
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-08 忘れられた花園を歩いて.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "忘れられた花園を歩いて"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 8
+track_total = 26
+duration_ms = 81631
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-07 願いの地.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "願いの地"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 7
+track_total = 26
+duration_ms = 92238
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-06 誇らしき景色.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "誇らしき景色"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 6
+track_total = 26
+duration_ms = 110459
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-05 煌めく星宮.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "煌めく星宮"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 5
+track_total = 26
+duration_ms = 117633
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-04 ほろ酔い一口.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "ほろ酔い一口"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 4
+track_total = 26
+duration_ms = 84431
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-03 優しい夜.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "優しい夜"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 3
+track_total = 26
+duration_ms = 99450
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-02 ロマンチックな邂逅.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "ロマンチックな邂逅"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 2
+track_total = 26
+duration_ms = 150542
+
+[[raw_tags]]
+file_path = "HOYO-MiX - 原神-珍珠之歌4 [2024] (WEB - FLAC)/1-01 そよ風とあたたかな雲.flac"
+album = "真珠の歌4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "そよ風とあたたかな雲"
+copyright = "℗© miHoYo"
+genre = "Soundtracks"
+disc = 1
+disc_total = 3
+track = 1
+track_total = 26
+duration_ms = 94774
+
+[expect.release]
+ids = { release_id = "bff3c38d-b840-4b35-857c-baf5af469798" }

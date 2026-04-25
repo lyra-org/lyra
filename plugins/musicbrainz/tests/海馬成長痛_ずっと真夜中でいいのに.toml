@@ -1,0 +1,27 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ZUTOMAYO - Hippocampal Pain [2024] (WEB - FLAC - Lossless)/01. 海馬成長痛.flac"
+album = "海馬成長痛"
+album_artists = ["ずっと真夜中でいいのに。", "ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "海馬成長痛"
+copyright = "An EMI Records release; ℗ 2024 UNIVERSAL MUSIC LLC"
+genre = "Rock"
+track = 1
+duration_ms = 189533
+
+[expect.release]
+ids = { release_group_id = "ff51f597-075c-43d9-bd5f-8fbfaa63c2cc", release_id = ["1aea6d4e-c58a-4e2c-ad57-38607e35cbe0", "b6debc17-26fa-4425-90ab-266b13517f3d"] }
+fields = { release_title = "海馬成長痛", release_date = "2024-08-29" }
+
+[expect.artists."14d2a235-30e2-489f-b490-f9dc7d2c0861"]
+fields = { artist_name = "ずっと真夜中でいいのに。", sort_name = "Zutto Mayonaka de Iinoni." }
+
+[expect.tracks."99e7465d-3ffb-4557-b424-70e7656dd0cf"]
+fields = { disc = 1, track = 1, track_title = "海馬成長痛" }

@@ -1,0 +1,149 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ヨルシカ - エルマ/14. ノーチラス.flac"
+album = "エルマ"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "ノーチラス"
+genre = "Pop"
+track = 14
+duration_ms = 240813
+
+[[raw_tags]]
+file_path = "ヨルシカ - エルマ/13. 海底、月明かり.flac"
+album = "エルマ"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "海底、月明かり"
+genre = "Pop"
+track = 13
+duration_ms = 145146
+
+[[raw_tags]]
+file_path = "ヨルシカ - エルマ/12. エイミー.flac"
+album = "エルマ"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "エイミー"
+genre = "Pop"
+track = 12
+duration_ms = 212906
+
+[[raw_tags]]
+file_path = "ヨルシカ - エルマ/11. 声.flac"
+album = "エルマ"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "声"
+genre = "Pop"
+track = 11
+duration_ms = 288906
+
+[[raw_tags]]
+file_path = "ヨルシカ - エルマ/10. 森の教会.flac"
+album = "エルマ"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "森の教会"
+genre = "Pop"
+track = 10
+duration_ms = 119653
+
+[[raw_tags]]
+file_path = "ヨルシカ - エルマ/09. 心に穴が空いた.flac"
+album = "エルマ"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "心に穴が空いた"
+genre = "Pop"
+track = 9
+duration_ms = 264506
+
+[[raw_tags]]
+file_path = "ヨルシカ - エルマ/08. 歩く.flac"
+album = "エルマ"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "歩く"
+genre = "Pop"
+track = 8
+duration_ms = 206786
+
+[[raw_tags]]
+file_path = "ヨルシカ - エルマ/07. 雨晴るる.flac"
+album = "エルマ"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "雨晴るる"
+genre = "Pop"
+track = 7
+duration_ms = 222746
+
+[[raw_tags]]
+file_path = "ヨルシカ - エルマ/06. 神様のダンス.flac"
+album = "エルマ"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "神様のダンス"
+genre = "Pop"
+track = 6
+duration_ms = 232480
+
+[[raw_tags]]
+file_path = "ヨルシカ - エルマ/05. 湖の街.flac"
+album = "エルマ"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "湖の街"
+genre = "Pop"
+track = 5
+duration_ms = 110080
+
+[[raw_tags]]
+file_path = "ヨルシカ - エルマ/04. 雨とカプチーノ.flac"
+album = "エルマ"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "雨とカプチーノ"
+genre = "Pop"
+track = 4
+duration_ms = 269613
+
+[[raw_tags]]
+file_path = "ヨルシカ - エルマ/03. 夕凪、某、花惑い.flac"
+album = "エルマ"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "夕凪、某、花惑い"
+genre = "Pop"
+track = 3
+duration_ms = 198533
+
+[[raw_tags]]
+file_path = "ヨルシカ - エルマ/02. 憂一乗.flac"
+album = "エルマ"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "憂一乗"
+genre = "Pop"
+track = 2
+duration_ms = 272040
+
+[[raw_tags]]
+file_path = "ヨルシカ - エルマ/01. 車窓.flac"
+album = "エルマ"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "車窓"
+genre = "Pop"
+track = 1
+duration_ms = 115853
+
+[expect.release]
+ids = { release_id = ["4767ff51-927e-410c-a52e-b18d2091b747", "cfae1c6e-bfe0-48ee-b6f1-e2d287a16b92"] }

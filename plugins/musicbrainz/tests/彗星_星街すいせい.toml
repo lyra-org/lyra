@@ -1,0 +1,43 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "星街すいせい — 彗星 (2025) [WEB-FLAC]/02. 彗星 (Instrumental).flac"
+album = "彗星"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "彗星 (Instrumental)"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 2
+duration_ms = 224666
+
+[[raw_tags]]
+file_path = "星街すいせい — 彗星 (2025) [WEB-FLAC]/01. 彗星.flac"
+album = "彗星"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "彗星"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 2
+duration_ms = 225433
+
+[expect.release]
+ids = { release_group_id = "47204e2e-7c0a-4e0b-bcdc-0522fd534feb", release_id = "6e859dba-81f9-4c2c-a7ff-ca0549718bac" }
+fields = { release_title = "彗星", release_date = "2025-12-05" }
+
+[expect.artists."8eeb59f4-0071-4261-b1f8-91d8294622d2"]
+fields = { artist_name = "星街すいせい", sort_name = "Hoshimachi, Suisei" }
+
+[expect.tracks."4f6f5741-290d-4025-8751-b1bca8fe0d41"]
+fields = { disc = 1, track = 1, track_title = "彗星" }
+
+[expect.tracks."eb660d82-db14-4058-828c-88b5306e96da"]
+fields = { disc = 1, track = 2, track_title = "彗星 (instrumental)" }

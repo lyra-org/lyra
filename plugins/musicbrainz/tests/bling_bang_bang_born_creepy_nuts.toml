@@ -1,0 +1,41 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Creepy Nuts - Bling-Bang-Bang-Born/02 - Bling-Bang-Bang-Born (Instrumental).flac"
+album = "Bling-Bang-Bang-Born"
+album_artists = ["Creepy Nuts"]
+artists = ["Creepy Nuts"]
+title = "Bling-Bang-Bang-Born (Instrumental)"
+genre = "Rap/Hip Hop"
+disc = 1
+track = 2
+duration_ms = 168135
+
+[[raw_tags]]
+file_path = "Creepy Nuts - Bling-Bang-Bang-Born/01 - Bling-Bang-Bang-Born.flac"
+album = "Bling-Bang-Bang-Born"
+album_artists = ["Creepy Nuts"]
+artists = ["Creepy Nuts"]
+title = "Bling-Bang-Bang-Born"
+genre = "Rap/Hip Hop"
+disc = 1
+track = 1
+duration_ms = 168135
+
+[expect.release]
+ids = { release_group_id = "88d1c744-85b5-4b57-823b-0dd6c6dbbfed", release_id = "cf20bdb0-d62c-4399-bebd-430c39cc1b2d" }
+fields = { release_title = "Bling‐Bang‐Bang‐Born", release_date = "2024-01-07" }
+
+[expect.artists."e5e045da-59a3-4b65-8bb4-3c7f3ac9a529"]
+fields = { artist_name = "Creepy Nuts", sort_name = "Creepy Nuts" }
+
+[expect.tracks."376b3728-daa6-4b6d-b471-4b72b52be568"]
+fields = { disc = 1, track = 2, track_title = "Bling‐Bang‐Bang‐Born (instrumental)" }
+
+[expect.tracks."6f92c637-dec2-4899-b0bc-aea55255dfb2"]
+fields = { disc = 1, track = 1, track_title = "Bling‐Bang‐Bang‐Born" }

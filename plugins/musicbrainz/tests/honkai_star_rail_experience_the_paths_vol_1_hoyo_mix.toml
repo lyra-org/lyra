@@ -1,0 +1,438 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/33. HOYO-MiX - Expert Tutorial.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Expert Tutorial"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 33
+track_total = 33
+duration_ms = 107875
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/32. HOYO-MiX - Selection, Planning, and Opportunity.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Selection, Planning, and Opportunity"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 32
+track_total = 33
+duration_ms = 171875
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/31. HOYO-MiX - Swordward.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Swordward"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 31
+track_total = 33
+duration_ms = 108857
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/30. HOYO-MiX - On Swords.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "On Swords"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 30
+track_total = 33
+duration_ms = 136625
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/29. HOYO-MiX - Jolted Awake From a Winter Dream.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Jolted Awake From a Winter Dream"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 29
+track_total = 33
+duration_ms = 171625
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/28. HOYO-MiX - Grasp the Stars.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Grasp the Stars"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 28
+track_total = 33
+duration_ms = 94000
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/27. HOYO-MiX - Omniscia Spares None.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Omniscia Spares None"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 27
+track_total = 33
+duration_ms = 106125
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/26. HOYO-MiX - Ichor of Two Dragons.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Ichor of Two Dragons"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 26
+track_total = 33
+duration_ms = 233608
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/25. HOYO-MiX - Exodus of the Five Dragons.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Exodus of the Five Dragons"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 25
+track_total = 33
+duration_ms = 178125
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/24. HOYO-MiX - The Prodigal's Return.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "The Prodigal's Return"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 24
+track_total = 33
+duration_ms = 103375
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/23. HOYO-MiX - General of All Affairs at the Seat of Divine Foresight.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "General of All Affairs at the Seat of Divine Foresight"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 23
+track_total = 33
+duration_ms = 93250
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/22. HOYO-MiX - Celestial Eyes Above Mortal Ruins.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Celestial Eyes Above Mortal Ruins"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 22
+track_total = 33
+duration_ms = 101625
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/21. HOYO-MiX - The Jepella Rebellion.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "The Jepella Rebellion"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 21
+track_total = 33
+duration_ms = 172750
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/20. HOYO-MiX - A Dramatic Irony.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "A Dramatic Irony"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 20
+track_total = 33
+duration_ms = 112750
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/19. HOYO-MiX - Death Approaches.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Death Approaches"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 19
+track_total = 33
+duration_ms = 109000
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/18. HOYO-MiX - Even Immortality Ends.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Even Immortality Ends"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 18
+track_total = 33
+duration_ms = 103625
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/17. HOYO-MiX - The Traveler And His Oath.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "The Traveler And His Oath"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 17
+track_total = 33
+duration_ms = 107125
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/16. HOYO-MiX - Got a Date.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Got a Date?"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 16
+track_total = 33
+duration_ms = 86375
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/15. HOYO-MiX - Galactic Roaming.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Galactic Roaming"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 15
+track_total = 33
+duration_ms = 107375
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/14. HOYO-MiX - Heaven and Earth as a Chessboard.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Heaven and Earth as a Chessboard"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 33
+duration_ms = 115000
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/13. HOYO-MiX - A Flash.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "A Flash"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 33
+duration_ms = 189875
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/12. HOYO-MiX - Fables About the Stars, Pt. 1.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Fables About the Stars, Pt. 1"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 33
+duration_ms = 230000
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/11. HOYO-MiX - Uneventful Night.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Uneventful Night"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 33
+duration_ms = 85000
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/10. HOYO-MiX - In the Name of Landau.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "In the Name of Landau"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 33
+duration_ms = 73125
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/9. HOYO-MiX - Star Chaser.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Star Chaser"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 33
+duration_ms = 78000
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/8. HOYO-MiX - Tempered Chill.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Tempered Chill"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 33
+duration_ms = 64875
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/7. HOYO-MiX - In Torrid Heat.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "In Torrid Heat"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 33
+duration_ms = 84125
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/6. HOYO-MiX - Space Comedy.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Space Comedy"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 33
+duration_ms = 84750
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/5. HOYO-MiX - To You Who Will Soon Depart.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "To You Who Will Soon Depart"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 33
+duration_ms = 86750
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/4. HOYO-MiX - The Cusp of Ignition!.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "The Cusp of Ignition!"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 33
+duration_ms = 50625
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/3. HOYO-MiX - Your Choice.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Your Choice"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 33
+duration_ms = 116979
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/2. HOYO-MiX - Let's Take a Photo!.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Let's Take a Photo!"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 33
+duration_ms = 89000
+
+[[raw_tags]]
+file_path = "HOYO-MiX - Honkai Star Rail - Experience the Paths, Vol. 1 (2023) [FLAC]/1. HOYO-MiX - Next Stop, the Stars!.flac"
+album = "Honkai: Star Rail - Experience the Paths, Vol. 1"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "Next Stop, the Stars!"
+genre = "Films/Games, Film Scores"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 33
+duration_ms = 116000
+
+[expect.release]
+ids = { release_group_id = "2a74d8fd-1e6f-4de9-b4c7-541252fea81e", release_id = "b8ede82d-4b98-4553-85dd-6fdb0e8e1594" }

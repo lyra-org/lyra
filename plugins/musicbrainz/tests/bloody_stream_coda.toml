@@ -1,0 +1,39 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Coda - BLOODY STREAM/02 BLOODY STREAM(ORIGINAL KARAOKE).flac"
+album = "BLOODY STREAM"
+artists = ["Coda"]
+title = "BLOODY STREAM(ORIGINAL KARAOKE)"
+genre = "Anime"
+track = 2
+track_total = 2
+duration_ms = 260586
+
+[[raw_tags]]
+file_path = "Coda - BLOODY STREAM/01 BLOODY STREAM.flac"
+album = "BLOODY STREAM"
+artists = ["Coda"]
+title = "BLOODY STREAM"
+genre = "Anime"
+track = 1
+track_total = 2
+duration_ms = 261920
+
+[expect.release]
+ids = { release_group_id = "b696bd64-9717-4ba1-a059-dd37151c8a6f", release_id = ["446c6100-fca7-40dc-bfa7-750944bba124", "6e85cf00-4a71-4e75-89bc-e2b31e0d80d0"] }
+fields = { release_title = "BLOODY STREAM", release_date = "2014-04-23" }
+
+[expect.artists."99296742-6e9c-498b-8368-e38bf3bc17d6"]
+fields = { artist_name = "Coda", sort_name = "Coda" }
+
+[expect.tracks."175e4b18-a763-419a-b567-7722bfacd5da"]
+fields = { disc = 1, track = 1, track_title = "BLOODY STREAM" }
+
+[expect.tracks."2a1d08c3-a598-4f6a-956a-d3746405ffb9"]
+fields = { disc = 1, track = 2, track_title = "BLOODY STREAM (ORIGINAL KARAOKE)" }

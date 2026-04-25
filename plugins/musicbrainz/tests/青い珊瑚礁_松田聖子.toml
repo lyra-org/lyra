@@ -1,0 +1,41 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "青い珊瑚礁/02 TRUE LOVE ～そっとくちづけて.m4a"
+album = "青い珊瑚礁"
+album_artists = ["松田聖子"]
+artists = ["松田聖子"]
+title = "TRUE LOVE ～そっとくちづけて"
+genre = "Pop"
+track = 2
+track_total = 2
+duration_ms = 184065
+
+[[raw_tags]]
+file_path = "青い珊瑚礁/01 青い珊瑚礁.m4a"
+album = "青い珊瑚礁"
+album_artists = ["松田聖子"]
+artists = ["松田聖子"]
+title = "青い珊瑚礁"
+genre = "Pop"
+track = 1
+track_total = 2
+duration_ms = 223051
+
+[expect.release]
+ids = { release_group_id = "a5f4ad94-a47b-4b49-9bc6-b992fb2de362", release_id = "e18390d8-22fe-43fe-90fc-385e7a8a17a0" }
+fields = { release_title = "青い珊瑚礁", release_date = "1980-07-01" }
+
+[expect.artists."ef013257-e584-410e-88e8-05ea9ae9ea3a"]
+fields = { artist_name = "松田聖子", sort_name = "Matsuda, Seiko" }
+
+[expect.tracks."7f3f6482-a8c0-468d-bdf3-063d4af26bc5"]
+fields = { disc = 1, track = 1, track_title = "青い珊瑚礁" }
+
+[expect.tracks."e2b2da2a-5176-4bb2-ba07-169e2f28120d"]
+fields = { disc = 1, track = 2, track_title = "TRUE LOVE〜そっとくちづけて" }

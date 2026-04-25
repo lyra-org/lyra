@@ -1,0 +1,24 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Eve — Ghost Avenue (2025) [WEB-FLAC]/01. Ghost Avenue.flac"
+album = "Ghost Avenue"
+album_artists = ["Eve"]
+artists = ["Eve"]
+title = "Ghost Avenue"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 173606
+
+[expect.release]
+ids = { release_id = "b3180a1a-8a10-45df-b058-c635c26e678b" }
+
+[expect.artists."66bdd1c9-d1c5-40b7-a487-5061fffbd87d"]
+fields = { artist_name = "Eve", sort_name = "Eve" }

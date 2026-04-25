@@ -1,0 +1,888 @@
+// This Source Code Form is subject to the terms of the Lyra Public License,
+// v1.0. If a copy of the Lyra Public License was not distributed with this file,
+// You can obtain one here:
+// www.meshiplaw.com/lyra.
+
+mod download;
+mod hls;
+mod ranged_file;
+mod stream;
+
+pub use download::download_routes;
+pub(crate) use download::download_track_response;
+pub(crate) use hls::serve_hls_playlist_for_track;
+pub(crate) use ranged_file::build_ranged_file_body;
+pub(crate) use stream::stream_track_response;
+
+use aide::axum::ApiRouter;
+
+use agdb::DbId;
+use axum::{
+    body::Body,
+    http::{
+        HeaderMap,
+        Response,
+        StatusCode,
+        header,
+    },
+};
+use lyra_ffmpeg::{
+    AudioCodec,
+    AudioFormat,
+    Output,
+};
+use std::path::{
+    Path as FsPath,
+    PathBuf,
+};
+use std::time::{
+    SystemTime,
+    UNIX_EPOCH,
+};
+
+use crate::{
+    STATE,
+    db,
+    routes::AppError,
+    services::{
+        auth::{
+            Principal,
+            require_download,
+        },
+        playback_sources as playback_source_service,
+    },
+};
+
+pub struct ValidatedTrackSource {
+    pub source_id: DbId,
+    pub input_path: String,
+    pub entry_format: Option<AudioFormat>,
+    pub full_path: PathBuf,
+    pub start_ms: Option<u64>,
+    pub end_ms: Option<u64>,
+    pub source_bitrate_bps: Option<u32>,
+}
+
+pub(crate) async fn require_download_access(headers: &HeaderMap) -> Result<Principal, AppError> {
+    require_download(headers).await.map_err(Into::into)
+}
+
+pub async fn validate_and_get_track_source(
+    track_db_id: DbId,
+) -> Result<ValidatedTrackSource, AppError> {
+    let db = &*STATE.db.read().await;
+    let track = db::tracks::get_by_id(db, track_db_id)?
+        .ok_or_else(|| AppError::not_found(format!("Track not found: {}", track_db_id.0)))?;
+
+    let source = playback_source_service::resolve(db, track_db_id, false)?.ok_or_else(|| {
+        AppError::not_found(format!(
+            "Playable source not found for track: {}",
+            track_db_id.0
+        ))
+    })?;
+    if !source.full_path.is_file() {
+        return Err(AppError::not_found(format!(
+            "Track source file not found: {}",
+            source.full_path.to_string_lossy()
+        )));
+    }
+
+    Ok(ValidatedTrackSource {
+        source_id: source.source_id,
+        input_path: source.input_path,
+        entry_format: source.entry_format,
+        full_path: source.full_path,
+        start_ms: source.start_ms,
+        end_ms: source.end_ms,
+        source_bitrate_bps: track.bitrate_bps,
+    })
+}
+
+pub struct ValidatedRequest {
+    pub format: Option<AudioFormat>,
+    pub codec: Option<AudioCodec>,
+}
+
+pub fn validate_request(
+    format: Option<String>,
+    codec: Option<String>,
+) -> Result<ValidatedRequest, AppError> {
+    let format = match format {
+        Some(fmt) => {
+            let parsed = AudioFormat::parse(&fmt).ok_or_else(|| {
+                AppError::bad_request(format!(
+                    "Unsupported format: {}. Supported formats: {:?}",
+                    fmt,
+                    lyra_ffmpeg::SUPPORTED_FORMATS
+                ))
+            })?;
+            Some(parsed)
+        }
+        None => None,
+    };
+    let codec = match codec {
+        Some(c) => {
+            let parsed = AudioCodec::parse(&c).ok_or_else(|| {
+                AppError::bad_request(format!(
+                    "Unsupported codec: {}. Supported codecs: {:?}",
+                    c,
+                    lyra_ffmpeg::SUPPORTED_CODECS
+                ))
+            })?;
+            Some(parsed)
+        }
+        None => None,
+    };
+    Ok(ValidatedRequest { format, codec })
+}
+
+pub fn resolve_output_format(
+    requested_format: Option<AudioFormat>,
+    requested_codec: Option<AudioCodec>,
+    entry_format: Option<AudioFormat>,
+    entry_path: &FsPath,
+) -> Result<AudioFormat, AppError> {
+    if let Some(fmt) = requested_format {
+        return Ok(fmt);
+    }
+    if let Some(codec) = requested_codec
+        && let Some(fmt) = codec.preferred_format()
+    {
+        return Ok(fmt);
+    }
+    entry_format.ok_or_else(|| {
+        AppError::bad_request(format!(
+            "Track source has unsupported format: {}",
+            entry_path.to_string_lossy()
+        ))
+    })
+}
+
+pub fn resolve_codec(
+    requested_format: Option<AudioFormat>,
+    requested_codec: Option<AudioCodec>,
+    entry_format: Option<AudioFormat>,
+) -> AudioCodec {
+    if let Some(codec) = requested_codec {
+        return codec;
+    }
+    if let Some(fmt) = requested_format
+        && Some(fmt) != entry_format
+    {
+        return fmt.default_codec();
+    }
+    AudioCodec::Copy
+}
+
+#[derive(Debug, Clone)]
+pub struct TranscodePolicy {
+    pub bitrate_bps: Option<u32>,
+    pub sample_rate_hz: Option<u32>,
+    pub channels: Option<u32>,
+}
+
+pub fn apply_transcode_policy(
+    requested_bitrate_bps: Option<u32>,
+    requested_sample_rate_hz: Option<u32>,
+    requested_channels: Option<u32>,
+    output_codec: AudioCodec,
+    source_bitrate_bps: Option<u32>,
+) -> Result<TranscodePolicy, AppError> {
+    let bitrate_bps = match requested_bitrate_bps {
+        None => None,
+        Some(0) => {
+            return Err(AppError::bad_request(
+                "bitrate_bps must be greater than zero",
+            ));
+        }
+        Some(bps) => {
+            if output_codec.is_lossless() {
+                tracing::info!(
+                    target: "transcode_policy",
+                    codec = ?output_codec,
+                    requested_bps = bps,
+                    "bitrate cap ignored for lossless codec"
+                );
+                None
+            } else if let Some(source) = source_bitrate_bps
+                && bps > source
+            {
+                // source bitrate is the average for VBR sources; peaks may exceed it and are not preserved here.
+                tracing::info!(
+                    target: "transcode_policy",
+                    codec = ?output_codec,
+                    requested_bps = bps,
+                    source_bps = source,
+                    "cap above source bitrate; dropping cap so quality is not inflated"
+                );
+                None
+            } else if let Some(min) = output_codec.min_bitrate_bps()
+                && bps < min
+            {
+                tracing::info!(
+                    target: "transcode_policy",
+                    codec = ?output_codec,
+                    requested_bps = bps,
+                    clamped_bps = min,
+                    "bitrate below codec minimum; clamping"
+                );
+                Some(min)
+            } else {
+                Some(bps)
+            }
+        }
+    };
+
+    let sample_rate_hz = match requested_sample_rate_hz {
+        None => None,
+        Some(0) => {
+            return Err(AppError::bad_request(
+                "sample_rate_hz must be greater than zero",
+            ));
+        }
+        Some(hz) => match output_codec.native_sample_rate_hz() {
+            Some(native) if hz != native => {
+                tracing::info!(
+                    target: "transcode_policy",
+                    codec = ?output_codec,
+                    requested_hz = hz,
+                    delivered_hz = native,
+                    "codec substitutes sample rate; delivering native rate"
+                );
+                Some(native)
+            }
+            _ => Some(hz),
+        },
+    };
+
+    let channels = match requested_channels {
+        None => None,
+        Some(0) => {
+            return Err(AppError::bad_request("channels must be greater than zero"));
+        }
+        Some(ch) => Some(ch),
+    };
+
+    Ok(TranscodePolicy {
+        bitrate_bps,
+        sample_rate_hz,
+        channels,
+    })
+}
+
+pub fn configure_output(
+    output: Output,
+    format: AudioFormat,
+    codec: AudioCodec,
+    policy: &TranscodePolicy,
+) -> Output {
+    let bitrate_kbps = policy
+        .bitrate_bps
+        .map(|bps| bps.saturating_add(999) / 1000)
+        .filter(|kbps| *kbps > 0)
+        .unwrap_or(192);
+    let mut output = output
+        .audio_format(format)
+        .codec(codec)
+        .bitrate(bitrate_kbps);
+    if let Some(hz) = policy.sample_rate_hz {
+        output = output.set_audio_sample_rate(hz as i32);
+    }
+    if let Some(ch) = policy.channels {
+        output = output.set_audio_channels(ch as i32);
+    }
+    output
+}
+
+pub fn temp_output_path(track_db_id: DbId, format: AudioFormat) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!(
+        "lyra-download-{}-{}.{}",
+        track_db_id.0,
+        nanos,
+        format.extension()
+    ))
+}
+
+async fn file_response_internal(
+    path: &FsPath,
+    content_type: &str,
+    headers: &HeaderMap,
+    cleanup_path: Option<PathBuf>,
+) -> Result<Response<Body>, AppError> {
+    let ranged = build_ranged_file_body(
+        path,
+        headers.get(header::RANGE),
+        StatusCode::OK,
+        cleanup_path,
+    )
+    .await?;
+
+    if ranged.status == StatusCode::RANGE_NOT_SATISFIABLE {
+        let mut response = Response::builder().status(ranged.status);
+        if let Some(content_range) = ranged.content_range {
+            response = response.header(header::CONTENT_RANGE, content_range);
+        }
+        return Ok(response.body(Body::empty())?);
+    }
+
+    let mut response = Response::builder()
+        .status(ranged.status)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CONTENT_LENGTH, ranged.content_length)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
+        .header(header::PRAGMA, "no-cache")
+        .header(header::EXPIRES, "0");
+
+    if let Some(content_range) = ranged.content_range {
+        response = response.header(header::CONTENT_RANGE, content_range);
+    }
+
+    Ok(response.body(ranged.body)?)
+}
+
+pub async fn file_response(
+    path: &FsPath,
+    content_type: &str,
+    headers: &HeaderMap,
+) -> Result<Response<Body>, AppError> {
+    file_response_internal(path, content_type, headers, None).await
+}
+
+pub async fn temp_file_response(
+    path: &FsPath,
+    content_type: &str,
+    headers: &HeaderMap,
+) -> Result<Response<Body>, AppError> {
+    file_response_internal(path, content_type, headers, Some(path.to_path_buf())).await
+}
+
+pub fn stream_routes() -> ApiRouter {
+    stream::stream_routes().merge(hls::hls_routes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        configure_output,
+        require_download_access,
+    };
+    use std::{
+        path::PathBuf,
+        time::{
+            SystemTime,
+            UNIX_EPOCH,
+        },
+    };
+
+    use axum::http::{
+        HeaderMap,
+        StatusCode,
+        header::AUTHORIZATION,
+    };
+    use lyra_ffmpeg::{
+        AudioCodec,
+        AudioFormat,
+        Output,
+    };
+    use nanoid::nanoid;
+
+    use crate::{
+        STATE,
+        db::{
+            self,
+            Permission,
+            User,
+            roles::Role,
+        },
+        services::auth::sessions,
+        testing::{
+            LibraryFixtureConfig,
+            initialize_runtime,
+            runtime_test_lock,
+        },
+    };
+    use axum::response::IntoResponse;
+
+    async fn initialize_test_runtime() -> anyhow::Result<PathBuf> {
+        let test_dir = std::env::temp_dir().join(format!(
+            "lyra-serve-auth-test-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+        std::fs::create_dir_all(&test_dir)?;
+        initialize_runtime(&LibraryFixtureConfig {
+            directory: test_dir.clone(),
+            language: None,
+            country: None,
+        })
+        .await?;
+        Ok(test_dir)
+    }
+
+    async fn create_user_with_permissions(
+        username: &str,
+        permissions: Vec<Permission>,
+    ) -> anyhow::Result<HeaderMap> {
+        let user_db_id = {
+            let mut db = STATE.db.write().await;
+            db::roles::ensure_builtin_roles(&mut db)?;
+            let user_db_id = db::users::create(
+                &mut db,
+                &User {
+                    db_id: None,
+                    id: nanoid!(),
+                    username: username.to_string(),
+                    password: "unused".to_string(),
+                },
+            )?;
+            let role_name = if permissions.is_empty() {
+                db::roles::BUILTIN_USER_ROLE.to_string()
+            } else {
+                let role_name = format!("download-test-{}", nanoid!());
+                db::roles::create(
+                    &mut db,
+                    &Role {
+                        db_id: None,
+                        id: nanoid!(),
+                        name: role_name.clone(),
+                        permissions,
+                    },
+                )?;
+                role_name
+            };
+            db::roles::ensure_user_has_role(&mut db, user_db_id, &role_name)?;
+            user_db_id
+        };
+
+        let session = sessions::create_session_for_user(user_db_id).await?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            format!("Bearer {}", session.token)
+                .parse()
+                .expect("valid auth header"),
+        );
+        Ok(headers)
+    }
+
+    #[tokio::test]
+    async fn require_download_access_rejects_user_without_download_permission() -> anyhow::Result<()>
+    {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let headers = create_user_with_permissions("listener", vec![]).await?;
+
+        let status = require_download_access(&headers)
+            .await
+            .expect_err("user without permission should be rejected")
+            .into_response()
+            .status();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn require_download_access_allows_user_with_download_permission() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let headers =
+            create_user_with_permissions("downloader", vec![Permission::Download]).await?;
+
+        let principal = require_download_access(&headers)
+            .await
+            .expect("user with download permission should be allowed");
+
+        assert_eq!(principal.username, "downloader");
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    fn policy_passthrough(
+        bitrate_bps: Option<u32>,
+        sample_rate_hz: Option<u32>,
+        channels: Option<u32>,
+    ) -> super::TranscodePolicy {
+        super::TranscodePolicy {
+            bitrate_bps,
+            sample_rate_hz,
+            channels,
+        }
+    }
+
+    #[test]
+    fn configure_output_defaults_bitrate_to_192_kbps_when_unset() {
+        let output = configure_output(
+            Output::with_callback(|_| 0),
+            AudioFormat::Mp3,
+            AudioCodec::Mp3,
+            &policy_passthrough(None, None, None),
+        );
+        assert_eq!(
+            output.get_audio_codec_opts().get("b"),
+            Some(&"192k".to_string()),
+            "default bitrate should be 192 kbps when none is supplied"
+        );
+        assert_eq!(output.get_audio_sample_rate(), None);
+        assert_eq!(output.get_audio_channels(), None);
+    }
+
+    #[test]
+    fn configure_output_applies_supplied_bitrate_sample_rate_and_channels() {
+        let output = configure_output(
+            Output::with_callback(|_| 0),
+            AudioFormat::Opus,
+            AudioCodec::Opus,
+            &policy_passthrough(Some(96_000), Some(48_000), Some(2)),
+        );
+        assert_eq!(
+            output.get_audio_codec_opts().get("b"),
+            Some(&"96k".to_string()),
+            "96_000 bps should round-trip to 96 kbps"
+        );
+        assert_eq!(output.get_audio_sample_rate(), Some(48_000));
+        assert_eq!(output.get_audio_channels(), Some(2));
+    }
+
+    #[test]
+    fn configure_output_rounds_bitrate_upward_to_the_nearest_kbps() {
+        let output = configure_output(
+            Output::with_callback(|_| 0),
+            AudioFormat::Mp3,
+            AudioCodec::Mp3,
+            &policy_passthrough(Some(127_500), None, None),
+        );
+        assert_eq!(
+            output.get_audio_codec_opts().get("b"),
+            Some(&"128k".to_string()),
+            "127_500 bps should ceil to 128 kbps"
+        );
+    }
+
+    #[test]
+    fn policy_rejects_zero_bitrate() {
+        let err = super::apply_transcode_policy(Some(0), None, None, AudioCodec::Mp3, None)
+            .expect_err("bitrate_bps=0 must fail fast, not silently fall back to the default");
+        assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn policy_rejects_zero_sample_rate() {
+        let err = super::apply_transcode_policy(None, Some(0), None, AudioCodec::Mp3, None)
+            .expect_err("sample_rate_hz=0 must fail fast");
+        assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn policy_rejects_zero_channels() {
+        let err = super::apply_transcode_policy(None, None, Some(0), AudioCodec::Mp3, None)
+            .expect_err("channels=0 must fail fast");
+        assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn policy_clamps_bitrate_below_codec_minimum() {
+        let policy = super::apply_transcode_policy(Some(1), None, None, AudioCodec::Mp3, None)
+            .expect("below-minimum bitrate should clamp, not reject");
+        assert_eq!(
+            policy.bitrate_bps,
+            Some(AudioCodec::Mp3.min_bitrate_bps().unwrap())
+        );
+    }
+
+    #[test]
+    fn policy_drops_bitrate_cap_for_lossless_codec() {
+        let policy =
+            super::apply_transcode_policy(Some(96_000), None, None, AudioCodec::Flac, None)
+                .expect("lossless codec ignores bitrate cap");
+        assert_eq!(
+            policy.bitrate_bps, None,
+            "flac output must drop the bitrate cap entirely rather than advertise a cap it cannot honor"
+        );
+    }
+
+    #[test]
+    fn policy_rewrites_opus_sample_rate_to_native_48000() {
+        let policy =
+            super::apply_transcode_policy(None, Some(44_100), None, AudioCodec::Opus, None)
+                .expect("opus substitutes non-48kHz sample rates");
+        assert_eq!(
+            policy.sample_rate_hz,
+            Some(48_000),
+            "opus substitutes internally; advertise what we deliver"
+        );
+    }
+
+    #[test]
+    fn policy_passes_matching_opus_sample_rate_through() {
+        let policy =
+            super::apply_transcode_policy(None, Some(48_000), None, AudioCodec::Opus, None)
+                .expect("48kHz request for opus should pass through");
+        assert_eq!(policy.sample_rate_hz, Some(48_000));
+    }
+
+    #[test]
+    fn policy_passes_bitrate_through_when_source_unknown() {
+        let policy =
+            super::apply_transcode_policy(Some(192_000), None, None, AudioCodec::Mp3, None)
+                .expect("source_bitrate_bps=None must not block the cap");
+        assert_eq!(
+            policy.bitrate_bps,
+            Some(192_000),
+            "when source bitrate is unknown, the requested cap flows through untouched"
+        );
+    }
+
+    #[test]
+    fn policy_drops_bitrate_cap_above_source_bitrate() {
+        let policy = super::apply_transcode_policy(
+            Some(320_000),
+            None,
+            None,
+            AudioCodec::Mp3,
+            Some(128_000),
+        )
+        .expect("cap above source should not inflate quality");
+        assert_eq!(
+            policy.bitrate_bps, None,
+            "a 320 kbps cap on a 128 kbps source should drop to no cap so we don't upsample quality"
+        );
+    }
+
+    #[test]
+    fn policy_retains_bitrate_cap_below_source_bitrate() {
+        let policy =
+            super::apply_transcode_policy(Some(96_000), None, None, AudioCodec::Mp3, Some(320_000))
+                .expect("legitimate cap below source should pass through");
+        assert_eq!(policy.bitrate_bps, Some(96_000));
+    }
+
+    #[test]
+    fn policy_preserves_untouched_knobs_for_lossy_passthrough_values() {
+        let policy = super::apply_transcode_policy(
+            Some(128_000),
+            Some(44_100),
+            Some(2),
+            AudioCodec::Mp3,
+            None,
+        )
+        .expect("in-range lossy values should pass through");
+        assert_eq!(policy.bitrate_bps, Some(128_000));
+        assert_eq!(policy.sample_rate_hz, Some(44_100));
+        assert_eq!(policy.channels, Some(2));
+    }
+
+    async fn prepare_streamable_track(test_dir: &PathBuf) -> anyhow::Result<i64> {
+        let fixture_src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/assets/metadata/integration_track.flac");
+        let fixture_dst = test_dir.join("integration_track.flac");
+        tokio::fs::copy(&fixture_src, &fixture_dst).await?;
+
+        let (tag, tagged_file) = crate::services::metadata::read_audio_tags(fixture_dst.clone())?;
+        let fixture_str = fixture_dst.to_string_lossy().to_string();
+        let mapping_config = crate::services::metadata::mapping::default_config();
+        let raw_tags = crate::services::metadata::extract_raw_tags_from_lofty(
+            &tag,
+            &tagged_file,
+            &fixture_str,
+            &mapping_config,
+        );
+
+        let fixture = crate::testing::prepare_fixture(
+            &LibraryFixtureConfig {
+                directory: test_dir.clone(),
+                language: None,
+                country: None,
+            },
+            vec![raw_tags],
+        )
+        .await?;
+        let track_id = *fixture
+            .track_ids
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("prepare_fixture produced no track ids"))?;
+        Ok(track_id)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stream_direct_copy_response_advertises_byte_range_support() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("streamer", vec![Permission::Download]).await?;
+
+        let response = super::stream::stream_track_response(
+            &headers,
+            agdb::DbId(track_id),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::ACCEPT_RANGES)
+                .and_then(|v| v.to_str().ok()),
+            Some("bytes"),
+            "direct-copy responses must continue to advertise byte-range support"
+        );
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stream_forced_transcode_advertises_no_byte_ranges() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("streamer", vec![Permission::Download]).await?;
+
+        let response = super::stream::stream_track_response(
+            &headers,
+            agdb::DbId(track_id),
+            Some("mp3".to_string()),
+            None,
+            Some(96_000),
+            None,
+            None,
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::ACCEPT_RANGES)
+                .and_then(|v| v.to_str().ok()),
+            Some("none"),
+            "transcoded responses must advertise Accept-Ranges: none so clients don't request byte ranges"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::TRANSFER_ENCODING)
+                .and_then(|v| v.to_str().ok()),
+            Some("chunked"),
+        );
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stream_forces_transcode_when_knob_supplied_with_matching_format() -> anyhow::Result<()>
+    {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("streamer", vec![Permission::Download]).await?;
+
+        let response = super::stream::stream_track_response(
+            &headers,
+            agdb::DbId(track_id),
+            Some("flac".to_string()),
+            None,
+            None,
+            Some(48_000),
+            None,
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::ACCEPT_RANGES)
+                .and_then(|v| v.to_str().ok()),
+            Some("none"),
+            "a sample-rate knob alone must still force the transcoded (chunked) path even when the output format matches the source"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::TRANSFER_ENCODING)
+                .and_then(|v| v.to_str().ok()),
+            Some("chunked"),
+        );
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stream_restores_direct_copy_when_policy_zeroes_cap() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("streamer", vec![Permission::Download]).await?;
+
+        let response = super::stream::stream_track_response(
+            &headers,
+            agdb::DbId(track_id),
+            Some("flac".to_string()),
+            None,
+            Some(96_000),
+            None,
+            None,
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::ACCEPT_RANGES)
+                .and_then(|v| v.to_str().ok()),
+            Some("bytes"),
+            "lossless codec + bitrate cap should land back on direct-copy once the policy drops the cap, rather than re-encoding wastefully"
+        );
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stream_rejects_zero_bitrate_with_400() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("streamer", vec![Permission::Download]).await?;
+
+        let result = super::stream::stream_track_response(
+            &headers,
+            agdb::DbId(track_id),
+            Some("mp3".to_string()),
+            None,
+            Some(0),
+            None,
+            None,
+        )
+        .await;
+
+        let status = result
+            .expect_err("bitrate_bps=0 must surface a policy rejection")
+            .into_response()
+            .status();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+}

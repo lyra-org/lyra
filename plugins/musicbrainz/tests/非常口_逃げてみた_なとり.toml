@@ -1,0 +1,28 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "なとり — 非常口 逃げてみた (2025) [WEB-FLAC]/01. 非常口 逃げてみた.flac"
+album = "非常口 逃げてみた"
+album_artists = ["なとり"]
+artists = ["なとり"]
+title = "非常口 逃げてみた"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 183917
+
+[expect.release]
+ids = { release_group_id = "32bb509e-5a0a-4d19-b22a-bb740eeb1c8e", release_id = "9a7963d6-2ef5-49bf-aaac-4e0b42e85fe2" }
+fields = { release_title = "非常口 逃げてみた", release_date = "2025-08-30" }
+
+[expect.artists."cad9e169-893d-4432-a23f-3aa16beb9f0e"]
+fields = { artist_name = "なとり", sort_name = "natori" }
+
+[expect.tracks."4eb58b4f-70f3-4d70-b5f7-e4f2f198ef82"]
+fields = { disc = 1, track = 1, track_title = "非常口 逃げてみた" }

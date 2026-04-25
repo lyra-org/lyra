@@ -1,0 +1,223 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Official髭男dism - Traveler [FLAC]/14. Travelers.flac"
+album = "Traveler"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Travelers"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 14
+duration_ms = 106573
+
+[[raw_tags]]
+file_path = "Official髭男dism - Traveler [FLAC]/13. ラストソング.flac"
+album = "Traveler"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "ラストソング"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 14
+duration_ms = 353371
+
+[[raw_tags]]
+file_path = "Official髭男dism - Traveler [FLAC]/12. Pretender.flac"
+album = "Traveler"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Pretender"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 14
+duration_ms = 326842
+
+[[raw_tags]]
+file_path = "Official髭男dism - Traveler [FLAC]/11. 052519.flac"
+album = "Traveler"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "052519"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 14
+duration_ms = 10605
+
+[[raw_tags]]
+file_path = "Official髭男dism - Traveler [FLAC]/10. 旅は道連れ.flac"
+album = "Traveler"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "旅は道連れ"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 14
+duration_ms = 195734
+
+[[raw_tags]]
+file_path = "Official髭男dism - Traveler [FLAC]/09. FIRE GROUND.flac"
+album = "Traveler"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "FIRE GROUND"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 14
+duration_ms = 223416
+
+[[raw_tags]]
+file_path = "Official髭男dism - Traveler [FLAC]/08. Stand By You.flac"
+album = "Traveler"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Stand By You"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 14
+duration_ms = 256131
+
+[[raw_tags]]
+file_path = "Official髭男dism - Traveler [FLAC]/07. ビンテージ.flac"
+album = "Traveler"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "ビンテージ"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 14
+duration_ms = 252565
+
+[[raw_tags]]
+file_path = "Official髭男dism - Traveler [FLAC]/06. 最後の恋煩い.flac"
+album = "Traveler"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "最後の恋煩い"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 14
+duration_ms = 273180
+
+[[raw_tags]]
+file_path = "Official髭男dism - Traveler [FLAC]/05. バッドフォーミー.flac"
+album = "Traveler"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "バッドフォーミー"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 14
+duration_ms = 235324
+
+[[raw_tags]]
+file_path = "Official髭男dism - Traveler [FLAC]/04. Rowan.flac"
+album = "Traveler"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Rowan"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 14
+duration_ms = 284224
+
+[[raw_tags]]
+file_path = "Official髭男dism - Traveler [FLAC]/03. Amazing.flac"
+album = "Traveler"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Amazing"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 14
+duration_ms = 231065
+
+[[raw_tags]]
+file_path = "Official髭男dism - Traveler [FLAC]/02. 宿命.flac"
+album = "Traveler"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "宿命"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 14
+duration_ms = 280856
+
+[[raw_tags]]
+file_path = "Official髭男dism - Traveler [FLAC]/01. イエスタデイ.flac"
+album = "Traveler"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "イエスタデイ"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 14
+duration_ms = 299164
+
+[expect.release]
+ids = { release_id = ["3a0c3f52-08fc-472a-acb1-4c1ac20d7285", "5d8559e0-6348-4368-8734-0e051e48d43a"] }
+fields = { release_title = "Traveler" }
+
+[expect.artists."6dddd7a2-5583-49d0-a8b2-9ee46d04f27e"]
+fields = { artist_name = "Official髭男dism", sort_name = "Official HIGE DANdism" }
+
+[expect.tracks."08d782ed-9d90-45d4-a5a2-2f5dbd5582f5"]
+fields = { disc = 1, track = 11, track_title = "052519" }
+
+[expect.tracks."2362eb6d-708c-4840-b952-f8fcdc217fe2"]
+fields = { disc = 1, track = 10, track_title = "旅は道連れ" }
+
+[expect.tracks."2b7ab7ca-f8ce-4f09-9bea-90c69bed6abd"]
+fields = { disc = 1, track = 1, track_title = "イエスタデイ" }
+
+[expect.tracks."2e1bb1c6-db0c-47f5-aaad-68f9d63066a2"]
+fields = { disc = 1, track = 9, track_title = "FIRE GROUND" }
+
+[expect.tracks."365e8003-30d9-44ea-80f5-1ab1d667676f"]
+fields = { disc = 1, track = 8, track_title = "Stand By You" }
+
+[expect.tracks."40976f6e-53ad-4a40-9bcc-44b48671623e"]
+fields = { disc = 1, track = 2, track_title = "宿命" }
+
+[expect.tracks."4d048815-6140-4c8a-90b0-0d737ec0afc3"]
+fields = { disc = 1, track = 5, track_title = "バッドフォーミー" }
+
+[expect.tracks."665f6806-11bd-41c7-b2fc-daf4c153f906"]
+fields = { disc = 1, track = 12, track_title = "Pretender" }
+
+[expect.tracks."9d986559-ccb3-4d69-baa3-c8dcf5904291"]
+fields = { disc = 1, track = 14, track_title = "Travelers" }
+
+[expect.tracks."9f6e561c-9ec8-41a1-8b0f-31782a248326"]
+fields = { disc = 1, track = 3, track_title = "Amazing" }
+
+[expect.tracks."ab049b2c-487b-4d99-b39e-53343f4e6c38"]
+fields = { disc = 1, track = 6, track_title = "最後の恋煩い" }
+
+[expect.tracks."b92bb137-735b-4bca-af29-cac23cdfcafa"]
+fields = { disc = 1, track = 7, track_title = "ビンテージ" }
+
+[expect.tracks."d9cec3c1-30d6-44f1-a3ef-65658b5a96b9"]
+fields = { disc = 1, track = 4, track_title = "Rowan" }
+
+[expect.tracks."dd9affbe-5ddb-4c26-803e-dcbedf91dc30"]
+fields = { disc = 1, track = 13, track_title = "ラストソング" }

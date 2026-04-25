@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "listenbrainz",
+  "name": "ListenBrainz Integration",
+  "version": "0.0.1",
+  "description": "Sync your listens to ListenBrainz",
+  "entrypoint": "init.luau",
+  "scopes": [
+    "harmony.http",
+    "harmony.json",
+    "lyra.entities",
+    "lyra.playback_sessions",
+    "lyra.plugins"
+  ]
+}

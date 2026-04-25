@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "audiomuse",
+  "name": "AudioMuse AI",
+  "version": "0.0.1",
+  "description": "AI-powered music similarity and mix generation via AudioMuse",
+  "entrypoint": "init.luau",
+  "scopes": [
+    "harmony.http",
+    "harmony.json",
+    "lyra.api",
+    "lyra.ids",
+    "lyra.mix",
+    "lyra.plugins",
+    "lyra.tracks"
+  ]
+}

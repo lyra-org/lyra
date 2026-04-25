@@ -1,0 +1,93 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "キタニタツヤ - スカー [FLAC+CUE+LOG+BK+BDMV][SRCL-12260~1]/1.05. Rapport (Scar version.).flac"
+album = "スカー"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "Rapport (Scar version.)"
+copyright = "℗ 2021(3),2022(1,2,4,5) Sony Music Labels Inc."
+disc = 1
+disc_total = 2
+track = 5
+track_total = 5
+duration_ms = 202693
+
+[[raw_tags]]
+file_path = "キタニタツヤ - スカー [FLAC+CUE+LOG+BK+BDMV][SRCL-12260~1]/1.04. Insel.flac"
+album = "スカー"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "Insel"
+copyright = "℗ 2021(3),2022(1,2,4,5) Sony Music Labels Inc."
+disc = 1
+disc_total = 2
+track = 4
+track_total = 5
+duration_ms = 62306
+
+[[raw_tags]]
+file_path = "キタニタツヤ - スカー [FLAC+CUE+LOG+BK+BDMV][SRCL-12260~1]/1.03. タナトフォビア.flac"
+album = "スカー"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "タナトフォビア"
+copyright = "℗ 2021(3),2022(1,2,4,5) Sony Music Labels Inc."
+disc = 1
+disc_total = 2
+track = 3
+track_total = 5
+duration_ms = 217080
+
+[[raw_tags]]
+file_path = "キタニタツヤ - スカー [FLAC+CUE+LOG+BK+BDMV][SRCL-12260~1]/1.02. 永遠.flac"
+album = "スカー"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "永遠"
+copyright = "℗ 2021(3),2022(1,2,4,5) Sony Music Labels Inc."
+disc = 1
+disc_total = 2
+track = 2
+track_total = 5
+duration_ms = 185040
+
+[[raw_tags]]
+file_path = "キタニタツヤ - スカー [FLAC+CUE+LOG+BK+BDMV][SRCL-12260~1]/1.01. スカー.flac"
+album = "スカー"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "スカー"
+copyright = "℗ 2021(3),2022(1,2,4,5) Sony Music Labels Inc."
+disc = 1
+disc_total = 2
+track = 1
+track_total = 5
+duration_ms = 260373
+
+[expect.release]
+ids = { release_group_id = "5dfc5b49-556a-4bbd-b76b-f0131c512ec7", release_id = "b68b3531-6e8d-499c-8a8f-38fce762f0fc" }
+fields = { release_title = "スカー", release_date = "2022-11-23" }
+
+[expect.artists."80b3cb83-b7a3-4f79-ad42-8325cefb3626"]
+fields = { artist_name = "キタニタツヤ", sort_name = "Kitani, Tatsuya" }
+
+[expect.tracks."74f8e285-aac1-471d-8af3-f1380e04e436"]
+fields = { disc = 1, track = 3, track_title = "タナトフォビア" }
+
+[expect.tracks."afd45abe-c895-40b7-b9c6-cd77452f6f99"]
+fields = { disc = 1, track = 5, track_title = "Rapport" }
+
+[expect.tracks."bdf6c7de-b170-4863-b71d-165c297f576b"]
+fields = { disc = 1, track = 2, track_title = "永遠" }
+
+[expect.tracks."c9dd58cd-c59c-445d-be55-0ef12914f1c6"]
+fields = { disc = 1, track = 1, track_title = "スカー" }
+
+[expect.tracks."cb09fb1f-7659-4f65-b558-424ce3aa843d"]
+fields = { disc = 1, track = 4, track_title = "Insel" }

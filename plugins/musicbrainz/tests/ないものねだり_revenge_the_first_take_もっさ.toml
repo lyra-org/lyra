@@ -1,0 +1,31 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "KANA-BOON feat. もっさ - 2020-09-04 - ないものねだり - Revenge THE FIRST TAKE - flac/1.01. ないものねだり - Revenge THE FIRST TAKE.flac"
+album = "ないものねだり - Revenge THE FIRST TAKE"
+album_artists = ["KANA-BOON feat. もっさ"]
+artists = ["KANA-BOON feat. もっさ"]
+title = "ないものねだり - Revenge THE FIRST TAKE"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 256256
+
+[expect.release]
+ids = { release_id = ["638ff63f-82f4-4400-907f-f19a8486c6b5", "90a61bd2-4f55-4efc-992f-3a8ec2986452"] }
+fields = { release_title = "ないものねだり - Revenge THE FIRST TAKE", release_date = "2020-09-04" }
+
+[expect.artists."33ff8a92-2f3b-4cac-8ea0-5eebfa995626"]
+fields = { artist_name = "KANA-BOON", sort_name = "KANA-BOON" }
+
+[expect.artists."4959b5cf-bc79-4d8e-9913-cfc1499664e6"]
+fields = { artist_name = "もっさ", sort_name = "Mossa" }
+
+[expect.tracks."d8a804d2-d94e-46c2-98ce-bb889cef3410"]
+fields = { disc = 1, track = 1, track_title = "ないものねだり - Revenge THE FIRST TAKE" }

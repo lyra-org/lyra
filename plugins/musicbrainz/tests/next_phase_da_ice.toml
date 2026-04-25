@@ -1,0 +1,221 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Da-iCE - (2017) NEXT PHASE [FLAC.WEB]/13 A Whole New World.flac"
+album = "Next Phase"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "A WHOLE NEW WORLD"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 13
+duration_ms = 252146
+
+[[raw_tags]]
+file_path = "Da-iCE - (2017) NEXT PHASE [FLAC.WEB]/12 Into You.flac"
+album = "Next Phase"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Into You"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 13
+duration_ms = 269146
+
+[[raw_tags]]
+file_path = "Da-iCE - (2017) NEXT PHASE [FLAC.WEB]/11 Paradive.flac"
+album = "Next Phase"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "パラダイブ"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 13
+duration_ms = 286506
+
+[[raw_tags]]
+file_path = "Da-iCE - (2017) NEXT PHASE [FLAC.WEB]/10 Two As One.flac"
+album = "Next Phase"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "TWO AS ONE"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 13
+duration_ms = 268066
+
+[[raw_tags]]
+file_path = "Da-iCE - (2017) NEXT PHASE [FLAC.WEB]/9 Bond.flac"
+album = "Next Phase"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "BOND"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 13
+duration_ms = 221226
+
+[[raw_tags]]
+file_path = "Da-iCE - (2017) NEXT PHASE [FLAC.WEB]/8 Reason.flac"
+album = "Next Phase"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "REASON"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 13
+duration_ms = 255746
+
+[[raw_tags]]
+file_path = "Da-iCE - (2017) NEXT PHASE [FLAC.WEB]/7 Koigokoro.flac"
+album = "Next Phase"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "恋ごころ"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 13
+duration_ms = 267640
+
+[[raw_tags]]
+file_path = "Da-iCE - (2017) NEXT PHASE [FLAC.WEB]/6 Fantasy.flac"
+album = "Next Phase"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "FANTASY"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 13
+duration_ms = 305880
+
+[[raw_tags]]
+file_path = "Da-iCE - (2017) NEXT PHASE [FLAC.WEB]/5 Free Falling.flac"
+album = "Next Phase"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Free Falling"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 13
+duration_ms = 233413
+
+[[raw_tags]]
+file_path = "Da-iCE - (2017) NEXT PHASE [FLAC.WEB]/4 Chocolate Sympathy.flac"
+album = "Next Phase"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Chocolate Sympathy"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 13
+duration_ms = 201506
+
+[[raw_tags]]
+file_path = "Da-iCE - (2017) NEXT PHASE [FLAC.WEB]/3 Step Back.flac"
+album = "Next Phase"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Step Back!"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 13
+duration_ms = 166853
+
+[[raw_tags]]
+file_path = "Da-iCE - (2017) NEXT PHASE [FLAC.WEB]/2 Watch Out.flac"
+album = "Next Phase"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "WATCH OUT"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 13
+duration_ms = 241000
+
+[[raw_tags]]
+file_path = "Da-iCE - (2017) NEXT PHASE [FLAC.WEB]/1 Next Phase.flac"
+album = "Next Phase"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "NEXT PHASE"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 13
+duration_ms = 203533
+
+[expect.release]
+ids = { release_group_id = "995ae212-0c22-42da-a7b3-222386d641ab", release_id = "22d4b8ec-17fc-4b34-b83f-dc1b3db7763f" }
+fields = { release_title = "NEXT PHASE", release_date = "2017-01-25" }
+
+[expect.artists."2fc5c58a-711b-4a11-9b7a-7b5ba1f58e04"]
+fields = { artist_name = "Da‐iCE", sort_name = "Da‐iCE" }
+
+[expect.tracks."0464165d-d1a6-4c76-9bc3-c73203a36748"]
+fields = { disc = 1, track = 8, track_title = "REASON" }
+
+[expect.tracks."07a4a9a4-d8a8-4f1b-88b5-9d948b81a317"]
+fields = { disc = 1, track = 12, track_title = "Into You" }
+
+[expect.tracks."0f353b7f-3cbc-4d53-8dd3-063ed6a0e0ef"]
+fields = { disc = 1, track = 13, track_title = "A WHOLE NEW WORLD" }
+
+[expect.tracks."24d18ad9-da30-4d30-9172-d40a6473f283"]
+fields = { disc = 1, track = 11, track_title = "パラダイブ" }
+
+[expect.tracks."46976f16-0397-4967-9e88-cb59e7b653ad"]
+fields = { disc = 1, track = 9, track_title = "BOND" }
+
+[expect.tracks."4ca8c66e-ede7-41d6-b718-4e6974dfcf13"]
+fields = { disc = 1, track = 10, track_title = "TWO AS ONE" }
+
+[expect.tracks."4d993103-3d86-45c1-b34a-23c3179a9c2b"]
+fields = { disc = 1, track = 6, track_title = "FANTASY" }
+
+[expect.tracks."a927bbb1-57ad-4f3a-b57e-b3ccfa7b66c4"]
+fields = { disc = 1, track = 1, track_title = "NEXT PHASE" }
+
+[expect.tracks."b29b0e10-ca62-46f2-bc5a-44b3c4fe44c9"]
+fields = { disc = 1, track = 5, track_title = "Free Falling" }
+
+[expect.tracks."d674d1b9-9ec0-4c7c-bc42-0b007534d796"]
+fields = { disc = 1, track = 3, track_title = "Step Back!" }
+
+[expect.tracks."d72be0be-bf0d-4e29-a886-e087d92d8e1b"]
+fields = { disc = 1, track = 2, track_title = "WATCH OUT" }
+
+[expect.tracks."e1de153c-c62a-46a5-8f78-dd48ac148438"]
+fields = { disc = 1, track = 7, track_title = "恋ごころ" }
+
+[expect.tracks."e965f150-53aa-43bf-85c9-03d6d51bb0e2"]
+fields = { disc = 1, track = 4, track_title = "Chocolate Sympathy" }

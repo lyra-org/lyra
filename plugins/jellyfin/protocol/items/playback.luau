@@ -1,0 +1,535 @@
+--!strict
+-- This Source Code Form is subject to the terms of the Lyra Public License,
+-- v1.0. If a copy of the Lyra Public License was not distributed with this file,
+-- You can obtain one here:
+-- www.meshiplaw.com/lyra.
+
+local api = require("@lyra/api")
+local playback_sources = require("@lyra/playback_sources")
+local playbacks = require("@lyra/playback_sessions")
+local tracks = require("@lyra/tracks")
+
+local constants = require("../../constants")
+
+local JELLYFIN_PLUGIN_ID = constants.JELLYFIN_PLUGIN_ID
+local PLAYBACK_COMPLETION_TOLERANCE_MS = constants.PLAYBACK_COMPLETION_TOLERANCE_MS
+local ROUTE_PREFIX = constants.ROUTE_PREFIX
+
+local base = require("./common")
+
+local next_generated_play_session_id = 1
+type Track = tracks.Track
+type PlaybackSourceInfo = playback_sources.PlaybackSourceInfo
+type EntryInfo = playback_sources.EntryInfo
+type ApiContext = api.ApiContext
+type ApiRequest = api.ApiRequest
+type ApiResponse = api.ApiResponse
+type ApiJsonValue = api.JsonValue
+type AuthContext = api.ApiAuth
+
+export type PlaybackPayload = { [string]: string | number | boolean? }
+
+type PlaybackSessionState = {
+	track_id: number,
+	playback_start_ticks: number,
+	position_ms: number?,
+	duration_ms: number?,
+}
+
+type MediaStream = {
+	Codec: string?,
+	Type: string,
+	Index: number,
+	Channels: number?,
+	SampleRate: number?,
+	BitDepth: number?,
+	IsDefault: boolean,
+	IsForced: boolean,
+	IsInterlaced: boolean,
+	IsExternal: boolean,
+	IsTextSubtitleStream: boolean,
+	SupportsExternalStream: boolean,
+	BitRate: number?,
+}
+
+type MediaSource = {
+	Protocol: string,
+	Id: string?,
+	Path: string?,
+	Type: string,
+	Container: string?,
+	Size: number?,
+	Name: string,
+	IsRemote: boolean,
+	RunTimeTicks: number?,
+	ReadAtNativeFramerate: boolean,
+	IgnoreDts: boolean,
+	IgnoreIndex: boolean,
+	GenPtsInput: boolean,
+	SupportsTranscoding: boolean,
+	SupportsDirectStream: boolean,
+	SupportsDirectPlay: boolean,
+	IsInfiniteStream: boolean,
+	RequiresOpening: boolean,
+	RequiresClosing: boolean,
+	RequiresLooping: boolean,
+	SupportsProbing: boolean,
+	MediaStreams: { MediaStream },
+	Bitrate: number?,
+	TranscodingSubProtocol: string?,
+	DefaultAudioStreamIndex: number,
+	HasSegments: boolean,
+	ETag: string?,
+	DirectStreamUrl: string?,
+}
+
+local playback_session_state_by_key: { [string]: PlaybackSessionState } = {}
+local playback_session_state_count = 0
+local MAX_PLAYBACK_SESSION_STATES = 500
+
+local module = {}
+module.trim = base.trim
+module.decode_jellyfin_item_id = base.decode_jellyfin_item_id
+module.bad_request = base.bad_request
+module.not_found = base.not_found
+module.parse_query_string = base.parse_query_string
+module.resolve_playback_source_for_track = base.resolve_playback_source_for_track
+module.encode_jellyfin_item_id = base.encode_jellyfin_item_id
+module.extension_from_path = base.extension_from_path
+
+local function ticks_to_ms(value: number | string?): number?
+	local ticks = tonumber(value)
+	if not ticks then
+		return nil
+	end
+
+	if ticks < 0 then
+		ticks = 0
+	end
+
+	return math.floor(ticks / 10000)
+end
+
+local function as_playback_payload(value: ApiJsonValue): PlaybackPayload?
+	if type(value) ~= "table" then
+		return nil
+	end
+	return value :: PlaybackPayload
+end
+
+local function scalar_field(payload: PlaybackPayload?, key: string): string | number?
+	local value = if payload then payload[key] else nil
+	if type(value) == "string" or type(value) == "number" then
+		return value
+	end
+	return nil
+end
+
+local function is_completed_position(position_ms: number?, duration_ms: number?): boolean
+	if position_ms == nil or duration_ms == nil then
+		return false
+	end
+	if duration_ms <= 0 then
+		return false
+	end
+
+	local completion_threshold_ms = math.max(duration_ms - PLAYBACK_COMPLETION_TOLERANCE_MS, 0)
+	return position_ms >= completion_threshold_ms
+end
+
+type PlaybackState = "playing" | "paused" | "stopped" | "completed"
+type PlaybackEvent = "started" | "progress" | "stopped" | "completed"
+
+local function as_playback_event(value: string): PlaybackEvent
+	if value == "started" then
+		return "started"
+	end
+	if value == "stopped" then
+		return "stopped"
+	end
+	if value == "completed" then
+		return "completed"
+	end
+	return "progress"
+end
+
+local function playback_state_for_event(
+	event_name: string,
+	payload: PlaybackPayload?,
+	position_ms: number?,
+	duration_ms: number?
+): PlaybackState
+	if event_name == "stopped" then
+		if is_completed_position(position_ms, duration_ms) then
+			return "completed"
+		end
+		return "stopped"
+	end
+	if type(if payload then payload.IsPaused else nil) == "boolean" and payload ~= nil and payload.IsPaused then
+		return "paused"
+	end
+
+	return "playing"
+end
+
+local function should_normalize_progress_to_started(
+	event_name: string,
+	payload: PlaybackPayload?,
+	state: string,
+	position_ms: number?
+): boolean
+	if event_name ~= "progress" then
+		return false
+	end
+	if state ~= "paused" then
+		return false
+	end
+	if position_ms == nil or position_ms ~= 0 then
+		return false
+	end
+
+	local playback_start_ticks = tonumber(scalar_field(payload, "PlaybackStartTimeTicks"))
+	if playback_start_ticks and playback_start_ticks > 0 then
+		return false
+	end
+
+	return true
+end
+
+local function is_terminal_playback_state(state: string): boolean
+	return state == "stopped" or state == "completed"
+end
+
+local function ensure_playback_session_id(requested_play_session_id: string?): string
+	local existing_session_id = module.trim(tostring(requested_play_session_id or ""))
+	if existing_session_id then
+		return existing_session_id
+	end
+
+	local new_id = tostring(next_generated_play_session_id)
+	next_generated_play_session_id += 1
+	return new_id
+end
+
+local function resolve_playback_session_key(
+	auth_context: AuthContext,
+	payload: PlaybackPayload?,
+	request_device_id: string?
+): string?
+	local principal_session_id = if auth_context then auth_context.credential.session_id else nil
+	if principal_session_id ~= nil and principal_session_id > 0 then
+		return string.format("auth:%d", principal_session_id)
+	end
+
+	local principal_user_id = if auth_context then auth_context.principal.user_id else nil
+	if principal_user_id ~= nil and principal_user_id > 0 and request_device_id then
+		return string.format("device:%d:%s", principal_user_id, request_device_id)
+	end
+
+	local session_id = module.trim(
+		if scalar_field(payload, "SessionId") ~= nil then tostring(scalar_field(payload, "SessionId")) else nil
+	)
+	if session_id then
+		return string.format("session:%s", session_id)
+	end
+
+	local play_session_id = module.trim(
+		if scalar_field(payload, "PlaySessionId") ~= nil then tostring(scalar_field(payload, "PlaySessionId")) else nil
+	)
+	if play_session_id then
+		return string.format("play:%s", play_session_id)
+	end
+
+	return nil
+end
+
+local function ms_to_ticks(duration_ms: number?): number?
+	local value = tonumber(duration_ms)
+	if not value then
+		return nil
+	end
+
+	return math.floor(value * 10000)
+end
+
+local function codec_for_extension(extension: string?): string?
+	if extension == "flac" then
+		return "flac"
+	end
+	if extension == "mp3" then
+		return "mp3"
+	end
+	if extension == "aac" or extension == "m4a" or extension == "mp4" then
+		return "aac"
+	end
+	if extension == "opus" then
+		return "opus"
+	end
+	if extension == "ogg" then
+		return "vorbis"
+	end
+	if extension == "wav" then
+		return "pcm_s16le"
+	end
+	if extension == "alac" then
+		return "alac"
+	end
+
+	return nil
+end
+
+local function build_media_info(
+	track: Track?,
+	source: PlaybackSourceInfo?,
+	item_id: string?,
+	fallback_name: string?
+): ({ MediaSource }, { MediaStream }, string?)
+	local entry: EntryInfo? = if source and type(source.entry) == "table" then source.entry else nil
+	local media_item_id = module.encode_jellyfin_item_id(item_id)
+	local container = module.extension_from_path(if entry then entry.full_path else nil)
+	local codec = codec_for_extension(container)
+	local size = if entry and entry.size then tonumber(entry.size) else nil
+	local bitrate = if track then track.bitrate_bps else nil
+	local full_path = if entry then module.trim(entry.full_path) else nil
+	local direct_stream_url = if full_path and media_item_id then `{ROUTE_PREFIX}/Items/{media_item_id}/File` else nil
+
+	local media_stream: MediaStream = {
+		Codec = codec,
+		Type = "Audio",
+		Index = 0,
+		Channels = if track then track.channel_count else nil,
+		SampleRate = if track then track.sample_rate_hz else nil,
+		BitDepth = if track then track.bit_depth else nil,
+		IsDefault = true,
+		IsForced = false,
+		IsInterlaced = false,
+		IsExternal = false,
+		IsTextSubtitleStream = false,
+		SupportsExternalStream = false,
+	}
+	if bitrate then
+		media_stream.BitRate = bitrate
+	end
+	local media_streams = { media_stream }
+
+	local media_source: MediaSource = {
+		Protocol = "File",
+		Id = media_item_id,
+		Path = if entry then entry.full_path else nil,
+		Type = "Default",
+		Container = container,
+		Size = size,
+		Name = if entry
+			then (entry.name or fallback_name or tostring(item_id))
+			else (fallback_name or tostring(item_id)),
+		IsRemote = false,
+		RunTimeTicks = if track then ms_to_ticks(track.duration_ms) else nil,
+		ReadAtNativeFramerate = false,
+		IgnoreDts = false,
+		IgnoreIndex = false,
+		GenPtsInput = false,
+		SupportsTranscoding = false,
+		SupportsDirectStream = direct_stream_url ~= nil,
+		SupportsDirectPlay = direct_stream_url ~= nil,
+		IsInfiniteStream = false,
+		RequiresOpening = false,
+		RequiresClosing = false,
+		RequiresLooping = false,
+		SupportsProbing = false,
+		MediaStreams = media_streams,
+		Bitrate = bitrate,
+		DefaultAudioStreamIndex = 0,
+		HasSegments = false,
+	}
+	if entry and entry.hash then
+		media_source.ETag = tostring(entry.hash)
+	end
+	if direct_stream_url then
+		media_source.DirectStreamUrl = direct_stream_url
+	end
+
+	return { media_source }, media_streams, container
+end
+
+function module.parse_playback_report_body(ctx: ApiContext?): (PlaybackPayload?, ApiResponse?)
+	local request = if ctx then ctx.request else nil
+	local request_json = if request then request.json else nil
+	local payload = as_playback_payload(request_json)
+	if payload == nil then
+		return nil, module.bad_request("invalid playback report body")
+	end
+
+	return payload, nil
+end
+
+function module.as_playback_payload(value: ApiJsonValue): PlaybackPayload?
+	return as_playback_payload(value)
+end
+
+function module.ensure_payload_user_matches(auth_context: AuthContext, payload: PlaybackPayload?): boolean
+	local raw_user_id = scalar_field(payload, "UserId")
+	local payload_user_id = if type(raw_user_id) == "string" then module.trim(raw_user_id) else nil
+	if payload_user_id and module.decode_jellyfin_item_id(payload_user_id) ~= auth_context.principal.user_id then
+		return false
+	end
+
+	return true
+end
+
+function module.report_playback_event(
+	auth_context: AuthContext,
+	payload: PlaybackPayload?,
+	event_name: string,
+	request_device_id: string?
+): (boolean, ApiResponse?)
+	local raw_item_id = scalar_field(payload, "ItemId")
+	local item_id = module.decode_jellyfin_item_id(if type(raw_item_id) == "string" then raw_item_id else nil)
+	if item_id == nil then
+		return false, module.bad_request("invalid or missing playback item id")
+	end
+
+	local session_key = resolve_playback_session_key(auth_context, payload, request_device_id)
+	if not session_key then
+		return false, module.bad_request("missing or invalid playback session key")
+	end
+
+	local position_ms = ticks_to_ms(scalar_field(payload, "PositionTicks"))
+	local duration_ms = ticks_to_ms(scalar_field(payload, "RunTimeTicks"))
+	if duration_ms == nil then
+		local track = module.resolve_track_for_playback(item_id)
+		duration_ms = if track then track.duration_ms else nil
+	end
+	local state = playback_state_for_event(event_name, payload, position_ms, duration_ms)
+	local normalized_event_name: string = if should_normalize_progress_to_started(
+			event_name,
+			payload,
+			state,
+			position_ms
+		)
+		then "started"
+		else event_name
+	local normalized_state: PlaybackState = if normalized_event_name == "started" then "playing" else state
+	local playback_start_ticks = tonumber(scalar_field(payload, "PlaybackStartTimeTicks")) or 0
+	local prior_session_state = playback_session_state_by_key[session_key]
+
+	-- Ignore late reports from older playbacks after a track switch.
+	if
+		prior_session_state
+		and playback_start_ticks > 0
+		and prior_session_state.playback_start_ticks ~= nil
+		and prior_session_state.playback_start_ticks > 0
+		and playback_start_ticks < prior_session_state.playback_start_ticks
+	then
+		return true, nil
+	end
+
+	if
+		prior_session_state
+		and prior_session_state.track_id ~= nil
+		and prior_session_state.track_id ~= item_id
+		and not is_terminal_playback_state(normalized_state)
+	then
+		playbacks.report_session({
+			plugin_id = JELLYFIN_PLUGIN_ID,
+			user_id = auth_context.principal.user_id,
+			session_key = session_key :: string,
+			track_id = prior_session_state.track_id,
+			position_ms = prior_session_state.position_ms,
+			duration_ms = prior_session_state.duration_ms,
+			state = "stopped",
+			event = "progress",
+		})
+	end
+
+	playbacks.report_session({
+		plugin_id = JELLYFIN_PLUGIN_ID,
+		user_id = auth_context.principal.user_id,
+		session_key = session_key :: string,
+		track_id = item_id,
+		position_ms = position_ms,
+		duration_ms = duration_ms,
+		state = normalized_state,
+		event = as_playback_event(normalized_event_name),
+	})
+
+	if is_terminal_playback_state(normalized_state) then
+		local current_session_state = playback_session_state_by_key[session_key]
+		if current_session_state and current_session_state.track_id == item_id then
+			playback_session_state_by_key[session_key] = nil
+			playback_session_state_count -= 1
+		end
+	else
+		if playback_session_state_by_key[session_key] == nil then
+			if playback_session_state_count >= MAX_PLAYBACK_SESSION_STATES then
+				playback_session_state_by_key = {}
+				playback_session_state_count = 0
+			end
+			playback_session_state_count += 1
+		end
+		playback_session_state_by_key[session_key] = {
+			track_id = item_id,
+			playback_start_ticks = playback_start_ticks,
+			position_ms = position_ms,
+			duration_ms = duration_ms,
+		}
+	end
+
+	return true, nil
+end
+
+function module.resolve_playback_info_item(ctx: ApiContext?): (string?, Track?, ApiResponse?)
+	local params = if ctx then ctx.params else nil
+	local raw_item_id = if params then params.id else nil
+	if not raw_item_id then
+		return nil, nil, module.bad_request("missing item id")
+	end
+
+	local db_id = module.decode_jellyfin_item_id(raw_item_id)
+	local track = module.resolve_track_for_playback(db_id)
+	if not track then
+		return nil, nil, module.not_found("item not found")
+	end
+
+	return track.id, track, nil
+end
+
+function module.resolve_requested_play_session_id(request: ApiRequest?, request_json: PlaybackPayload?): string?
+	local play_session_id = module.trim(
+		if scalar_field(request_json, "PlaySessionId") ~= nil
+			then tostring(scalar_field(request_json, "PlaySessionId"))
+			else nil
+	)
+	if play_session_id then
+		return play_session_id
+	end
+
+	local query = if request then request.query else nil
+	return module.parse_query_string(query, { "PlaySessionId", "playSessionId" }, nil)
+end
+
+function module.build_playback_info(item_id: string?, track: Track?, existing_play_session_id: string?): ApiJsonValue
+	local source = module.resolve_playback_source_for_track(track, true)
+	local media_sources, _ = build_media_info(track, source, item_id, if track then track.track_title else item_id)
+
+	local play_session_id = ensure_playback_session_id(existing_play_session_id)
+	return {
+		MediaSources = media_sources,
+		PlaySessionId = play_session_id,
+		ErrorCode = nil,
+	}
+end
+
+function module.resolve_track_for_playback(item_id: number?): Track?
+	if not item_id or item_id <= 0 then
+		return nil
+	end
+
+	-- Typed-to-Track-node: release/artist db_ids resolve to nil, not the first related track.
+	local ok, result = pcall(tracks.get_by_ids, { item_id })
+	if not ok or type(result) ~= "table" then
+		return nil
+	end
+	return (result :: { [number]: Track })[item_id]
+end
+
+return module

@@ -1,0 +1,27 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2021.10.10] ツユ - 終点の先が在るとするならば。 [FLAC]/01. 終点の先が在るとするならば。.flac"
+album = "終点の先が在るとするならば。"
+album_artists = ["ツユ", "ツユ"]
+artists = ["ツユ"]
+title = "終点の先が在るとするならば。"
+copyright = "℗© 2021 TUYU Records"
+genre = "Pop"
+track = 1
+duration_ms = 179297
+
+[expect.release]
+ids = { release_group_id = "4bbc9d27-b177-4d77-956c-1fde0345cc02", release_id = "24898111-1d30-4477-a12f-1a593c5dae86" }
+fields = { release_title = "終点の先が在るとするならば。", release_date = "2021-10-12" }
+
+[expect.artists."2b0a8be6-bfb8-4f62-b21d-f47a3104157e"]
+fields = { artist_name = "ツユ", sort_name = "TUYU" }
+
+[expect.tracks."b346ad4a-5eea-41b1-93ce-81c9eafe102f"]
+fields = { disc = 1, track = 1, track_title = "終点の先が在るとするならば。" }

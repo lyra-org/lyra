@@ -1,0 +1,1219 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/032 - Wake Up, Get Up, Get Out There -opening movie version-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["Lyn Inaizumi"]
+title = "Wake Up, Get Up, Get Out There -opening movie version-"
+genre = "Films/Games"
+disc = 3
+track = 32
+duration_ms = 94800
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/031 - Hoshi To Bokura To.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["Lyn Inaizumi"]
+title = "Hoshi To Bokura To"
+genre = "Films/Games"
+disc = 3
+track = 31
+duration_ms = 429066
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/030 - Hoshi To Bokura To -piano version-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Hoshi To Bokura To -piano version-"
+genre = "Films/Games"
+disc = 3
+track = 30
+duration_ms = 117973
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/029 - Our Beginning.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Our Beginning"
+genre = "Films/Games"
+disc = 3
+track = 29
+duration_ms = 158453
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/028 - Swear to My Bones.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Swear to My Bones"
+genre = "Films/Games"
+disc = 3
+track = 28
+duration_ms = 191280
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/027 - Jaldabaoth.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Jaldabaoth"
+genre = "Films/Games"
+disc = 3
+track = 27
+duration_ms = 182226
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/026 - Confrontation.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Confrontation"
+genre = "Films/Games"
+disc = 3
+track = 26
+duration_ms = 60253
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/025 - Erosion.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Erosion"
+genre = "Films/Games"
+disc = 3
+track = 25
+duration_ms = 63333
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/024 - Freedom and Peace.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Freedom and Peace"
+genre = "Films/Games"
+disc = 3
+track = 24
+duration_ms = 231426
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/023 - The Collapse of Pride.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "The Collapse of Pride"
+genre = "Films/Games"
+disc = 3
+track = 23
+duration_ms = 95520
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/022 - Rivers In the Desert.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["Lyn Inaizumi"]
+title = "Rivers In the Desert"
+genre = "Films/Games"
+disc = 3
+track = 22
+duration_ms = 315026
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/021 - Desire.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Desire"
+genre = "Films/Games"
+disc = 3
+track = 21
+duration_ms = 163826
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/020 - Rivers In the Desert -instrumental version-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Rivers In the Desert -instrumental version-"
+genre = "Films/Games"
+disc = 3
+track = 20
+duration_ms = 315066
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/019 - Wake Up, Get Up, Get Out There -instrumental version-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Wake Up, Get Up, Get Out There -instrumental version-"
+genre = "Films/Games"
+disc = 3
+track = 19
+duration_ms = 172946
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/018 - Impromptu for the Next Prime Minister.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Impromptu for the Next Prime Minister"
+genre = "Films/Games"
+disc = 3
+track = 18
+duration_ms = 68133
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/017 - Ark.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Ark"
+genre = "Films/Games"
+disc = 3
+track = 17
+duration_ms = 123253
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/016 - Limitless Pride.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Limitless Pride"
+genre = "Films/Games"
+disc = 3
+track = 16
+duration_ms = 63080
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/015 - Trick.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Trick"
+genre = "Films/Games"
+disc = 3
+track = 15
+duration_ms = 39493
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/014 - Nothingness..._.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Nothingness...?"
+genre = "Films/Games"
+disc = 3
+track = 14
+duration_ms = 198946
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/013 - Betrayer.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Betrayer"
+genre = "Films/Games"
+disc = 3
+track = 13
+duration_ms = 41000
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/012 - Getaway -another version-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Getaway -another version-"
+genre = "Films/Games"
+disc = 3
+track = 12
+duration_ms = 81960
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/011 - Escape -another version-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Escape -another version-"
+genre = "Films/Games"
+disc = 3
+track = 11
+duration_ms = 51840
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/010 - The Whims of Fate.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["Lyn Inaizumi"]
+title = "The Whims of Fate"
+genre = "Films/Games"
+disc = 3
+track = 10
+duration_ms = 193626
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/009 - Disquiet.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Disquiet"
+genre = "Films/Games"
+disc = 3
+track = 9
+duration_ms = 127413
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/008 - Accident On-Air.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Accident On-Air"
+genre = "Films/Games"
+disc = 3
+track = 8
+duration_ms = 46800
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/007 - RUN,RUN,RUN!.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "RUN,RUN,RUN!"
+genre = "Films/Games"
+disc = 3
+track = 7
+duration_ms = 117253
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/006 - Sweatshop -another version-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Sweatshop -another version-"
+genre = "Films/Games"
+disc = 3
+track = 6
+duration_ms = 80146
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/005 - Sweatshop.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Sweatshop"
+genre = "Films/Games"
+disc = 3
+track = 5
+duration_ms = 149440
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/004 - Mental Shutdown.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Mental Shutdown"
+genre = "Films/Games"
+disc = 3
+track = 4
+duration_ms = 79493
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/003 - So Boring.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "So Boring"
+genre = "Films/Games"
+disc = 3
+track = 3
+duration_ms = 86120
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/002 - Break it Down.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Break it Down"
+genre = "Films/Games"
+disc = 3
+track = 2
+duration_ms = 107026
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD3/001 - Beneath the Mask -rain, instrumental version-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Beneath the Mask -rain, instrumental version-"
+genre = "Films/Games"
+disc = 3
+track = 1
+duration_ms = 278160
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/042 - Tanaka's Shady Commodities.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Tanaka's Shady Commodities"
+genre = "Films/Games"
+disc = 2
+track = 42
+duration_ms = 49080
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/041 - Destinyland.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Destinyland"
+genre = "Films/Games"
+disc = 2
+track = 41
+duration_ms = 44386
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/040 - Time to Repent.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Time to Repent"
+genre = "Films/Games"
+disc = 2
+track = 40
+duration_ms = 56146
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/039 - Welcome Home, Master!.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Welcome Home, Master!"
+genre = "Films/Games"
+disc = 2
+track = 39
+duration_ms = 71853
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/038 - Home Electronics Store.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Home Electronics Store"
+genre = "Films/Games"
+disc = 2
+track = 38
+duration_ms = 74480
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/037 - Planetarium.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Planetarium"
+genre = "Films/Games"
+disc = 2
+track = 37
+duration_ms = 33613
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/036 - Crane Game.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Crane Game"
+genre = "Films/Games"
+disc = 2
+track = 36
+duration_ms = 38160
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/035 - TRIPLE SEVEN.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "TRIPLE SEVEN"
+genre = "Films/Games"
+disc = 2
+track = 35
+duration_ms = 46266
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/034 - Big Bang Burger March.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Big Bang Burger March"
+genre = "Films/Games"
+disc = 2
+track = 34
+duration_ms = 47240
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/033 - Sweet.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Sweet"
+genre = "Films/Games"
+disc = 2
+track = 33
+duration_ms = 141213
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/032 - What's Going On_.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "What's Going On?"
+genre = "Films/Games"
+disc = 2
+track = 32
+duration_ms = 126866
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/031 - The Spirit.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "The Spirit"
+genre = "Films/Games"
+disc = 2
+track = 31
+duration_ms = 84773
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/030 - Break it Down -elp version-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Break it Down -elp version-"
+genre = "Films/Games"
+disc = 2
+track = 30
+duration_ms = 103653
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/029 - Alright.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Alright"
+genre = "Films/Games"
+disc = 2
+track = 29
+duration_ms = 91186
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/028 - Hawaii.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Hawaii"
+genre = "Films/Games"
+disc = 2
+track = 28
+duration_ms = 57946
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/027 - New Beginning.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "New Beginning"
+genre = "Films/Games"
+disc = 2
+track = 27
+duration_ms = 187306
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/026 - Alright -elp version-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Alright -elp version-"
+genre = "Films/Games"
+disc = 2
+track = 26
+duration_ms = 90973
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/025 - The Collapse of Wrath.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "The Collapse of Wrath"
+genre = "Films/Games"
+disc = 2
+track = 25
+duration_ms = 54146
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/024 - Alleycat.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Alleycat"
+genre = "Films/Games"
+disc = 2
+track = 24
+duration_ms = 250480
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/023 - When Mother Was There.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "When Mother Was There"
+genre = "Films/Games"
+disc = 2
+track = 23
+duration_ms = 239266
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/022 - When Mother Was There -another version-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "When Mother Was There -another version-"
+genre = "Films/Games"
+disc = 2
+track = 22
+duration_ms = 110680
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/021 - Treading on Scorched Sand.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Treading on Scorched Sand"
+genre = "Films/Games"
+disc = 2
+track = 21
+duration_ms = 82920
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/020 - Memories of Summer.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Memories of Summer"
+genre = "Films/Games"
+disc = 2
+track = 20
+duration_ms = 61280
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/019 - Life Goes On.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Life Goes On"
+genre = "Films/Games"
+disc = 2
+track = 19
+duration_ms = 151720
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/018 - Keeper of Lust.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Keeper of Lust"
+genre = "Films/Games"
+disc = 2
+track = 18
+duration_ms = 241213
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/017 - Price -another version-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Price -another version-"
+genre = "Films/Games"
+disc = 2
+track = 17
+duration_ms = 98666
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/016 - Price.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Price"
+genre = "Films/Games"
+disc = 2
+track = 16
+duration_ms = 109546
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/015 - High Pressure.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "High Pressure"
+genre = "Films/Games"
+disc = 2
+track = 15
+duration_ms = 96653
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/014 - Suspicion.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Suspicion"
+genre = "Films/Games"
+disc = 2
+track = 14
+duration_ms = 149066
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/013 - Crossroads.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Crossroads"
+genre = "Films/Games"
+disc = 2
+track = 13
+duration_ms = 54040
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/012 - Beneath the Mask -rain-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["Lyn Inaizumi"]
+title = "Beneath the Mask -rain-"
+genre = "Films/Games"
+disc = 2
+track = 12
+duration_ms = 278733
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/011 - Days of Sisters.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Days of Sisters"
+genre = "Films/Games"
+disc = 2
+track = 11
+duration_ms = 129973
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/010 - Sunset Bridge.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Sunset Bridge"
+genre = "Films/Games"
+disc = 2
+track = 10
+duration_ms = 100720
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/009 - A Woman -another version-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "A Woman -another version-"
+genre = "Films/Games"
+disc = 2
+track = 9
+duration_ms = 252
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/008 - A Woman.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "A Woman"
+genre = "Films/Games"
+disc = 2
+track = 8
+duration_ms = 131226
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/007 - Wicked Plan.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Wicked Plan"
+genre = "Films/Games"
+disc = 2
+track = 7
+duration_ms = 145733
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/006 - My Homie.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "My Homie"
+genre = "Films/Games"
+disc = 2
+track = 6
+duration_ms = 128600
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/005 - Suspicious Person.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Suspicious Person"
+genre = "Films/Games"
+disc = 2
+track = 5
+duration_ms = 21640
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/004 - Have a Short Rest.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Have a Short Rest"
+genre = "Films/Games"
+disc = 2
+track = 4
+duration_ms = 131200
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/003 - Mementos.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Mementos"
+genre = "Films/Games"
+disc = 2
+track = 3
+duration_ms = 99853
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/002 - Butterfly Kiss.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Butterfly Kiss"
+genre = "Films/Games"
+disc = 2
+track = 2
+duration_ms = 147120
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD2/001 - Tokyo Daylight.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["Lyn Inaizumi"]
+title = "Tokyo Daylight"
+genre = "Films/Games"
+disc = 2
+track = 1
+duration_ms = 124146
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/036 - Pro Golfer Sarutahiko.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Pro Golfer Sarutahiko"
+genre = "Films/Games"
+disc = 1
+track = 36
+duration_ms = 45720
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/035 - Legend of Gambla Goemon.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Legend of Gambla Goemon"
+genre = "Films/Games"
+disc = 1
+track = 35
+duration_ms = 47093
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/034 - Power Intuition.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Power Intuition"
+genre = "Films/Games"
+disc = 1
+track = 34
+duration_ms = 32253
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/033 - Train of Life.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Train of Life"
+genre = "Films/Games"
+disc = 1
+track = 33
+duration_ms = 44320
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/032 - Punch Ouch.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Punch Ouch"
+genre = "Films/Games"
+disc = 1
+track = 32
+duration_ms = 59386
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/031 - Star Forneus.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Star Forneus"
+genre = "Films/Games"
+disc = 1
+track = 31
+duration_ms = 40720
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/030 - Endless Days.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Endless Days"
+genre = "Films/Games"
+disc = 1
+track = 30
+duration_ms = 44213
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/029 - Beneath the Mask.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["Lyn Inaizumi"]
+title = "Beneath the Mask"
+genre = "Films/Games"
+disc = 1
+track = 29
+duration_ms = 277880
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/028 - The Collapse of Lust.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "The Collapse of Lust"
+genre = "Films/Games"
+disc = 1
+track = 28
+duration_ms = 56013
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/027 - Regret.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Regret"
+genre = "Films/Games"
+disc = 1
+track = 27
+duration_ms = 167440
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/026 - Blooming Villain.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Blooming Villain"
+genre = "Films/Games"
+disc = 1
+track = 26
+duration_ms = 247853
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/025 - Blood of Villain.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Blood of Villain"
+genre = "Films/Games"
+disc = 1
+track = 25
+duration_ms = 109653
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/024 - Life Will Change -instrumental version-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Life Will Change -instrumental version-"
+genre = "Films/Games"
+disc = 1
+track = 24
+duration_ms = 150653
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/023 - Layer Cake.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Layer Cake"
+genre = "Films/Games"
+disc = 1
+track = 23
+duration_ms = 147893
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/022 - Confession _ Secret -piano version-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Confession / Secret -piano version-"
+genre = "Films/Games"
+disc = 1
+track = 22
+duration_ms = 66240
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/021 - Confession _ Secret.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Confession / Secret"
+genre = "Films/Games"
+disc = 1
+track = 21
+duration_ms = 151680
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/020 - Tokyo Emergency.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Tokyo Emergency"
+genre = "Films/Games"
+disc = 1
+track = 20
+duration_ms = 154813
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/019 - Triumph.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Triumph"
+genre = "Films/Games"
+disc = 1
+track = 19
+duration_ms = 69960
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/018 - Talk.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Talk"
+genre = "Films/Games"
+disc = 1
+track = 18
+duration_ms = 59160
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/017 - Last Surprise.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["Lyn Inaizumi"]
+title = "Last Surprise"
+genre = "Films/Games"
+disc = 1
+track = 17
+duration_ms = 235546
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/016 - King, Queen, and Slaves.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "King, Queen, and Slaves"
+genre = "Films/Games"
+disc = 1
+track = 16
+duration_ms = 119413
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/015 - King, Queen, and Slaves -another version-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "King, Queen, and Slaves -another version-"
+genre = "Films/Games"
+disc = 1
+track = 15
+duration_ms = 103586
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/014 - Will Power.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Will Power"
+genre = "Films/Games"
+disc = 1
+track = 14
+duration_ms = 165213
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/013 - Awakening.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Awakening"
+genre = "Films/Games"
+disc = 1
+track = 13
+duration_ms = 90453
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/012 - Tension.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Tension"
+genre = "Films/Games"
+disc = 1
+track = 12
+duration_ms = 124413
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/011 - Into the Metaverse.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Into the Metaverse"
+genre = "Films/Games"
+disc = 1
+track = 11
+duration_ms = 75186
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/010 - Meeting.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Meeting"
+genre = "Films/Games"
+disc = 1
+track = 10
+duration_ms = 45386
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/009 - Beneath the Mask -instrumental version-.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Beneath the Mask -instrumental version-"
+genre = "Films/Games"
+disc = 1
+track = 9
+duration_ms = 281813
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/008 - Hymn of the Soul.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["Haruko Komiya"]
+title = "Hymn of the Soul"
+genre = "Films/Games"
+disc = 1
+track = 8
+duration_ms = 338306
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/007 - Recollection & Foreboding.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Recollection & Foreboding"
+genre = "Films/Games"
+disc = 1
+track = 7
+duration_ms = 61480
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/006 - Interrogation Room.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Interrogation Room"
+genre = "Films/Games"
+disc = 1
+track = 6
+duration_ms = 97733
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/005 - Getaway & Arrest.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Getaway & Arrest"
+genre = "Films/Games"
+disc = 1
+track = 5
+duration_ms = 100093
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/004 - Life Will Change.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["Lyn Inaizumi"]
+title = "Life Will Change"
+genre = "Films/Games"
+disc = 1
+track = 4
+duration_ms = 262026
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/003 - Escape.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Escape"
+genre = "Films/Games"
+disc = 1
+track = 3
+duration_ms = 53333
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/002 - Phantom.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["ATLUS Sound Team"]
+title = "Phantom"
+genre = "Films/Games"
+disc = 1
+track = 2
+duration_ms = 137840
+
+[[raw_tags]]
+file_path = "ATLUS Sound Team - PERSONA5 ORIGINAL SOUNDTRACK (2017) [WEB FLAC]/CD1/001 - Wake Up, Get Up, Get Out There.flac"
+album = "PERSONA5 ORIGINAL SOUNDTRACK"
+album_artists = ["ATLUS Sound Team"]
+artists = ["Lyn Inaizumi"]
+title = "Wake Up, Get Up, Get Out There"
+genre = "Films/Games"
+disc = 1
+track = 1
+duration_ms = 277826
+
+[expect.release]
+ids = { release_id = ["ca69373e-daf4-4605-9353-5ae4a4f2556e", "9ca00068-228a-4eb9-8d89-060704b6efe5"] }

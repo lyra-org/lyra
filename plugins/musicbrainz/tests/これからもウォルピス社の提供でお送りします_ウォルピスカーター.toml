@@ -1,0 +1,169 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ウォルピスカーター - これからもウォルピス社の提供でお送りします。FLAC/13. THE JOURNEY HOME.flac"
+album = "これからもウォルピス社の提供でお送りします。"
+album_artists = ["ウォルピスカーター"]
+title = "THE JOURNEY HOME"
+genre = "JPop"
+track = 13
+duration_ms = 278666
+
+[[raw_tags]]
+file_path = "ウォルピスカーター - これからもウォルピス社の提供でお送りします。FLAC/12. DAYBREAK FRONTLINE.flac"
+album = "これからもウォルピス社の提供でお送りします。"
+album_artists = ["ウォルピスカーター"]
+title = "DAYBREAK FRONTLINE"
+genre = "JPop"
+track = 12
+duration_ms = 217600
+
+[[raw_tags]]
+file_path = "ウォルピスカーター - これからもウォルピス社の提供でお送りします。FLAC/11. 泥中に咲く.flac"
+album = "これからもウォルピス社の提供でお送りします。"
+album_artists = ["ウォルピスカーター"]
+title = "泥中に咲く"
+genre = "JPop"
+track = 11
+duration_ms = 286933
+
+[[raw_tags]]
+file_path = "ウォルピスカーター - これからもウォルピス社の提供でお送りします。FLAC/10. 未来予想図Ⅱ.flac"
+album = "これからもウォルピス社の提供でお送りします。"
+album_artists = ["ウォルピスカーター"]
+title = "未来予想図Ⅱ"
+genre = "JPop"
+track = 10
+duration_ms = 429733
+
+[[raw_tags]]
+file_path = "ウォルピスカーター - これからもウォルピス社の提供でお送りします。FLAC/09. 傀儡マイム.flac"
+album = "これからもウォルピス社の提供でお送りします。"
+album_artists = ["ウォルピスカーター"]
+title = "傀儡マイム"
+genre = "JPop"
+track = 9
+duration_ms = 211600
+
+[[raw_tags]]
+file_path = "ウォルピスカーター - これからもウォルピス社の提供でお送りします。FLAC/08. オレンジ.flac"
+album = "これからもウォルピス社の提供でお送りします。"
+album_artists = ["ウォルピスカーター"]
+title = "オレンジ"
+genre = "JPop"
+track = 8
+duration_ms = 247333
+
+[[raw_tags]]
+file_path = "ウォルピスカーター - これからもウォルピス社の提供でお送りします。FLAC/07. M.flac"
+album = "これからもウォルピス社の提供でお送りします。"
+album_artists = ["ウォルピスカーター"]
+title = "M"
+genre = "JPop"
+track = 7
+duration_ms = 277866
+
+[[raw_tags]]
+file_path = "ウォルピスカーター - これからもウォルピス社の提供でお送りします。FLAC/06. お天道様とドブネズミ.flac"
+album = "これからもウォルピス社の提供でお送りします。"
+album_artists = ["ウォルピスカーター"]
+title = "お天道様とドブネズミ"
+genre = "JPop"
+track = 6
+duration_ms = 255800
+
+[[raw_tags]]
+file_path = "ウォルピスカーター - これからもウォルピス社の提供でお送りします。FLAC/05. ストリーミングハート.flac"
+album = "これからもウォルピス社の提供でお送りします。"
+album_artists = ["ウォルピスカーター"]
+title = "ストリーミングハート"
+genre = "JPop"
+track = 5
+duration_ms = 181400
+
+[[raw_tags]]
+file_path = "ウォルピスカーター - これからもウォルピス社の提供でお送りします。FLAC/04. 命のユースティティア.flac"
+album = "これからもウォルピス社の提供でお送りします。"
+album_artists = ["ウォルピスカーター"]
+title = "命のユースティティア"
+genre = "JPop"
+track = 4
+duration_ms = 252066
+
+[[raw_tags]]
+file_path = "ウォルピスカーター - これからもウォルピス社の提供でお送りします。FLAC/03. STILL GREEN.flac"
+album = "これからもウォルピス社の提供でお送りします。"
+album_artists = ["ウォルピスカーター"]
+title = "STILL GREEN"
+genre = "JPop"
+track = 3
+duration_ms = 229733
+
+[[raw_tags]]
+file_path = "ウォルピスカーター - これからもウォルピス社の提供でお送りします。FLAC/02. 廃景に鉄塔、「千鶴」は田園にて待つ。.flac"
+album = "これからもウォルピス社の提供でお送りします。"
+album_artists = ["ウォルピスカーター"]
+title = "廃景に鉄塔、「千鶴」は田園にて待つ。"
+genre = "JPop"
+track = 2
+duration_ms = 229066
+
+[[raw_tags]]
+file_path = "ウォルピスカーター - これからもウォルピス社の提供でお送りします。FLAC/01. 天ノ弱.flac"
+album = "これからもウォルピス社の提供でお送りします。"
+album_artists = ["ウォルピスカーター"]
+title = "天ノ弱"
+genre = "JPop"
+track = 1
+duration_ms = 189733
+
+[expect.release]
+ids = { release_group_id = "e3e7ead0-d791-474e-9bdb-713752206471", release_id = "661ae188-082a-4196-9854-c638e84d3381" }
+fields = { release_title = "これからもウォルピス社の提供でお送りします。", release_date = "2018-12-26" }
+
+[expect.artists."168b8ecd-f8ac-4528-9838-e7669b6ef63f"]
+fields = { artist_name = "ウォルピスカーター", sort_name = "Wolpis Carter" }
+
+[expect.tracks."2741d958-538d-48fa-bc28-0f59a556c3c1"]
+fields = { disc = 1, track = 2, track_title = "廃墟に鉄塔、「千鶴」は田園にて待つ。" }
+
+[expect.tracks."2bbb72bd-94b8-4b44-8883-a9806c8626a3"]
+fields = { disc = 1, track = 6, track_title = "お天道様とドブネズミ" }
+
+[expect.tracks."42052c72-871d-4db7-ab13-d0eba5695e44"]
+fields = { disc = 1, track = 13, track_title = "THE JOURNEY HOME" }
+
+[expect.tracks."45edca32-474e-4142-a534-d0e2c6ce1cd9"]
+fields = { disc = 1, track = 3, track_title = "STILL GREEN" }
+
+[expect.tracks."47fb0daf-cd3d-4ab9-b88f-fe3164785cde"]
+fields = { disc = 1, track = 8, track_title = "オレンジ" }
+
+[expect.tracks."5f10f805-8586-4694-86ba-144c8d90441b"]
+fields = { disc = 1, track = 5, track_title = "ストリーミングハート" }
+
+[expect.tracks."62b8a3de-b806-4f4f-b8c5-0b3aa9439dab"]
+fields = { disc = 1, track = 10, track_title = "未来予想図||" }
+
+[expect.tracks."b921436d-4190-40b3-9286-ac9de187d291"]
+fields = { disc = 1, track = 1, track_title = "天ノ弱" }
+
+[expect.tracks."cbb6b506-d197-4e7a-8214-48d38e2c1f73"]
+fields = { disc = 1, track = 7, track_title = "M" }
+
+[expect.tracks."e8ad8876-9c59-4201-9f87-aa110570f7e4"]
+fields = { disc = 1, track = 4, track_title = "命のユースティティア" }
+
+[expect.tracks."e8c37f55-7763-41ad-a2c5-ecc2000ed5d4"]
+fields = { disc = 1, track = 11, track_title = "泥中に咲く" }
+
+[expect.tracks."edb839bb-2f0b-4a57-801a-8122840252c1"]
+fields = { disc = 1, track = 9, track_title = "傀儡マイム" }
+
+[expect.tracks."ee85efb5-6d23-4c13-bf2d-9fbde29f07c8"]
+fields = { disc = 1, track = 12, track_title = "DAYBREAK FRONTLINE" }

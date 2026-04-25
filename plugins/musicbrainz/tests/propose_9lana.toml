@@ -1,0 +1,28 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "9Lana propose [2024-08-24] (WEB - FLAC - Lossless)/01. propose.flac"
+album = "propose"
+album_artists = ["9Lana"]
+artists = ["9Lana"]
+title = "propose"
+copyright = "© 2024 Sony Music Labels Inc."
+genre = "Musiques du monde, Asie, Japon, J-pop"
+track = 1
+track_total = 1
+duration_ms = 234400
+
+[expect.release]
+ids = { release_id = "7005c1de-c23f-4b78-a386-ca3e78be30b0" }
+fields = { release_title = "プロポーズ", release_date = "2024-08-24" }
+
+[expect.artists."3fa52c01-4985-407e-a6e0-784564cc52c7"]
+fields = { artist_name = "9Lana", sort_name = "9Lana" }
+
+[expect.tracks."3a7b1670-377c-488a-a57d-02d1f7a3fd1a"]
+fields = { disc = 1, track = 1, track_title = "プロポーズ" }

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "musicbrainz",
+  "name": "MusicBrainz Provider",
+  "version": "0.0.1",
+  "description": "Matches local albums to MusicBrainz releases",
+  "entrypoint": "init.luau",
+  "scopes": [
+    "harmony.http",
+    "harmony.json",
+    "lyra.chromaprint",
+    "lyra.datastore",
+    "lyra.entries",
+    "lyra.genres",
+    "lyra.libraries",
+    "lyra.metadata"
+  ]
+}

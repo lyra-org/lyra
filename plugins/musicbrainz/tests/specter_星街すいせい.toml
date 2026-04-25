@@ -1,0 +1,189 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "星街すいせい - Specter (2023-01-25) [WEB FLAC]/1.11. Newton.flac"
+album = "Specter"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "Newton"
+copyright = "℗ 2023 cover corp."
+disc = 1
+disc_total = 1
+track = 11
+track_total = 11
+duration_ms = 216400
+
+[[raw_tags]]
+file_path = "星街すいせい - Specter (2023-01-25) [WEB FLAC]/1.10. ソワレ.flac"
+album = "Specter"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "ソワレ"
+copyright = "℗ 2023 cover corp."
+disc = 1
+disc_total = 1
+track = 10
+track_total = 11
+duration_ms = 227306
+
+[[raw_tags]]
+file_path = "星街すいせい - Specter (2023-01-25) [WEB FLAC]/1.09. Damn Good Day.flac"
+album = "Specter"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "Damn Good Day"
+copyright = "℗ 2023 cover corp."
+disc = 1
+disc_total = 1
+track = 9
+track_total = 11
+duration_ms = 182706
+
+[[raw_tags]]
+file_path = "星街すいせい - Specter (2023-01-25) [WEB FLAC]/1.08. 7days.flac"
+album = "Specter"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "7days"
+copyright = "℗ 2023 cover corp."
+disc = 1
+disc_total = 1
+track = 8
+track_total = 11
+duration_ms = 214853
+
+[[raw_tags]]
+file_path = "星街すいせい - Specter (2023-01-25) [WEB FLAC]/1.07. デビュタントボール.flac"
+album = "Specter"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "デビュタントボール"
+copyright = "℗ 2023 cover corp."
+disc = 1
+disc_total = 1
+track = 7
+track_total = 11
+duration_ms = 348640
+
+[[raw_tags]]
+file_path = "星街すいせい - Specter (2023-01-25) [WEB FLAC]/1.06. 放送室.flac"
+album = "Specter"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "放送室"
+copyright = "℗ 2023 cover corp."
+disc = 1
+disc_total = 1
+track = 6
+track_total = 11
+duration_ms = 209506
+
+[[raw_tags]]
+file_path = "星街すいせい - Specter (2023-01-25) [WEB FLAC]/1.05. TRUE GIRL SHOW.flac"
+album = "Specter"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "TRUE GIRL SHOW"
+copyright = "℗ 2023 cover corp."
+disc = 1
+disc_total = 1
+track = 5
+track_total = 11
+duration_ms = 229706
+
+[[raw_tags]]
+file_path = "星街すいせい - Specter (2023-01-25) [WEB FLAC]/1.04. 褪せたハナミドリ.flac"
+album = "Specter"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "褪せたハナミドリ"
+copyright = "℗ 2023 cover corp."
+disc = 1
+disc_total = 1
+track = 4
+track_total = 11
+duration_ms = 217200
+
+[[raw_tags]]
+file_path = "星街すいせい - Specter (2023-01-25) [WEB FLAC]/1.03. みちづれ.flac"
+album = "Specter"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "みちづれ"
+copyright = "℗ 2023 cover corp."
+disc = 1
+disc_total = 1
+track = 3
+track_total = 11
+duration_ms = 193960
+
+[[raw_tags]]
+file_path = "星街すいせい - Specter (2023-01-25) [WEB FLAC]/1.02. TEMPLATE.flac"
+album = "Specter"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "TEMPLATE"
+copyright = "℗ 2023 cover corp."
+disc = 1
+disc_total = 1
+track = 2
+track_total = 11
+duration_ms = 187440
+
+[[raw_tags]]
+file_path = "星街すいせい - Specter (2023-01-25) [WEB FLAC]/1.01. 灼熱にて純情(wii-wii-woo).flac"
+album = "Specter"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "灼熱にて純情(wii-wii-woo)"
+copyright = "℗ 2023 cover corp."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 11
+duration_ms = 228240
+
+[expect.release]
+ids = { release_group_id = "75082e3f-d4d3-4c38-a77b-c7f22aab28aa", release_id = "48f82249-137d-46a7-a582-05eca6044fb7" }
+fields = { release_title = "Specter", release_date = "2023-01-25" }
+
+[expect.artists."8eeb59f4-0071-4261-b1f8-91d8294622d2"]
+fields = { artist_name = "星街すいせい", sort_name = "Hoshimachi, Suisei" }
+
+[expect.tracks."2b042fd6-f97d-453a-8cf7-3903f5adf987"]
+fields = { disc = 1, track = 9, track_title = "Damn Good Day" }
+
+[expect.tracks."37feae51-c733-437e-bae2-3edbbdb78df9"]
+fields = { disc = 1, track = 6, track_title = "放送室" }
+
+[expect.tracks."47dca8dd-413f-4ef1-a291-75e1ccd33eb7"]
+fields = { disc = 1, track = 5, track_title = "TRUE GIRL SHOW" }
+
+[expect.tracks."7db2c551-05d6-4141-aee7-ccf7567be836"]
+fields = { disc = 1, track = 11, track_title = "Newton" }
+
+[expect.tracks."82ff1383-7815-48dc-8a23-686cbb7f9617"]
+fields = { disc = 1, track = 7, track_title = "デビュタントボール" }
+
+[expect.tracks."88d6dd15-25dc-4a11-b15f-4bcb7cfd7b61"]
+fields = { disc = 1, track = 10, track_title = "ソワレ" }
+
+[expect.tracks."bb904319-789b-425b-8dc4-bff49d1afa3f"]
+fields = { disc = 1, track = 3, track_title = "みちづれ" }
+
+[expect.tracks."befc6b98-fa97-4285-ab4e-7577d504687b"]
+fields = { disc = 1, track = 1, track_title = "灼熱にて純情 (wii-wii-woo)" }
+
+[expect.tracks."c88c4dca-de54-4bf6-8731-3b8c76c040bf"]
+fields = { disc = 1, track = 2, track_title = "TEMPLATE" }
+
+[expect.tracks."cf59f43a-81ca-4096-934c-9482c8eb5d70"]
+fields = { disc = 1, track = 4, track_title = "褪せたハナミドリ" }
+
+[expect.tracks."e78fbb06-3618-4f37-b18d-9365f44ef24f"]
+fields = { disc = 1, track = 8, track_title = "7days" }

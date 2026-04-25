@@ -1,0 +1,24 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "mishiri - dance dance dance (2026) [WEB FLAC]/1. mishiri - dance dance dance.flac"
+album = "dance dance dance"
+album_artists = ["mishiri"]
+artists = ["mishiri"]
+title = "dance dance dance"
+copyright = "tsubuan.music"
+track = 1
+track_total = 1
+duration_ms = 179919
+
+[expect.release]
+ids = { release_group_id = "", release_id = "" }
+
+[expect.artists.""]
+
+[expect.tracks.""]

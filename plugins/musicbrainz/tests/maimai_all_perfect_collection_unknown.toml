@@ -1,0 +1,2230 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 6/17 - Shoichiro Hirata feat.Sana - Believe the Rainbow（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Shoichiro Hirata feat.Sana"]
+title = "Believe the Rainbow（LONG Version）"
+genre = "Soundtrack"
+disc = 6
+disc_total = 6
+track = 17
+track_total = 17
+duration_ms = 288426
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 6/16 - 削除 - AFTER PANDORA.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["削除"]
+title = "AFTER PANDORA"
+genre = "Soundtrack"
+disc = 6
+disc_total = 6
+track = 16
+track_total = 17
+duration_ms = 246333
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 6/15 - MintJam feat.光吉猛修 - Justified feat. 光吉猛修 -Expanded Ver.-.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["MintJam feat.光吉猛修"]
+title = "Justified feat. 光吉猛修 -Expanded Ver.-"
+genre = "Soundtrack"
+disc = 6
+disc_total = 6
+track = 15
+track_total = 17
+duration_ms = 319653
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 6/14 - good-cool ft. Pete Klassen - Kinda Way（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["good-cool ft. Pete Klassen"]
+title = "Kinda Way（LONG Version）"
+genre = "Soundtrack"
+disc = 6
+disc_total = 6
+track = 14
+track_total = 17
+duration_ms = 245813
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 6/13 - 削除 - 天火明命（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["削除"]
+title = "天火明命（LONG Version）"
+genre = "Soundtrack"
+disc = 6
+disc_total = 6
+track = 13
+track_total = 17
+duration_ms = 254373
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 6/12 - cosMo＠暴走P - ねぇ、壊れタ人形ハ何処へ棄テらレるノ？（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["cosMo＠暴走P"]
+title = "ねぇ、壊れタ人形ハ何処へ棄テらレるノ？（LONG Version）"
+genre = "Soundtrack"
+disc = 6
+disc_total = 6
+track = 12
+track_total = 17
+duration_ms = 253773
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 6/11 - ルゼ - HERA（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["ルゼ"]
+title = "HERA（LONG Version）"
+genre = "Soundtrack"
+disc = 6
+disc_total = 6
+track = 11
+track_total = 17
+duration_ms = 345120
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 6/10 - t+pazolite - Our Wrenally（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["t+pazolite"]
+title = "Our Wrenally（LONG Version）"
+genre = "Soundtrack"
+disc = 6
+disc_total = 6
+track = 10
+track_total = 17
+duration_ms = 214773
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 6/09 - WAiKURO - AMAZING MIGHTYYYY!!!!（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["WAiKURO"]
+title = "AMAZING MIGHTYYYY!!!!（LONG Version）"
+genre = "Soundtrack"
+disc = 6
+disc_total = 6
+track = 9
+track_total = 17
+duration_ms = 324760
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 6/08 - HiTECH NINJA - Hyper Active（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["HiTECH NINJA"]
+title = "Hyper Active（LONG Version）"
+genre = "Soundtrack"
+disc = 6
+disc_total = 6
+track = 8
+track_total = 17
+duration_ms = 228240
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 6/07 - INNOCENT NOIZE - Jumble Rumble（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["INNOCENT NOIZE"]
+title = "Jumble Rumble（LONG Version）"
+genre = "Soundtrack"
+disc = 6
+disc_total = 6
+track = 7
+track_total = 17
+duration_ms = 205186
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 6/06 - t+pazolite - Contrapasso -purgatorio-.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["t+pazolite"]
+title = "Contrapasso -purgatorio-"
+genre = "Soundtrack"
+disc = 6
+disc_total = 6
+track = 6
+track_total = 17
+duration_ms = 370440
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 6/05 - xi - Glorious Crown（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["xi"]
+title = "Glorious Crown（LONG Version）"
+genre = "Soundtrack"
+disc = 6
+disc_total = 6
+track = 5
+track_total = 17
+duration_ms = 247066
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 6/04 - Tatsh - GEMINI-PlatinumLong ver-.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Tatsh"]
+title = "GEMINI-PlatinumLong ver-"
+genre = "Soundtrack"
+disc = 6
+disc_total = 6
+track = 4
+track_total = 17
+duration_ms = 276066
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 6/03 - 削除 - 7thSense（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["削除"]
+title = "7thSense（LONG Version）"
+genre = "Soundtrack"
+disc = 6
+disc_total = 6
+track = 3
+track_total = 17
+duration_ms = 276906
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 6/02 - void(Mournfinale) - Revive The Rave（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["void(Mournfinale)"]
+title = "Revive The Rave（LONG Version）"
+genre = "Soundtrack"
+disc = 6
+disc_total = 6
+track = 2
+track_total = 17
+duration_ms = 306906
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 6/01 - sasakure.UK - ガラテアの螺旋（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["sasakure.UK"]
+title = "ガラテアの螺旋（LONG Version）"
+genre = "Soundtrack"
+disc = 6
+disc_total = 6
+track = 1
+track_total = 17
+duration_ms = 223240
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/21 - EB(aka EarBreaker) - D✪N’T ST✪P R✪CKIN’（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["EB(aka EarBreaker)"]
+title = "D✪N’T ST✪P R✪CKIN’（LONG Version）"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 21
+track_total = 21
+duration_ms = 181986
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/20 - t+pazolite - Oshama Scramble!（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["t+pazolite"]
+title = "Oshama Scramble!（LONG Version）"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 20
+track_total = 21
+duration_ms = 257040
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/19 - Project Grimoire - Caliburne ～Story of the Legendary sword～（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Project Grimoire"]
+title = "Caliburne ～Story of the Legendary sword～（LONG Version）"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 19
+track_total = 21
+duration_ms = 291813
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/18 - D.watt(IOSYS)feat.ちよこ - ぐるぐるWASH！コインランドリー・ディスコ（Extended Mix）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["D.watt(IOSYS)feat.ちよこ"]
+title = "ぐるぐるWASH！コインランドリー・ディスコ（Extended Mix）"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 18
+track_total = 21
+duration_ms = 312853
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/17 - t+pazolite - Garakuta Doll Play（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["t+pazolite"]
+title = "Garakuta Doll Play（LONG Version）"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 17
+track_total = 21
+duration_ms = 291000
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/16 - A-One - BREAK YOU!!（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["A-One"]
+title = "BREAK YOU!!（LONG Version）"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 16
+track_total = 21
+duration_ms = 206480
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/15 - SHIKI - Death Scythe（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["SHIKI"]
+title = "Death Scythe（LONG Version）"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 15
+track_total = 21
+duration_ms = 208773
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/14 - SHIKI - LUCIA（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["SHIKI"]
+title = "LUCIA（LONG Version）"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 14
+track_total = 21
+duration_ms = 273080
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/13 - 幡谷尚史 Arranged by [H.]「バーニングレンジャー」 - Burning Hearts ～炎のANGEL～（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["幡谷尚史 Arranged by [H.]「バーニングレンジャー」"]
+title = "Burning Hearts ～炎のANGEL～（LONG Version）"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 13
+track_total = 21
+duration_ms = 236786
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/12 - sampling masters MEGA「パワードリフト」 - Like the Wind [Reborn]（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["sampling masters MEGA「パワードリフト」"]
+title = "Like the Wind [Reborn]（LONG Version）"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 12
+track_total = 21
+duration_ms = 243373
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/11 - Cranky - We Gonna Party（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Cranky"]
+title = "We Gonna Party（LONG Version）"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 11
+track_total = 21
+duration_ms = 233880
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/10 - SEGA Sound Unit[H.] - ジングルベル（LONG Version）.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["SEGA Sound Unit[H.]"]
+title = "ジングルベル（LONG Version）"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 10
+track_total = 21
+duration_ms = 340773
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/09 - Shoichiro Hirata feat.Sana - Believe the Rainbow.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Shoichiro Hirata feat.Sana"]
+title = "Believe the Rainbow"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 9
+track_total = 21
+duration_ms = 147653
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/08 - 削除 - PANDORA PARADOXXX.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["削除"]
+title = "PANDORA PARADOXXX"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 8
+track_total = 21
+duration_ms = 147240
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/07 - sasakure.UK - the EmpErroR.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["sasakure.UK"]
+title = "the EmpErroR"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 7
+track_total = 21
+duration_ms = 128466
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/06 - kanone - 雷切-RAIKIRI-.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["kanone"]
+title = "雷切-RAIKIRI-"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 6
+track_total = 21
+duration_ms = 139093
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/05 - cybermiso - FFT.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["cybermiso"]
+title = "FFT"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 5
+track_total = 21
+duration_ms = 137866
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/04 - BlackY fused with WAiKURO - Alea jacta est!.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["BlackY fused with WAiKURO"]
+title = "Alea jacta est!"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 4
+track_total = 21
+duration_ms = 138826
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/03 - Tsukasa - Schwarzschild.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Tsukasa"]
+title = "Schwarzschild"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 3
+track_total = 21
+duration_ms = 123493
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/02 - Cranky - Oshama Scramble! (Cranky Remix).flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Cranky"]
+title = "Oshama Scramble! (Cranky Remix)"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 2
+track_total = 21
+duration_ms = 141640
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 5/01 - t+pazolite - QZKago Requiem.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["t+pazolite"]
+title = "QZKago Requiem"
+genre = "Soundtrack"
+disc = 5
+disc_total = 6
+track = 1
+track_total = 21
+duration_ms = 140093
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/34 - かねこちはる - SILENT BLUE.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["かねこちはる"]
+title = "SILENT BLUE"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 34
+track_total = 34
+duration_ms = 137506
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/33 - kanone feat. せんざい - 花と、雪と、ドラムンベース。.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["kanone feat. せんざい"]
+title = "花と、雪と、ドラムンベース。"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 33
+track_total = 34
+duration_ms = 140240
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/32 - t+pazolite - FREEDOM DiVE (tpz Overcute Remix).flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["t+pazolite"]
+title = "FREEDOM DiVE (tpz Overcute Remix)"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 32
+track_total = 34
+duration_ms = 141773
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/31 - sky_delta - Ragnarok.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["sky_delta"]
+title = "Ragnarok"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 31
+track_total = 34
+duration_ms = 125346
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/30 - ガリガリさむし - larva.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["ガリガリさむし"]
+title = "larva"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 30
+track_total = 34
+duration_ms = 148453
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/29 - kamome sano - keep hopping.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["kamome sano"]
+title = "keep hopping"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 29
+track_total = 34
+duration_ms = 132320
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/28 - 霜月はるか - FestivaLight.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["霜月はるか"]
+title = "FestivaLight"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 28
+track_total = 34
+duration_ms = 116160
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/27 - M2U - Mare Maris.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["M2U"]
+title = "Mare Maris"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 27
+track_total = 34
+duration_ms = 134666
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/26 - MintJam feat.光吉猛修 - Justified.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["MintJam feat.光吉猛修"]
+title = "Justified"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 26
+track_total = 34
+duration_ms = 135586
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/25 - 矢鴇つかさ feat. kalon. - SPILL OVER COLORS.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["矢鴇つかさ feat. kalon."]
+title = "SPILL OVER COLORS"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 25
+track_total = 34
+duration_ms = 138946
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/24 - naotyu- feat. 佐々木恵梨 - Candy Tall Woman.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["naotyu- feat. 佐々木恵梨"]
+title = "Candy Tall Woman"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 24
+track_total = 34
+duration_ms = 128200
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/23 - good-cool ft. Pete Klassen - Kinda Way.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["good-cool ft. Pete Klassen"]
+title = "Kinda Way"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 23
+track_total = 34
+duration_ms = 132586
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/22 - Project Grimoire - Excalibur ～Revived resolution～.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Project Grimoire"]
+title = "Excalibur ～Revived resolution～"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 22
+track_total = 34
+duration_ms = 133453
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/21 - Palme - Signature.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Palme"]
+title = "Signature"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 21
+track_total = 34
+duration_ms = 140440
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/20 - DECOx27 feat.Tia - Magical Flavor.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["DECO*27 feat.Tia"]
+title = "Magical Flavor"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 20
+track_total = 34
+duration_ms = 127573
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/19 - 山根ミチル - ユビキリ.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["山根ミチル"]
+title = "ユビキリ"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 19
+track_total = 34
+duration_ms = 124506
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/18 - owlxtree - デスパレイト.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["owl*tree"]
+title = "デスパレイト"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 18
+track_total = 34
+duration_ms = 123453
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/17 - Sampling Masters MEGA - Moon of Noon.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Sampling Masters MEGA"]
+title = "Moon of Noon"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 17
+track_total = 34
+duration_ms = 122653
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/16 - A4paper - Ultranova.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["A4paper"]
+title = "Ultranova"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 16
+track_total = 34
+duration_ms = 122293
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/15 - A-One - KING is BACK!!.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["A-One"]
+title = "KING is BACK!!"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 15
+track_total = 34
+duration_ms = 130693
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/14 - Halozy - 曖昧mind.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Halozy"]
+title = "曖昧mind"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 14
+track_total = 34
+duration_ms = 128720
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/13 - DiGiTAL WiNG - Limit Break.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["DiGiTAL WiNG"]
+title = "Limit Break"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 13
+track_total = 34
+duration_ms = 126626
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/12 - Junky - オトヒメモリー☆ウタゲーション.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Junky"]
+title = "オトヒメモリー☆ウタゲーション"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 12
+track_total = 34
+duration_ms = 139013
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/11 - 豚乙女 - 夢花火.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["豚乙女"]
+title = "夢花火"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 11
+track_total = 34
+duration_ms = 137186
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/10 - cybermiso - Panopticon.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["cybermiso"]
+title = "Panopticon"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 10
+track_total = 34
+duration_ms = 135226
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/09 - 削除 - 天火明命.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["削除"]
+title = "天火明命"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 9
+track_total = 34
+duration_ms = 141146
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/08 - cubesato - 四月の雨.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["cubesato"]
+title = "四月の雨"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 8
+track_total = 34
+duration_ms = 128106
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/07 - cosMo＠暴走P - ねぇ、壊れタ人形ハ何処へ棄テらレるノ？.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["cosMo＠暴走P"]
+title = "ねぇ、壊れタ人形ハ何処へ棄テらレるノ？"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 7
+track_total = 34
+duration_ms = 139240
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/06 - Feryquitous - Lividi.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Feryquitous"]
+title = "Lividi"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 6
+track_total = 34
+duration_ms = 123293
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/05 - Ino(chronoize) - Imitation-Loud Lounge.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Ino(chronoize)"]
+title = "Imitation:Loud Lounge"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 5
+track_total = 34
+duration_ms = 120880
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/04 - ルゼ - HERA.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["ルゼ"]
+title = "HERA"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 4
+track_total = 34
+duration_ms = 141026
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/03 - Aliesritex (Ym1024 feat. lamiex) - Selector.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Aliesrite* (Ym1024 feat. lamie*)"]
+title = "Selector"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 3
+track_total = 34
+duration_ms = 130706
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/02 - t+pazolite - Our Wrenally.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["t+pazolite"]
+title = "Our Wrenally"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 2
+track_total = 34
+duration_ms = 133880
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 4/01 - さつき が てんこもり feat. YURiCa,花たん - いっしそう電☆舞舞神拳！.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["さつき が てんこもり feat. YURiCa/花たん"]
+title = "いっしそう電☆舞舞神拳！"
+genre = "Soundtrack"
+disc = 4
+disc_total = 6
+track = 1
+track_total = 34
+duration_ms = 138733
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/37 - vox2（小野秀幸） - Prophesy One.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["vox2（小野秀幸）"]
+title = "Prophesy One"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 37
+track_total = 37
+duration_ms = 131186
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/36 - WAiKURO - AMAZING MIGHTYYYY!!!!.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["WAiKURO"]
+title = "AMAZING MIGHTYYYY!!!!"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 36
+track_total = 37
+duration_ms = 141426
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/35 - D-Cee - CITRUS MONSTER.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["D-Cee"]
+title = "CITRUS MONSTER"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 35
+track_total = 37
+duration_ms = 126440
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/34 - Jun Senoue - Nitrous Fury.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Jun Senoue"]
+title = "Nitrous Fury"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 34
+track_total = 37
+duration_ms = 116626
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/33 - HiTECH NINJA - Hyper Active.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["HiTECH NINJA"]
+title = "Hyper Active"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 33
+track_total = 37
+duration_ms = 143093
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/32 - INNOCENT NOIZE - Jumble Rumble.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["INNOCENT NOIZE"]
+title = "Jumble Rumble"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 32
+track_total = 37
+duration_ms = 132066
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/31 - t+pazolite - Contrapasso -paradiso-.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["t+pazolite"]
+title = "Contrapasso -paradiso-"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 31
+track_total = 37
+duration_ms = 128160
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/30 - 小野隊長とJimmy親分 - 高気圧ねこロック.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["小野隊長とJimmy親分"]
+title = "高気圧ねこロック"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 30
+track_total = 37
+duration_ms = 132400
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/29 - Takahiro Eguchi feat. 三澤秋 - connecting with you.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Takahiro Eguchi feat. 三澤秋"]
+title = "connecting with you"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 29
+track_total = 37
+duration_ms = 149706
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/28 - xi - Glorious Crown.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["xi"]
+title = "Glorious Crown"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 28
+track_total = 37
+duration_ms = 121960
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/27 - tilt-six feat.串伊トモミ - スリップフリップ.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["tilt-six feat.串伊トモミ"]
+title = "スリップフリップ"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 27
+track_total = 37
+duration_ms = 141920
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/26 - A-One - FEEL the BEATS.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["A-One"]
+title = "FEEL the BEATS"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 26
+track_total = 37
+duration_ms = 133000
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/25 - Kai「Wonderland Wars」 - Garden Of The Dragon.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Kai「Wonderland Wars」"]
+title = "Garden Of The Dragon"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 25
+track_total = 37
+duration_ms = 113573
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/24 - Tatsh - GEMINI -M-.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Tatsh"]
+title = "GEMINI -M-"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 24
+track_total = 37
+duration_ms = 142306
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/23 - 削除 - 7thSense.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["削除"]
+title = "7thSense"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 23
+track_total = 37
+duration_ms = 131786
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/22 - 東京アクティブNEETs - After Burner.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["東京アクティブNEETs"]
+title = "After Burner"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 22
+track_total = 37
+duration_ms = 139640
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/21 - void(Mournfinale) - Revive The Rave.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["void(Mournfinale)"]
+title = "Revive The Rave"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 21
+track_total = 37
+duration_ms = 133600
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/20 - Sta feat.b - アージェントシンメトリー.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Sta feat.b"]
+title = "アージェントシンメトリー"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 20
+track_total = 37
+duration_ms = 133693
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/19 - AcuticNotes - Axeria.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["AcuticNotes"]
+title = "Axeria"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 19
+track_total = 37
+duration_ms = 116746
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/18 - xi - Aiolos.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["xi"]
+title = "Aiolos"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 18
+track_total = 37
+duration_ms = 132986
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/17 - Ras - LANCE.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Ras"]
+title = "LANCE"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 17
+track_total = 37
+duration_ms = 130173
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/16 - sasakure.UK - ガラテアの螺旋.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["sasakure.UK"]
+title = "ガラテアの螺旋"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 16
+track_total = 37
+duration_ms = 121320
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/15 - EB(aka EarBreaker) - D✪N’T  ST✪P  R✪CKIN’.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["EB(aka EarBreaker)"]
+title = "D✪N’T  ST✪P  R✪CKIN’"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 15
+track_total = 37
+duration_ms = 129013
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/14 - t+pazolite - Oshama Scramble!.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["t+pazolite"]
+title = "Oshama Scramble!"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 14
+track_total = 37
+duration_ms = 124146
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/13 - Hiro feat.越田Rute隆人&ビートまりお - welcome to maimai!! with マイマイマー.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Hiro feat.越田Rute隆人&ビートまりお"]
+title = "welcome to maimai!! with マイマイマー"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 13
+track_total = 37
+duration_ms = 147360
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/12 - 芳川よしの - ナミダと流星.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["芳川よしの"]
+title = "ナミダと流星"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 12
+track_total = 37
+duration_ms = 126306
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/11 - Project Grimoire - Caliburne ～Story of the Legendary sword～.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Project Grimoire"]
+title = "Caliburne ～Story of the Legendary sword～"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 11
+track_total = 37
+duration_ms = 144453
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/10 - 光吉猛修 - おても☆Yan.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["光吉猛修"]
+title = "おても☆Yan"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 10
+track_total = 37
+duration_ms = 118986
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/09 - Shandy kubota - Dragoon.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Shandy kubota"]
+title = "Dragoon"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 9
+track_total = 37
+duration_ms = 124013
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/08 - ヒゲドライバー - oboro.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["ヒゲドライバー"]
+title = "oboro"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 8
+track_total = 37
+duration_ms = 115546
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/07 - カタオカツグミ - ピーマンたべたら.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["カタオカツグミ"]
+title = "ピーマンたべたら"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 7
+track_total = 37
+duration_ms = 106160
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/06 - 樽木栄一郎 - planet dancer.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["樽木栄一郎"]
+title = "planet dancer"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 6
+track_total = 37
+duration_ms = 124266
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/05 - Hiro - VERTeX.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Hiro"]
+title = "VERTeX"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 5
+track_total = 37
+duration_ms = 122146
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/04 - Jimmy Weckl feat.高貴みな - BETTER CHOICE.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Jimmy Weckl feat.高貴みな"]
+title = "BETTER CHOICE"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 4
+track_total = 37
+duration_ms = 117520
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/03 - 光吉猛修「ホルカ・トルカ」 - The Great Journey.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["光吉猛修「ホルカ・トルカ」"]
+title = "The Great Journey"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 3
+track_total = 37
+duration_ms = 120120
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/02 - Sta feat.tigerlily and DOT96 - Dreampainter.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Sta feat.tigerlily and DOT96"]
+title = "Dreampainter"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 2
+track_total = 37
+duration_ms = 113386
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 3/01 - Shoichiro Hirata feat.SUIMI - MIRROR of MAGIC.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Shoichiro Hirata feat.SUIMI"]
+title = "MIRROR of MAGIC"
+genre = "Soundtrack"
+disc = 3
+disc_total = 6
+track = 1
+track_total = 37
+duration_ms = 122013
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/35 - 福山光晴 - Danza zandA.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["福山光晴"]
+title = "Danza zandA"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 35
+track_total = 35
+duration_ms = 117653
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/34 - ビートまりお＋ARM feat.高橋名人 - タカハせ！名人マン.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["ビートまりお＋ARM feat.高橋名人"]
+title = "タカハせ！名人マン"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 34
+track_total = 35
+duration_ms = 147600
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/33 - 山根ミチル - 火炎地獄.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["山根ミチル"]
+title = "火炎地獄"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 33
+track_total = 35
+duration_ms = 112333
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/32 - Yuji Masubuchi(BNSI)「電車でGO!」「ファンタジーゾーン」 - 電車で電車でOPA!OPA!OPA! -GMT mashup-.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Yuji Masubuchi(BNSI)「電車でGO!」「ファンタジーゾーン」"]
+title = "電車で電車でOPA!OPA!OPA! -GMT mashup-"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 32
+track_total = 35
+duration_ms = 132293
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/31 - COSIO（ZUNTATA・TAITO)「ファンタジーゾーン」「電車でGO!」 - オパ! オパ! RACER -GMT mashup-.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["COSIO（ZUNTATA・TAITO)「ファンタジーゾーン」「電車でGO!」"]
+title = "オパ! オパ! RACER -GMT mashup-"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 31
+track_total = 35
+duration_ms = 113160
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/30 - Hiro(SEGA)「RIDGE RACER」「電車でGO!」 - リッジでリッジでGO!GO!GO! -GMT mashup-.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Hiro(SEGA)「RIDGE RACER」「電車でGO!」"]
+title = "リッジでリッジでGO!GO!GO! -GMT mashup-"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 30
+track_total = 35
+duration_ms = 126000
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/29 - Yuji Masubuchi(BNGI)「RIDGE RACER」 - RIDGE RACER STEPS -GMT remix-.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Yuji Masubuchi(BNGI)「RIDGE RACER」"]
+title = "RIDGE RACER STEPS -GMT remix-"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 29
+track_total = 35
+duration_ms = 127133
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/28 - COSIO（ZUNTATA・TAITO)、沢城千春「電車でGO!」 - 電車で電車でGO!GO!GO!GC! -GMT remix-.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["COSIO（ZUNTATA・TAITO)、沢城千春「電車でGO!」"]
+title = "電車で電車でGO!GO!GO!GC! -GMT remix-"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 28
+track_total = 35
+duration_ms = 113013
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/27 - Hiro(SEGA)「ファンタジーゾーン」 - ファンタジーゾーン OPA-OPA! -GMT remix-.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Hiro(SEGA)「ファンタジーゾーン」"]
+title = "ファンタジーゾーン OPA-OPA! -GMT remix-"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 27
+track_total = 35
+duration_ms = 125720
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/26 - ALiCE'S EMOTiON feat.Ayumi Nomiya - End of Twilight.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["ALiCE'S EMOTiON feat.Ayumi Nomiya"]
+title = "End of Twilight"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 26
+track_total = 35
+duration_ms = 120533
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/25 - Cranky feat.まらしぃ＆てっぺい先生 - MYTHOS.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Cranky feat.まらしぃ＆てっぺい先生"]
+title = "MYTHOS"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 25
+track_total = 35
+duration_ms = 123653
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/24 - Cranky - Life Feels Good.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Cranky"]
+title = "Life Feels Good"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 24
+track_total = 35
+duration_ms = 119133
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/23 - RAMM feat.若井友希 - Heartbeats.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["RAMM feat.若井友希"]
+title = "Heartbeats"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 23
+track_total = 35
+duration_ms = 109560
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/22 - Masayoshi Minoshima - CYCLES.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Masayoshi Minoshima"]
+title = "CYCLES"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 22
+track_total = 35
+duration_ms = 122453
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/21 - Sta - Monochrome Rainbow.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Sta"]
+title = "Monochrome Rainbow"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 21
+track_total = 35
+duration_ms = 110760
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/20 - D.watt(IOSYS)feat.ちよこ - ぐるぐるWASH！コインランドリー・ディスコ.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["D.watt(IOSYS)feat.ちよこ"]
+title = "ぐるぐるWASH！コインランドリー・ディスコ"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 20
+track_total = 35
+duration_ms = 124853
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/19 - SEGA Sound Unit [H.] - DADDY MULK -Groove remix-.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["SEGA Sound Unit [H.]"]
+title = "DADDY MULK -Groove remix-"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 19
+track_total = 35
+duration_ms = 129800
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/18 - Hiro - セガサターン起動音[H.][Remix].flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Hiro"]
+title = "セガサターン起動音[H.][Remix]"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 18
+track_total = 35
+duration_ms = 83600
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/17 - Jimmy Weckl - System “Z”.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Jimmy Weckl"]
+title = "System “Z”"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 17
+track_total = 35
+duration_ms = 114453
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/16 - t+pazolite - Garakuta Doll Play.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["t+pazolite"]
+title = "Garakuta Doll Play"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 16
+track_total = 35
+duration_ms = 129133
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/15 - SOUND HOLIC feat.Nana Takahashi - L'epilogue.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["SOUND HOLIC feat.Nana Takahashi"]
+title = "L'epilogue"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 15
+track_total = 35
+duration_ms = 132120
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/14 - SOUND HOLIC feat.Nana Takahashi - JUMPIN' JUMPIN'.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["SOUND HOLIC feat.Nana Takahashi"]
+title = "JUMPIN' JUMPIN'"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 14
+track_total = 35
+duration_ms = 126120
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/13 - A-One - BREAK YOU!!.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["A-One"]
+title = "BREAK YOU!!"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 13
+track_total = 35
+duration_ms = 136106
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/12 - SHIKI - Death Scythe.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["SHIKI"]
+title = "Death Scythe"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 12
+track_total = 35
+duration_ms = 126506
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/11 - SHIKI - LUCIA.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["SHIKI"]
+title = "LUCIA"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 11
+track_total = 35
+duration_ms = 122533
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/10 - 幡谷尚史 Arranged by [H.]「バーニングレンジャー」 - Burning Hearts ～炎のANGEL～.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["幡谷尚史 Arranged by [H.]「バーニングレンジャー」"]
+title = "Burning Hearts ～炎のANGEL～"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 10
+track_total = 35
+duration_ms = 107146
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/09 - ビートまりお（COOL&CREATE)+ARM(IOSYS) - みんなのマイマイマー.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["ビートまりお（COOL&CREATE)+ARM(IOSYS)"]
+title = "みんなのマイマイマー"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 9
+track_total = 35
+duration_ms = 117826
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/08 - 青木千紘、愛海 - Backyun! －悪い女－.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["青木千紘、愛海"]
+title = "Backyun! －悪い女－"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 8
+track_total = 35
+duration_ms = 110986
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/07 - にしもと先生、タクマ、どんちゃん「ちょっと盛りました。」 - maiム・maiム feat.週刊少年マガジン.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["にしもと先生、タクマ、どんちゃん「ちょっと盛りました。」"]
+title = "maiム・maiム feat.週刊少年マガジン"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 7
+track_total = 35
+duration_ms = 132880
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/06 - Shoichiro Hirata feat.SUIMI - Cosmic Train.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Shoichiro Hirata feat.SUIMI"]
+title = "Cosmic Train"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 6
+track_total = 35
+duration_ms = 128706
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/05 - Shoichiro Hirata - Beat of getting entangled.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Shoichiro Hirata"]
+title = "Beat of getting entangled"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 5
+track_total = 35
+duration_ms = 124600
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/04 - Jimmy Weckl - Get Happy.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Jimmy Weckl"]
+title = "Get Happy"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 4
+track_total = 35
+duration_ms = 125053
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/03 - YMCK - Pixel Voyage.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["YMCK"]
+title = "Pixel Voyage"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 3
+track_total = 35
+duration_ms = 136400
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/02 - t+pazolite - Blew Moon.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["t+pazolite"]
+title = "Blew Moon"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 2
+track_total = 35
+duration_ms = 124933
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 2/01 - LOPIT(SEGA) - 記憶、記録.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["LOPIT(SEGA)"]
+title = "記憶、記録"
+genre = "Soundtrack"
+disc = 2
+disc_total = 6
+track = 1
+track_total = 35
+duration_ms = 112520
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/41 - Hiro、友香 - 泣き虫O'clock.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Hiro、友香"]
+title = "泣き虫O'clock"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 41
+track_total = 41
+duration_ms = 135786
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/40 - Tsukasa(Arte Refact) - Black Out.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Tsukasa(Arte Refact)"]
+title = "Black Out"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 40
+track_total = 41
+duration_ms = 84666
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/39 - Taishi - Nerverakes.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Taishi"]
+title = "Nerverakes"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 39
+track_total = 41
+duration_ms = 84226
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/38 - Clean Tears - Turn around.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Clean Tears"]
+title = "Turn around"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 38
+track_total = 41
+duration_ms = 85466
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/37 - Hiro、小山あかり - ぴぴぱぷぅ！.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Hiro、小山あかり"]
+title = "ぴぴぱぷぅ！"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 37
+track_total = 41
+duration_ms = 137026
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/36 - RYOHEI KOHNO、保立美和子 - Endless World.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["RYOHEI KOHNO、保立美和子"]
+title = "Endless World"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 36
+track_total = 41
+duration_ms = 123093
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/35 - 光吉猛修 - ソーラン☆節.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["光吉猛修"]
+title = "ソーラン☆節"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 35
+track_total = 41
+duration_ms = 97253
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/34 - Hiro、森山愛子 - 炎歌 -ほむらうた-.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Hiro、森山愛子"]
+title = "炎歌 -ほむらうた-"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 34
+track_total = 41
+duration_ms = 129760
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/33 - Tsukasa(Arte Refact) - Fragrance.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Tsukasa(Arte Refact)"]
+title = "Fragrance"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 33
+track_total = 41
+duration_ms = 85546
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/32 - D.watt(IOSYS)feat.Asana - Spin me harder.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["D.watt(IOSYS)feat.Asana"]
+title = "Spin me harder"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 32
+track_total = 41
+duration_ms = 83360
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/31 - 発熱巫女～ず - Feel My Fire.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["発熱巫女～ず"]
+title = "Feel My Fire"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 31
+track_total = 41
+duration_ms = 85640
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/30 - 発熱巫女～ず - Night Fly.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["発熱巫女～ず"]
+title = "Night Fly"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 30
+track_total = 41
+duration_ms = 85506
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/29 - Clean Tears feat.Youna - Link.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Clean Tears feat.Youna"]
+title = "Link"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 29
+track_total = 41
+duration_ms = 85533
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/28 - ELEMENTAS feat.NAGISA - FEEL ALIVE.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["ELEMENTAS feat.NAGISA"]
+title = "FEEL ALIVE"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 28
+track_total = 41
+duration_ms = 85706
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/27 - 佐野信義「スペースハリアー」 - Space Harrier Main Theme [Reborn].flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["佐野信義「スペースハリアー」"]
+title = "Space Harrier Main Theme [Reborn]"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 27
+track_total = 41
+duration_ms = 115493
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/26 - 古代祐三「ファンタジーゾーン」 - YA･DA･YO [Reborn].flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["古代祐三「ファンタジーゾーン」"]
+title = "YA･DA･YO [Reborn]"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 26
+track_total = 41
+duration_ms = 109080
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/25 - sampling masters MEGA「パワードリフト」 - Like the Wind [Reborn].flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["sampling masters MEGA「パワードリフト」"]
+title = "Like the Wind [Reborn]"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 25
+track_total = 41
+duration_ms = 114293
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/24 - 大久保博（BNGI)「デイトナUSA」 - Sky High [Reborn].flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["大久保博（BNGI)「デイトナUSA」"]
+title = "Sky High [Reborn]"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 24
+track_total = 41
+duration_ms = 117720
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/23 - COSIO(ZUNTATA,TAITO)「カルテット」 - Quartet Theme [Reborn].flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["COSIO(ZUNTATA/TAITO)「カルテット」"]
+title = "Quartet Theme [Reborn]"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 23
+track_total = 41
+duration_ms = 129253
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/22 - YMCK - maimaiちゃんのテーマ.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["YMCK"]
+title = "maimaiちゃんのテーマ"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 22
+track_total = 41
+duration_ms = 105333
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/21 - 光吉猛修＆体操隊 - デコボコ体操第二.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["光吉猛修＆体操隊"]
+title = "デコボコ体操第二"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 21
+track_total = 41
+duration_ms = 86240
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/20 - RYOHEI KOHNO、森綾香 - 犬日和。.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["RYOHEI KOHNO、森綾香"]
+title = "犬日和。"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 20
+track_total = 41
+duration_ms = 99293
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/19 - loos feat.Meramipop - Starlight Disco.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["loos feat.Meramipop"]
+title = "Starlight Disco"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 19
+track_total = 41
+duration_ms = 85533
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/18 - zts - air's gravity.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["zts"]
+title = "air's gravity"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 18
+track_total = 41
+duration_ms = 85040
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/17 - Taishi - Sprintrances.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Taishi"]
+title = "Sprintrances"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 17
+track_total = 41
+duration_ms = 83666
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/16 - REDALiCE - Acceleration.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["REDALiCE"]
+title = "Acceleration"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 16
+track_total = 41
+duration_ms = 85560
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/15 - Masayoshi Minoshima - Lionheart.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Masayoshi Minoshima"]
+title = "Lionheart"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 15
+track_total = 41
+duration_ms = 85493
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/14 - ARM（IOSYS) - Streak.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["ARM（IOSYS)"]
+title = "Streak"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 14
+track_total = 41
+duration_ms = 83626
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/13 - Cranky - We Gonna Party.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Cranky"]
+title = "We Gonna Party"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 13
+track_total = 41
+duration_ms = 83520
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/12 - 「BORDER BREAK」 - Urban Crusher [Remix].flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["「BORDER BREAK」"]
+title = "Urban Crusher [Remix]"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 12
+track_total = 41
+duration_ms = 109626
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/11 - 「バーチャファイター」 - JACKY [Remix].flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["「バーチャファイター」"]
+title = "JACKY [Remix]"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 11
+track_total = 41
+duration_ms = 92466
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/10 - SEGA Sound Unit[H.] - ジングルベル.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["SEGA Sound Unit[H.]"]
+title = "ジングルベル"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 10
+track_total = 41
+duration_ms = 96346
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/09 - Hiro、永江理奈 - BaBan!! －甘い罠－.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Hiro、永江理奈"]
+title = "BaBan!! －甘い罠－"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 9
+track_total = 41
+duration_ms = 118493
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/08 - Hiro、タクマロ - オレンジの夏.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Hiro、タクマロ"]
+title = "オレンジの夏"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 8
+track_total = 41
+duration_ms = 116373
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/07 - 新小田夢童 ＆ キラ★ロッソ - 源平大戦絵巻テーマソング.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["新小田夢童 ＆ キラ★ロッソ"]
+title = "源平大戦絵巻テーマソング"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 7
+track_total = 41
+duration_ms = 101840
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/06 - Kai、光吉猛修 - 炭★坑★節.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Kai、光吉猛修"]
+title = "炭★坑★節"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 6
+track_total = 41
+duration_ms = 101386
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/05 - GOSH、manami - 虹と太陽.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["GOSH、manami"]
+title = "虹と太陽"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 5
+track_total = 41
+duration_ms = 95266
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/04 - Kai、能登有沙 - ネコ日和。.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Kai、能登有沙"]
+title = "ネコ日和。"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 4
+track_total = 41
+duration_ms = 91680
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/03 - Team-D - Sweets×Sweets.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Team-D"]
+title = "Sweets×Sweets"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 3
+track_total = 41
+duration_ms = 105693
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/02 - GOSH - Color My World.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["GOSH"]
+title = "Color My World"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 2
+track_total = 41
+duration_ms = 98560
+
+[[raw_tags]]
+file_path = "maimai ALL PERFECT COLLECTiON [flac]/Disc 1/01 - Kai - True Love Song.flac"
+album = "maimai ALL PERFECT COLLECTiON"
+artists = ["Kai"]
+title = "True Love Song"
+genre = "Soundtrack"
+disc = 1
+disc_total = 6
+track = 1
+track_total = 41
+duration_ms = 98706
+
+[expect.release]
+ids = { release_group_id = "d077e5f5-0896-444c-9846-12656fd09021", release_id = "a5606161-a6b1-48f1-b92d-bd2d73216c3b" }
+fields = { release_title = "maimai ALL PERFECT COLLECTiON", release_date = "2020-11-04" }

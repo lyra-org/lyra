@@ -1,0 +1,209 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Official髭男dism - Editorial (2021) [FLAC]/14. Lost In My Room.flac"
+album = "Editorial"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Lost In My Room"
+copyright = "PONYCANYON/IRORI Records"
+track = 14
+track_total = 14
+duration_ms = 269926
+
+[[raw_tags]]
+file_path = "Official髭男dism - Editorial (2021) [FLAC]/13. Universe.flac"
+album = "Editorial"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Universe"
+copyright = "PONYCANYON/IRORI Records"
+track = 13
+track_total = 14
+duration_ms = 285819
+
+[[raw_tags]]
+file_path = "Official髭男dism - Editorial (2021) [FLAC]/12. Laughter.flac"
+album = "Editorial"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Laughter"
+copyright = "PONYCANYON/IRORI Records"
+track = 12
+track_total = 14
+duration_ms = 352919
+
+[[raw_tags]]
+file_path = "Official髭男dism - Editorial (2021) [FLAC]/11. Bedroom Talk.flac"
+album = "Editorial"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Bedroom Talk"
+copyright = "PONYCANYON/IRORI Records"
+track = 11
+track_total = 14
+duration_ms = 201427
+
+[[raw_tags]]
+file_path = "Official髭男dism - Editorial (2021) [FLAC]/10. ペンディング・マシーン.flac"
+album = "Editorial"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "ペンディング・マシーン"
+copyright = "PONYCANYON/IRORI Records"
+track = 10
+track_total = 14
+duration_ms = 235690
+
+[[raw_tags]]
+file_path = "Official髭男dism - Editorial (2021) [FLAC]/09. パラボラ.flac"
+album = "Editorial"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "パラボラ"
+copyright = "PONYCANYON/IRORI Records"
+track = 9
+track_total = 14
+duration_ms = 305816
+
+[[raw_tags]]
+file_path = "Official髭男dism - Editorial (2021) [FLAC]/08. みどりの雨避け.flac"
+album = "Editorial"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "みどりの雨避け"
+copyright = "PONYCANYON/IRORI Records"
+track = 8
+track_total = 14
+duration_ms = 238268
+
+[[raw_tags]]
+file_path = "Official髭男dism - Editorial (2021) [FLAC]/07. Shower.flac"
+album = "Editorial"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Shower"
+copyright = "PONYCANYON/IRORI Records"
+track = 7
+track_total = 14
+duration_ms = 340207
+
+[[raw_tags]]
+file_path = "Official髭男dism - Editorial (2021) [FLAC]/06. Cry Baby.flac"
+album = "Editorial"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Cry Baby"
+copyright = "PONYCANYON/IRORI Records"
+track = 6
+track_total = 14
+duration_ms = 241675
+
+[[raw_tags]]
+file_path = "Official髭男dism - Editorial (2021) [FLAC]/05. HELLO.flac"
+album = "Editorial"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "HELLO"
+copyright = "PONYCANYON/IRORI Records"
+track = 5
+track_total = 14
+duration_ms = 282393
+
+[[raw_tags]]
+file_path = "Official髭男dism - Editorial (2021) [FLAC]/04. フィラメント.flac"
+album = "Editorial"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "フィラメント"
+copyright = "PONYCANYON/IRORI Records"
+track = 4
+track_total = 14
+duration_ms = 244784
+
+[[raw_tags]]
+file_path = "Official髭男dism - Editorial (2021) [FLAC]/03. I LOVE....flac"
+album = "Editorial"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "I LOVE..."
+copyright = "PONYCANYON/IRORI Records"
+track = 3
+track_total = 14
+duration_ms = 282687
+
+[[raw_tags]]
+file_path = "Official髭男dism - Editorial (2021) [FLAC]/02. アポトーシス.flac"
+album = "Editorial"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "アポトーシス"
+copyright = "PONYCANYON/IRORI Records"
+track = 2
+track_total = 14
+duration_ms = 389695
+
+[[raw_tags]]
+file_path = "Official髭男dism - Editorial (2021) [FLAC]/01. Editorial.flac"
+album = "Editorial"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Editorial"
+copyright = "PONYCANYON/IRORI Records"
+track = 1
+track_total = 14
+duration_ms = 134024
+
+[expect.release]
+ids = { release_group_id = "dc593316-6b5b-4133-940e-f3b0258311e4", release_id = "e9ed8905-66d1-4dc8-85d2-67ab2623c787" }
+fields = { release_title = "Editorial", release_date = "2021-08-18" }
+
+[expect.artists."6dddd7a2-5583-49d0-a8b2-9ee46d04f27e"]
+fields = { artist_name = "Official髭男dism", sort_name = "Official HIGE DANdism" }
+
+[expect.tracks."03924f83-fb23-4a6b-a8ee-da66d75b7b3b"]
+fields = { disc = 1, track = 10, track_title = "ペンディング・マシーン" }
+
+[expect.tracks."0eb0c849-ae6e-4f43-a6da-1ab936fdb41e"]
+fields = { disc = 1, track = 13, track_title = "Universe" }
+
+[expect.tracks."319ab61b-5295-48d1-a28b-b47dedcdc76b"]
+fields = { disc = 1, track = 8, track_title = "みどりの雨避け" }
+
+[expect.tracks."34cd44f4-35ae-4352-a2f5-188e04fd329e"]
+fields = { disc = 1, track = 6, track_title = "Cry Baby" }
+
+[expect.tracks."5a2accc6-eac7-47f6-b494-c484e801b9b9"]
+fields = { disc = 1, track = 11, track_title = "Bedroom Talk" }
+
+[expect.tracks."71664a06-6981-41e7-8493-80ee6db6c3dd"]
+fields = { disc = 1, track = 3, track_title = "I LOVE..." }
+
+[expect.tracks."7d510bfc-6dba-4df6-baf0-1b00991e00d0"]
+fields = { disc = 1, track = 5, track_title = "HELLO" }
+
+[expect.tracks."90a9c232-6b09-44fd-8a06-61c9f487dd76"]
+fields = { disc = 1, track = 12, track_title = "Laughter" }
+
+[expect.tracks."b00bff51-9b19-4352-bbba-c0e6a06021cf"]
+fields = { disc = 1, track = 9, track_title = "パラボラ" }
+
+[expect.tracks."cc47925c-1518-4d1b-9d15-e5a1aed794fa"]
+fields = { disc = 1, track = 7, track_title = "Shower" }
+
+[expect.tracks."e25b75a8-17a1-4e98-89c9-90f0344cea86"]
+fields = { disc = 1, track = 2, track_title = "アポトーシス" }
+
+[expect.tracks."e52693cf-8a54-49a8-b8bb-0124b21909fc"]
+fields = { disc = 1, track = 14, track_title = "Lost In My Room" }
+
+[expect.tracks."ecc8afbb-b79a-426c-afd5-e52d0aea2c0f"]
+fields = { disc = 1, track = 1, track_title = "Editorial" }
+
+[expect.tracks."f995d06c-fc65-4966-8ea4-d0bc5e8dba4f"]
+fields = { disc = 1, track = 4, track_title = "フィラメント" }

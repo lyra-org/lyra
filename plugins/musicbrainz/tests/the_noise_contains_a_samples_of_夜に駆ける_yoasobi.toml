@@ -1,0 +1,21 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "LE SSERAFIM & YOASOBI — the NOISE (Contains a Samples of 夜に駆ける) (2025) [WEB-FLAC]/01. the NOISE (Contains a Samples of 夜に駆ける).flac"
+album = "the NOISE (Contains a Samples of 夜に駆ける)"
+album_artists = ["LE SSERAFIM & YOASOBI"]
+artists = ["LE SSERAFIM & YOASOBI"]
+title = "the NOISE (Contains a Samples of 夜に駆ける)"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 224280
+
+[expect.release]
+ids = { release_group_id = "24962998-431e-4790-bafd-a34124919115", release_id = "6eba69f5-71a0-4d3c-8549-9e06bed6d9a8" }

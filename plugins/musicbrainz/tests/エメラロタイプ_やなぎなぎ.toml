@@ -1,0 +1,205 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "やなぎなぎ - エメラロタイプ (2020) [FLAC] {GNCA-1595}/12 - Birth.flac"
+album = "エメラロタイプ"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "Birth"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 12
+duration_ms = 124186
+
+[[raw_tags]]
+file_path = "やなぎなぎ - エメラロタイプ (2020) [FLAC] {GNCA-1595}/11 - エメラロタイプ.flac"
+album = "エメラロタイプ"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "エメラロタイプ"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 12
+duration_ms = 339533
+
+[[raw_tags]]
+file_path = "やなぎなぎ - エメラロタイプ (2020) [FLAC] {GNCA-1595}/10 - アウトサイダー.flac"
+album = "エメラロタイプ"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "アウトサイダー"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 12
+duration_ms = 303640
+
+[[raw_tags]]
+file_path = "やなぎなぎ - エメラロタイプ (2020) [FLAC] {GNCA-1595}/09 - 209415.flac"
+album = "エメラロタイプ"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "209415"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 12
+duration_ms = 264506
+
+[[raw_tags]]
+file_path = "やなぎなぎ - エメラロタイプ (2020) [FLAC] {GNCA-1595}/08 - out of the blue.flac"
+album = "エメラロタイプ"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "out of the blue"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 12
+duration_ms = 254413
+
+[[raw_tags]]
+file_path = "やなぎなぎ - エメラロタイプ (2020) [FLAC] {GNCA-1595}/07 - 芽ぐみの雨.flac"
+album = "エメラロタイプ"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "芽ぐみの雨"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 12
+duration_ms = 277386
+
+[[raw_tags]]
+file_path = "やなぎなぎ - エメラロタイプ (2020) [FLAC] {GNCA-1595}/06 - Special Pack!.flac"
+album = "エメラロタイプ"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "Special Pack!"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 12
+duration_ms = 380413
+
+[[raw_tags]]
+file_path = "やなぎなぎ - エメラロタイプ (2020) [FLAC] {GNCA-1595}/05 - voke.flac"
+album = "エメラロタイプ"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "voke"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 12
+duration_ms = 272760
+
+[[raw_tags]]
+file_path = "やなぎなぎ - エメラロタイプ (2020) [FLAC] {GNCA-1595}/04 - 今日もデジは猫のふり.flac"
+album = "エメラロタイプ"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "今日もデジは猫のふり"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 12
+duration_ms = 342533
+
+[[raw_tags]]
+file_path = "やなぎなぎ - エメラロタイプ (2020) [FLAC] {GNCA-1595}/03 - 宝石の生まれるとき.flac"
+album = "エメラロタイプ"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "宝石の生まれるとき"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 12
+duration_ms = 289853
+
+[[raw_tags]]
+file_path = "やなぎなぎ - エメラロタイプ (2020) [FLAC] {GNCA-1595}/02 - asterhythm.flac"
+album = "エメラロタイプ"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "asterhythm"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 12
+duration_ms = 233240
+
+[[raw_tags]]
+file_path = "やなぎなぎ - エメラロタイプ (2020) [FLAC] {GNCA-1595}/01 - Re.flac"
+album = "エメラロタイプ"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "Re"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 12
+duration_ms = 69573
+
+[expect.release]
+ids = { release_group_id = "a0fb8f40-2dac-42c7-972c-a543f549d40a", release_id = ["47a9f1f0-c958-498f-a907-014c70e581bd", "d6a3fb8b-9268-4e1b-a707-32d97291e910"] }
+fields = { release_title = "エメラロタイプ", release_date = "2020-12-09" }
+
+[expect.artists."eeacda09-891d-4367-b9cc-c6371c96d4d9"]
+fields = { artist_name = "やなぎなぎ", sort_name = "Yanagi, Nagi" }
+
+[expect.tracks."075ee95a-9620-4093-a352-fdf96087e3d8"]
+fields = { disc = 1, track = 3, track_title = "宝石の生まれるとき" }
+
+[expect.tracks."305115f6-a0ad-4f20-b754-bf803acbf997"]
+fields = { disc = 1, track = 2, track_title = "asterhythm" }
+
+[expect.tracks."65519dc8-5a4d-41f2-89c3-93cfbc3414b6"]
+fields = { disc = 1, track = 8, track_title = "out of the blue" }
+
+[expect.tracks."6607dd1f-1729-4a31-8f74-b8fd69a4fe9c"]
+fields = { disc = 1, track = 9, track_title = "209415" }
+
+[expect.tracks."8d6b3b34-092b-4b66-8fb7-b245e64e64f7"]
+fields = { disc = 1, track = 1, track_title = "Re" }
+
+[expect.tracks."d4f3f517-d89f-4b3c-9226-55917b18f34e"]
+fields = { disc = 1, track = 7, track_title = "芽ぐみの雨" }
+
+[expect.tracks."dab1ca82-0183-413c-b8a1-9e2ff16b2a5b"]
+fields = { disc = 1, track = 4, track_title = "今日もデジは猫のふり" }
+
+[expect.tracks."db8253c1-f2af-4be3-8097-8cbd25f11c78"]
+fields = { disc = 1, track = 12, track_title = "Birth" }
+
+[expect.tracks."e1043cb2-2dd2-40e2-a509-d8eb2d9dc300"]
+fields = { disc = 1, track = 11, track_title = "エメラロタイプ" }
+
+[expect.tracks."e556788c-720f-48d6-b350-1323a74e144c"]
+fields = { disc = 1, track = 10, track_title = "アウトサイダー" }
+
+[expect.tracks."e71b42f4-956d-46ec-996e-ebf4704f44ac"]
+fields = { disc = 1, track = 5, track_title = "voke" }
+
+[expect.tracks."e7fdccd1-54d3-44f3-a36c-e0e4a3b5e9f2"]
+fields = { disc = 1, track = 6, track_title = "Special Pack!" }

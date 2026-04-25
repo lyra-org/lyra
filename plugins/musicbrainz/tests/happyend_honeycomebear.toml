@@ -1,0 +1,153 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "HappyEND/10. 十夏の花.flac"
+album = "HappyEND"
+album_artists = ["HoneyComeBear"]
+artists = ["HoneyComeBear"]
+title = "十夏の花"
+genre = "J-Pop, Future Bass"
+disc = 1
+track = 10
+duration_ms = 264487
+
+[[raw_tags]]
+file_path = "HappyEND/09. さよならの支度.flac"
+album = "HappyEND"
+album_artists = ["HoneyComeBear"]
+artists = ["HoneyComeBear"]
+title = "さよならの支度"
+genre = "J-Pop, Future Bass"
+disc = 1
+track = 9
+duration_ms = 260287
+
+[[raw_tags]]
+file_path = "HappyEND/08. きみと君.flac"
+album = "HappyEND"
+album_artists = ["HoneyComeBear"]
+artists = ["HoneyComeBear"]
+title = "きみと君"
+genre = "J-Pop, Future Bass"
+disc = 1
+track = 8
+duration_ms = 225374
+
+[[raw_tags]]
+file_path = "HappyEND/07. 悪天.flac"
+album = "HappyEND"
+album_artists = ["HoneyComeBear"]
+artists = ["HoneyComeBear"]
+title = "悪天"
+genre = "J-Pop, Future Bass"
+disc = 1
+track = 7
+duration_ms = 162637
+
+[[raw_tags]]
+file_path = "HappyEND/06. ニライカナイ.flac"
+album = "HappyEND"
+album_artists = ["HoneyComeBear"]
+artists = ["HoneyComeBear"]
+title = "ニライカナイ"
+genre = "J-Pop, Future Bass"
+disc = 1
+track = 6
+duration_ms = 162112
+
+[[raw_tags]]
+file_path = "HappyEND/05. 糸電話.flac"
+album = "HappyEND"
+album_artists = ["HoneyComeBear"]
+artists = ["HoneyComeBear"]
+title = "糸電話"
+genre = "J-Pop, Future Bass"
+disc = 1
+track = 5
+duration_ms = 242962
+
+[[raw_tags]]
+file_path = "HappyEND/04. 打上げ星.flac"
+album = "HappyEND"
+album_artists = ["HoneyComeBear"]
+artists = ["HoneyComeBear"]
+title = "打上げ星"
+genre = "J-Pop, Future Bass"
+disc = 1
+track = 4
+duration_ms = 243487
+
+[[raw_tags]]
+file_path = "HappyEND/03. 雨泳ぎ.flac"
+album = "HappyEND"
+album_artists = ["HoneyComeBear"]
+artists = ["HoneyComeBear"]
+title = "雨泳ぎ"
+genre = "J-Pop, Future Bass"
+disc = 1
+track = 3
+duration_ms = 163949
+
+[[raw_tags]]
+file_path = "HappyEND/02. 夢さんぽ.flac"
+album = "HappyEND"
+album_artists = ["HoneyComeBear"]
+artists = ["HoneyComeBear"]
+title = "夢さんぽ"
+genre = "J-Pop, Future Bass"
+disc = 1
+track = 2
+duration_ms = 197550
+
+[[raw_tags]]
+file_path = "HappyEND/01. 夏の魔法.flac"
+album = "HappyEND"
+album_artists = ["HoneyComeBear"]
+artists = ["HoneyComeBear"]
+title = "夏の魔法"
+genre = "J-Pop, Future Bass"
+disc = 1
+track = 1
+duration_ms = 250799
+
+[expect.release]
+ids = { release_group_id = "d1ce094a-1492-4a47-b1e8-1c6c1466d442", release_id = "0f9b7e7b-7e05-4b0b-b860-c9f289cebaac" }
+fields = { release_title = "HappyEND", genres = ["future bass", "j-pop", "pop"], release_date = "2021-08-11" }
+
+[expect.artists."85b9d988-53ca-466d-b2d4-a57eb97bc514"]
+fields = { artist_name = "HoneyComeBear", sort_name = "HoneyComeBear" }
+
+[expect.tracks."03995813-b177-46e9-8055-ab2df75d5ef9"]
+fields = { disc = 1, track = 4, track_title = "打上げ星" }
+
+[expect.tracks."046244ce-766c-4db0-99bf-6fd5ffb849fb"]
+fields = { disc = 1, track = 7, track_title = "悪天" }
+
+[expect.tracks."208580fb-834a-4a30-9d25-35fb8995c985"]
+fields = { disc = 1, track = 9, track_title = "さよならの支度" }
+
+[expect.tracks."363b3819-4ce7-432c-a1ea-874002c117e5"]
+fields = { disc = 1, track = 10, track_title = "十夏の花" }
+
+[expect.tracks."961cb72d-65ca-4926-beca-c39282df99c1"]
+fields = { disc = 1, track = 6, track_title = "ニライカナイ" }
+
+[expect.tracks."9c2fce46-b341-4ced-8968-a4fcfa6f67d4"]
+fields = { disc = 1, track = 3, track_title = "雨泳ぎ" }
+
+[expect.tracks."a7a544ef-60aa-4cf5-b838-d78bbaba5c14"]
+fields = { disc = 1, track = 8, track_title = "きみと君" }
+
+[expect.tracks."b6868e81-aed0-458f-9897-c03b2e8023aa"]
+fields = { disc = 1, track = 2, track_title = "夢さんぽ" }
+
+[expect.tracks."f4d31216-8449-4fb6-849e-051149c99b39"]
+fields = { disc = 1, track = 5, track_title = "糸電話" }
+
+[expect.tracks."f62fbc9d-57e6-4c78-abab-28c6fa49e474"]
+fields = { disc = 1, track = 1, track_title = "夏の魔法" }

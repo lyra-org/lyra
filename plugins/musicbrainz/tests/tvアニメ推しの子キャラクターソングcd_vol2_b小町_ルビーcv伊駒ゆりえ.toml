@@ -1,0 +1,106 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "B小町 ルビー(CV伊駒ゆりえ)、有馬かな(CV潘めぐみ)、MEMちょ(CV大久保瑠美) - [Oshi no Ko] Character Song CD (Vol. 2) [FLAC] [16B-44.1kHz]/06. B小町 ルビー(CV伊駒ゆりえ)、有馬かな(CV潘めぐみ)、MEMちょ(CV大久保瑠美) - HEART's♡KISS -New Arrange Ver.- (instrumental).flac"
+album = "TVアニメ「【推しの子】」キャラクターソングCD Vol.2"
+album_artists = ["B小町 ルビー(CV:伊駒ゆりえ)、有馬かな(CV:潘めぐみ)、MEMちょ(CV:大久保瑠美)"]
+artists = ["B小町 ルビー(CV:伊駒ゆりえ)、有馬かな(CV:潘めぐみ)、MEMちょ(CV:大久保瑠美)"]
+title = "HEART's♡KISS -New Arrange Ver.- (instrumental)"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 6
+duration_ms = 215792
+
+[[raw_tags]]
+file_path = "B小町 ルビー(CV伊駒ゆりえ)、有馬かな(CV潘めぐみ)、MEMちょ(CV大久保瑠美) - [Oshi no Ko] Character Song CD (Vol. 2) [FLAC] [16B-44.1kHz]/05. B小町 ルビー(CV伊駒ゆりえ)、有馬かな(CV潘めぐみ)、MEMちょ(CV大久保瑠美) - サインはB -New Arrange Ver.- (instrumental),.flac"
+album = "TVアニメ「【推しの子】」キャラクターソングCD Vol.2"
+album_artists = ["B小町 ルビー(CV:伊駒ゆりえ)、有馬かな(CV:潘めぐみ)、MEMちょ(CV:大久保瑠美)"]
+artists = ["B小町 ルビー(CV:伊駒ゆりえ)、有馬かな(CV:潘めぐみ)、MEMちょ(CV:大久保瑠美)"]
+title = "サインはB -New Arrange Ver.- (instrumental)"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 6
+duration_ms = 221712
+
+[[raw_tags]]
+file_path = "B小町 ルビー(CV伊駒ゆりえ)、有馬かな(CV潘めぐみ)、MEMちょ(CV大久保瑠美) - [Oshi no Ko] Character Song CD (Vol. 2) [FLAC] [16B-44.1kHz]/04. B小町 ルビー(CV伊駒ゆりえ)、有馬かな(CV潘めぐみ)、MEMちょ(CV大久保瑠美) - STAR☆T☆RAIN -New Arrange Ver.- (instrumental).flac"
+album = "TVアニメ「【推しの子】」キャラクターソングCD Vol.2"
+album_artists = ["B小町 ルビー(CV:伊駒ゆりえ)、有馬かな(CV:潘めぐみ)、MEMちょ(CV:大久保瑠美)"]
+artists = ["B小町 ルビー(CV:伊駒ゆりえ)、有馬かな(CV:潘めぐみ)、MEMちょ(CV:大久保瑠美)"]
+title = "STAR☆T☆RAIN -New Arrange Ver.- (instrumental)"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 6
+duration_ms = 232265
+
+[[raw_tags]]
+file_path = "B小町 ルビー(CV伊駒ゆりえ)、有馬かな(CV潘めぐみ)、MEMちょ(CV大久保瑠美) - [Oshi no Ko] Character Song CD (Vol. 2) [FLAC] [16B-44.1kHz]/03. B小町 ルビー(CV伊駒ゆりえ)、有馬かな(CV潘めぐみ)、MEMちょ(CV大久保瑠美) - HEART's♡KISS -New Arrange Ver.-.flac"
+album = "TVアニメ「【推しの子】」キャラクターソングCD Vol.2"
+album_artists = ["B小町 ルビー(CV:伊駒ゆりえ)、有馬かな(CV:潘めぐみ)、MEMちょ(CV:大久保瑠美)"]
+artists = ["B小町 ルビー(CV:伊駒ゆりえ)、有馬かな(CV:潘めぐみ)、MEMちょ(CV:大久保瑠美)"]
+title = "HEART's♡KISS -New Arrange Ver.-"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 6
+duration_ms = 215792
+
+[[raw_tags]]
+file_path = "B小町 ルビー(CV伊駒ゆりえ)、有馬かな(CV潘めぐみ)、MEMちょ(CV大久保瑠美) - [Oshi no Ko] Character Song CD (Vol. 2) [FLAC] [16B-44.1kHz]/02. B小町 ルビー(CV伊駒ゆりえ)、有馬かな(CV潘めぐみ)、MEMちょ(CV大久保瑠美) - サインはB -New Arrange Ver.-.flac"
+album = "TVアニメ「【推しの子】」キャラクターソングCD Vol.2"
+album_artists = ["B小町 ルビー(CV:伊駒ゆりえ)、有馬かな(CV:潘めぐみ)、MEMちょ(CV:大久保瑠美)"]
+artists = ["B小町 ルビー(CV:伊駒ゆりえ)、有馬かな(CV:潘めぐみ)、MEMちょ(CV:大久保瑠美)"]
+title = "サインはB -New Arrange Ver.-"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 6
+duration_ms = 221712
+
+[[raw_tags]]
+file_path = "B小町 ルビー(CV伊駒ゆりえ)、有馬かな(CV潘めぐみ)、MEMちょ(CV大久保瑠美) - [Oshi no Ko] Character Song CD (Vol. 2) [FLAC] [16B-44.1kHz]/01. B小町 ルビー(CV伊駒ゆりえ)、有馬かな(CV潘めぐみ)、MEMちょ(CV大久保瑠美) - STAR☆T☆RAIN -New Arrange Ver.-.flac"
+album = "TVアニメ「【推しの子】」キャラクターソングCD Vol.2"
+album_artists = ["B小町 ルビー(CV:伊駒ゆりえ)、有馬かな(CV:潘めぐみ)、MEMちょ(CV:大久保瑠美)"]
+artists = ["B小町 ルビー(CV:伊駒ゆりえ)、有馬かな(CV:潘めぐみ)、MEMちょ(CV:大久保瑠美)"]
+title = "STAR☆T☆RAIN -New Arrange Ver.-"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 6
+duration_ms = 232265
+
+[expect.release]
+ids = { release_group_id = "fb3381a9-81c0-471c-96a8-fd4e8fcffbc6", release_id = "670465f5-c3d3-4eba-9854-c1134a8dbce7" }
+fields = { release_title = "TVアニメ「【推しの子】」キャラクターソングCD Vol.2", release_date = "2023-07-05" }
+
+[expect.artists."de137401-a128-4d33-a4bd-0ad6157a054b"]
+fields = { artist_name = "MEMちょ", sort_name = "MEM-cho" }
+
+[expect.artists."fbadebba-dcfe-4497-a645-ab085b2e5cbb"]
+fields = { artist_name = "有馬かな", sort_name = "Arima, Kana" }
+
+[expect.tracks."03fd96af-78ad-44a1-88c8-8c3be6ce5ec2"]
+fields = { disc = 1, track = 6, track_title = "HEART's♡KISS -New Arrange Ver.- (instrumental)" }
+
+[expect.tracks."59232e25-23ed-442b-b733-9ac0ed0d8787"]
+fields = { disc = 1, track = 3, track_title = "HEART's♡KISS -New Arrange Ver.-" }
+
+[expect.tracks."9db0da56-6ffc-4b05-96c9-7aceea2c68ed"]
+fields = { disc = 1, track = 4, track_title = "STAR☆T☆RAIN -New Arrange Ver.- (instrumental)" }
+
+[expect.tracks."a2e30b18-5080-4256-b70b-796276e95d12"]
+fields = { disc = 1, track = 1, track_title = "STAR☆T☆RAIN -New Arrange Ver.-" }
+
+[expect.tracks."fe97bf5a-6e5b-42eb-a54b-5cccb844ac2b"]
+fields = { disc = 1, track = 5, track_title = "サインはB -New Arrange Ver.- (instrumental)" }
+
+[expect.tracks."ffc579e1-93ec-4882-aa9c-2c82fcefaf73"]
+fields = { disc = 1, track = 2, track_title = "サインはB -New Arrange Ver.-" }

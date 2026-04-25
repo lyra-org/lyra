@@ -1,0 +1,60 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Yukitoki/06. Surrealisme (Instrumental).flac"
+album = "ユキトキ"
+title = "Surrealisme (Instrumental)"
+track = 6
+track_total = 6
+duration_ms = 230946
+
+[[raw_tags]]
+file_path = "Yukitoki/05. 音のない夢 (Instrumental).flac"
+album = "ユキトキ"
+title = "音のない夢 (Instrumental)"
+track = 5
+track_total = 6
+duration_ms = 252946
+
+[[raw_tags]]
+file_path = "Yukitoki/04. ユキトキ (Instrumental).flac"
+album = "ユキトキ"
+title = "ユキトキ (Instrumental)"
+track = 4
+track_total = 6
+duration_ms = 269280
+
+[[raw_tags]]
+file_path = "Yukitoki/03. Surrealisme.flac"
+album = "ユキトキ"
+artists = ["やなぎなぎ"]
+title = "Surrealisme"
+track = 3
+track_total = 6
+duration_ms = 230560
+
+[[raw_tags]]
+file_path = "Yukitoki/02. 音のない夢.flac"
+album = "ユキトキ"
+artists = ["やなぎなぎ"]
+title = "音のない夢"
+track = 2
+track_total = 6
+duration_ms = 252666
+
+[[raw_tags]]
+file_path = "Yukitoki/01. ユキトキ.flac"
+album = "ユキトキ"
+artists = ["やなぎなぎ"]
+title = "ユキトキ"
+track = 1
+track_total = 6
+duration_ms = 269880
+
+[expect.release]
+ids = { release_group_id = "a6a03b2f-d555-417c-b5c0-4c48a5f87ffe", release_id = ["08f07a9a-4cd7-413b-8647-637e648aeef5", "f2151230-04b1-47d8-b12f-4d45bef892be"] }

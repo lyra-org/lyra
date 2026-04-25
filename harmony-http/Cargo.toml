@@ -1,0 +1,18 @@
+[package]
+name = "harmony-http"
+version = "0.0.1"
+edition = "2024"
+license-file = "../LICENSE"
+
+[dependencies]
+harmony-core = { path = "../harmony-core" }
+harmony-luau = { path = "../harmony-luau" }
+harmony-macros = { path = "../harmony-macros" }
+anyhow = { workspace = true }
+mlua = { workspace = true, features = ["luau", "anyhow", "serialize"] }
+percent-encoding = { workspace = true }
+reqwest = { workspace = true, default-features = false, features = ["charset", "http2", "json", "rustls-no-provider", "system-proxy"] }
+rustls = { workspace = true, default-features = false, features = ["ring", "std", "tls12"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time"] }
+url = { workspace = true }

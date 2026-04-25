@@ -1,0 +1,237 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "LiSA - LANDER (2022-11-16) [WEB FLAC]/1.14. NEW ME.flac"
+album = "LANDER"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "NEW ME"
+copyright = "℗ 2020(7),2021(1,5,6,9,13),2022(2-4,8,10-12,14) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 14
+track_total = 13
+duration_ms = 264186
+
+[[raw_tags]]
+file_path = "LiSA - LANDER (2022-11-16) [WEB FLAC]/1.13. dawn.flac"
+album = "LANDER"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "dawn"
+copyright = "℗ 2020(7),2021(1,5,6,9,13),2022(2-4,8,10-12,14) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 13
+track_total = 13
+duration_ms = 245773
+
+[[raw_tags]]
+file_path = "LiSA - LANDER (2022-11-16) [WEB FLAC]/1.12. 悪女のオキテ.flac"
+album = "LANDER"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "悪女のオキテ"
+copyright = "℗ 2020(7),2021(1,5,6,9,13),2022(2-4,8,10-12,14) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 12
+track_total = 13
+duration_ms = 181946
+
+[[raw_tags]]
+file_path = "LiSA - LANDER (2022-11-16) [WEB FLAC]/1.11. 土曜日のわたしたちは.flac"
+album = "LANDER"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "土曜日のわたしたちは"
+copyright = "℗ 2020(7),2021(1,5,6,9,13),2022(2-4,8,10-12,14) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 11
+track_total = 13
+duration_ms = 250400
+
+[[raw_tags]]
+file_path = "LiSA - LANDER (2022-11-16) [WEB FLAC]/1.10. シフクノトキ.flac"
+album = "LANDER"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "シフクノトキ"
+copyright = "℗ 2020(7),2021(1,5,6,9,13),2022(2-4,8,10-12,14) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 10
+track_total = 13
+duration_ms = 188400
+
+[[raw_tags]]
+file_path = "LiSA - LANDER (2022-11-16) [WEB FLAC]/1.09. HADASHi NO STEP.flac"
+album = "LANDER"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "HADASHi NO STEP"
+copyright = "℗ 2020(7),2021(1,5,6,9,13),2022(2-4,8,10-12,14) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 9
+track_total = 13
+duration_ms = 222720
+
+[[raw_tags]]
+file_path = "LiSA - LANDER (2022-11-16) [WEB FLAC]/1.08. 逃飛行.flac"
+album = "LANDER"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "逃飛行"
+copyright = "℗ 2020(7),2021(1,5,6,9,13),2022(2-4,8,10-12,14) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 8
+track_total = 13
+duration_ms = 292693
+
+[[raw_tags]]
+file_path = "LiSA - LANDER (2022-11-16) [WEB FLAC]/1.07. 炎.flac"
+album = "LANDER"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "炎"
+copyright = "℗ 2020(7),2021(1,5,6,9,13),2022(2-4,8,10-12,14) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 7
+track_total = 13
+duration_ms = 277000
+
+[[raw_tags]]
+file_path = "LiSA - LANDER (2022-11-16) [WEB FLAC]/1.06. 白銀.flac"
+album = "LANDER"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "白銀"
+copyright = "℗ 2020(7),2021(1,5,6,9,13),2022(2-4,8,10-12,14) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 6
+track_total = 13
+duration_ms = 263680
+
+[[raw_tags]]
+file_path = "LiSA - LANDER (2022-11-16) [WEB FLAC]/1.05. 明け星.flac"
+album = "LANDER"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "明け星"
+copyright = "℗ 2020(7),2021(1,5,6,9,13),2022(2-4,8,10-12,14) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 5
+track_total = 13
+duration_ms = 267346
+
+[[raw_tags]]
+file_path = "LiSA - LANDER (2022-11-16) [WEB FLAC]/1.04. シャンプーソング.flac"
+album = "LANDER"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "シャンプーソング"
+copyright = "℗ 2020(7),2021(1,5,6,9,13),2022(2-4,8,10-12,14) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 4
+track_total = 13
+duration_ms = 196960
+
+[[raw_tags]]
+file_path = "LiSA - LANDER (2022-11-16) [WEB FLAC]/1.03. dis-connect.flac"
+album = "LANDER"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "dis/connect"
+copyright = "℗ 2020(7),2021(1,5,6,9,13),2022(2-4,8,10-12,14) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 3
+track_total = 13
+duration_ms = 205720
+
+[[raw_tags]]
+file_path = "LiSA - LANDER (2022-11-16) [WEB FLAC]/1.02. 一斉ノ喝采.flac"
+album = "LANDER"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "一斉ノ喝采"
+copyright = "℗ 2020(7),2021(1,5,6,9,13),2022(2-4,8,10-12,14) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 2
+track_total = 13
+duration_ms = 213880
+
+[[raw_tags]]
+file_path = "LiSA - LANDER (2022-11-16) [WEB FLAC]/1.01. 往け.flac"
+album = "LANDER"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "往け"
+copyright = "℗ 2020(7),2021(1,5,6,9,13),2022(2-4,8,10-12,14) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 13
+duration_ms = 229360
+
+[expect.release]
+ids = { release_group_id = "3c1aa9ef-67ff-4171-bd84-40bbd19f960b", release_id = ["db2cbb99-69ff-479d-9bad-81aeb3a93bec", "6a1a61b6-bb37-4f4c-af9d-8f21a2cd5de5", "d6b8f742-e647-4d12-b23b-9ab3aa0642cb"] }
+fields = { release_title = "LANDER", release_date = "2022-11-16" }
+
+[expect.artists."85d76093-9865-4605-97fa-8c910929d366"]
+fields = { artist_name = "LiSA", sort_name = "LiSA" }
+
+[expect.tracks."06121823-33f6-44ea-b0cd-e4ca49f83151"]
+fields = { disc = 1, track = 4, track_title = "シャンプーソング" }
+
+[expect.tracks."13a77246-3ec4-4176-bb55-ea534d427e7c"]
+fields = { disc = 1, track = 3, track_title = "dis/connect" }
+
+[expect.tracks."3b8a5953-ee7a-4ffe-97b9-c2a48e3fde32"]
+fields = { disc = 1, track = 10, track_title = "シフクノトキ" }
+
+[expect.tracks."42242028-2d98-4651-aec5-5cb06da85975"]
+fields = { disc = 1, track = 7, track_title = "炎" }
+
+[expect.tracks."522bf444-b015-4a0a-b6c5-46dd21964906"]
+fields = { disc = 1, track = 13, track_title = "dawn" }
+
+[expect.tracks."59402f75-282e-42fd-8ede-8b6c904ad782"]
+fields = { disc = 1, track = 6, track_title = "白銀" }
+
+[expect.tracks."6a2f8f8a-2e44-4cb8-a66e-55c0c7518222"]
+fields = { disc = 1, track = 14, track_title = "NEW ME" }
+
+[expect.tracks."6df73f59-9702-40d2-b222-9fbf2df6d2e0"]
+fields = { disc = 1, track = 12, track_title = "悪女のオキテ" }
+
+[expect.tracks."73079955-2a3c-40de-bfa9-93d772df64bf"]
+fields = { disc = 1, track = 2, track_title = "一斉ノ喝采" }
+
+[expect.tracks."8ba953e8-b7db-4b76-b7fe-67fa6b10e430"]
+fields = { disc = 1, track = 11, track_title = "土曜日のわたしたちは" }
+
+[expect.tracks."b5cbcf65-b440-40f1-8728-876cb501f073"]
+fields = { disc = 1, track = 8, track_title = "逃飛行" }
+
+[expect.tracks."b6db0b98-db67-4a9d-8f7e-9a4235ef0321"]
+fields = { disc = 1, track = 5, track_title = "明け星" }
+
+[expect.tracks."c36ea7ab-2cd8-49ed-8281-092bd8f9377a"]
+fields = { disc = 1, track = 9, track_title = "HADASHi NO STEP" }
+
+[expect.tracks."da4de06d-e9d7-4654-84e0-698f7ddfd05f"]
+fields = { disc = 1, track = 1, track_title = "往け" }

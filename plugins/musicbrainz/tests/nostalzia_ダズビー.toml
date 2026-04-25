@@ -1,0 +1,133 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ダズビー — Nostalzia (2025) {OCK-10000} [CD-FLAC]/08 Fade Into Starlight.flac"
+album = "Nostalzia"
+album_artists = ["ダズビー"]
+artists = ["ダズビー"]
+title = "Fade Into Starlight"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 8
+duration_ms = 196000
+
+[[raw_tags]]
+file_path = "ダズビー — Nostalzia (2025) {OCK-10000} [CD-FLAC]/07 bamu.flac"
+album = "Nostalzia"
+album_artists = ["ダズビー"]
+artists = ["ダズビー"]
+title = "bamu"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 8
+duration_ms = 160000
+
+[[raw_tags]]
+file_path = "ダズビー — Nostalzia (2025) {OCK-10000} [CD-FLAC]/06 シンパシー.flac"
+album = "Nostalzia"
+album_artists = ["ダズビー"]
+artists = ["ダズビー"]
+title = "シンパシー"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 8
+duration_ms = 184533
+
+[[raw_tags]]
+file_path = "ダズビー — Nostalzia (2025) {OCK-10000} [CD-FLAC]/05 ガーデン.flac"
+album = "Nostalzia"
+album_artists = ["ダズビー"]
+artists = ["ダズビー"]
+title = "ガーデン"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 8
+duration_ms = 61000
+
+[[raw_tags]]
+file_path = "ダズビー — Nostalzia (2025) {OCK-10000} [CD-FLAC]/04 ビターロス.flac"
+album = "Nostalzia"
+album_artists = ["ダズビー"]
+artists = ["ダズビー"]
+title = "ビターロス"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 8
+duration_ms = 204026
+
+[[raw_tags]]
+file_path = "ダズビー — Nostalzia (2025) {OCK-10000} [CD-FLAC]/03 才能.flac"
+album = "Nostalzia"
+album_artists = ["ダズビー"]
+artists = ["ダズビー"]
+title = "才能"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 8
+duration_ms = 198000
+
+[[raw_tags]]
+file_path = "ダズビー — Nostalzia (2025) {OCK-10000} [CD-FLAC]/02 やまない.flac"
+album = "Nostalzia"
+album_artists = ["ダズビー"]
+artists = ["ダズビー"]
+title = "やまない"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 8
+duration_ms = 165000
+
+[[raw_tags]]
+file_path = "ダズビー — Nostalzia (2025) {OCK-10000} [CD-FLAC]/01 LoveXposer.flac"
+album = "Nostalzia"
+album_artists = ["ダズビー"]
+artists = ["ダズビー"]
+title = "LoveXposer"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 8
+duration_ms = 150000
+
+[expect.release]
+ids = { release_group_id = "85a7526b-9bd2-40d9-9521-91d74223e33b", release_id = "a56c58ef-76df-4022-8b35-e712499e296b" }
+fields = { release_title = "Nostalzia", genres = ["pop"], release_date = "2025-10-15" }
+
+[expect.artists."10623c33-205c-49f4-b8a0-55a105dd4fa3"]
+fields = { artist_name = "ダズビー", sort_name = "Dazbee" }
+
+[expect.tracks."03a3e608-80c3-4a00-9e55-a24ff81220ce"]
+fields = { disc = 1, track = 3, track_title = "才能" }
+
+[expect.tracks."0f7c75c6-8b90-4f7e-96fd-5717f23dba7d"]
+fields = { disc = 1, track = 5, track_title = "ガーデン" }
+
+[expect.tracks."11e01847-d01e-4499-9faa-d68826e1a0ef"]
+fields = { disc = 1, track = 8, track_title = "Fade Into Starlight" }
+
+[expect.tracks."2edbdfbf-74bd-4904-81f0-92f57d1ed216"]
+fields = { disc = 1, track = 7, track_title = "bamu" }
+
+[expect.tracks."5fc036dc-f38d-4ca1-94f9-e5078f50b2f7"]
+fields = { disc = 1, track = 1, track_title = "LoveXposer" }
+
+[expect.tracks."8f4d020b-e913-412d-acf2-979aec16d4c1"]
+fields = { disc = 1, track = 4, track_title = "ビターロス" }
+
+[expect.tracks."9e7d8505-cd34-4f2c-8997-8816fd3135e5"]
+fields = { disc = 1, track = 6, track_title = "シンパシー" }
+
+[expect.tracks."f9b7e2d8-3e1f-4b7b-a6a8-dc3c7da6f50c"]
+fields = { disc = 1, track = 2, track_title = "やまない" }

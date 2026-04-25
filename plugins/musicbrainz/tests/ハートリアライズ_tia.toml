@@ -1,0 +1,65 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ハートリアライズ／ちょっと出かけてきます ~ By Tia (FLAC+BK)/04. ちょっと出かけてきます -Instrumental-.flac"
+album = "ハートリアライズ"
+artists = ["Tia"]
+title = "ちょっと出かけてきます -Instrumental-"
+genre = "Anime"
+track = 4
+track_total = 4
+duration_ms = 297960
+
+[[raw_tags]]
+file_path = "ハートリアライズ／ちょっと出かけてきます ~ By Tia (FLAC+BK)/03. ハートリアライズ -Instrumental-.flac"
+album = "ハートリアライズ"
+artists = ["Tia"]
+title = "ハートリアライズ -Instrumental-"
+genre = "Anime"
+track = 3
+track_total = 4
+duration_ms = 292760
+
+[[raw_tags]]
+file_path = "ハートリアライズ／ちょっと出かけてきます ~ By Tia (FLAC+BK)/02. ちょっと出かけてきます.flac"
+album = "ハートリアライズ"
+artists = ["Tia"]
+title = "ちょっと出かけてきます"
+genre = "Anime"
+track = 2
+track_total = 4
+duration_ms = 296013
+
+[[raw_tags]]
+file_path = "ハートリアライズ／ちょっと出かけてきます ~ By Tia (FLAC+BK)/01. ハートリアライズ.flac"
+album = "ハートリアライズ"
+artists = ["Tia"]
+title = "ハートリアライズ"
+genre = "Anime"
+track = 1
+track_total = 4
+duration_ms = 293640
+
+[expect.release]
+ids = { release_group_id = "b8fd1d91-666d-496a-952b-4d99c42b65d6", release_id = "7cf008ee-1cdf-4807-bb5d-31dee85092aa" }
+fields = { release_title = "ハートリアライズ", release_date = "2014-03-12" }
+
+[expect.artists."b2f213d8-bf96-4bd5-99f0-cad1431a3000"]
+fields = { artist_name = "Tia", sort_name = "Tia" }
+
+[expect.tracks."7a61b6f6-bdbc-47a2-8583-ce28c4fc2589"]
+fields = { disc = 1, track = 4, track_title = "ちょっと出かけてきます –Instrumental–" }
+
+[expect.tracks."7a8080ad-1aa8-4337-b6a2-6f036ed68179"]
+fields = { disc = 1, track = 1, track_title = "ハートリアライズ" }
+
+[expect.tracks."a07517d5-abed-4807-ba00-42b5c7e0c007"]
+fields = { disc = 1, track = 3, track_title = "ハートリアライズ –Instrumental–" }
+
+[expect.tracks."bd454496-da4f-4b9a-9af9-0d6470531e71"]
+fields = { disc = 1, track = 2, track_title = "ちょっと出かけてきます" }

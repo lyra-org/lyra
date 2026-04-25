@@ -1,0 +1,157 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "月詠み - 月が満ちる (2022-08-17) [WEB FLAC]/1.09. 月が満ちる.flac"
+album = "月が満ちる"
+album_artists = ["月詠み"]
+artists = ["月詠み"]
+title = "月が満ちる"
+copyright = "℗ Tsukuyomi"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 9
+duration_ms = 206120
+
+[[raw_tags]]
+file_path = "月詠み - 月が満ちる (2022-08-17) [WEB FLAC]/1.08. 白夜.flac"
+album = "月が満ちる"
+album_artists = ["月詠み"]
+artists = ["月詠み"]
+title = "白夜"
+copyright = "℗ Tsukuyomi"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 9
+duration_ms = 223773
+
+[[raw_tags]]
+file_path = "月詠み - 月が満ちる (2022-08-17) [WEB FLAC]/1.07. アメイセンソウ.flac"
+album = "月が満ちる"
+album_artists = ["月詠み"]
+artists = ["月詠み"]
+title = "アメイセンソウ"
+copyright = "℗ Tsukuyomi"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 9
+duration_ms = 209666
+
+[[raw_tags]]
+file_path = "月詠み - 月が満ちる (2022-08-17) [WEB FLAC]/1.06. メデ.flac"
+album = "月が満ちる"
+album_artists = ["月詠み"]
+artists = ["月詠み"]
+title = "メデ"
+copyright = "℗ Tsukuyomi"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 9
+duration_ms = 202933
+
+[[raw_tags]]
+file_path = "月詠み - 月が満ちる (2022-08-17) [WEB FLAC]/1.05. 暮れに茜、芥と花束.flac"
+album = "月が満ちる"
+album_artists = ["月詠み"]
+artists = ["月詠み"]
+title = "暮れに茜、芥と花束"
+copyright = "℗ Tsukuyomi"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 9
+duration_ms = 210053
+
+[[raw_tags]]
+file_path = "月詠み - 月が満ちる (2022-08-17) [WEB FLAC]/1.04. 醜悪.flac"
+album = "月が満ちる"
+album_artists = ["月詠み"]
+artists = ["月詠み"]
+title = "醜悪"
+copyright = "℗ Tsukuyomi"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 9
+duration_ms = 194653
+
+[[raw_tags]]
+file_path = "月詠み - 月が満ちる (2022-08-17) [WEB FLAC]/1.03. ヨダカ.flac"
+album = "月が満ちる"
+album_artists = ["月詠み"]
+artists = ["月詠み"]
+title = "ヨダカ"
+copyright = "℗ Tsukuyomi"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 9
+duration_ms = 219413
+
+[[raw_tags]]
+file_path = "月詠み - 月が満ちる (2022-08-17) [WEB FLAC]/1.02. 生きるよすが.flac"
+album = "月が満ちる"
+album_artists = ["月詠み"]
+artists = ["月詠み"]
+title = "生きるよすが"
+copyright = "℗ Tsukuyomi"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 9
+duration_ms = 241733
+
+[[raw_tags]]
+file_path = "月詠み - 月が満ちる (2022-08-17) [WEB FLAC]/1.01. 廻想.flac"
+album = "月が満ちる"
+album_artists = ["月詠み"]
+artists = ["月詠み"]
+title = "廻想"
+copyright = "℗ Tsukuyomi"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 9
+duration_ms = 86400
+
+[expect.release]
+ids = { release_group_id = "92f914f2-b537-4573-bc14-8e8f2450ec63", release_id = ["81ad1091-8335-407f-8f36-df543b555023", "917cfb8a-4ffe-41be-ad37-6b3f6b74c290"] }
+fields = { release_title = "月が満ちる", release_date = "2022-08-17" }
+
+[expect.artists."6825ace2-3563-4ac5-8d85-c7bf1334bd2c"]
+fields = { artist_name = "月詠み", sort_name = "Tsukuyomi" }
+
+[expect.tracks."0b126c68-03ff-401f-a7d5-3c4c980b5958"]
+fields = { disc = 1, track = 6, track_title = "メデ" }
+
+[expect.tracks."16ecd502-77de-4436-96a6-c3f926c73f92"]
+fields = { disc = 1, track = 9, track_title = "月が満ちる" }
+
+[expect.tracks."3a4d81ed-37e9-4001-8e32-c1d5902146fe"]
+fields = { disc = 1, track = 7, track_title = "アメイセンソウ" }
+
+[expect.tracks."5c8330ba-4586-474f-88cc-bd785734971c"]
+fields = { disc = 1, track = 5, track_title = "暮れに茜、芥と花束" }
+
+[expect.tracks."6b6c09db-6b4d-4491-9aa8-4e43205b9241"]
+fields = { disc = 1, track = 4, track_title = "醜悪" }
+
+[expect.tracks."b7852f82-32e4-485d-90ba-621bd886f97f"]
+fields = { disc = 1, track = 2, track_title = "生きるよすが" }
+
+[expect.tracks."e17282fe-f314-421f-920c-8c55245043c4"]
+fields = { disc = 1, track = 1, track_title = "廻想" }
+
+[expect.tracks."f18632e7-8741-401c-9639-df3b33a181e8"]
+fields = { disc = 1, track = 3, track_title = "ヨダカ" }
+
+[expect.tracks."f6171e72-b9ae-484c-a8b1-afdaf8c5f0c2"]
+fields = { disc = 1, track = 8, track_title = "白夜" }

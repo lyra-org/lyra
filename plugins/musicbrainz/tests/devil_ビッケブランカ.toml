@@ -1,0 +1,141 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ビッケブランカ - Devil (2020-03-04) [WEB 24bit FLAC]/1.11. Avalanche.flac"
+album = "Devil"
+album_artists = ["ビッケブランカ"]
+artists = ["ビッケブランカ"]
+title = "Avalanche"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 11
+duration_ms = 267080
+
+[[raw_tags]]
+file_path = "ビッケブランカ - Devil (2020-03-04) [WEB 24bit FLAC]/1.10. Lucky Ending.flac"
+album = "Devil"
+album_artists = ["ビッケブランカ"]
+artists = ["ビッケブランカ"]
+title = "Lucky Ending"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 11
+duration_ms = 259066
+
+[[raw_tags]]
+file_path = "ビッケブランカ - Devil (2020-03-04) [WEB 24bit FLAC]/1.09. Heal Me.flac"
+album = "Devil"
+album_artists = ["ビッケブランカ"]
+artists = ["ビッケブランカ"]
+title = "Heal Me"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 11
+duration_ms = 229040
+
+[[raw_tags]]
+file_path = "ビッケブランカ - Devil (2020-03-04) [WEB 24bit FLAC]/1.08. Save This Love.flac"
+album = "Devil"
+album_artists = ["ビッケブランカ"]
+artists = ["ビッケブランカ"]
+title = "Save This Love"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 11
+duration_ms = 199026
+
+[[raw_tags]]
+file_path = "ビッケブランカ - Devil (2020-03-04) [WEB 24bit FLAC]/1.07. Black Catcher.flac"
+album = "Devil"
+album_artists = ["ビッケブランカ"]
+artists = ["ビッケブランカ"]
+title = "Black Catcher"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 11
+duration_ms = 196946
+
+[[raw_tags]]
+file_path = "ビッケブランカ - Devil (2020-03-04) [WEB 24bit FLAC]/1.06. かたうた.flac"
+album = "Devil"
+album_artists = ["ビッケブランカ"]
+artists = ["ビッケブランカ"]
+title = "かたうた"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 11
+duration_ms = 230013
+
+[[raw_tags]]
+file_path = "ビッケブランカ - Devil (2020-03-04) [WEB 24bit FLAC]/1.05. 白熊 - Main Version.flac"
+album = "Devil"
+album_artists = ["ビッケブランカ"]
+artists = ["ビッケブランカ"]
+title = "白熊 - Main Version"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 11
+duration_ms = 224986
+
+[[raw_tags]]
+file_path = "ビッケブランカ - Devil (2020-03-04) [WEB 24bit FLAC]/1.04. TARA - 2020 Mix.flac"
+album = "Devil"
+album_artists = ["ビッケブランカ"]
+artists = ["ビッケブランカ"]
+title = "TARA - 2020 Mix"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 11
+duration_ms = 262746
+
+[[raw_tags]]
+file_path = "ビッケブランカ - Devil (2020-03-04) [WEB 24bit FLAC]/1.03. Ca Va.flac"
+album = "Devil"
+album_artists = ["ビッケブランカ"]
+artists = ["ビッケブランカ"]
+title = "Ca Va?"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 11
+duration_ms = 248186
+
+[[raw_tags]]
+file_path = "ビッケブランカ - Devil (2020-03-04) [WEB 24bit FLAC]/1.02. Shekebon!.flac"
+album = "Devil"
+album_artists = ["ビッケブランカ"]
+artists = ["ビッケブランカ"]
+title = "Shekebon!"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 11
+duration_ms = 200320
+
+[[raw_tags]]
+file_path = "ビッケブランカ - Devil (2020-03-04) [WEB 24bit FLAC]/1.01. Devil.flac"
+album = "Devil"
+album_artists = ["ビッケブランカ"]
+artists = ["ビッケブランカ"]
+title = "Devil"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 11
+duration_ms = 65653
+
+[expect.release]
+ids = { release_id = ["050a96ec-2411-444c-aceb-06e4d654e157", "57c39e84-ab7d-4e0c-9367-7ec62dc2b505", "14841445-d362-43b9-8d1d-be05723adbdd", "5128cda7-f409-40bd-b51b-8ac3c58e3f5c"] }

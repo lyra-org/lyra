@@ -1,0 +1,181 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "星街すいせい - 新星目録 (2025) {HLP-10010} [CD-FLAC]/11 綺麗事.flac"
+album = "新星目録"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "綺麗事"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 11
+duration_ms = 226466
+
+[[raw_tags]]
+file_path = "星街すいせい - 新星目録 (2025) {HLP-10010} [CD-FLAC]/10 繭と心.flac"
+album = "新星目録"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "繭と心"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 11
+duration_ms = 298640
+
+[[raw_tags]]
+file_path = "星街すいせい - 新星目録 (2025) {HLP-10010} [CD-FLAC]/09 ザイオン.flac"
+album = "新星目録"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "ザイオン"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 11
+duration_ms = 252373
+
+[[raw_tags]]
+file_path = "星街すいせい - 新星目録 (2025) {HLP-10010} [CD-FLAC]/08 レクイエム (星街すいせい ver.).flac"
+album = "新星目録"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "レクイエム (星街すいせい ver.)"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 11
+duration_ms = 158000
+
+[[raw_tags]]
+file_path = "星街すいせい - 新星目録 (2025) {HLP-10010} [CD-FLAC]/07 DEADPOOL feat.花譜.flac"
+album = "新星目録"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい, 花譜"]
+title = "DEADPOOL feat.花譜"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 11
+duration_ms = 204920
+
+[[raw_tags]]
+file_path = "星街すいせい - 新星目録 (2025) {HLP-10010} [CD-FLAC]/06 ムーンライト.flac"
+album = "新星目録"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "ムーンライト"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 11
+duration_ms = 180746
+
+[[raw_tags]]
+file_path = "星街すいせい - 新星目録 (2025) {HLP-10010} [CD-FLAC]/05 Caramel Pain.flac"
+album = "新星目録"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "Caramel Pain"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 11
+duration_ms = 179746
+
+[[raw_tags]]
+file_path = "星街すいせい - 新星目録 (2025) {HLP-10010} [CD-FLAC]/04 ビーナスバグ.flac"
+album = "新星目録"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "ビーナスバグ"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 11
+duration_ms = 169893
+
+[[raw_tags]]
+file_path = "星街すいせい - 新星目録 (2025) {HLP-10010} [CD-FLAC]/03 AWAKE.flac"
+album = "新星目録"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "AWAKE"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 11
+duration_ms = 197386
+
+[[raw_tags]]
+file_path = "星街すいせい - 新星目録 (2025) {HLP-10010} [CD-FLAC]/02 ビビデバ.flac"
+album = "新星目録"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "ビビデバ"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 11
+duration_ms = 164626
+
+[[raw_tags]]
+file_path = "星街すいせい - 新星目録 (2025) {HLP-10010} [CD-FLAC]/01 先駆者.flac"
+album = "新星目録"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "先駆者"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 11
+duration_ms = 276626
+
+[expect.release]
+ids = { release_group_id = "a23fba67-a869-40a9-89d7-be549549b6b2", release_id = ["74d569fb-3343-45a9-81ec-ee3421b94cef", "816094f7-aed2-462d-a911-2d29b2a102f3"] }
+fields = { release_title = "新星目録", release_date = "2025-01-22" }
+
+[expect.artists."47ba70a2-d040-4265-bf52-86b9ef28c2c9"]
+fields = { artist_name = "花譜", sort_name = "KAF" }
+
+[expect.artists."8eeb59f4-0071-4261-b1f8-91d8294622d2"]
+fields = { artist_name = "星街すいせい", sort_name = "Hoshimachi, Suisei" }
+
+[expect.tracks."078d1da9-0e8d-4639-9dee-00d02c37352e"]
+fields = { disc = 1, track = 10, track_title = "繭と心" }
+
+[expect.tracks."2207d0c3-3f9b-421b-944f-1651a3ea0aad"]
+fields = { disc = 1, track = 7, track_title = "DEADPOOL" }
+
+[expect.tracks."2641db62-19a1-4f2a-9bfb-4bbfff8b2462"]
+fields = { disc = 1, track = 11, track_title = "綺麗事" }
+
+[expect.tracks."72641f3d-b33b-483e-a21f-9fccf84e6033"]
+fields = { disc = 1, track = 6, track_title = "ムーンライト" }
+
+[expect.tracks."7dfb4e0c-09ae-4ef5-b34c-d273d9201f4f"]
+fields = { disc = 1, track = 3, track_title = "AWAKE" }
+
+[expect.tracks."a470e9ce-d5e6-4571-9e68-8f3033348df8"]
+fields = { disc = 1, track = 5, track_title = "Caramel Pain" }
+
+[expect.tracks."a6252e30-9764-4bb2-9098-a7ea6d0cf539"]
+fields = { disc = 1, track = 4, track_title = "ビーナスバグ" }
+
+[expect.tracks."a7a3c583-3ee6-4015-b0b0-93515045b27f"]
+fields = { disc = 1, track = 2, track_title = "ビビデバ" }
+
+[expect.tracks."e18740cb-5cd3-40a4-ac6a-779d4209c1d6"]
+fields = { disc = 1, track = 1, track_title = "先駆者" }
+
+[expect.tracks."e84bb2b6-bcfd-4632-8efa-73ddbff6ac3b"]
+fields = { disc = 1, track = 8, track_title = "レクイエム (星街すいせい ver.)" }
+
+[expect.tracks."ea02df11-4ba6-4b9c-93c6-75364c041b83"]
+fields = { disc = 1, track = 9, track_title = "ザイオン" }

@@ -1,0 +1,48 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ASH DA HERO - Judgement (2023) [FLAC] [16B-44.1kHz]/03. ASH DA HERO - 最強のエンドロール.flac"
+album = "Judgement"
+album_artists = ["ASH DA HERO"]
+artists = ["ASH DA HERO"]
+title = "Saikyo no Endroll"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 3
+duration_ms = 219586
+
+[[raw_tags]]
+file_path = "ASH DA HERO - Judgement (2023) [FLAC] [16B-44.1kHz]/02. ASH DA HERO - 自分革命.flac"
+album = "Judgement"
+album_artists = ["ASH DA HERO"]
+artists = ["ASH DA HERO"]
+title = "Jibun Kakumei"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 3
+duration_ms = 211560
+
+[[raw_tags]]
+file_path = "ASH DA HERO - Judgement (2023) [FLAC] [16B-44.1kHz]/01. ASH DA HERO - Judgement.flac"
+album = "Judgement"
+album_artists = ["ASH DA HERO"]
+artists = ["ASH DA HERO"]
+title = "Judgement"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 3
+duration_ms = 226240
+
+[expect.release]
+ids = { release_group_id = "60761a4c-82f7-4cf8-97c7-03bafd899d4a" }

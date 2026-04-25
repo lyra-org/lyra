@@ -1,0 +1,109 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ウォルピスカーター - Overseas Highway (2021-05-26) [WEB FLAC]/1.06. オーバーシーズ・ハイウェイ (Instrumental).flac"
+album = "Overseas Highway"
+album_artists = ["ウォルピスカーター"]
+artists = ["ウォルピスカーター"]
+title = "オーバーシーズ・ハイウェイ (Instrumental)"
+copyright = "℗ 2021 Nippon Columbia Co., Ltd./NIPPONOPHONE"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 6
+duration_ms = 145560
+
+[[raw_tags]]
+file_path = "ウォルピスカーター - Overseas Highway (2021-05-26) [WEB FLAC]/1.05. シオン.flac"
+album = "Overseas Highway"
+album_artists = ["ウォルピスカーター"]
+artists = ["ウォルピスカーター"]
+title = "シオン"
+copyright = "℗ 2021 Nippon Columbia Co., Ltd./NIPPONOPHONE"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 6
+duration_ms = 327346
+
+[[raw_tags]]
+file_path = "ウォルピスカーター - Overseas Highway (2021-05-26) [WEB FLAC]/1.04. 止まないねって言わないで.flac"
+album = "Overseas Highway"
+album_artists = ["ウォルピスカーター"]
+artists = ["ウォルピスカーター"]
+title = "止まないねって言わないで"
+copyright = "℗ 2021 Nippon Columbia Co., Ltd./NIPPONOPHONE"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 6
+duration_ms = 243653
+
+[[raw_tags]]
+file_path = "ウォルピスカーター - Overseas Highway (2021-05-26) [WEB FLAC]/1.03. シ・シ・シ.flac"
+album = "Overseas Highway"
+album_artists = ["ウォルピスカーター"]
+artists = ["ウォルピスカーター"]
+title = "シ・シ・シ"
+copyright = "℗ 2021 Nippon Columbia Co., Ltd./NIPPONOPHONE"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 6
+duration_ms = 245640
+
+[[raw_tags]]
+file_path = "ウォルピスカーター - Overseas Highway (2021-05-26) [WEB FLAC]/1.02. 口なしの黒百合.flac"
+album = "Overseas Highway"
+album_artists = ["ウォルピスカーター"]
+artists = ["ウォルピスカーター"]
+title = "口なしの黒百合"
+copyright = "℗ 2021 Nippon Columbia Co., Ltd./NIPPONOPHONE"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 6
+duration_ms = 198946
+
+[[raw_tags]]
+file_path = "ウォルピスカーター - Overseas Highway (2021-05-26) [WEB FLAC]/1.01. オーバーシーズ・ハイウェイ.flac"
+album = "Overseas Highway"
+album_artists = ["ウォルピスカーター"]
+artists = ["ウォルピスカーター"]
+title = "オーバーシーズ・ハイウェイ"
+copyright = "℗ 2021 Nippon Columbia Co., Ltd./NIPPONOPHONE"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 6
+duration_ms = 146746
+
+[expect.release]
+ids = { release_group_id = "cd0c11c4-0690-47a8-8a99-72b9dbe7d0c3", release_id = "6307f0bc-c48d-4908-8aa4-f63c1081bc3d" }
+fields = { release_title = "Overseas Highway", release_date = "2021-05-26" }
+
+[expect.artists."168b8ecd-f8ac-4528-9838-e7669b6ef63f"]
+fields = { artist_name = "ウォルピスカーター", sort_name = "Wolpis Carter" }
+
+[expect.tracks."35518f80-57fb-4685-8969-4a1c909e7cbe"]
+fields = { disc = 1, track = 5, track_title = "シオン" }
+
+[expect.tracks."4d0c87ae-6fd3-43cc-8e59-f7021013bef1"]
+fields = { disc = 1, track = 1, track_title = "オーバーシーズ・ハイウェイ" }
+
+[expect.tracks."b2be8899-6592-474d-bdc7-542d571df109"]
+fields = { disc = 1, track = 2, track_title = "口なしの黒百合" }
+
+[expect.tracks."c9d82c77-f633-491e-a238-b5ba2f858c11"]
+fields = { disc = 1, track = 4, track_title = "止まないねって言わないで" }
+
+[expect.tracks."d143461e-952b-4e70-904a-ef25ea6bcdf6"]
+fields = { disc = 1, track = 3, track_title = "シ・シ・シ" }
+
+[expect.tracks."de7f1c36-7e7e-4762-bba1-08f93355221d"]
+fields = { disc = 1, track = 6, track_title = "オーバーシーズ・ハイウェイ (Instrumental)" }

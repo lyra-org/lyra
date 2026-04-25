@@ -1,0 +1,221 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Nightmare (ナイトメア) - the WORLD Ruler (2007) [FLAC]/13 - 縷々〜lulu〜.flac"
+album = "the WORLD Ruler"
+album_artists = ["ナイトメア"]
+artists = ["ナイトメア"]
+title = "縷々〜lulu〜"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 13
+duration_ms = 329826
+
+[[raw_tags]]
+file_path = "Nightmare (ナイトメア) - the WORLD Ruler (2007) [FLAC]/12 - Morpho.flac"
+album = "the WORLD Ruler"
+album_artists = ["ナイトメア"]
+artists = ["ナイトメア"]
+title = "Morpho"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 13
+duration_ms = 351893
+
+[[raw_tags]]
+file_path = "Nightmare (ナイトメア) - the WORLD Ruler (2007) [FLAC]/11 - アルミナ.flac"
+album = "the WORLD Ruler"
+album_artists = ["ナイトメア"]
+artists = ["ナイトメア"]
+title = "アルミナ"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 13
+duration_ms = 305840
+
+[[raw_tags]]
+file_path = "Nightmare (ナイトメア) - the WORLD Ruler (2007) [FLAC]/10 - the FOOL.flac"
+album = "the WORLD Ruler"
+album_artists = ["ナイトメア"]
+artists = ["ナイトメア"]
+title = "the FOOL"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 13
+duration_ms = 47760
+
+[[raw_tags]]
+file_path = "Nightmare (ナイトメア) - the WORLD Ruler (2007) [FLAC]/09 - ジャイアニズム叱.flac"
+album = "the WORLD Ruler"
+album_artists = ["ナイトメア"]
+artists = ["ナイトメア"]
+title = "ジャイアニズム叱"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 13
+duration_ms = 306306
+
+[[raw_tags]]
+file_path = "Nightmare (ナイトメア) - the WORLD Ruler (2007) [FLAC]/08 - Black Sick Spider.flac"
+album = "the WORLD Ruler"
+album_artists = ["ナイトメア"]
+artists = ["ナイトメア"]
+title = "Black Sick Spider"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 13
+duration_ms = 212293
+
+[[raw_tags]]
+file_path = "Nightmare (ナイトメア) - the WORLD Ruler (2007) [FLAC]/07 - 18歳.flac"
+album = "the WORLD Ruler"
+album_artists = ["ナイトメア"]
+artists = ["ナイトメア"]
+title = "18歳"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 13
+duration_ms = 208666
+
+[[raw_tags]]
+file_path = "Nightmare (ナイトメア) - the WORLD Ruler (2007) [FLAC]/06 - crevasse.flac"
+album = "the WORLD Ruler"
+album_artists = ["ナイトメア"]
+artists = ["ナイトメア"]
+title = "crevasse"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 13
+duration_ms = 295373
+
+[[raw_tags]]
+file_path = "Nightmare (ナイトメア) - the WORLD Ruler (2007) [FLAC]/05 - Alice.flac"
+album = "the WORLD Ruler"
+album_artists = ["ナイトメア"]
+artists = ["ナイトメア"]
+title = "Alice"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 13
+duration_ms = 255800
+
+[[raw_tags]]
+file_path = "Nightmare (ナイトメア) - the WORLD Ruler (2007) [FLAC]/04 - Criminal baby.flac"
+album = "the WORLD Ruler"
+album_artists = ["ナイトメア"]
+artists = ["ナイトメア"]
+title = "Criminal baby"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 13
+duration_ms = 214960
+
+[[raw_tags]]
+file_path = "Nightmare (ナイトメア) - the WORLD Ruler (2007) [FLAC]/03 - the WORLD.flac"
+album = "the WORLD Ruler"
+album_artists = ["ナイトメア"]
+artists = ["ナイトメア"]
+title = "the WORLD"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 13
+duration_ms = 228120
+
+[[raw_tags]]
+file_path = "Nightmare (ナイトメア) - the WORLD Ruler (2007) [FLAC]/02 - PHANTOM.flac"
+album = "the WORLD Ruler"
+album_artists = ["ナイトメア"]
+artists = ["ナイトメア"]
+title = "PHANTOM"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 13
+duration_ms = 93413
+
+[[raw_tags]]
+file_path = "Nightmare (ナイトメア) - the WORLD Ruler (2007) [FLAC]/01 - BOYS BE SUSPICIOUS.flac"
+album = "the WORLD Ruler"
+album_artists = ["ナイトメア"]
+artists = ["ナイトメア"]
+title = "BOYS BE SUSPICIOUS"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 13
+duration_ms = 243573
+
+[expect.release]
+ids = { release_group_id = "975cf2d7-254a-3fdd-9bbd-729e95de3ef2", release_id = "5724d57c-aba4-4950-8a09-725dd267d2d1" }
+fields = { release_title = "the WORLD Ruler", genres = ["alternative rock", "gothic rock", "rock", "visual kei"], release_date = "2007-02-28" }
+
+[expect.artists."61ac244d-3201-4c43-a234-f99d7166400e"]
+fields = { artist_name = "NIGHTMARE", sort_name = "NIGHTMARE" }
+
+[expect.tracks."006d4594-d6cb-4fe9-bd3c-577f0ad5c712"]
+fields = { disc = 1, track = 5, track_title = "Alice" }
+
+[expect.tracks."100e64d3-1e27-448f-9ffb-e8f24082c8f1"]
+fields = { disc = 1, track = 13, track_title = "縷々〜lulu〜" }
+
+[expect.tracks."18d5cb3f-ba4e-4ed6-9f00-7b6bed955aaa"]
+fields = { disc = 1, track = 2, track_title = "PHANTOM" }
+
+[expect.tracks."1b093292-53e4-4637-a4ff-d4996c29d003"]
+fields = { disc = 1, track = 8, track_title = "Black Sick Spider" }
+
+[expect.tracks."1d9bb14b-d371-43c2-b27c-74c0308f5638"]
+fields = { disc = 1, track = 4, track_title = "Criminal baby" }
+
+[expect.tracks."30cb0db8-ed06-4f9e-9760-7ed5bee359bb"]
+fields = { disc = 1, track = 7, track_title = "18歳" }
+
+[expect.tracks."554726f9-37a9-43b5-8e47-286bf448fedd"]
+fields = { disc = 1, track = 9, track_title = "ジャイアニズム叱" }
+
+[expect.tracks."673c5c24-5e5e-43a7-93be-e610031e8ffe"]
+fields = { disc = 1, track = 1, track_title = "BOYS BE SUSPICIOUS" }
+
+[expect.tracks."89fdfe69-e4ad-41da-a8d9-c49474b4aa90"]
+fields = { disc = 1, track = 12, track_title = "Morpho" }
+
+[expect.tracks."cac098a5-b116-4009-b3cc-eaa2c0915bf4"]
+fields = { disc = 1, track = 6, track_title = "crevasse" }
+
+[expect.tracks."e7aeb938-e93e-48f2-bbb4-0c0a1fd1f882"]
+fields = { disc = 1, track = 11, track_title = "アルミナ" }
+
+[expect.tracks."f3017c7b-bb27-4ae0-8d5a-6549933f0e63"]
+fields = { disc = 1, track = 3, track_title = "the WORLD" }
+
+[expect.tracks."f651a391-547f-4e86-b273-55dc82034606"]
+fields = { disc = 1, track = 10, track_title = "the FOOL" }

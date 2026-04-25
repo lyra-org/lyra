@@ -1,0 +1,28 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "鈴木雅之 feat. 古賀 葵 — アブナイキオク (2025) [WEB-FLAC]/01. アブナイキオク.flac"
+album = "アブナイキオク"
+album_artists = ["鈴木雅之 feat. 古賀 葵"]
+artists = ["鈴木雅之 feat. 古賀 葵"]
+title = "アブナイキオク"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 248153
+
+[expect.release]
+ids = { release_id = "ce17dbe4-8c50-424b-9ddf-9ad10bbc46d1" }
+fields = { release_title = "アブナイキオク", release_date = "2025-12-10" }
+
+[expect.artists."30f851bb-dba3-4e9b-811c-5f27f595c86a"]
+fields = { artist_name = "鈴木雅之", sort_name = "Suzuki, Masayuki" }
+
+[expect.tracks."6fcd7b82-a42b-4dbc-987a-a82907b173a8"]
+fields = { disc = 1, track = 1, track_title = "アブナイキオク" }

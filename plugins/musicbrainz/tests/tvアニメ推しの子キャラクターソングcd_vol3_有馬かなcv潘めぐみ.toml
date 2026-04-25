@@ -1,0 +1,106 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ぴえヨン(CV村田太志)、有馬かな(CV潘めぐみ) - [Oshi No Ko] Character Song CD (Vol. 3) [FLAC] [16B-44.1kHz]/06. 有馬かな(CV潘めぐみ) - Full moon…! (instrumental).flac"
+album = "TVアニメ「【推しの子】」キャラクターソングCD Vol.3"
+album_artists = ["ぴえヨン(CV:村田太志)、有馬かな(CV:潘めぐみ)"]
+artists = ["有馬かな(CV:潘めぐみ)"]
+title = "Full moon…! (instrumental)"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 6
+duration_ms = 217332
+
+[[raw_tags]]
+file_path = "ぴえヨン(CV村田太志)、有馬かな(CV潘めぐみ) - [Oshi No Ko] Character Song CD (Vol. 3) [FLAC] [16B-44.1kHz]/05. 有馬かな(CV潘めぐみ) - ピーマン体操 (instrumental).flac"
+album = "TVアニメ「【推しの子】」キャラクターソングCD Vol.3"
+album_artists = ["ぴえヨン(CV:村田太志)、有馬かな(CV:潘めぐみ)"]
+artists = ["有馬かな(CV:潘めぐみ)"]
+title = "ピーマン体操 (instrumental)"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 6
+duration_ms = 221162
+
+[[raw_tags]]
+file_path = "ぴえヨン(CV村田太志)、有馬かな(CV潘めぐみ) - [Oshi No Ko] Character Song CD (Vol. 3) [FLAC] [16B-44.1kHz]/04. ぴえヨン(CV村田太志) - ぴえヨンブートダンス (instrumental).flac"
+album = "TVアニメ「【推しの子】」キャラクターソングCD Vol.3"
+album_artists = ["ぴえヨン(CV:村田太志)、有馬かな(CV:潘めぐみ)"]
+artists = ["ぴえヨン(CV:村田太志)"]
+title = "ぴえヨンブートダンス (instrumental)"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 6
+duration_ms = 278146
+
+[[raw_tags]]
+file_path = "ぴえヨン(CV村田太志)、有馬かな(CV潘めぐみ) - [Oshi No Ko] Character Song CD (Vol. 3) [FLAC] [16B-44.1kHz]/03. 有馬かな(CV潘めぐみ) - Full moon…!.flac"
+album = "TVアニメ「【推しの子】」キャラクターソングCD Vol.3"
+album_artists = ["ぴえヨン(CV:村田太志)、有馬かな(CV:潘めぐみ)"]
+artists = ["有馬かな(CV:潘めぐみ)"]
+title = "Full moon…!"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 6
+duration_ms = 218719
+
+[[raw_tags]]
+file_path = "ぴえヨン(CV村田太志)、有馬かな(CV潘めぐみ) - [Oshi No Ko] Character Song CD (Vol. 3) [FLAC] [16B-44.1kHz]/02. 有馬かな(CV潘めぐみ) - ピーマン体操.flac"
+album = "TVアニメ「【推しの子】」キャラクターソングCD Vol.3"
+album_artists = ["ぴえヨン(CV:村田太志)、有馬かな(CV:潘めぐみ)"]
+artists = ["有馬かな(CV:潘めぐみ)"]
+title = "ピーマン体操"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 6
+duration_ms = 221162
+
+[[raw_tags]]
+file_path = "ぴえヨン(CV村田太志)、有馬かな(CV潘めぐみ) - [Oshi No Ko] Character Song CD (Vol. 3) [FLAC] [16B-44.1kHz]/01. ぴえヨン(CV村田太志) - ぴえヨンブートダンス.flac"
+album = "TVアニメ「【推しの子】」キャラクターソングCD Vol.3"
+album_artists = ["ぴえヨン(CV:村田太志)、有馬かな(CV:潘めぐみ)"]
+artists = ["ぴえヨン(CV:村田太志)"]
+title = "ぴえヨンブートダンス"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 6
+duration_ms = 278146
+
+[expect.release]
+ids = { release_id = ["5fa5ab58-e79b-4a29-a334-c137226b8bd9", "69c490f9-baa2-47b8-b240-858f1deeed8a"] }
+fields = { release_title = "TVアニメ「【推しの子】」キャラクターソングCD Vol.3", release_date = "2023-07-05" }
+
+[expect.artists."8bd571ef-baee-4ef6-80d5-a70129ff28a3"]
+fields = { artist_name = "ぴえヨン", sort_name = "Pieyon" }
+
+[expect.artists."fbadebba-dcfe-4497-a645-ab085b2e5cbb"]
+fields = { artist_name = "有馬かな", sort_name = "Arima, Kana" }
+
+[expect.tracks."2e4074ab-3bf6-4def-81eb-d8d308dc1b08"]
+fields = { disc = 1, track = 2, track_title = "ピーマン体操" }
+
+[expect.tracks."7acc9589-926b-4105-b2da-9879e3ba6cbe"]
+fields = { disc = 1, track = 3, track_title = "Full moon…!" }
+
+[expect.tracks."86969afd-ffd7-412c-a145-d0a7e03b7504"]
+fields = { disc = 1, track = 6, track_title = "Full moon…! (instrumental)" }
+
+[expect.tracks."bb390361-c082-450c-8fee-5420631ae657"]
+fields = { disc = 1, track = 4, track_title = "ぴえヨンブートダンス (instrumental)" }
+
+[expect.tracks."eb33f494-139b-4a00-8773-4c202d6b39a3"]
+fields = { disc = 1, track = 5, track_title = "ピーマン体操 (instrumental)" }
+
+[expect.tracks."fb2cd8ea-facb-417b-9514-6ef548b30b7c"]
+fields = { disc = 1, track = 1, track_title = "ぴえヨンブートダンス" }

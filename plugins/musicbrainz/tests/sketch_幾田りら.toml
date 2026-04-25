@@ -1,0 +1,189 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "幾田りら - Sketch (2023-03-08) [WEB FLAC]/1.11. ロマンスの約束.flac"
+album = "Sketch"
+album_artists = ["幾田りら"]
+artists = ["幾田りら"]
+title = "ロマンスの約束"
+copyright = "℗ 2023 Sony Music Entertainment(Japan)inc."
+disc = 1
+disc_total = 1
+track = 11
+track_total = 11
+duration_ms = 222066
+
+[[raw_tags]]
+file_path = "幾田りら - Sketch (2023-03-08) [WEB FLAC]/1.10. 宝石.flac"
+album = "Sketch"
+album_artists = ["幾田りら"]
+artists = ["幾田りら"]
+title = "宝石"
+copyright = "℗ 2023 Sony Music Entertainment(Japan)inc."
+disc = 1
+disc_total = 1
+track = 10
+track_total = 11
+duration_ms = 255533
+
+[[raw_tags]]
+file_path = "幾田りら - Sketch (2023-03-08) [WEB FLAC]/1.09. ヒカリ.flac"
+album = "Sketch"
+album_artists = ["幾田りら"]
+artists = ["幾田りら"]
+title = "ヒカリ"
+copyright = "℗ 2023 Sony Music Entertainment(Japan)inc."
+disc = 1
+disc_total = 1
+track = 9
+track_total = 11
+duration_ms = 244833
+
+[[raw_tags]]
+file_path = "幾田りら - Sketch (2023-03-08) [WEB FLAC]/1.08. 吉祥寺.flac"
+album = "Sketch"
+album_artists = ["幾田りら"]
+artists = ["幾田りら"]
+title = "吉祥寺"
+copyright = "℗ 2023 Sony Music Entertainment(Japan)inc."
+disc = 1
+disc_total = 1
+track = 8
+track_total = 11
+duration_ms = 169123
+
+[[raw_tags]]
+file_path = "幾田りら - Sketch (2023-03-08) [WEB FLAC]/1.07. レンズ.flac"
+album = "Sketch"
+album_artists = ["幾田りら"]
+artists = ["幾田りら"]
+title = "レンズ"
+copyright = "℗ 2023 Sony Music Entertainment(Japan)inc."
+disc = 1
+disc_total = 1
+track = 7
+track_total = 11
+duration_ms = 233460
+
+[[raw_tags]]
+file_path = "幾田りら - Sketch (2023-03-08) [WEB FLAC]/1.06. JUMP.flac"
+album = "Sketch"
+album_artists = ["幾田りら"]
+artists = ["幾田りら"]
+title = "JUMP"
+copyright = "℗ 2023 Sony Music Entertainment(Japan)inc."
+disc = 1
+disc_total = 1
+track = 6
+track_total = 11
+duration_ms = 227553
+
+[[raw_tags]]
+file_path = "幾田りら - Sketch (2023-03-08) [WEB FLAC]/1.05. 蒲公英.flac"
+album = "Sketch"
+album_artists = ["幾田りら"]
+artists = ["幾田りら"]
+title = "蒲公英"
+copyright = "℗ 2023 Sony Music Entertainment(Japan)inc."
+disc = 1
+disc_total = 1
+track = 5
+track_total = 11
+duration_ms = 191486
+
+[[raw_tags]]
+file_path = "幾田りら - Sketch (2023-03-08) [WEB FLAC]/1.04. Midnight Talk.flac"
+album = "Sketch"
+album_artists = ["幾田りら"]
+artists = ["幾田りら"]
+title = "Midnight Talk"
+copyright = "℗ 2023 Sony Music Entertainment(Japan)inc."
+disc = 1
+disc_total = 1
+track = 4
+track_total = 11
+duration_ms = 219909
+
+[[raw_tags]]
+file_path = "幾田りら - Sketch (2023-03-08) [WEB FLAC]/1.03. スパークル.flac"
+album = "Sketch"
+album_artists = ["幾田りら"]
+artists = ["幾田りら"]
+title = "スパークル"
+copyright = "℗ 2023 Sony Music Entertainment(Japan)inc."
+disc = 1
+disc_total = 1
+track = 3
+track_total = 11
+duration_ms = 210500
+
+[[raw_tags]]
+file_path = "幾田りら - Sketch (2023-03-08) [WEB FLAC]/1.02. サークル.flac"
+album = "Sketch"
+album_artists = ["幾田りら"]
+artists = ["幾田りら"]
+title = "サークル"
+copyright = "℗ 2023 Sony Music Entertainment(Japan)inc."
+disc = 1
+disc_total = 1
+track = 2
+track_total = 11
+duration_ms = 195760
+
+[[raw_tags]]
+file_path = "幾田りら - Sketch (2023-03-08) [WEB FLAC]/1.01. Answer.flac"
+album = "Sketch"
+album_artists = ["幾田りら"]
+artists = ["幾田りら"]
+title = "Answer"
+copyright = "℗ 2023 Sony Music Entertainment(Japan)inc."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 11
+duration_ms = 242105
+
+[expect.release]
+ids = { release_group_id = "f2ce6a96-f873-4b71-89eb-5d8b27ae318f", release_id = "add99b39-c4e2-43bf-962e-0b9b7893ade8" }
+fields = { release_title = "Sketch", release_date = "2023-03-08" }
+
+[expect.artists."55e42264-ef27-49d8-93fd-29f930dc96e4"]
+fields = { artist_name = "幾田りら", sort_name = "Ikuta, Lilas" }
+
+[expect.tracks."439b5337-4939-40a6-ba11-dae9b571ec31"]
+fields = { disc = 1, track = 8, track_title = "吉祥寺" }
+
+[expect.tracks."4ac7d349-b327-4e28-9526-aa385c12e0fb"]
+fields = { disc = 1, track = 5, track_title = "蒲公英" }
+
+[expect.tracks."4ee3c244-2f27-4b4c-beb6-78f6fc0de228"]
+fields = { disc = 1, track = 1, track_title = "Answer" }
+
+[expect.tracks."66bb2bdc-e4cc-442f-860a-1941b7371ea7"]
+fields = { disc = 1, track = 3, track_title = "スパークル" }
+
+[expect.tracks."84189c6c-360e-4d9e-8679-30c467795589"]
+fields = { disc = 1, track = 9, track_title = "ヒカリ" }
+
+[expect.tracks."a3d758b0-c46b-461c-a9b4-25d5d8947239"]
+fields = { disc = 1, track = 2, track_title = "サークル" }
+
+[expect.tracks."a3fb740b-7834-496c-be57-c3b4012ad12a"]
+fields = { disc = 1, track = 7, track_title = "レンズ" }
+
+[expect.tracks."b0ee3a90-cc5b-4a9e-af3a-29b0abcf37bc"]
+fields = { disc = 1, track = 11, track_title = "ロマンスの約束" }
+
+[expect.tracks."c21cb49d-6179-4ce5-afc0-7f950227a097"]
+fields = { disc = 1, track = 6, track_title = "JUMP" }
+
+[expect.tracks."c6f7c264-2ed3-4112-a4f5-6f6b8d84a11c"]
+fields = { disc = 1, track = 4, track_title = "Midnight Talk" }
+
+[expect.tracks."ca823e2b-cfc6-4812-9b43-cedbee6bd691"]
+fields = { disc = 1, track = 10, track_title = "宝石" }
