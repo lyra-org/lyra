@@ -1,0 +1,61 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "安月名莉子 - Chance! & Revenge! (2021-04-28 EP) [Web]/04 恋なのかも (Instrumental).flac"
+album = "Chance! & Revenge! (EP) [Web]"
+album_artists = ["安月名莉子"]
+artists = ["安月名莉子"]
+title = "恋なのかも (Instrumental)"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 257796
+
+[[raw_tags]]
+file_path = "安月名莉子 - Chance! & Revenge! (2021-04-28 EP) [Web]/03 Chance! & Revenge! (Instrumental).flac"
+album = "Chance! & Revenge! (EP) [Web]"
+album_artists = ["安月名莉子"]
+artists = ["安月名莉子"]
+title = "Chance! & Revenge! (Instrumental)"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 226743
+
+[[raw_tags]]
+file_path = "安月名莉子 - Chance! & Revenge! (2021-04-28 EP) [Web]/02 恋なのかも.flac"
+album = "Chance! & Revenge! (EP) [Web]"
+album_artists = ["安月名莉子"]
+artists = ["安月名莉子"]
+title = "恋なのかも"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 258036
+
+[[raw_tags]]
+file_path = "安月名莉子 - Chance! & Revenge! (2021-04-28 EP) [Web]/01 Chance! & Revenge!.flac"
+album = "Chance! & Revenge! (EP) [Web]"
+album_artists = ["安月名莉子"]
+artists = ["安月名莉子"]
+title = "Chance! & Revenge!"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 226730
+
+[expect.release]
+ids = { release_id = ["528bef70-adec-4616-b52d-8a9114659b6d", "d55d20ec-a824-44f1-abc4-2b626df8f5b7"] }

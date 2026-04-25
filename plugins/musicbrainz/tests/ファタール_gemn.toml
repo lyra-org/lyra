@@ -1,0 +1,21 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2024.07.04] GEMN - ファタール [WEB-FLAC 24bit／96kHz]/01. ファタール - Fatal.flac"
+album = "ファタール"
+album_artists = ["GEMN"]
+artists = ["GEMN: 中島健人, キタニタツヤ"]
+title = "ファタール"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 219200
+
+[expect.release]
+ids = { release_id = "18ed0fb5-c1ac-4c61-aab0-2150d4fa2892" }

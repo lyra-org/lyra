@@ -1,0 +1,193 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ReoNa - unknown (2020) [FLAC]/12. - SWEET HURT -plus unknown-.flac"
+album = "unknown"
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "SWEET HURT -plus unknown-"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 12
+duration_ms = 578080
+
+[[raw_tags]]
+file_path = "ReoNa - unknown (2020) [FLAC]/11. - Till the End.flac"
+album = "unknown"
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "Till the End"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 12
+duration_ms = 364013
+
+[[raw_tags]]
+file_path = "ReoNa - unknown (2020) [FLAC]/10. - ANIMA.flac"
+album = "unknown"
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "ANIMA"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 12
+duration_ms = 269120
+
+[[raw_tags]]
+file_path = "ReoNa - unknown (2020) [FLAC]/09. - 絶望年表.flac"
+album = "unknown"
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "絶望年表"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 12
+duration_ms = 452440
+
+[[raw_tags]]
+file_path = "ReoNa - unknown (2020) [FLAC]/08. - 心音.flac"
+album = "unknown"
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "心音"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 12
+duration_ms = 307240
+
+[[raw_tags]]
+file_path = "ReoNa - unknown (2020) [FLAC]/07. - いかり.flac"
+album = "unknown"
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "いかり"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 12
+duration_ms = 239853
+
+[[raw_tags]]
+file_path = "ReoNa - unknown (2020) [FLAC]/06. - BIRTHDAY.flac"
+album = "unknown"
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "BIRTHDAY"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 12
+duration_ms = 216040
+
+[[raw_tags]]
+file_path = "ReoNa - unknown (2020) [FLAC]/05. - Let it Die.flac"
+album = "unknown"
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "Let it Die"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 12
+duration_ms = 300666
+
+[[raw_tags]]
+file_path = "ReoNa - unknown (2020) [FLAC]/04. - 怪物の詩.flac"
+album = "unknown"
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "怪物の詩"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 12
+duration_ms = 262666
+
+[[raw_tags]]
+file_path = "ReoNa - unknown (2020) [FLAC]/03. - Untitled world.flac"
+album = "unknown"
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "Untitled world"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 12
+duration_ms = 250080
+
+[[raw_tags]]
+file_path = "ReoNa - unknown (2020) [FLAC]/02. - forget-me-not -unknown mix-.flac"
+album = "unknown"
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "forget-me-not -unknown mix-"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 12
+duration_ms = 266826
+
+[[raw_tags]]
+file_path = "ReoNa - unknown (2020) [FLAC]/01. - unknown.flac"
+album = "unknown"
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "unknown"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 12
+duration_ms = 260560
+
+[expect.release]
+ids = { release_id = ["b478587d-0131-4555-83e4-1f1bbd75f101", "c4893fe8-6a73-4149-8e6e-41593c6a012f", "07507178-1710-4370-8b42-3548bf91503b"] }
+fields = { release_title = "unknown", release_date = "2020-10-07" }
+
+[expect.artists."4da158cc-4d03-48d6-aefc-6726e4f9a149"]
+fields = { artist_name = "ReoNa", sort_name = "ReoNa" }
+
+[expect.tracks."1b2922fb-5fbe-48be-b531-62f644cb348d"]
+fields = { disc = 1, track = 10, track_title = "ANIMA" }
+
+[expect.tracks."1dbe09d8-ad0d-4ff5-a207-80f77ea3f3ca"]
+fields = { disc = 1, track = 1, track_title = "unknown" }
+
+[expect.tracks."23064ee6-2437-4324-91e8-adf5e91a0dbe"]
+fields = { disc = 1, track = 5, track_title = "Let it Die" }
+
+[expect.tracks."40ddb6d9-90df-4781-ab3c-c024281537b3"]
+fields = { disc = 1, track = 4, track_title = "怪物の詩" }
+
+[expect.tracks."6b59ff04-b62a-40c1-9bd7-4f2050c23b08"]
+fields = { disc = 1, track = 7, track_title = "いかり" }
+
+[expect.tracks."7e9609a2-996e-45e8-81c8-3508209ee311"]
+fields = { disc = 1, track = 3, track_title = "Untitled world" }
+
+[expect.tracks."a225add7-ab54-4b5f-993e-e01ccaf8dff9"]
+fields = { disc = 1, track = 8, track_title = "心音" }
+
+[expect.tracks."b9c7cea9-b7a4-4d87-acfa-f5b50e15ca80"]
+fields = { disc = 1, track = 2, track_title = "forget-me-not -unknown mix-" }
+
+[expect.tracks."c0610ec1-feda-4eba-9379-ce9f73031355"]
+fields = { disc = 1, track = 9, track_title = "絶望年表" }
+
+[expect.tracks."d5646636-0827-4ecb-8f46-3ccc9f5a7016"]
+fields = { disc = 1, track = 11, track_title = "Till the End" }
+
+[expect.tracks."de7aca6f-28a3-4502-88fc-a8dde20a76c2"]
+fields = { disc = 1, track = 12, track_title = "SWEET HURT -plus unknown-" }
+
+[expect.tracks."e7bc2609-534b-446a-a4d2-763b4c8d575d"]
+fields = { disc = 1, track = 6, track_title = "BIRTHDAY" }

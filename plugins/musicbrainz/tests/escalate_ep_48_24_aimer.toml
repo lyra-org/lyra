@@ -1,0 +1,29 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Aimer - escalate (2023-01-08 EP) [48-24]/01 escalate.flac"
+album = "escalate (EP) [48-24]"
+album_artists = ["Aimer"]
+artists = ["Aimer"]
+title = "escalate"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 242341
+
+[expect.release]
+ids = { release_group_id = "b00ffb1b-3f6d-4bd8-847f-1ede337cc66c", release_id = "f8c54845-fc45-4227-8b88-9df7cd2b9d12" }
+fields = { release_title = "escalate", genres = ["j-pop"], release_date = "2023-01-08" }
+
+[expect.artists."9388cee2-7d57-4598-905f-106019b267d3"]
+fields = { artist_name = "Aimer", sort_name = "Aimer" }
+
+[expect.tracks."fa3cc916-e072-4821-9d61-2bf2aa7fb5a9"]
+fields = { disc = 1, track = 1, track_title = "escalate", work_id = "869841e1-466a-4c94-a4fa-437dee3b8a6f" }

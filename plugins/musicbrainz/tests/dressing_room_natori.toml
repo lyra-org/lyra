@@ -1,0 +1,28 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "なとり - DRESSING ROOM (2025) [WEB-FLAC 24bit／48kHz]/01. DRESSING ROOM.flac"
+album = "DRESSING ROOM"
+album_artists = ["Natori"]
+artists = ["Natori"]
+title = "DRESSING ROOM"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 174260
+
+[expect.release]
+ids = { release_group_id = "fc360207-f965-49df-aacc-e89f1e0b7a57", release_id = "2ddd53f3-d57a-4e79-a018-007eea9195b1" }
+fields = { release_title = "DRESSING ROOM", release_date = "2025-02-07" }
+
+[expect.artists."cad9e169-893d-4432-a23f-3aa16beb9f0e"]
+fields = { artist_name = "なとり", sort_name = "natori" }
+
+[expect.tracks."fa66ac71-9f04-41f7-a03b-f40ac0f84f7c"]
+fields = { disc = 1, track = 1, track_title = "DRESSING ROOM" }

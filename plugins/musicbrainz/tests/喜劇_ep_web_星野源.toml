@@ -1,0 +1,29 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "星野源 - 喜劇 (2022 EP) [Web]/01 喜劇.flac"
+album = "喜劇 (EP) [Web]"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "喜劇"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 230666
+
+[expect.release]
+ids = { release_id = "2c9c7185-aab8-40fe-bf05-00e6877a5739" }
+fields = { release_title = "喜劇", release_date = "2022-04-08" }
+
+[expect.artists."2c6c53ea-09d4-4d98-b174-c9aa83d4fecf"]
+fields = { artist_name = "星野源", sort_name = "Hoshino, Gen" }
+
+[expect.tracks."70978d75-0c1e-4d5e-b489-a21df41e92d5"]
+fields = { disc = 1, track = 1, track_title = "喜劇" }

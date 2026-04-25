@@ -1,0 +1,25 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2022.04.04] Mori Calliope & Hoshimachi Suisei - CapSule [FLAC 24bit]/01. CapSule.flac"
+album = "CapSule"
+artists = ["Mori Calliope & Hoshimachi Suisei"]
+title = "CapSule"
+genre = "Jpop"
+track = 1
+duration_ms = 174842
+
+[expect.release]
+ids = { release_id = "be7fc688-eae4-4201-9924-bbc0eaeb19bc" }
+fields = { release_title = "CapSule", release_date = "2022-04-04" }
+
+[expect.artists."8a9d0b90-951e-4ab8-b2dc-9d3618af3d28"]
+fields = { artist_name = "Mori Calliope", sort_name = "Mori, Calliope" }
+
+[expect.tracks."710d0fe4-14cc-4b32-9657-0dc15677c4a7"]
+fields = { disc = 1, track = 1, track_title = "CapSule", work_id = "4b8dac46-eabd-468c-9c82-393d23ee3b21" }

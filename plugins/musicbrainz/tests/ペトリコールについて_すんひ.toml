@@ -1,0 +1,30 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "すんひ - ペトリコールについて [FLAC] [16B-44.1kHz]/01. すんひ - ペトリコールについて.flac"
+album = "ペトリコールについて"
+album_artists = ["すんひ"]
+artists = ["すんひ"]
+title = "ペトリコールについて"
+copyright = "℗ 2021 UNIVERSAL MUSIC LLC"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 202273
+
+[expect.release]
+ids = { release_id = "849bc100-a61c-45af-a9c7-45b5c8070dd7" }
+fields = { release_title = "ペトリコールについて", release_date = "2022-03-29" }
+
+[expect.artists."8b5167cd-63de-401b-a734-ad9245432dba"]
+fields = { artist_name = "さんひ", sort_name = "Sanghee" }
+
+[expect.tracks."87b773d6-6ab2-4d8a-ab66-806096ab71db"]
+fields = { disc = 1, track = 1, track_title = "ペトリコールについて" }

@@ -1,0 +1,53 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[EAC][220622][TFCC-86861~2][マカロニえんぴつ][たましいの居場所][初回生産限定盤][CD+BD]/04. 僕らは夢の中.flac"
+album = "たましいの居場所"
+artists = ["マカロニえんぴつ"]
+title = "僕らは夢の中"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 282120
+
+[[raw_tags]]
+file_path = "[EAC][220622][TFCC-86861~2][マカロニえんぴつ][たましいの居場所][初回生産限定盤][CD+BD]/03. 街中華☆超愛.flac"
+album = "たましいの居場所"
+artists = ["マカロニえんぴつ"]
+title = "街中華☆超愛"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 242333
+
+[[raw_tags]]
+file_path = "[EAC][220622][TFCC-86861~2][マカロニえんぴつ][たましいの居場所][初回生産限定盤][CD+BD]/02. 星が泳ぐ.flac"
+album = "たましいの居場所"
+artists = ["マカロニえんぴつ"]
+title = "星が泳ぐ"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 240066
+
+[[raw_tags]]
+file_path = "[EAC][220622][TFCC-86861~2][マカロニえんぴつ][たましいの居場所][初回生産限定盤][CD+BD]/01. たましいの居場所.flac"
+album = "たましいの居場所"
+artists = ["マカロニえんぴつ"]
+title = "たましいの居場所"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 201533
+
+[expect.release]
+ids = { release_id = "756447a1-06bb-4fb2-b0cd-ecc1076f2c07" }

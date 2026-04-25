@@ -1,0 +1,139 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "緑黄色社会 - SINGALONG (2020) [WEB FLAC]/13. 冬の朝.flac"
+album = "SINGALONG"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "冬の朝"
+track = 13
+track_total = 13
+duration_ms = 305160
+
+[[raw_tags]]
+file_path = "緑黄色社会 - SINGALONG (2020) [WEB FLAC]/12. あのころ見た光.flac"
+album = "SINGALONG"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "あのころ見た光"
+track = 12
+track_total = 13
+duration_ms = 240066
+
+[[raw_tags]]
+file_path = "緑黄色社会 - SINGALONG (2020) [WEB FLAC]/11. Brand New World.flac"
+album = "SINGALONG"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "Brand New World"
+track = 11
+track_total = 13
+duration_ms = 226920
+
+[[raw_tags]]
+file_path = "緑黄色社会 - SINGALONG (2020) [WEB FLAC]/10. 幸せ.flac"
+album = "SINGALONG"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "幸せ"
+track = 10
+track_total = 13
+duration_ms = 310826
+
+[[raw_tags]]
+file_path = "緑黄色社会 - SINGALONG (2020) [WEB FLAC]/09. 愛のかたち.flac"
+album = "SINGALONG"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "愛のかたち"
+track = 9
+track_total = 13
+duration_ms = 269280
+
+[[raw_tags]]
+file_path = "緑黄色社会 - SINGALONG (2020) [WEB FLAC]/08. 一歩.flac"
+album = "SINGALONG"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "一歩"
+track = 8
+track_total = 13
+duration_ms = 324293
+
+[[raw_tags]]
+file_path = "緑黄色社会 - SINGALONG (2020) [WEB FLAC]/07. スカーレット.flac"
+album = "SINGALONG"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "スカーレット"
+track = 7
+track_total = 13
+duration_ms = 214826
+
+[[raw_tags]]
+file_path = "緑黄色社会 - SINGALONG (2020) [WEB FLAC]/06. Shout Baby.flac"
+album = "SINGALONG"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "Shout Baby"
+track = 6
+track_total = 13
+duration_ms = 263826
+
+[[raw_tags]]
+file_path = "緑黄色社会 - SINGALONG (2020) [WEB FLAC]/05. inori.flac"
+album = "SINGALONG"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "inori"
+track = 5
+track_total = 13
+duration_ms = 252013
+
+[[raw_tags]]
+file_path = "緑黄色社会 - SINGALONG (2020) [WEB FLAC]/04. 想い人.flac"
+album = "SINGALONG"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "想い人"
+track = 4
+track_total = 13
+duration_ms = 272666
+
+[[raw_tags]]
+file_path = "緑黄色社会 - SINGALONG (2020) [WEB FLAC]/03. Mela!.flac"
+album = "SINGALONG"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "Mela!"
+track = 3
+track_total = 13
+duration_ms = 242066
+
+[[raw_tags]]
+file_path = "緑黄色社会 - SINGALONG (2020) [WEB FLAC]/02. sabotage.flac"
+album = "SINGALONG"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "sabotage"
+track = 2
+track_total = 13
+duration_ms = 238706
+
+[[raw_tags]]
+file_path = "緑黄色社会 - SINGALONG (2020) [WEB FLAC]/01. SINGALONG.flac"
+album = "SINGALONG"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "SINGALONG"
+track = 1
+track_total = 13
+duration_ms = 80186
+
+[expect.release]
+ids = { release_group_id = "3689cfe3-23cf-4575-8ed9-ba838a87b61e" }

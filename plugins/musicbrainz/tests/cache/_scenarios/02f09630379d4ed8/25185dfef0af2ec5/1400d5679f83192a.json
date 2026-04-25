@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/release?query=arid%3A66bdd1c9-d1c5-40b7-a487-5061fffbd87d%20AND%20(release%3AGhost%20Avenue%20OR%20recording%3AGhost%20Avenue)&limit=100",
+  "status_code": 200,
+  "body": "{\"created\":\"2026-03-10T02:21:13.618Z\",\"count\":0,\"offset\":0,\"releases\":[]}"
+}

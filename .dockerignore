@@ -1,0 +1,20 @@
+target/
+.git/
+.lyra/
+.serena/
+
+# Documentation
+*.md
+
+# Test fixtures
+lyra-server/tests/
+lyra-harmony-test/src/
+lyra-harmony-test/tests/
+
+# Database files
+*.db
+
+# Secrets and local config
+config.json
+plugins/**/token.luau
+plugins/**/config.luau

@@ -1,0 +1,165 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2021] Various Artists - ROAR [WEB-FLAC 16Bit_44.1kHz]/12 - INNOCENT BLACK.flac"
+album = "ROAR"
+album_artists = ["Various Artists"]
+artists = ["KanKan"]
+title = "INNOCENT BLACK"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 12
+duration_ms = 196384
+
+[[raw_tags]]
+file_path = "[2021] Various Artists - ROAR [WEB-FLAC 16Bit_44.1kHz]/11 - TRIPPER.flac"
+album = "ROAR"
+album_artists = ["Various Artists"]
+artists = ["KanKan"]
+title = "TRIPPER"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 12
+duration_ms = 256281
+
+[[raw_tags]]
+file_path = "[2021] Various Artists - ROAR [WEB-FLAC 16Bit_44.1kHz]/10 - ROARS.flac"
+album = "ROAR"
+album_artists = ["Various Artists"]
+artists = ["KanKan", "BIZ", "Karukuro"]
+title = "ROARS"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 12
+duration_ms = 220137
+
+[[raw_tags]]
+file_path = "[2021] Various Artists - ROAR [WEB-FLAC 16Bit_44.1kHz]/09 - Interlude.flac"
+album = "ROAR"
+album_artists = ["Various Artists"]
+artists = ["KanKan", "BIZ"]
+title = "Interlude"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 12
+duration_ms = 32600
+
+[[raw_tags]]
+file_path = "[2021] Various Artists - ROAR [WEB-FLAC 16Bit_44.1kHz]/08 - ALL FOOL.flac"
+album = "ROAR"
+album_artists = ["Various Artists"]
+artists = ["KanKan", "HiiragiKirai"]
+title = "ALL FOOL"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 12
+duration_ms = 200461
+
+[[raw_tags]]
+file_path = "[2021] Various Artists - ROAR [WEB-FLAC 16Bit_44.1kHz]/07 - Revive.flac"
+album = "ROAR"
+album_artists = ["Various Artists"]
+artists = ["KanKan", "Aqu3ra"]
+title = "Revive"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 12
+duration_ms = 205128
+
+[[raw_tags]]
+file_path = "[2021] Various Artists - ROAR [WEB-FLAC 16Bit_44.1kHz]/06 - R.Yuk (Long Ver).flac"
+album = "ROAR"
+album_artists = ["Various Artists"]
+artists = ["KanKan", "Three"]
+title = "R.Yuk (Long Ver)"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 12
+duration_ms = 244444
+
+[[raw_tags]]
+file_path = "[2021] Various Artists - ROAR [WEB-FLAC 16Bit_44.1kHz]/05 - suima.flac"
+album = "ROAR"
+album_artists = ["Various Artists"]
+artists = ["KanKan", "Ayase"]
+title = "suima"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 12
+duration_ms = 190692
+
+[[raw_tags]]
+file_path = "[2021] Various Artists - ROAR [WEB-FLAC 16Bit_44.1kHz]/04 - Bloody Mary.flac"
+album = "ROAR"
+album_artists = ["Various Artists"]
+artists = ["KanKan", "FAKE TYPE."]
+title = "Bloody Mary"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 12
+duration_ms = 222000
+
+[[raw_tags]]
+file_path = "[2021] Various Artists - ROAR [WEB-FLAC 16Bit_44.1kHz]/03 - babirusa.flac"
+album = "ROAR"
+album_artists = ["Various Artists"]
+artists = ["KanKan", "NILFRUITS niru kajitsu"]
+title = "babirusa"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 12
+duration_ms = 183633
+
+[[raw_tags]]
+file_path = "[2021] Various Artists - ROAR [WEB-FLAC 16Bit_44.1kHz]/02 - VITA.flac"
+album = "ROAR"
+album_artists = ["Various Artists"]
+artists = ["KanKan", "Kairiki Bear"]
+title = "VITA"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 12
+duration_ms = 209801
+
+[[raw_tags]]
+file_path = "[2021] Various Artists - ROAR [WEB-FLAC 16Bit_44.1kHz]/01 - Introduction.flac"
+album = "ROAR"
+album_artists = ["Various Artists"]
+artists = ["KanKan", "BIZ"]
+title = "Introduction"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 12
+duration_ms = 79173
+
+[expect.release]
+ids = { release_id = ["33ee14ba-049f-4cad-9638-d09a6f8eb00a", "a24d89e5-08bd-418f-a09e-1a4174e5dbf2", "46b73171-69ac-413b-9ed1-5e7c00a3f100"] }

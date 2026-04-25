@@ -1,0 +1,193 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "COWBOY BEBOP Tank! THE! BEST! (2012) [FLAC] {VTCL-60330]/12 - Gotta knock a little harder.flac"
+album = "Cowboy Bebop: Tank! THE! BEST!"
+album_artists = ["シートベルツ"]
+artists = ["シートベルツ"]
+title = "Gotta knock a little harder"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 12
+duration_ms = 320133
+
+[[raw_tags]]
+file_path = "COWBOY BEBOP Tank! THE! BEST! (2012) [FLAC] {VTCL-60330]/11 - PEARLS.flac"
+album = "Cowboy Bebop: Tank! THE! BEST!"
+album_artists = ["シートベルツ"]
+artists = ["シートベルツ"]
+title = "PEARLS"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 12
+duration_ms = 284626
+
+[[raw_tags]]
+file_path = "COWBOY BEBOP Tank! THE! BEST! (2012) [FLAC] {VTCL-60330]/10 - EINSTEIN GROOVIN’.flac"
+album = "Cowboy Bebop: Tank! THE! BEST!"
+album_artists = ["シートベルツ"]
+artists = ["シートベルツ"]
+title = "EINSTEIN GROOVIN’"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 12
+duration_ms = 379840
+
+[[raw_tags]]
+file_path = "COWBOY BEBOP Tank! THE! BEST! (2012) [FLAC] {VTCL-60330]/09 - BLUE.flac"
+album = "Cowboy Bebop: Tank! THE! BEST!"
+album_artists = ["シートベルツ"]
+artists = ["シートベルツ"]
+title = "BLUE"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 12
+duration_ms = 304466
+
+[[raw_tags]]
+file_path = "COWBOY BEBOP Tank! THE! BEST! (2012) [FLAC] {VTCL-60330]/08 - No Reply.flac"
+album = "Cowboy Bebop: Tank! THE! BEST!"
+album_artists = ["シートベルツ"]
+artists = ["シートベルツ"]
+title = "No Reply"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 12
+duration_ms = 360026
+
+[[raw_tags]]
+file_path = "COWBOY BEBOP Tank! THE! BEST! (2012) [FLAC] {VTCL-60330]/07 - MUSHROOM HUNTING.flac"
+album = "Cowboy Bebop: Tank! THE! BEST!"
+album_artists = ["シートベルツ"]
+artists = ["シートベルツ"]
+title = "MUSHROOM HUNTING"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 12
+duration_ms = 199573
+
+[[raw_tags]]
+file_path = "COWBOY BEBOP Tank! THE! BEST! (2012) [FLAC] {VTCL-60330]/06 - PIANO BLACK.flac"
+album = "Cowboy Bebop: Tank! THE! BEST!"
+album_artists = ["シートベルツ"]
+artists = ["シートベルツ"]
+title = "PIANO BLACK"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 12
+duration_ms = 167893
+
+[[raw_tags]]
+file_path = "COWBOY BEBOP Tank! THE! BEST! (2012) [FLAC] {VTCL-60330]/05 - Don’t bother none (TV edit).flac"
+album = "Cowboy Bebop: Tank! THE! BEST!"
+album_artists = ["シートベルツ"]
+artists = ["シートベルツ"]
+title = "Don’t bother none (TV edit)"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 12
+duration_ms = 175506
+
+[[raw_tags]]
+file_path = "COWBOY BEBOP Tank! THE! BEST! (2012) [FLAC] {VTCL-60330]/04 - DIAMONDS.flac"
+album = "Cowboy Bebop: Tank! THE! BEST!"
+album_artists = ["シートベルツ"]
+artists = ["シートベルツ"]
+title = "DIAMONDS"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 12
+duration_ms = 241533
+
+[[raw_tags]]
+file_path = "COWBOY BEBOP Tank! THE! BEST! (2012) [FLAC] {VTCL-60330]/03 - COSMIC DARE (PRETTY WITH A PISTOL).flac"
+album = "Cowboy Bebop: Tank! THE! BEST!"
+album_artists = ["シートベルツ"]
+artists = ["シートベルツ"]
+title = "COSMIC DARE (PRETTY WITH A PISTOL)"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 12
+duration_ms = 248826
+
+[[raw_tags]]
+file_path = "COWBOY BEBOP Tank! THE! BEST! (2012) [FLAC] {VTCL-60330]/02 - WHAT PLANET IS THIS..flac"
+album = "Cowboy Bebop: Tank! THE! BEST!"
+album_artists = ["シートベルツ"]
+artists = ["シートベルツ"]
+title = "WHAT PLANET IS THIS."
+disc = 1
+disc_total = 1
+track = 2
+track_total = 12
+duration_ms = 164600
+
+[[raw_tags]]
+file_path = "COWBOY BEBOP Tank! THE! BEST! (2012) [FLAC] {VTCL-60330]/01 - Tank! (TV stretch).flac"
+album = "Cowboy Bebop: Tank! THE! BEST!"
+album_artists = ["シートベルツ"]
+artists = ["シートベルツ"]
+title = "Tank! (TV stretch)"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 12
+duration_ms = 207200
+
+[expect.release]
+ids = { release_group_id = "ea45e38c-6882-30e2-b58b-a85945c700b6", release_id = ["d1b830ae-3b67-4043-90ef-53d1c812b6f6", "924f1fe5-bb31-409a-a22a-4943a3019692"] }
+fields = { release_title = "Cowboy Bebop: Tank! THE! BEST!", release_date = "2012-12-21" }
+
+[expect.artists."b5fb0f1a-2cd4-4759-9d80-648643f70c43"]
+fields = { artist_name = "シートベルツ", sort_name = "Seatbelts, The" }
+
+[expect.tracks."09fa4a04-742e-4fa5-9454-a2b274f55961"]
+fields = { disc = 1, track = 6, track_title = "PIANO BLACK" }
+
+[expect.tracks."10ba293c-64cf-423e-8b1f-83254e300ee8"]
+fields = { disc = 1, track = 5, track_title = "Don’t bother none (TV edit)" }
+
+[expect.tracks."16152636-39a6-446a-9722-09ea7d6cf550"]
+fields = { disc = 1, track = 4, track_title = "DIAMONDS" }
+
+[expect.tracks."2cbd08e0-e4ba-424c-a6d6-7d59f862e646"]
+fields = { disc = 1, track = 10, track_title = "EINSTEIN GROOVIN’" }
+
+[expect.tracks."42fafb94-afaa-4f03-8784-d0d3f0f232a8"]
+fields = { disc = 1, track = 9, track_title = "BLUE" }
+
+[expect.tracks."5baa8da7-7a92-4c43-a535-4ca3d50f0414"]
+fields = { disc = 1, track = 7, track_title = "MUSHROOM HUNTING" }
+
+[expect.tracks."6bd67df3-5acc-4325-a0f2-4fddf4b0b7d8"]
+fields = { disc = 1, track = 8, track_title = "No Reply" }
+
+[expect.tracks."90dd5477-ecf4-4855-83dc-bd2f16aba8e1"]
+fields = { disc = 1, track = 11, track_title = "PEARLS" }
+
+[expect.tracks."9737ce56-a964-4097-b725-46dcb13749e2"]
+fields = { disc = 1, track = 1, track_title = "Tank! (TV stretch)" }
+
+[expect.tracks."ad251b34-342e-4801-98c8-938b35b98981"]
+fields = { disc = 1, track = 12, track_title = "Gotta knock a little harder" }
+
+[expect.tracks."ca65558f-b342-444e-beb6-04970fa09832"]
+fields = { disc = 1, track = 2, track_title = "WHAT PLANET IS THIS." }
+
+[expect.tracks."edf6062f-3835-4886-bc38-64746c893954"]
+fields = { disc = 1, track = 3, track_title = "COSMIC DARE (PRETTY WITH A PISTOL)" }

@@ -1,0 +1,32 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Saikai (produced by Ayase)/01. Saikai (produced by Ayase).flac"
+album = "再会 (produced by Ayase)"
+album_artists = ["LiSA"]
+artists = ["LiSA", "Uru"]
+title = "再会 (produced by Ayase)"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 242166
+
+[expect.release]
+ids = { release_group_id = "4ad55f66-8cf0-4db4-8775-ed98a5bf4b71", release_id = ["506fd860-60de-43cd-a27e-5104badaa8f8", "0c2e09af-59c0-46fc-8086-b2171cea9490"] }
+fields = { release_title = "再会", release_date = "2020-11-16" }
+
+[expect.artists."6eb863a5-477d-4be1-9e10-b5d56446ed16"]
+fields = { artist_name = "Uru", sort_name = "Uru" }
+
+[expect.artists."85d76093-9865-4605-97fa-8c910929d366"]
+fields = { artist_name = "LiSA", sort_name = "LiSA" }
+
+[expect.tracks."fc6a6c6f-e221-45df-839c-a3dcd019ae21"]
+fields = { disc = 1, track = 1, track_title = "再会" }

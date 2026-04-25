@@ -1,0 +1,41 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "seisyun complex/kessoku band - hitoribocchi tokyo-instrumental-.flac"
+album = "seisyun complex"
+artists = ["kessoku band"]
+title = "hitoribocchi tokyo-instrumental-"
+track = 4
+duration_ms = 232573
+
+[[raw_tags]]
+file_path = "seisyun complex/kessoku band - seisyun complex-instrumental-.flac"
+album = "seisyun complex"
+artists = ["kessoku band"]
+title = "seisyun complex-instrumental-"
+track = 3
+duration_ms = 205133
+
+[[raw_tags]]
+file_path = "seisyun complex/kessoku band - hitoribocchi tokyo.flac"
+album = "seisyun complex"
+artists = ["kessoku band"]
+title = "hitoribocchi tokyo"
+track = 2
+duration_ms = 233733
+
+[[raw_tags]]
+file_path = "seisyun complex/kessoku band - seisyun complex.flac"
+album = "seisyun complex"
+artists = ["kessoku band"]
+title = "seisyun complex"
+track = 1
+duration_ms = 205133
+
+[expect.release]
+ids = { release_id = ["0afbdff9-729c-43cb-a646-1312c2af42d7", "d3d8d28e-c4b3-4049-890e-ae57af61732e"] }

@@ -1,0 +1,89 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "キタニタツヤ - LOVE- AMPLIFIED (2023-06-14) [WEB FLAC]/1.04. 知らないあそび (feat. indigo la End).flac"
+album = "LOVE: AMPLIFIED"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "知らないあそび (feat. indigo la End)"
+copyright = "℗ 2023 Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 224842
+
+[[raw_tags]]
+file_path = "キタニタツヤ - LOVE- AMPLIFIED (2023-06-14) [WEB FLAC]/1.03. ナイトルーティーン (feat. suis from ヨルシカ).flac"
+album = "LOVE: AMPLIFIED"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "ナイトルーティーン (feat. suis from ヨルシカ)"
+copyright = "℗ 2023 Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 222123
+
+[[raw_tags]]
+file_path = "キタニタツヤ - LOVE- AMPLIFIED (2023-06-14) [WEB FLAC]/1.02. やんぐわーるど (feat. NEE).flac"
+album = "LOVE: AMPLIFIED"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "やんぐわーるど (feat. NEE)"
+copyright = "℗ 2023 Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 252382
+
+[[raw_tags]]
+file_path = "キタニタツヤ - LOVE- AMPLIFIED (2023-06-14) [WEB FLAC]/1.01. ラブソング (feat. Eve).flac"
+album = "LOVE: AMPLIFIED"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "ラブソング (feat. Eve)"
+copyright = "℗ 2023 Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 164917
+
+[expect.release]
+ids = { release_group_id = "5c07c6df-e4b4-4dd1-9cba-531f63a83729", release_id = "655214c0-f115-4526-9c23-5997bc60f768" }
+fields = { release_title = "LOVE: AMPLIFIED", release_date = "2023-06-14" }
+
+[expect.artists."3f53eb17-3338-4920-8b79-31c26a90ef28"]
+fields = { artist_name = "NEE", sort_name = "NEE" }
+
+[expect.artists."66bdd1c9-d1c5-40b7-a487-5061fffbd87d"]
+fields = { artist_name = "Eve", sort_name = "Eve" }
+
+[expect.artists."80b3cb83-b7a3-4f79-ad42-8325cefb3626"]
+fields = { artist_name = "キタニタツヤ", sort_name = "Kitani, Tatsuya" }
+
+[expect.artists."8d17b65b-8ccf-495c-8b79-1f53d6226448"]
+fields = { artist_name = "indigo la End", sort_name = "indigo la End" }
+
+[expect.artists."b2de971f-b3d6-409f-9ed0-ecfc09e8b4e3"]
+fields = { artist_name = "suis", sort_name = "suis" }
+
+[expect.tracks."0b7e0772-475d-434e-bdb9-1f14a13a92ad"]
+fields = { disc = 1, track = 4, track_title = "知らないあそび" }
+
+[expect.tracks."9a70f454-1da3-4570-b592-33e5f8713d28"]
+fields = { disc = 1, track = 3, track_title = "ナイトルーティーン" }
+
+[expect.tracks."9e7565ad-62aa-4b24-ab46-862f5fa51014"]
+fields = { disc = 1, track = 2, track_title = "やんぐわーるど" }
+
+[expect.tracks."ad87143d-1120-492c-a9eb-d455f601b981"]
+fields = { disc = 1, track = 1, track_title = "ラブソング" }

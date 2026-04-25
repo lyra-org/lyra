@@ -1,0 +1,22 @@
+// Folder-specific settings
+//
+// For a full list of overridable settings, and general information on folder-specific settings,
+// see the documentation: https://zed.dev/docs/configuring-zed#settings-files
+{
+  "lsp": {
+    "luau-lsp": {
+      "settings": {
+        "roblox": {
+          "enabled": false,
+        },
+        "fflags": {
+          "enable_new_solver": true,
+          "sync": false,
+        },
+        "binary": {
+          "ignore_system_version": false,
+        },
+      },
+    },
+  },
+}

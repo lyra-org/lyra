@@ -1,0 +1,181 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Kano - rye (2018) [FLAC]/14-ピエロ.flac"
+album = "rye"
+artists = ["鹿乃"]
+title = "ピエロ"
+disc = 1
+track = 14
+duration_ms = 254459
+
+[[raw_tags]]
+file_path = "Kano - rye (2018) [FLAC]/13-クライヤ.flac"
+album = "rye"
+artists = ["鹿乃"]
+title = "クライヤ"
+disc = 1
+track = 13
+duration_ms = 254794
+
+[[raw_tags]]
+file_path = "Kano - rye (2018) [FLAC]/12-メリーメリー.flac"
+album = "rye"
+artists = ["鹿乃"]
+title = "メリーメリー"
+disc = 1
+track = 12
+duration_ms = 262974
+
+[[raw_tags]]
+file_path = "Kano - rye (2018) [FLAC]/11-小夜子.flac"
+album = "rye"
+artists = ["鹿乃"]
+title = "小夜子"
+disc = 1
+track = 11
+duration_ms = 253594
+
+[[raw_tags]]
+file_path = "Kano - rye (2018) [FLAC]/10-六兆年と一夜物語.flac"
+album = "rye"
+artists = ["鹿乃"]
+title = "六兆年と一夜物語"
+disc = 1
+track = 10
+duration_ms = 222249
+
+[[raw_tags]]
+file_path = "Kano - rye (2018) [FLAC]/09-想像フォレスト.flac"
+album = "rye"
+artists = ["鹿乃"]
+title = "想像フォレスト"
+disc = 1
+track = 9
+duration_ms = 272541
+
+[[raw_tags]]
+file_path = "Kano - rye (2018) [FLAC]/08-ハロ／ハワユ.flac"
+album = "rye"
+artists = ["鹿乃"]
+title = "ハロ／ハワユ"
+disc = 1
+track = 8
+duration_ms = 298048
+
+[[raw_tags]]
+file_path = "Kano - rye (2018) [FLAC]/07-Paddling Blue.flac"
+album = "rye"
+artists = ["鹿乃"]
+title = "Paddling Blue"
+disc = 1
+track = 7
+duration_ms = 249909
+
+[[raw_tags]]
+file_path = "Kano - rye (2018) [FLAC]/06-HOPE.flac"
+album = "rye"
+artists = ["鹿乃"]
+title = "HOPE"
+disc = 1
+track = 6
+duration_ms = 268200
+
+[[raw_tags]]
+file_path = "Kano - rye (2018) [FLAC]/05-loop loop loop.flac"
+album = "rye"
+artists = ["鹿乃"]
+title = "loop loop loop"
+disc = 1
+track = 5
+duration_ms = 260728
+
+[[raw_tags]]
+file_path = "Kano - rye (2018) [FLAC]/04-なんで.flac"
+album = "rye"
+artists = ["鹿乃"]
+title = "なんで"
+disc = 1
+track = 4
+duration_ms = 219655
+
+[[raw_tags]]
+file_path = "Kano - rye (2018) [FLAC]/03-さよなら、アダムとイヴ.flac"
+album = "rye"
+artists = ["鹿乃"]
+title = "さよなら、アダムとイヴ"
+disc = 1
+track = 3
+duration_ms = 261187
+
+[[raw_tags]]
+file_path = "Kano - rye (2018) [FLAC]/02-春に落ちて.flac"
+album = "rye"
+artists = ["鹿乃"]
+title = "春に落ちて"
+disc = 1
+track = 2
+duration_ms = 298992
+
+[[raw_tags]]
+file_path = "Kano - rye (2018) [FLAC]/01-「Q」&「A」.flac"
+album = "rye"
+artists = ["鹿乃"]
+title = "「Q」&「A」"
+disc = 1
+track = 1
+duration_ms = 256285
+
+[expect.release]
+ids = { release_group_id = "80d7fb19-ce66-49ad-88b8-e868969259fa", release_id = "7d72fe22-d887-494c-a8ea-b632017e6022" }
+fields = { release_title = "rye", release_date = "2018-12-19" }
+
+[expect.artists."487cda72-0633-46d5-a80e-f9ee94080080"]
+fields = { artist_name = "鹿乃", sort_name = "Kano" }
+
+[expect.tracks."05ecfdff-51ae-45ac-afd0-af1f06f856d4"]
+fields = { disc = 1, track = 2, track_title = "春に落ちて" }
+
+[expect.tracks."0e95cf5c-efbf-45d1-ab41-5b7adb5575ff"]
+fields = { disc = 1, track = 5, track_title = "loop loop loop" }
+
+[expect.tracks."1043fc2c-6345-45b7-b447-b424ff37ba68"]
+fields = { disc = 1, track = 8, track_title = "ハロ／ハワユ" }
+
+[expect.tracks."3fdfca41-2cad-4ae0-af09-81ab71fc92b8"]
+fields = { disc = 1, track = 10, track_title = "六兆年と一夜物語" }
+
+[expect.tracks."408fc3f2-7ed7-4a1d-9e34-4c80b69025dc"]
+fields = { disc = 1, track = 6, track_title = "HOPE" }
+
+[expect.tracks."710c1565-428f-4f21-a5bc-f983a7f11d2a"]
+fields = { disc = 1, track = 12, track_title = "メリーメリー" }
+
+[expect.tracks."74c8521d-16eb-4031-838f-25f70552048f"]
+fields = { disc = 1, track = 4, track_title = "なんで" }
+
+[expect.tracks."7696b4fe-69c3-4cdb-afd5-71cbcbbb8714"]
+fields = { disc = 1, track = 11, track_title = "小夜子" }
+
+[expect.tracks."93b328b3-e3a8-41cc-97e5-714f6a84879c"]
+fields = { disc = 1, track = 7, track_title = "Paddling Blue" }
+
+[expect.tracks."a8091b57-0c32-4606-96c1-cc320a980b34"]
+fields = { disc = 1, track = 9, track_title = "想像フォレスト" }
+
+[expect.tracks."a89d3e41-1998-4779-b36c-82039dda6d20"]
+fields = { disc = 1, track = 1, track_title = "「Q」&「A」" }
+
+[expect.tracks."af9fc90e-f149-4b95-b263-0bdc9b787e74"]
+fields = { disc = 1, track = 13, track_title = "クライヤ" }
+
+[expect.tracks."c6a7570a-321e-4ca5-88ec-8cf598a4fd6f"]
+fields = { disc = 1, track = 3, track_title = "さよなら、アダムとイヴ" }
+
+[expect.tracks."d0783442-0c8d-4ff6-801f-dca23c8bd3c3"]
+fields = { disc = 1, track = 14, track_title = "ピエロ" }

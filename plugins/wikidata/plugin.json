@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "wikidata",
+  "name": "WikiData Genre Provider",
+  "version": "0.0.1",
+  "description": "Enriches album genre data from WikiData",
+  "entrypoint": "init.luau",
+  "scopes": [
+    "harmony.http",
+    "harmony.json",
+    "lyra.datastore",
+    "lyra.genres",
+    "lyra.metadata",
+    "lyra.plugins"
+  ]
+}

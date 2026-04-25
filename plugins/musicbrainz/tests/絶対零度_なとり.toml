@@ -1,0 +1,45 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "なとり - 絶対零度 (2024-05-22) [WEB FLAC]/1.02. 聖者たち.flac"
+album = "絶対零度"
+album_artists = ["なとり"]
+artists = ["なとり"]
+title = "聖者たち"
+copyright = "℗ 2024 Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 2
+track_total = 2
+duration_ms = 133826
+
+[[raw_tags]]
+file_path = "なとり - 絶対零度 (2024-05-22) [WEB FLAC]/1.01. 絶対零度.flac"
+album = "絶対零度"
+album_artists = ["なとり"]
+artists = ["なとり"]
+title = "絶対零度"
+copyright = "℗ 2024 Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 2
+duration_ms = 199000
+
+[expect.release]
+ids = { release_group_id = "7a1e5522-d608-4bce-b24e-5b68134d5141", release_id = ["ccd285a4-8bc2-45a8-b7c6-e869e13b9b70", "04a7887d-d7bc-4b93-80a7-fda2d946400d"] }
+fields = { release_title = "絶対零度", release_date = "2024-05-22" }
+
+[expect.artists."cad9e169-893d-4432-a23f-3aa16beb9f0e"]
+fields = { artist_name = "なとり", sort_name = "natori" }
+
+[expect.tracks."97d16626-cef9-4d2d-a908-5965cb03b9f1"]
+fields = { disc = 1, track = 1, track_title = "絶対零度" }
+
+[expect.tracks."ccec2468-0563-4452-be2d-8ed03ce2cd9d"]
+fields = { disc = 1, track = 2, track_title = "聖者たち" }

@@ -1,0 +1,815 @@
+plugin = "musicbrainz"
+
+[library]
+directory = "."
+language = "jpn"
+country = "JP"
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/32. True Friends (w／o Gt.Solo).flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["Kengo Morimoto"]
+title = "True Friends (w/o Gt.Solo)"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 32
+track_total = 32
+duration_ms = 147666
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/31. True Friends.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["Kengo Morimoto"]
+title = "True Friends"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 31
+track_total = 32
+duration_ms = 148906
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/30. Impatience.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Impatience"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 30
+track_total = 32
+duration_ms = 129760
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/29. Honest Feeling II.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Honest Feeling II"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 29
+track_total = 32
+duration_ms = 133866
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/28. Loneliness and Solitude.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Loneliness and Solitude"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 28
+track_total = 32
+duration_ms = 185773
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/27. Fury.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Fury"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 27
+track_total = 32
+duration_ms = 125920
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/26. Awkwardness.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Awkwardness"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 26
+track_total = 32
+duration_ms = 144413
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/25. Relief.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Relief"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 25
+track_total = 32
+duration_ms = 127213
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/24. MEMcho.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "MEMcho"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 24
+track_total = 32
+duration_ms = 86560
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/23. Rivalry II.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Rivalry II"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 23
+track_total = 32
+duration_ms = 124813
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/22. Mysterious II.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Mysterious II"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 22
+track_total = 32
+duration_ms = 92133
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/21. Chagrin.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Chagrin"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 21
+track_total = 32
+duration_ms = 136853
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/20. Provocation.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Provocation"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 20
+track_total = 32
+duration_ms = 134320
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/19. Audition.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Audition"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 19
+track_total = 32
+duration_ms = 120306
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/18. Jingle II.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Jingle II"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 18
+track_total = 32
+duration_ms = 15306
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/17. Mystery.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Mystery"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 17
+track_total = 32
+duration_ms = 120400
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/16. Under fire.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Under fire"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 16
+track_total = 32
+duration_ms = 200973
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/15. Worry and Fear.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Worry and Fear"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 15
+track_total = 32
+duration_ms = 161453
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/14. Mysterious.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Mysterious"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 14
+track_total = 32
+duration_ms = 116293
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/13. Cross-purposes.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Cross-purposes"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 13
+track_total = 32
+duration_ms = 167400
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/12. Rivalry I.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Rivalry I"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 12
+track_total = 32
+duration_ms = 140973
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/11. Challenge completed.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Challenge completed"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 11
+track_total = 32
+duration_ms = 138120
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/10. Jingle I.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Jingle I"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 10
+track_total = 32
+duration_ms = 12466
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/09. Ima-Gachi.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Ima-Gachi"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 9
+track_total = 32
+duration_ms = 107280
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/08. Assessment.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Assessment"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 8
+track_total = 32
+duration_ms = 130306
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/07. Well, well....flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Well, well..."
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 7
+track_total = 32
+duration_ms = 86493
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/06. Kyo-Ama II.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Kyo-Ama II"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 6
+track_total = 32
+duration_ms = 30640
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/05. Kyo-Ama I.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Kyo-Ama I"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 5
+track_total = 32
+duration_ms = 167546
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/04. Explanation and Introduction.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Explanation and Introduction"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 4
+track_total = 32
+duration_ms = 127400
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/03. With you.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "With you"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 3
+track_total = 32
+duration_ms = 130040
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/02. Upset.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Upset"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 2
+track_total = 32
+duration_ms = 125493
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 2/01. Aqua's plot.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Aqua's plot"
+genre = "Soundtrack"
+disc = 2
+disc_total = 2
+track = 1
+track_total = 32
+duration_ms = 135720
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/30. Yearning.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Yearning"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 30
+track_total = 30
+duration_ms = 178360
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/29. A plot.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "A plot"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 29
+track_total = 30
+duration_ms = 111560
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/28. Float on air.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Float on air"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 28
+track_total = 30
+duration_ms = 117093
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/27. Resolution.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Resolution"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 27
+track_total = 30
+duration_ms = 213546
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/26. Beginning of the revenge.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Beginning of the revenge"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 26
+track_total = 30
+duration_ms = 163880
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/25. Bygone Death.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Bygone Death"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 25
+track_total = 30
+duration_ms = 146933
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/24. Mother and Children.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Mother and Children"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 24
+track_total = 30
+duration_ms = 339746
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/23. A lie turned out to be true.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "A lie turned out to be true"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 23
+track_total = 30
+duration_ms = 135826
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/22. Ai II.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Ai II"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 22
+track_total = 30
+duration_ms = 115320
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/21. I can dance!.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "I can dance!"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 21
+track_total = 30
+duration_ms = 89320
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/20. View from the window.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "View from the window"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 20
+track_total = 30
+duration_ms = 110666
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/19. Vague Anxiety.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Vague Anxiety"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 19
+track_total = 30
+duration_ms = 184866
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/18. Honest Feeling I.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Honest Feeling I"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 18
+track_total = 30
+duration_ms = 121733
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/17. Weirdness.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Weirdness"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 17
+track_total = 30
+duration_ms = 128746
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/16. Low-budget productions.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Low-budget productions"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 16
+track_total = 30
+duration_ms = 135306
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/15. My first TV series.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "My first TV series"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 15
+track_total = 30
+duration_ms = 124293
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/14. Ordinary Days.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Ordinary Days"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 30
+duration_ms = 131226
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/13. Ai II (w／o Rhythm).flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Ai II (w/o Rhythm)"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 30
+duration_ms = 115320
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/12. Monologue II.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Monologue II"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 30
+duration_ms = 146466
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/11. Mystery (w／o Perc.).flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Mystery (w/o Perc.)"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 30
+duration_ms = 120400
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/10. Ominous.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Ominous"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 30
+duration_ms = 124266
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/09. Peaceful Life.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Peaceful Life"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 30
+duration_ms = 126080
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/08. Doom.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Doom"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 30
+duration_ms = 107613
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/07. Lie and Calculation.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Lie and Calculation"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 30
+duration_ms = 148773
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/06. Monologue I.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Monologue I"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 30
+duration_ms = 146040
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/05. Reincarnation.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Reincarnation"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 30
+duration_ms = 62986
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/04. Chase in the woods.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Chase in the woods"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 30
+duration_ms = 44800
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/03. Heartily.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Heartily"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 30
+duration_ms = 151826
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/02. Ai I.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "Ai I"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 30
+duration_ms = 194826
+
+[[raw_tags]]
+file_path = "TVアニメ「【推しの子】」オリジナルサウンドトラック (2023) [FLAC+CUE+LOG] {ZMCZ-16881}/Disc 1/01. My Idol is pregnant!!.flac"
+album = "TVアニメ「【推しの子】」オリジナルサウンドトラック"
+album_artists = ["伊賀拓郎"]
+artists = ["伊賀拓郎"]
+title = "My Idol is pregnant!!"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 30
+duration_ms = 116253
+
+[expect.release]
+ids = { release_group_id = "655f1d1b-1a97-4a25-95cb-229da8f70388", release_id = "2d62abbd-0c1f-4b70-810c-85294976c53a" }

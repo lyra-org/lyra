@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/artist?query=mishiri",
+  "status_code": 200,
+  "body": "{\"created\":\"2026-03-10T02:29:43.413Z\",\"count\":1,\"offset\":0,\"artists\":[{\"id\":\"de5f0c54-0abe-4178-8e53-efb30a560d90\",\"score\":100,\"name\":\"瞳・識\",\"sort-name\":\"Hitomishiri\",\"country\":\"JP\",\"area\":{\"id\":\"2db42837-c832-3c27-b4a3-08198f75693c\",\"type\":\"Country\",\"type-id\":\"06dd0ae4-8c74-30bb-b43d-95dcedf961de\",\"name\":\"Japan\",\"sort-name\":\"Japan\",\"life-span\":{\"ended\":null}},\"life-span\":{\"ended\":null},\"aliases\":[{\"sort-name\":\"瞳●識\",\"name\":\"瞳●識\",\"locale\":null,\"type\":null,\"primary\":null,\"begin-date\":null,\"end-date\":null}]}]}"
+}

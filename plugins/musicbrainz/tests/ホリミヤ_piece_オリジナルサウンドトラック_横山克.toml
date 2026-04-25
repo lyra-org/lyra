@@ -1,0 +1,669 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/41 - Hori and Miyamura.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Hori and Miyamura"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 41
+track_total = 41
+duration_ms = 161600
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/40 - Pastel Pages.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Pastel Pages"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 40
+track_total = 41
+duration_ms = 108306
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/39 - Love Hori Love.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Love Hori Love"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 39
+track_total = 41
+duration_ms = 91373
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/38 - On Your Mark.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "On Your Mark"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 38
+track_total = 41
+duration_ms = 82800
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/37 - Difficult Question.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Difficult Question"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 37
+track_total = 41
+duration_ms = 77506
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/36 - Heart of Glass.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Heart of Glass"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 36
+track_total = 41
+duration_ms = 86186
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/35 - Mr. Invisible.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Mr. Invisible"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 35
+track_total = 41
+duration_ms = 91186
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/34 - Lost in Trigonometry.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Lost in Trigonometry"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 34
+track_total = 41
+duration_ms = 95760
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/33 - Cloud Rider.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Cloud Rider"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 33
+track_total = 41
+duration_ms = 90693
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/32 - Curryland Dystopia.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Curryland Dystopia"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 32
+track_total = 41
+duration_ms = 58506
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/31 - East Team Cheer.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "East Team Cheer"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 31
+track_total = 41
+duration_ms = 20226
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/30 - My Small Feet.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "My Small Feet"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 30
+track_total = 41
+duration_ms = 85880
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/29 - Behind the Glasses.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Behind the Glasses"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 29
+track_total = 41
+duration_ms = 80573
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/28 - Yasuda Sensei.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Yasuda Sensei"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 28
+track_total = 41
+duration_ms = 92106
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/27 - Carousel Fanfare.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Carousel Fanfare"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 27
+track_total = 41
+duration_ms = 69960
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/26 - That's Not Fair.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "That's Not Fair"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 26
+track_total = 41
+duration_ms = 69773
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/25 - But, Because, However.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "But, Because, However"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 25
+track_total = 41
+duration_ms = 94133
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/24 - Cocoon Time.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Cocoon Time"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 24
+track_total = 41
+duration_ms = 98173
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/23 - Once Upon a Time.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Once Upon a Time"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 23
+track_total = 41
+duration_ms = 109000
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/22 - Brother in Black.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Brother in Black"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 22
+track_total = 41
+duration_ms = 76906
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/21 - Wordy Bullets.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Wordy Bullets"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 21
+track_total = 41
+duration_ms = 68226
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/20 - West Team Cheer.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "West Team Cheer"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 20
+track_total = 41
+duration_ms = 17240
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/19 - Red Score Talk.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Red Score Talk"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 19
+track_total = 41
+duration_ms = 80640
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/18 - Dear Alien.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Dear Alien"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 18
+track_total = 41
+duration_ms = 77613
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/17 - Floating Letters.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Floating Letters"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 17
+track_total = 41
+duration_ms = 94213
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/16 - Lactic Acid Inflation.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Lactic Acid Inflation"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 16
+track_total = 41
+duration_ms = 57586
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/15 - Red Book.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Red Book"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 15
+track_total = 41
+duration_ms = 76733
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/14 - In Your Hands.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "In Your Hands"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 41
+duration_ms = 68253
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/13 - Tickin' Tockin'.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Tickin' Tockin'"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 41
+duration_ms = 95226
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/12 - BFF Blanket.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "BFF Blanket"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 41
+duration_ms = 111600
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/11 - Messy Hair.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Messy Hair"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 41
+duration_ms = 52973
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/10 - Angry Sister.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Angry Sister"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 41
+duration_ms = 85226
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/09 - Weaponless March.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Weaponless March"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 41
+duration_ms = 87066
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/08 - Shady Boy.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Shady Boy"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 41
+duration_ms = 75346
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/07 - Pom Poms.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Pom Poms"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 41
+duration_ms = 101440
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/06 - Empty Treasures.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Empty Treasures"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 41
+duration_ms = 92333
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/05 - Painful Rain.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Painful Rain"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 41
+duration_ms = 116720
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/04 - Tie Your Shoelaces.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Tie Your Shoelaces"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 41
+duration_ms = 82426
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/03 - Green Canvas.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Green Canvas"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 41
+duration_ms = 106320
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/02 - Uniform Adventure.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Uniform Adventure"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 41
+duration_ms = 85506
+
+[[raw_tags]]
+file_path = "横山克 - ホリミヤ -piece- オリジナルサウンドトラック (2023) [CD FLAC]/01 - Cider Pop Sparkle.flac"
+album = "ホリミヤ -piece- オリジナルサウンドトラック"
+album_artists = ["横山克"]
+artists = ["横山克"]
+title = "Cider Pop Sparkle"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 41
+duration_ms = 100906
+
+[expect.release]
+ids = { release_group_id = "a9ecb929-b256-4beb-a3d0-1e00fff6592b", release_id = "d22fa356-d4df-4196-95dc-512189f284ea" }
+fields = { release_title = "ホリミヤ -piece- オリジナルサウンドトラック", release_date = "2023-12-27" }
+
+[expect.artists."1b4414e5-b699-4c77-82b5-4669c9e69a59"]
+fields = { artist_name = "横山克", sort_name = "Yokoyama, Masaru" }
+
+[expect.tracks."0806db3b-e272-459c-8efb-bf018496cdb8"]
+fields = { disc = 1, track = 13, track_title = "Tickin' Tockin'" }
+
+[expect.tracks."0a34ca99-8e59-42d6-b4cd-545ec8ce75fc"]
+fields = { disc = 1, track = 6, track_title = "Empty Treasures" }
+
+[expect.tracks."0b8f3274-e32d-403f-8b55-c00a4de0f7a6"]
+fields = { disc = 1, track = 1, track_title = "Cider Pop Sparkle" }
+
+[expect.tracks."10d46862-3677-4c15-bed8-d8d986dbef24"]
+fields = { disc = 1, track = 41, track_title = "Hori and Miyamura" }
+
+[expect.tracks."159ab337-260d-4c7e-bf8f-bc27117ac56c"]
+fields = { disc = 1, track = 3, track_title = "Green Canvas" }
+
+[expect.tracks."2a30d3fd-bec6-4214-ba29-d9f7db032a1d"]
+fields = { disc = 1, track = 8, track_title = "Shady Boy" }
+
+[expect.tracks."2f964027-2467-4bb1-99c6-a048cf33ab29"]
+fields = { disc = 1, track = 32, track_title = "Curryland Dystopia" }
+
+[expect.tracks."32c951c8-e6fd-41bb-9f36-49972e9bfe6a"]
+fields = { disc = 1, track = 12, track_title = "BFF Blanket" }
+
+[expect.tracks."336e5d6d-aece-4245-b0a9-448b65bdf0f8"]
+fields = { disc = 1, track = 21, track_title = "Wordy Bullets" }
+
+[expect.tracks."4ad24235-6840-41d7-a6c7-82b213bbd6aa"]
+fields = { disc = 1, track = 11, track_title = "Messy Hair" }
+
+[expect.tracks."5658eb45-98af-4b4e-83d5-50e893decc52"]
+fields = { disc = 1, track = 36, track_title = "Heart of Glass" }
+
+[expect.tracks."576c63d2-a097-4052-b266-c779b960f7a6"]
+fields = { disc = 1, track = 29, track_title = "Behind the Glasses" }
+
+[expect.tracks."5a18f69b-08dc-4093-a27c-ec9d3e6745a8"]
+fields = { disc = 1, track = 40, track_title = "Pastel Pages" }
+
+[expect.tracks."68e361cc-5143-48fc-8e2d-70228665b9fc"]
+fields = { disc = 1, track = 20, track_title = "West Team Cheer" }
+
+[expect.tracks."71212ab5-46c5-4839-8ea3-f2e7e6cfb198"]
+fields = { disc = 1, track = 18, track_title = "Dear Alien" }
+
+[expect.tracks."7564efae-e46c-4175-a6eb-b6a86af46cf3"]
+fields = { disc = 1, track = 10, track_title = "Angry Sister" }
+
+[expect.tracks."77a9af4a-b236-4ab4-a069-ea8a1a48f009"]
+fields = { disc = 1, track = 37, track_title = "Difficult Question" }
+
+[expect.tracks."78803afa-c7b9-4fe3-9141-d48b1e8427b4"]
+fields = { disc = 1, track = 19, track_title = "Red Score Talk" }
+
+[expect.tracks."788939d7-0ebb-42e0-a606-e25361dd7076"]
+fields = { disc = 1, track = 15, track_title = "Red Book" }
+
+[expect.tracks."967b67d0-3f06-4263-af36-90aa3e90200f"]
+fields = { disc = 1, track = 34, track_title = "Lost in Trigonometry" }
+
+[expect.tracks."a030b428-91ca-45d2-8bee-fc78efba25dd"]
+fields = { disc = 1, track = 33, track_title = "Cloud Rider" }
+
+[expect.tracks."a8e10828-4389-4663-b53d-0b0774fcee92"]
+fields = { disc = 1, track = 23, track_title = "Once Upon a Time" }
+
+[expect.tracks."ad31e96d-02d5-4b91-bedd-e8d0d52c0940"]
+fields = { disc = 1, track = 35, track_title = "Mr. Invisible" }
+
+[expect.tracks."ae884e2f-52bc-40c0-acaa-c34e65b14fa9"]
+fields = { disc = 1, track = 22, track_title = "Brother in Black" }
+
+[expect.tracks."b1f11b40-0321-4b56-b79e-878b5971f893"]
+fields = { disc = 1, track = 30, track_title = "My Small Feet" }
+
+[expect.tracks."bdfe1a1b-b3b9-42a4-a40a-2f04322180bf"]
+fields = { disc = 1, track = 25, track_title = "But, Because, However" }
+
+[expect.tracks."be54a364-5042-4168-9635-8474f3b6718d"]
+fields = { disc = 1, track = 17, track_title = "Floating Letters" }
+
+[expect.tracks."bfc5570b-4e78-47d2-9684-2fbbc999a189"]
+fields = { disc = 1, track = 16, track_title = "Lactic Acid Inflation" }
+
+[expect.tracks."c4602e28-6f0b-4cf2-9eac-11c086bfbb8e"]
+fields = { disc = 1, track = 26, track_title = "That's Not Fair" }
+
+[expect.tracks."c91bba38-2b72-405d-ac68-3934d7c426db"]
+fields = { disc = 1, track = 31, track_title = "East Team Cheer" }
+
+[expect.tracks."cda4d445-a77c-48e5-b6eb-b572c558c855"]
+fields = { disc = 1, track = 14, track_title = "In Your Hands" }
+
+[expect.tracks."d666892e-8953-43a4-a51b-36ce85e4eb37"]
+fields = { disc = 1, track = 28, track_title = "Yasuda Sensei" }
+
+[expect.tracks."d861b895-b73a-48bf-8771-76a008f6bbf0"]
+fields = { disc = 1, track = 27, track_title = "Carousel Fanfare" }
+
+[expect.tracks."dd388d16-2fad-4a14-975f-383e0d2089a0"]
+fields = { disc = 1, track = 39, track_title = "Love Hori Love" }
+
+[expect.tracks."e46e49a3-228f-45c6-967c-ab049391991a"]
+fields = { disc = 1, track = 7, track_title = "Pom Poms" }
+
+[expect.tracks."e48c8b50-7f43-4d5e-9ce5-43fabd0f3ce7"]
+fields = { disc = 1, track = 38, track_title = "On Your Mark" }
+
+[expect.tracks."e5d2b1ed-d69d-464d-bbfc-6da3ba40d433"]
+fields = { disc = 1, track = 5, track_title = "Painful Rain" }
+
+[expect.tracks."e6e4937e-6e92-443c-bd62-a82a98dfd198"]
+fields = { disc = 1, track = 2, track_title = "Uniform Adventure" }
+
+[expect.tracks."e9bca929-1405-4cd2-a6be-11979af75010"]
+fields = { disc = 1, track = 24, track_title = "Cocoon Time" }
+
+[expect.tracks."f449be7d-e93c-47b0-aea6-a4090bd6e03d"]
+fields = { disc = 1, track = 4, track_title = "Tie Your Shoelaces" }
+
+[expect.tracks."fe1faffe-bdc4-401e-a2bb-65b0b7910072"]
+fields = { disc = 1, track = 9, track_title = "Weaponless March" }

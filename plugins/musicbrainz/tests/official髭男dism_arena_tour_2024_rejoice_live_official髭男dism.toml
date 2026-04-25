@@ -1,0 +1,298 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 2/08. TATTOO (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "TATTOO (Live)"
+disc = 2
+disc_total = 2
+track = 8
+track_total = 19
+duration_ms = 430293
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 2/07. SOULSOUP (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "SOULSOUP (Live)"
+disc = 2
+disc_total = 2
+track = 7
+track_total = 19
+duration_ms = 382173
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 2/06. Same Blue (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Same Blue (Live)"
+disc = 2
+disc_total = 2
+track = 6
+track_total = 19
+duration_ms = 257853
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 2/05. B-Side Blues (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "B-Side Blues (Live)"
+disc = 2
+disc_total = 2
+track = 5
+track_total = 19
+duration_ms = 317293
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 2/04. Chessboard (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Chessboard (Live)"
+disc = 2
+disc_total = 2
+track = 4
+track_total = 19
+duration_ms = 337013
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 2/03. Anarchy (Rejoice ver. ／ Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Anarchy (Rejoice ver. / Live)"
+disc = 2
+disc_total = 2
+track = 3
+track_total = 19
+duration_ms = 300093
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 2/02. ミックスナッツ (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "ミックスナッツ (Live)"
+disc = 2
+disc_total = 2
+track = 2
+track_total = 19
+duration_ms = 230626
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 2/01. うらみつらみきわみ (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "うらみつらみきわみ (Live)"
+disc = 2
+disc_total = 2
+track = 1
+track_total = 19
+duration_ms = 319040
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 1/11. ノーダウト (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "ノーダウト (Live)"
+disc = 1
+disc_total = 2
+track = 11
+track_total = 19
+duration_ms = 238346
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 1/10. ホワイトノイズ (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "ホワイトノイズ (Live)"
+disc = 1
+disc_total = 2
+track = 10
+track_total = 19
+duration_ms = 271053
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 1/09. 115万キロのフィルム (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "115万キロのフィルム (Live)"
+disc = 1
+disc_total = 2
+track = 9
+track_total = 19
+duration_ms = 387973
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 1/08. Subtitle (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Subtitle (Live)"
+disc = 1
+disc_total = 2
+track = 8
+track_total = 19
+duration_ms = 312426
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 1/07. 濁点 (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "濁点 (Live)"
+disc = 1
+disc_total = 2
+track = 7
+track_total = 19
+duration_ms = 226853
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 1/06. 日常 (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "日常 (Live)"
+disc = 1
+disc_total = 2
+track = 6
+track_total = 19
+duration_ms = 372200
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 1/05. キャッチボール (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "キャッチボール (Live)"
+disc = 1
+disc_total = 2
+track = 5
+track_total = 19
+duration_ms = 271813
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 1/04. Stand By You (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Stand By You (Live)"
+disc = 1
+disc_total = 2
+track = 4
+track_total = 19
+duration_ms = 319466
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 1/03. 宿命 (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "宿命 (Live)"
+disc = 1
+disc_total = 2
+track = 3
+track_total = 19
+duration_ms = 301226
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 1/02. Get Back To 人生 (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Get Back To 人生 (Live)"
+disc = 1
+disc_total = 2
+track = 2
+track_total = 19
+duration_ms = 270146
+
+[[raw_tags]]
+file_path = "Official髭男dism — Official髭男dism Arena Tour 2024 - Rejoice - (Live) (2025) [WEB-FLAC]/Disc 1/01. Sharon (Live).flac"
+album = "Official髭男dism Arena Tour 2024 - Rejoice - (Live)"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Sharon (Live)"
+disc = 1
+disc_total = 2
+track = 1
+track_total = 19
+duration_ms = 276520
+
+[expect.release]
+ids = { release_group_id = "65ae8a97-90f7-4413-ae80-7c167293716f", release_id = "c87a2c18-439d-4884-bc06-87130c5b9067" }
+fields = { release_title = "Official髭男dism Arena Tour 2024 - Rejoice -", release_date = "2025-12-10" }
+
+[expect.artists."6dddd7a2-5583-49d0-a8b2-9ee46d04f27e"]
+fields = { artist_name = "Official髭男dism", sort_name = "Official HIGE DANdism" }
+
+[expect.tracks."01fbd85e-b9d6-4a73-b05f-612ae8805919"]
+fields = { disc = 2, track = 5, track_title = "B-Side Blues (Live)" }
+
+[expect.tracks."062f550d-68dd-46e9-af57-75490588f252"]
+fields = { disc = 1, track = 6, track_title = "日常 (Live)" }
+
+[expect.tracks."1dc511f3-17e2-44eb-aa36-40330d1004d6"]
+fields = { disc = 2, track = 7, track_title = "SOULSOUP (Live)" }
+
+[expect.tracks."28b56b26-bdf1-4965-87a6-7b8aec1b1a4b"]
+fields = { disc = 2, track = 6, track_title = "Same Blue (Live)" }
+
+[expect.tracks."33960ac3-6a0f-4585-8312-5f4c6dc1a585"]
+fields = { disc = 2, track = 3, track_title = "Anarchy (Rejoice ver. / Live)" }
+
+[expect.tracks."37bc708f-df6b-45e0-9e06-f24ec1d70901"]
+fields = { disc = 2, track = 4, track_title = "Chessboard (Live)" }
+
+[expect.tracks."4b731491-c53e-4edf-b834-104ed1a38698"]
+fields = { disc = 2, track = 2, track_title = "ミックスナッツ (Live)" }
+
+[expect.tracks."587d97a1-5ecb-4b61-8f8f-8ca8e9949f94"]
+fields = { disc = 1, track = 8, track_title = "Subtitle (Live)" }
+
+[expect.tracks."622028f7-c18c-426e-ae0b-7fcc9313d8be"]
+fields = { disc = 1, track = 1, track_title = "Sharon (Live)" }
+
+[expect.tracks."6f7fbaa4-981c-4d85-a03b-ea646da06c3b"]
+fields = { disc = 1, track = 3, track_title = "宿命 (Live)" }
+
+[expect.tracks."94d27325-35a8-4502-a30e-36e62fe9da12"]
+fields = { disc = 2, track = 8, track_title = "TATTOO (Live)" }
+
+[expect.tracks."a0f2544a-c484-4cc4-b25e-08824881446b"]
+fields = { disc = 1, track = 2, track_title = "Get Back To 人生 (Live)" }
+
+[expect.tracks."a5c1c903-ffd8-454c-9a29-08ee47d84fbf"]
+fields = { disc = 1, track = 9, track_title = "115万キロのフィルム (Live)" }
+
+[expect.tracks."b3c59ba8-1c1d-4ebf-accb-4c00cb2c299a"]
+fields = { disc = 1, track = 4, track_title = "Stand By You (Live)" }
+
+[expect.tracks."b92243e9-bdc2-48c4-9878-9459ff394739"]
+fields = { disc = 1, track = 10, track_title = "ホワイトノイズ (Live)" }
+
+[expect.tracks."b9caac68-e9fd-4616-b0d9-ba6073dbeb04"]
+fields = { disc = 2, track = 1, track_title = "うらみつらみきわみ (Live)" }
+
+[expect.tracks."cefebb9b-9398-4915-bdcb-62af46ffd7cc"]
+fields = { disc = 1, track = 7, track_title = "濁点 (Live)" }
+
+[expect.tracks."d8ab1c7a-6777-4615-b6db-e97d820adfd7"]
+fields = { disc = 1, track = 11, track_title = "ノーダウト (Live)" }
+
+[expect.tracks."dbf7124c-5515-4250-a3b4-ea2f729d3c2b"]
+fields = { disc = 1, track = 5, track_title = "キャッチボール (Live)" }

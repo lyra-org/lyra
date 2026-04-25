@@ -1,0 +1,20 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "HoneyComeBear - Dear.flac"
+album = "Dear"
+album_artists = ["HoneyComeBear"]
+artists = ["HoneyComeBear"]
+title = "Dear"
+genre = "J-pop"
+track = 1
+track_total = 1
+duration_ms = 251756
+
+[expect.release]
+ids = { release_id = "560391a6-d81c-45c4-9c97-fa053bb37828" }

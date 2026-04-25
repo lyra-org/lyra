@@ -1,0 +1,93 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2022.07.07] Unity (Expanded Edition) [WEB-FLAC]/07 ダンスホール (Instrumental).flac"
+album = "Unity (Expanded Edition)"
+album_artists = ["Mrs. GREEN APPLE"]
+artists = ["Mrs. GREEN APPLE"]
+title = "ダンスホール (Instrumental)"
+copyright = "An EMI Records release; ℗ 2023 UNIVERSAL MUSIC LLC"
+genre = "Rock"
+disc_total = 1
+track_total = 7
+duration_ms = 203396
+
+[[raw_tags]]
+file_path = "[2022.07.07] Unity (Expanded Edition) [WEB-FLAC]/06 Part of me.flac"
+album = "Unity (Expanded Edition)"
+album_artists = ["Mrs. GREEN APPLE"]
+artists = ["Mrs. GREEN APPLE"]
+title = "Part of me"
+copyright = "An EMI Records release; ℗ 2023 UNIVERSAL MUSIC LLC"
+genre = "Rock"
+disc_total = 1
+track_total = 7
+duration_ms = 332706
+
+[[raw_tags]]
+file_path = "[2022.07.07] Unity (Expanded Edition) [WEB-FLAC]/05 延々.flac"
+album = "Unity (Expanded Edition)"
+album_artists = ["Mrs. GREEN APPLE"]
+artists = ["Mrs. GREEN APPLE"]
+title = "延々"
+copyright = "An EMI Records release; ℗ 2023 UNIVERSAL MUSIC LLC"
+genre = "Rock"
+disc_total = 1
+track_total = 7
+duration_ms = 216253
+
+[[raw_tags]]
+file_path = "[2022.07.07] Unity (Expanded Edition) [WEB-FLAC]/04 君を知らない.flac"
+album = "Unity (Expanded Edition)"
+album_artists = ["Mrs. GREEN APPLE"]
+artists = ["Mrs. GREEN APPLE"]
+title = "君を知らない"
+copyright = "An EMI Records release; ℗ 2023 UNIVERSAL MUSIC LLC"
+genre = "Rock"
+disc_total = 1
+track_total = 7
+duration_ms = 247773
+
+[[raw_tags]]
+file_path = "[2022.07.07] Unity (Expanded Edition) [WEB-FLAC]/03 ブルーアンビエンス (feat. asmi).flac"
+album = "Unity (Expanded Edition)"
+album_artists = ["Mrs. GREEN APPLE"]
+artists = ["Mrs. GREEN APPLE"]
+title = "ブルーアンビエンス (feat. asmi)"
+copyright = "An EMI Records release; ℗ 2023 UNIVERSAL MUSIC LLC"
+genre = "Rock"
+disc_total = 1
+track_total = 7
+duration_ms = 250773
+
+[[raw_tags]]
+file_path = "[2022.07.07] Unity (Expanded Edition) [WEB-FLAC]/02 ダンスホール.flac"
+album = "Unity (Expanded Edition)"
+album_artists = ["Mrs. GREEN APPLE"]
+artists = ["Mrs. GREEN APPLE"]
+title = "ダンスホール"
+copyright = "An EMI Records release; ℗ 2023 UNIVERSAL MUSIC LLC"
+genre = "Rock"
+disc_total = 1
+track_total = 7
+duration_ms = 199173
+
+[[raw_tags]]
+file_path = "[2022.07.07] Unity (Expanded Edition) [WEB-FLAC]/01 ニュー・マイ・ノーマル.flac"
+album = "Unity (Expanded Edition)"
+album_artists = ["Mrs. GREEN APPLE"]
+artists = ["Mrs. GREEN APPLE"]
+title = "ニュー・マイ・ノーマル"
+copyright = "An EMI Records release; ℗ 2023 UNIVERSAL MUSIC LLC"
+genre = "Rock"
+disc_total = 1
+track_total = 7
+duration_ms = 245240
+
+[expect.release]
+ids = { release_id = ["846dc630-5954-472c-a501-70726d7af70a"] }

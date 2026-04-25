@@ -1,0 +1,61 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "緑黄色社会 - 花になって (2023)[24-48]/04.夢と悪魔とファンタジー (Instrumental).flac"
+album = "花になって"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "夢と悪魔とファンタジー (Instrumental)"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 267659
+
+[[raw_tags]]
+file_path = "緑黄色社会 - 花になって (2023)[24-48]/03.花になって (Instrumental).flac"
+album = "花になって"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "花になって (Instrumental)"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 199353
+
+[[raw_tags]]
+file_path = "緑黄色社会 - 花になって (2023)[24-48]/02.夢と悪魔とファンタジー.flac"
+album = "花になって"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "夢と悪魔とファンタジー"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 269326
+
+[[raw_tags]]
+file_path = "緑黄色社会 - 花になって (2023)[24-48]/01.花になって.flac"
+album = "花になって"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "花になって"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 199339
+
+[expect.release]
+ids = { release_group_id = "039bff67-f256-41b4-8530-90b04866ec28" }

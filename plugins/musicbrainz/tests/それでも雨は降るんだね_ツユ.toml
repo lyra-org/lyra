@@ -1,0 +1,29 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ツユ - それでも雨は降るんだね (2024-04-15) [WEB FLAC]/1.01. それでも雨は降るんだね.flac"
+album = "それでも雨は降るんだね"
+album_artists = ["ツユ"]
+artists = ["ツユ"]
+title = "それでも雨は降るんだね"
+copyright = "℗ 2024 TUYU"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 223260
+
+[expect.release]
+ids = { release_group_id = "a553ba51-45f4-4ee8-9ba7-c9fb50292d70", release_id = "1d13a731-767c-45db-814e-51bd250cc1ff" }
+fields = { release_title = "それでも雨は降るんだね", release_date = "2024-04-15" }
+
+[expect.artists."2b0a8be6-bfb8-4f62-b21d-f47a3104157e"]
+fields = { artist_name = "ツユ", sort_name = "TUYU" }
+
+[expect.tracks."2779f202-c566-4971-a6c0-179790c8083f"]
+fields = { disc = 1, track = 1, track_title = "それでも雨は降るんだね" }

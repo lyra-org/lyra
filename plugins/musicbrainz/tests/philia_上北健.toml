@@ -1,0 +1,125 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "上北健 - Philia (2020) [WEB FLAC]/07 - 待人 (Acoustic Session Live in Tokyo 2020).flac"
+album = "Philia"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "待人 (Acoustic Session Live in Tokyo 2020)"
+copyright = "℗© 2020 CORONOID RECORDS"
+genre = "J-Pop"
+disc = 1
+track = 7
+track_total = 7
+duration_ms = 266375
+
+[[raw_tags]]
+file_path = "上北健 - Philia (2020) [WEB FLAC]/06 - Mother's Face (Wagakki Remix).flac"
+album = "Philia"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "Mother's Face (Wagakki Remix)"
+copyright = "℗© 2020 CORONOID RECORDS"
+genre = "J-Pop"
+disc = 1
+track = 6
+track_total = 7
+duration_ms = 291196
+
+[[raw_tags]]
+file_path = "上北健 - Philia (2020) [WEB FLAC]/05 - 愛、そのようなもの.flac"
+album = "Philia"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "愛、そのようなもの"
+copyright = "℗© 2020 CORONOID RECORDS"
+genre = "J-Pop"
+disc = 1
+track = 5
+track_total = 7
+duration_ms = 120000
+
+[[raw_tags]]
+file_path = "上北健 - Philia (2020) [WEB FLAC]/04 - 神無よ.flac"
+album = "Philia"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "神無よ"
+copyright = "℗© 2020 CORONOID RECORDS"
+genre = "J-Pop"
+disc = 1
+track = 4
+track_total = 7
+duration_ms = 226320
+
+[[raw_tags]]
+file_path = "上北健 - Philia (2020) [WEB FLAC]/03 - 待人.flac"
+album = "Philia"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "待人"
+copyright = "℗© 2020 CORONOID RECORDS"
+genre = "J-Pop"
+disc = 1
+track = 3
+track_total = 7
+duration_ms = 230840
+
+[[raw_tags]]
+file_path = "上北健 - Philia (2020) [WEB FLAC]/02 - かなう.flac"
+album = "Philia"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "かなう"
+copyright = "℗© 2020 CORONOID RECORDS"
+genre = "J-Pop"
+disc = 1
+track = 2
+track_total = 7
+duration_ms = 330933
+
+[[raw_tags]]
+file_path = "上北健 - Philia (2020) [WEB FLAC]/01 - Mother's Face.flac"
+album = "Philia"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "Mother's Face"
+copyright = "℗© 2020 CORONOID RECORDS"
+genre = "J-Pop"
+disc = 1
+track = 1
+track_total = 7
+duration_ms = 217533
+
+[expect.release]
+ids = { release_group_id = "75656463-ac43-4ab7-a909-3391a6fd1457", release_id = "5224b4a0-8688-4349-a29f-f0267ec6af2f" }
+fields = { release_title = "Philia", release_date = "2020-12-10" }
+
+[expect.artists."17951579-3b02-4b9d-a699-6019a567b918"]
+fields = { artist_name = "上北健", sort_name = "Kamikita, Ken" }
+
+[expect.tracks."3956ebe0-a92a-4261-a49a-37b077a9dadc"]
+fields = { disc = 1, track = 6, track_title = "Mother's Face (Wagakki Remix)" }
+
+[expect.tracks."3b1d8cc1-c9ae-44ac-baa2-dce01b528c71"]
+fields = { disc = 1, track = 1, track_title = "Mother's Face" }
+
+[expect.tracks."875fa387-b3d1-4182-8611-0c006cb9c534"]
+fields = { disc = 1, track = 5, track_title = "愛、そのようなもの" }
+
+[expect.tracks."c669f8a3-0557-400e-a944-12a61b10473b"]
+fields = { disc = 1, track = 2, track_title = "かなう" }
+
+[expect.tracks."e234da6b-8eab-4d61-875d-78538f8fe162"]
+fields = { disc = 1, track = 4, track_title = "神無よ" }
+
+[expect.tracks."e3f4d86a-0c75-4d4f-8611-13ceeca32663"]
+fields = { disc = 1, track = 3, track_title = "待人" }
+
+[expect.tracks."f185d469-1592-4ee9-bbd5-565aead3b646"]
+fields = { disc = 1, track = 7, track_title = "待人 (Acoustic Session Live in Tokyo 2020)" }

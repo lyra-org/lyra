@@ -1,0 +1,196 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Reol — “No title” in NIPPON BUDOKAN (2025) [WEB-FLAC]/12. No title -10 Years Later Edition-.flac"
+album = "“No title” in NIPPON BUDOKAN"
+album_artists = ["Reol"]
+artists = ["Reol"]
+title = "No title -10 Years Later Edition-"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 12
+duration_ms = 265200
+
+[[raw_tags]]
+file_path = "Reol — “No title” in NIPPON BUDOKAN (2025) [WEB-FLAC]/11. -REOL BDK SCREAM-.flac"
+album = "“No title” in NIPPON BUDOKAN"
+album_artists = ["Reol"]
+artists = ["Reol"]
+title = "-REOL BDK SCREAM-"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 12
+duration_ms = 437240
+
+[[raw_tags]]
+file_path = "Reol — “No title” in NIPPON BUDOKAN (2025) [WEB-FLAC]/10. -Opening- Live at NIPPON BUDOKAN 2024.08.17.flac"
+album = "“No title” in NIPPON BUDOKAN"
+album_artists = ["Reol"]
+artists = ["Reol"]
+title = "-Opening- Live at NIPPON BUDOKAN 2024.08.17"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 12
+duration_ms = 113840
+
+[[raw_tags]]
+file_path = "Reol — “No title” in NIPPON BUDOKAN (2025) [WEB-FLAC]/09. ギガンティックO.T.N -Big Death Edition- Live at NIPPON BUDOKAN 2024.08.17.flac"
+album = "“No title” in NIPPON BUDOKAN"
+album_artists = ["Reol"]
+artists = ["Reol"]
+title = "ギガンティックO.T.N -Big Death Edition- Live at NIPPON BUDOKAN 2024.08.17"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 12
+duration_ms = 247627
+
+[[raw_tags]]
+file_path = "Reol — “No title” in NIPPON BUDOKAN (2025) [WEB-FLAC]/08. アシンメトリー Live at NIPPON BUDOKAN 2024.08.17.flac"
+album = "“No title” in NIPPON BUDOKAN"
+album_artists = ["Reol"]
+artists = ["Reol"]
+title = "アシンメトリー Live at NIPPON BUDOKAN 2024.08.17"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 12
+duration_ms = 260346
+
+[[raw_tags]]
+file_path = "Reol — “No title” in NIPPON BUDOKAN (2025) [WEB-FLAC]/07. -BWW SCREAM- Live at NIPPON BUDOKAN 2024.08.17.flac"
+album = "“No title” in NIPPON BUDOKAN"
+album_artists = ["Reol"]
+artists = ["Reol"]
+title = "-BWW SCREAM- Live at NIPPON BUDOKAN 2024.08.17"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 12
+duration_ms = 87280
+
+[[raw_tags]]
+file_path = "Reol — “No title” in NIPPON BUDOKAN (2025) [WEB-FLAC]/06. Echo Live at NIPPON BUDOKAN 2024.08.17.flac"
+album = "“No title” in NIPPON BUDOKAN"
+album_artists = ["Reol"]
+artists = ["Reol"]
+title = "Echo Live at NIPPON BUDOKAN 2024.08.17"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 12
+duration_ms = 223613
+
+[[raw_tags]]
+file_path = "Reol — “No title” in NIPPON BUDOKAN (2025) [WEB-FLAC]/05. No title Live at NIPPON BUDOKAN 2024.08.17.flac"
+album = "“No title” in NIPPON BUDOKAN"
+album_artists = ["Reol"]
+artists = ["Reol"]
+title = "No title Live at NIPPON BUDOKAN 2024.08.17"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 12
+duration_ms = 260973
+
+[[raw_tags]]
+file_path = "Reol — “No title” in NIPPON BUDOKAN (2025) [WEB-FLAC]/04. drop pop candy Live at NIPPON BUDOKAN 2024.08.17.flac"
+album = "“No title” in NIPPON BUDOKAN"
+album_artists = ["Reol"]
+artists = ["Reol"]
+title = "drop pop candy Live at NIPPON BUDOKAN 2024.08.17"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 12
+duration_ms = 225592
+
+[[raw_tags]]
+file_path = "Reol — “No title” in NIPPON BUDOKAN (2025) [WEB-FLAC]/03. オオエドランヴ Live at NIPPON BUDOKAN 2024.08.17.flac"
+album = "“No title” in NIPPON BUDOKAN"
+album_artists = ["Reol"]
+artists = ["Reol & nqrse"]
+title = "オオエドランヴ Live at NIPPON BUDOKAN 2024.08.17"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 12
+duration_ms = 230860
+
+[[raw_tags]]
+file_path = "Reol — “No title” in NIPPON BUDOKAN (2025) [WEB-FLAC]/02. ヒビカセ Live at NIPPON BUDOKAN 2024.08.17.flac"
+album = "“No title” in NIPPON BUDOKAN"
+album_artists = ["Reol"]
+artists = ["Reol"]
+title = "ヒビカセ Live at NIPPON BUDOKAN 2024.08.17"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 12
+duration_ms = 257280
+
+[[raw_tags]]
+file_path = "Reol — “No title” in NIPPON BUDOKAN (2025) [WEB-FLAC]/01. -Ending- Live at NIPPON BUDOKAN 2024.08.17.flac"
+album = "“No title” in NIPPON BUDOKAN"
+album_artists = ["Reol"]
+artists = ["Reol"]
+title = "-Ending- Live at NIPPON BUDOKAN 2024.08.17"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 12
+duration_ms = 93606
+
+[expect.release]
+ids = { release_group_id = "8ba841f0-a017-4f4e-8120-08f9533c679e", release_id = "9e376db0-8edf-4a36-8523-170b97900256" }
+fields = { release_title = "“No title” in NIPPON BUDOKAN", release_date = "2025-08-17" }
+
+[expect.artists."aea6ccea-deb0-44bb-886e-d91aa4c358bf"]
+fields = { artist_name = "Reol", sort_name = "Reol" }
+
+[expect.artists."d6402d9b-652f-4f93-9e04-1c0d43bfd707"]
+fields = { artist_name = "nqrse", sort_name = "nqrse" }
+
+[expect.tracks."16219838-15d4-455c-b276-1e9b031f745d"]
+fields = { disc = 1, track = 1, track_title = "-Ending-" }
+
+[expect.tracks."19463621-9859-4bab-b69c-8dd1e0996197"]
+fields = { disc = 1, track = 12, track_title = "No title -10 Years Later Edition-" }
+
+[expect.tracks."32fb602e-10ab-471a-ae56-84efb8144360"]
+fields = { disc = 1, track = 7, track_title = "-BWW SCREAM-" }
+
+[expect.tracks."3aa93795-9582-47fe-9dbf-60b5d60015e9"]
+fields = { disc = 1, track = 9, track_title = "ギガンティックO.T.N -Big Death Edition-" }
+
+[expect.tracks."45ce4bdb-a160-47c8-a9af-f2d044bd7c2c"]
+fields = { disc = 1, track = 3, track_title = "オオエドランヴ" }
+
+[expect.tracks."6b022679-bcd0-4f71-8f51-54cde19e2038"]
+fields = { disc = 1, track = 6, track_title = "Echo" }
+
+[expect.tracks."7f22c01d-7cf4-4aae-827d-c7ab1597d3bc"]
+fields = { disc = 1, track = 5, track_title = "No title" }
+
+[expect.tracks."87e2bc96-8a68-430b-8b14-a3db14332582"]
+fields = { disc = 1, track = 10, track_title = "-Opening-" }
+
+[expect.tracks."972516df-de10-47dc-9e71-5f9df5ff989a"]
+fields = { disc = 1, track = 2, track_title = "ヒビカセ" }
+
+[expect.tracks."b9e5a05d-dc1e-452d-a68c-9a30d72f3ca4"]
+fields = { disc = 1, track = 8, track_title = "アシンメトリー" }
+
+[expect.tracks."c6d91fbe-a430-4108-ad48-63747af6552c"]
+fields = { disc = 1, track = 11, track_title = "-REOL BDK SCREAM-" }
+
+[expect.tracks."f7da9e06-43f8-4315-b373-e6d1604fa99a"]
+fields = { disc = 1, track = 4, track_title = "drop pop candy" }

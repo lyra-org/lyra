@@ -1,0 +1,22 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2022.11.06] Guitar to Kodoku to Aoi Hoshi/01. Guitar to Kodoku to Aoi Hoshi.flac"
+album = "Guitar to Kodoku to Aoi Hoshi"
+album_artists = ["Kessoku Band"]
+artists = ["Kessoku Band"]
+title = "Guitar to Kodoku to Aoi Hoshi"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 228960
+
+[expect.release]
+ids = { release_id = "d23933d6-b48b-4e05-b8ac-e08fdf8fcc9a" }

@@ -1,0 +1,253 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "星野源 - ばかのうた (2010-06-23) [WEB FLAC]/1.15. ばかのうた.flac"
+album = "ばかのうた"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "ばかのうた"
+copyright = "℗ 2010 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 15
+track_total = 15
+duration_ms = 205594
+
+[[raw_tags]]
+file_path = "星野源 - ばかのうた (2010-06-23) [WEB FLAC]/1.14. ひらめき.flac"
+album = "ばかのうた"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "ひらめき"
+copyright = "℗ 2010 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 15
+duration_ms = 162690
+
+[[raw_tags]]
+file_path = "星野源 - ばかのうた (2010-06-23) [WEB FLAC]/1.13. ただいま.flac"
+album = "ばかのうた"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "ただいま"
+copyright = "℗ 2010 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 15
+duration_ms = 205458
+
+[[raw_tags]]
+file_path = "星野源 - ばかのうた (2010-06-23) [WEB FLAC]/1.12. 穴を掘る.flac"
+album = "ばかのうた"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "穴を掘る"
+copyright = "℗ 2010 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 15
+duration_ms = 168129
+
+[[raw_tags]]
+file_path = "星野源 - ばかのうた (2010-06-23) [WEB FLAC]/1.11. さようならのうみ(Instrumental).flac"
+album = "ばかのうた"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "さようならのうみ(Instrumental)"
+copyright = "℗ 2010 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 15
+duration_ms = 141602
+
+[[raw_tags]]
+file_path = "星野源 - ばかのうた (2010-06-23) [WEB FLAC]/1.10. 子供.flac"
+album = "ばかのうた"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "子供"
+copyright = "℗ 2010 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 15
+duration_ms = 203732
+
+[[raw_tags]]
+file_path = "星野源 - ばかのうた (2010-06-23) [WEB FLAC]/1.09. 兄妹.flac"
+album = "ばかのうた"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "兄妹"
+copyright = "℗ 2010 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 15
+duration_ms = 169298
+
+[[raw_tags]]
+file_path = "星野源 - ばかのうた (2010-06-23) [WEB FLAC]/1.08. くせのうた.flac"
+album = "ばかのうた"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "くせのうた"
+copyright = "℗ 2010 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 15
+duration_ms = 284976
+
+[[raw_tags]]
+file_path = "星野源 - ばかのうた (2010-06-23) [WEB FLAC]/1.07. 老夫婦.flac"
+album = "ばかのうた"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "老夫婦"
+copyright = "℗ 2010 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 15
+duration_ms = 121513
+
+[[raw_tags]]
+file_path = "星野源 - ばかのうた (2010-06-23) [WEB FLAC]/1.06. 夜中唄.flac"
+album = "ばかのうた"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "夜中唄"
+copyright = "℗ 2010 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 15
+duration_ms = 231031
+
+[[raw_tags]]
+file_path = "星野源 - ばかのうた (2010-06-23) [WEB FLAC]/1.05. デイジーお味噌汁(Instrumental).flac"
+album = "ばかのうた"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "デイジーお味噌汁(Instrumental)"
+copyright = "℗ 2010 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 15
+duration_ms = 91275
+
+[[raw_tags]]
+file_path = "星野源 - ばかのうた (2010-06-23) [WEB FLAC]/1.04. 茶碗.flac"
+album = "ばかのうた"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "茶碗"
+copyright = "℗ 2010 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 15
+duration_ms = 233240
+
+[[raw_tags]]
+file_path = "星野源 - ばかのうた (2010-06-23) [WEB FLAC]/1.03. キッチン.flac"
+album = "ばかのうた"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "キッチン"
+copyright = "℗ 2010 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 15
+duration_ms = 256701
+
+[[raw_tags]]
+file_path = "星野源 - ばかのうた (2010-06-23) [WEB FLAC]/1.02. グー.flac"
+album = "ばかのうた"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "グー"
+copyright = "℗ 2010 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 15
+duration_ms = 214065
+
+[[raw_tags]]
+file_path = "星野源 - ばかのうた (2010-06-23) [WEB FLAC]/1.01. ばらばら.flac"
+album = "ばかのうた"
+album_artists = ["星野源"]
+artists = ["星野源"]
+title = "ばらばら"
+copyright = "℗ 2010 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 15
+duration_ms = 202184
+
+[expect.release]
+ids = { release_group_id = "25d11ecf-30c1-447a-9ec5-cddecd112519", release_id = "0d10a7bb-218f-4d00-af9e-09615f9b5bc0" }
+fields = { release_title = "ばかのうた", release_date = "2010-06-23" }
+
+[expect.artists."2c6c53ea-09d4-4d98-b174-c9aa83d4fecf"]
+fields = { artist_name = "星野源", sort_name = "Hoshino, Gen" }
+
+[expect.tracks."0df11718-0d9b-4f56-937f-be243682de74"]
+fields = { disc = 1, track = 3, track_title = "キッチン" }
+
+[expect.tracks."487c0d94-d334-4e7d-a69f-39e3116c5641"]
+fields = { disc = 1, track = 10, track_title = "子供" }
+
+[expect.tracks."6005caa1-5294-429a-b961-13874044ff8a"]
+fields = { disc = 1, track = 7, track_title = "老夫婦" }
+
+[expect.tracks."89d1879d-4071-44ac-9b13-13b70c6ea120"]
+fields = { disc = 1, track = 5, track_title = "デイジーお味噌汁 (Instrumental)" }
+
+[expect.tracks."939743e4-6f99-4aff-a8f5-4826e1a6431d"]
+fields = { disc = 1, track = 12, track_title = "穴を掘る" }
+
+[expect.tracks."9e2ef2ec-d650-45eb-881d-0e08c0ba1699"]
+fields = { disc = 1, track = 4, track_title = "茶碗" }
+
+[expect.tracks."a4ac2f23-9ed7-4cbc-bd7b-574b37a05e7f"]
+fields = { disc = 1, track = 9, track_title = "兄妹" }
+
+[expect.tracks."af750102-d03c-43c0-82c7-049b01779c6e"]
+fields = { disc = 1, track = 1, track_title = "ばらばら" }
+
+[expect.tracks."bdac17a6-2651-4ed6-b1ef-9d28a8ed8f13"]
+fields = { disc = 1, track = 8, track_title = "くせのうた" }
+
+[expect.tracks."c38969d1-40d8-47a8-83ac-66cb6d53d3ab"]
+fields = { disc = 1, track = 14, track_title = "ひらめき" }
+
+[expect.tracks."d85e9720-cfa2-491d-b9dd-667bf1901d61"]
+fields = { disc = 1, track = 13, track_title = "ただいま" }
+
+[expect.tracks."d862568b-adb2-47d5-80d1-92566320df0f"]
+fields = { disc = 1, track = 2, track_title = "グー" }
+
+[expect.tracks."da8d93af-4324-4797-b399-abd33e864fc6"]
+fields = { disc = 1, track = 11, track_title = "さようならのうみ (Instrumental)" }
+
+[expect.tracks."e4862d5b-38e5-4bbd-9339-6893b323ad10"]
+fields = { disc = 1, track = 15, track_title = "ばかのうた" }
+
+[expect.tracks."e7105313-4c28-4b2c-bfd3-8a415207e780"]
+fields = { disc = 1, track = 6, track_title = "夜中唄" }

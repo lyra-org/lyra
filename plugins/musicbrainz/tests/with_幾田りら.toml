@@ -1,0 +1,29 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "幾田りら - With (2023-10-06) [WEB FLAC]/1.01. With.flac"
+album = "With"
+album_artists = ["幾田りら"]
+artists = ["幾田りら"]
+title = "With"
+copyright = "℗ 2023 Sony Music Entertainment(Japan) inc."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 227906
+
+[expect.release]
+ids = { release_group_id = "53005f8d-8df1-4407-a21b-b9038f935f4e", release_id = "0e241b52-abf8-499f-ab9b-985a12ed6d24" }
+fields = { release_title = "With", release_date = "2023-10-06" }
+
+[expect.artists."55e42264-ef27-49d8-93fd-29f930dc96e4"]
+fields = { artist_name = "幾田りら", sort_name = "Ikuta, Lilas" }
+
+[expect.tracks."31e154bb-4c5f-4d65-9e3e-2c3477e25604"]
+fields = { disc = 1, track = 1, track_title = "With", work_id = "bfbc59a6-c543-4441-87ee-1068ff61eeec" }

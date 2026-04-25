@@ -1,0 +1,14 @@
+[package]
+name = "harmony-net"
+version = "0.0.1"
+edition = "2024"
+license-file = "../LICENSE"
+
+[dependencies]
+harmony-core = { path = "../harmony-core" }
+harmony-luau = { path = "../harmony-luau" }
+harmony-macros = { path = "../harmony-macros" }
+anyhow = { workspace = true }
+mlua = { workspace = true, features = ["luau", "anyhow", "serialize"] }
+serde = { workspace = true }
+tokio = { workspace = true, features = ["net", "io-util"] }

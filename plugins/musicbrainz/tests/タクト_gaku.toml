@@ -1,0 +1,89 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[EAC][220427][SNCL-00056~7][ryo (supercell) feat. まふまふ, gaku][タクト][初回限定版][CD+DVD]/05. タクト (TV Edit) -instrumental-.flac"
+album = "タクト"
+artists = ["ryo (supercell) feat. まふまふ, gaku"]
+title = "タクト (TV Edit) -instrumental-"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 5
+duration_ms = 93013
+
+[[raw_tags]]
+file_path = "[EAC][220427][SNCL-00056~7][ryo (supercell) feat. まふまふ, gaku][タクト][初回限定版][CD+DVD]/04. タクト -instrumental-.flac"
+album = "タクト"
+artists = ["ryo (supercell) feat. まふまふ, gaku"]
+title = "タクト -instrumental-"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 5
+duration_ms = 239693
+
+[[raw_tags]]
+file_path = "[EAC][220427][SNCL-00056~7][ryo (supercell) feat. まふまふ, gaku][タクト][初回限定版][CD+DVD]/03. タクト (TV Edit).flac"
+album = "タクト"
+artists = ["ryo (supercell) feat. まふまふ, gaku"]
+title = "タクト (TV Edit)"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 5
+duration_ms = 92973
+
+[[raw_tags]]
+file_path = "[EAC][220427][SNCL-00056~7][ryo (supercell) feat. まふまふ, gaku][タクト][初回限定版][CD+DVD]/02. タクト (TeddyLoid & Giga Remix).flac"
+album = "タクト"
+artists = ["ryo (supercell) feat. まふまふ, gaku"]
+title = "タクト (TeddyLoid & Giga Remix)"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 5
+duration_ms = 149480
+
+[[raw_tags]]
+file_path = "[EAC][220427][SNCL-00056~7][ryo (supercell) feat. まふまふ, gaku][タクト][初回限定版][CD+DVD]/01. タクト.flac"
+album = "タクト"
+artists = ["ryo (supercell) feat. まふまふ, gaku"]
+title = "タクト"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 5
+duration_ms = 240133
+
+[expect.release]
+ids = { release_id = ["d8334288-8df0-4127-b489-6e28af332385", "ae410717-7dbc-4ac0-91c3-693f7d47b0d3"] }
+fields = { release_title = "タクト", release_date = "2022-04-27" }
+
+[expect.artists."8c37481e-8a91-4df1-b77b-864b5808b14d"]
+fields = { artist_name = "まふまふ", sort_name = "Mafumafu" }
+
+[expect.artists."aabc3d78-218b-4e98-95b7-fe6388adef2d"]
+fields = { artist_name = "ryo", sort_name = "ryo" }
+
+[expect.artists."c0e7a4d8-4b3f-490a-8115-51bd95ea74e6"]
+fields = { artist_name = "gaku", sort_name = "gaku" }
+
+[expect.tracks."06e06ccc-5599-4ce9-b732-c1a5eaa1482b"]
+fields = { disc = 1, track = 3, track_title = "タクト (TV Edit)" }
+
+[expect.tracks."3fc72949-4492-4ce2-a546-e7864ad1a0ff"]
+fields = { disc = 1, track = 4, track_title = "タクト -instrumental-" }
+
+[expect.tracks."5a6451ea-fbb4-4716-9f56-f6dfca5cd130"]
+fields = { disc = 1, track = 2, track_title = "タクト (TeddyLoid & Giga Remix)" }
+
+[expect.tracks."bb2ece3c-f9c4-4468-8bc1-723d03d1901f"]
+fields = { disc = 1, track = 1, track_title = "タクト" }
+
+[expect.tracks."c985ede5-388b-40cd-a102-c7051ae2f8ac"]
+fields = { disc = 1, track = 5, track_title = "タクト (TV Edit) -instrumental-" }

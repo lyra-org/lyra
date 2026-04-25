@@ -1,0 +1,73 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "エマ・ヴェルデ (CV.指出毬亜) - Starry Night Serenade (2025) [WEB-FLAC]/04. ドリーム☆シューター (Off Vocal).flac"
+album = "Starry Night Serenade"
+album_artists = ["エマ・ヴェルデ (CV.指出毬亜)"]
+artists = ["エマ・ヴェルデ (CV.指出毬亜)"]
+title = "ドリーム☆シューター (Off Vocal)"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 232160
+
+[[raw_tags]]
+file_path = "エマ・ヴェルデ (CV.指出毬亜) - Starry Night Serenade (2025) [WEB-FLAC]/03. Starry Night Serenade (Off Vocal).flac"
+album = "Starry Night Serenade"
+album_artists = ["エマ・ヴェルデ (CV.指出毬亜)"]
+artists = ["エマ・ヴェルデ (CV.指出毬亜)"]
+title = "Starry Night Serenade (Off Vocal)"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 257426
+
+[[raw_tags]]
+file_path = "エマ・ヴェルデ (CV.指出毬亜) - Starry Night Serenade (2025) [WEB-FLAC]/02. ドリーム☆シューター.flac"
+album = "Starry Night Serenade"
+album_artists = ["エマ・ヴェルデ (CV.指出毬亜)"]
+artists = ["エマ・ヴェルデ (CV.指出毬亜)"]
+title = "ドリーム☆シューター"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 233520
+
+[[raw_tags]]
+file_path = "エマ・ヴェルデ (CV.指出毬亜) - Starry Night Serenade (2025) [WEB-FLAC]/01. Starry Night Serenade.flac"
+album = "Starry Night Serenade"
+album_artists = ["エマ・ヴェルデ (CV.指出毬亜)"]
+artists = ["エマ・ヴェルデ (CV.指出毬亜)"]
+title = "Starry Night Serenade"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 257306
+
+[expect.release]
+ids = { release_group_id = "602049d7-8998-4f80-a9da-44b9ad88bd34", release_id = ["8926b0c5-d381-4cc1-a1c2-2ebd4a1c0855", "4443b987-baae-4fee-92c4-537b2cbee6e9"] }
+fields = { release_title = "Starry Night Serenade", release_date = "2025-02-12" }
+
+[expect.artists."1566c0b0-3a75-4751-9ba3-598447ff484c"]
+fields = { artist_name = "エマ・ヴェルデ", sort_name = "Verde, Emma" }
+
+[expect.tracks."4fa68db9-8ca7-411c-8674-7d119e049541"]
+fields = { disc = 1, track = 2, track_title = "ドリーム☆シューター" }
+
+[expect.tracks."798618a7-8df0-43a7-b6db-5edd0a4d3670"]
+fields = { disc = 1, track = 3, track_title = "Starry Night Serenade (Off Vocal)" }
+
+[expect.tracks."914d0960-d125-4e38-a06e-dbd085c3064c"]
+fields = { disc = 1, track = 4, track_title = "ドリーム☆シューター (Off Vocal)" }
+
+[expect.tracks."f989bc70-4095-4c73-8a7d-8e8bdfccbb78"]
+fields = { disc = 1, track = 1, track_title = "Starry Night Serenade" }

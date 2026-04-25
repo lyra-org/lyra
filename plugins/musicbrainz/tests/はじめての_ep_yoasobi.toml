@@ -1,0 +1,77 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "YOASOBI - はじめての - EP (2023-05-10) [WEB FLAC]/1.04. ミスター.flac"
+album = "はじめての - EP"
+album_artists = ["YOASOBI"]
+artists = ["YOASOBI"]
+title = "ミスター"
+copyright = "℗ 2023 YOASOBI"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 185293
+
+[[raw_tags]]
+file_path = "YOASOBI - はじめての - EP (2023-05-10) [WEB FLAC]/1.03. 好きだ.flac"
+album = "はじめての - EP"
+album_artists = ["YOASOBI"]
+artists = ["YOASOBI"]
+title = "好きだ"
+copyright = "℗ 2023 YOASOBI"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 218093
+
+[[raw_tags]]
+file_path = "YOASOBI - はじめての - EP (2023-05-10) [WEB FLAC]/1.02. 海のまにまに.flac"
+album = "はじめての - EP"
+album_artists = ["YOASOBI"]
+artists = ["YOASOBI"]
+title = "海のまにまに"
+copyright = "℗ 2023 YOASOBI"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 256613
+
+[[raw_tags]]
+file_path = "YOASOBI - はじめての - EP (2023-05-10) [WEB FLAC]/1.01. セブンティーン.flac"
+album = "はじめての - EP"
+album_artists = ["YOASOBI"]
+artists = ["YOASOBI"]
+title = "セブンティーン"
+copyright = "℗ 2023 YOASOBI"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 199653
+
+[expect.release]
+ids = { release_group_id = "6ce0fa70-7a56-4d55-afc4-a89f45e92961", release_id = ["144c7118-67e8-4db2-8cb5-1b35ff2d2487", "78d46d2c-5fea-429b-8f7a-c695c6741d34"] }
+fields = { release_title = "はじめての - EP", release_date = "2023-05-10" }
+
+[expect.artists."df6c619f-4334-43e2-8b6a-4a32af1e4f85"]
+fields = { artist_name = "YOASOBI", sort_name = "YOASOBI" }
+
+[expect.tracks."10a6e4b6-4b3c-4d33-8558-c8f0c0fa5029"]
+fields = { disc = 1, track = 4, track_title = "ミスター" }
+
+[expect.tracks."79910039-b17e-405f-b854-d64657f59afa"]
+fields = { disc = 1, track = 3, track_title = "好きだ" }
+
+[expect.tracks."9f29f4dc-4c31-41e7-9fb2-b0ecefe8a592"]
+fields = { disc = 1, track = 1, track_title = "セブンティーン" }
+
+[expect.tracks."c632dc53-5acf-4b32-bd75-2e30f3a6b6cd"]
+fields = { disc = 1, track = 2, track_title = "海のまにまに" }

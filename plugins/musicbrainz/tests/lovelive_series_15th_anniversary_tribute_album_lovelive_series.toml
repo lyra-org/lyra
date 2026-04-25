@@ -1,0 +1,142 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "LoveLive! Series 15th Anniversary Tribute Album 2026-01-14 (CD - FLAC)/11 - START!! True dreams.flac"
+album = "LoveLive! Series 15th Anniversary Tribute Album"
+album_artists = ["LoveLive! Series"]
+artists = ["Poppin'Party, 戸山香澄(CV.愛美), 花園たえ(CV.大塚紗英), 牛込りみ(CV.西本りみ), 山吹沙綾(CV.大橋彩香), 市ヶ谷有咲(CV.伊藤彩沙)"]
+title = "START!! True dreams"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 11
+duration_ms = 242720
+
+[[raw_tags]]
+file_path = "LoveLive! Series 15th Anniversary Tribute Album 2026-01-14 (CD - FLAC)/10 - KiRa-KiRa Sensation!.flac"
+album = "LoveLive! Series 15th Anniversary Tribute Album"
+album_artists = ["LoveLive! Series"]
+artists = ["天海春香(CV. 中村繪里子), 如月千早(CV. 今井麻美), 星井美希(CV. 長谷川明子), 萩原雪歩(CV. 浅倉杏美), 菊地 真(CV. 平田宏美)"]
+title = "KiRa-KiRa Sensation!"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 11
+duration_ms = 301546
+
+[[raw_tags]]
+file_path = "LoveLive! Series 15th Anniversary Tribute Album 2026-01-14 (CD - FLAC)/09 - Fly with You!!.flac"
+album = "LoveLive! Series 15th Anniversary Tribute Album"
+album_artists = ["LoveLive! Series"]
+artists = ["初音ミク"]
+title = "Fly with You!!"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 11
+duration_ms = 275213
+
+[[raw_tags]]
+file_path = "LoveLive! Series 15th Anniversary Tribute Album 2026-01-14 (CD - FLAC)/08 - Landing action Yeah!!.flac"
+album = "LoveLive! Series 15th Anniversary Tribute Album"
+album_artists = ["LoveLive! Series"]
+artists = ["樋口楓"]
+title = "Landing action Yeah!!"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 11
+duration_ms = 247013
+
+[[raw_tags]]
+file_path = "LoveLive! Series 15th Anniversary Tribute Album 2026-01-14 (CD - FLAC)/07 - フォーチュンムービー.flac"
+album = "LoveLive! Series 15th Anniversary Tribute Album"
+album_artists = ["LoveLive! Series"]
+artists = ["しぐれうい"]
+title = "フォーチュンムービー"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 11
+duration_ms = 226080
+
+[[raw_tags]]
+file_path = "LoveLive! Series 15th Anniversary Tribute Album 2026-01-14 (CD - FLAC)/06 - 酸欠.flac"
+album = "LoveLive! Series 15th Anniversary Tribute Album"
+album_artists = ["LoveLive! Series"]
+artists = ["V.W.P"]
+title = "酸欠"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 11
+duration_ms = 200800
+
+[[raw_tags]]
+file_path = "LoveLive! Series 15th Anniversary Tribute Album 2026-01-14 (CD - FLAC)/05 - soldier game.flac"
+album = "LoveLive! Series 15th Anniversary Tribute Album"
+album_artists = ["LoveLive! Series"]
+artists = ["Ado"]
+title = "soldier game"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 11
+duration_ms = 221360
+
+[[raw_tags]]
+file_path = "LoveLive! Series 15th Anniversary Tribute Album 2026-01-14 (CD - FLAC)/04 - キラーキューン☆.flac"
+album = "LoveLive! Series 15th Anniversary Tribute Album"
+album_artists = ["LoveLive! Series"]
+artists = ["泉こなた(CV. 平野綾), 柊かがみ(CV. 加藤英美里), 柊つかさ(CV. 福原香織), 高良みゆき(CV. 遠藤綾)"]
+title = "キラーキューン☆"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 11
+duration_ms = 203920
+
+[[raw_tags]]
+file_path = "LoveLive! Series 15th Anniversary Tribute Album 2026-01-14 (CD - FLAC)/03 - Dream Believers.flac"
+album = "LoveLive! Series 15th Anniversary Tribute Album"
+album_artists = ["LoveLive! Series"]
+artists = ["わか・るか"]
+title = "Dream Believers"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 11
+duration_ms = 310480
+
+[[raw_tags]]
+file_path = "LoveLive! Series 15th Anniversary Tribute Album 2026-01-14 (CD - FLAC)/02 - 僕らは今のなかで.flac"
+album = "LoveLive! Series 15th Anniversary Tribute Album"
+album_artists = ["LoveLive! Series"]
+artists = ["トウカイテイオー(CV. Machico), オグリキャップ(CV. 高柳知葉), ゴールドシップ(CV. 上田瞳), スティルインラブ(CV. 宮下早紀), アーモンドアイ(CV. 石原夏織)"]
+title = "僕らは今のなかで"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 11
+duration_ms = 286346
+
+[[raw_tags]]
+file_path = "LoveLive! Series 15th Anniversary Tribute Album 2026-01-14 (CD - FLAC)/01 - 決めたよHand in Hand.flac"
+album = "LoveLive! Series 15th Anniversary Tribute Album"
+album_artists = ["LoveLive! Series"]
+artists = ["キュアアイドル(CV. 松岡美里),キュアウインク(CV. 髙橋ミナミ), キュアキュンキュン(CV. 高森奈津美)"]
+title = "決めたよHand in Hand"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 11
+duration_ms = 267426
+
+[expect.release]
+ids = { release_id = ["806fe4d7-b791-49b2-9d01-3d702f85e07a", "ead77d52-55a9-4b90-999b-431d5123e710"] }
+fields = { release_title = "LoveLive! Series 15th Anniversary Tribute Album", release_date = "2026-01-14" }

@@ -1,0 +1,11 @@
+[package]
+name = "lyra-chromaprint"
+version = "0.0.1"
+edition = "2024"
+license-file = "../LICENSE"
+
+[dependencies]
+lyra-ffmpeg = { path = "../lyra-ffmpeg" }
+rustfft = "6"
+base64 = { workspace = true }
+thiserror = { workspace = true }

@@ -1,0 +1,10 @@
+[package]
+name = "lyra-ffmpeg"
+version = "0.0.1"
+edition = "2024"
+license-file = "../LICENSE"
+
+[dependencies]
+ffmpeg-sys-next = { workspace = true }
+thiserror = { workspace = true }
+scopeguard = "1"

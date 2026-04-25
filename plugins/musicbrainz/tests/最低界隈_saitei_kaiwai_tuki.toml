@@ -1,0 +1,28 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "tuki. — 最低界隈 - Saitei Kaiwai (2025) [WEB-FLAC]/01. 最低界隈 - Saitei Kaiwai.flac"
+album = "最低界隈 - Saitei Kaiwai"
+album_artists = ["tuki."]
+artists = ["tuki."]
+title = "最低界隈 - Saitei Kaiwai"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 200053
+
+[expect.release]
+ids = { release_group_id = "cdf2df35-4fd9-4889-8677-932ccf998247", release_id = "3b0c97a9-01c1-4004-8b22-a02c27de0c24" }
+fields = { release_title = "最低界隈 - Saitei Kaiwai", release_date = "2025-08-27" }
+
+[expect.artists."1359dfb8-8220-4ebe-aeb9-b759ed737c41"]
+fields = { artist_name = "tuki.", sort_name = "tuki." }
+
+[expect.tracks."8c644fc1-95af-4cb2-a139-40e42064941a"]
+fields = { disc = 1, track = 1, track_title = "最低界隈 - Saitei Kaiwai" }

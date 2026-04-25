@@ -1,0 +1,205 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Gyze (2015.02.25) (album) Black Bride [FLAC] {VICL-64303}/12 - Gnosis.flac"
+album = "Black Bride"
+album_artists = ["Gyze"]
+artists = ["Gyze"]
+title = "Gnosis"
+genre = "Metal"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 12
+duration_ms = 251013
+
+[[raw_tags]]
+file_path = "Gyze (2015.02.25) (album) Black Bride [FLAC] {VICL-64303}/11 - 明日への光.flac"
+album = "Black Bride"
+album_artists = ["Gyze"]
+artists = ["Gyze"]
+title = "明日への光"
+genre = "Metal"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 12
+duration_ms = 242840
+
+[[raw_tags]]
+file_path = "Gyze (2015.02.25) (album) Black Bride [FLAC] {VICL-64303}/10 - Julius.flac"
+album = "Black Bride"
+album_artists = ["Gyze"]
+artists = ["Gyze"]
+title = "Julius"
+genre = "Metal"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 12
+duration_ms = 344706
+
+[[raw_tags]]
+file_path = "Gyze (2015.02.25) (album) Black Bride [FLAC] {VICL-64303}/09 - 菜の花.flac"
+album = "Black Bride"
+album_artists = ["Gyze"]
+artists = ["Gyze"]
+title = "菜の花"
+genre = "Metal"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 12
+duration_ms = 327053
+
+[[raw_tags]]
+file_path = "Gyze (2015.02.25) (album) Black Bride [FLAC] {VICL-64303}/08 - Satanic Loop.flac"
+album = "Black Bride"
+album_artists = ["Gyze"]
+artists = ["Gyze"]
+title = "Satanic Loop"
+genre = "Metal"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 12
+duration_ms = 339466
+
+[[raw_tags]]
+file_path = "Gyze (2015.02.25) (album) Black Bride [FLAC] {VICL-64303}/07 - Twilight.flac"
+album = "Black Bride"
+album_artists = ["Gyze"]
+artists = ["Gyze"]
+title = "Twilight"
+genre = "Metal"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 12
+duration_ms = 271333
+
+[[raw_tags]]
+file_path = "Gyze (2015.02.25) (album) Black Bride [FLAC] {VICL-64303}/06 - Winter Breath.flac"
+album = "Black Bride"
+album_artists = ["Gyze"]
+artists = ["Gyze"]
+title = "Winter Breath"
+genre = "Metal"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 12
+duration_ms = 230360
+
+[[raw_tags]]
+file_path = "Gyze (2015.02.25) (album) Black Bride [FLAC] {VICL-64303}/05 - Black Shadow.flac"
+album = "Black Bride"
+album_artists = ["Gyze"]
+artists = ["Gyze"]
+title = "Black Shadow"
+genre = "Metal"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 12
+duration_ms = 319360
+
+[[raw_tags]]
+file_path = "Gyze (2015.02.25) (album) Black Bride [FLAC] {VICL-64303}/04 - Insane Brain.flac"
+album = "Black Bride"
+album_artists = ["Gyze"]
+artists = ["Gyze"]
+title = "Insane Brain"
+genre = "Metal"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 12
+duration_ms = 353853
+
+[[raw_tags]]
+file_path = "Gyze (2015.02.25) (album) Black Bride [FLAC] {VICL-64303}/03 - Honesty.flac"
+album = "Black Bride"
+album_artists = ["Gyze"]
+artists = ["Gyze"]
+title = "Honesty"
+genre = "Metal"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 12
+duration_ms = 304533
+
+[[raw_tags]]
+file_path = "Gyze (2015.02.25) (album) Black Bride [FLAC] {VICL-64303}/02 - In Grief.flac"
+album = "Black Bride"
+album_artists = ["Gyze"]
+artists = ["Gyze"]
+title = "In Grief"
+genre = "Metal"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 12
+duration_ms = 320426
+
+[[raw_tags]]
+file_path = "Gyze (2015.02.25) (album) Black Bride [FLAC] {VICL-64303}/01 - Black Bride.flac"
+album = "Black Bride"
+album_artists = ["Gyze"]
+artists = ["Gyze"]
+title = "Black Bride"
+genre = "Metal"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 12
+duration_ms = 298733
+
+[expect.release]
+ids = { release_group_id = "10c9cc61-ae32-455d-abd8-f8faf4362552", release_id = "6d237c51-372e-4484-8a85-3ee07ebc1772" }
+fields = { release_title = "BLACK BRIDE", release_date = "2015-02-25" }
+
+[expect.artists."e0efb258-e7fc-4305-96fa-45e8bac2200e"]
+fields = { artist_name = "RYUJIN", sort_name = "RYUJIN" }
+
+[expect.tracks."0437e95b-c3d2-433a-a960-dac8da5dcc75"]
+fields = { disc = 1, track = 10, track_title = "JULIUS" }
+
+[expect.tracks."0f99b5f6-85b5-48a0-b322-9a361e2eb99d"]
+fields = { disc = 1, track = 12, track_title = "GNOSIS" }
+
+[expect.tracks."3b09d788-6b6f-4965-a85c-12476ab44dc5"]
+fields = { disc = 1, track = 7, track_title = "TWILIGHT" }
+
+[expect.tracks."3f38586f-f2e7-4d2a-8463-b61191075f32"]
+fields = { disc = 1, track = 4, track_title = "INSANE BRAIN" }
+
+[expect.tracks."619e4c24-84fd-463b-b8ed-ebed9bd923b0"]
+fields = { disc = 1, track = 3, track_title = "HONESTY" }
+
+[expect.tracks."625867f4-29ed-4f3c-b744-4a5d6d8bebed"]
+fields = { disc = 1, track = 8, track_title = "SATANIC LOOP" }
+
+[expect.tracks."62885360-ffaf-4099-ae11-3e7c36cf2967"]
+fields = { disc = 1, track = 5, track_title = "BLACK SHADOW" }
+
+[expect.tracks."7dc7c5f5-4765-49ef-a604-b8f4a1a2145a"]
+fields = { disc = 1, track = 9, track_title = "菜の花" }
+
+[expect.tracks."7efca6b9-b6ad-421e-9102-c3b69bf5b83e"]
+fields = { disc = 1, track = 6, track_title = "WINTER BREATH" }
+
+[expect.tracks."98d34608-64fb-44b7-b0cb-82c8dfacd42a"]
+fields = { disc = 1, track = 2, track_title = "IN GRIEF" }
+
+[expect.tracks."9e5d6a79-5315-4583-8915-ae69f80f8a6c"]
+fields = { disc = 1, track = 1, track_title = "BLACK BRIDE" }
+
+[expect.tracks."c99c936b-c37f-4f3b-ab3f-ca9f3de6eaf4"]
+fields = { disc = 1, track = 11, track_title = "明日への光" }

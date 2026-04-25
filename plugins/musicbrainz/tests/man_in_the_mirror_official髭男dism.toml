@@ -1,0 +1,103 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Official髭男dism - MAN IN THE MIRROR (2016) {Lastrum, LACD-0276, CD} [FLAC]/06. 日曜日のラブレター.flac"
+album = "MAN IN THE MIRROR"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "日曜日のラブレター"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 6
+duration_ms = 319280
+
+[[raw_tags]]
+file_path = "Official髭男dism - MAN IN THE MIRROR (2016) {Lastrum, LACD-0276, CD} [FLAC]/05. ゼロのままでいられたら.flac"
+album = "MAN IN THE MIRROR"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "ゼロのままでいられたら"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 6
+duration_ms = 325653
+
+[[raw_tags]]
+file_path = "Official髭男dism - MAN IN THE MIRROR (2016) {Lastrum, LACD-0276, CD} [FLAC]/04. 恋の去り際.flac"
+album = "MAN IN THE MIRROR"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "恋の去り際"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 6
+duration_ms = 294560
+
+[[raw_tags]]
+file_path = "Official髭男dism - MAN IN THE MIRROR (2016) {Lastrum, LACD-0276, CD} [FLAC]/03. Happy Birthday To You.flac"
+album = "MAN IN THE MIRROR"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Happy Birthday To You"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 6
+duration_ms = 199466
+
+[[raw_tags]]
+file_path = "Official髭男dism - MAN IN THE MIRROR (2016) {Lastrum, LACD-0276, CD} [FLAC]/02. コーヒーとシロップ.flac"
+album = "MAN IN THE MIRROR"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "コーヒーとシロップ"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 6
+duration_ms = 224653
+
+[[raw_tags]]
+file_path = "Official髭男dism - MAN IN THE MIRROR (2016) {Lastrum, LACD-0276, CD} [FLAC]/01. Clap Clap.flac"
+album = "MAN IN THE MIRROR"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Clap Clap"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 6
+duration_ms = 190266
+
+[expect.release]
+ids = { release_id = "72f33c4b-89ec-4eea-ad13-2684fd63a872" }
+fields = { release_title = "MAN IN THE MIRROR", release_date = "2016-06-15" }
+
+[expect.artists."6dddd7a2-5583-49d0-a8b2-9ee46d04f27e"]
+fields = { artist_name = "Official髭男dism", sort_name = "Official HIGE DANdism" }
+
+[expect.tracks."046aae01-937b-43a6-94fd-8a3861b37345"]
+fields = { disc = 1, track = 4, track_title = "恋の去り際" }
+
+[expect.tracks."a9429a88-1528-4bdf-9a1c-999f03829efa"]
+fields = { disc = 1, track = 6, track_title = "日曜日のラブレター" }
+
+[expect.tracks."c89bfa94-ebf9-4c45-b5b4-e6f97901c344"]
+fields = { disc = 1, track = 3, track_title = "Happy Birthday To You" }
+
+[expect.tracks."cd80453a-0cbb-4513-91b3-e44fac415e2d"]
+fields = { disc = 1, track = 2, track_title = "コーヒーとシロップ" }
+
+[expect.tracks."d7a73bc7-c315-46c1-9130-1e0cb391899c"]
+fields = { disc = 1, track = 5, track_title = "ゼロのままでいられたら" }
+
+[expect.tracks."ddbd5a8b-7d5a-4574-b6d5-b8f8048f8dcb"]
+fields = { disc = 1, track = 1, track_title = "Clap Clap" }

@@ -1,0 +1,52 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Hanako Oku - garnet/03 garnet.flac"
+album = "Garnet (ガーネット)"
+artists = ["Oku Hanako"]
+title = "Garnet (ガーネット) (Shudaika (主題歌))"
+genre = "Jpop / Anime"
+track = 3
+track_total = 3
+duration_ms = 319066
+
+[[raw_tags]]
+file_path = "Hanako Oku - garnet/02 Kawaranai Mono.flac"
+album = "Garnet (ガーネット)"
+artists = ["Oku Hanako"]
+title = "Kawaranai Mono (変わらないもの)"
+genre = "Jpop / Anime"
+track = 2
+track_total = 3
+duration_ms = 285240
+
+[[raw_tags]]
+file_path = "Hanako Oku - garnet/01 garnet (Hikigatari).flac"
+album = "Garnet (ガーネット)"
+artists = ["Oku Hanako"]
+title = "Garnet (ガーネット) (Hikigatari (弾き語り))"
+genre = "Jpop / Anime"
+track = 1
+track_total = 3
+duration_ms = 316280
+
+[expect.release]
+ids = { release_group_id = "7ea138e9-6901-358c-8498-47a05710273b", release_id = "07b830f3-c585-44e7-8ae3-578ca357b5d9" }
+fields = { release_title = "ガーネット", release_date = "2006-07-12" }
+
+[expect.artists."c2ec5859-f53e-4397-9d97-d47f653ac388"]
+fields = { artist_name = "奥華子", sort_name = "Oku, Hanako" }
+
+[expect.tracks."094942a9-bdd4-4da6-a2a3-ac20df7ec66b"]
+fields = { disc = 1, track = 1, track_title = "ガーネット (弾き語り)" }
+
+[expect.tracks."a6b1f507-362c-4887-add0-44cef4017438"]
+fields = { disc = 1, track = 2, track_title = "変わらないもの" }
+
+[expect.tracks."d3e71fdc-5cde-4bcf-81ea-01241da96fc3"]
+fields = { disc = 1, track = 3, track_title = "ガーネット" }

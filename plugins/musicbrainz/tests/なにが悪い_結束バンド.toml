@@ -1,0 +1,27 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Kessoku Band - Nani ga warui - 2022-11-27 (WEB - FLAC - Lossless)/01 結束バンド - なにが悪い.flac"
+album = "なにが悪い"
+album_artists = ["結束バンド"]
+artists = ["結束バンド"]
+title = "なにが悪い"
+genre = "Anime"
+disc = 1
+track = 1
+duration_ms = 227360
+
+[expect.release]
+ids = { release_group_id = "96eceb31-6285-47e5-a974-e9e02c813cf2", release_id = "de33104e-44da-472e-af8d-aadb67aa0643" }
+fields = { release_title = "なにが悪い", release_date = "2022-11-27" }
+
+[expect.artists."c1b0fe0a-779d-43ed-b193-4370f0d0f88f"]
+fields = { artist_name = "結束バンド", sort_name = "Kessoku Band" }
+
+[expect.tracks."929b0f97-a56a-4351-9eda-42bab52a0c6e"]
+fields = { disc = 1, track = 1, track_title = "なにが悪い" }

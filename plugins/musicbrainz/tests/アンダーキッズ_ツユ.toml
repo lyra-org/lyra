@@ -1,0 +1,28 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[N4O] [2022.07.27] TUYU - Under Kids [FLAC]/01. アンダーキッズ.flac"
+album = "アンダーキッズ"
+album_artists = ["ツユ", "ツユ"]
+artists = ["ツユ"]
+title = "アンダーキッズ"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 206400
+
+[expect.release]
+ids = { release_group_id = "736deb0b-bac7-4a5e-b9d8-c2e739bd5726", release_id = "9da5b9de-1cd4-45f1-92a2-588781cb9997" }
+fields = { release_title = "アンダーキッズ", release_date = "2022-07-27" }
+
+[expect.artists."2b0a8be6-bfb8-4f62-b21d-f47a3104157e"]
+fields = { artist_name = "ツユ", sort_name = "TUYU" }
+
+[expect.tracks."c9208000-f0c6-4e74-a5a3-6feb10025806"]
+fields = { disc = 1, track = 1, track_title = "アンダーキッズ" }

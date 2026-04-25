@@ -1,0 +1,79 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Masayuki Suzuki, Reni Takagi - Love is Show (2023) [FLAC] [16B-48kHz]/05. Love is Show (Instrumental).flac"
+album = "Love is Show"
+album_artists = ["Masayuki Suzuki feat. Reni Takagi"]
+artists = ["Masayuki Suzuki feat. Reni Takagi"]
+title = "Love is Show (Instrumental)"
+copyright = "(P) 2022(1),2023(2-5) Sony Music Labels Inc."
+genre = "R&B/Soul"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 5
+duration_ms = 242073
+
+[[raw_tags]]
+file_path = "Masayuki Suzuki, Reni Takagi - Love is Show (2023) [FLAC] [16B-48kHz]/04. Love is Show (for male Karaoke).flac"
+album = "Love is Show"
+album_artists = ["Masayuki Suzuki feat. Reni Takagi"]
+artists = ["Masayuki Suzuki feat. Reni Takagi"]
+title = "Love is Show (for male Karaoke)"
+copyright = "(P) 2022(1),2023(2-5) Sony Music Labels Inc."
+genre = "R&B/Soul"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 5
+duration_ms = 243873
+
+[[raw_tags]]
+file_path = "Masayuki Suzuki, Reni Takagi - Love is Show (2023) [FLAC] [16B-48kHz]/03. Love is Show (for female Karaoke).flac"
+album = "Love is Show"
+album_artists = ["Masayuki Suzuki feat. Reni Takagi"]
+artists = ["Masayuki Suzuki feat. Reni Takagi"]
+title = "Love is Show (for female Karaoke)"
+copyright = "(P) 2022(1),2023(2-5) Sony Music Labels Inc."
+genre = "R&B/Soul"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 5
+duration_ms = 243859
+
+[[raw_tags]]
+file_path = "Masayuki Suzuki, Reni Takagi - Love is Show (2023) [FLAC] [16B-48kHz]/02. Love is Show (TV Size Version).flac"
+album = "Love is Show"
+album_artists = ["Masayuki Suzuki feat. Reni Takagi"]
+artists = ["Masayuki Suzuki feat. Reni Takagi"]
+title = "Love is Show (TV Size Version)"
+copyright = "(P) 2022(1),2023(2-5) Sony Music Labels Inc."
+genre = "R&B/Soul"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 5
+duration_ms = 91513
+
+[[raw_tags]]
+file_path = "Masayuki Suzuki, Reni Takagi - Love is Show (2023) [FLAC] [16B-48kHz]/01. Love is Show.flac"
+album = "Love is Show"
+album_artists = ["Masayuki Suzuki feat. Reni Takagi"]
+artists = ["Masayuki Suzuki feat. Reni Takagi"]
+title = "Love is Show"
+copyright = "(P) 2022(1),2023(2-5) Sony Music Labels Inc."
+genre = "R&B/Soul"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 5
+duration_ms = 242034
+
+[expect.release]
+ids = { release_id = ["a15036ce-0194-4cb3-807e-c97ee61c66dc", "82b1da6e-fa3b-4853-b619-a031b2e1e191"] }

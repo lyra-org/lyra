@@ -1,0 +1,237 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "さユり - ミカヅキの航海 {Type B} (2017) {BVCL-793~4} [CD FLAC]/1.14. birthday song.flac"
+album = "ミカヅキの航海"
+album_artists = ["さユり"]
+artists = ["さユり"]
+title = "birthday song"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 14
+duration_ms = 317506
+
+[[raw_tags]]
+file_path = "さユり - ミカヅキの航海 {Type B} (2017) {BVCL-793~4} [CD FLAC]/1.13. 夏.flac"
+album = "ミカヅキの航海"
+album_artists = ["さユり"]
+artists = ["さユり"]
+title = "夏"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 14
+duration_ms = 209733
+
+[[raw_tags]]
+file_path = "さユり - ミカヅキの航海 {Type B} (2017) {BVCL-793~4} [CD FLAC]/1.12. アノニマス.flac"
+album = "ミカヅキの航海"
+album_artists = ["さユり"]
+artists = ["さユり"]
+title = "アノニマス"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 14
+duration_ms = 271226
+
+[[raw_tags]]
+file_path = "さユり - ミカヅキの航海 {Type B} (2017) {BVCL-793~4} [CD FLAC]/1.11. knot.flac"
+album = "ミカヅキの航海"
+album_artists = ["さユり"]
+artists = ["さユり"]
+title = "knot"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 14
+duration_ms = 282506
+
+[[raw_tags]]
+file_path = "さユり - ミカヅキの航海 {Type B} (2017) {BVCL-793~4} [CD FLAC]/1.10. 来世で会おう.flac"
+album = "ミカヅキの航海"
+album_artists = ["さユり"]
+artists = ["さユり"]
+title = "来世で会おう"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 14
+duration_ms = 280706
+
+[[raw_tags]]
+file_path = "さユり - ミカヅキの航海 {Type B} (2017) {BVCL-793~4} [CD FLAC]/1.09. それは小さな光のような.flac"
+album = "ミカヅキの航海"
+album_artists = ["さユり"]
+artists = ["さユり"]
+title = "それは小さな光のような"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 14
+duration_ms = 272946
+
+[[raw_tags]]
+file_path = "さユり - ミカヅキの航海 {Type B} (2017) {BVCL-793~4} [CD FLAC]/1.08. オッドアイ.flac"
+album = "ミカヅキの航海"
+album_artists = ["さユり"]
+artists = ["さユり"]
+title = "オッドアイ"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 14
+duration_ms = 294946
+
+[[raw_tags]]
+file_path = "さユり - ミカヅキの航海 {Type B} (2017) {BVCL-793~4} [CD FLAC]/1.07. るーららるーらーるららるーらー.flac"
+album = "ミカヅキの航海"
+album_artists = ["さユり"]
+artists = ["さユり"]
+title = "るーららるーらーるららるーらー"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 14
+duration_ms = 198293
+
+[[raw_tags]]
+file_path = "さユり - ミカヅキの航海 {Type B} (2017) {BVCL-793~4} [CD FLAC]/1.06. 蜂と見世物.flac"
+album = "ミカヅキの航海"
+album_artists = ["さユり"]
+artists = ["さユり"]
+title = "蜂と見世物"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 14
+duration_ms = 243053
+
+[[raw_tags]]
+file_path = "さユり - ミカヅキの航海 {Type B} (2017) {BVCL-793~4} [CD FLAC]/1.05. フラレガイガール.flac"
+album = "ミカヅキの航海"
+album_artists = ["さユり"]
+artists = ["さユり"]
+title = "フラレガイガール"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 14
+duration_ms = 367773
+
+[[raw_tags]]
+file_path = "さユり - ミカヅキの航海 {Type B} (2017) {BVCL-793~4} [CD FLAC]/1.04. ケーキを焼く.flac"
+album = "ミカヅキの航海"
+album_artists = ["さユり"]
+artists = ["さユり"]
+title = "ケーキを焼く"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 14
+duration_ms = 217040
+
+[[raw_tags]]
+file_path = "さユり - ミカヅキの航海 {Type B} (2017) {BVCL-793~4} [CD FLAC]/1.03. 十億年.flac"
+album = "ミカヅキの航海"
+album_artists = ["さユり"]
+artists = ["さユり"]
+title = "十億年"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 14
+duration_ms = 323586
+
+[[raw_tags]]
+file_path = "さユり - ミカヅキの航海 {Type B} (2017) {BVCL-793~4} [CD FLAC]/1.02. 平行線.flac"
+album = "ミカヅキの航海"
+album_artists = ["さユり"]
+artists = ["さユり"]
+title = "平行線"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 14
+duration_ms = 298760
+
+[[raw_tags]]
+file_path = "さユり - ミカヅキの航海 {Type B} (2017) {BVCL-793~4} [CD FLAC]/1.01. ミカヅキ.flac"
+album = "ミカヅキの航海"
+album_artists = ["さユり"]
+artists = ["さユり"]
+title = "ミカヅキ"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 14
+duration_ms = 261920
+
+[expect.release]
+ids = { release_group_id = "673ec982-6d0c-4968-8506-d2b151e3893b", release_id = ["7f4b4a0a-b37a-4b0c-b907-b0e4adf386d7", "acc2a7cc-6da6-4992-9181-e55428e30df7"] }
+fields = { release_title = "ミカヅキの航海", release_date = "2017-05-17" }
+
+[expect.artists."efc787f0-046f-4a60-beff-77b398c8cdf4"]
+fields = { artist_name = "さユり", sort_name = "Sayuri" }
+
+[expect.tracks."1f77bab0-4b88-4bb2-8634-db4dd11dfd86"]
+fields = { disc = 1, track = 9, track_title = "それは小さな光のような" }
+
+[expect.tracks."3d8916ea-c43f-4dff-b28d-9d78fe24d34a"]
+fields = { disc = 1, track = 3, track_title = "十億年" }
+
+[expect.tracks."48cfba7c-f536-4539-a0dc-c7c3d489410b"]
+fields = { disc = 1, track = 11, track_title = "knot" }
+
+[expect.tracks."73851da5-3d13-4f7d-a3fa-ae298e0c198e"]
+fields = { disc = 1, track = 8, track_title = "オッドアイ" }
+
+[expect.tracks."83d14836-632a-4fba-8d3f-493a980a6827"]
+fields = { disc = 1, track = 6, track_title = "蜂と見世物" }
+
+[expect.tracks."90124449-7bc0-4080-9156-b5db90ee19d9"]
+fields = { disc = 1, track = 4, track_title = "ケーキを焼く" }
+
+[expect.tracks."9f818616-0cde-49b6-850c-4e94421bbdc1"]
+fields = { disc = 1, track = 13, track_title = "夏" }
+
+[expect.tracks."a02f51b1-2f99-4609-9da9-b8a269943a32"]
+fields = { disc = 1, track = 14, track_title = "birthday song" }
+
+[expect.tracks."a6392db0-e07f-4c67-b64f-f98cc474cf26"]
+fields = { disc = 1, track = 5, track_title = "フラレガイガール" }
+
+[expect.tracks."be9499c5-7770-4e1e-a8e3-0a5e0a2f92c5"]
+fields = { disc = 1, track = 2, track_title = "平行線" }
+
+[expect.tracks."c9b55958-eb50-4336-b376-4e05c7924ee2"]
+fields = { disc = 1, track = 1, track_title = "ミカヅキ" }
+
+[expect.tracks."dcceb80f-85dc-4ce7-8da9-c6d8f5ef02cc"]
+fields = { disc = 1, track = 12, track_title = "アノニマス" }
+
+[expect.tracks."e0ffacb8-7764-4c17-81d0-c335dfdd803e"]
+fields = { disc = 1, track = 10, track_title = "来世で会おう" }
+
+[expect.tracks."e995f71e-45c7-4f95-a758-142aa610896e"]
+fields = { disc = 1, track = 7, track_title = "るーららるーらーるららるーらー" }

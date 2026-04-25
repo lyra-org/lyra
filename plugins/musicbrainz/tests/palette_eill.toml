@@ -1,0 +1,205 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "eill - PALETTE (2022-02-02) [WEB FLAC]/1.12. HARU.flac"
+album = "PALETTE"
+album_artists = ["eill"]
+artists = ["eill"]
+title = "HARU"
+copyright = "℗ 2022 PONY CANYON INC."
+disc = 1
+disc_total = 1
+track = 12
+track_total = 12
+duration_ms = 185545
+
+[[raw_tags]]
+file_path = "eill - PALETTE (2022-02-02) [WEB FLAC]/1.11. letter....flac"
+album = "PALETTE"
+album_artists = ["eill"]
+artists = ["eill"]
+title = "letter..."
+copyright = "℗ 2022 PONY CANYON INC."
+disc = 1
+disc_total = 1
+track = 11
+track_total = 12
+duration_ms = 368484
+
+[[raw_tags]]
+file_path = "eill - PALETTE (2022-02-02) [WEB FLAC]/1.10. 片っぽ (Acoustic Version).flac"
+album = "PALETTE"
+album_artists = ["eill"]
+artists = ["eill"]
+title = "片っぽ (Acoustic Version)"
+copyright = "℗ 2022 PONY CANYON INC."
+disc = 1
+disc_total = 1
+track = 10
+track_total = 12
+duration_ms = 249069
+
+[[raw_tags]]
+file_path = "eill - PALETTE (2022-02-02) [WEB FLAC]/1.09. honey-cage.flac"
+album = "PALETTE"
+album_artists = ["eill"]
+artists = ["eill"]
+title = "honey-cage"
+copyright = "℗ 2022 PONY CANYON INC."
+disc = 1
+disc_total = 1
+track = 9
+track_total = 12
+duration_ms = 235681
+
+[[raw_tags]]
+file_path = "eill - PALETTE (2022-02-02) [WEB FLAC]/1.08. ただのギャル.flac"
+album = "PALETTE"
+album_artists = ["eill"]
+artists = ["eill"]
+title = "ただのギャル"
+copyright = "℗ 2022 PONY CANYON INC."
+disc = 1
+disc_total = 1
+track = 8
+track_total = 12
+duration_ms = 168395
+
+[[raw_tags]]
+file_path = "eill - PALETTE (2022-02-02) [WEB FLAC]/1.07. プラスティック・ラブ.flac"
+album = "PALETTE"
+album_artists = ["eill"]
+artists = ["eill"]
+title = "プラスティック・ラブ"
+copyright = "℗ 2022 PONY CANYON INC."
+disc = 1
+disc_total = 1
+track = 7
+track_total = 12
+duration_ms = 261639
+
+[[raw_tags]]
+file_path = "eill - PALETTE (2022-02-02) [WEB FLAC]/1.06. 花のように.flac"
+album = "PALETTE"
+album_artists = ["eill"]
+artists = ["eill"]
+title = "花のように"
+copyright = "℗ 2022 PONY CANYON INC."
+disc = 1
+disc_total = 1
+track = 6
+track_total = 12
+duration_ms = 200790
+
+[[raw_tags]]
+file_path = "eill - PALETTE (2022-02-02) [WEB FLAC]/1.05. hikari.flac"
+album = "PALETTE"
+album_artists = ["eill"]
+artists = ["eill"]
+title = "hikari"
+copyright = "℗ 2022 PONY CANYON INC."
+disc = 1
+disc_total = 1
+track = 5
+track_total = 12
+duration_ms = 218159
+
+[[raw_tags]]
+file_path = "eill - PALETTE (2022-02-02) [WEB FLAC]/1.04. palette.flac"
+album = "PALETTE"
+album_artists = ["eill"]
+artists = ["eill"]
+title = "palette"
+copyright = "℗ 2022 PONY CANYON INC."
+disc = 1
+disc_total = 1
+track = 4
+track_total = 12
+duration_ms = 191622
+
+[[raw_tags]]
+file_path = "eill - PALETTE (2022-02-02) [WEB FLAC]/1.03. 23.flac"
+album = "PALETTE"
+album_artists = ["eill"]
+artists = ["eill"]
+title = "23"
+copyright = "℗ 2022 PONY CANYON INC."
+disc = 1
+disc_total = 1
+track = 3
+track_total = 12
+duration_ms = 213521
+
+[[raw_tags]]
+file_path = "eill - PALETTE (2022-02-02) [WEB FLAC]/1.02. ここで息をして.flac"
+album = "PALETTE"
+album_artists = ["eill"]
+artists = ["eill"]
+title = "ここで息をして"
+copyright = "℗ 2022 PONY CANYON INC."
+disc = 1
+disc_total = 1
+track = 2
+track_total = 12
+duration_ms = 215984
+
+[[raw_tags]]
+file_path = "eill - PALETTE (2022-02-02) [WEB FLAC]/1.01. いけないbaby.flac"
+album = "PALETTE"
+album_artists = ["eill"]
+artists = ["eill"]
+title = "いけないbaby"
+copyright = "℗ 2022 PONY CANYON INC."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 12
+duration_ms = 215664
+
+[expect.release]
+ids = { release_group_id = "d291ab1e-7402-47a7-aab9-bd5f7032d9c5", release_id = ["ba6d6a7c-cd94-4ce2-8978-21c3a95755e4"] }
+fields = { release_title = "PALETTE", release_date = "2022-02-02" }
+
+[expect.artists."ddd72af5-34b6-4321-8338-47c4b67cb247"]
+fields = { artist_name = "eill", sort_name = "eill" }
+
+[expect.tracks."349a5c23-6117-43df-a2ef-8d9aa997ceaa"]
+fields = { disc = 1, track = 1, track_title = "いけないbaby" }
+
+[expect.tracks."39df33ae-8e7e-4b08-a5b2-e72a66af94df"]
+fields = { disc = 1, track = 5, track_title = "hikari" }
+
+[expect.tracks."4076f8ec-f7ec-444f-892d-a64f4a21274e"]
+fields = { disc = 1, track = 3, track_title = "23" }
+
+[expect.tracks."49301b56-18cc-4995-95fc-7db352869b7f"]
+fields = { disc = 1, track = 10, track_title = "片っぽ (Acoustic Version)" }
+
+[expect.tracks."4de8cfd7-70bb-4353-a920-a7cb814cf6c3"]
+fields = { disc = 1, track = 2, track_title = "ここで息をして" }
+
+[expect.tracks."6aa698d3-b3ae-411d-b17e-367a6d1566d3"]
+fields = { disc = 1, track = 7, track_title = "プラスティック・ラブ" }
+
+[expect.tracks."85565680-73ef-4702-a53a-f040a7add589"]
+fields = { disc = 1, track = 6, track_title = "花のように" }
+
+[expect.tracks."9f3c2472-b5e8-4aa4-92c8-a45fe4c2ed82"]
+fields = { disc = 1, track = 12, track_title = "HARU" }
+
+[expect.tracks."a0360b59-e9ac-4c41-8dd1-b75e3a21d42c"]
+fields = { disc = 1, track = 11, track_title = "letter..." }
+
+[expect.tracks."bdf9a7c1-f9c9-473f-be42-d00c9b25212d"]
+fields = { disc = 1, track = 8, track_title = "ただのギャル" }
+
+[expect.tracks."d071e2d9-baab-4b6a-a46a-e29328a14373"]
+fields = { disc = 1, track = 4, track_title = "palette" }
+
+[expect.tracks."efc24ce7-3e0e-47fc-a4cf-0948c1bd45a2"]
+fields = { disc = 1, track = 9, track_title = "honey-cage" }

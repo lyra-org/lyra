@@ -1,0 +1,119 @@
+# Tests prioritizing releases with a cover image
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "神崎エルザ starring ReoNa - ELZA (2018) [FLAC]/07 Rea(s)oN.flac"
+album = "ELZA"
+artists = ["神崎エルザ starring ReoNa"]
+title = "Rea(s)oN"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 7
+duration_ms = 267426
+
+[[raw_tags]]
+file_path = "神崎エルザ starring ReoNa - ELZA (2018) [FLAC]/06 ヒカリ.flac"
+album = "ELZA"
+artists = ["神崎エルザ starring ReoNa"]
+title = "ヒカリ"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 7
+duration_ms = 226293
+
+[[raw_tags]]
+file_path = "神崎エルザ starring ReoNa - ELZA (2018) [FLAC]/05 レプリカ.flac"
+album = "ELZA"
+artists = ["神崎エルザ starring ReoNa"]
+title = "レプリカ"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 7
+duration_ms = 209440
+
+[[raw_tags]]
+file_path = "神崎エルザ starring ReoNa - ELZA (2018) [FLAC]/04 Independence.flac"
+album = "ELZA"
+artists = ["神崎エルザ starring ReoNa"]
+title = "Independence"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 7
+duration_ms = 227960
+
+[[raw_tags]]
+file_path = "神崎エルザ starring ReoNa - ELZA (2018) [FLAC]/03 Disorder.flac"
+album = "ELZA"
+artists = ["神崎エルザ starring ReoNa"]
+title = "Disorder"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 7
+duration_ms = 244866
+
+[[raw_tags]]
+file_path = "神崎エルザ starring ReoNa - ELZA (2018) [FLAC]/02 step, step.flac"
+album = "ELZA"
+artists = ["神崎エルザ starring ReoNa"]
+title = "step, step"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 7
+duration_ms = 239960
+
+[[raw_tags]]
+file_path = "神崎エルザ starring ReoNa - ELZA (2018) [FLAC]/01 ピルグリム.flac"
+album = "ELZA"
+artists = ["神崎エルザ starring ReoNa"]
+title = "ピルグリム"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 7
+duration_ms = 245386
+
+[expect.release]
+ids = { release_group_id = "ca6e9844-3e11-4dda-9d2e-9ee0af31c3d5", release_id = "eee354cf-46c1-4c43-8922-ec320d36952e" }
+fields = { release_title = "ELZA", release_date = "2018-07-04" }
+
+[expect.artists."2d8e8cd4-cd36-4c50-a2cf-c9fd967f085e"]
+fields = { artist_name = "神崎エルザ", sort_name = "Kanzaki, Elza" }
+
+[expect.tracks."53f405fe-d473-4c3b-bb5e-2e579a187bb2"]
+fields = { disc = 1, track = 4, track_title = "Independence" }
+
+[expect.tracks."72f75fb1-2c3a-4165-b9d3-8ab5fdd7ab33"]
+fields = { disc = 1, track = 5, track_title = "レプリカ" }
+
+[expect.tracks."85fcc406-25cd-41ca-a237-72d2f5afe7b4"]
+fields = { disc = 1, track = 3, track_title = "Disorder" }
+
+[expect.tracks."864ea6f0-76e8-4ca6-a10a-92744aceab6e"]
+fields = { disc = 1, track = 1, track_title = "ピルグリム" }
+
+[expect.tracks."a4ea8be0-0033-4b29-96ba-58c41789ef4d"]
+fields = { disc = 1, track = 7, track_title = "Rea(s)oN" }
+
+[expect.tracks."c0dc6412-bea8-49ff-89c3-9a0f117c09db"]
+fields = { disc = 1, track = 2, track_title = "step, step" }
+
+[expect.tracks."da807194-c32a-4ef4-ac6a-24bb38bd5b6e"]
+fields = { disc = 1, track = 6, track_title = "ヒカリ" }

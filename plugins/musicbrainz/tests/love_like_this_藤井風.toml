@@ -1,0 +1,30 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "藤井風 - Love Like This (2025) [WEB FLAC]/Love Like This.flac"
+album = "Love Like This"
+album_artists = ["藤井風"]
+artists = ["藤井風"]
+title = "Love Like This"
+copyright = "℗© 2025 UNIVERSAL MUSIC LLC"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 9
+duration_ms = 260778
+
+[expect.release]
+ids = { release_id = ["f520b995-9319-4bf0-b17a-2169d98aa4e9", "3f58022a-2b97-495d-a014-c696be32df33"] }
+fields = { release_title = "Love Like This", release_date = "2025-08-01" }
+
+[expect.artists."c3a4aeca-8f02-4d22-b1ff-693434ab09a8"]
+fields = { artist_name = "藤井風", sort_name = "Fujii, Kaze" }
+
+[expect.tracks."6f68f220-df9f-4254-ab63-cc3aee6ce9b7"]
+fields = { disc = 1, track = 1, track_title = "Love Like This", work_id = "5386bb81-7903-44be-afb2-f65d8554a287" }

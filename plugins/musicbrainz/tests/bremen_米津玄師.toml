@@ -1,0 +1,195 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2015.10.07] Bremen/14 Blue Jasmine.flac"
+album = "Bremen"
+album_artists = ["米津玄師"]
+artists = ["米津玄師"]
+title = "Blue Jasmine"
+track = 14
+track_total = 14
+duration_ms = 279293
+
+[[raw_tags]]
+file_path = "[2015.10.07] Bremen/13 Hope Land.flac"
+album = "Bremen"
+album_artists = ["米津玄師"]
+artists = ["米津玄師"]
+title = "ホープランド"
+track = 13
+track_total = 14
+duration_ms = 306840
+
+[[raw_tags]]
+file_path = "[2015.10.07] Bremen/12 Mirage Song.flac"
+album = "Bremen"
+album_artists = ["米津玄師"]
+artists = ["米津玄師"]
+title = "ミラージュソング"
+track = 12
+track_total = 14
+duration_ms = 297160
+
+[[raw_tags]]
+file_path = "[2015.10.07] Bremen/11 Cinderella Gray.flac"
+album = "Bremen"
+album_artists = ["米津玄師"]
+artists = ["米津玄師"]
+title = "シンデレラグレイ"
+track = 11
+track_total = 14
+duration_ms = 253720
+
+[[raw_tags]]
+file_path = "[2015.10.07] Bremen/10 Ame no Gairo ni Yakouchuu.flac"
+album = "Bremen"
+album_artists = ["米津玄師"]
+artists = ["米津玄師"]
+title = "雨の街路に夜光蟲"
+track = 10
+track_total = 14
+duration_ms = 232160
+
+[[raw_tags]]
+file_path = "[2015.10.07] Bremen/09 Metronome.flac"
+album = "Bremen"
+album_artists = ["米津玄師"]
+artists = ["米津玄師"]
+title = "メトロノーム"
+track = 9
+track_total = 14
+duration_ms = 262493
+
+[[raw_tags]]
+file_path = "[2015.10.07] Bremen/08 Neon Sign.flac"
+album = "Bremen"
+album_artists = ["米津玄師"]
+artists = ["米津玄師"]
+title = "Neon Sign"
+track = 8
+track_total = 14
+duration_ms = 251240
+
+[[raw_tags]]
+file_path = "[2015.10.07] Bremen/07 Undercover.flac"
+album = "Bremen"
+album_artists = ["米津玄師"]
+artists = ["米津玄師"]
+title = "Undercover"
+track = 7
+track_total = 14
+duration_ms = 240893
+
+[[raw_tags]]
+file_path = "[2015.10.07] Bremen/06 Will-o'-the-Wisp.flac"
+album = "Bremen"
+album_artists = ["米津玄師"]
+artists = ["米津玄師"]
+title = "ウィルオウィスプ"
+track = 6
+track_total = 14
+duration_ms = 310093
+
+[[raw_tags]]
+file_path = "[2015.10.07] Bremen/05 Atashi wa Yuurei.flac"
+album = "Bremen"
+album_artists = ["米津玄師"]
+artists = ["米津玄師"]
+title = "あたしはゆうれい"
+track = 5
+track_total = 14
+duration_ms = 247106
+
+[[raw_tags]]
+file_path = "[2015.10.07] Bremen/04 Flowerwall.flac"
+album = "Bremen"
+album_artists = ["米津玄師"]
+artists = ["米津玄師"]
+title = "Flowerwall"
+track = 4
+track_total = 14
+duration_ms = 301960
+
+[[raw_tags]]
+file_path = "[2015.10.07] Bremen/03 Saijouei.flac"
+album = "Bremen"
+album_artists = ["米津玄師"]
+artists = ["米津玄師"]
+title = "再上映"
+track = 3
+track_total = 14
+duration_ms = 215773
+
+[[raw_tags]]
+file_path = "[2015.10.07] Bremen/02 Fluorite.flac"
+album = "Bremen"
+album_artists = ["米津玄師"]
+artists = ["米津玄師"]
+title = "フローライト"
+track = 2
+track_total = 14
+duration_ms = 284960
+
+[[raw_tags]]
+file_path = "[2015.10.07] Bremen/01 Unbelievers.flac"
+album = "Bremen"
+album_artists = ["米津玄師"]
+artists = ["米津玄師"]
+title = "アンビリーバーズ"
+track = 1
+track_total = 14
+duration_ms = 286480
+
+[expect.release]
+ids = { release_group_id = "f46ed688-66e6-4d64-812b-7f68093a1766", release_id = "71bdd2e5-d3dc-478c-9085-4119fdd443de" }
+fields = { release_title = "Bremen", release_date = "2015-10-07" }
+
+[expect.artists."09d4a85c-4916-4b4e-bc96-c4cfcf371046"]
+fields = { artist_name = "米津玄師", sort_name = "Yonezu, Kenshi" }
+
+[expect.tracks."04ce0133-6bdc-40d1-a30d-617a2350dc24"]
+fields = { disc = 1, track = 1, track_title = "アンビリーバーズ" }
+
+[expect.tracks."0aee01d4-2ee9-4a79-8358-cf6b1aa9ac39"]
+fields = { disc = 1, track = 12, track_title = "ミラージュソング" }
+
+[expect.tracks."449c118e-4858-45c4-8ce6-db4cf91af2f1"]
+fields = { disc = 1, track = 2, track_title = "フローライト" }
+
+[expect.tracks."535d41da-576b-4931-8de8-ad76f0b72358"]
+fields = { disc = 1, track = 11, track_title = "シンデレラグレイ" }
+
+[expect.tracks."6f9cc793-c922-4d0e-810b-21d289a5a3cd"]
+fields = { disc = 1, track = 5, track_title = "あたしはゆうれい" }
+
+[expect.tracks."7137a236-5dcb-40c9-bb23-514ea1a32938"]
+fields = { disc = 1, track = 4, track_title = "Flowerwall" }
+
+[expect.tracks."80304118-66ff-4742-a792-da6c0ce43459"]
+fields = { disc = 1, track = 8, track_title = "Neon Sign" }
+
+[expect.tracks."95b675b2-2c51-4c51-bae3-1baa10458034"]
+fields = { disc = 1, track = 10, track_title = "雨の街路に夜光蟲" }
+
+[expect.tracks."a46ad5ea-f697-4f1a-be39-93a07d738517"]
+fields = { disc = 1, track = 7, track_title = "Undercover" }
+
+[expect.tracks."bec28dca-0f95-462b-80b0-294bf7fe48e0"]
+fields = { disc = 1, track = 13, track_title = "ホープランド" }
+
+[expect.tracks."bf73fd1e-2b83-4dd4-9954-699d595ed239"]
+fields = { disc = 1, track = 9, track_title = "メトロノーム" }
+
+[expect.tracks."c37ff737-f129-4f8f-8dcd-c217d48ada6b"]
+fields = { disc = 1, track = 3, track_title = "再上映" }
+
+[expect.tracks."d1eade08-f39d-417f-bc8b-51cfa8da6ef9"]
+fields = { disc = 1, track = 6, track_title = "ウィルオウィスプ" }
+
+[expect.tracks."d6c24f3d-236f-479b-9c68-63efe4954413"]
+fields = { disc = 1, track = 14, track_title = "Blue Jasmine" }

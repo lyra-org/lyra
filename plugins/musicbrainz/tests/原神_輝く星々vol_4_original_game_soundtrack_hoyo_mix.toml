@@ -1,0 +1,403 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/26. 旅への誘い.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "旅への誘い"
+disc = 1
+disc_total = 1
+track = 26
+track_total = 26
+duration_ms = 183098
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/25. 万民の頌歌.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "万民の頌歌"
+disc = 1
+disc_total = 1
+track = 25
+track_total = 26
+duration_ms = 131429
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/24. 真実を求めて.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "真実を求めて"
+disc = 1
+disc_total = 1
+track = 24
+track_total = 26
+duration_ms = 76236
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/23. 霜烈の競争.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "霜烈の競争"
+disc = 1
+disc_total = 1
+track = 23
+track_total = 26
+duration_ms = 158101
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/22. 深海の格律.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "深海の格律"
+disc = 1
+disc_total = 1
+track = 22
+track_total = 26
+duration_ms = 113274
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/21. 古海が再び湧き上がる時.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "古海が再び湧き上がる時"
+disc = 1
+disc_total = 1
+track = 21
+track_total = 26
+duration_ms = 179543
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/20. 潮音流奏の日.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "潮音流奏の日"
+disc = 1
+disc_total = 1
+track = 20
+track_total = 26
+duration_ms = 95466
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/19. 寒晶の夢.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "寒晶の夢"
+disc = 1
+disc_total = 1
+track = 19
+track_total = 26
+duration_ms = 73791
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/18. 軽やかに風を追う影.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "軽やかに風を追う影"
+disc = 1
+disc_total = 1
+track = 18
+track_total = 26
+duration_ms = 88068
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/17. 幻光のトリック.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "幻光のトリック"
+disc = 1
+disc_total = 1
+track = 17
+track_total = 26
+duration_ms = 115453
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/16. 虚と実の秘言.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "虚と実の秘言"
+disc = 1
+disc_total = 1
+track = 16
+track_total = 26
+duration_ms = 103408
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/15. 散らし絹織り.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "散らし絹織り"
+disc = 1
+disc_total = 1
+track = 15
+track_total = 26
+duration_ms = 74182
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/14. 暖かな雲と猫の痕跡.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "暖かな雲と猫の痕跡"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 26
+duration_ms = 73419
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/13. ついに止む雨.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "ついに止む雨"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 26
+duration_ms = 167309
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/12. 風に吹かれる野草.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "風に吹かれる野草"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 26
+duration_ms = 120169
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/11. 天路遥々.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "天路遥々"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 26
+duration_ms = 73781
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/10. 霜晴の風.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "霜晴の風"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 26
+duration_ms = 68802
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/09. 灼熱の陽光.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "灼熱の陽光"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 26
+duration_ms = 120474
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/08. 夜明けの輝き.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "夜明けの輝き"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 26
+duration_ms = 111375
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/07. 千載の時を継ぐ想い.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "千載の時を継ぐ想い"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 26
+duration_ms = 172139
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/06. 封じられし世の理.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "封じられし世の理"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 26
+duration_ms = 86849
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/05. 玉花映芯.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "玉花映芯"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 26
+duration_ms = 77745
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/04. 妙浄の心.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "妙浄の心"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 26
+duration_ms = 67879
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/03. 旋藍の舞.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "旋藍の舞"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 26
+duration_ms = 72604
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/02. 無余灰断.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "無余灰断"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 26
+duration_ms = 140736
+
+[[raw_tags]]
+file_path = "HOYO-MiX — 原神-輝く星々Vol. 4 (Original Game Soundtrack) (2024) [WEB-FLAC]/01. 九徹の先見.flac"
+album = "原神-輝く星々Vol. 4 (Original Game Soundtrack)"
+album_artists = ["HOYO-MiX"]
+artists = ["HOYO-MiX"]
+title = "九徹の先見"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 26
+duration_ms = 161111
+
+[expect.release]
+ids = { release_group_id = "43a41781-fe2b-4ec6-a623-2a17f55967ae", release_id = "f96eda2a-ea87-4189-8cdc-590fc8850073" }
+fields = { release_title = "原神-輝く星々Vol. 4 (Original Game Soundtrack)", release_date = "2024-01-17" }
+
+[expect.artists."9df7ddfb-75fe-4470-9269-5810d9263b09"]
+fields = { artist_name = "HOYO-MiX", sort_name = "HOYO-MiX" }
+
+[expect.tracks."0839a9ad-fb32-40be-8292-23e9673cd81d"]
+fields = { disc = 1, track = 22, track_title = "深海の格律" }
+
+[expect.tracks."0b632976-bdf6-4712-95e9-6855385032ef"]
+fields = { disc = 1, track = 25, track_title = "万民の頌歌" }
+
+[expect.tracks."0f3ae19c-d68a-40c6-ab41-4cd5999b4646"]
+fields = { disc = 1, track = 20, track_title = "潮音流奏の日" }
+
+[expect.tracks."13f31b84-7218-4f7d-a2a0-f8c882828aef"]
+fields = { disc = 1, track = 10, track_title = "霜晴の風" }
+
+[expect.tracks."29c6d551-1ef8-4f67-9bde-18cc103c20b1"]
+fields = { disc = 1, track = 13, track_title = "ついに止む雨" }
+
+[expect.tracks."2a5f9391-0fb4-4867-b501-306eb9e0f815"]
+fields = { disc = 1, track = 17, track_title = "幻光のトリック" }
+
+[expect.tracks."30ce5e56-833d-42da-a8f3-63af48ef4150"]
+fields = { disc = 1, track = 2, track_title = "無余灰断" }
+
+[expect.tracks."38c64b97-be35-4896-b69f-e38957b95691"]
+fields = { disc = 1, track = 24, track_title = "真実を求めて" }
+
+[expect.tracks."3af5a313-e5cc-4b5f-94d4-93a359f85dfd"]
+fields = { disc = 1, track = 19, track_title = "寒晶の夢" }
+
+[expect.tracks."48650323-8bc6-47a0-809a-8b98ded64b5b"]
+fields = { disc = 1, track = 9, track_title = "灼熱の陽光" }
+
+[expect.tracks."512ea664-d0ca-46ee-a088-ce9d97a47a10"]
+fields = { disc = 1, track = 1, track_title = "九徹の先見" }
+
+[expect.tracks."670f8429-18ee-42f1-beac-00d4bf477d6d"]
+fields = { disc = 1, track = 8, track_title = "夜明けの輝き" }
+
+[expect.tracks."76e45607-5bc2-4d33-8e50-8308af3a23dc"]
+fields = { disc = 1, track = 11, track_title = "天路遥々" }
+
+[expect.tracks."79fb7c33-f2ee-42ef-a049-c3908386a8d3"]
+fields = { disc = 1, track = 15, track_title = "散らし絹織り" }
+
+[expect.tracks."7b57023e-e463-49b9-bd0a-6155a8777915"]
+fields = { disc = 1, track = 14, track_title = "暖かな雲と猫の痕跡" }
+
+[expect.tracks."8baaeb40-af93-4f26-b537-6343bd59b0be"]
+fields = { disc = 1, track = 12, track_title = "風に吹かれる野草" }
+
+[expect.tracks."8e19a116-3b9d-48eb-a986-f2f2102d7775"]
+fields = { disc = 1, track = 26, track_title = "旅への誘い" }
+
+[expect.tracks."c96e5e26-a6ed-470c-9f17-c06af562f11d"]
+fields = { disc = 1, track = 21, track_title = "古海が再び湧き上がる時" }
+
+[expect.tracks."d2e0d281-b918-4b19-89e2-705c1126de61"]
+fields = { disc = 1, track = 6, track_title = "封じられし世の理" }
+
+[expect.tracks."d66038e4-b728-4295-84b9-bd3f0f3150db"]
+fields = { disc = 1, track = 5, track_title = "玉花映芯" }
+
+[expect.tracks."da621d6e-6892-4a55-8b09-59f0df29c847"]
+fields = { disc = 1, track = 18, track_title = "軽やかに風を追う影" }
+
+[expect.tracks."e81954af-70d3-405f-89ac-4dff8d8e4f46"]
+fields = { disc = 1, track = 3, track_title = "旋藍の舞" }
+
+[expect.tracks."ea32dac5-7bee-439b-b8fa-816ca9c2579d"]
+fields = { disc = 1, track = 7, track_title = "千載の時を継ぐ想い" }
+
+[expect.tracks."f9e88605-4065-4c0b-998f-186f7f6bd826"]
+fields = { disc = 1, track = 23, track_title = "霜烈の競争" }
+
+[expect.tracks."fd0910eb-7555-4b04-81ef-17cc8b633532"]
+fields = { disc = 1, track = 16, track_title = "虚と実の秘言" }
+
+[expect.tracks."fd511716-224b-41d4-97d2-658ad6eed7fa"]
+fields = { disc = 1, track = 4, track_title = "妙浄の心" }

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/release?query=arid%3A10623c33-205c-49f4-b8a0-55a105dd4fa3%20AND%20(release%3AAijanai%20OR%20recording%3AAijanai)&limit=100",
+  "status_code": 200,
+  "body": "{\"created\":\"2026-03-10T02:28:22.476Z\",\"count\":1,\"offset\":0,\"releases\":[{\"id\":\"c61ca757-eea7-4a20-95ee-6b33bac87cd6\",\"score\":100,\"status-id\":\"41121bb9-3413-3818-8a9a-9742318349aa\",\"artist-credit-id\":\"b17b1218-0463-3894-b8ec-294a7a5c601b\",\"count\":1,\"title\":\"Aijanai\",\"status\":\"Pseudo-Release\",\"text-representation\":{\"language\":\"eng\",\"script\":\"Latn\"},\"artist-credit\":[{\"name\":\"ダズビー\",\"artist\":{\"id\":\"10623c33-205c-49f4-b8a0-55a105dd4fa3\",\"name\":\"ダズビー\",\"sort-name\":\"Dazbee\"}}],\"release-group\":{\"id\":\"8322ce04-9e9f-494f-b83a-5ac1b9ffe3bb\",\"type-id\":\"d6038452-8ee0-3f68-affc-2de9a1ede0b9\",\"primary-type-id\":\"d6038452-8ee0-3f68-affc-2de9a1ede0b9\",\"title\":\"愛じゃない\",\"primary-type\":\"Single\"},\"track-count\":1,\"media\":[{\"id\":\"5ee47c5c-50b6-3988-8aea-4d2a6a065cf8\",\"disc-count\":0,\"track-count\":1}]}]}"
+}

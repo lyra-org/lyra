@@ -1,0 +1,217 @@
+plugin = "musicbrainz"
+
+[library]
+directory = "."
+language = "jpn"
+country = "JP"
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano (澤野弘之) - Attack on Titan (進撃の巨人) Original Soundtrack (2013) [FLAC]/1.16. Hiroyuki Sawano (澤野弘之) - omake-pfadlib.flac"
+album = "Attack on Titan (進撃の巨人) Original Soundtrack"
+album_artists = ["Hiroyuki Sawano (澤野弘之)"]
+artists = ["Hiroyuki Sawano (澤野弘之)"]
+title = "omake-pfadlib"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 16
+track_total = 16
+duration_ms = 211533
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano (澤野弘之) - Attack on Titan (進撃の巨人) Original Soundtrack (2013) [FLAC]/1.15. mpi & CASG (Caramel Apple Sound Gadget) - Call your name.flac"
+album = "Attack on Titan (進撃の巨人) Original Soundtrack"
+album_artists = ["Hiroyuki Sawano (澤野弘之)"]
+artists = ["mpi & CASG (Caramel Apple Sound Gadget)"]
+title = "Call your name"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 15
+track_total = 16
+duration_ms = 268333
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano (澤野弘之) - Attack on Titan (進撃の巨人) Original Soundtrack (2013) [FLAC]/1.14. Hiroyuki Sawano (澤野弘之) - XL-TT.flac"
+album = "Attack on Titan (進撃の巨人) Original Soundtrack"
+album_artists = ["Hiroyuki Sawano (澤野弘之)"]
+artists = ["Hiroyuki Sawano (澤野弘之)"]
+title = "XL-TT"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 16
+duration_ms = 397440
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano (澤野弘之) - Attack on Titan (進撃の巨人) Original Soundtrack (2013) [FLAC]/1.13. Hiroyuki Sawano (澤野弘之) - 2chi城.flac"
+album = "Attack on Titan (進撃の巨人) Original Soundtrack"
+album_artists = ["Hiroyuki Sawano (澤野弘之)"]
+artists = ["Hiroyuki Sawano (澤野弘之)"]
+title = "2chi城"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 16
+duration_ms = 407573
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano (澤野弘之) - Attack on Titan (進撃の巨人) Original Soundtrack (2013) [FLAC]/1.12. Mika Kobayashi (小林未郁) - Bauklötze.flac"
+album = "Attack on Titan (進撃の巨人) Original Soundtrack"
+album_artists = ["Hiroyuki Sawano (澤野弘之)"]
+artists = ["Mika Kobayashi (小林未郁)"]
+title = "Bauklötze"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 16
+duration_ms = 236253
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano (澤野弘之) - Attack on Titan (進撃の巨人) Original Soundtrack (2013) [FLAC]/1.11. Hiroyuki Sawano (澤野弘之) - 巨♀～9地区.flac"
+album = "Attack on Titan (進撃の巨人) Original Soundtrack"
+album_artists = ["Hiroyuki Sawano (澤野弘之)"]
+artists = ["Hiroyuki Sawano (澤野弘之)"]
+title = "巨♀～9地区"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 16
+duration_ms = 315360
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano (澤野弘之) - Attack on Titan (進撃の巨人) Original Soundtrack (2013) [FLAC]/1.10. Hiroyuki Sawano (澤野弘之) - E・M・A.flac"
+album = "Attack on Titan (進撃の巨人) Original Soundtrack"
+album_artists = ["Hiroyuki Sawano (澤野弘之)"]
+artists = ["Hiroyuki Sawano (澤野弘之)"]
+title = "E・M・A"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 16
+duration_ms = 342880
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano (澤野弘之) - Attack on Titan (進撃の巨人) Original Soundtrack (2013) [FLAC]/1.09. Hiroyuki Sawano (澤野弘之) - 凸】♀】♂】←巨人.flac"
+album = "Attack on Titan (進撃の巨人) Original Soundtrack"
+album_artists = ["Hiroyuki Sawano (澤野弘之)"]
+artists = ["Hiroyuki Sawano (澤野弘之)"]
+title = "凸】♀】♂】←巨人"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 16
+duration_ms = 261373
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano (澤野弘之) - Attack on Titan (進撃の巨人) Original Soundtrack (2013) [FLAC]/1.08. Aimee Blackschleger - DOA.flac"
+album = "Attack on Titan (進撃の巨人) Original Soundtrack"
+album_artists = ["Hiroyuki Sawano (澤野弘之)"]
+artists = ["Aimee Blackschleger"]
+title = "DOA"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 16
+duration_ms = 206026
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano (澤野弘之) - Attack on Titan (進撃の巨人) Original Soundtrack (2013) [FLAC]/1.07. Cyua - Vogel im Käfig.flac"
+album = "Attack on Titan (進撃の巨人) Original Soundtrack"
+album_artists = ["Hiroyuki Sawano (澤野弘之)"]
+artists = ["Cyua"]
+title = "Vogel im Käfig"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 16
+duration_ms = 380053
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano (澤野弘之) - Attack on Titan (進撃の巨人) Original Soundtrack (2013) [FLAC]/1.06. Hiroyuki Sawano (澤野弘之) - army⇒G♂.flac"
+album = "Attack on Titan (進撃の巨人) Original Soundtrack"
+album_artists = ["Hiroyuki Sawano (澤野弘之)"]
+artists = ["Hiroyuki Sawano (澤野弘之)"]
+title = "army⇒G♂"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 16
+duration_ms = 206440
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano (澤野弘之) - Attack on Titan (進撃の巨人) Original Soundtrack (2013) [FLAC]/1.05. Hiroyuki Sawano (澤野弘之) - cóunter・attàck-mˈænkάɪnd.flac"
+album = "Attack on Titan (進撃の巨人) Original Soundtrack"
+album_artists = ["Hiroyuki Sawano (澤野弘之)"]
+artists = ["Hiroyuki Sawano (澤野弘之)"]
+title = "cóunter・attàck-mˈænkάɪnd"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 16
+duration_ms = 366586
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano (澤野弘之) - Attack on Titan (進撃の巨人) Original Soundtrack (2013) [FLAC]/1.04. Hiroyuki Sawano (澤野弘之) - 立body機motion.flac"
+album = "Attack on Titan (進撃の巨人) Original Soundtrack"
+album_artists = ["Hiroyuki Sawano (澤野弘之)"]
+artists = ["Hiroyuki Sawano (澤野弘之)"]
+title = "立body機motion"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 16
+duration_ms = 342720
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano (澤野弘之) - Attack on Titan (進撃の巨人) Original Soundtrack (2013) [FLAC]/1.03. Hiroyuki Sawano (澤野弘之) - eye-water.flac"
+album = "Attack on Titan (進撃の巨人) Original Soundtrack"
+album_artists = ["Hiroyuki Sawano (澤野弘之)"]
+artists = ["Hiroyuki Sawano (澤野弘之)"]
+title = "eye-water"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 16
+duration_ms = 181413
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano (澤野弘之) - Attack on Titan (進撃の巨人) Original Soundtrack (2013) [FLAC]/1.02. mpi - The Reluctant Heroes.flac"
+album = "Attack on Titan (進撃の巨人) Original Soundtrack"
+album_artists = ["Hiroyuki Sawano (澤野弘之)"]
+artists = ["mpi"]
+title = "The Reluctant Heroes"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 16
+duration_ms = 267120
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano (澤野弘之) - Attack on Titan (進撃の巨人) Original Soundtrack (2013) [FLAC]/1.01. Mika Kobayashi (小林未郁) - ətˈæk 0N tάɪtn.flac"
+album = "Attack on Titan (進撃の巨人) Original Soundtrack"
+album_artists = ["Hiroyuki Sawano (澤野弘之)"]
+artists = ["Mika Kobayashi (小林未郁)"]
+title = "ətˈæk 0N tάɪtn"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 16
+duration_ms = 256920
+
+[expect.release]
+ids = { release_id = ["7b1c6633-4789-4d92-b3b0-967335c13598", "1df1be9f-2db1-4976-bdad-5f8bae14c753", "f69abf88-7a41-4aa5-bdb3-9e68c57e3088"] }

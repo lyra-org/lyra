@@ -1,0 +1,21 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "高橋李依 - 小さな恋のうた [FLAC - 24bit - 96kHz]/小さな恋のうた.flac"
+album = "小さな恋のうた"
+album_artists = ["高木さん(CV:高橋李依)"]
+artists = ["高木さん(CV:高橋李依)"]
+title = "小さな恋のうた"
+copyright = "2018 TOHO CO.,LTD"
+genre = " "
+disc = 1
+track = 1
+duration_ms = 247000
+
+[expect.release]
+ids = { release_id = "" }

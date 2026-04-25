@@ -1,0 +1,193 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ビッケブランカ - wizard (2018) [WEB FLAC]/1.12. Great Squall.flac"
+album = "wizard"
+album_artists = ["ビッケブランカ"]
+artists = ["Vickeblanka"]
+title = "Great Squall"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 12
+duration_ms = 301666
+
+[[raw_tags]]
+file_path = "ビッケブランカ - wizard (2018) [WEB FLAC]/1.11. WALK(long ver.).flac"
+album = "wizard"
+album_artists = ["ビッケブランカ"]
+artists = ["Vickeblanka"]
+title = "WALK(long ver.)"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 12
+duration_ms = 250933
+
+[[raw_tags]]
+file_path = "ビッケブランカ - wizard (2018) [WEB FLAC]/1.10. Smash(Right This Way).flac"
+album = "wizard"
+album_artists = ["ビッケブランカ"]
+artists = ["Vickeblanka"]
+title = "Smash(Right This Way)"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 12
+duration_ms = 221226
+
+[[raw_tags]]
+file_path = "ビッケブランカ - wizard (2018) [WEB FLAC]/1.09. キロン.flac"
+album = "wizard"
+album_artists = ["ビッケブランカ"]
+artists = ["Vickeblanka"]
+title = "キロン"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 12
+duration_ms = 214973
+
+[[raw_tags]]
+file_path = "ビッケブランカ - wizard (2018) [WEB FLAC]/1.08. 夏の夢.flac"
+album = "wizard"
+album_artists = ["ビッケブランカ"]
+artists = ["Vickeblanka"]
+title = "夏の夢"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 12
+duration_ms = 256533
+
+[[raw_tags]]
+file_path = "ビッケブランカ - wizard (2018) [WEB FLAC]/1.07. Buntline Special.flac"
+album = "wizard"
+album_artists = ["ビッケブランカ"]
+artists = ["Vickeblanka"]
+title = "Buntline Special"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 12
+duration_ms = 212093
+
+[[raw_tags]]
+file_path = "ビッケブランカ - wizard (2018) [WEB FLAC]/1.06. Black Rover.flac"
+album = "wizard"
+album_artists = ["ビッケブランカ"]
+artists = ["Vickeblanka"]
+title = "Black Rover"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 12
+duration_ms = 209573
+
+[[raw_tags]]
+file_path = "ビッケブランカ - wizard (2018) [WEB FLAC]/1.05. ウララ.flac"
+album = "wizard"
+album_artists = ["ビッケブランカ"]
+artists = ["Vickeblanka"]
+title = "ウララ"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 12
+duration_ms = 221493
+
+[[raw_tags]]
+file_path = "ビッケブランカ - wizard (2018) [WEB FLAC]/1.04. Lights Out.flac"
+album = "wizard"
+album_artists = ["ビッケブランカ"]
+artists = ["Vickeblanka"]
+title = "Lights Out"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 12
+duration_ms = 247000
+
+[[raw_tags]]
+file_path = "ビッケブランカ - wizard (2018) [WEB FLAC]/1.03. まっしろ.flac"
+album = "wizard"
+album_artists = ["ビッケブランカ"]
+artists = ["Vickeblanka"]
+title = "まっしろ"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 12
+duration_ms = 237200
+
+[[raw_tags]]
+file_path = "ビッケブランカ - wizard (2018) [WEB FLAC]/1.02. Winter Beat.flac"
+album = "wizard"
+album_artists = ["ビッケブランカ"]
+artists = ["Vickeblanka"]
+title = "Winter Beat"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 12
+duration_ms = 251973
+
+[[raw_tags]]
+file_path = "ビッケブランカ - wizard (2018) [WEB FLAC]/1.01. Wizard.flac"
+album = "wizard"
+album_artists = ["ビッケブランカ"]
+artists = ["Vickeblanka"]
+title = "Wizard"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 12
+duration_ms = 135333
+
+[expect.release]
+ids = { release_group_id = "9046ac8a-ecf5-4f17-9899-eb5fe6ae165c", release_id = ["28f50586-26e9-43c1-8dd1-395bde2541de", "d0d2b759-33c9-4580-aeba-07274ec8e621", "43af6b20-d85e-4ab8-8704-113a71e9e1f9"] }
+fields = { release_title = "wizard" }
+
+[expect.artists."547ea003-708f-4073-bf5d-edefbeb0f2d4"]
+fields = { artist_name = "ビッケブランカ", sort_name = "Vickeblanka" }
+
+[expect.tracks."0bd02a93-738d-4ad7-937d-c67e90580b58"]
+fields = { disc = 1, track = 7, track_title = "Buntline Special" }
+
+[expect.tracks."0f943a73-9d89-4f45-9ae5-b401feb322ed"]
+fields = { disc = 1, track = 8, track_title = "夏の夢" }
+
+[expect.tracks."0fd04172-5265-4d46-ae8c-97a4c72e55c7"]
+fields = { disc = 1, track = 5, track_title = "ウララ" }
+
+[expect.tracks."112094db-629a-4e99-a283-8981ba6e7da5"]
+fields = { disc = 1, track = 12, track_title = "Great Squall" }
+
+[expect.tracks."1cd141de-6d4e-45b3-a3cb-966bc90c1432"]
+fields = { disc = 1, track = 3, track_title = "まっしろ" }
+
+[expect.tracks."250ce102-06a3-4cc8-ab4c-95373d35d972"]
+fields = { disc = 1, track = 6, track_title = "Black Rover" }
+
+[expect.tracks."9ff6b7e2-d68d-4e46-a30f-b175408b95ac"]
+fields = { disc = 1, track = 10, track_title = "Smash（Right This Way）" }
+
+[expect.tracks."a5e5a778-1e2e-44f4-9f4d-2324fdc5324d"]
+fields = { disc = 1, track = 11, track_title = "WALK（long ver.）" }
+
+[expect.tracks."c7e31507-9f24-4fa8-86b7-d852313f8288"]
+fields = { disc = 1, track = 1, track_title = "Wizard" }
+
+[expect.tracks."e55b0f11-388f-48cd-b16d-d7ff920b48f7"]
+fields = { disc = 1, track = 9, track_title = "キロン" }
+
+[expect.tracks."f23ef4b7-a3b2-42f3-88c6-c2f21803bf40"]
+fields = { disc = 1, track = 2, track_title = "Winter Beat" }
+
+[expect.tracks."ffbabcf9-28da-4294-9f0d-9dc2147cd14d"]
+fields = { disc = 1, track = 4, track_title = "Lights Out" }

@@ -1,0 +1,189 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Cordelia - Flower Drops/11. 花のように.flac"
+album = "FLOWER DROPS"
+album_artists = ["Cordelia", "Cordelia"]
+artists = ["ユリカ／花たん"]
+title = "花のように"
+genre = "J-POP"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 11
+duration_ms = 314093
+
+[[raw_tags]]
+file_path = "Cordelia - Flower Drops/10. ニワカアメ.flac"
+album = "FLOWER DROPS"
+album_artists = ["Cordelia", "Cordelia"]
+artists = ["ユリカ／花たん"]
+title = "ニワカアメ"
+genre = "J-POP"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 11
+duration_ms = 331853
+
+[[raw_tags]]
+file_path = "Cordelia - Flower Drops/09. 最初の涙.flac"
+album = "FLOWER DROPS"
+album_artists = ["Cordelia", "Cordelia"]
+artists = ["ユリカ／花たん"]
+title = "最初の涙"
+genre = "J-POP"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 11
+duration_ms = 283253
+
+[[raw_tags]]
+file_path = "Cordelia - Flower Drops/08. キャットフード.flac"
+album = "FLOWER DROPS"
+album_artists = ["Cordelia", "Cordelia"]
+artists = ["ユリカ／花たん"]
+title = "キャットフード"
+genre = "J-POP"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 11
+duration_ms = 286826
+
+[[raw_tags]]
+file_path = "Cordelia - Flower Drops/07. 簪.flac"
+album = "FLOWER DROPS"
+album_artists = ["Cordelia", "Cordelia"]
+artists = ["ユリカ／花たん"]
+title = "簪"
+genre = "J-POP"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 11
+duration_ms = 305880
+
+[[raw_tags]]
+file_path = "Cordelia - Flower Drops/06. ロミオとシンデレラ.flac"
+album = "FLOWER DROPS"
+album_artists = ["Cordelia", "Cordelia"]
+artists = ["ユリカ／花たん"]
+title = "ロミオとシンデレラ"
+genre = "J-POP"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 11
+duration_ms = 279613
+
+[[raw_tags]]
+file_path = "Cordelia - Flower Drops/05. 笹舟.flac"
+album = "FLOWER DROPS"
+album_artists = ["Cordelia", "Cordelia"]
+artists = ["ユリカ／花たん"]
+title = "笹舟"
+genre = "J-POP"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 11
+duration_ms = 315040
+
+[[raw_tags]]
+file_path = "Cordelia - Flower Drops/04. 君の軌跡.flac"
+album = "FLOWER DROPS"
+album_artists = ["Cordelia", "Cordelia"]
+artists = ["ユリカ／花たん"]
+title = "君の軌跡"
+genre = "J-POP"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 11
+duration_ms = 251480
+
+[[raw_tags]]
+file_path = "Cordelia - Flower Drops/03. 飴か夢.flac"
+album = "FLOWER DROPS"
+album_artists = ["Cordelia", "Cordelia"]
+artists = ["ユリカ／花たん"]
+title = "飴か夢"
+genre = "J-POP"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 11
+duration_ms = 289293
+
+[[raw_tags]]
+file_path = "Cordelia - Flower Drops/02. Humanoid.flac"
+album = "FLOWER DROPS"
+album_artists = ["Cordelia", "Cordelia"]
+artists = ["ユリカ／花たん"]
+title = "Humanoid"
+genre = "J-POP"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 11
+duration_ms = 246253
+
+[[raw_tags]]
+file_path = "Cordelia - Flower Drops/01. Flower Drops.flac"
+album = "FLOWER DROPS"
+album_artists = ["Cordelia", "Cordelia"]
+artists = ["ユリカ／花たん"]
+title = "Flower Drops"
+genre = "J-POP"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 11
+duration_ms = 319946
+
+[expect.release]
+ids = { release_id = "8b169d5b-423a-40fc-8cc4-ab5b3eb08d87" }
+fields = { release_title = "Flower Drops", release_date = "2011-06-29" }
+
+[expect.artists."d53eb473-7906-47a4-b2cd-33d18b06a0ac"]
+fields = { artist_name = "YURiCa/花たん", sort_name = "YURiCa / Hanatan" }
+
+[expect.tracks."079e63d1-e24e-4c17-88e4-81c01a085980"]
+fields = { disc = 1, track = 6, track_title = "ロミオとシンデレラ" }
+
+[expect.tracks."1d49af4b-90ad-4e78-9bf3-83d62ac36b56"]
+fields = { disc = 1, track = 11, track_title = "花のように" }
+
+[expect.tracks."23bd6d04-b40a-4b87-9a44-8a05d1795020"]
+fields = { disc = 1, track = 2, track_title = "Humanoid" }
+
+[expect.tracks."4bf9b367-cac5-4b63-a98f-1b70f5356bc2"]
+fields = { disc = 1, track = 1, track_title = "Flower Drops" }
+
+[expect.tracks."4fbec6db-9e41-4da4-9675-3abcf81fe6ff"]
+fields = { disc = 1, track = 10, track_title = "ニワカアメ" }
+
+[expect.tracks."5155c911-707d-4be2-b1e2-7f3ef1b46184"]
+fields = { disc = 1, track = 3, track_title = "飴か夢" }
+
+[expect.tracks."52f84b85-22f3-4bd2-93e3-961319b5f68a"]
+fields = { disc = 1, track = 8, track_title = "キャットフード" }
+
+[expect.tracks."8b5fb698-b834-4ad7-b4f5-bbc0e2723042"]
+fields = { disc = 1, track = 7, track_title = "簪" }
+
+[expect.tracks."a32894c2-a9fc-4909-8b11-64373cd8c6d2"]
+fields = { disc = 1, track = 4, track_title = "君の軌跡" }
+
+[expect.tracks."cc4333b0-91e6-42b2-b0d4-3615ccb651f1"]
+fields = { disc = 1, track = 5, track_title = "笹舟" }
+
+[expect.tracks."fef057ce-dd52-4864-b7dd-08df708948b8"]
+fields = { disc = 1, track = 9, track_title = "最初の涙" }

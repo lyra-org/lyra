@@ -1,0 +1,322 @@
+plugin = "musicbrainz"
+
+[library]
+directory = "."
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/24 Dance Hymn of the Soul (Disco in Velvet Room).flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Dance Hymn of the Soul (Disco in Velvet Room)"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 24
+track_total = 24
+duration_ms = 157773
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/23 Collection.flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Collection"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 23
+track_total = 24
+duration_ms = 114093
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/22 Tanaka's Amazing Commodities ~Fresh Modern Luxury Edition~.flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Tanaka's Amazing Commodities ~Fresh Modern Luxury Edition~"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 22
+track_total = 24
+duration_ms = 105933
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/21 Period (''P4D'' ver.).flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Period ('P4D' ver.)"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 21
+track_total = 24
+duration_ms = 74880
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/20 As You Like It.flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "As You Like It"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 20
+track_total = 24
+duration_ms = 54333
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/19 Same Time, Same Feeling.flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Same Time, Same Feeling"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 19
+track_total = 24
+duration_ms = 128840
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/18 So Baby Go For It, Feel The Vibe!.flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "So Baby Go For It, Feel The Vibe!"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 18
+track_total = 24
+duration_ms = 61240
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/17 Calystegia.flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Calystegia"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 17
+track_total = 24
+duration_ms = 326853
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/16 Reach Out to the Truth (Dancing on PERSONA STAGE).flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Reach Out to the Truth (Dancing on PERSONA STAGE)"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 16
+track_total = 24
+duration_ms = 268680
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/15 Shadow World (DE DE MOUSE shadow swing mix).flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Shadow World (DE DE MOUSE shadow swing mix)"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 15
+track_total = 24
+duration_ms = 217293
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/14 Your Affection (Daisuke Asakura Remix).flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Your Affection (Daisuke Asakura Remix)"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 24
+duration_ms = 216600
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/13 Heartbeat, Heartbreak (TOWA TEI Remix).flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Heartbeat, Heartbreak (TOWA TEI Remix)"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 24
+duration_ms = 216640
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/12 Pursuing My True Self (Shinichi Osawa Remix).flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Pursuing My True Self (Shinichi Osawa Remix)"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 24
+duration_ms = 198080
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/11 Best Friends (Banvox Remix).flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Best Friends (Banvox Remix)"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 24
+duration_ms = 226080
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/10 Shadow World (ATLUS Kozuka Remix).flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Shadow World (ATLUS Kozuka Remix)"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 24
+duration_ms = 203573
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/09 Junes Theme (Vocal Version).flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Junes Theme (Vocal Version)"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 24
+duration_ms = 164560
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/08 NOW I KNOW (Yuu Miyake Remix).flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "NOW I KNOW (Yuu Miyake Remix)"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 24
+duration_ms = 208893
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/07 Heaven (Norihiko Hibino Remix).flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Heaven (Norihiko Hibino Remix)"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 24
+duration_ms = 212093
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/06 Time to Make History (AKIRA YAMAOKA Remix).flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Time to Make History (AKIRA YAMAOKA Remix)"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 24
+duration_ms = 184280
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/05 Signs of Love (TK Remix).flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Signs of Love (TK Remix)"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 24
+duration_ms = 211813
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/04 SNOWFLAKES (NARASAKI Remix).flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "SNOWFLAKES (NARASAKI Remix)"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 24
+duration_ms = 209080
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/03 Backside of the TV (Lotus Juice Remix).flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Backside of the TV (Lotus Juice Remix)"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 24
+duration_ms = 210133
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/02 Pursuing My True Self (ATLUS Kozuka Remix).flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Pursuing My True Self (ATLUS Kozuka Remix)"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 24
+duration_ms = 176893
+
+[[raw_tags]]
+file_path = "Persona 4 Dancing All Night/disc 1/01 Dance!.flac"
+album = "Persona 4: Dancing All Night Soundtrack (disc 1)"
+album_artists = ["Shoji Meguro"]
+artists = ["Shoji Meguro"]
+title = "Dance!"
+genre = "Game"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 24
+duration_ms = 210613
+
+[expect.release]
+ids = { release_group_id = "d1062df0-c686-4d1e-8213-27e0c8deb47e", release_id = "1b80e03f-aea9-4046-ad5c-2395c70a7ddf" }
+
+[expect.tracks."9b3ca77f-4c9d-4b21-a072-a2f1503d1f96"]
+fields = { disc = 1, disc_total = 2, track = 1 }

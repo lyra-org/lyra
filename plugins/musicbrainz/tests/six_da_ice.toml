@@ -1,0 +1,221 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Da-iCE - SiX (2021) [WEB 24bit FLAC] {avex trax}/13. I’ll be back 2020.flac"
+album = "SiX"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "I’ll be back 2020"
+copyright = "AVEX ENTERTAINMENT INC."
+genre = "Jpop"
+disc = 1
+track = 13
+track_total = 13
+duration_ms = 189101
+
+[[raw_tags]]
+file_path = "Da-iCE - SiX (2021) [WEB 24bit FLAC] {avex trax}/12. Melody.flac"
+album = "SiX"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Melody"
+copyright = "AVEX ENTERTAINMENT INC."
+genre = "Jpop"
+disc = 1
+track = 12
+track_total = 13
+duration_ms = 235867
+
+[[raw_tags]]
+file_path = "Da-iCE - SiX (2021) [WEB 24bit FLAC] {avex trax}/11. Special One.flac"
+album = "SiX"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Special One"
+copyright = "AVEX ENTERTAINMENT INC."
+genre = "Jpop"
+disc = 1
+track = 11
+track_total = 13
+duration_ms = 217255
+
+[[raw_tags]]
+file_path = "Da-iCE - SiX (2021) [WEB 24bit FLAC] {avex trax}/10. CITRUS.flac"
+album = "SiX"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "CITRUS"
+copyright = "AVEX ENTERTAINMENT INC."
+genre = "Jpop"
+disc = 1
+track = 10
+track_total = 13
+duration_ms = 248654
+
+[[raw_tags]]
+file_path = "Da-iCE - SiX (2021) [WEB 24bit FLAC] {avex trax}/09. image.flac"
+album = "SiX"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "image"
+copyright = "AVEX ENTERTAINMENT INC."
+genre = "Jpop"
+disc = 1
+track = 9
+track_total = 13
+duration_ms = 276470
+
+[[raw_tags]]
+file_path = "Da-iCE - SiX (2021) [WEB 24bit FLAC] {avex trax}/08. Love Song.flac"
+album = "SiX"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Love Song"
+copyright = "AVEX ENTERTAINMENT INC."
+genre = "Jpop"
+disc = 1
+track = 8
+track_total = 13
+duration_ms = 231794
+
+[[raw_tags]]
+file_path = "Da-iCE - SiX (2021) [WEB 24bit FLAC] {avex trax}/07. Revolver.flac"
+album = "SiX"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Revolver"
+copyright = "AVEX ENTERTAINMENT INC."
+genre = "Jpop"
+disc = 1
+track = 7
+track_total = 13
+duration_ms = 225608
+
+[[raw_tags]]
+file_path = "Da-iCE - SiX (2021) [WEB 24bit FLAC] {avex trax}/06. amp.flac"
+album = "SiX"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "amp"
+copyright = "AVEX ENTERTAINMENT INC."
+genre = "Jpop"
+disc = 1
+track = 6
+track_total = 13
+duration_ms = 201927
+
+[[raw_tags]]
+file_path = "Da-iCE - SiX (2021) [WEB 24bit FLAC] {avex trax}/05. Found it.flac"
+album = "SiX"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Found it"
+copyright = "AVEX ENTERTAINMENT INC."
+genre = "Jpop"
+disc = 1
+track = 5
+track_total = 13
+duration_ms = 224061
+
+[[raw_tags]]
+file_path = "Da-iCE - SiX (2021) [WEB 24bit FLAC] {avex trax}/04. Time is Life.flac"
+album = "SiX"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Time is Life"
+copyright = "AVEX ENTERTAINMENT INC."
+genre = "Jpop"
+disc = 1
+track = 4
+track_total = 13
+duration_ms = 253711
+
+[[raw_tags]]
+file_path = "Da-iCE - SiX (2021) [WEB 24bit FLAC] {avex trax}/03. DREAMIN' ON.flac"
+album = "SiX"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "DREAMIN' ON"
+copyright = "AVEX ENTERTAINMENT INC."
+genre = "Jpop"
+disc = 1
+track = 3
+track_total = 13
+duration_ms = 235372
+
+[[raw_tags]]
+file_path = "Da-iCE - SiX (2021) [WEB 24bit FLAC] {avex trax}/02. EASY TASTY.flac"
+album = "SiX"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "EASY TASTY"
+copyright = "AVEX ENTERTAINMENT INC."
+genre = "Jpop"
+disc = 1
+track = 2
+track_total = 13
+duration_ms = 197186
+
+[[raw_tags]]
+file_path = "Da-iCE - SiX (2021) [WEB 24bit FLAC] {avex trax}/01. SiX.flac"
+album = "SiX"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "SiX"
+copyright = "AVEX ENTERTAINMENT INC."
+genre = "Jpop"
+disc = 1
+track = 1
+track_total = 13
+duration_ms = 230128
+
+[expect.release]
+ids = { release_id = "bfa24a31-0fc2-4da0-b7b1-ae1bbae52c59" }
+fields = { release_title = "SiX", release_date = "2021-01-20" }
+
+[expect.artists."2fc5c58a-711b-4a11-9b7a-7b5ba1f58e04"]
+fields = { artist_name = "Da‐iCE", sort_name = "Da‐iCE" }
+
+[expect.tracks."3d95e778-7c2b-4f80-8b2a-bc47a930acf9"]
+fields = { disc = 1, track = 9, track_title = "image" }
+
+[expect.tracks."40be8833-52d5-4c9e-8574-f2e3bda351bb"]
+fields = { disc = 1, track = 11, track_title = "Special One" }
+
+[expect.tracks."4aea2c7e-95fb-4700-bd44-d403ed6ad8c6"]
+fields = { disc = 1, track = 4, track_title = "Time is Life" }
+
+[expect.tracks."530202c9-f25f-4657-a026-a707635fa34e"]
+fields = { disc = 1, track = 2, track_title = "EASY TASTY" }
+
+[expect.tracks."72f2d69a-925b-4ca6-a648-06e5e3c33014"]
+fields = { disc = 1, track = 6, track_title = "amp" }
+
+[expect.tracks."749f6025-acae-4315-bcfc-becf95fab075"]
+fields = { disc = 1, track = 7, track_title = "Revolver" }
+
+[expect.tracks."87ecf504-5dce-4440-996f-2b59ccc967e1"]
+fields = { disc = 1, track = 5, track_title = "Found it" }
+
+[expect.tracks."8f913a29-88f4-477f-8f3c-5f4d926924ac"]
+fields = { disc = 1, track = 8, track_title = "Love Song" }
+
+[expect.tracks."947c4a05-fd27-4b05-91e9-460fb5e87105"]
+fields = { disc = 1, track = 3, track_title = "DREAMIN’ ON" }
+
+[expect.tracks."b42cfcd3-ed03-49b4-bd46-d6e6c1302959"]
+fields = { disc = 1, track = 13, track_title = "I’ll be back 2020" }
+
+[expect.tracks."cfe3b880-bc20-49e9-b0a9-60cce2def8e3"]
+fields = { disc = 1, track = 12, track_title = "Melody" }
+
+[expect.tracks."d1b705c8-bfe2-40de-aba2-706b45065d71"]
+fields = { disc = 1, track = 1, track_title = "SiX" }
+
+[expect.tracks."ec1c5f3c-9ca2-4cb5-9f86-6cebeaef16d5"]
+fields = { disc = 1, track = 10, track_title = "CITRUS" }

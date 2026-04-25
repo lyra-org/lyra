@@ -1,0 +1,152 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2020.01.22] reol - Kinjitou [FLAC][VICL-65313]/11 1LDK.flac"
+album = "Kinjitou"
+album_artists = ["reol"]
+artists = ["reol"]
+title = "1LDK"
+copyright = "2020 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 11
+duration_ms = 234533
+
+[[raw_tags]]
+file_path = "[2020.01.22] reol - Kinjitou [FLAC][VICL-65313]/10 GRIMOIRE.flac"
+album = "Kinjitou"
+album_artists = ["reol"]
+artists = ["reol"]
+title = "GRIMOIRE"
+copyright = "2020 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 11
+duration_ms = 221022
+
+[[raw_tags]]
+file_path = "[2020.01.22] reol - Kinjitou [FLAC][VICL-65313]/09 -Renee Piece Nr.9-.flac"
+album = "Kinjitou"
+album_artists = ["reol"]
+artists = ["reol"]
+title = "-Renee Piece Nr.9-"
+copyright = "2020 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 11
+duration_ms = 37497
+
+[[raw_tags]]
+file_path = "[2020.01.22] reol - Kinjitou [FLAC][VICL-65313]/08 Dali.flac"
+album = "Kinjitou"
+album_artists = ["reol"]
+artists = ["reol"]
+title = "Dali"
+copyright = "2020 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 11
+duration_ms = 191213
+
+[[raw_tags]]
+file_path = "[2020.01.22] reol - Kinjitou [FLAC][VICL-65313]/07 insider.flac"
+album = "Kinjitou"
+album_artists = ["reol"]
+artists = ["reol"]
+title = "insider"
+copyright = "2020 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 11
+duration_ms = 221895
+
+[[raw_tags]]
+file_path = "[2020.01.22] reol - Kinjitou [FLAC][VICL-65313]/06 un, deux, trois.flac"
+album = "Kinjitou"
+album_artists = ["reol"]
+artists = ["reol"]
+title = "un, deux, trois"
+copyright = "2020 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 11
+duration_ms = 225561
+
+[[raw_tags]]
+file_path = "[2020.01.22] reol - Kinjitou [FLAC][VICL-65313]/05 Hameln.flac"
+album = "Kinjitou"
+album_artists = ["reol"]
+artists = ["reol"]
+title = "Hameln"
+copyright = "2020 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 11
+duration_ms = 199342
+
+[[raw_tags]]
+file_path = "[2020.01.22] reol - Kinjitou [FLAC][VICL-65313]/04 -Etude For Move Nr.4-.flac"
+album = "Kinjitou"
+album_artists = ["reol"]
+artists = ["reol"]
+title = "-Etude For Move Nr.4-"
+copyright = "2020 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 11
+duration_ms = 83266
+
+[[raw_tags]]
+file_path = "[2020.01.22] reol - Kinjitou [FLAC][VICL-65313]/03 Phanto(me).flac"
+album = "Kinjitou"
+album_artists = ["reol"]
+artists = ["reol"]
+title = "Phanto(me)"
+copyright = "2020 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 11
+duration_ms = 231747
+
+[[raw_tags]]
+file_path = "[2020.01.22] reol - Kinjitou [FLAC][VICL-65313]/02 HYPE MODE.flac"
+album = "Kinjitou"
+album_artists = ["reol"]
+artists = ["reol"]
+title = "HYPE MODE"
+copyright = "2020 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 11
+duration_ms = 211119
+
+[[raw_tags]]
+file_path = "[2020.01.22] reol - Kinjitou [FLAC][VICL-65313]/01 Kinjitou.flac"
+album = "Kinjitou"
+album_artists = ["reol"]
+artists = ["reol"]
+title = "Kinjitou"
+copyright = "2020 JVCKENWOOD Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 11
+duration_ms = 207733
+
+[expect.release]
+ids = { release_id = ["9ef6ddfe-1118-4ac0-b2ad-986f479d18be", "732e0c6e-8923-46f8-a7d1-3dc77f9656e3"] }

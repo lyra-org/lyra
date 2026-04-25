@@ -1,0 +1,91 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Iri - For Life EP [FLAC]/125974445.flac"
+album = "life ep"
+album_artists = ["Iri"]
+artists = ["Iri"]
+title = "会いたいわ"
+copyright = ""
+genre = "ポップ"
+disc = 1
+track = 5
+duration_ms = 267472
+
+[[raw_tags]]
+file_path = "Iri - For Life EP [FLAC]/125974390.flac"
+album = "life ep"
+album_artists = ["Iri"]
+artists = ["Iri"]
+title = "Moonlight flit"
+copyright = ""
+genre = "ポップ"
+disc = 1
+track = 4
+duration_ms = 264757
+
+[[raw_tags]]
+file_path = "Iri - For Life EP [FLAC]/125974350.flac"
+album = "life ep"
+album_artists = ["Iri"]
+artists = ["Iri"]
+title = "fruits"
+copyright = ""
+genre = "ポップ"
+disc = 1
+track = 3
+duration_ms = 249961
+
+[[raw_tags]]
+file_path = "Iri - For Life EP [FLAC]/125974294.flac"
+album = "life ep"
+album_artists = ["Iri"]
+artists = ["Iri"]
+title = "Telephone feat. 5lack"
+copyright = ""
+genre = "ポップ"
+disc = 1
+track = 2
+duration_ms = 258984
+
+[[raw_tags]]
+file_path = "Iri - For Life EP [FLAC]/125974248.flac"
+album = "life ep"
+album_artists = ["Iri"]
+artists = ["Iri"]
+title = "For life"
+copyright = ""
+genre = "ポップ"
+disc = 1
+track = 1
+duration_ms = 262829
+
+[expect.release]
+ids = { release_group_id = "ed994558-6fc3-45ad-b64d-6b979f099320", release_id = "a8653f88-de16-4f3b-a85a-2f53041ce184" }
+fields = { release_title = "life ep", release_date = "2017-11-22" }
+
+[expect.artists."a41fa129-f9e5-46db-ad06-a83979a2f37e"]
+fields = { artist_name = "5LACK", sort_name = "SLACK" }
+
+[expect.artists."c1439dbc-2424-4142-b96b-cadcaf0cc2e0"]
+fields = { artist_name = "iri", sort_name = "iri" }
+
+[expect.tracks."0b7742c6-44e4-4cc1-85e0-f8fb1ad99cce"]
+fields = { disc = 1, track = 5, track_title = "会いたいわ" }
+
+[expect.tracks."2b81b8b8-6d72-4060-bc7f-09fecfe590a7"]
+fields = { disc = 1, track = 3, track_title = "fruits" }
+
+[expect.tracks."c12cdf4c-0497-47da-8191-ef5f6788eb69"]
+fields = { disc = 1, track = 1, track_title = "For life" }
+
+[expect.tracks."e718c506-8964-4ead-90b8-efb9a7428888"]
+fields = { disc = 1, track = 2, track_title = "Telephone" }
+
+[expect.tracks."f4b8e523-0065-4870-b39d-f1c52fdb25d2"]
+fields = { disc = 1, track = 4, track_title = "Moonlight flit" }

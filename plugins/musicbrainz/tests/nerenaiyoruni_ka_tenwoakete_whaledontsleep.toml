@@ -1,0 +1,277 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/20 - Nereneiyoruni (feat. yama).flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "Nereneiyoruni (feat. yama)"
+genre = "Música asiática"
+disc = 1
+track = 20
+duration_ms = 320571
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/19 - Seaside motel (feat. chomaiyo).flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "Seaside motel (feat. chomaiyo)"
+genre = "Música asiática"
+disc = 1
+track = 19
+duration_ms = 272905
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/18 - Sleeping town (feat. yama).flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "Sleeping town (feat. yama)"
+genre = "Música asiática"
+disc = 1
+track = 18
+duration_ms = 197067
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/17 - yozakura (feat. meychan).flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "yozakura (feat. meychan)"
+genre = "Música asiática"
+disc = 1
+track = 17
+duration_ms = 184888
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/16 - Inside night looper (feat. NORISTRY).flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "Inside night looper (feat. NORISTRY)"
+genre = "Música asiática"
+disc = 1
+track = 16
+duration_ms = 190800
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/15 - Fake wolf boy (feat. SiN).flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "Fake wolf boy (feat. SiN)"
+genre = "Música asiática"
+disc = 1
+track = 15
+duration_ms = 194389
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/14 - Blacked out 2020 (self cover).flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "Blacked out 2020 (self cover)"
+genre = "Música asiática"
+disc = 1
+track = 14
+duration_ms = 227337
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/13 - Live from hand to mouth (feat. suisoh).flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "Live from hand to mouth (feat. suisoh)"
+genre = "Música asiática"
+disc = 1
+track = 13
+duration_ms = 273000
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/12 - Night Candy (feat. Nenne).flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "Night Candy (feat. Nenne)"
+genre = "Música asiática"
+disc = 1
+track = 12
+duration_ms = 190300
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/11 - osmanthus (feat. Ado).flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "osmanthus (feat. Ado)"
+genre = "Música asiática"
+disc = 1
+track = 11
+duration_ms = 140487
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/10 - Nerenaiyoruni.flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "Nerenaiyoruni"
+genre = "Música asiática"
+disc = 1
+track = 10
+duration_ms = 323149
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/09 - Seaside motel.flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "Seaside motel"
+genre = "Música asiática"
+disc = 1
+track = 9
+duration_ms = 272409
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/08 - Sleeping town.flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "Sleeping town"
+genre = "Música asiática"
+disc = 1
+track = 8
+duration_ms = 197067
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/07 - yozakura.flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "yozakura"
+genre = "Música asiática"
+disc = 1
+track = 7
+duration_ms = 183614
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/06 - Inside night looper.flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "Inside night looper"
+genre = "Música asiática"
+disc = 1
+track = 6
+duration_ms = 188514
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/05 - Fake wolf boy.flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "Fake wolf boy"
+genre = "Música asiática"
+disc = 1
+track = 5
+duration_ms = 192889
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/04 - Blacked out 2020.flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "Blacked out 2020"
+genre = "Música asiática"
+disc = 1
+track = 4
+duration_ms = 232795
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/03 - Live from hand to mouth.flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "Live from hand to mouth"
+genre = "Música asiática"
+disc = 1
+track = 3
+duration_ms = 270035
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/02 - Night Candy.flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "Night Candy"
+genre = "Música asiática"
+disc = 1
+track = 2
+duration_ms = 189555
+
+[[raw_tags]]
+file_path = "WhaleDontSleep - Nerenaiyoruni ka-tenwoakete [2020.10.15] (WEB-FLAC)/01 - osmanthus.flac"
+album = "Nerenaiyoruni ka-tenwoakete"
+album_artists = ["WhaleDontSleep"]
+artists = ["WhaleDontSleep"]
+title = "osmanthus"
+genre = "Música asiática"
+disc = 1
+track = 1
+duration_ms = 137126
+
+[expect.release]
+ids = { release_id = "76a0f82a-d27a-4f5c-b589-19f13fa53567" }
+
+[expect.artists."49c22add-497c-409e-8819-872d37aacff6"]
+
+[expect.artists."53f0939b-7f5b-450a-b0b3-94e506a2806f"]
+
+[expect.artists."83c0a54f-85e4-4df7-afdb-b53b67b05600"]
+
+[expect.artists."9cb45a5f-b858-4d15-abbe-a02a8342687d"]
+
+[expect.artists."a3becc83-9dab-48c6-9513-e269e1e4c49a"]
+
+[expect.artists."a8acd4ca-05f4-43eb-aa5c-505542e4cc04"]
+
+[expect.artists."bfe1c564-1476-44a9-b308-799479021cd9"]
+
+[expect.artists."e134b52f-2e9e-4734-9bc3-bea9648d1fa1"]
+
+[expect.artists."f965776a-54a5-4ea7-8fe1-286bbd2ec154"]
+
+[expect.tracks."27022b90-3ac2-4e65-ad8b-4b178a804a81"]
+fields = { disc = 1, track = 18 }
+
+[expect.tracks."4bcebe2e-3741-49cd-9605-849e926fc85f"]
+fields = { disc = 1, track = 20 }
+
+[expect.tracks."74d86a14-6f89-48e4-914d-4e31c4ec9b44"]
+fields = { disc = 1, track = 17 }
+
+[expect.tracks."816c3476-d7d1-41e9-a31e-e0bb6c046228"]
+fields = { disc = 1, track = 12 }
+
+[expect.tracks."a31ac4b7-8d15-4999-b250-27563f6c06d7"]
+fields = { disc = 1, track = 16 }
+
+[expect.tracks."a87a9ca4-76f7-40d4-9a9c-53906c0970df"]
+fields = { disc = 1, track = 13 }
+
+[expect.tracks."bfbfd82c-86da-4199-b8ec-e47f22972535"]
+fields = { disc = 1, track = 14 }
+
+[expect.tracks."d49a14d6-ba67-4eac-8220-4bcccc28c7d4"]
+fields = { disc = 1, track = 19 }
+
+[expect.tracks."e8fba350-a663-496a-8252-d57d87e9243e"]
+fields = { disc = 1, track = 15 }
+
+[expect.tracks."fe507e8d-61fb-45d2-9333-0c3e3253c6ff"]
+fields = { disc = 1, track = 11 }

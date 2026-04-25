@@ -1,0 +1,183 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD1/13. やなぎなぎ - どこにも行かない.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "どこにも行かない"
+track = 13
+duration_ms = 252706
+
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD1/12. やなぎなぎ - ターミナル.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "ターミナル"
+genre = "JPop"
+track = 12
+duration_ms = 386386
+
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD1/11. やなぎなぎ - 未来ペンシル.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "未来ペンシル"
+genre = "JPop"
+track = 11
+duration_ms = 314760
+
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD1/10. やなぎなぎ - カザキリ.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "カザキリ"
+genre = "JPop"
+track = 10
+duration_ms = 227773
+
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD1/09. やなぎなぎ - ワンルームトラベル.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "ワンルームトラベル"
+genre = "JPop"
+track = 9
+duration_ms = 217333
+
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD1/08. やなぎなぎ - 夜天幕.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "夜天幕"
+genre = "JPop"
+track = 8
+duration_ms = 236506
+
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD1/07. やなぎなぎ - オラリオン.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "オラリオン"
+genre = "JPop"
+track = 7
+duration_ms = 250480
+
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD1/06. やなぎなぎ - モノクローム.サイレントシティ.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "モノクローム.サイレントシティ"
+genre = "JPop"
+track = 6
+duration_ms = 213840
+
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD2/05. やなぎなぎ - 春擬き.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "春擬き"
+track = 5
+duration_ms = 305733
+
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD1/05. やなぎなぎ - パラレルエレベーター.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "パラレルエレベーター"
+genre = "JPop"
+track = 5
+duration_ms = 213946
+
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD2/04. やなぎなぎ - ビードロ模様.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "ビードロ模様"
+track = 4
+duration_ms = 285386
+
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD1/04. やなぎなぎ - rooter's song.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "rooter's song"
+genre = "JPop"
+track = 4
+duration_ms = 222746
+
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD2/03. やなぎなぎ - 三つ葉の結びめ.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "三つ葉の結びめ"
+track = 3
+duration_ms = 303813
+
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD1/03. やなぎなぎ - キャメルバックの街.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "キャメルバックの街"
+genre = "JPop"
+track = 3
+duration_ms = 309120
+
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD1/02. やなぎなぎ - 春擬き.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "春擬き"
+genre = "JPop"
+track = 2
+duration_ms = 271093
+
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD2/02. やなぎなぎ - Sweet Track.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "Sweet Track"
+track = 2
+duration_ms = 292386
+
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD2/01. やなぎなぎ - ユキトキ.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "ユキトキ"
+track = 1
+duration_ms = 275266
+
+[[raw_tags]]
+file_path = "[やなぎなぎ ] Follow My Tracks/CD1/01. やなぎなぎ - Follw My Tracks.flac"
+album = "Follow My Tracks"
+album_artists = ["やなぎなぎ"]
+artists = ["やなぎなぎ"]
+title = "Follw My Tracks"
+genre = "JPop"
+track = 1
+duration_ms = 188346
+
+[expect.release]
+ids = { release_id = "56e026d4-a274-4f0b-b6e1-b8e1613dcf3d" }

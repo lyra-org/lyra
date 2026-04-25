@@ -1,0 +1,195 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ヨルシカ - 盗作 (2020) [WEB FLAC]/14. 花に亡霊.flac"
+album = "盗作"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "花に亡霊"
+track = 14
+track_total = 14
+duration_ms = 241226
+
+[[raw_tags]]
+file_path = "ヨルシカ - 盗作 (2020) [WEB FLAC]/13. 夜行.flac"
+album = "盗作"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "夜行"
+track = 13
+track_total = 14
+duration_ms = 202720
+
+[[raw_tags]]
+file_path = "ヨルシカ - 盗作 (2020) [WEB FLAC]/12. 幼年期、思い出の中.flac"
+album = "盗作"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "幼年期、思い出の中"
+track = 12
+track_total = 14
+duration_ms = 140853
+
+[[raw_tags]]
+file_path = "ヨルシカ - 盗作 (2020) [WEB FLAC]/11. 逃亡.flac"
+album = "盗作"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "逃亡"
+track = 11
+track_total = 14
+duration_ms = 287453
+
+[[raw_tags]]
+file_path = "ヨルシカ - 盗作 (2020) [WEB FLAC]/10. 思想犯.flac"
+album = "盗作"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "思想犯"
+track = 10
+track_total = 14
+duration_ms = 251266
+
+[[raw_tags]]
+file_path = "ヨルシカ - 盗作 (2020) [WEB FLAC]/09. 盗作.flac"
+album = "盗作"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "盗作"
+track = 9
+track_total = 14
+duration_ms = 239120
+
+[[raw_tags]]
+file_path = "ヨルシカ - 盗作 (2020) [WEB FLAC]/08. 朱夏期、音楽泥棒.flac"
+album = "盗作"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "朱夏期、音楽泥棒"
+track = 8
+track_total = 14
+duration_ms = 108653
+
+[[raw_tags]]
+file_path = "ヨルシカ - 盗作 (2020) [WEB FLAC]/07. 花人局.flac"
+album = "盗作"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "花人局"
+track = 7
+track_total = 14
+duration_ms = 332373
+
+[[raw_tags]]
+file_path = "ヨルシカ - 盗作 (2020) [WEB FLAC]/06. レプリカント.flac"
+album = "盗作"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "レプリカント"
+track = 6
+track_total = 14
+duration_ms = 217053
+
+[[raw_tags]]
+file_path = "ヨルシカ - 盗作 (2020) [WEB FLAC]/05. 青年期、空き巣.flac"
+album = "盗作"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "青年期、空き巣"
+track = 5
+track_total = 14
+duration_ms = 76280
+
+[[raw_tags]]
+file_path = "ヨルシカ - 盗作 (2020) [WEB FLAC]/04. 爆弾魔 (Re-Recording).flac"
+album = "盗作"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "爆弾魔 (Re-Recording)"
+track = 4
+track_total = 14
+duration_ms = 215720
+
+[[raw_tags]]
+file_path = "ヨルシカ - 盗作 (2020) [WEB FLAC]/03. 春ひさぎ.flac"
+album = "盗作"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "春ひさぎ"
+track = 3
+track_total = 14
+duration_ms = 217733
+
+[[raw_tags]]
+file_path = "ヨルシカ - 盗作 (2020) [WEB FLAC]/02. 昼鳶.flac"
+album = "盗作"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "昼鳶"
+track = 2
+track_total = 14
+duration_ms = 162840
+
+[[raw_tags]]
+file_path = "ヨルシカ - 盗作 (2020) [WEB FLAC]/01. 音楽泥棒の自白.flac"
+album = "盗作"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "音楽泥棒の自白"
+track = 1
+track_total = 14
+duration_ms = 72453
+
+[expect.release]
+ids = { release_group_id = "5f2bc852-a016-46c6-96f0-69cdf0796988", release_id = ["99845955-f4bb-4d60-ae95-b99964654c4a", "91b20b0c-9164-496f-8b2a-f0f7fa74756b", "ad46ead9-e62b-43fe-bb73-767f40881113"] }
+fields = { release_title = "盗作", release_date = "2020-07-29" }
+
+[expect.artists."dfc6a151-3792-4695-8fda-f64723eaa788"]
+fields = { artist_name = "ヨルシカ", sort_name = "Yorushika" }
+
+[expect.tracks."02f907d0-6ef4-4f15-8e80-4d69054ca37a"]
+fields = { disc = 1, track = 1, track_title = "音楽泥棒の自白" }
+
+[expect.tracks."23eb44f6-e333-49ce-bf4f-e477b02829de"]
+fields = { disc = 1, track = 7, track_title = "花人局" }
+
+[expect.tracks."2d15d8e5-acbe-4801-8d27-ce0824310cf8"]
+fields = { disc = 1, track = 14, track_title = "花に亡霊" }
+
+[expect.tracks."39cda4fd-9b94-4635-a53d-7bb65dac76c7"]
+fields = { disc = 1, track = 5, track_title = "青年期、空き巣" }
+
+[expect.tracks."4eb37be2-07de-4689-bf5d-1bbceff66321"]
+fields = { disc = 1, track = 12, track_title = "幼年期、思い出の中" }
+
+[expect.tracks."54802a19-2222-4884-b78a-0b56c40dccea"]
+fields = { disc = 1, track = 8, track_title = "朱夏期、音楽泥棒" }
+
+[expect.tracks."6f6a60f0-4335-4cfe-ae10-7e2845c39cdf"]
+fields = { disc = 1, track = 2, track_title = "昼鳶" }
+
+[expect.tracks."7431b29a-495f-4831-a8d7-3bcb5c61d327"]
+fields = { disc = 1, track = 9, track_title = "盗作" }
+
+[expect.tracks."ac6ff3ac-d8f3-495b-96c3-5dfc21d296a8"]
+fields = { disc = 1, track = 10, track_title = "思想犯" }
+
+[expect.tracks."b3fb2ee5-8922-4c2e-a34e-42d44f0f2b3a"]
+fields = { disc = 1, track = 3, track_title = "春ひさぎ" }
+
+[expect.tracks."c1cd4821-272a-424b-9d45-0447485e09eb"]
+fields = { disc = 1, track = 6, track_title = "レプリカント" }
+
+[expect.tracks."dccf8791-6e80-4250-98b5-65c9ebb11a88"]
+fields = { disc = 1, track = 11, track_title = "逃亡" }
+
+[expect.tracks."e9c534ea-99ad-40ba-b6ac-9319c13474e6"]
+fields = { disc = 1, track = 13, track_title = "夜行" }
+
+[expect.tracks."f0b4e7dc-0988-4a9d-96b7-88c3860b429e"]
+fields = { disc = 1, track = 4, track_title = "爆弾魔 (Re-Recording)" }

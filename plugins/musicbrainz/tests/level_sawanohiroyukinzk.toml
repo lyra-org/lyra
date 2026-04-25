@@ -1,0 +1,88 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[240124] SawanoHiroyuki[nZk] -  LEveL/05 LEveL (Instrumental).flac"
+album = "LEveL"
+album_artists = ["SawanoHiroyuki[nZk]"]
+artists = ["SawanoHiroyuki[nZk]"]
+title = "LEveL (Instrumental)"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 5
+duration_ms = 180373
+
+[[raw_tags]]
+file_path = "[240124] SawanoHiroyuki[nZk] -  LEveL/04 LEveL -English ver.- (TV size).flac"
+album = "LEveL"
+album_artists = ["SawanoHiroyuki[nZk]"]
+artists = ["SawanoHiroyuki[nZk]:TOMORROW X TOGETHER"]
+title = "LEveL -English ver.- (TV size)"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 5
+duration_ms = 92506
+
+[[raw_tags]]
+file_path = "[240124] SawanoHiroyuki[nZk] -  LEveL/03 LEveL (TV size).flac"
+album = "LEveL"
+album_artists = ["SawanoHiroyuki[nZk]"]
+artists = ["SawanoHiroyuki[nZk]:TOMORROW X TOGETHER"]
+title = "LEveL (TV size)"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 5
+duration_ms = 91493
+
+[[raw_tags]]
+file_path = "[240124] SawanoHiroyuki[nZk] -  LEveL/02 DARK ARIA ＜LV2＞.flac"
+album = "LEveL"
+album_artists = ["SawanoHiroyuki[nZk]"]
+artists = ["SawanoHiroyuki[nZk]:XAI"]
+title = "DARK ARIA <LV2>"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 5
+duration_ms = 142080
+
+[[raw_tags]]
+file_path = "[240124] SawanoHiroyuki[nZk] -  LEveL/01 LEveL.flac"
+album = "LEveL"
+album_artists = ["SawanoHiroyuki[nZk]"]
+artists = ["SawanoHiroyuki[nZk]:TOMORROW X TOGETHER"]
+title = "LEveL"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 5
+duration_ms = 182160
+
+[expect.release]
+ids = { release_group_id = "c48b183e-2697-4f95-9652-36ee8058cff6", release_id = ["a60f04fa-2696-4ab4-968b-047364ee5338", "fa7b749d-a89f-4d81-b69a-3dafdee53460"] }
+fields = { release_title = "LEveL", release_date = "2024-01-24" }
+
+[expect.artists."cb191900-8ad8-46b9-b021-a093ee2b2f9b"]
+fields = { artist_name = "SawanoHiroyuki[nZk]", sort_name = "Sawano, Hiroyuki, nZk" }
+
+[expect.tracks."134c45c0-6a5b-484b-a802-bda4dbc4fdd7"]
+fields = { disc = 1, track = 1, track_title = "LEveL" }
+
+[expect.tracks."2725fd7a-a50d-4012-9ad8-fc80b8ff8801"]
+fields = { disc = 1, track = 4, track_title = "LEveL -English ver.- (TV size)" }
+
+[expect.tracks."59642ef2-f565-4796-95d9-a49687091e3e"]
+fields = { disc = 1, track = 5, track_title = "LEveL (instrumental)" }
+
+[expect.tracks."6680e597-3fb8-49a9-a5eb-892eea5ce524"]
+fields = { disc = 1, track = 2, track_title = "DARK ARIA <LV2>" }
+
+[expect.tracks."6f590fb1-3868-4c96-9d81-3e4240bf6167"]
+fields = { disc = 1, track = 3, track_title = "LEveL (TV size)" }

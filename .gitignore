@@ -1,0 +1,8 @@
+/target
+/static
+
+config.json
+
+*.db
+.lyra/
+.luaurc

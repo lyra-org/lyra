@@ -1,0 +1,43 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "DECO27 - Rabbit Hole (2023) [FLAC]/02. ラビットホール -Instrumental-.flac"
+album = "ラビットホール"
+album_artists = ["DECO*27"]
+artists = ["DECO*27"]
+title = "ラビットホール -Instrumental-"
+genre = "JPop"
+disc_total = 1
+track = 2
+track_total = 2
+duration_ms = 159000
+
+[[raw_tags]]
+file_path = "DECO27 - Rabbit Hole (2023) [FLAC]/01. ラビットホール.flac"
+album = "ラビットホール"
+album_artists = ["DECO*27"]
+artists = ["DECO*27"]
+title = "ラビットホール"
+genre = "JPop"
+disc_total = 1
+track = 1
+track_total = 2
+duration_ms = 159000
+
+[expect.release]
+ids = { release_group_id = "5c7d6238-27ff-4d2c-994e-cedbe3f2ca1d", release_id = "146da426-db38-46fe-a440-9e796eaae33d" }
+fields = { release_title = "ラビットホール", release_date = "2023-05-20" }
+
+[expect.artists."bd247ab3-c22d-4b5d-a6fd-437771cacbbe"]
+fields = { artist_name = "DECO*27", sort_name = "deco27" }
+
+[expect.tracks."301a394c-9f7f-4577-88e8-737072e156c2"]
+fields = { disc = 1, track = 1, track_title = "ラビットホール" }
+
+[expect.tracks."ce417c39-f5c2-48a0-b39b-a2b9ae7ab131"]
+fields = { disc = 1, track = 2, track_title = "ラビットホール -Instrumental-" }

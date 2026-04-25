@@ -1,0 +1,221 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "くじら - 生活を愛せるようになるまで (2022-08-17) [WEB FLAC]/1.13. 生活を愛せるようになるまで.flac"
+album = "生活を愛せるようになるまで"
+album_artists = ["くじら"]
+artists = ["くじら"]
+title = "生活を愛せるようになるまで"
+copyright = "℗ 2021(4,11),2022(1-3,5-10,12,13) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 13
+track_total = 13
+duration_ms = 340346
+
+[[raw_tags]]
+file_path = "くじら - 生活を愛せるようになるまで (2022-08-17) [WEB FLAC]/1.12. 抱きしめたいほど美しい日々に.flac"
+album = "生活を愛せるようになるまで"
+album_artists = ["くじら"]
+artists = ["くじら"]
+title = "抱きしめたいほど美しい日々に"
+copyright = "℗ 2021(4,11),2022(1-3,5-10,12,13) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 12
+track_total = 13
+duration_ms = 185520
+
+[[raw_tags]]
+file_path = "くじら - 生活を愛せるようになるまで (2022-08-17) [WEB FLAC]/1.11. ジオラマの中で.flac"
+album = "生活を愛せるようになるまで"
+album_artists = ["くじら"]
+artists = ["くじら"]
+title = "ジオラマの中で"
+copyright = "℗ 2021(4,11),2022(1-3,5-10,12,13) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 11
+track_total = 13
+duration_ms = 222240
+
+[[raw_tags]]
+file_path = "くじら - 生活を愛せるようになるまで (2022-08-17) [WEB FLAC]/1.10. いのちのせんたく.flac"
+album = "生活を愛せるようになるまで"
+album_artists = ["くじら"]
+artists = ["くじら"]
+title = "いのちのせんたく"
+copyright = "℗ 2021(4,11),2022(1-3,5-10,12,13) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 10
+track_total = 13
+duration_ms = 206000
+
+[[raw_tags]]
+file_path = "くじら - 生活を愛せるようになるまで (2022-08-17) [WEB FLAC]/1.09. 愛など.flac"
+album = "生活を愛せるようになるまで"
+album_artists = ["くじら"]
+artists = ["くじら"]
+title = "愛など"
+copyright = "℗ 2021(4,11),2022(1-3,5-10,12,13) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 9
+track_total = 13
+duration_ms = 198640
+
+[[raw_tags]]
+file_path = "くじら - 生活を愛せるようになるまで (2022-08-17) [WEB FLAC]/1.08. 四月になること.flac"
+album = "生活を愛せるようになるまで"
+album_artists = ["くじら"]
+artists = ["くじら"]
+title = "四月になること"
+copyright = "℗ 2021(4,11),2022(1-3,5-10,12,13) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 8
+track_total = 13
+duration_ms = 198986
+
+[[raw_tags]]
+file_path = "くじら - 生活を愛せるようになるまで (2022-08-17) [WEB FLAC]/1.07. 薄青とキッチン.flac"
+album = "生活を愛せるようになるまで"
+album_artists = ["くじら"]
+artists = ["くじら"]
+title = "薄青とキッチン"
+copyright = "℗ 2021(4,11),2022(1-3,5-10,12,13) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 7
+track_total = 13
+duration_ms = 176666
+
+[[raw_tags]]
+file_path = "くじら - 生活を愛せるようになるまで (2022-08-17) [WEB FLAC]/1.06. エンドロール.flac"
+album = "生活を愛せるようになるまで"
+album_artists = ["くじら"]
+artists = ["くじら"]
+title = "エンドロール"
+copyright = "℗ 2021(4,11),2022(1-3,5-10,12,13) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 6
+track_total = 13
+duration_ms = 236093
+
+[[raw_tags]]
+file_path = "くじら - 生活を愛せるようになるまで (2022-08-17) [WEB FLAC]/1.05. 呼吸.flac"
+album = "生活を愛せるようになるまで"
+album_artists = ["くじら"]
+artists = ["くじら"]
+title = "呼吸"
+copyright = "℗ 2021(4,11),2022(1-3,5-10,12,13) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 5
+track_total = 13
+duration_ms = 184213
+
+[[raw_tags]]
+file_path = "くじら - 生活を愛せるようになるまで (2022-08-17) [WEB FLAC]/1.04. 悪者.flac"
+album = "生活を愛せるようになるまで"
+album_artists = ["くじら"]
+artists = ["くじら"]
+title = "悪者"
+copyright = "℗ 2021(4,11),2022(1-3,5-10,12,13) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 4
+track_total = 13
+duration_ms = 210226
+
+[[raw_tags]]
+file_path = "くじら - 生活を愛せるようになるまで (2022-08-17) [WEB FLAC]/1.03. 水星.flac"
+album = "生活を愛せるようになるまで"
+album_artists = ["くじら"]
+artists = ["くじら"]
+title = "水星"
+copyright = "℗ 2021(4,11),2022(1-3,5-10,12,13) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 3
+track_total = 13
+duration_ms = 218773
+
+[[raw_tags]]
+file_path = "くじら - 生活を愛せるようになるまで (2022-08-17) [WEB FLAC]/1.02. キャラメル.flac"
+album = "生活を愛せるようになるまで"
+album_artists = ["くじら"]
+artists = ["くじら"]
+title = "キャラメル"
+copyright = "℗ 2021(4,11),2022(1-3,5-10,12,13) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 2
+track_total = 13
+duration_ms = 196160
+
+[[raw_tags]]
+file_path = "くじら - 生活を愛せるようになるまで (2022-08-17) [WEB FLAC]/1.01. うそだらけ.flac"
+album = "生活を愛せるようになるまで"
+album_artists = ["くじら"]
+artists = ["くじら"]
+title = "うそだらけ"
+copyright = "℗ 2021(4,11),2022(1-3,5-10,12,13) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 13
+duration_ms = 168133
+
+[expect.release]
+ids = { release_group_id = "86da8fcb-3a56-4467-8f6a-38b540856121", release_id = "8c860d3b-da75-4239-bf2a-b7e42b74cf7c" }
+fields = { release_title = "生活を愛せるようになるまで", release_date = "2022-08-17" }
+
+[expect.artists."f965776a-54a5-4ea7-8fe1-286bbd2ec154"]
+fields = { artist_name = "くじら", sort_name = "Kujira" }
+
+[expect.tracks."02779739-72ee-4f42-941a-5d7ca6300873"]
+fields = { disc = 1, track = 10, track_title = "いのちのせんたく" }
+
+[expect.tracks."0d344a40-ea52-430e-b891-79c7a4e558d7"]
+fields = { disc = 1, track = 3, track_title = "水星" }
+
+[expect.tracks."2162510c-e90d-4e84-b721-1804754513cb"]
+fields = { disc = 1, track = 2, track_title = "キャラメル" }
+
+[expect.tracks."55c6d08e-548a-440c-8e3b-7232a2e1f952"]
+fields = { disc = 1, track = 7, track_title = "薄青とキッチン" }
+
+[expect.tracks."612b3ea7-4701-4d01-8271-b183ceb73509"]
+fields = { disc = 1, track = 6, track_title = "エンドロール" }
+
+[expect.tracks."626797db-41e1-44b1-b003-69dd40c68ed7"]
+fields = { disc = 1, track = 11, track_title = "ジオラマの中で" }
+
+[expect.tracks."7dce24b5-ba11-4961-829d-90ed2b73c2e1"]
+fields = { disc = 1, track = 13, track_title = "生活を愛せるようになるまで" }
+
+[expect.tracks."8e2785f2-ab10-4b3e-8a74-28b38b3a9c65"]
+fields = { disc = 1, track = 4, track_title = "悪者" }
+
+[expect.tracks."95e9c8fd-17fa-45da-b84d-056b833a6001"]
+fields = { disc = 1, track = 1, track_title = "うそだらけ" }
+
+[expect.tracks."b2c37652-f2c4-4074-9f03-dd676974663c"]
+fields = { disc = 1, track = 9, track_title = "愛など" }
+
+[expect.tracks."b597fff6-586e-4e1e-a6ab-1177b5626354"]
+fields = { disc = 1, track = 5, track_title = "呼吸" }
+
+[expect.tracks."e37bdf7f-4ae6-4a09-bef3-beb155156444"]
+fields = { disc = 1, track = 12, track_title = "抱きしめたいほど美しい日々に" }
+
+[expect.tracks."f67db6f5-2594-4f3f-8bc8-247ad25286da"]
+fields = { disc = 1, track = 8, track_title = "四月になること" }

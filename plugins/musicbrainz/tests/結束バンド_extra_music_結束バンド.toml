@@ -1,0 +1,77 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ぼっち・ざ・ろっく！ vol.3/CD/04 あのバンド -路上ライブ instrumental-.flac"
+album = "結束バンド EXTRA MUSIC"
+album_artists = ["結束バンド"]
+artists = ["結束バンド"]
+title = "あのバンド -路上ライブ instrumental-"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 91213
+
+[[raw_tags]]
+file_path = "ぼっち・ざ・ろっく！ vol.3/CD/03 ギターと孤独と蒼い惑星 -Anime Ver.-.flac"
+album = "結束バンド EXTRA MUSIC"
+album_artists = ["結束バンド"]
+artists = ["結束バンド"]
+title = "ギターと孤独と蒼い惑星 -Anime Ver.-"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 107400
+
+[[raw_tags]]
+file_path = "ぼっち・ざ・ろっく！ vol.3/CD/02 カラカラ -instrumental-.flac"
+album = "結束バンド EXTRA MUSIC"
+album_artists = ["結束バンド"]
+artists = ["結束バンド"]
+title = "カラカラ -instrumental-"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 265746
+
+[[raw_tags]]
+file_path = "ぼっち・ざ・ろっく！ vol.3/CD/01 Distortion!! -instrumental-.flac"
+album = "結束バンド EXTRA MUSIC"
+album_artists = ["結束バンド"]
+artists = ["結束バンド"]
+title = "Distortion!! -instrumental-"
+genre = "Soundtrack"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 204493
+
+[expect.release]
+ids = { release_group_id = "8e6fd968-e20c-4822-9923-354edc4ab0df", release_id = "33cc499c-ee5b-4433-a9e7-9641688070e5" }
+fields = { release_title = "結束バンド EXTRA MUSIC", release_date = "2023-02-22" }
+
+[expect.artists."c1b0fe0a-779d-43ed-b193-4370f0d0f88f"]
+fields = { artist_name = "結束バンド", sort_name = "Kessoku Band" }
+
+[expect.tracks."01ca1ae4-fa24-44a7-8fa3-56109ad47ec2"]
+fields = { disc = 1, track = 3, track_title = "ギターと孤独と蒼い惑星 -Anime Ver.-" }
+
+[expect.tracks."48c78716-3d87-47c8-8d08-e19bf3a2e98a"]
+fields = { disc = 1, track = 2, track_title = "カラカラ -instrumental-" }
+
+[expect.tracks."68ae782d-cb47-41b1-8af9-205a94eecbbc"]
+fields = { disc = 1, track = 1, track_title = "Distortion‼ -instrumental-" }
+
+[expect.tracks."6b2766f8-57db-403a-b5cb-bd4c28a9eae7"]
+fields = { disc = 1, track = 4, track_title = "あのバンド -路上ライブinstrumental-" }

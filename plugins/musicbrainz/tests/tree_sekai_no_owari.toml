@@ -1,0 +1,182 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "SEKAI NO OWARI - Tree [2015.1.14] [FLAC]/13 Dragon Night.flac"
+album = "Tree"
+album_artists = ["SEKAI NO OWARI"]
+artists = ["SEKAI NO OWARI"]
+title = "Dragon Night"
+genre = "J-Rock"
+track = 13
+duration_ms = 229320
+
+[[raw_tags]]
+file_path = "SEKAI NO OWARI - Tree [2015.1.14] [FLAC]/12 RPG.flac"
+album = "Tree"
+album_artists = ["SEKAI NO OWARI"]
+artists = ["SEKAI NO OWARI"]
+title = "RPG"
+genre = "J-Rock"
+track = 12
+duration_ms = 291360
+
+[[raw_tags]]
+file_path = "SEKAI NO OWARI - Tree [2015.1.14] [FLAC]/11 PLAY.flac"
+album = "Tree"
+album_artists = ["SEKAI NO OWARI"]
+artists = ["SEKAI NO OWARI"]
+title = "PLAY"
+genre = "J-Rock"
+track = 11
+duration_ms = 240600
+
+[[raw_tags]]
+file_path = "SEKAI NO OWARI - Tree [2015.1.14] [FLAC]/10 broken bone.flac"
+album = "Tree"
+album_artists = ["SEKAI NO OWARI"]
+artists = ["SEKAI NO OWARI"]
+title = "broken bone"
+genre = "J-Rock"
+track = 10
+duration_ms = 173040
+
+[[raw_tags]]
+file_path = "SEKAI NO OWARI - Tree [2015.1.14] [FLAC]/09 Death Disco.flac"
+album = "Tree"
+album_artists = ["SEKAI NO OWARI"]
+artists = ["SEKAI NO OWARI"]
+title = "Death Disco"
+genre = "J-Rock"
+track = 9
+duration_ms = 255120
+
+[[raw_tags]]
+file_path = "SEKAI NO OWARI - Tree [2015.1.14] [FLAC]/08 Gingagai no Akumu.flac"
+album = "Tree"
+album_artists = ["SEKAI NO OWARI"]
+artists = ["SEKAI NO OWARI"]
+title = "銀河街の悪夢 (Gingagai no Akumu)"
+genre = "J-Rock"
+track = 8
+duration_ms = 382800
+
+[[raw_tags]]
+file_path = "SEKAI NO OWARI - Tree [2015.1.14] [FLAC]/07 Pierrot.flac"
+album = "Tree"
+album_artists = ["SEKAI NO OWARI"]
+artists = ["SEKAI NO OWARI"]
+title = "ピエロ (Pierrot)"
+genre = "J-Rock"
+track = 7
+duration_ms = 338280
+
+[[raw_tags]]
+file_path = "SEKAI NO OWARI - Tree [2015.1.14] [FLAC]/06 Mermaid Rhapsody.flac"
+album = "Tree"
+album_artists = ["SEKAI NO OWARI"]
+artists = ["SEKAI NO OWARI"]
+title = "マーメイドラプソディー (Mermaid Rhapsody)"
+genre = "J-Rock"
+track = 6
+duration_ms = 320400
+
+[[raw_tags]]
+file_path = "SEKAI NO OWARI - Tree [2015.1.14] [FLAC]/05 Earth Child.flac"
+album = "Tree"
+album_artists = ["SEKAI NO OWARI"]
+artists = ["SEKAI NO OWARI"]
+title = "アースチャイルド (Earth Child)"
+genre = "J-Rock"
+track = 5
+duration_ms = 263880
+
+[[raw_tags]]
+file_path = "SEKAI NO OWARI - Tree [2015.1.14] [FLAC]/04 Moonlight Station.flac"
+album = "Tree"
+album_artists = ["SEKAI NO OWARI"]
+artists = ["SEKAI NO OWARI"]
+title = "ムーンライトステーション (Moonlight Station)"
+genre = "J-Rock"
+track = 4
+duration_ms = 232560
+
+[[raw_tags]]
+file_path = "SEKAI NO OWARI - Tree [2015.1.14] [FLAC]/03 Snow Magic Fantasy.flac"
+album = "Tree"
+album_artists = ["SEKAI NO OWARI"]
+artists = ["SEKAI NO OWARI"]
+title = "スノーマジックファンタジー (Snow Magic Fantasy)"
+genre = "J-Rock"
+track = 3
+duration_ms = 316080
+
+[[raw_tags]]
+file_path = "SEKAI NO OWARI - Tree [2015.1.14] [FLAC]/02 Honoo to Mori no Carnival.flac"
+album = "Tree"
+album_artists = ["SEKAI NO OWARI"]
+artists = ["SEKAI NO OWARI"]
+title = "炎と森のカーニバル (Honoo to Mori no Carnival)"
+genre = "J-Rock"
+track = 2
+duration_ms = 298080
+
+[[raw_tags]]
+file_path = "SEKAI NO OWARI - Tree [2015.1.14] [FLAC]/01 the bell.flac"
+album = "Tree"
+album_artists = ["SEKAI NO OWARI"]
+artists = ["SEKAI NO OWARI"]
+title = "the bell"
+genre = "J-Rock"
+track = 1
+duration_ms = 38280
+
+[expect.release]
+ids = { release_group_id = "b221e5a8-4d95-4de4-ae82-3475a33d1f42", release_id = ["0af5cdf2-943a-427f-a2d4-2098a7d23017", "1f176ffe-c13d-41a5-8f9b-7a1c1e1c6da5"] }
+fields = { release_title = "Tree" }
+
+[expect.artists."d9dbfe6a-8346-4337-8614-fe96aab63927"]
+fields = { artist_name = "SEKAI NO OWARI", sort_name = "SEKAI NO OWARI" }
+
+[expect.tracks."0a0c8ecc-b9ab-4d6f-ba7f-d46f5192633d"]
+fields = { disc = 1, track = 2, track_title = "炎と森のカーニバル" }
+
+[expect.tracks."1ae91e7b-123c-4c5d-bf6f-c8a0189811d1"]
+fields = { disc = 1, track = 1, track_title = "the bell" }
+
+[expect.tracks."1ce0070e-07ea-47bd-b8e3-db3cc909cff7"]
+fields = { disc = 1, track = 5, track_title = "アースチャイルド" }
+
+[expect.tracks."300915af-f2f7-4784-be45-bd56897df535"]
+fields = { disc = 1, track = 8, track_title = "銀河街の悪夢" }
+
+[expect.tracks."400f67c8-e4c3-4621-be16-d718c25bd466"]
+fields = { disc = 1, track = 13, track_title = "Dragon Night" }
+
+[expect.tracks."5028d2b0-ef29-43f3-bee1-7622f56efdc1"]
+fields = { disc = 1, track = 4, track_title = "ムーンライトステーション" }
+
+[expect.tracks."54bc6502-7ed3-4600-80da-0b51258d4b19"]
+fields = { disc = 1, track = 7, track_title = "ピエロ" }
+
+[expect.tracks."75f5a6bf-dcb3-4fde-846a-acb1e9ea287c"]
+fields = { disc = 1, track = 6, track_title = "マーメイドラプソディー" }
+
+[expect.tracks."84a529c8-868b-491c-b2d1-10bd5dec2591"]
+fields = { disc = 1, track = 12, track_title = "RPG" }
+
+[expect.tracks."bf49eb79-dd28-4582-97bb-2e3f787aac2f"]
+fields = { disc = 1, track = 10, track_title = "broken bone" }
+
+[expect.tracks."cff92a39-de70-4e2f-a0c2-1e1464f95711"]
+fields = { disc = 1, track = 3, track_title = "スノーマジックファンタジー" }
+
+[expect.tracks."d5482d71-1704-4c8e-a602-44a8599c9cf0"]
+fields = { disc = 1, track = 11, track_title = "PLAY" }
+
+[expect.tracks."e8d973f2-b6c8-4ab3-b083-4aeabc7bed9b"]
+fields = { disc = 1, track = 9, track_title = "Death Disco" }

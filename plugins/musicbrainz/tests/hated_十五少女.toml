@@ -1,0 +1,91 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2021.09.01] 十五少女 1st EP「HATED」[FLAC]/06. ノンブレス・オブリージュ (十五少女 Cover).flac"
+album = "HATED"
+album_artists = ["十五少女", "十五少女"]
+artists = ["十五少女"]
+title = "ノンブレス・オブリージュ (十五少女 Cover)"
+genre = "Pop"
+track = 6
+duration_ms = 205345
+
+[[raw_tags]]
+file_path = "[2021.09.01] 十五少女 1st EP「HATED」[FLAC]/05. 死にたいと言ってくれ。 HATED Ver..flac"
+album = "HATED"
+album_artists = ["十五少女", "十五少女"]
+artists = ["十五少女"]
+title = "死にたいと言ってくれ。 HATED Ver."
+genre = "Pop"
+track = 5
+duration_ms = 236919
+
+[[raw_tags]]
+file_path = "[2021.09.01] 十五少女 1st EP「HATED」[FLAC]/04. 還る HATED ver..flac"
+album = "HATED"
+album_artists = ["十五少女", "十五少女"]
+artists = ["十五少女"]
+title = "還る HATED ver."
+genre = "Pop"
+track = 4
+duration_ms = 342265
+
+[[raw_tags]]
+file_path = "[2021.09.01] 十五少女 1st EP「HATED」[FLAC]/03. 何度死んでも構わない。だから HATED Ver..flac"
+album = "HATED"
+album_artists = ["十五少女", "十五少女"]
+artists = ["十五少女"]
+title = "何度死んでも構わない。だから HATED Ver."
+genre = "Pop"
+track = 3
+duration_ms = 238585
+
+[[raw_tags]]
+file_path = "[2021.09.01] 十五少女 1st EP「HATED」[FLAC]/02. 今日だけは。 HATED Ver..flac"
+album = "HATED"
+album_artists = ["十五少女", "十五少女"]
+artists = ["十五少女"]
+title = "今日だけは。 HATED Ver."
+genre = "Pop"
+track = 2
+duration_ms = 275199
+
+[[raw_tags]]
+file_path = "[2021.09.01] 十五少女 1st EP「HATED」[FLAC]/01. 君が死んだ日の天気は HATED Ver..flac"
+album = "HATED"
+album_artists = ["十五少女", "十五少女"]
+artists = ["十五少女"]
+title = "君が死んだ日の天気は HATED Ver."
+genre = "Pop"
+track = 1
+duration_ms = 254959
+
+[expect.release]
+ids = { release_group_id = "9e874934-b5fc-4775-81f0-24fe519cf52c", release_id = "25183e35-99b7-4445-84cf-77b72750f492" }
+fields = { release_title = "HATED", release_date = "2021-09-01" }
+
+[expect.artists."980c09f5-552b-4321-b67e-e9684be6efbf"]
+fields = { artist_name = "十五少女", sort_name = "Fifteen voices" }
+
+[expect.tracks."0c67ca51-5ae2-4628-bf82-9931b5907180"]
+fields = { disc = 1, track = 5, track_title = "死にたいと言ってくれ。" }
+
+[expect.tracks."62307a90-1ff5-4c61-90ce-40b68fa73aca"]
+fields = { disc = 1, track = 6, track_title = "ノンブレス・オブリージュ（十五少女Cover）" }
+
+[expect.tracks."67a09434-a0c5-4a0f-8b2f-eb95804ce779"]
+fields = { disc = 1, track = 2, track_title = "今日だけは。" }
+
+[expect.tracks."a18a1027-7939-45ca-9d2b-2741414d35d0"]
+fields = { disc = 1, track = 3, track_title = "何度死んでも構わない。だから" }
+
+[expect.tracks."af4a78e1-5235-43f7-99cf-f91e8a921c87"]
+fields = { disc = 1, track = 4, track_title = "還る" }
+
+[expect.tracks."eca384f2-4dab-4550-a0af-627f6ec7ad62"]
+fields = { disc = 1, track = 1, track_title = "君が死んだ日の天気は" }

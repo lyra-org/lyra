@@ -1,0 +1,25 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2024.06.26] Otomodachi [FLAC 24-48]/01. Otomodachi.flac"
+album = "Otomodachi"
+artists = ["Phantom Siita"]
+title = "Otomodachi"
+genre = "Jpop"
+track = 1
+duration_ms = 194634
+
+[expect.release]
+ids = { release_id = ["ed7fa8e9-a922-46b1-b8ea-680dc21e6c7e", "3791e5aa-4505-4b3d-9e27-9c6a11189585"] }
+fields = { release_title = "おともだち", release_date = "2024-06-26" }
+
+[expect.artists."10527a74-4a9a-4d5a-9deb-96fb4242d90f"]
+fields = { artist_name = "ファントムシータ", sort_name = "Phantom Siita" }
+
+[expect.tracks."33bd1f4c-7042-48b8-a27e-e36ca9dea24d"]
+fields = { disc = 1, track = 1, track_title = "おともだち" }

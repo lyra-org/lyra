@@ -1,0 +1,77 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Vaundy - 裸の勇者 (2022-02-23) [WEB FLAC]/1.04. おもかげ -self cover-.flac"
+album = "裸の勇者"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "おもかげ -self cover-"
+copyright = "℗ 2022 SDR Inc."
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 209920
+
+[[raw_tags]]
+file_path = "Vaundy - 裸の勇者 (2022-02-23) [WEB FLAC]/1.03. HERO.flac"
+album = "裸の勇者"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "HERO"
+copyright = "℗ 2022 SDR Inc."
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 200413
+
+[[raw_tags]]
+file_path = "Vaundy - 裸の勇者 (2022-02-23) [WEB FLAC]/1.02. 二人話.flac"
+album = "裸の勇者"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "二人話"
+copyright = "℗ 2022 SDR Inc."
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 204893
+
+[[raw_tags]]
+file_path = "Vaundy - 裸の勇者 (2022-02-23) [WEB FLAC]/1.01. 裸の勇者.flac"
+album = "裸の勇者"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "裸の勇者"
+copyright = "℗ 2022 SDR Inc."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 201973
+
+[expect.release]
+ids = { release_group_id = "1167f128-43e3-442d-9c66-d694d7ee2a8d", release_id = ["b234ff7c-5d6e-4d2e-94c8-b850e8b522ba", "027cb83d-d56d-46a3-b542-423ef2ede9d4"] }
+fields = { release_title = "裸の勇者" }
+
+[expect.artists."114b26ff-a1fe-41f3-9df8-5c093afe9c56"]
+fields = { artist_name = "Vaundy", sort_name = "Vaundy" }
+
+[expect.tracks."675f0369-977e-4648-b57d-9bbe5457d0b0"]
+fields = { disc = 1, track = 2, track_title = "二人話" }
+
+[expect.tracks."98ef7264-1b3d-4325-bae1-e0caadedf0c5"]
+fields = { disc = 1, track = 3, track_title = "HERO" }
+
+[expect.tracks."b62e53d5-e3f7-48bf-b22b-2e2ed2981f72"]
+fields = { disc = 1, track = 1, track_title = "裸の勇者" }
+
+[expect.tracks."c5980fa0-df8d-4b93-ac13-82943df18691"]
+fields = { disc = 1, track = 4, track_title = "おもかげ -self cover-" }

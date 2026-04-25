@@ -1,0 +1,153 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "2018-03-14 - 緑黄色社会/10 - またね.flac"
+album = "緑黄色社会"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "またね"
+genre = "J-Pop"
+track = 10
+track_total = 10
+duration_ms = 257720
+
+[[raw_tags]]
+file_path = "2018-03-14 - 緑黄色社会/09 - 真夜中ドライブ.flac"
+album = "緑黄色社会"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "真夜中ドライブ"
+genre = "J-Pop"
+track = 9
+track_total = 10
+duration_ms = 206133
+
+[[raw_tags]]
+file_path = "2018-03-14 - 緑黄色社会/08 - regret.flac"
+album = "緑黄色社会"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "regret"
+genre = "J-Pop"
+track = 8
+track_total = 10
+duration_ms = 223826
+
+[[raw_tags]]
+file_path = "2018-03-14 - 緑黄色社会/07 - 恋って.flac"
+album = "緑黄色社会"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "恋って"
+genre = "J-Pop"
+track = 7
+track_total = 10
+duration_ms = 251413
+
+[[raw_tags]]
+file_path = "2018-03-14 - 緑黄色社会/06 - 君が望む世界.flac"
+album = "緑黄色社会"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "君が望む世界"
+genre = "J-Pop"
+track = 6
+track_total = 10
+duration_ms = 283253
+
+[[raw_tags]]
+file_path = "2018-03-14 - 緑黄色社会/05 - Alice.flac"
+album = "緑黄色社会"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "Alice"
+genre = "J-Pop"
+track = 5
+track_total = 10
+duration_ms = 215533
+
+[[raw_tags]]
+file_path = "2018-03-14 - 緑黄色社会/04 - キラキラ.flac"
+album = "緑黄色社会"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "キラキラ"
+genre = "J-Pop"
+track = 4
+track_total = 10
+duration_ms = 228573
+
+[[raw_tags]]
+file_path = "2018-03-14 - 緑黄色社会/03 - 大人ごっこ.flac"
+album = "緑黄色社会"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "大人ごっこ"
+genre = "J-Pop"
+track = 3
+track_total = 10
+duration_ms = 282293
+
+[[raw_tags]]
+file_path = "2018-03-14 - 緑黄色社会/02 - 始まりの歌.flac"
+album = "緑黄色社会"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "始まりの歌"
+genre = "J-Pop"
+track = 2
+track_total = 10
+duration_ms = 266533
+
+[[raw_tags]]
+file_path = "2018-03-14 - 緑黄色社会/01 - Re.flac"
+album = "緑黄色社会"
+album_artists = ["緑黄色社会"]
+artists = ["緑黄色社会"]
+title = "Re"
+genre = "J-Pop"
+track = 1
+track_total = 10
+duration_ms = 227586
+
+[expect.release]
+ids = { release_group_id = "cd161094-0246-4105-96a6-31e701124270", release_id = ["a52ddd83-f9f1-4f06-8916-4fce1fb14f14", "d4ef6c10-2a5b-4740-a2d7-ff58d20ee76c"] }
+fields = { release_title = "緑黄色社会" }
+
+[expect.artists."3ed40054-97ab-4783-b3c3-15c2c7b06546"]
+fields = { artist_name = "緑黄色社会", sort_name = "Ryokuoushoku Shakai" }
+
+[expect.tracks."0875720f-ec0c-4881-80df-d74889ba427c"]
+fields = { disc = 1, track = 10, track_title = "またね" }
+
+[expect.tracks."11d721a6-7086-4363-b310-f8f3fe1a973a"]
+fields = { disc = 1, track = 1, track_title = "Re" }
+
+[expect.tracks."132857c0-fad7-49cc-8a21-32ae21cfd899"]
+fields = { disc = 1, track = 6, track_title = "君が望む世界" }
+
+[expect.tracks."21393a25-cfab-47b6-a27e-d8110247ef8b"]
+fields = { disc = 1, track = 7, track_title = "恋って" }
+
+[expect.tracks."2a8b7029-74b2-4d39-a6f4-c29b126081bf"]
+fields = { disc = 1, track = 5, track_title = "Alice" }
+
+[expect.tracks."2f0efda4-0c39-444f-b43f-1b0bae6c99a0"]
+fields = { disc = 1, track = 4, track_title = "キラキラ" }
+
+[expect.tracks."6b8e5d04-2d58-4a08-8ca7-f0fc2d1a61f0"]
+fields = { disc = 1, track = 2, track_title = "始まりの歌" }
+
+[expect.tracks."9d308c71-e21c-4fd3-902e-5bbcad6f9a5a"]
+fields = { disc = 1, track = 9, track_title = "真夜中ドライブ" }
+
+[expect.tracks."b5ca6ef1-d38c-4590-839d-a3bb74c798eb"]
+fields = { disc = 1, track = 3, track_title = "大人ごっこ" }
+
+[expect.tracks."d13fe0ef-ebf2-4ac5-9773-881e91b18d48"]
+fields = { disc = 1, track = 8, track_title = "regret" }

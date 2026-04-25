@@ -1,0 +1,139 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ずっと真夜中でいいのに。 - 沈香学 (2023) [WEB-FLAC]/13. 上辺の私自身なんだよ.flac"
+album = "沈香学"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ZUTOMAYO"]
+title = "上辺の私自身なんだよ"
+disc = 1
+track = 13
+duration_ms = 247813
+
+[[raw_tags]]
+file_path = "ずっと真夜中でいいのに。 - 沈香学 (2023) [WEB-FLAC]/12. ミラーチューン.flac"
+album = "沈香学"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ZUTOMAYO"]
+title = "ミラーチューン"
+disc = 1
+track = 12
+duration_ms = 249800
+
+[[raw_tags]]
+file_path = "ずっと真夜中でいいのに。 - 沈香学 (2023) [WEB-FLAC]/11. 消えてしまいそうです.flac"
+album = "沈香学"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ZUTOMAYO"]
+title = "消えてしまいそうです"
+disc = 1
+track = 11
+duration_ms = 258466
+
+[[raw_tags]]
+file_path = "ずっと真夜中でいいのに。 - 沈香学 (2023) [WEB-FLAC]/10. ばかじゃないのに.flac"
+album = "沈香学"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ZUTOMAYO"]
+title = "ばかじゃないのに"
+disc = 1
+track = 10
+duration_ms = 254826
+
+[[raw_tags]]
+file_path = "ずっと真夜中でいいのに。 - 沈香学 (2023) [WEB-FLAC]/09. 不法侵入.flac"
+album = "沈香学"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ZUTOMAYO"]
+title = "不法侵入"
+disc = 1
+track = 9
+duration_ms = 260666
+
+[[raw_tags]]
+file_path = "ずっと真夜中でいいのに。 - 沈香学 (2023) [WEB-FLAC]/08. 袖のキルト.flac"
+album = "沈香学"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ZUTOMAYO"]
+title = "袖のキルト"
+disc = 1
+track = 8
+duration_ms = 254773
+
+[[raw_tags]]
+file_path = "ずっと真夜中でいいのに。 - 沈香学 (2023) [WEB-FLAC]/07. 夏枯れ.flac"
+album = "沈香学"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ZUTOMAYO"]
+title = "夏枯れ"
+disc = 1
+track = 7
+duration_ms = 235733
+
+[[raw_tags]]
+file_path = "ずっと真夜中でいいのに。 - 沈香学 (2023) [WEB-FLAC]/06. あいつら全員同窓会.flac"
+album = "沈香学"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ZUTOMAYO"]
+title = "あいつら全員同窓会"
+disc = 1
+track = 6
+duration_ms = 254533
+
+[[raw_tags]]
+file_path = "ずっと真夜中でいいのに。 - 沈香学 (2023) [WEB-FLAC]/05. 馴れ合いサーブ.flac"
+album = "沈香学"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ZUTOMAYO"]
+title = "馴れ合いサーブ"
+disc = 1
+track = 5
+duration_ms = 237866
+
+[[raw_tags]]
+file_path = "ずっと真夜中でいいのに。 - 沈香学 (2023) [WEB-FLAC]/04. 綺羅キラー [feat. Mori Calliope].flac"
+album = "沈香学"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ZUTOMAYO", "Mori Calliope"]
+title = "綺羅キラー [feat. Mori Calliope]"
+disc = 1
+track = 4
+duration_ms = 253133
+
+[[raw_tags]]
+file_path = "ずっと真夜中でいいのに。 - 沈香学 (2023) [WEB-FLAC]/03. 猫リセット.flac"
+album = "沈香学"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ZUTOMAYO"]
+title = "猫リセット"
+disc = 1
+track = 3
+duration_ms = 246293
+
+[[raw_tags]]
+file_path = "ずっと真夜中でいいのに。 - 沈香学 (2023) [WEB-FLAC]/02. 残機.flac"
+album = "沈香学"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ZUTOMAYO"]
+title = "残機"
+disc = 1
+track = 2
+duration_ms = 230373
+
+[[raw_tags]]
+file_path = "ずっと真夜中でいいのに。 - 沈香学 (2023) [WEB-FLAC]/01. 花一匁.flac"
+album = "沈香学"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ZUTOMAYO"]
+title = "花一匁"
+disc = 1
+track = 1
+duration_ms = 250613
+
+[expect.release]
+ids = { release_id = ["00537282-9ae6-4e11-b9ad-1c55c10b3178", "a4b681a1-0251-444c-bbfc-6a937135acc4", "e3200ed1-4c27-4766-bd8f-3ed62aa2874d"] }

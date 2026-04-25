@@ -1,0 +1,28 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ずっと真夜中でいいのに。 — クリームで会いにいけますか (2025) [WEB-FLAC]/01. クリームで会いにいけますか.flac"
+album = "クリームで会いにいけますか"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "クリームで会いにいけますか"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 234000
+
+[expect.release]
+ids = { release_group_id = "d2fb099b-628f-4bfb-9942-f3e98650ef1f", release_id = "a5673089-4490-40ce-bba5-7f653396427c" }
+fields = { release_title = "クリームで会いにいけますか", release_date = "2025-05-22" }
+
+[expect.artists."14d2a235-30e2-489f-b490-f9dc7d2c0861"]
+fields = { artist_name = "ずっと真夜中でいいのに。", sort_name = "Zutto Mayonaka de Iinoni." }
+
+[expect.tracks."2907d650-4922-4fbc-a7ee-421da188aac8"]
+fields = { disc = 1, track = 1, track_title = "クリームで会いにいけますか" }

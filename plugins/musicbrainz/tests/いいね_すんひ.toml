@@ -1,0 +1,30 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "すんひ - ♡いいね [FLAC] [16B-44.1kHz]/01. すんひ - ♡いいね.flac"
+album = "♡いいね"
+album_artists = ["すんひ"]
+artists = ["すんひ"]
+title = "♡いいね"
+copyright = "℗ 2021 UNIVERSAL MUSIC LLC"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 199066
+
+[expect.release]
+ids = { release_id = "7674a553-88ec-44ea-ad68-935a7d505fc2" }
+fields = { release_title = "♡いいね", release_date = "2021-03-03" }
+
+[expect.artists."8b5167cd-63de-401b-a734-ad9245432dba"]
+fields = { artist_name = "さんひ", sort_name = "Sanghee" }
+
+[expect.tracks."f1b199c4-d981-437c-a2d1-9c3f8d491113"]
+fields = { disc = 1, track = 1, track_title = "♡いいね" }

@@ -1,0 +1,53 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Official髭男dism - HELLO EP (2020-08-05) [WEB FLAC]/1.04. 夏模様の猫.flac"
+album = "HELLO EP"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "夏模様の猫"
+disc = 1
+track = 4
+track_total = 4
+duration_ms = 132960
+
+[[raw_tags]]
+file_path = "Official髭男dism - HELLO EP (2020-08-05) [WEB FLAC]/1.03. Laughter.flac"
+album = "HELLO EP"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Laughter"
+disc = 1
+track = 3
+track_total = 4
+duration_ms = 351426
+
+[[raw_tags]]
+file_path = "Official髭男dism - HELLO EP (2020-08-05) [WEB FLAC]/1.02. パラボラ.flac"
+album = "HELLO EP"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "パラボラ"
+disc = 1
+track = 2
+track_total = 4
+duration_ms = 303066
+
+[[raw_tags]]
+file_path = "Official髭男dism - HELLO EP (2020-08-05) [WEB FLAC]/1.01. HELLO.flac"
+album = "HELLO EP"
+album_artists = ["Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "HELLO"
+disc = 1
+track = 1
+track_total = 4
+duration_ms = 280453
+
+[expect.release]
+ids = { release_id = ["c0d64294-0e22-4752-b8f2-4cc8f3f92f3a", "0e61d55b-fb76-4f22-8dca-db3807eb4d21"] }

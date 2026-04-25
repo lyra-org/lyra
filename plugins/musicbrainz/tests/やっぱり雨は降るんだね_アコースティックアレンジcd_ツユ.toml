@@ -1,0 +1,41 @@
+plugin = "musicbrainz"
+
+[library]
+directory = "."
+language = "jpn"
+country = "JP"
+
+[[raw_tags]]
+file_path = "ツユ — やっぱり雨は降るんだね アコースティックアレンジCD (2020) {no cat#} [CD-FLAC]/02. くらべられっ子 Acoustic arrange ver..flac"
+album = "やっぱり雨は降るんだね アコースティックアレンジCD"
+album_artists = ["ツユ"]
+artists = ["ツユ"]
+title = "くらべられっ子 Acoustic arrange ver."
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 2
+duration_ms = 226733
+
+[[raw_tags]]
+file_path = "ツユ — やっぱり雨は降るんだね アコースティックアレンジCD (2020) {no cat#} [CD-FLAC]/01. やっぱり雨は降るんだね Acoustic arrange ver..flac"
+album = "やっぱり雨は降るんだね アコースティックアレンジCD"
+album_artists = ["ツユ"]
+artists = ["ツユ"]
+title = "やっぱり雨は降るんだね Acoustic arrange ver."
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 2
+duration_ms = 214120
+
+[expect.release]
+ids = { release_id = "458e3ef5-ed19-40cf-82d1-7ab4556338f6" }
+
+[expect.tracks."193c7537-e87c-4883-abda-8984c6d49492"]
+fields = { track = 1, track_title = "やっぱり雨は降るんだね Acoustic arrange ver." }
+
+[expect.tracks."e38faa3e-c9a4-4acb-ba21-0728df7b2fe5"]
+fields = { track = 2, track_title = "くらべられっ子 Acoustic arrange ver." }

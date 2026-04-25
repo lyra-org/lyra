@@ -1,0 +1,117 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Novelbright - 「EN.」 (2019-09-04) [WEB FLAC]/08. 拝啓、親愛なる君へ.flac"
+album = "「EN.」"
+album_artists = ["Novelbright"]
+artists = ["Novelbright"]
+title = "拝啓、親愛なる君へ"
+track = 8
+track_total = 8
+duration_ms = 247306
+
+[[raw_tags]]
+file_path = "Novelbright - 「EN.」 (2019-09-04) [WEB FLAC]/07. Heart voice.flac"
+album = "「EN.」"
+album_artists = ["Novelbright"]
+artists = ["Novelbright"]
+title = "Heart voice"
+track = 7
+track_total = 8
+duration_ms = 261146
+
+[[raw_tags]]
+file_path = "Novelbright - 「EN.」 (2019-09-04) [WEB FLAC]/06. Rain Dancer.flac"
+album = "「EN.」"
+album_artists = ["Novelbright"]
+artists = ["Novelbright"]
+title = "Rain Dancer"
+track = 6
+track_total = 8
+duration_ms = 218933
+
+[[raw_tags]]
+file_path = "Novelbright - 「EN.」 (2019-09-04) [WEB FLAC]/05. parade-Я-.flac"
+album = "「EN.」"
+album_artists = ["Novelbright"]
+artists = ["Novelbright"]
+title = "parade-Я-"
+track = 5
+track_total = 8
+duration_ms = 74693
+
+[[raw_tags]]
+file_path = "Novelbright - 「EN.」 (2019-09-04) [WEB FLAC]/04. フォーリン・ヴィーナス.flac"
+album = "「EN.」"
+album_artists = ["Novelbright"]
+artists = ["Novelbright"]
+title = "フォーリン・ヴィーナス"
+track = 4
+track_total = 8
+duration_ms = 231520
+
+[[raw_tags]]
+file_path = "Novelbright - 「EN.」 (2019-09-04) [WEB FLAC]/03. ふたつの影.flac"
+album = "「EN.」"
+album_artists = ["Novelbright"]
+artists = ["Novelbright"]
+title = "ふたつの影"
+track = 3
+track_total = 8
+duration_ms = 277280
+
+[[raw_tags]]
+file_path = "Novelbright - 「EN.」 (2019-09-04) [WEB FLAC]/02. the Eternal oath.flac"
+album = "「EN.」"
+album_artists = ["Novelbright"]
+artists = ["Novelbright"]
+title = "the Eternal oath"
+track = 2
+track_total = 8
+duration_ms = 258333
+
+[[raw_tags]]
+file_path = "Novelbright - 「EN.」 (2019-09-04) [WEB FLAC]/01. Revive.flac"
+album = "「EN.」"
+album_artists = ["Novelbright"]
+artists = ["Novelbright"]
+title = "Revive"
+track = 1
+track_total = 8
+duration_ms = 198453
+
+[expect.release]
+ids = { release_group_id = "0814569f-d47f-44ad-abb2-61e6df99d7ea", release_id = "72151027-1d0d-462b-bb0f-e2e34e087a7c" }
+fields = { release_title = "EN.", release_date = "2019-09-04" }
+
+[expect.artists."f1d9bc16-a8a2-4733-9b9d-2e101e010ea0"]
+fields = { artist_name = "Novelbright", sort_name = "Novelbright" }
+
+[expect.tracks."1616730b-39dd-4cab-ad44-2052c76f0fce"]
+fields = { disc = 1, track = 6, track_title = "Rain Dancer" }
+
+[expect.tracks."58d30807-87e7-4907-9f6e-10e8a8d9913a"]
+fields = { disc = 1, track = 7, track_title = "Heart voice" }
+
+[expect.tracks."627e6120-47b1-47af-892a-c2a9dd13d944"]
+fields = { disc = 1, track = 4, track_title = "フォーリン・ヴィーナス" }
+
+[expect.tracks."80665bb1-d611-4784-86ce-7dec76822d4d"]
+fields = { disc = 1, track = 5, track_title = "parade –Я–" }
+
+[expect.tracks."b11303c5-5f6d-4864-9eee-06924906019a"]
+fields = { disc = 1, track = 1, track_title = "Revive" }
+
+[expect.tracks."e08911c7-7db8-48c6-8083-bb6ff9fd2688"]
+fields = { disc = 1, track = 8, track_title = "拝啓、親愛なる君へ" }
+
+[expect.tracks."ecdfb04b-2a26-4d22-ba47-45b66b5fb6d8"]
+fields = { disc = 1, track = 3, track_title = "ふたつの影" }
+
+[expect.tracks."f8f70b0e-ed18-4ba5-801d-c8e6c5f57df4"]
+fields = { disc = 1, track = 2, track_title = "the Eternal oath" }

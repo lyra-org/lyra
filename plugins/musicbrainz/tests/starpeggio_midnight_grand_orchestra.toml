@@ -1,0 +1,113 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2023.12.13] Midnight Grand Orchestra - Starpeggio [CD-FLAC+CUE+LOG][TFCC-81055]/08 夜を待つよ.flac"
+album = "Starpeggio"
+album_artists = ["Midnight Grand Orchestra"]
+artists = ["Midnight Grand Orchestra"]
+title = "夜を待つよ"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 8
+duration_ms = 248506
+
+[[raw_tags]]
+file_path = "[2023.12.13] Midnight Grand Orchestra - Starpeggio [CD-FLAC+CUE+LOG][TFCC-81055]/07 ソリロキー.flac"
+album = "Starpeggio"
+album_artists = ["Midnight Grand Orchestra"]
+artists = ["Midnight Grand Orchestra"]
+title = "ソリロキー"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 8
+duration_ms = 205346
+
+[[raw_tags]]
+file_path = "[2023.12.13] Midnight Grand Orchestra - Starpeggio [CD-FLAC+CUE+LOG][TFCC-81055]/06 Starpeggio.flac"
+album = "Starpeggio"
+album_artists = ["Midnight Grand Orchestra"]
+artists = ["Midnight Grand Orchestra"]
+title = "Starpeggio"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 8
+duration_ms = 74280
+
+[[raw_tags]]
+file_path = "[2023.12.13] Midnight Grand Orchestra - Starpeggio [CD-FLAC+CUE+LOG][TFCC-81055]/05 Blackhole Dancehall.flac"
+album = "Starpeggio"
+album_artists = ["Midnight Grand Orchestra"]
+artists = ["Midnight Grand Orchestra"]
+title = "Blackhole Dancehall"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 8
+duration_ms = 192493
+
+[[raw_tags]]
+file_path = "[2023.12.13] Midnight Grand Orchestra - Starpeggio [CD-FLAC+CUE+LOG][TFCC-81055]/04 Igniter.flac"
+album = "Starpeggio"
+album_artists = ["Midnight Grand Orchestra"]
+artists = ["Midnight Grand Orchestra"]
+title = "Igniter"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 8
+duration_ms = 192560
+
+[[raw_tags]]
+file_path = "[2023.12.13] Midnight Grand Orchestra - Starpeggio [CD-FLAC+CUE+LOG][TFCC-81055]/03 Midnight Mission.flac"
+album = "Starpeggio"
+album_artists = ["Midnight Grand Orchestra"]
+artists = ["Midnight Grand Orchestra"]
+title = "Midnight Mission"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 8
+duration_ms = 222933
+
+[[raw_tags]]
+file_path = "[2023.12.13] Midnight Grand Orchestra - Starpeggio [CD-FLAC+CUE+LOG][TFCC-81055]/02 Moonlightspeed.flac"
+album = "Starpeggio"
+album_artists = ["Midnight Grand Orchestra"]
+artists = ["Midnight Grand Orchestra"]
+title = "Moonlightspeed"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 8
+duration_ms = 193666
+
+[[raw_tags]]
+file_path = "[2023.12.13] Midnight Grand Orchestra - Starpeggio [CD-FLAC+CUE+LOG][TFCC-81055]/01 Light The Light.flac"
+album = "Starpeggio"
+album_artists = ["Midnight Grand Orchestra"]
+artists = ["Midnight Grand Orchestra"]
+title = "Light The Light"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 8
+duration_ms = 199093
+
+[expect.release]
+ids = { release_id = ["391cfbee-670e-483f-903f-01fe594c8aa7", "87595d01-7a2d-445e-a057-bdb089418633", "57f74466-25c7-4bbb-8118-b32956a9641b"] }

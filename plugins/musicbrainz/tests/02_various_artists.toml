@@ -1,0 +1,152 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "KANKAN - 02 - 2022-11-11 (WEB - FLAC - 2448)/13 缶缶 & yowanecity - カーテンコール [Explicit].flac"
+album = "02 "
+album_artists = ["VARIOUS ARTISTS"]
+artists = ["缶缶 & yowanecity"]
+title = "カーテンコール [Explicit]"
+genre = "Pop"
+track = 13
+track_total = 13
+duration_ms = 200867
+
+[[raw_tags]]
+file_path = "KANKAN - 02 - 2022-11-11 (WEB - FLAC - 2448)/12 缶缶 feat. なきそ - お願い上手 (feat. なきそ) [Explicit].flac"
+album = "02 "
+album_artists = ["VARIOUS ARTISTS"]
+artists = ["缶缶 feat. なきそ"]
+title = "お願い上手 (feat. なきそ) [Explicit]"
+genre = "Pop"
+track = 12
+track_total = 13
+duration_ms = 132789
+
+[[raw_tags]]
+file_path = "KANKAN - 02 - 2022-11-11 (WEB - FLAC - 2448)/11 缶缶 & ど～ぱみん - ワンダラ [Explicit].flac"
+album = "02 "
+album_artists = ["VARIOUS ARTISTS"]
+artists = ["缶缶 & ど～ぱみん"]
+title = "ワンダラ [Explicit]"
+genre = "Pop"
+track = 11
+track_total = 13
+duration_ms = 216614
+
+[[raw_tags]]
+file_path = "KANKAN - 02 - 2022-11-11 (WEB - FLAC - 2448)/10 缶缶 & メドミア - Ms.マゼンタ [Explicit].flac"
+album = "02 "
+album_artists = ["VARIOUS ARTISTS"]
+artists = ["缶缶 & メドミア"]
+title = "Ms.マゼンタ [Explicit]"
+genre = "Pop"
+track = 10
+track_total = 13
+duration_ms = 183121
+
+[[raw_tags]]
+file_path = "KANKAN - 02 - 2022-11-11 (WEB - FLAC - 2448)/09 缶缶 & RuLu - 抜刀 [Explicit].flac"
+album = "02 "
+album_artists = ["VARIOUS ARTISTS"]
+artists = ["缶缶 & RuLu"]
+title = "抜刀 [Explicit]"
+genre = "Pop"
+track = 9
+track_total = 13
+duration_ms = 210970
+
+[[raw_tags]]
+file_path = "KANKAN - 02 - 2022-11-11 (WEB - FLAC - 2448)/08 缶缶 & ZERA - トランキライザー [Explicit].flac"
+album = "02 "
+album_artists = ["VARIOUS ARTISTS"]
+artists = ["缶缶 & ZERA"]
+title = "トランキライザー [Explicit]"
+genre = "Pop"
+track = 8
+track_total = 13
+duration_ms = 95359
+
+[[raw_tags]]
+file_path = "KANKAN - 02 - 2022-11-11 (WEB - FLAC - 2448)/07 缶缶 & yowanecity - トゥーム [Explicit].flac"
+album = "02 "
+album_artists = ["VARIOUS ARTISTS"]
+artists = ["缶缶 & yowanecity"]
+title = "トゥーム [Explicit]"
+genre = "Pop"
+track = 7
+track_total = 13
+duration_ms = 165809
+
+[[raw_tags]]
+file_path = "KANKAN - 02 - 2022-11-11 (WEB - FLAC - 2448)/06 缶缶 feat. Ayase & yuigot - 睡魔 (feat. Ayase & yuigot) [yuigot REMIX] [Explicit].flac"
+album = "02 "
+album_artists = ["VARIOUS ARTISTS"]
+artists = ["缶缶 feat. Ayase & yuigot"]
+title = "睡魔 (feat. Ayase & yuigot) [yuigot REMIX] [Explicit]"
+genre = "Pop"
+track = 6
+track_total = 13
+duration_ms = 173947
+
+[[raw_tags]]
+file_path = "KANKAN - 02 - 2022-11-11 (WEB - FLAC - 2448)/05 缶缶 & FAKE TYPE. - マーナガルム [Explicit].flac"
+album = "02 "
+album_artists = ["VARIOUS ARTISTS"]
+artists = ["缶缶 & FAKE TYPE."]
+title = "マーナガルム [Explicit]"
+genre = "Pop"
+track = 5
+track_total = 13
+duration_ms = 215686
+
+[[raw_tags]]
+file_path = "KANKAN - 02 - 2022-11-11 (WEB - FLAC - 2448)/04 缶缶 feat. 超学生 - ドロシー (feat. 超学生) [Explicit].flac"
+album = "02 "
+album_artists = ["VARIOUS ARTISTS"]
+artists = ["缶缶 feat. 超学生"]
+title = "ドロシー (feat. 超学生) [Explicit]"
+genre = "Pop"
+track = 4
+track_total = 13
+duration_ms = 182272
+
+[[raw_tags]]
+file_path = "KANKAN - 02 - 2022-11-11 (WEB - FLAC - 2448)/03 缶缶 & かいりきベア - ブーストアニマ [Explicit].flac"
+album = "02 "
+album_artists = ["VARIOUS ARTISTS"]
+artists = ["缶缶 & かいりきベア"]
+title = "ブーストアニマ [Explicit]"
+genre = "Pop"
+track = 3
+track_total = 13
+duration_ms = 160646
+
+[[raw_tags]]
+file_path = "KANKAN - 02 - 2022-11-11 (WEB - FLAC - 2448)/02 缶缶 & 柊マグネタイト - ヴァイパー [Explicit].flac"
+album = "02 "
+album_artists = ["VARIOUS ARTISTS"]
+artists = ["缶缶 & 柊マグネタイト"]
+title = "ヴァイパー [Explicit]"
+genre = "Pop"
+track = 2
+track_total = 13
+duration_ms = 159736
+
+[[raw_tags]]
+file_path = "KANKAN - 02 - 2022-11-11 (WEB - FLAC - 2448)/01 缶缶 & yowanecity - 鬼焔 [Explicit].flac"
+album = "02 "
+album_artists = ["VARIOUS ARTISTS"]
+artists = ["缶缶 & yowanecity"]
+title = "鬼焔 [Explicit]"
+genre = "Pop"
+track = 1
+track_total = 13
+duration_ms = 163964
+
+[expect.release]
+ids = { release_id = "d0bf286e-cc3c-478d-b2ca-b4760d28c480" }

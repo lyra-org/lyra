@@ -1,0 +1,119 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2021.09.18] Bentham、10周年記念アルバム「3650」[FLAC]/10. クレイジーガール（LIVE at TAGO STUDIO TAKASAKI）.flac"
+album = "3650"
+album_artists = ["Bentham", "Bentham"]
+artists = ["Bentham"]
+title = "クレイジーガール(LIVE at TAGO STUDIO TAKASAKI)"
+copyright = "℗ 2021 MARGUERITE MUSIC Inc."
+genre = "オルタナティブ"
+track = 10
+duration_ms = 236218
+
+[[raw_tags]]
+file_path = "[2021.09.18] Bentham、10周年記念アルバム「3650」[FLAC]/09. FUN (LIVE at TAGO STUDIO TAKASAKI).flac"
+album = "3650"
+album_artists = ["Bentham", "Bentham"]
+artists = ["Bentham"]
+title = "FUN (LIVE at TAGO STUDIO TAKASAKI)"
+copyright = "℗ 2021 MARGUERITE MUSIC Inc."
+genre = "オルタナティブ"
+track = 9
+duration_ms = 214998
+
+[[raw_tags]]
+file_path = "[2021.09.18] Bentham、10周年記念アルバム「3650」[FLAC]/08. アクセル (LIVE at TAGO STUDIO TAKASAKI).flac"
+album = "3650"
+album_artists = ["Bentham", "Bentham"]
+artists = ["Bentham"]
+title = "アクセル (LIVE at TAGO STUDIO TAKASAKI)"
+copyright = "℗ 2021 MARGUERITE MUSIC Inc."
+genre = "オルタナティブ"
+track = 8
+duration_ms = 244614
+
+[[raw_tags]]
+file_path = "[2021.09.18] Bentham、10周年記念アルバム「3650」[FLAC]/07. TONIGHT (midnight ver.).flac"
+album = "3650"
+album_artists = ["Bentham", "Bentham"]
+artists = ["Bentham"]
+title = "TONIGHT (midnight ver.)"
+copyright = "℗ 2021 MARGUERITE MUSIC Inc."
+genre = "オルタナティブ"
+track = 7
+duration_ms = 269296
+
+[[raw_tags]]
+file_path = "[2021.09.18] Bentham、10周年記念アルバム「3650」[FLAC]/06. 幸せトカゲ.flac"
+album = "3650"
+album_artists = ["Bentham", "Bentham"]
+artists = ["Bentham"]
+title = "幸せトカゲ"
+copyright = "℗ 2021 MARGUERITE MUSIC Inc."
+genre = "オルタナティブ"
+track = 6
+duration_ms = 238058
+
+[[raw_tags]]
+file_path = "[2021.09.18] Bentham、10周年記念アルバム「3650」[FLAC]/05. Corner.flac"
+album = "3650"
+album_artists = ["Bentham", "Bentham"]
+artists = ["Bentham"]
+title = "Corner"
+copyright = "℗ 2021 MARGUERITE MUSIC Inc."
+genre = "オルタナティブ"
+track = 5
+duration_ms = 227456
+
+[[raw_tags]]
+file_path = "[2021.09.18] Bentham、10周年記念アルバム「3650」[FLAC]/04. NUDE.flac"
+album = "3650"
+album_artists = ["Bentham", "Bentham"]
+artists = ["Bentham"]
+title = "NUDE"
+copyright = "℗ 2021 MARGUERITE MUSIC Inc."
+genre = "オルタナティブ"
+track = 4
+duration_ms = 178712
+
+[[raw_tags]]
+file_path = "[2021.09.18] Bentham、10周年記念アルバム「3650」[FLAC]/03. アルルの夜.flac"
+album = "3650"
+album_artists = ["Bentham", "Bentham"]
+artists = ["Bentham"]
+title = "アルルの夜"
+copyright = "℗ 2021 MARGUERITE MUSIC Inc."
+genre = "オルタナティブ"
+track = 3
+duration_ms = 252957
+
+[[raw_tags]]
+file_path = "[2021.09.18] Bentham、10周年記念アルバム「3650」[FLAC]/02. COMPLEX.flac"
+album = "3650"
+album_artists = ["Bentham", "Bentham"]
+artists = ["Bentham"]
+title = "COMPLEX"
+copyright = "℗ 2021 MARGUERITE MUSIC Inc."
+genre = "オルタナティブ"
+track = 2
+duration_ms = 192877
+
+[[raw_tags]]
+file_path = "[2021.09.18] Bentham、10周年記念アルバム「3650」[FLAC]/01. マーガレット.flac"
+album = "3650"
+album_artists = ["Bentham", "Bentham"]
+artists = ["Bentham"]
+title = "マーガレット"
+copyright = "℗ 2021 MARGUERITE MUSIC Inc."
+genre = "オルタナティブ"
+track = 1
+duration_ms = 185821
+
+[expect.release]
+ids = { release_id = "" }

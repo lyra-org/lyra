@@ -1,0 +1,29 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "eill - 25 (2024-02-28) [WEB FLAC]/1.01. 25.flac"
+album = "25"
+album_artists = ["eill"]
+artists = ["eill"]
+title = "25"
+copyright = "℗ 2024 PONY CANYON INC."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 176865
+
+[expect.release]
+ids = { release_id = "844a8311-2ea1-465b-8222-abe6c823f1d0" }
+fields = { release_title = "25", release_date = "2024-02-28" }
+
+[expect.artists."ddd72af5-34b6-4321-8338-47c4b67cb247"]
+fields = { artist_name = "eill", sort_name = "eill" }
+
+[expect.tracks."fce9e7fc-2b0e-4d48-8b23-1bd74828311b"]
+fields = { disc = 1, track = 1, track_title = "25", work_id = "f0eda7a6-3b4c-4f30-b6d0-f0e0406d39f5" }

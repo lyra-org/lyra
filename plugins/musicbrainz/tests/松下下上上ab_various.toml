@@ -1,0 +1,246 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "松下下上上←→AB/19. 地球最後の告白を.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["kemu feat. 松下"]
+title = "地球最後の告白を"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 19
+duration_ms = 266527
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/18. Twilight∞nighT.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["ひとしずく×やま△ feat. 松下、eclair、おさむらいさん、柿チョコ、ぐるたみん、しゃむおん、nero、mao（bass）、ゆう十、リシェ"]
+title = "Twilight∞nighT"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 18
+duration_ms = 225541
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/17. 小夜子.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["みきとP feat. 松下"]
+title = "小夜子"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 17
+duration_ms = 253544
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/16. 古書屋敷殺人事件.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["てにをは feat. 松下"]
+title = "古書屋敷殺人事件"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 16
+duration_ms = 270028
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/15. 月に叢雲 恋に花を.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["PolyphonicBranch feat. 松下"]
+title = "月に叢雲 恋に花を"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 15
+duration_ms = 214047
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/14. ポーカーフェイス.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["ゆちゃP feat. 松下"]
+title = "ポーカーフェイス"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 14
+duration_ms = 201038
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/13. ジャバヲッキー・ジャバヲッカ.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["カラスヤサボウ feat. 松下, ぐるたみん"]
+title = "ジャバヲッキー・ジャバヲッカ "
+copyright = ""
+disc = 1
+disc_total = 1
+track = 13
+duration_ms = 189022
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/12. 放課後ストライド.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["Last Note．feat. 松下 "]
+title = "放課後ストライド"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 12
+duration_ms = 225541
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/11. 独りんぼエンヴィー.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["koyori feat. 松下"]
+title = "独りんぼエンヴィー"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 11
+duration_ms = 203520
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/10. 在来ヒーローズ.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["150P feat. 松下"]
+title = "在来ヒーローズ"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 10
+duration_ms = 223033
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/09. 幸せになれる隠しコマンドがあるらしい.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["うたたP feat. 松下"]
+title = "幸せになれる隠しコマンドがあるらしい"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 9
+duration_ms = 225045
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/08. 二次元ドリームフィーバー.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["PolyphonicBranch feat. 松下"]
+title = "二次元ドリームフィーバー"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 8
+duration_ms = 188029
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/07. ビバハピ.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["Mitchie M feat. 松下, ゆいこんぬ"]
+title = "ビバハピ"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 7
+duration_ms = 213525
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/06. 世界寿命と最後の一日 -Album Version-.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["スズム feat. 松下"]
+title = "世界寿命と最後の一日 -Album Version-"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 6
+duration_ms = 278047
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/05. デザイアストライク.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["Last Note．feat. 松下"]
+title = "デザイアストライク"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 5
+duration_ms = 286537
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/04. クノイチでも恋がしたい.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["みきとP feat. 松下"]
+title = "クノイチでも恋がしたい"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 4
+duration_ms = 251533
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/03. ロストワンの号哭.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["Neru feat. 松下 "]
+title = "ロストワンの号哭"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 3
+duration_ms = 216529
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/02. ギガンティックO.T.N.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["ギガP feat. 松下 "]
+title = "ギガンティックO.T.N"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 2
+duration_ms = 200542
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/01. インビジブル.mp3"
+album = "松下下上上←→AB"
+album_artists = ["various"]
+artists = ["kemu feat. 松下"]
+title = "インビジブル"
+copyright = ""
+disc = 1
+disc_total = 1
+track = 1
+duration_ms = 213525
+
+[[raw_tags]]
+file_path = "松下下上上←→AB/20. くるみ☆ぽんちお.mp3"
+album = "松下下上上←→AB"
+artists = ["まだ仔feat. 松下"]
+title = "くるみ☆ぽんちお"
+copyright = ""
+track = 20
+duration_ms = 200908
+
+[expect.release]
+ids = { release_group_id = "28e306ae-1d75-4c48-b3f3-122b4eec148e", release_id = "4f76a4d5-ac47-4193-a500-5fcf2e7b87a5" }

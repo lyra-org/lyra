@@ -1,0 +1,77 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "結束バンド - 光の中へ {SVWC-70620} [CD-FLAC]/04 青い春と西の空 -instrumental-.flac"
+album = "光の中へ"
+album_artists = ["結束バンド"]
+artists = ["結束バンド"]
+title = "青い春と西の空 -instrumental-"
+genre = "J-Rock"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 251360
+
+[[raw_tags]]
+file_path = "結束バンド - 光の中へ {SVWC-70620} [CD-FLAC]/03 光の中へ -instrumental-.flac"
+album = "光の中へ"
+album_artists = ["結束バンド"]
+artists = ["結束バンド"]
+title = "光の中へ -instrumental-"
+genre = "J-Rock"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 258266
+
+[[raw_tags]]
+file_path = "結束バンド - 光の中へ {SVWC-70620} [CD-FLAC]/02 青い春と西の空.flac"
+album = "光の中へ"
+album_artists = ["結束バンド"]
+artists = ["結束バンド"]
+title = "青い春と西の空"
+genre = "J-Rock"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 253013
+
+[[raw_tags]]
+file_path = "結束バンド - 光の中へ {SVWC-70620} [CD-FLAC]/01 光の中へ.flac"
+album = "光の中へ"
+album_artists = ["結束バンド"]
+artists = ["結束バンド"]
+title = "光の中へ"
+genre = "J-Rock"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 258266
+
+[expect.release]
+ids = { release_group_id = "8edd55a4-5894-4f7a-87e1-5ffdd3386b78", release_id = ["e74a2aa0-3274-49ad-80f7-43a115ca3acc", "13ee1dd1-572b-401f-a16b-254b3389b1b8"] }
+fields = { release_title = "光の中へ" }
+
+[expect.artists."c1b0fe0a-779d-43ed-b193-4370f0d0f88f"]
+fields = { artist_name = "結束バンド", sort_name = "Kessoku Band" }
+
+[expect.tracks."2e67c6d2-5335-4830-947c-7e6652f67c06"]
+fields = { disc = 1, track = 2, track_title = "青い春と西の空" }
+
+[expect.tracks."77591995-5588-4be4-a0ce-f9ffa298194d"]
+fields = { disc = 1, track = 3, track_title = "光の中へ -instrumental-" }
+
+[expect.tracks."dc65daeb-84bc-4973-88c4-669d49dcfbef"]
+fields = { disc = 1, track = 1, track_title = "光の中へ" }
+
+[expect.tracks."e5b1aa07-a6b4-407b-9390-c05142629d48"]
+fields = { disc = 1, track = 4, track_title = "青い春と西の空 -instrumental-" }

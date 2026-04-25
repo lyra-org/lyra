@@ -1,0 +1,18 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "01.虹.flac"
+album = "虹"
+album_artists = ["Masaki Suda(마사키 스다/菅田将暉)"]
+artists = ["菅田将暉"]
+title = "虹"
+track = 1
+duration_ms = 258733
+
+[expect.artists."264955bb-3412-4ab5-9ba5-4423a28b3641"]
+fields = { artist_name = "菅田将暉", sort_name = "Suda, Masaki" }

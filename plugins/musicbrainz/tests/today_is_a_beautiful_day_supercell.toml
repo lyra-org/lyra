@@ -1,0 +1,208 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "supercell - Today Is A Beautiful Day (2011) [FLAC]/13 - 私へ.flac"
+album = "Today Is A Beautiful Day"
+artists = ["supercell"]
+title = "私へ"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 13
+duration_ms = 126520
+
+[[raw_tags]]
+file_path = "supercell - Today Is A Beautiful Day (2011) [FLAC]/12 - さよならメモリーズ.flac"
+album = "Today Is A Beautiful Day"
+artists = ["supercell"]
+title = "さよならメモリーズ"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 13
+duration_ms = 368373
+
+[[raw_tags]]
+file_path = "supercell - Today Is A Beautiful Day (2011) [FLAC]/11 - 夜が明けるよ.flac"
+album = "Today Is A Beautiful Day"
+artists = ["supercell"]
+title = "夜が明けるよ"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 13
+duration_ms = 290573
+
+[[raw_tags]]
+file_path = "supercell - Today Is A Beautiful Day (2011) [FLAC]/10 - うたかた花火.flac"
+album = "Today Is A Beautiful Day"
+artists = ["supercell"]
+title = "うたかた花火"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 13
+duration_ms = 360013
+
+[[raw_tags]]
+file_path = "supercell - Today Is A Beautiful Day (2011) [FLAC]/09 - 星が瞬くこんな夜に.flac"
+album = "Today Is A Beautiful Day"
+artists = ["supercell"]
+title = "星が瞬くこんな夜に"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 13
+duration_ms = 269293
+
+[[raw_tags]]
+file_path = "supercell - Today Is A Beautiful Day (2011) [FLAC]/08 - Feel so good.flac"
+album = "Today Is A Beautiful Day"
+artists = ["supercell"]
+title = "Feel so good"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 13
+duration_ms = 301986
+
+[[raw_tags]]
+file_path = "supercell - Today Is A Beautiful Day (2011) [FLAC]/07 - LOVE & ROLL.flac"
+album = "Today Is A Beautiful Day"
+artists = ["supercell"]
+title = "LOVE & ROLL"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 13
+duration_ms = 295080
+
+[[raw_tags]]
+file_path = "supercell - Today Is A Beautiful Day (2011) [FLAC]/06 - ロックンロールなんですの.flac"
+album = "Today Is A Beautiful Day"
+artists = ["supercell"]
+title = "ロックンロールなんですの"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 13
+duration_ms = 216760
+
+[[raw_tags]]
+file_path = "supercell - Today Is A Beautiful Day (2011) [FLAC]/05 - 復讐.flac"
+album = "Today Is A Beautiful Day"
+artists = ["supercell"]
+title = "復讐"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 13
+duration_ms = 203480
+
+[[raw_tags]]
+file_path = "supercell - Today Is A Beautiful Day (2011) [FLAC]/04 - Perfect Day.flac"
+album = "Today Is A Beautiful Day"
+artists = ["supercell"]
+title = "Perfect Day"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 13
+duration_ms = 286373
+
+[[raw_tags]]
+file_path = "supercell - Today Is A Beautiful Day (2011) [FLAC]/03 - ヒーロー.flac"
+album = "Today Is A Beautiful Day"
+artists = ["supercell"]
+title = "ヒーロー"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 13
+duration_ms = 311680
+
+[[raw_tags]]
+file_path = "supercell - Today Is A Beautiful Day (2011) [FLAC]/02 - 君の知らない物語.flac"
+album = "Today Is A Beautiful Day"
+artists = ["supercell"]
+title = "君の知らない物語"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 13
+duration_ms = 339573
+
+[[raw_tags]]
+file_path = "supercell - Today Is A Beautiful Day (2011) [FLAC]/01 - 終わりへ向かう始まりの歌.flac"
+album = "Today Is A Beautiful Day"
+artists = ["supercell"]
+title = "終わりへ向かう始まりの歌"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 13
+duration_ms = 130413
+
+[expect.release]
+ids = { release_group_id = "93bb79c2-2995-4607-af5e-061a25a4e06f", release_id = "facfbd7f-e9fa-4983-8abc-b7b90fd135dd" }
+fields = { release_title = "Today Is A Beautiful Day", release_date = "2011-03-16" }
+
+[expect.artists."9b15ff5e-5bd1-43c2-821d-e31240aad334"]
+fields = { artist_name = "supercell", sort_name = "supercell" }
+
+[expect.tracks."0ef04153-cd64-4d38-bd58-8a469dae7664"]
+fields = { disc = 1, track = 12, track_title = "さよならメモリーズ" }
+
+[expect.tracks."10c376ec-6f7f-44c6-b4b2-32f73e7bf816"]
+fields = { disc = 1, track = 11, track_title = "夜が明けるよ" }
+
+[expect.tracks."1c8d2ed4-258f-4435-8db9-fa2f8be24712"]
+fields = { disc = 1, track = 2, track_title = "君の知らない物語" }
+
+[expect.tracks."4714901e-d0e4-4121-900b-bc95043580a3"]
+fields = { disc = 1, track = 13, track_title = "私へ" }
+
+[expect.tracks."66512715-98f8-49d1-8df8-3fd80e5da2de"]
+fields = { disc = 1, track = 4, track_title = "Perfect Day" }
+
+[expect.tracks."69ca2c36-8642-4968-9e7d-451d9d98114c"]
+fields = { disc = 1, track = 8, track_title = "Feel so good" }
+
+[expect.tracks."803f742f-6f81-4674-99bb-73ce768613c5"]
+fields = { disc = 1, track = 5, track_title = "復讐" }
+
+[expect.tracks."824c4fcd-a405-4faa-be72-82a01753d18e"]
+fields = { disc = 1, track = 7, track_title = "LOVE & ROLL" }
+
+[expect.tracks."a7875312-f3e4-4c8c-9029-c77c6e623acf"]
+fields = { disc = 1, track = 6, track_title = "ロックンロールなんですの" }
+
+[expect.tracks."be5911d7-b349-49d7-b1de-d57fc27d0977"]
+fields = { disc = 1, track = 3, track_title = "ヒーロー" }
+
+[expect.tracks."bf20591e-cf4b-4a0a-8b88-bc1ab6c92d8f"]
+fields = { disc = 1, track = 10, track_title = "うたかた花火" }
+
+[expect.tracks."c943aa35-24ad-4859-9f2f-ab6e218974bf"]
+fields = { disc = 1, track = 9, track_title = "星が瞬くこんな夜に" }
+
+[expect.tracks."ff84b4f1-7879-4936-8b62-35dc2c8a098a"]
+fields = { disc = 1, track = 1, track_title = "終わりへ向かう始まりの歌" }

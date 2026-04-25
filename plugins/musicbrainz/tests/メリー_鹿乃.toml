@@ -1,0 +1,118 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2015.12.31 (C89)] 鹿乃 — メリー (flac+log)/07. メリニュー.flac"
+album = "メリー"
+album_artists = ["鹿乃"]
+artists = ["鹿乃"]
+title = "メリニュー"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 7
+duration_ms = 212520
+
+[[raw_tags]]
+file_path = "[2015.12.31 (C89)] 鹿乃 — メリー (flac+log)/06. 心做し.flac"
+album = "メリー"
+album_artists = ["鹿乃"]
+artists = ["鹿乃"]
+title = "心做し"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 7
+duration_ms = 269746
+
+[[raw_tags]]
+file_path = "[2015.12.31 (C89)] 鹿乃 — メリー (flac+log)/05. キミノマボロシ.flac"
+album = "メリー"
+album_artists = ["鹿乃"]
+artists = ["鹿乃"]
+title = "キミノマボロシ"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 7
+duration_ms = 199573
+
+[[raw_tags]]
+file_path = "[2015.12.31 (C89)] 鹿乃 — メリー (flac+log)/04. ミルククラウン　オン　ソーネチカ.flac"
+album = "メリー"
+album_artists = ["鹿乃"]
+artists = ["鹿乃"]
+title = "ミルククラウン　オン　ソーネチカ"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 7
+duration_ms = 216693
+
+[[raw_tags]]
+file_path = "[2015.12.31 (C89)] 鹿乃 — メリー (flac+log)/03. スキスキ絶頂症.flac"
+album = "メリー"
+album_artists = ["鹿乃"]
+artists = ["鹿乃"]
+title = "スキスキ絶頂症"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 7
+duration_ms = 216826
+
+[[raw_tags]]
+file_path = "[2015.12.31 (C89)] 鹿乃 — メリー (flac+log)/02. バレリーコ.flac"
+album = "メリー"
+album_artists = ["鹿乃"]
+artists = ["鹿乃"]
+title = "バレリーコ"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 7
+duration_ms = 247720
+
+[[raw_tags]]
+file_path = "[2015.12.31 (C89)] 鹿乃 — メリー (flac+log)/01. メリー.flac"
+album = "メリー"
+album_artists = ["鹿乃"]
+artists = ["鹿乃"]
+title = "メリー"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 7
+duration_ms = 217933
+
+[expect.release]
+ids = { release_group_id = "1a910ac7-e646-4e80-a01e-56d9ce08ec91", release_id = "a890c449-15a5-4ec7-b0f9-be7fe40f6220" }
+fields = { release_title = "メリー", release_date = "2015-12-31" }
+
+[expect.artists."487cda72-0633-46d5-a80e-f9ee94080080"]
+fields = { artist_name = "鹿乃", sort_name = "Kano" }
+
+[expect.tracks."35f51a0b-291d-423c-a06e-4e463b7196a2"]
+fields = { disc = 1, track = 4, track_title = "ミルククラウン・オン・ソーネチカ" }
+
+[expect.tracks."7cb2dbd6-2b5a-483a-a0a1-06cafd9efc4e"]
+fields = { disc = 1, track = 2, track_title = "バレリーコ" }
+
+[expect.tracks."7e1d45df-c329-4365-b75b-d19a0c1d7907"]
+fields = { disc = 1, track = 3, track_title = "スキスキ絶頂症" }
+
+[expect.tracks."7fa42352-db5d-421b-89d1-6f3c5b447507"]
+fields = { disc = 1, track = 6, track_title = "心做し" }
+
+[expect.tracks."b13ffff7-8ea4-499a-8328-8d43c0cd8d88"]
+fields = { disc = 1, track = 7, track_title = "メリュー" }
+
+[expect.tracks."df9d4c88-4a3a-4af4-ba4b-fa1cb1ad34d0"]
+fields = { disc = 1, track = 5, track_title = "キミのマボロシ" }
+
+[expect.tracks."fd654937-5969-4b07-83f6-df537ba6a9f6"]
+fields = { disc = 1, track = 1, track_title = "プラトニック・ラヴ" }

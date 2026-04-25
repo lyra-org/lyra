@@ -1,0 +1,28 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "まふまふ — グッバイ宣言 (2025) [WEB-FLAC]/01. グッバイ宣言.flac"
+album = "グッバイ宣言"
+album_artists = ["まふまふ"]
+artists = ["まふまふ"]
+title = "グッバイ宣言"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 175058
+
+[expect.release]
+ids = { release_group_id = "ada69271-492e-49fc-9ac3-99579e7b3b42", release_id = "78604514-c8a6-49a3-a6aa-91ec944c12ad" }
+fields = { release_title = "グッバイ宣言", release_date = "2025-10-10" }
+
+[expect.artists."8c37481e-8a91-4df1-b77b-864b5808b14d"]
+fields = { artist_name = "まふまふ", sort_name = "Mafumafu" }
+
+[expect.tracks."f00b2e4d-f731-4bc8-8911-0e0004cacd13"]
+fields = { disc = 1, track = 1, track_title = "グッバイ宣言" }

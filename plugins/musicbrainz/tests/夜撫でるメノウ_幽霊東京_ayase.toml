@@ -1,0 +1,41 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[210908] Ayase - 夜撫でるメノウ ⁄ 幽霊東京 [FLAC]/02. 幽霊東京.flac"
+album = "夜撫でるメノウ / 幽霊東京"
+album_artists = ["Ayase", "Ayase"]
+artists = ["Ayase"]
+title = "幽霊東京"
+copyright = "℗ 2021 Ayase © 2021 Ayase"
+genre = "Pop"
+track = 2
+duration_ms = 210626
+
+[[raw_tags]]
+file_path = "[210908] Ayase - 夜撫でるメノウ ⁄ 幽霊東京 [FLAC]/01. 夜撫でるメノウ.flac"
+album = "夜撫でるメノウ / 幽霊東京"
+album_artists = ["Ayase", "Ayase"]
+artists = ["Ayase"]
+title = "夜撫でるメノウ"
+copyright = "℗ 2021 Ayase © 2021 Ayase"
+genre = "Pop"
+track = 1
+duration_ms = 262800
+
+[expect.release]
+ids = { release_group_id = "67b7477b-438f-417a-a986-9b2cd8601c28", release_id = ["7c7fb6a8-df51-469a-830c-319a56728e67", "ed149109-da67-4770-8a36-b545a15eba8a"] }
+fields = { release_title = "夜撫でるメノウ / 幽霊東京", release_date = "2021-09-08" }
+
+[expect.artists."4173073b-ae68-476a-a715-e22f1f43046d"]
+fields = { artist_name = "Ayase", sort_name = "Ayase" }
+
+[expect.tracks."2a95ffc7-b8cd-41e4-bbaa-335bcb9bf076"]
+fields = { disc = 1, track = 2, track_title = "幽霊東京" }
+
+[expect.tracks."93a3e79b-2d89-4cfc-9951-2b287e33b2ad"]
+fields = { disc = 1, track = 1, track_title = "夜撫でるメノウ" }

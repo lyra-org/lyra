@@ -1,0 +1,118 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Midnight Grand Orchestra - Overture (2022) [CD-FLAC] {TFCC86869}/1.07 - Midnight Grand Orchestra - Highway.flac"
+album = "Overture"
+album_artists = ["Midnight Grand Orchestra"]
+artists = ["Midnight Grand Orchestra"]
+title = "Highway"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 7
+duration_ms = 245026
+
+[[raw_tags]]
+file_path = "Midnight Grand Orchestra - Overture (2022) [CD-FLAC] {TFCC86869}/1.06 - Midnight Grand Orchestra - 流星群.flac"
+album = "Overture"
+album_artists = ["Midnight Grand Orchestra"]
+artists = ["Midnight Grand Orchestra"]
+title = "流星群"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 7
+duration_ms = 280000
+
+[[raw_tags]]
+file_path = "Midnight Grand Orchestra - Overture (2022) [CD-FLAC] {TFCC86869}/1.05 - Midnight Grand Orchestra - Tuning (Interlude).flac"
+album = "Overture"
+album_artists = ["Midnight Grand Orchestra"]
+artists = ["Midnight Grand Orchestra"]
+title = "Tuning (Interlude)"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 7
+duration_ms = 79000
+
+[[raw_tags]]
+file_path = "Midnight Grand Orchestra - Overture (2022) [CD-FLAC] {TFCC86869}/1.04 - Midnight Grand Orchestra - Rat A Tat.flac"
+album = "Overture"
+album_artists = ["Midnight Grand Orchestra"]
+artists = ["Midnight Grand Orchestra"]
+title = "Rat A Tat"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 7
+duration_ms = 224000
+
+[[raw_tags]]
+file_path = "Midnight Grand Orchestra - Overture (2022) [CD-FLAC] {TFCC86869}/1.03 - Midnight Grand Orchestra - Allegro.flac"
+album = "Overture"
+album_artists = ["Midnight Grand Orchestra"]
+artists = ["Midnight Grand Orchestra"]
+title = "Allegro"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 7
+duration_ms = 207000
+
+[[raw_tags]]
+file_path = "Midnight Grand Orchestra - Overture (2022) [CD-FLAC] {TFCC86869}/1.02 - Midnight Grand Orchestra - SOS.flac"
+album = "Overture"
+album_artists = ["Midnight Grand Orchestra"]
+artists = ["Midnight Grand Orchestra"]
+title = "SOS"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 7
+duration_ms = 222000
+
+[[raw_tags]]
+file_path = "Midnight Grand Orchestra - Overture (2022) [CD-FLAC] {TFCC86869}/1.01 - Midnight Grand Orchestra - Never Ending Midnights.flac"
+album = "Overture"
+album_artists = ["Midnight Grand Orchestra"]
+artists = ["Midnight Grand Orchestra"]
+title = "Never Ending Midnights"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 7
+duration_ms = 187000
+
+[expect.release]
+ids = { release_id = ["31eade14-1dae-4ffa-a707-f51a49b20bb4", "57f13998-2a93-4ad7-91dd-a721d91be506", "eca843bf-e0a8-4b90-8fed-bbb07b7d8f4c", "d378ce9b-0519-43f8-89b2-e48f4c7fdda9"] }
+fields = { release_title = "Overture", release_date = "2022-07-27" }
+
+[expect.artists."337a25b8-2ffc-40b6-a4b7-22dbfe5b1ecd"]
+fields = { artist_name = "Midnight Grand Orchestra", sort_name = "Midnight Grand Orchestra" }
+
+[expect.tracks."16bd2ba2-a6b4-4fed-90cc-e5a68d09df1e"]
+fields = { disc = 1, track = 5, track_title = "Tuning (Interlude)" }
+
+[expect.tracks."5310ba48-05a0-4927-b5d0-75d18bf5d2d2"]
+fields = { disc = 1, track = 4, track_title = "Rat A Tat" }
+
+[expect.tracks."89230742-0f86-4bea-ab21-6ddf315a8068"]
+fields = { disc = 1, track = 6, track_title = "流星群" }
+
+[expect.tracks."89fa2f23-e6e6-4557-899e-f5c6e7c920dd"]
+fields = { disc = 1, track = 3, track_title = "Allegro" }
+
+[expect.tracks."9d55326a-0d62-436a-b25d-9340c4aff854"]
+fields = { disc = 1, track = 2, track_title = "SOS" }
+
+[expect.tracks."fc339c17-81b6-48f8-a7ac-57a8c5ccab27"]
+fields = { disc = 1, track = 7, track_title = "Highway" }
+
+[expect.tracks."ff7f2353-2f86-4bc0-a551-eaa6b9e77f74"]
+fields = { disc = 1, track = 1, track_title = "Never Ending Midnights" }

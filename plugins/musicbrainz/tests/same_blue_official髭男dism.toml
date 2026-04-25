@@ -1,0 +1,27 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Official HIGE DANdism (Official髭男dism) - Same Blue [2024] (WEB - FLAC)/01. Same Blue.flac"
+album = "Same Blue"
+album_artists = ["Official髭男dism", "Official髭男dism"]
+artists = ["Official髭男dism"]
+title = "Same Blue"
+copyright = "℗ 2024 IRORI Records / PONY CANYON"
+genre = "J-Pop, Anime"
+track = 1
+duration_ms = 237836
+
+[expect.release]
+ids = { release_group_id = "501f441c-0e2f-4ba1-8c56-cc5ec8b85d78", release_id = "a52e94e9-72de-4b05-bbcb-98004ea5cc24" }
+fields = { release_title = "Same Blue", release_date = "2024-10-02" }
+
+[expect.artists."6dddd7a2-5583-49d0-a8b2-9ee46d04f27e"]
+fields = { artist_name = "Official髭男dism", sort_name = "Official HIGE DANdism" }
+
+[expect.tracks."02b1bca5-dbd3-464f-8156-3d3a04c4f2ca"]
+fields = { disc = 1, track = 1, track_title = "Same Blue", work_id = "2f5d4ef2-4dd7-4476-877c-90127c99c98a" }

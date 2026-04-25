@@ -1,0 +1,130 @@
+plugin = "musicbrainz"
+
+[library]
+directory = "."
+language = "jpn"
+country = "JP"
+
+[[raw_tags]]
+file_path = "(2017) Reimport 2/11. 最果てが見たい.flac"
+album = "逆輸入~航空局~"
+album_artists = ["椎名林檎"]
+artists = ["椎名林檎"]
+title = "最果てが見たい"
+genre = "Pop"
+track = 11
+track_total = 11
+duration_ms = 253760
+
+[[raw_tags]]
+file_path = "(2017) Reimport 2/10. 野性の同盟.flac"
+album = "逆輸入~航空局~"
+album_artists = ["椎名林檎"]
+artists = ["椎名林檎"]
+title = "野性の同盟"
+genre = "Pop"
+track = 10
+track_total = 11
+duration_ms = 358613
+
+[[raw_tags]]
+file_path = "(2017) Reimport 2/09. 華麗なる逆襲.flac"
+album = "逆輸入~航空局~"
+album_artists = ["椎名林檎"]
+artists = ["椎名林檎"]
+title = "華麗なる逆襲"
+genre = "Pop"
+track = 9
+track_total = 11
+duration_ms = 253880
+
+[[raw_tags]]
+file_path = "(2017) Reimport 2/08. 名うての泥棒猫.flac"
+album = "逆輸入~航空局~"
+album_artists = ["椎名林檎"]
+artists = ["椎名林檎"]
+title = "名うての泥棒猫"
+genre = "Pop"
+track = 8
+track_total = 11
+duration_ms = 188266
+
+[[raw_tags]]
+file_path = "(2017) Reimport 2/07. おとなの掟.flac"
+album = "逆輸入~航空局~"
+album_artists = ["椎名林檎"]
+artists = ["椎名林檎"]
+title = "おとなの掟"
+genre = "Pop"
+track = 7
+track_total = 11
+duration_ms = 204853
+
+[[raw_tags]]
+file_path = "(2017) Reimport 2/06. 重金属製の女.flac"
+album = "逆輸入~航空局~"
+album_artists = ["椎名林檎"]
+artists = ["椎名林檎"]
+title = "重金属製の女"
+genre = "Pop"
+track = 6
+track_total = 11
+duration_ms = 227653
+
+[[raw_tags]]
+file_path = "(2017) Reimport 2/05. 薄ら氷心中.flac"
+album = "逆輸入~航空局~"
+album_artists = ["椎名林檎"]
+artists = ["椎名林檎"]
+title = "薄ら氷心中"
+genre = "Pop"
+track = 5
+track_total = 11
+duration_ms = 193000
+
+[[raw_tags]]
+file_path = "(2017) Reimport 2/04. 暗夜の心中立て.flac"
+album = "逆輸入~航空局~"
+album_artists = ["椎名林檎"]
+artists = ["椎名林檎"]
+title = "暗夜の心中立て"
+genre = "Pop"
+track = 4
+track_total = 11
+duration_ms = 243106
+
+[[raw_tags]]
+file_path = "(2017) Reimport 2/03. 少女ロボット.flac"
+album = "逆輸入~航空局~"
+album_artists = ["椎名林檎"]
+artists = ["椎名林檎"]
+title = "少女ロボット"
+genre = "Pop"
+track = 3
+track_total = 11
+duration_ms = 214026
+
+[[raw_tags]]
+file_path = "(2017) Reimport 2/02. おいしい季節.flac"
+album = "逆輸入~航空局~"
+album_artists = ["椎名林檎"]
+artists = ["椎名林檎"]
+title = "おいしい季節"
+genre = "Pop"
+track = 2
+track_total = 11
+duration_ms = 255866
+
+[[raw_tags]]
+file_path = "(2017) Reimport 2/01. 人生は夢だらけ.flac"
+album = "逆輸入~航空局~"
+album_artists = ["椎名林檎"]
+artists = ["椎名林檎"]
+title = "人生は夢だらけ"
+genre = "Pop"
+track = 1
+track_total = 11
+duration_ms = 194640
+
+[expect.release]
+ids = { release_group_id = "f43e2517-3dd7-4977-9ab1-f50a12742589", release_id = "68b2edfa-b157-48a4-9b8f-a77d3ff7b985" }

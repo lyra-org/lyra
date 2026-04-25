@@ -1,0 +1,221 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Bentham - Re Wonder [FLAC]/13. クラクション・ラヴ.flac"
+album = "Re: Wonder"
+album_artists = ["Bentham"]
+artists = ["Bentham"]
+title = "クラクション・ラヴ"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 13
+duration_ms = 233666
+
+[[raw_tags]]
+file_path = "Bentham - Re Wonder [FLAC]/12. 激しい雨.flac"
+album = "Re: Wonder"
+album_artists = ["Bentham"]
+artists = ["Bentham"]
+title = "激しい雨"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 13
+duration_ms = 195173
+
+[[raw_tags]]
+file_path = "Bentham - Re Wonder [FLAC]/11. センチメンタル.flac"
+album = "Re: Wonder"
+album_artists = ["Bentham"]
+artists = ["Bentham"]
+title = "センチメンタル"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 13
+duration_ms = 170160
+
+[[raw_tags]]
+file_path = "Bentham - Re Wonder [FLAC]/10. survive.flac"
+album = "Re: Wonder"
+album_artists = ["Bentham"]
+artists = ["Bentham"]
+title = "survive"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 13
+duration_ms = 196653
+
+[[raw_tags]]
+file_path = "Bentham - Re Wonder [FLAC]/09. Heartbreaker.flac"
+album = "Re: Wonder"
+album_artists = ["Bentham"]
+artists = ["Bentham"]
+title = "Heartbreaker"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 13
+duration_ms = 154533
+
+[[raw_tags]]
+file_path = "Bentham - Re Wonder [FLAC]/08. エスケープ.flac"
+album = "Re: Wonder"
+album_artists = ["Bentham"]
+artists = ["Bentham"]
+title = "エスケープ"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 13
+duration_ms = 210266
+
+[[raw_tags]]
+file_path = "Bentham - Re Wonder [FLAC]/07. ファンファーレ.flac"
+album = "Re: Wonder"
+album_artists = ["Bentham"]
+artists = ["Bentham"]
+title = "ファンファーレ"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 13
+duration_ms = 197280
+
+[[raw_tags]]
+file_path = "Bentham - Re Wonder [FLAC]/06. 戸惑いは週末の朝に.flac"
+album = "Re: Wonder"
+album_artists = ["Bentham"]
+artists = ["Bentham"]
+title = "戸惑いは週末の朝に"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 13
+duration_ms = 164533
+
+[[raw_tags]]
+file_path = "Bentham - Re Wonder [FLAC]/05. Sunny.flac"
+album = "Re: Wonder"
+album_artists = ["Bentham"]
+artists = ["Bentham"]
+title = "Sunny"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 13
+duration_ms = 203400
+
+[[raw_tags]]
+file_path = "Bentham - Re Wonder [FLAC]/04. 今さら.flac"
+album = "Re: Wonder"
+album_artists = ["Bentham"]
+artists = ["Bentham"]
+title = "今さら"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 13
+duration_ms = 202586
+
+[[raw_tags]]
+file_path = "Bentham - Re Wonder [FLAC]/03. White (Album Ver.).flac"
+album = "Re: Wonder"
+album_artists = ["Bentham"]
+artists = ["Bentham"]
+title = "White (Album Ver.)"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 13
+duration_ms = 221400
+
+[[raw_tags]]
+file_path = "Bentham - Re Wonder [FLAC]/02. 透明シミュレーション.flac"
+album = "Re: Wonder"
+album_artists = ["Bentham"]
+artists = ["Bentham"]
+title = "透明シミュレーション"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 13
+duration_ms = 154720
+
+[[raw_tags]]
+file_path = "Bentham - Re Wonder [FLAC]/01. Chicago.flac"
+album = "Re: Wonder"
+album_artists = ["Bentham"]
+artists = ["Bentham"]
+title = "Chicago"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 13
+duration_ms = 198320
+
+[expect.release]
+ids = { release_group_id = "a4ea13bb-d28b-4b03-9f1f-6fde7cce682c", release_id = "632cc4e2-a3b0-47c6-a55a-26ba20032941" }
+fields = { release_title = "Re: Wonder", release_date = "2017-07-26" }
+
+[expect.artists."b6d37a3d-77a2-4659-996c-a880cde56a67"]
+fields = { artist_name = "Bentham", sort_name = "Bentham" }
+
+[expect.tracks."0545e49a-3a5d-4b2b-9101-d94680298802"]
+fields = { disc = 1, track = 13, track_title = "クラクション・ラヴ" }
+
+[expect.tracks."1b0673d9-2670-496b-a5a8-e98455881a25"]
+fields = { disc = 1, track = 9, track_title = "Heartbreaker" }
+
+[expect.tracks."1cdf32eb-c9c2-40d0-88b9-72662e9eca2a"]
+fields = { disc = 1, track = 8, track_title = "エスケープ" }
+
+[expect.tracks."3026a29d-028c-489b-b0ee-a309936dd856"]
+fields = { disc = 1, track = 5, track_title = "Sunny" }
+
+[expect.tracks."435cd822-41f2-4dff-9696-982affc2575f"]
+fields = { disc = 1, track = 10, track_title = "survive" }
+
+[expect.tracks."4f2d38f0-94b3-4c0b-b29f-cb627cb0499e"]
+fields = { disc = 1, track = 6, track_title = "戸惑いは週末の朝に" }
+
+[expect.tracks."5c670c13-1c35-4bd4-84e6-df7438905532"]
+fields = { disc = 1, track = 12, track_title = "激しい雨" }
+
+[expect.tracks."67ae419e-87ad-4e62-af4c-74726c7d373f"]
+fields = { disc = 1, track = 11, track_title = "センチメンタル" }
+
+[expect.tracks."6b9985da-104b-4908-b15a-7584a5d847b8"]
+fields = { disc = 1, track = 2, track_title = "透明シミュレーション" }
+
+[expect.tracks."8e346698-50ec-4da9-a2da-9bcba10a62c9"]
+fields = { disc = 1, track = 7, track_title = "ファンファーレ" }
+
+[expect.tracks."95c7a563-bc73-43aa-a045-0b85fd7c175f"]
+fields = { disc = 1, track = 4, track_title = "今さら" }
+
+[expect.tracks."ba9bea78-6b38-4acd-8aa8-47040cc33f38"]
+fields = { disc = 1, track = 3, track_title = "White (Album Ver.)" }
+
+[expect.tracks."ed2f00dc-9df9-41cc-871b-39f1636e1927"]
+fields = { disc = 1, track = 1, track_title = "Chicago" }

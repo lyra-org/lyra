@@ -1,0 +1,189 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "2017-09-13 あいみょん - 青春のエキサイトメント (CD FLAC)/11 漂白.flac"
+album = "青春のエキサイトメント"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "漂白"
+genre = "J-Rock"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 11
+duration_ms = 291240
+
+[[raw_tags]]
+file_path = "2017-09-13 あいみょん - 青春のエキサイトメント (CD FLAC)/10 ジェニファー.flac"
+album = "青春のエキサイトメント"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "ジェニファー"
+genre = "J-Rock"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 11
+duration_ms = 223653
+
+[[raw_tags]]
+file_path = "2017-09-13 あいみょん - 青春のエキサイトメント (CD FLAC)/09 RING DING.flac"
+album = "青春のエキサイトメント"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "RING DING"
+genre = "J-Rock"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 11
+duration_ms = 235693
+
+[[raw_tags]]
+file_path = "2017-09-13 あいみょん - 青春のエキサイトメント (CD FLAC)/08 風のささやき.flac"
+album = "青春のエキサイトメント"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "風のささやき"
+genre = "J-Rock"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 11
+duration_ms = 233240
+
+[[raw_tags]]
+file_path = "2017-09-13 あいみょん - 青春のエキサイトメント (CD FLAC)/07 愛を伝えたいだとか.flac"
+album = "青春のエキサイトメント"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "愛を伝えたいだとか"
+genre = "J-Rock"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 11
+duration_ms = 237293
+
+[[raw_tags]]
+file_path = "2017-09-13 あいみょん - 青春のエキサイトメント (CD FLAC)/06 いつまでも.flac"
+album = "青春のエキサイトメント"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "いつまでも"
+genre = "J-Rock"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 11
+duration_ms = 183386
+
+[[raw_tags]]
+file_path = "2017-09-13 あいみょん - 青春のエキサイトメント (CD FLAC)/05 ふたりの世界.flac"
+album = "青春のエキサイトメント"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "ふたりの世界"
+genre = "J-Rock"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 11
+duration_ms = 287866
+
+[[raw_tags]]
+file_path = "2017-09-13 あいみょん - 青春のエキサイトメント (CD FLAC)/04 マトリョーシカ.flac"
+album = "青春のエキサイトメント"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "マトリョーシカ"
+genre = "J-Rock"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 11
+duration_ms = 222600
+
+[[raw_tags]]
+file_path = "2017-09-13 あいみょん - 青春のエキサイトメント (CD FLAC)/03 君はロックを聴かない.flac"
+album = "青春のエキサイトメント"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "君はロックを聴かない"
+genre = "J-Rock"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 11
+duration_ms = 248480
+
+[[raw_tags]]
+file_path = "2017-09-13 あいみょん - 青春のエキサイトメント (CD FLAC)/02 生きていたんだよな.flac"
+album = "青春のエキサイトメント"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "生きていたんだよな"
+genre = "J-Rock"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 11
+duration_ms = 193093
+
+[[raw_tags]]
+file_path = "2017-09-13 あいみょん - 青春のエキサイトメント (CD FLAC)/01 憧れてきたんだ.flac"
+album = "青春のエキサイトメント"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "憧れてきたんだ"
+genre = "J-Rock"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 11
+duration_ms = 145813
+
+[expect.release]
+ids = { release_group_id = "413d3b68-6a32-4d0a-a6c9-0e19e129be96", release_id = ["701cc7a2-8fb8-4637-9bf5-6654c7dfa98f", "5918f7f1-3c74-4723-9167-f55aee2f4043", "0cbedbef-d2cc-4586-8755-001d64ee7eeb"] }
+fields = { release_title = "青春のエキサイトメント" }
+
+[expect.artists."908d9ac2-5187-4b9e-b281-601c6afb0791"]
+fields = { artist_name = "あいみょん", sort_name = "Aimyon" }
+
+[expect.tracks."1f9b74e8-a67a-482a-9c65-2dcada1e1346"]
+fields = { disc = 1, track = 2, track_title = "生きていたんだよな" }
+
+[expect.tracks."26534138-63e4-4092-967e-334aacc121e4"]
+fields = { disc = 1, track = 6, track_title = "いつまでも" }
+
+[expect.tracks."70e38a16-a373-465b-9182-f5ca195437c9"]
+fields = { disc = 1, track = 10, track_title = "ジェニファー" }
+
+[expect.tracks."7b53870a-526c-4106-8779-82cf196c4e00"]
+fields = { disc = 1, track = 8, track_title = "風のささやき" }
+
+[expect.tracks."82ac33c6-413c-4829-a19a-9b9bb22137f9"]
+fields = { disc = 1, track = 1, track_title = "憧れてきたんだ" }
+
+[expect.tracks."82b4e2f0-5761-4c25-a432-6b818e2c9f4f"]
+fields = { disc = 1, track = 4, track_title = "マトリョーシカ" }
+
+[expect.tracks."8a63a39b-9691-44f2-8243-b8d07ebcef07"]
+fields = { disc = 1, track = 11, track_title = "漂白" }
+
+[expect.tracks."a01b4aa9-4223-43c3-80f0-57ac830be08f"]
+fields = { disc = 1, track = 7, track_title = "愛を伝えたいだとか" }
+
+[expect.tracks."d774f900-8623-47ee-9f5b-056ca14a3903"]
+fields = { disc = 1, track = 9, track_title = "RING DING" }
+
+[expect.tracks."e4e09575-a997-4fcf-bc65-b4233194682a"]
+fields = { disc = 1, track = 3, track_title = "君はロックを聴かない" }
+
+[expect.tracks."ecbbf5ed-6c28-4462-8a74-4d51e3ee423f"]
+fields = { disc = 1, track = 5, track_title = "ふたりの世界" }

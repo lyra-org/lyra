@@ -1,0 +1,93 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "美波 - LOSE LOOSE Day (2023-03-22) [WEB FLAC]/1.05. TIME GRAM.flac"
+album = "LOSE LOOSE Day"
+album_artists = ["美波"]
+artists = ["美波"]
+title = "タイムグラム"
+copyright = "℗ 2023 WARNER MUSIC JAPAN INC."
+disc = 1
+disc_total = 1
+track = 5
+track_total = 5
+duration_ms = 243933
+
+[[raw_tags]]
+file_path = "美波 - LOSE LOOSE Day (2023-03-22) [WEB FLAC]/1.04. BLANK POST.flac"
+album = "LOSE LOOSE Day"
+album_artists = ["美波"]
+artists = ["美波"]
+title = "BLANK POST"
+copyright = "℗ 2023 WARNER MUSIC JAPAN INC."
+disc = 1
+disc_total = 1
+track = 4
+track_total = 5
+duration_ms = 239833
+
+[[raw_tags]]
+file_path = "美波 - LOSE LOOSE Day (2023-03-22) [WEB FLAC]/1.03. BLUE GURASU.flac"
+album = "LOSE LOOSE Day"
+album_artists = ["美波"]
+artists = ["美波"]
+title = "ブルーグラス"
+copyright = "℗ 2023 WARNER MUSIC JAPAN INC."
+disc = 1
+disc_total = 1
+track = 3
+track_total = 5
+duration_ms = 264117
+
+[[raw_tags]]
+file_path = "美波 - LOSE LOOSE Day (2023-03-22) [WEB FLAC]/1.02. GOOD LUCKER.flac"
+album = "LOSE LOOSE Day"
+album_artists = ["美波"]
+artists = ["美波"]
+title = "グッドラッカー"
+copyright = "℗ 2023 WARNER MUSIC JAPAN INC."
+disc = 1
+disc_total = 1
+track = 2
+track_total = 5
+duration_ms = 293157
+
+[[raw_tags]]
+file_path = "美波 - LOSE LOOSE Day (2023-03-22) [WEB FLAC]/1.01. RUDE LOSE DANCE.flac"
+album = "LOSE LOOSE Day"
+album_artists = ["美波"]
+artists = ["美波"]
+title = "ルードルーズダンス"
+copyright = "℗ 2023 WARNER MUSIC JAPAN INC."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 5
+duration_ms = 282164
+
+[expect.release]
+ids = { release_group_id = "29549ef3-a8c6-4b6d-857a-6666ef6a142c", release_id = ["4c42afca-391b-4bbe-9960-1bf0dca3c742", "cdaee880-497c-4cc6-8066-ea000f03b114", "0747e221-222b-4dcc-9e66-1228eb381456", "0a46deca-9f69-4102-8833-1e49eb85659b"] }
+fields = { release_title = "LOSE LOOSE Day", release_date = "2023-03-22" }
+
+[expect.artists."be5ae183-78b6-4564-93e1-553d752d3b84"]
+fields = { artist_name = "美波", sort_name = "Minami" }
+
+[expect.tracks."038ddc8f-9a05-4f84-8515-387a81b022c4"]
+fields = { disc = 1, track = 1, track_title = "ルードルーズダンス" }
+
+[expect.tracks."3861041e-c431-4d9c-899e-bea211996373"]
+fields = { disc = 1, track = 4, track_title = "BLANK POST" }
+
+[expect.tracks."816cab10-fa59-4b82-9f68-6c09e143714e"]
+fields = { disc = 1, track = 3, track_title = "ブルーグラス" }
+
+[expect.tracks."beb5a8e5-6884-4169-bceb-6ba128479834"]
+fields = { disc = 1, track = 2, track_title = "グッドラッカー" }
+
+[expect.tracks."dd9f5fb5-8fb5-4f78-aa80-585a5a4ab678"]
+fields = { disc = 1, track = 5, track_title = "タイムグラム" }

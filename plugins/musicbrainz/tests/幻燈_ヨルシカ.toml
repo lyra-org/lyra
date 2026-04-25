@@ -1,0 +1,173 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2023.04.05] ヨルシカ - 幻燈 [WEB][FLAC 96kHz-24bit]/10. 第一夜.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "第一夜"
+copyright = "A Polydor Records release; ℗ 2023 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 10
+duration_ms = 262073
+
+[[raw_tags]]
+file_path = "[2023.04.05] ヨルシカ - 幻燈 [WEB][FLAC 96kHz-24bit]/09. アルジャーノン.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "アルジャーノン"
+copyright = "A Polydor Records release; ℗ 2023 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 10
+duration_ms = 252789
+
+[[raw_tags]]
+file_path = "[2023.04.05] ヨルシカ - 幻燈 [WEB][FLAC 96kHz-24bit]/08. 左右盲.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "左右盲"
+copyright = "A Polydor Records release; ℗ 2023 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 10
+duration_ms = 267489
+
+[[raw_tags]]
+file_path = "[2023.04.05] ヨルシカ - 幻燈 [WEB][FLAC 96kHz-24bit]/07. 老人と海.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "老人と海"
+copyright = "A Polydor Records release; ℗ 2023 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 10
+duration_ms = 255312
+
+[[raw_tags]]
+file_path = "[2023.04.05] ヨルシカ - 幻燈 [WEB][FLAC 96kHz-24bit]/06. 又三郎.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "又三郎"
+copyright = "A Polydor Records release; ℗ 2023 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 10
+duration_ms = 229360
+
+[[raw_tags]]
+file_path = "[2023.04.05] ヨルシカ - 幻燈 [WEB][FLAC 96kHz-24bit]/05. 451.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "451"
+copyright = "A Polydor Records release; ℗ 2023 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 10
+duration_ms = 209564
+
+[[raw_tags]]
+file_path = "[2023.04.05] ヨルシカ - 幻燈 [WEB][FLAC 96kHz-24bit]/04. 月に吠える.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "月に吠える"
+copyright = "A Polydor Records release; ℗ 2023 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 10
+duration_ms = 266151
+
+[[raw_tags]]
+file_path = "[2023.04.05] ヨルシカ - 幻燈 [WEB][FLAC 96kHz-24bit]/03. チノカテ.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "チノカテ"
+copyright = "A Polydor Records release; ℗ 2023 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 10
+duration_ms = 247667
+
+[[raw_tags]]
+file_path = "[2023.04.05] ヨルシカ - 幻燈 [WEB][FLAC 96kHz-24bit]/02. ブレーメン.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "ブレーメン"
+copyright = "A Polydor Records release; ℗ 2023 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 10
+duration_ms = 272744
+
+[[raw_tags]]
+file_path = "[2023.04.05] ヨルシカ - 幻燈 [WEB][FLAC 96kHz-24bit]/01. 都落ち.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "都落ち"
+copyright = "A Polydor Records release; ℗ 2023 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 10
+duration_ms = 250168
+
+[expect.release]
+ids = { release_group_id = "88ee1a12-f362-4737-b7f4-b2f0b079e218", release_id = ["94b33880-d85c-4afa-837f-f6f1af04e02c", "96f7628f-8b52-4cd0-9151-d46611673b14", "d5a439f3-c264-4c35-8854-54849046e2d0", "b631cf60-6e3a-47f4-aefc-5facc28b3cc3"] }
+fields = { release_title = "幻燈" }
+
+[expect.artists."dfc6a151-3792-4695-8fda-f64723eaa788"]
+fields = { artist_name = "ヨルシカ", sort_name = "Yorushika" }
+
+[expect.tracks."13ef471a-0cef-4c0d-885d-73ac3e8f4e7f"]
+fields = { disc = 1, track = 8, track_title = "左右盲" }
+
+[expect.tracks."3ece7f0d-4ef4-4882-9300-6bf3d9723d03"]
+fields = { disc = 1, track = 4, track_title = "月に吠える" }
+
+[expect.tracks."6081c9d4-f046-49c3-8375-297142b3996d"]
+fields = { disc = 1, track = 2, track_title = "ブレーメン" }
+
+[expect.tracks."80db4119-213c-4b0c-af9b-37c4a11eaa72"]
+fields = { disc = 1, track = 7, track_title = "老人と海" }
+
+[expect.tracks."8fff3baa-e2ce-4017-a140-1a606598d03b"]
+fields = { disc = 1, track = 5, track_title = "451" }
+
+[expect.tracks."9c4a772f-52f5-4472-84dd-35171106ef48"]
+fields = { disc = 1, track = 10, track_title = "第一夜" }
+
+[expect.tracks."a25f8014-79e6-4bcc-9faa-2f4d8324847f"]
+fields = { disc = 1, track = 3, track_title = "チノカテ" }
+
+[expect.tracks."c43037a7-e888-49d6-89b5-243c971ca9b2"]
+fields = { disc = 1, track = 6, track_title = "又三郎" }
+
+[expect.tracks."e3c81234-74f9-41db-b51f-f996b02322ea"]
+fields = { disc = 1, track = 9, track_title = "アルジャーノン" }
+
+[expect.tracks."ff8caa75-763a-46f6-8c99-9ea67e913570"]
+fields = { disc = 1, track = 1, track_title = "都落ち" }

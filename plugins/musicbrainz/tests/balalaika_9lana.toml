@@ -1,0 +1,26 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "9Lana - BALALAIKA (2024-02-14) [WEB FLAC]/1.01. BALALAIKA.flac"
+album = "BALALAIKA"
+album_artists = ["9Lana"]
+artists = ["9Lana"]
+title = "BALALAIKA"
+disc = 1
+track = 1
+duration_ms = 190033
+
+[expect.release]
+ids = { release_group_id = "00f835b0-7cc1-4598-975a-0d872ea66e4f", release_id = "40f20d27-6707-4617-9f47-b60a7da54517" }
+fields = { release_title = "BALALAIKA", release_date = "2024-02-14" }
+
+[expect.artists."3fa52c01-4985-407e-a6e0-784564cc52c7"]
+fields = { artist_name = "9Lana", sort_name = "9Lana" }
+
+[expect.tracks."d8ca4ab3-05b7-445d-806b-d134c6187092"]
+fields = { disc = 1, track = 1, track_title = "BALALAIKA", work_id = "cc49255f-54a5-4cbb-a3e6-7da5878c699c" }

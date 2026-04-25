@@ -1,0 +1,73 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2023.07.19] キタニタツヤ - 青のすみか [CD][SRCL-12546~7][FLAC]/04. 青のすみか - Instrumental.flac"
+album = "青のすみか"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "青のすみか - Instrumental"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 197306
+
+[[raw_tags]]
+file_path = "[2023.07.19] キタニタツヤ - 青のすみか [CD][SRCL-12546~7][FLAC]/03. ラブソング (cover).flac"
+album = "青のすみか"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "ラブソング (cover)"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 165680
+
+[[raw_tags]]
+file_path = "[2023.07.19] キタニタツヤ - 青のすみか [CD][SRCL-12546~7][FLAC]/02. 素敵なしゅうまつを!.flac"
+album = "青のすみか"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "素敵なしゅうまつを!"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 191080
+
+[[raw_tags]]
+file_path = "[2023.07.19] キタニタツヤ - 青のすみか [CD][SRCL-12546~7][FLAC]/01. 青のすみか.flac"
+album = "青のすみか"
+album_artists = ["キタニタツヤ"]
+artists = ["キタニタツヤ"]
+title = "青のすみか"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 197266
+
+[expect.release]
+ids = { release_group_id = "89069d92-e495-462c-b189-3431551868ed", release_id = ["d3662e22-1530-4f14-bf4b-5fb76c4e4b7d", "fc155f19-d19a-4339-ae03-a7a3c7704314"] }
+fields = { release_title = "青のすみか", release_date = "2023-07-19" }
+
+[expect.artists."80b3cb83-b7a3-4f79-ad42-8325cefb3626"]
+fields = { artist_name = "キタニタツヤ", sort_name = "Kitani, Tatsuya" }
+
+[expect.tracks."23afa15e-8847-487c-8039-ddf5bcf010ed"]
+fields = { disc = 1, track = 2, track_title = "素敵なしゅうまつを！" }
+
+[expect.tracks."4e909c21-e7a8-404d-b75a-0c8c2926efb0"]
+fields = { disc = 1, track = 1, track_title = "青のすみか" }
+
+[expect.tracks."a471e0a6-3161-4c96-b1e7-6ee6d19d5da9"]
+fields = { disc = 1, track = 4, track_title = "青のすみか - Instrumental" }
+
+[expect.tracks."dafe460b-d302-478a-8f66-1f75de36b0e2"]
+fields = { disc = 1, track = 3, track_title = "ラブソング (cover)" }

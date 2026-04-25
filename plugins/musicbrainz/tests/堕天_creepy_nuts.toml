@@ -1,0 +1,61 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2022.09.07] Creepy Nuts - 堕天 [CD][FLAC+CUE+LOG][AICL-4276]/04 堕天 (Instrumental).flac"
+album = "堕天"
+album_artists = ["Creepy Nuts"]
+artists = ["Creepy Nuts"]
+title = "堕天 (Instrumental)"
+genre = "Asian Hip-Hop/Rap"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 173053
+
+[[raw_tags]]
+file_path = "[2022.09.07] Creepy Nuts - 堕天 [CD][FLAC+CUE+LOG][AICL-4276]/03 よふかしのうた (Remastered).flac"
+album = "堕天"
+album_artists = ["Creepy Nuts"]
+artists = ["Creepy Nuts"]
+title = "よふかしのうた (Remastered)"
+genre = "Asian Hip-Hop/Rap"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 240826
+
+[[raw_tags]]
+file_path = "[2022.09.07] Creepy Nuts - 堕天 [CD][FLAC+CUE+LOG][AICL-4276]/02 ロスタイム.flac"
+album = "堕天"
+album_artists = ["Creepy Nuts"]
+artists = ["Creepy Nuts"]
+title = "ロスタイム"
+genre = "Asian Hip-Hop/Rap"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 219093
+
+[[raw_tags]]
+file_path = "[2022.09.07] Creepy Nuts - 堕天 [CD][FLAC+CUE+LOG][AICL-4276]/01 堕天.flac"
+album = "堕天"
+album_artists = ["Creepy Nuts"]
+artists = ["Creepy Nuts"]
+title = "堕天"
+genre = "Asian Hip-Hop/Rap"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 174306
+
+[expect.release]
+ids = { release_id = "c70d3dd4-54eb-473c-8d3d-9a176d4ff595" }

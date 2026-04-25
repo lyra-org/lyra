@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/artist?query=9Lana",
+  "status_code": 200,
+  "body": "{\"created\":\"2026-03-10T02:28:49.329Z\",\"count\":1,\"offset\":0,\"artists\":[{\"id\":\"3fa52c01-4985-407e-a6e0-784564cc52c7\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"score\":100,\"name\":\"9Lana\",\"sort-name\":\"9Lana\",\"country\":\"JP\",\"area\":{\"id\":\"2db42837-c832-3c27-b4a3-08198f75693c\",\"type\":\"Country\",\"type-id\":\"06dd0ae4-8c74-30bb-b43d-95dcedf961de\",\"name\":\"Japan\",\"sort-name\":\"Japan\",\"life-span\":{\"ended\":null}},\"life-span\":{\"ended\":null},\"tags\":[{\"count\":1,\"name\":\"pop\"},{\"count\":3,\"name\":\"j-pop\"},{\"count\":1,\"name\":\"yakousei\"}]}]}"
+}

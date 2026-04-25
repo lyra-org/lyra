@@ -1,0 +1,22 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "みけねこ - you&me (2023) [FLAC] [16B-44.1kHz]/01. みけねこ - you&me.flac"
+album = "you&me"
+album_artists = ["みけねこ"]
+artists = ["みけねこ"]
+title = "you&me"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 209142
+
+[expect.release]
+ids = { release_id = ["1725ad6d-861e-48ab-bdd6-b554f36b0868", "a3fc7474-355f-42ae-8276-458b62a7f1bf"] }

@@ -1,0 +1,61 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2023.04.01] 星街すいせい - スイちゃんのメンテナンスソング [FLAC CD]/03. スイちゃんのメンテナンスソング (Instrumental).flac"
+album = "スイちゃんのメンテナンスソング"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "スイちゃんのメンテナンスソング (Instrumental)"
+genre = "VTuber"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 3
+duration_ms = 158000
+
+[[raw_tags]]
+file_path = "[2023.04.01] 星街すいせい - スイちゃんのメンテナンスソング [FLAC CD]/02. 心憂い.flac"
+album = "スイちゃんのメンテナンスソング"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "心憂い"
+genre = "VTuber"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 3
+duration_ms = 65000
+
+[[raw_tags]]
+file_path = "[2023.04.01] 星街すいせい - スイちゃんのメンテナンスソング [FLAC CD]/01. スイちゃんのメンテナンスソング.flac"
+album = "スイちゃんのメンテナンスソング"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "スイちゃんのメンテナンスソング"
+genre = "VTuber"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 3
+duration_ms = 158000
+
+[expect.release]
+ids = { release_group_id = "b149fdb5-b51c-4288-a879-64fa804d1264", release_id = "08325018-38f8-46f2-8a7d-c458dabecb60" }
+fields = { release_title = "スイちゃんのメンテナンスソング", release_date = "2023-04-01" }
+
+[expect.artists."8eeb59f4-0071-4261-b1f8-91d8294622d2"]
+fields = { artist_name = "星街すいせい", sort_name = "Hoshimachi, Suisei" }
+
+[expect.tracks."60ade2b8-84fc-453c-be26-82e9d13602b2"]
+fields = { disc = 1, track = 1, track_title = "スイちゃんのメンテナンスソング" }
+
+[expect.tracks."bda6b326-48d7-4998-b7b4-cca9f4a97fa5"]
+fields = { disc = 1, track = 3, track_title = "スイちゃんのメンテナンスソング (Instrumental)" }
+
+[expect.tracks."d843308c-bdba-488e-b16a-2d99f9bbef4a"]
+fields = { disc = 1, track = 2, track_title = "心憂い" }

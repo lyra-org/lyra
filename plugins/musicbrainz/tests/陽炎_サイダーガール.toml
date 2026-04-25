@@ -1,0 +1,29 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "サイダーガール — 陽炎 (2025) [WEB FLAC 16⧸44.1]/01. 陽炎.flac"
+album = "陽炎"
+album_artists = ["サイダーガール"]
+artists = ["サイダーガール"]
+title = "陽炎"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 230100
+
+[expect.release]
+ids = { release_group_id = "d9c91d26-7525-4d60-a914-9bac7d6ed8e5", release_id = "5a090e7b-c954-4bf2-91fb-53d85e86062f" }
+fields = { release_title = "陽炎", release_date = "2025-10-08" }
+
+[expect.artists."20657a75-9c38-406f-846b-485b4e8e0e30"]
+fields = { artist_name = "サイダーガール", sort_name = "CIDER GIRL" }
+
+[expect.tracks."6eac85ca-0b81-42f7-9908-32cd9983b848"]
+fields = { disc = 1, track = 1, track_title = "陽炎" }

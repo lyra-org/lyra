@@ -1,0 +1,193 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "優里 - 響 [2023] [FLAC]/1.12 - メリーゴーランド -オーケストラアレンジver.-.flac"
+album = "響"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "メリーゴーランド -オーケストラアレンジver.-"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 12
+duration_ms = 243800
+
+[[raw_tags]]
+file_path = "優里 - 響 [2023] [FLAC]/1.11 - うぉ -オーケストラアレンジver.-.flac"
+album = "響"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "うぉ -オーケストラアレンジver.-"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 12
+duration_ms = 173066
+
+[[raw_tags]]
+file_path = "優里 - 響 [2023] [FLAC]/1.10 - ピーターパン -オーケストラアレンジver.-.flac"
+album = "響"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "ピーターパン -オーケストラアレンジver.-"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 12
+duration_ms = 256960
+
+[[raw_tags]]
+file_path = "優里 - 響 [2023] [FLAC]/1.09 - かごめ -オーケストラアレンジver.-.flac"
+album = "響"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "かごめ -オーケストラアレンジver.-"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 12
+duration_ms = 270106
+
+[[raw_tags]]
+file_path = "優里 - 響 [2023] [FLAC]/1.08 - ガリレオは恋をする -オーケストラアレンジver.-.flac"
+album = "響"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "ガリレオは恋をする -オーケストラアレンジver.-"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 12
+duration_ms = 262200
+
+[[raw_tags]]
+file_path = "優里 - 響 [2023] [FLAC]/1.07 - アストロノーツ -オーケストラアレンジver.-.flac"
+album = "響"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "アストロノーツ -オーケストラアレンジver.-"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 12
+duration_ms = 188400
+
+[[raw_tags]]
+file_path = "優里 - 響 [2023] [FLAC]/1.06 - レオ -オーケストラアレンジver.-.flac"
+album = "響"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "レオ -オーケストラアレンジver.-"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 12
+duration_ms = 245586
+
+[[raw_tags]]
+file_path = "優里 - 響 [2023] [FLAC]/1.05 - アダムとイブ -オーケストラアレンジver.-.flac"
+album = "響"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "アダムとイブ -オーケストラアレンジver.-"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 12
+duration_ms = 227586
+
+[[raw_tags]]
+file_path = "優里 - 響 [2023] [FLAC]/1.04 - ドライフラワー -オーケストラアレンジver.-.flac"
+album = "響"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "ドライフラワー -オーケストラアレンジver.-"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 12
+duration_ms = 293066
+
+[[raw_tags]]
+file_path = "優里 - 響 [2023] [FLAC]/1.03 - かくれんぼ -オーケストラアレンジver.-.flac"
+album = "響"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "かくれんぼ -オーケストラアレンジver.-"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 12
+duration_ms = 277546
+
+[[raw_tags]]
+file_path = "優里 - 響 [2023] [FLAC]/1.02 - ベテルギウス -オーケストラアレンジver.-.flac"
+album = "響"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "ベテルギウス -オーケストラアレンジver.-"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 12
+duration_ms = 233960
+
+[[raw_tags]]
+file_path = "優里 - 響 [2023] [FLAC]/1.01 - ビリミリオン -オーケストラアレンジver.-.flac"
+album = "響"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "ビリミリオン -オーケストラアレンジver.-"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 12
+duration_ms = 238346
+
+[expect.release]
+ids = { release_group_id = "633077f1-ce3b-4992-8ee5-85e6e0cd4ded", release_id = "266f1bdf-cd3d-4d3f-affa-9f3735277a07" }
+fields = { release_title = "響", release_date = "2023-11-29" }
+
+[expect.artists."4337f1a5-9e02-4b46-98c3-e3c28683a9b5"]
+fields = { artist_name = "優里", sort_name = "Yuuri" }
+
+[expect.tracks."0ed510fe-4087-48e5-baf3-f0c9616ac75a"]
+fields = { disc = 1, track = 2, track_title = "ベテルギウス -オーケストラアレンジver.-" }
+
+[expect.tracks."1e56e096-5dd9-4701-a6f9-b0dfc62a923b"]
+fields = { disc = 1, track = 3, track_title = "かくれんぼ -オーケストラアレンジver.-" }
+
+[expect.tracks."2deff3b4-34c3-4d6b-b546-3113f6077843"]
+fields = { disc = 1, track = 1, track_title = "ビリミリオン -オーケストラアレンジver.-" }
+
+[expect.tracks."4cf21153-b5af-47f1-b7e0-2283f193a19b"]
+fields = { disc = 1, track = 6, track_title = "レオ -オーケストラアレンジver.-" }
+
+[expect.tracks."65b18e4f-f941-4cd8-aa65-24eea3a5ef12"]
+fields = { disc = 1, track = 8, track_title = "ガリレオは恋をする -オーケストラアレンジver.-" }
+
+[expect.tracks."74eeb5d9-95e1-4813-baff-dc27899fe4d3"]
+fields = { disc = 1, track = 12, track_title = "メリーゴーランド -オーケストラアレンジver.-" }
+
+[expect.tracks."a7925673-6d63-4932-8e4a-5008f83c84b2"]
+fields = { disc = 1, track = 11, track_title = "うぉ -オーケストラアレンジver.-" }
+
+[expect.tracks."bd62cf2b-996e-4bf7-95bd-f0cbd5e2f59b"]
+fields = { disc = 1, track = 5, track_title = "アダムとイブ -オーケストラアレンジver.-" }
+
+[expect.tracks."d82f24d4-a888-41da-b05c-a758a532a7a3"]
+fields = { disc = 1, track = 4, track_title = "ドライフラワー -オーケストラアレンジver.-" }
+
+[expect.tracks."d9258b86-ff0b-4264-9a50-5576d9aab0ce"]
+fields = { disc = 1, track = 9, track_title = "かごめ -オーケストラアレンジver.-" }
+
+[expect.tracks."e290ce91-2e51-4d24-84c1-107204fcb397"]
+fields = { disc = 1, track = 10, track_title = "ピーターパン -オーケストラアレンジver.-" }
+
+[expect.tracks."ee87ba5f-c0aa-4bf3-81d5-fd99cf0dd22c"]
+fields = { disc = 1, track = 7, track_title = "アストロノーツ -オーケストラアレンジver.-" }

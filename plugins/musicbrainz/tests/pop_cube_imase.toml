@@ -1,0 +1,118 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "imase - POP CUBE (2022-11-09) [WEB FLAC]/1.07. Holy Light.flac"
+album = "POP CUBE"
+album_artists = ["imase"]
+artists = ["imase"]
+title = "Holy Light"
+copyright = "℗© 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+track = 7
+track_total = 7
+duration_ms = 197306
+
+[[raw_tags]]
+file_path = "imase - POP CUBE (2022-11-09) [WEB FLAC]/1.06. NIGHT DANCER.flac"
+album = "POP CUBE"
+album_artists = ["imase"]
+artists = ["imase"]
+title = "NIGHT DANCER"
+copyright = "℗© 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+track = 6
+track_total = 7
+duration_ms = 210600
+
+[[raw_tags]]
+file_path = "imase - POP CUBE (2022-11-09) [WEB FLAC]/1.05. 逃避行.flac"
+album = "POP CUBE"
+album_artists = ["imase"]
+artists = ["imase"]
+title = "逃避行"
+copyright = "℗© 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+track = 5
+track_total = 7
+duration_ms = 192800
+
+[[raw_tags]]
+file_path = "imase - POP CUBE (2022-11-09) [WEB FLAC]/1.04. でもね、たまには.flac"
+album = "POP CUBE"
+album_artists = ["imase"]
+artists = ["imase"]
+title = "でもね、たまには"
+copyright = "℗© 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+track = 4
+track_total = 7
+duration_ms = 186666
+
+[[raw_tags]]
+file_path = "imase - POP CUBE (2022-11-09) [WEB FLAC]/1.03. アナログライフ.flac"
+album = "POP CUBE"
+album_artists = ["imase"]
+artists = ["imase"]
+title = "アナログライフ"
+copyright = "℗© 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+track = 3
+track_total = 7
+duration_ms = 193200
+
+[[raw_tags]]
+file_path = "imase - POP CUBE (2022-11-09) [WEB FLAC]/1.02. あべこべ.flac"
+album = "POP CUBE"
+album_artists = ["imase"]
+artists = ["imase"]
+title = "あべこべ"
+copyright = "℗© 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+track = 2
+track_total = 7
+duration_ms = 200733
+
+[[raw_tags]]
+file_path = "imase - POP CUBE (2022-11-09) [WEB FLAC]/1.01. Have a nice day.flac"
+album = "POP CUBE"
+album_artists = ["imase"]
+artists = ["imase"]
+title = "Have a nice day"
+copyright = "℗© 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+track = 1
+track_total = 7
+duration_ms = 175600
+
+[expect.release]
+ids = { release_group_id = "6fa39021-9f83-4da1-94e8-75700ee7cca1", release_id = "2eaa6ae9-8195-449b-be5c-3d3a93b27b1c" }
+fields = { release_title = "POP CUBE", release_date = "2022-11-09" }
+
+[expect.artists."bc83173f-c86f-4343-b3e7-aad839a47a54"]
+fields = { artist_name = "imase", sort_name = "imase" }
+
+[expect.tracks."10c20127-eb74-4342-8052-8ae8225774af"]
+fields = { disc = 1, track = 3, track_title = "アナログライフ" }
+
+[expect.tracks."216eb602-3269-4059-94d9-bdf906da532e"]
+fields = { disc = 1, track = 5, track_title = "逃避行" }
+
+[expect.tracks."24e1ac1d-bc2a-4ca4-a0ec-95133502fc11"]
+fields = { disc = 1, track = 2, track_title = "あべこべ" }
+
+[expect.tracks."3b767411-f28f-4aa8-9d7e-c6a52660f021"]
+fields = { disc = 1, track = 4, track_title = "でもね、たまには" }
+
+[expect.tracks."a262fb82-6c2b-4cbf-85b5-1208594424bd"]
+fields = { disc = 1, track = 1, track_title = "Have a nice day" }
+
+[expect.tracks."f814c10e-d4c7-4f2c-b6e6-1f128919071d"]
+fields = { disc = 1, track = 6, track_title = "NIGHT DANCER" }
+
+[expect.tracks."fd86e731-3f4c-469f-ae3b-aa4212f76a75"]
+fields = { disc = 1, track = 7, track_title = "Holy Light" }

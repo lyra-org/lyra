@@ -1,0 +1,20 @@
+# This test is meant to test if the MusicBrainz plugin is capable of prioritizing artists in the same country as the library
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "susumu. - 羊は眠らない (2026) [WEB FLAC]/1. susumu. - 羊は眠らない.flac"
+album = "羊は眠らない"
+album_artists = ["susumu."]
+artists = ["susumu."]
+title = "羊は眠らない"
+copyright = "℗© susumu."
+track = 1
+track_total = 1
+duration_ms = 217200
+
+[expect.artists."c89d29ba-4ff5-4816-b2f6-fb50a6da1512"]

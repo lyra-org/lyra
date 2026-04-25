@@ -1,0 +1,189 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ぜったくん - Bed in Wonderland (2022-08-31) [WEB FLAC]/1.11. Gaming Party Xmas.flac"
+album = "Bed in Wonderland"
+album_artists = ["ぜったくん"]
+artists = ["ぜったくん"]
+title = "Gaming Party Xmas"
+copyright = "A Virgin Music release; ℗ 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 11
+duration_ms = 222186
+
+[[raw_tags]]
+file_path = "ぜったくん - Bed in Wonderland (2022-08-31) [WEB FLAC]/1.10. WAKE me UP!!! (feat. Hannya Kanada Satoshi).flac"
+album = "Bed in Wonderland"
+album_artists = ["ぜったくん"]
+artists = ["ぜったくん"]
+title = "WAKE me UP!!! (feat. Hannya Kanada Satoshi)"
+copyright = "A Virgin Music release; ℗ 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 11
+duration_ms = 171266
+
+[[raw_tags]]
+file_path = "ぜったくん - Bed in Wonderland (2022-08-31) [WEB FLAC]/1.09. orange juice.flac"
+album = "Bed in Wonderland"
+album_artists = ["ぜったくん"]
+artists = ["ぜったくん"]
+title = "orange juice"
+copyright = "A Virgin Music release; ℗ 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 11
+duration_ms = 150760
+
+[[raw_tags]]
+file_path = "ぜったくん - Bed in Wonderland (2022-08-31) [WEB FLAC]/1.08. レンタカー.flac"
+album = "Bed in Wonderland"
+album_artists = ["ぜったくん"]
+artists = ["ぜったくん"]
+title = "レンタカー"
+copyright = "A Virgin Music release; ℗ 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 11
+duration_ms = 183346
+
+[[raw_tags]]
+file_path = "ぜったくん - Bed in Wonderland (2022-08-31) [WEB FLAC]/1.07. Baby.flac"
+album = "Bed in Wonderland"
+album_artists = ["ぜったくん"]
+artists = ["ぜったくん"]
+title = "Baby"
+copyright = "A Virgin Music release; ℗ 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 11
+duration_ms = 213706
+
+[[raw_tags]]
+file_path = "ぜったくん - Bed in Wonderland (2022-08-31) [WEB FLAC]/1.06. なんて日だ.flac"
+album = "Bed in Wonderland"
+album_artists = ["ぜったくん"]
+artists = ["ぜったくん"]
+title = "なんて日だ"
+copyright = "A Virgin Music release; ℗ 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 11
+duration_ms = 139666
+
+[[raw_tags]]
+file_path = "ぜったくん - Bed in Wonderland (2022-08-31) [WEB FLAC]/1.05. sunday sunday.flac"
+album = "Bed in Wonderland"
+album_artists = ["ぜったくん"]
+artists = ["ぜったくん"]
+title = "sunday sunday"
+copyright = "A Virgin Music release; ℗ 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 11
+duration_ms = 201053
+
+[[raw_tags]]
+file_path = "ぜったくん - Bed in Wonderland (2022-08-31) [WEB FLAC]/1.04. 味噌つけてキュウリ食べたい.flac"
+album = "Bed in Wonderland"
+album_artists = ["ぜったくん"]
+artists = ["ぜったくん"]
+title = "味噌つけてキュウリ食べたい"
+copyright = "A Virgin Music release; ℗ 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 11
+duration_ms = 196293
+
+[[raw_tags]]
+file_path = "ぜったくん - Bed in Wonderland (2022-08-31) [WEB FLAC]/1.03. Midnight Call (feat. kojikoji).flac"
+album = "Bed in Wonderland"
+album_artists = ["ぜったくん"]
+artists = ["ぜったくん"]
+title = "Midnight Call (feat. kojikoji)"
+copyright = "A Virgin Music release; ℗ 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 11
+duration_ms = 209800
+
+[[raw_tags]]
+file_path = "ぜったくん - Bed in Wonderland (2022-08-31) [WEB FLAC]/1.02. Man Say Bien.flac"
+album = "Bed in Wonderland"
+album_artists = ["ぜったくん"]
+artists = ["ぜったくん"]
+title = "Man Say Bien"
+copyright = "A Virgin Music release; ℗ 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 11
+duration_ms = 219520
+
+[[raw_tags]]
+file_path = "ぜったくん - Bed in Wonderland (2022-08-31) [WEB FLAC]/1.01. ビュンビュン逃飛行✈️.flac"
+album = "Bed in Wonderland"
+album_artists = ["ぜったくん"]
+artists = ["ぜったくん"]
+title = "ビュンビュン逃飛行✈️"
+copyright = "A Virgin Music release; ℗ 2022 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 11
+duration_ms = 203573
+
+[expect.release]
+ids = { release_group_id = "b36f52bb-a1a2-4760-81fb-33247cc24481", release_id = "d7609d38-d0c3-44b0-92fc-3140fde0e2f8" }
+fields = { release_title = "Bed in Wonderland", release_date = "2022-08-31" }
+
+[expect.artists."6ae9a689-5003-4ecf-880b-336399903bab"]
+fields = { artist_name = "ぜったくん", sort_name = "zettakun" }
+
+[expect.tracks."10805c96-6f11-434d-8e40-fa871a2b243d"]
+fields = { disc = 1, track = 7, track_title = "Baby" }
+
+[expect.tracks."173c983f-b29f-4392-baae-845339585144"]
+fields = { disc = 1, track = 11, track_title = "Gaming Party Xmas" }
+
+[expect.tracks."28bdb839-7adc-4d5a-9dd4-39e5ec5fdd84"]
+fields = { disc = 1, track = 3, track_title = "Midnight Call" }
+
+[expect.tracks."2bba6595-b863-4c41-af13-72889f608651"]
+fields = { disc = 1, track = 2, track_title = "Man Say Bien" }
+
+[expect.tracks."3424a168-31af-42f3-9fda-35999bde768e"]
+fields = { disc = 1, track = 4, track_title = "味噌つけてキュウリ食べたい" }
+
+[expect.tracks."4407172e-56f6-4aec-8ced-94fb1ec257a7"]
+fields = { disc = 1, track = 10, track_title = "WAKE me UP!!!" }
+
+[expect.tracks."5408fafc-254f-4135-9a8c-377857230e8c"]
+fields = { disc = 1, track = 6, track_title = "なんて日だ" }
+
+[expect.tracks."55ab2bf8-247d-4f0e-89f6-a9db3ebca8a8"]
+fields = { disc = 1, track = 8, track_title = "レンタカー" }
+
+[expect.tracks."733a7fbc-8c3a-41d3-b9eb-dd0d9e90b6be"]
+fields = { disc = 1, track = 5, track_title = "sunday sunday" }
+
+[expect.tracks."8f9c7bd5-193e-43f5-af52-1a109e48b056"]
+fields = { disc = 1, track = 9, track_title = "orange juice" }
+
+[expect.tracks."96c36f24-ba57-48be-aef3-e5b4f89b35e6"]
+fields = { disc = 1, track = 1, track_title = "ビュンビュン逃飛行✈️" }

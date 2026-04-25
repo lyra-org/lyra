@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/artist?query=WhaleDontSleep",
+  "status_code": 200,
+  "body": "{\"created\":\"2026-03-10T02:33:55.976Z\",\"count\":1,\"offset\":0,\"artists\":[{\"id\":\"f965776a-54a5-4ea7-8fe1-286bbd2ec154\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"score\":100,\"gender-id\":\"36d3d30a-839d-3eda-8cb3-29be4384e4a9\",\"name\":\"くじら\",\"sort-name\":\"Kujira\",\"gender\":\"male\",\"country\":\"JP\",\"area\":{\"id\":\"2db42837-c832-3c27-b4a3-08198f75693c\",\"type\":\"Country\",\"type-id\":\"06dd0ae4-8c74-30bb-b43d-95dcedf961de\",\"name\":\"Japan\",\"sort-name\":\"Japan\",\"life-span\":{\"ended\":null}},\"disambiguation\":\"Japanese composer\",\"ipis\":[\"01046849242\"],\"life-span\":{\"begin\":\"2000-03-02\",\"ended\":null},\"aliases\":[{\"sort-name\":\"WhaleDontSleep\",\"type-id\":\"894afba6-2816-3c24-8072-eadb66bd04bc\",\"name\":\"WhaleDontSleep\",\"locale\":\"en\",\"type\":\"Artist name\",\"primary\":true,\"begin-date\":null,\"end-date\":null}],\"tags\":[{\"count\":1,\"name\":\"j-pop\"}]}]}"
+}

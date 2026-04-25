@@ -1,0 +1,176 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Penthouse - Laundry (2024-11-06) [WEB FLAC]/1.10. Whiskey And Coke.flac"
+album = "Laundry"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "Whiskey And Coke"
+copyright = "℗ 2024 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 10
+duration_ms = 205000
+
+[[raw_tags]]
+file_path = "Penthouse - Laundry (2024-11-06) [WEB FLAC]/1.09. アイデンティファイ.flac"
+album = "Laundry"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "アイデンティファイ"
+copyright = "℗ 2024 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 10
+duration_ms = 217573
+
+[[raw_tags]]
+file_path = "Penthouse - Laundry (2024-11-06) [WEB FLAC]/1.08. Kitchen feat. 9m88.flac"
+album = "Laundry"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "Kitchen feat. 9m88"
+copyright = "℗ 2024 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 10
+duration_ms = 232213
+
+[[raw_tags]]
+file_path = "Penthouse - Laundry (2024-11-06) [WEB FLAC]/1.07. 一難.flac"
+album = "Laundry"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "一難"
+copyright = "℗ 2024 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 10
+duration_ms = 213453
+
+[[raw_tags]]
+file_path = "Penthouse - Laundry (2024-11-06) [WEB FLAC]/1.06. 花束のような人生を君に.flac"
+album = "Laundry"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "花束のような人生を君に"
+copyright = "℗ 2024 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 10
+duration_ms = 295120
+
+[[raw_tags]]
+file_path = "Penthouse - Laundry (2024-11-06) [WEB FLAC]/1.05. フライデーズハイ.flac"
+album = "Laundry"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "フライデーズハイ"
+copyright = "℗ 2024 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 10
+duration_ms = 193426
+
+[[raw_tags]]
+file_path = "Penthouse - Laundry (2024-11-06) [WEB FLAC]/1.04. Raise Your Hands Up.flac"
+album = "Laundry"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "Raise Your Hands Up"
+copyright = "℗ 2024 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 10
+duration_ms = 192573
+
+[[raw_tags]]
+file_path = "Penthouse - Laundry (2024-11-06) [WEB FLAC]/1.03. 夏に願いを.flac"
+album = "Laundry"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "夏に願いを"
+copyright = "℗ 2024 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 10
+duration_ms = 182626
+
+[[raw_tags]]
+file_path = "Penthouse - Laundry (2024-11-06) [WEB FLAC]/1.02. 我愛你.flac"
+album = "Laundry"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "我愛你"
+copyright = "℗ 2024 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 10
+duration_ms = 193440
+
+[[raw_tags]]
+file_path = "Penthouse - Laundry (2024-11-06) [WEB FLAC]/1.01. Taxi to the Moon.flac"
+album = "Laundry"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "Taxi to the Moon"
+copyright = "℗ 2024 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 10
+duration_ms = 131200
+
+[expect.release]
+ids = { release_group_id = "23913d4f-68ba-41fe-8567-0d69de17ba10", release_id = "4dbb1bf7-876d-453b-9d53-ee77ecee2073" }
+fields = { release_title = "Laundry", genres = ["r&b", "soul"], release_date = "2024-11-06" }
+
+[expect.artists."55baa3aa-1914-4a9c-a0ec-636eaaaba904"]
+fields = { artist_name = "9m88", sort_name = "9m88" }
+
+[expect.artists."9604bb00-65c5-4b67-a174-c46c063ba794"]
+fields = { artist_name = "Penthouse", sort_name = "Penthouse" }
+
+[expect.tracks."3051fc4b-6fa5-47d0-886c-68dfbd3303f7"]
+fields = { disc = 1, track = 4, track_title = "Raise Your Hands Up" }
+
+[expect.tracks."46a137e9-c419-4e74-b257-517eaefc840f"]
+fields = { disc = 1, track = 1, track_title = "Taxi to the Moon" }
+
+[expect.tracks."69ecc9e2-e0bb-4f33-a7fe-3e721276e845"]
+fields = { disc = 1, track = 9, track_title = "Identify" }
+
+[expect.tracks."6f1ac85c-4a21-4931-b24b-bcb5703a8919"]
+fields = { disc = 1, track = 5, track_title = "Friday’s High" }
+
+[expect.tracks."726f0ba1-cf02-4f41-90fc-fff760e118c2"]
+fields = { disc = 1, track = 8, track_title = "Kitchen" }
+
+[expect.tracks."836233c0-7abe-43aa-ba80-b23918fadb30"]
+fields = { disc = 1, track = 3, track_title = "Wish upon the Summer" }
+
+[expect.tracks."a9107a61-d067-48b5-8047-c182b2b184da"]
+fields = { disc = 1, track = 2, track_title = "我愛你" }
+
+[expect.tracks."b640e071-ab63-40a9-a394-d700e1f8778a"]
+fields = { disc = 1, track = 7, track_title = "Undertaker" }
+
+[expect.tracks."ecae9817-d729-4360-8cc3-b339accd30a2"]
+fields = { disc = 1, track = 6, track_title = "Bouquet" }
+
+[expect.tracks."f3be6639-6d07-4dbe-be65-7c4c04149ee8"]
+fields = { disc = 1, track = 10, track_title = "Whiskey And Coke" }

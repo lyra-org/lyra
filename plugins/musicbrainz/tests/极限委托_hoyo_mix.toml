@@ -1,0 +1,2187 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/198 - Come Alive Stripped.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Come Alive Stripped."
+genre = "Alternative"
+disc = 1
+track = 198
+duration_ms = 215262
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/197 - 妖刀幻境.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "妖刀幻境"
+genre = "Alternative"
+disc = 1
+track = 197
+duration_ms = 235454
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/196 - 火狱骑行.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "火狱骑行"
+genre = "Alternative"
+disc = 1
+track = 196
+duration_ms = 262666
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/195 - 绝命舞曲 Acoustic.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "绝命舞曲 Acoustic."
+genre = "Alternative"
+disc = 1
+track = 195
+duration_ms = 160099
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/194 - 咖啡伴侣.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "咖啡伴侣"
+genre = "Alternative"
+disc = 1
+track = 194
+duration_ms = 46883
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/193 - 虚无.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "虚无"
+genre = "Alternative"
+disc = 1
+track = 193
+duration_ms = 47333
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/192 - 生活百货.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "生活百货"
+genre = "Alternative"
+disc = 1
+track = 192
+duration_ms = 24039
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/191 - 快充嗯呢.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "快充嗯呢"
+genre = "Alternative"
+disc = 1
+track = 191
+duration_ms = 18967
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/190 - 械尸狂潮.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "械尸狂潮"
+genre = "Alternative"
+disc = 1
+track = 190
+duration_ms = 19625
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/189 - H.I.A.的未来.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "H.I.A.的未来"
+genre = "Alternative"
+disc = 1
+track = 189
+duration_ms = 16998
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/188 - 远景.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "远景"
+genre = "Alternative"
+disc = 1
+track = 188
+duration_ms = 17694
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/187 - 最后一次飞行.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "最后一次飞行"
+genre = "Alternative"
+disc = 1
+track = 187
+duration_ms = 26944
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/186 - Storm Petrel.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Storm Petrel"
+genre = "Alternative"
+disc = 1
+track = 186
+duration_ms = 34142
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/185 - 瀑汤谷.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "瀑汤谷"
+genre = "Alternative"
+disc = 1
+track = 185
+duration_ms = 16006
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/184 - 吾本如斯.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "吾本如斯"
+genre = "Alternative"
+disc = 1
+track = 184
+duration_ms = 52057
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/183 - 邦布知道.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "邦布知道"
+genre = "Alternative"
+disc = 1
+track = 183
+duration_ms = 21458
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/182 - 小身材大危机.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "小身材大危机"
+genre = "Alternative"
+disc = 1
+track = 182
+duration_ms = 14500
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/181 - 足行天下.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "足行天下"
+genre = "Alternative"
+disc = 1
+track = 181
+duration_ms = 23081
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/180 - 新装备.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "新装备"
+genre = "Alternative"
+disc = 1
+track = 180
+duration_ms = 14000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/179 - 十万次心跳.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "十万次心跳"
+genre = "Alternative"
+disc = 1
+track = 179
+duration_ms = 19613
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/178 - 侵袭次世代.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "侵袭次世代"
+genre = "Alternative"
+disc = 1
+track = 178
+duration_ms = 15977
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/177 - 不可触碰.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "不可触碰"
+genre = "Alternative"
+disc = 1
+track = 177
+duration_ms = 17278
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/176 - 大空洞.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "大空洞"
+genre = "Alternative"
+disc = 1
+track = 176
+duration_ms = 27000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/175 - 波特山.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "波特山"
+genre = "Alternative"
+disc = 1
+track = 175
+duration_ms = 19113
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/174 - 141杂货店.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "141杂货店"
+genre = "Alternative"
+disc = 1
+track = 174
+duration_ms = 25349
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/173 - 回到放学那一年.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "回到放学那一年"
+genre = "Alternative"
+disc = 1
+track = 173
+duration_ms = 16416
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/172 - 邦布帮帮你.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "邦布帮帮你"
+genre = "Alternative"
+disc = 1
+track = 172
+duration_ms = 14000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/171 - Wifi无处不在.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Wifi无处不在"
+genre = "Alternative"
+disc = 1
+track = 171
+duration_ms = 14000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/170 - 燃油饮.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "燃油饮"
+genre = "Alternative"
+disc = 1
+track = 170
+duration_ms = 22000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/169 - 遗忘的角落.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "遗忘的角落"
+genre = "Alternative"
+disc = 1
+track = 169
+duration_ms = 132363
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/168 - 六缸转速.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "六缸转速"
+genre = "Alternative"
+disc = 1
+track = 168
+duration_ms = 79565
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/167 - 躁动狂潮.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "躁动狂潮"
+genre = "Alternative"
+disc = 1
+track = 167
+duration_ms = 90666
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/166 - 宿命之路.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "宿命之路"
+genre = "Alternative"
+disc = 1
+track = 166
+duration_ms = 272727
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/165 - 黑暗深处.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "黑暗深处"
+genre = "Alternative"
+disc = 1
+track = 165
+duration_ms = 458666
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/164 - 安全出口.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "安全出口"
+genre = "Alternative"
+disc = 1
+track = 164
+duration_ms = 191250
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/163 - 使命.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "使命"
+genre = "Alternative"
+disc = 1
+track = 163
+duration_ms = 320000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/162 - 溯源.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "溯源"
+genre = "Alternative"
+disc = 1
+track = 162
+duration_ms = 240909
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/161 - 敲门.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "敲门"
+genre = "Alternative"
+disc = 1
+track = 161
+duration_ms = 182250
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/160 - 机油.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "机油"
+genre = "Alternative"
+disc = 1
+track = 160
+duration_ms = 256800
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/159 - 破境.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "破境"
+genre = "Alternative"
+disc = 1
+track = 159
+duration_ms = 61818
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/158 - 黑兔子.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "黑兔子"
+genre = "Alternative"
+disc = 1
+track = 158
+duration_ms = 129777
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/157 - 黑色变调夹.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "黑色变调夹"
+genre = "Alternative"
+disc = 1
+track = 157
+duration_ms = 69913
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/156 - 岁岁.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "岁岁"
+genre = "Alternative"
+disc = 1
+track = 156
+duration_ms = 79200
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/155 - 褪色铁皮盒.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "褪色铁皮盒"
+genre = "Alternative"
+disc = 1
+track = 155
+duration_ms = 106800
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/154 - 保持怀疑.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "保持怀疑"
+genre = "Alternative"
+disc = 1
+track = 154
+duration_ms = 103799
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/153 - 猜忌.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "猜忌"
+genre = "Alternative"
+disc = 1
+track = 153
+duration_ms = 83547
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/152 - !Bug!.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "!Bug!"
+genre = "Alternative"
+disc = 1
+track = 152
+duration_ms = 109666
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/151 - Peace.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Peace"
+genre = "Alternative"
+disc = 1
+track = 151
+duration_ms = 86571
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/150 - 时光正在回退.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "时光正在回退"
+genre = "Alternative"
+disc = 1
+track = 150
+duration_ms = 67000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/149 - 白色网格.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "白色网格"
+genre = "Alternative"
+disc = 1
+track = 149
+duration_ms = 92090
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/148 - 无须他言.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "无须他言"
+genre = "Alternative"
+disc = 1
+track = 148
+duration_ms = 82130
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/147 - 嘿！朋友！.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "嘿！朋友！"
+genre = "Alternative"
+disc = 1
+track = 147
+duration_ms = 81000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/146 - 不安之种.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "不安之种"
+genre = "Alternative"
+disc = 1
+track = 146
+duration_ms = 201000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/145 - 胜负已分.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "胜负已分"
+genre = "Alternative"
+disc = 1
+track = 145
+duration_ms = 117551
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/144 - 我方斗志.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "我方斗志"
+genre = "Alternative"
+disc = 1
+track = 144
+duration_ms = 100273
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/143 - 现在正当时.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "现在正当时"
+genre = "Alternative"
+disc = 1
+track = 143
+duration_ms = 71314
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/142 - 菓.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "菓"
+genre = "Alternative"
+disc = 1
+track = 142
+duration_ms = 144000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/141 - 吧台特调.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "吧台特调"
+genre = "Alternative"
+disc = 1
+track = 141
+duration_ms = 70420
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/140 - 无声晚祷.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "无声晚祷"
+genre = "Alternative"
+disc = 1
+track = 140
+duration_ms = 83761
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/139 - 如子弹穿过风.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "如子弹穿过风"
+genre = "Alternative"
+disc = 1
+track = 139
+duration_ms = 75223
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/138 - 风滚草与仙人掌.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "风滚草与仙人掌"
+genre = "Alternative"
+disc = 1
+track = 138
+duration_ms = 150447
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/137 - 红色革履.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "红色革履"
+genre = "Alternative"
+disc = 1
+track = 137
+duration_ms = 68571
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/136 - 此刻心绪.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "此刻心绪"
+genre = "Alternative"
+disc = 1
+track = 136
+duration_ms = 106000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/135 - Choice.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Choice"
+genre = "Alternative"
+disc = 1
+track = 135
+duration_ms = 83448
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/134 - 急速激情.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "急速激情"
+genre = "Alternative"
+disc = 1
+track = 134
+duration_ms = 58437
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/133 - 逆境重生.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "逆境重生"
+genre = "Alternative"
+disc = 1
+track = 133
+duration_ms = 92109
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/132 - 极.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "极"
+genre = "Alternative"
+disc = 1
+track = 132
+duration_ms = 93858
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/131 - 迷.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "迷"
+genre = "Alternative"
+disc = 1
+track = 131
+duration_ms = 297600
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/130 - 乱.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "乱"
+genre = "Alternative"
+disc = 1
+track = 130
+duration_ms = 52800
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/129 - 骸.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "骸"
+genre = "Alternative"
+disc = 1
+track = 129
+duration_ms = 242400
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/128 - 请您先用茶.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "请您先用茶"
+genre = "Alternative"
+disc = 1
+track = 128
+duration_ms = 91167
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/127 - 股掌之间.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "股掌之间"
+genre = "Alternative"
+disc = 1
+track = 127
+duration_ms = 93600
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/126 - 荒唐童谣.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "荒唐童谣"
+genre = "Alternative"
+disc = 1
+track = 126
+duration_ms = 124800
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/125 - 天生丽质.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "天生丽质"
+genre = "Alternative"
+disc = 1
+track = 125
+duration_ms = 105600
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/124 - 松弛感.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "松弛感"
+genre = "Alternative"
+disc = 1
+track = 124
+duration_ms = 103200
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/123 - 如有闲情.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "如有闲情"
+genre = "Alternative"
+disc = 1
+track = 123
+duration_ms = 129431
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/122 - 自在一日.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "自在一日"
+genre = "Alternative"
+disc = 1
+track = 122
+duration_ms = 122400
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/121 - 不慌.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "不慌"
+genre = "Alternative"
+disc = 1
+track = 121
+duration_ms = 158400
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/120 - 迂回之径.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "迂回之径"
+genre = "Alternative"
+disc = 1
+track = 120
+duration_ms = 132731
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/119 - 闲散度日.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "闲散度日"
+genre = "Alternative"
+disc = 1
+track = 119
+duration_ms = 165600
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/118 - Defeat.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Defeat"
+genre = "Alternative"
+disc = 1
+track = 118
+duration_ms = 35229
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/117 - Victory.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Victory"
+genre = "Alternative"
+disc = 1
+track = 117
+duration_ms = 46238
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/116 - 嗯呐呐！.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "嗯呐呐！"
+genre = "Alternative"
+disc = 1
+track = 116
+duration_ms = 86511
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/115 - 嗯呐？.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "嗯呐？"
+genre = "Alternative"
+disc = 1
+track = 115
+duration_ms = 97674
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/114 - 当三明治来敲门.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "当三明治来敲门"
+genre = "Alternative"
+disc = 1
+track = 114
+duration_ms = 98117
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/113 - 以太虚境+++.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "以太虚境+++"
+genre = "Alternative"
+disc = 1
+track = 113
+duration_ms = 19200
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/112 - 以太虚境++.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "以太虚境++"
+genre = "Alternative"
+disc = 1
+track = 112
+duration_ms = 19200
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/111 - 混沌虚境.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "混沌虚境"
+genre = "Alternative"
+disc = 1
+track = 111
+duration_ms = 46400
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/110 - 以太虚境+.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "以太虚境+"
+genre = "Alternative"
+disc = 1
+track = 110
+duration_ms = 24000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/109 - 以太虚境.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "以太虚境"
+genre = "Alternative"
+disc = 1
+track = 109
+duration_ms = 24000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/108 - 虚境脱轨.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "虚境脱轨"
+genre = "Alternative"
+disc = 1
+track = 108
+duration_ms = 42000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/107 - 漫行.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "漫行"
+genre = "Alternative"
+disc = 1
+track = 107
+duration_ms = 98823
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/106 - 外环用餐礼仪.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "外环用餐礼仪"
+genre = "Alternative"
+disc = 1
+track = 106
+duration_ms = 208000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/105 - 「芝托邦」变奏曲.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "「芝托邦」变奏曲"
+genre = "Alternative"
+disc = 1
+track = 105
+duration_ms = 64527
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/104 - 上菜.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "上菜"
+genre = "Alternative"
+disc = 1
+track = 104
+duration_ms = 84923
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/103 - 治安官的一天.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "治安官的一天"
+genre = "Alternative"
+disc = 1
+track = 103
+duration_ms = 67272
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/102 - 夏日派对.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "夏日派对"
+genre = "Alternative"
+disc = 1
+track = 102
+duration_ms = 222076
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/101 - Red!!!.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Red!!!"
+genre = "Alternative"
+disc = 1
+track = 101
+duration_ms = 73333
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/100 - Red!!.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Red!!"
+genre = "Alternative"
+disc = 1
+track = 100
+duration_ms = 73333
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/099 - Red!.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Red!"
+genre = "Alternative"
+disc = 1
+track = 99
+duration_ms = 73333
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/098 - 夏日盛典.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "夏日盛典"
+genre = "Alternative"
+disc = 1
+track = 98
+duration_ms = 128000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/097 - 夏日前奏.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "夏日前奏"
+genre = "Alternative"
+disc = 1
+track = 97
+duration_ms = 121000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/096 - 金牌嘉奖.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "金牌嘉奖"
+genre = "Alternative"
+disc = 1
+track = 96
+duration_ms = 50500
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/095 - 金牌纪念.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "金牌纪念"
+genre = "Alternative"
+disc = 1
+track = 95
+duration_ms = 22200
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/094 - 大师金牌.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "大师金牌"
+genre = "Alternative"
+disc = 1
+track = 94
+duration_ms = 50499
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/093 - 入门金牌.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "入门金牌"
+genre = "Alternative"
+disc = 1
+track = 93
+duration_ms = 22200
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/092 - 金牌向你招手.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "金牌向你招手"
+genre = "Alternative"
+disc = 1
+track = 92
+duration_ms = 28800
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/091 - 孩子们的交友监督.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "孩子们的交友监督"
+genre = "Alternative"
+disc = 1
+track = 91
+duration_ms = 58536
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/090 - 同行于新艾利都.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "同行于新艾利都"
+genre = "Alternative"
+disc = 1
+track = 90
+duration_ms = 105846
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/089 - 邦布维修大师.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "邦布维修大师"
+genre = "Alternative"
+disc = 1
+track = 89
+duration_ms = 83855
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/088 - 玛瑟尔迷宫.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "玛瑟尔迷宫"
+genre = "Alternative"
+disc = 1
+track = 88
+duration_ms = 109253
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/087 - 真·预言之下.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "真·预言之下"
+genre = "Alternative"
+disc = 1
+track = 87
+duration_ms = 80853
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/086 - 预言之下.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "预言之下"
+genre = "Alternative"
+disc = 1
+track = 86
+duration_ms = 195888
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/085 - Doom Bloom.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Doom Bloom"
+genre = "Alternative"
+disc = 1
+track = 85
+duration_ms = 175272
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/084 - 献给始主的牲.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "献给始主的牲"
+genre = "Alternative"
+disc = 1
+track = 84
+duration_ms = 294615
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/083 - 危险面.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "危险面"
+genre = "Alternative"
+disc = 1
+track = 83
+duration_ms = 206400
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/082 - 复活的霸主.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "复活的霸主"
+genre = "Alternative"
+disc = 1
+track = 82
+duration_ms = 144375
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/081 - Purchasable Loyalty.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Purchasable Loyalty"
+genre = "Alternative"
+disc = 1
+track = 81
+duration_ms = 139200
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/080 - 傲慢与偏执.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "傲慢与偏执"
+genre = "Alternative"
+disc = 1
+track = 80
+duration_ms = 148928
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/079 - 绝命舞曲.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "绝命舞曲"
+genre = "Alternative"
+disc = 1
+track = 79
+duration_ms = 152898
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/078 - 钢铁奇美拉.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "钢铁奇美拉"
+genre = "Alternative"
+disc = 1
+track = 78
+duration_ms = 196363
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/077 - 勇者星期五.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "勇者星期五"
+genre = "Alternative"
+disc = 1
+track = 77
+duration_ms = 95255
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/076 - 少女格莱特.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "少女格莱特"
+genre = "Alternative"
+disc = 1
+track = 76
+duration_ms = 96909
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/075 - 男子汉汉斯.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "男子汉汉斯"
+genre = "Alternative"
+disc = 1
+track = 75
+duration_ms = 92586
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/074 - 四手刀俎.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "四手刀俎"
+genre = "Alternative"
+disc = 1
+track = 74
+duration_ms = 161600
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/073 - 侵蚀之剑.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "侵蚀之剑"
+genre = "Alternative"
+disc = 1
+track = 73
+duration_ms = 128244
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/072 - 灾难土壤.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "灾难土壤"
+genre = "Alternative"
+disc = 1
+track = 72
+duration_ms = 186810
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/071 - 混沌ζ.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "混沌ζ"
+genre = "Alternative"
+disc = 1
+track = 71
+duration_ms = 82400
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/070 - 混沌ε.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "混沌ε"
+genre = "Alternative"
+disc = 1
+track = 70
+duration_ms = 160800
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/069 - 混沌δ.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "混沌δ"
+genre = "Alternative"
+disc = 1
+track = 69
+duration_ms = 259200
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/068 - 混沌γ.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "混沌γ"
+genre = "Alternative"
+disc = 1
+track = 68
+duration_ms = 274400
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/067 - 混沌β.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "混沌β"
+genre = "Alternative"
+disc = 1
+track = 67
+duration_ms = 320000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/066 - 混沌α.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "混沌α"
+genre = "Alternative"
+disc = 1
+track = 66
+duration_ms = 267300
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/065 - 薙.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "薙"
+genre = "Alternative"
+disc = 1
+track = 65
+duration_ms = 230000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/064 - Shnnnn~.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Shnnnn~"
+genre = "Alternative"
+disc = 1
+track = 64
+duration_ms = 166000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/063 - 宿命的交代.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "宿命的交代"
+genre = "Alternative"
+disc = 1
+track = 63
+duration_ms = 90909
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/062 - 烈拳困斗.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "烈拳困斗"
+genre = "Alternative"
+disc = 1
+track = 62
+duration_ms = 285000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/061 - 幸运cheer.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "幸运cheer"
+genre = "Alternative"
+disc = 1
+track = 61
+duration_ms = 170158
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/060 - 二进制正旦.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "二进制正旦"
+genre = "Alternative"
+disc = 1
+track = 60
+duration_ms = 189375
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/059 - 维多利亚式服务.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "维多利亚式服务"
+genre = "Alternative"
+disc = 1
+track = 59
+duration_ms = 105600
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/058 - 尖牙、利爪、微笑.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "尖牙、利爪、微笑"
+genre = "Alternative"
+disc = 1
+track = 58
+duration_ms = 144750
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/057 - 小大人.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "小大人"
+genre = "Alternative"
+disc = 1
+track = 57
+duration_ms = 273000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/056 - 齿轮与坩埚.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "齿轮与坩埚"
+genre = "Alternative"
+disc = 1
+track = 56
+duration_ms = 164137
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/055 - 喵~.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "喵~"
+genre = "Alternative"
+disc = 1
+track = 55
+duration_ms = 234000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/054 - Roger That.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Roger That"
+genre = "Alternative"
+disc = 1
+track = 54
+duration_ms = 298378
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/053 - 多进制.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "多进制"
+genre = "Alternative"
+disc = 1
+track = 53
+duration_ms = 257272
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/052 - Vr.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Vr"
+genre = "Alternative"
+disc = 1
+track = 52
+duration_ms = 310454
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/051 - 锈浪狂袭.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "锈浪狂袭"
+genre = "Alternative"
+disc = 1
+track = 51
+duration_ms = 167272
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/050 - 铁锚沉吟.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "铁锚沉吟"
+genre = "Alternative"
+disc = 1
+track = 50
+duration_ms = 156190
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/049 - 荒野暮色.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "荒野暮色"
+genre = "Alternative"
+disc = 1
+track = 49
+duration_ms = 221333
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/048 - 荒野之风.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "荒野之风"
+genre = "Alternative"
+disc = 1
+track = 48
+duration_ms = 253086
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/047 - 芭莱迷宫·黑夜.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "芭莱迷宫·黑夜"
+genre = "Alternative"
+disc = 1
+track = 47
+duration_ms = 296760
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/046 - 芭莱迷宫·白昼.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "芭莱迷宫·白昼"
+genre = "Alternative"
+disc = 1
+track = 46
+duration_ms = 317441
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/045 - 无尽的施工日·黑夜.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "无尽的施工日·黑夜"
+genre = "Alternative"
+disc = 1
+track = 45
+duration_ms = 315166
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/044 - 无尽的施工日·白昼.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "无尽的施工日·白昼"
+genre = "Alternative"
+disc = 1
+track = 44
+duration_ms = 242702
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/043 - 秩序脱轨·黑夜.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "秩序脱轨·黑夜"
+genre = "Alternative"
+disc = 1
+track = 43
+duration_ms = 308648
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/042 - 秩序脱轨·白昼.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "秩序脱轨·白昼"
+genre = "Alternative"
+disc = 1
+track = 42
+duration_ms = 344250
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/041 - Enjoy The Ride.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Enjoy The Ride"
+genre = "Alternative"
+disc = 1
+track = 41
+duration_ms = 68333
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/040 - Golden Sign _f.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Golden Sign _f"
+genre = "Alternative"
+disc = 1
+track = 40
+duration_ms = 68333
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/039 - Golden Sign _m.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Golden Sign _m"
+genre = "Alternative"
+disc = 1
+track = 39
+duration_ms = 68333
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/038 - 怪奇之友.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "怪奇之友"
+genre = "Alternative"
+disc = 1
+track = 38
+duration_ms = 62400
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/037 - 怪奇之旅.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "怪奇之旅"
+genre = "Alternative"
+disc = 1
+track = 37
+duration_ms = 64389
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/036 - 怪奇交易.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "怪奇交易"
+genre = "Alternative"
+disc = 1
+track = 36
+duration_ms = 34285
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/035 - 怪奇召唤.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "怪奇召唤"
+genre = "Alternative"
+disc = 1
+track = 35
+duration_ms = 34285
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/034 - 别打结！.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "别打结！"
+genre = "Alternative"
+disc = 1
+track = 34
+duration_ms = 106206
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/033 - 拐弯请注意.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "拐弯请注意"
+genre = "Alternative"
+disc = 1
+track = 33
+duration_ms = 105000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/032 - 当心尾巴.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "当心尾巴"
+genre = "Alternative"
+disc = 1
+track = 32
+duration_ms = 33000
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/031 - 冠军犬.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "冠军犬"
+genre = "Alternative"
+disc = 1
+track = 31
+duration_ms = 67317
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/030 - 犬出没.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "犬出没"
+genre = "Alternative"
+disc = 1
+track = 30
+duration_ms = 59955
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/029 - 噬魂犬.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "噬魂犬"
+genre = "Alternative"
+disc = 1
+track = 29
+duration_ms = 33648
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/028 - 秩序守护者.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "秩序守护者"
+genre = "Alternative"
+disc = 1
+track = 28
+duration_ms = 132789
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/027 - Hia.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Hia"
+genre = "Alternative"
+disc = 1
+track = 27
+duration_ms = 106833
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/026 - 三z出品.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "三z出品"
+genre = "Alternative"
+disc = 1
+track = 26
+duration_ms = 117374
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/025 - 微醺的缪斯.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "微醺的缪斯"
+genre = "Alternative"
+disc = 1
+track = 25
+duration_ms = 146961
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/024 - Turbo.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Turbo"
+genre = "Alternative"
+disc = 1
+track = 24
+duration_ms = 136421
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/023 - 机械手冲.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "机械手冲"
+genre = "Alternative"
+disc = 1
+track = 23
+duration_ms = 79704
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/022 - 上上下下左左右右.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "上上下下左左右右"
+genre = "Alternative"
+disc = 1
+track = 22
+duration_ms = 147518
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/021 - 开盒有惊__.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "开盒有惊__"
+genre = "Alternative"
+disc = 1
+track = 21
+duration_ms = 134800
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/020 - Time To Play.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Time To Play"
+genre = "Alternative"
+disc = 1
+track = 20
+duration_ms = 98965
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/019 - 虚幻光映.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "虚幻光映"
+genre = "Alternative"
+disc = 1
+track = 19
+duration_ms = 169600
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/018 - 鼠辈舞台.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "鼠辈舞台"
+genre = "Alternative"
+disc = 1
+track = 18
+duration_ms = 153333
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/017 - 地下律动.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "地下律动"
+genre = "Alternative"
+disc = 1
+track = 17
+duration_ms = 138947
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/016 - 争流口岸.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "争流口岸"
+genre = "Alternative"
+disc = 1
+track = 16
+duration_ms = 133714
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/015 - 运斤成风.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "运斤成风"
+genre = "Alternative"
+disc = 1
+track = 15
+duration_ms = 134311
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/014 - 野火.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "野火"
+genre = "Alternative"
+disc = 1
+track = 14
+duration_ms = 114146
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/013 - Limbo.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Limbo"
+genre = "Alternative"
+disc = 1
+track = 13
+duration_ms = 129056
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/012 - 注意头顶.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "注意头顶"
+genre = "Alternative"
+disc = 1
+track = 12
+duration_ms = 119464
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/011 - 昨日繁华.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "昨日繁华"
+genre = "Alternative"
+disc = 1
+track = 11
+duration_ms = 138159
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/010 - Still Vacation！.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Still Vacation！"
+genre = "Alternative"
+disc = 1
+track = 10
+duration_ms = 176151
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/009 - Vacation！.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Vacation！"
+genre = "Alternative"
+disc = 1
+track = 9
+duration_ms = 134117
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/008 - Still Action！.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Still Action！"
+genre = "Alternative"
+disc = 1
+track = 8
+duration_ms = 136333
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/007 - Action！.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "Action！"
+genre = "Alternative"
+disc = 1
+track = 7
+duration_ms = 149647
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/006 - 60%的遐想·热情.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "60%的遐想·热情"
+genre = "Alternative"
+disc = 1
+track = 6
+duration_ms = 139706
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/005 - 60%的日常·自由.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "60%的日常·自由"
+genre = "Alternative"
+disc = 1
+track = 5
+duration_ms = 143877
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/004 - 60%的遐想·静谧.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "60%的遐想·静谧"
+genre = "Alternative"
+disc = 1
+track = 4
+duration_ms = 150750
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/003 - 60%的日常·悠闲.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "60%的日常·悠闲"
+genre = "Alternative"
+disc = 1
+track = 3
+duration_ms = 126705
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/002 - 60%的遐想.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "60%的遐想"
+genre = "Alternative"
+disc = 1
+track = 2
+duration_ms = 163604
+
+[[raw_tags]]
+file_path = "Sān-Z - Hyper Commission (极限委托) (2024) {WEB} [FLAC]/001 - 60%的日常.flac"
+album = "极限委托"
+album_artists = ["Sān-Z", "HOYO-MiX"]
+artists = ["Sān-Z"]
+title = "60%的日常"
+genre = "Alternative"
+disc = 1
+track = 1
+duration_ms = 133888
+
+[expect.release]
+ids = { release_id = "b22a227a-5f64-4c40-823c-fab7a49f71b7" }
