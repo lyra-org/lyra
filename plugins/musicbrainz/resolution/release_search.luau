@@ -961,7 +961,7 @@ local function search_and_fetch_release(
 		if seed_release and seed_release["release-group"] and seed_release["release-group"].id then
 			local release_group_id = seed_release["release-group"].id
 			local group_response = mb_get(
-				`/release?release-group={release_group_id}&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels&limit=100`
+				`/release?release-group={release_group_id}&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100`
 			)
 			local group_data = if group_response then normalize_release_search_result(group_response) else nil
 			local group_releases = if group_data then group_data.releases else nil
@@ -1294,7 +1294,7 @@ local function search_and_fetch_release(
 			and current_best_release.id
 		then
 			local best_release_response = mb_get(
-				`/release/{current_best_release.id}?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels`
+				`/release/{current_best_release.id}?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels`
 			)
 			best_release = if best_release_response then normalize_release(best_release_response) else nil
 		end
@@ -1464,7 +1464,7 @@ local function search_and_fetch_release(
 		local deferred_track_count = #release_context.tracks
 		if deferred_track_count >= 2 and deferred_release.id then
 			local deferred_response = mb_get(
-				`/release/{deferred_release.id}?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels`
+				`/release/{deferred_release.id}?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels`
 			)
 			local deferred_data = if deferred_response then normalize_release(deferred_response) else nil
 			if deferred_data then
@@ -1490,7 +1490,7 @@ local function search_and_fetch_release(
 			local norm_title = normalize_title(search_title)
 			local declared_total = max_declared_track_total(release_context.tracks)
 			local deferred_response = mb_get(
-				`/release/{deferred_release.id}?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels`
+				`/release/{deferred_release.id}?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels`
 			)
 			local deferred_data = if deferred_response then normalize_release(deferred_response) else nil
 			if deferred_data then
