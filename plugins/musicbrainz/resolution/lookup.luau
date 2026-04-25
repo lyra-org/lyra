@@ -466,7 +466,7 @@ end
 
 local function browse_release_group(release_group_id: string, fast_mode: boolean, track_count: number?): { Release }?
 	local detailed_response = mb_get(
-		`/release?release-group={release_group_id}&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels&limit=100`
+		`/release?release-group={release_group_id}&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100`
 	)
 	local detailed_data = if detailed_response then normalize_release_search_result(detailed_response) else nil
 
@@ -1165,18 +1165,24 @@ local MB_RELATION_TO_CREDIT: { [string]: { type: CreditType, detail: string? } }
 	vocal = { type = CreditType.Vocalist },
 	instrument = { type = CreditType.Instrumentalist },
 	conductor = { type = CreditType.Conductor },
+	-- composition
+	arranger = { type = CreditType.Arranger },
+	composer = { type = CreditType.Composer },
+	lyricist = { type = CreditType.Lyricist },
+	writer = { type = CreditType.Writer },
 	-- production
 	producer = { type = CreditType.Producer },
 	engineer = { type = CreditType.Engineer },
 	["audio engineer"] = { type = CreditType.Engineer, detail = "audio" },
 	["sound engineer"] = { type = CreditType.Engineer, detail = "sound" },
-	mixer = { type = CreditType.Engineer, detail = "mix" },
+	mix = { type = CreditType.Mixer },
 	["recording engineer"] = { type = CreditType.Engineer, detail = "recording" },
 	["balance engineer"] = { type = CreditType.Engineer, detail = "balance" },
 	editor = { type = CreditType.Engineer, detail = "editor" },
+	["instrument arranger"] = { type = CreditType.Arranger, detail = "instrument" },
 	-- remix
-	remixer = { type = CreditType.Producer, detail = "remix" },
-	["dj-mixer"] = { type = CreditType.Producer, detail = "DJ mix" },
+	remixer = { type = CreditType.Remixer },
+	["dj-mixer"] = { type = CreditType.Mixer, detail = "DJ mix" },
 }
 
 local function link_artist_credits_from_relations(track_db_id: number, relations: { Relation })
@@ -1599,13 +1605,13 @@ local function process_release(
 				local recording_relations: { Relation }? = nil
 				if mb_track.recording_id then
 					track_layer:set_id("recording_id", mb_track.recording_id)
+					local inline_relations = mb_track.recording_relations
+					if inline_relations then
+						recording_relations = inline_relations :: { Relation }?
+					end
 					if should_lookup_track_work then
-						local inline_relations = mb_track.recording_relations
-						local work_id: string? = nil
-						if inline_relations then
-							work_id = extract_track_work_id_from_relations(inline_relations :: { Relation }?)
-							recording_relations = inline_relations :: { Relation }?
-						else
+						local work_id = extract_track_work_id_from_relations(recording_relations)
+						if work_id == nil and recording_relations == nil then
 							local result = fetch_recording_result(mb_track.recording_id, recording_cache)
 							if result then
 								work_id = extract_track_work_id_from_relations(result.relations)
@@ -1742,7 +1748,7 @@ end
 
 local function fetch_release_details(release_id: string): Release?
 	local release_response = mb_get(
-		`/release/{release_id}?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels`
+		`/release/{release_id}?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels`
 	)
 	local release = if release_response then normalize_release(release_response) else nil
 	if release and not release["track-count"] then
