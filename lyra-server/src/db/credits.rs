@@ -41,9 +41,13 @@ pub(crate) enum CreditType {
     Instrumentalist,
     Composer,
     Lyricist,
+    Arranger,
+    Writer,
     Producer,
     Conductor,
     Engineer,
+    Mixer,
+    Remixer,
 }
 
 impl CreditType {
@@ -54,9 +58,13 @@ impl CreditType {
             Self::Instrumentalist => "instrumentalist",
             Self::Composer => "composer",
             Self::Lyricist => "lyricist",
+            Self::Arranger => "arranger",
+            Self::Writer => "writer",
             Self::Producer => "producer",
             Self::Conductor => "conductor",
             Self::Engineer => "engineer",
+            Self::Mixer => "mixer",
+            Self::Remixer => "remixer",
         }
     }
 
@@ -67,9 +75,13 @@ impl CreditType {
             "instrumentalist" => Ok(Self::Instrumentalist),
             "composer" => Ok(Self::Composer),
             "lyricist" => Ok(Self::Lyricist),
+            "arranger" => Ok(Self::Arranger),
+            "writer" => Ok(Self::Writer),
             "producer" => Ok(Self::Producer),
             "conductor" => Ok(Self::Conductor),
             "engineer" => Ok(Self::Engineer),
+            "mixer" => Ok(Self::Mixer),
+            "remixer" => Ok(Self::Remixer),
             _ => Err(DbError::from(format!("invalid CreditType value '{value}'"))),
         }
     }
