@@ -69,4 +69,8 @@ type Config = {
 
 ## License
 
-This project is licensed under the [Lyra Public License, Version 1.0](LICENSE). While this license is custom, it is based on the [MPL-2.0](https://opensource.org/license/MPL-2.0) and includes only an additional provision regarding Remote Network Interaction, inspired by the [AGPL-3.0](https://opensource.org/license/agpl-3-0). You are free to use this project as you see fit, so long as you comply with the license's terms.
+This project is licensed under the [Lyra Public License, Version 1.0](LICENSE) (LPL-1.0). While this license is custom, it is based on the [MPL-2.0](https://opensource.org/license/MPL-2.0).
+
+The main differences between the two are that the `LPL-1.0` includes an additional provision regarding Remote Network Interaction (inspired by the [AGPL-3.0](https://opensource.org/license/agpl-3-0)) and limits your secondary license options to only the `AGPL-3.0-or-later`.
+
+You are free to use this project as you see fit, so long as you comply with the license's terms.
