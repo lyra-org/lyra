@@ -1460,6 +1460,7 @@ end
 
 function helpers.collect_artist_projection(
 	entity_id: number?,
+	entity_type: "release" | "track",
 	context: ItemContext?
 ): (string?, { string }, { ArtistProjectionItem })
 	local names: { string } = {}
@@ -1468,13 +1469,35 @@ function helpers.collect_artist_projection(
 		return nil, names, items
 	end
 
-	local related_artists =
-		helpers.lookup_by_id(if context then context.related_artists_by_owner_id else nil, entity_id)
-	if related_artists == nil then
-		related_artists = helpers.call_module_get(artists_module.list, entity_id)
+	local credits = helpers.lookup_by_id(if context then context.credited_artists_by_owner_id else nil, entity_id)
+	if credits == nil then
+		credits = helpers.query_credits(entity_id, entity_type)
+	end
+	if credits == nil then
+		return nil, names, items
 	end
 
-	return helpers.build_artist_projection(related_artists)
+	local seen: { [string]: boolean } = {}
+	for _, credited_artist: CreditedArtistProjectionInfo in credits do
+		local credit = credited_artist.credit
+		if credit.type ~= CreditType.Artist then
+			continue
+		end
+		local artist = credited_artist.artist
+		local artist_name = module.trim(artist.artist_name)
+		local artist_id = module.encode_jellyfin_item_id(artist.id)
+		if artist_name == nil or artist_id == nil or seen[artist_id] then
+			continue
+		end
+		seen[artist_id] = true
+		table.insert(names, artist_name)
+		table.insert(items, {
+			Id = artist_id,
+			Name = artist_name,
+		})
+	end
+
+	return names[1], names, items
 end
 
 function helpers.to_artist_item(
@@ -1783,7 +1806,7 @@ function helpers.to_release_item(
 	end
 
 	local include_images = helpers.should_include_images(context)
-	local release_artist, artist_names, artist_items = helpers.collect_artist_projection(release.db_id, context)
+	local release_artist, artist_names, artist_items = helpers.collect_artist_projection(release.db_id, "release", context)
 	local prefetched_release_tracks =
 		helpers.lookup_by_id(if context then context.release_tracks_by_release_id else nil, release.db_id)
 	local release_tracks: { Track } = if prefetched_release_tracks ~= nil
@@ -1939,13 +1962,13 @@ function helpers.to_track_item(
 	local include_images = helpers.should_include_images(context)
 	local release, release_cover_info =
 		helpers.resolve_release_for_track(track, preferred_release_id, include_images, context)
-	local artist_name, artist_names, artist_items = helpers.collect_artist_projection(track.db_id, context)
+	local artist_name, artist_names, artist_items = helpers.collect_artist_projection(track.db_id, "track", context)
 	local release_artist_name = artist_name
 	local release_artist_names = artist_names
 	local release_artist_items = artist_items
 	if release and release.db_id then
 		local resolved_release_artist_name, resolved_release_artist_names, resolved_release_artist_items =
-			helpers.collect_artist_projection(release.db_id, context)
+			helpers.collect_artist_projection(release.db_id, "release", context)
 		if resolved_release_artist_name then
 			release_artist_name = resolved_release_artist_name
 		end
