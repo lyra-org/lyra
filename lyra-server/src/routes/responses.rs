@@ -183,6 +183,33 @@ pub struct ArtistResponse {
     pub releases: Option<Vec<ReleaseResponse>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tracks: Option<Vec<TrackResponse>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relations: Option<Vec<ArtistRelationResponse>>,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub struct ArtistRelationResponse {
+    #[serde(rename = "type")]
+    pub relation_type: db::ArtistRelationType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attributes: Option<String>,
+    pub direction: RelationDirectionResponse,
+    pub artist: RelatedArtistResponse,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum RelationDirectionResponse {
+    Incoming,
+    Outgoing,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub struct RelatedArtistResponse {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artist_type: Option<db::ArtistType>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -221,6 +248,7 @@ impl From<db::Artist> for ArtistResponse {
             credit: None,
             releases: None,
             tracks: None,
+            relations: None,
         }
     }
 }

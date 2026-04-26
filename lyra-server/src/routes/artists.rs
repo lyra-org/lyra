@@ -28,7 +28,10 @@ use crate::{
     routes::AppError,
     routes::deserialize_inc,
     routes::responses::{
+        ArtistRelationResponse,
         ArtistResponse,
+        RelatedArtistResponse,
+        RelationDirectionResponse,
         ReleaseResponse,
     },
     services::{
@@ -39,7 +42,7 @@ use crate::{
 
 #[derive(Deserialize, JsonSchema)]
 struct ArtistQuery {
-    #[schemars(description = "Comma-separated or repeated values: releases, tracks.")]
+    #[schemars(description = "Comma-separated or repeated values: releases, tracks, relations.")]
     #[serde(default, deserialize_with = "deserialize_inc")]
     inc: Option<Vec<String>>,
 }
@@ -55,15 +58,17 @@ struct ArtistUpdateRequest {
 }
 
 fn parse_inc(inc: Option<Vec<String>>) -> Result<artist_service::ArtistIncludes, AppError> {
-    let values = super::parse_inc_values(inc, &["releases", "tracks"])?;
+    let values = super::parse_inc_values(inc, &["releases", "tracks", "relations"])?;
     let mut result = artist_service::ArtistIncludes {
         releases: false,
         tracks: false,
+        relations: false,
     };
     for value in values {
         match value.as_str() {
             "releases" => result.releases = true,
             "tracks" => result.tracks = true,
+            "relations" => result.relations = true,
             _ => {}
         }
     }
@@ -77,6 +82,27 @@ fn artist_detail_to_response(
     let releases = detail
         .releases
         .map(|v| v.into_iter().map(ReleaseResponse::from).collect());
+    let relations = detail.relations.map(|v| {
+        v.into_iter()
+            .map(|r| ArtistRelationResponse {
+                relation_type: r.relation_type,
+                attributes: r.attributes,
+                direction: match r.direction {
+                    artist_service::RelationDirection::Incoming => {
+                        RelationDirectionResponse::Incoming
+                    }
+                    artist_service::RelationDirection::Outgoing => {
+                        RelationDirectionResponse::Outgoing
+                    }
+                },
+                artist: RelatedArtistResponse {
+                    id: r.artist.id,
+                    name: r.artist.artist_name,
+                    artist_type: r.artist.artist_type,
+                },
+            })
+            .collect()
+    });
     Ok(ArtistResponse {
         id: detail.artist.id,
         name: detail.artist.artist_name,
@@ -88,6 +114,7 @@ fn artist_detail_to_response(
         tracks: detail
             .tracks
             .map(|v| v.into_iter().map(Into::into).collect()),
+        relations,
     })
 }
 
@@ -192,18 +219,19 @@ async fn update_artist(
         credit: None,
         releases: None,
         tracks: None,
+        relations: None,
     }))
 }
 
 fn list_artists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List artists").description(
-        "Returns artists. Use `inc` to include releases and/or tracks. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
+        "Returns artists. Use `inc` to include releases, tracks, and/or relations. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
     )
 }
 
 fn get_artist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get artist by ID").description(
-        "Returns a single artist. 404 if not found. Use `inc` to include releases and/or tracks. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
+        "Returns a single artist. 404 if not found. Use `inc` to include releases, tracks, and/or relations. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
     )
 }
 
