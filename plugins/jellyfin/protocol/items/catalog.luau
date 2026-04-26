@@ -50,6 +50,12 @@ type EntityQueryManyRequest = entities.EntityQueryManyRequest
 type ReleaseProjectionInfo = entities.ReleaseProjectionInfo
 type ArtistProjectionInfo = entities.ArtistProjectionInfo
 type TrackProjectionInfo = entities.TrackProjectionInfo
+type CreditedArtistProjectionInfo = entities.CreditedArtistProjectionInfo
+type CreditType = entities.CreditType
+type ArtistCreditSource = entities.ArtistCreditSource
+
+local CreditType = entities.CreditType
+local ArtistCreditSource = entities.ArtistCreditSource
 type ApiQueryParams = api.ApiQueryParams
 type ReleaseQueryOptions = releases.ReleaseQueryOptions
 type ReleaseQueryResult = releases.ReleaseQueryResult
@@ -139,6 +145,7 @@ export type ItemsQueryOptions = {
 	enable_user_data: boolean?,
 	enable_images: boolean?,
 	include_media_info: boolean,
+	include_people: boolean,
 	user_id: number?,
 	_favorite_id_lookup: FavoriteLookup?,
 	_genre_infos_by_release_id: { [number]: { genres.GenreInfo } }?,
@@ -154,6 +161,7 @@ type CoverInfo = {
 type ArtistRelationMap = { [number]: { Artist }? }
 type ReleaseRelationMap = { [number]: { Release }? }
 type TrackRelationMap = { [number]: { Track }? }
+type CreditRelationMap = { [number]: { CreditedArtistProjectionInfo }? }
 type PlaybackSourceMap = { [number]: PlaybackSourceInfo? }
 type ContainerMap = { [number]: string? }
 type PlayCountLookup = { [number]: number }
@@ -165,7 +173,9 @@ type ItemContext = {
 	last_played_lookup: LastPlayedLookup,
 	include_user_data: boolean,
 	include_images: boolean,
+	include_people: boolean,
 	related_artists_by_owner_id: ArtistRelationMap,
+	credited_artists_by_owner_id: CreditRelationMap,
 	release_tracks_by_release_id: TrackRelationMap,
 	track_releases_by_track_id: ReleaseRelationMap,
 	artist_tracks_by_artist_id: TrackRelationMap,
@@ -203,11 +213,14 @@ type MediaStreamInfo = item_types.MediaStreamInfo
 type MediaSourceInfo = item_types.MediaSourceInfo
 type ArtistProjectionItem = item_types.ArtistProjectionItem
 type ImageBlurHashes = item_types.ImageBlurHashes
+type PersonItem = item_types.PersonItem
+type PersonType = item_types.PersonType
 export type ItemInfo = item_types.SerializableItemInfo & {
 	_type: ItemKind?,
 	_raw: ItemRaw?,
 	_child_count: number?,
 }
+
 type ItemListResult = {
 	items: { ItemInfo },
 	total_count: number,
@@ -454,6 +467,7 @@ local function clone_items_query_options(options: ItemsQueryOptions): ItemsQuery
 		enable_user_data = options.enable_user_data,
 		enable_images = options.enable_images,
 		include_media_info = options.include_media_info,
+		include_people = options.include_people,
 		user_id = options.user_id,
 		_favorite_id_lookup = options._favorite_id_lookup,
 		_genre_infos_by_release_id = options._genre_infos_by_release_id,
@@ -1039,6 +1053,38 @@ local function query_many_projections(ids: { number }, include_values: { string 
 	return projections
 end
 
+local function projection_credits(projection: EntityProjectionInfo?): { CreditedArtistProjectionInfo }?
+	if projection == nil then
+		return nil
+	end
+
+	if projection.entity_type == "release" then
+		return (projection :: ReleaseProjectionInfo).includes.credits
+	elseif projection.entity_type == "track" then
+		return (projection :: TrackProjectionInfo).includes.credits
+	end
+
+	return nil
+end
+
+local function query_credits(entity_id: number, entity_type: "release" | "track"): { CreditedArtistProjectionInfo }?
+	local request: EntityQueryRequest = {
+		id = entity_id,
+		include = "credits",
+	}
+	local ok, projection = pcall(entities.query, request)
+	if not ok or type(projection) ~= "table" then
+		return nil
+	end
+
+	local typed_projection = projection :: EntityProjectionInfo
+	if typed_projection.entity_type ~= entity_type then
+		return nil
+	end
+
+	return projection_credits(typed_projection)
+end
+
 local function merge_artist_relation_map(destination: ArtistRelationMap, relation_map: { [number]: { Artist } })
 	for key: number, value: { Artist } in relation_map do
 		local relation_id = resolve_numeric_id(key)
@@ -1315,6 +1361,92 @@ local function build_artist_projection(related_artists: { Artist }?): (string?, 
 	end
 
 	return names[1], names, items
+end
+
+local function person_type_for_credit(credit_type: CreditType, source: ArtistCreditSource): PersonType
+	if credit_type == CreditType.Artist then
+		return if source == ArtistCreditSource.Release then "AlbumArtist" else "Artist"
+	elseif credit_type == CreditType.Vocalist or credit_type == CreditType.Instrumentalist then
+		return "Actor"
+	elseif credit_type == CreditType.Composer then
+		return "Composer"
+	elseif credit_type == CreditType.Lyricist then
+		return "Lyricist"
+	elseif credit_type == CreditType.Arranger then
+		return "Arranger"
+	elseif credit_type == CreditType.Writer then
+		return "Writer"
+	elseif credit_type == CreditType.Producer then
+		return "Producer"
+	elseif credit_type == CreditType.Conductor then
+		return "Conductor"
+	elseif credit_type == CreditType.Engineer then
+		return "Engineer"
+	elseif credit_type == CreditType.Mixer then
+		return "Mixer"
+	elseif credit_type == CreditType.Remixer then
+		return "Remixer"
+	end
+	return "Unknown"
+end
+
+local function people_from_credits(credits: { CreditedArtistProjectionInfo }?): { PersonItem }
+	local people: { PersonItem } = {}
+	local seen: { [string]: boolean } = {}
+	if credits == nil then
+		return people
+	end
+
+	for _, credited_artist: CreditedArtistProjectionInfo in credits do
+		local artist = credited_artist.artist
+		local artist_name = module.trim(artist.artist_name)
+		local artist_id = module.encode_jellyfin_item_id(artist.id)
+		if artist_name == nil or artist_id == nil then
+			continue
+		end
+
+		local credit = credited_artist.credit
+		local person_type = person_type_for_credit(credit.type, credited_artist.source)
+		local role = module.trim(credit.detail)
+		local key = artist_id .. "\t" .. person_type .. "\t" .. (role or "")
+		if seen[key] then
+			continue
+		end
+		seen[key] = true
+
+		local person: PersonItem = {
+			Name = artist_name,
+			Id = artist_id,
+			Role = role,
+			Type = person_type,
+		}
+		table.insert(people, person)
+	end
+
+	return people
+end
+
+local function resolve_people_for_item(
+	entity_id: number?,
+	entity_type: "release" | "track",
+	context: ItemContext?
+): { PersonItem }?
+	if context == nil or context.include_people ~= true then
+		return nil
+	end
+	if entity_id == nil or entity_id <= 0 then
+		return {}
+	end
+
+	local credits = lookup_by_id(context.credited_artists_by_owner_id, entity_id)
+	if credits == nil then
+		credits = query_credits(entity_id, entity_type)
+		if credits ~= nil then
+			context.credited_artists_by_owner_id[entity_id] = credits
+		end
+	end
+
+	return people_from_credits(credits)
 end
 
 local function collect_artist_projection(
@@ -1669,6 +1801,7 @@ local function to_release_item(
 		AlbumArtists = artist_items,
 		Artists = artist_names,
 		ArtistItems = artist_items,
+		People = resolve_people_for_item(release.db_id, "release", context),
 		ChildCount = #release_tracks,
 		RunTimeTicks = runtime_ticks,
 		ImageTags = if cover_info then { Primary = cover_info.hash } else nil,
@@ -1854,6 +1987,7 @@ local function to_track_item(
 		AlbumArtists = release_artist_items,
 		Artists = artist_names,
 		ArtistItems = artist_items,
+		People = resolve_people_for_item(track.db_id, "track", context),
 		Genres = genre_names(track_genres),
 		GenreItems = genre_items(track_genres),
 		Tags = tag_names(resolve_tag_infos(track.db_id, context)),
@@ -2723,6 +2857,15 @@ local function query_requests_media_fields(fields: { string }): boolean
 	return requested["mediasources"] == true or requested["mediastreams"] == true
 end
 
+local function query_requests_people(fields: { string }): boolean
+	for _, field in fields do
+		if lower_or_empty(field) == "people" then
+			return true
+		end
+	end
+	return false
+end
+
 function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 	local options: ItemsQueryOptions = {
 		include_item_types = {},
@@ -2749,6 +2892,7 @@ function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 		enable_user_data = nil,
 		enable_images = nil,
 		include_media_info = false,
+		include_people = false,
 		user_id = nil,
 		_favorite_id_lookup = nil,
 	}
@@ -2787,6 +2931,7 @@ function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 		options.fields = DEFAULT_ITEMS_FIELDS
 	end
 	options.include_media_info = query_requests_media_fields(options.fields)
+	options.include_people = query_requests_people(options.fields)
 	return options
 end
 
@@ -2873,7 +3018,9 @@ local function new_realization_context(options: ItemsQueryOptions): ItemContext
 		last_played_lookup = {},
 		include_user_data = options.enable_user_data ~= false,
 		include_images = options.enable_images ~= false,
+		include_people = options.include_people == true,
 		related_artists_by_owner_id = {},
+		credited_artists_by_owner_id = {},
 		release_tracks_by_release_id = {},
 		track_releases_by_track_id = {},
 		artist_tracks_by_artist_id = {},
@@ -3045,6 +3192,33 @@ local function prefetch_release_artists_and_genres(
 	context.genre_infos_by_release_id = genre_cache
 end
 
+local function prefetch_credit_relations(context: ItemContext, seed: RealizationSeedInfo): ()
+	if context.include_people ~= true or (not seed.has_release_stubs and not seed.has_track_stubs) then
+		return
+	end
+
+	local ids: { number } = {}
+	local seen: { [number]: boolean } = {}
+	for _, release_id in seed.release_ids do
+		append_unique_id(release_id, ids, seen)
+	end
+	for _, track_id in seed.track_ids do
+		append_unique_id(track_id, ids, seen)
+	end
+	if #ids == 0 then
+		return
+	end
+
+	ensure_relation_entries(context.credited_artists_by_owner_id, ids)
+	local projection_lookup = query_many_projections(ids, { "credits" })
+	for _, id in ids do
+		local credits = projection_credits(projection_lookup[tostring(id)])
+		if credits ~= nil then
+			context.credited_artists_by_owner_id[id] = credits
+		end
+	end
+end
+
 local function prefetch_release_tracks(context: ItemContext, seed: RealizationSeedInfo): ()
 	if not seed.has_release_stubs or #seed.release_ids == 0 then
 		return
@@ -3182,6 +3356,7 @@ local function build_realization_context(stubs: { ItemInfo }, options: ItemsQuer
 	prefetch_track_releases(context, seed)
 	prefetch_release_covers(context, seed)
 	prefetch_release_artists_and_genres(context, seed, options)
+	prefetch_credit_relations(context, seed)
 	prefetch_release_tracks(context, seed)
 	prefetch_artist_tracks(context, seed)
 	prefetch_track_stats_and_media(context, seed, options)
@@ -4660,6 +4835,7 @@ function module.find_item_by_id(item_id: number?, user_id: number?): ItemInfo?
 		sort_order = "Ascending",
 		fields = DEFAULT_ITEMS_FIELDS,
 		include_media_info = true,
+		include_people = true,
 		search_term = nil,
 		artist_ids = {},
 		genre_ids = {},

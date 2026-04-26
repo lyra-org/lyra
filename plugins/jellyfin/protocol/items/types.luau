@@ -13,6 +13,20 @@ type JsonValue = api.JsonValue
 export type UserData = base.UserData
 export type MediaStreamInfo = { [string]: JsonValue }
 export type MediaSourceInfo = { [string]: JsonValue }
+export type PersonType =
+	"Unknown"
+	| "Actor"
+	| "Artist"
+	| "AlbumArtist"
+	| "Composer"
+	| "Writer"
+	| "Producer"
+	| "Conductor"
+	| "Lyricist"
+	| "Arranger"
+	| "Engineer"
+	| "Mixer"
+	| "Remixer"
 
 export type ArtistProjectionItem = {
 	Id: string,
@@ -21,6 +35,15 @@ export type ArtistProjectionItem = {
 
 export type ImageBlurHashes = {
 	Primary: { [string]: string },
+}
+
+export type PersonItem = {
+	Name: string,
+	Id: string,
+	Role: string?,
+	Type: PersonType,
+	PrimaryImageTag: string?,
+	ImageBlurHashes: ImageBlurHashes?,
 }
 
 export type SerializableItemInfo = {
@@ -47,6 +70,7 @@ export type SerializableItemInfo = {
 	AlbumArtists: { ArtistProjectionItem }?,
 	Artists: { string }?,
 	ArtistItems: { ArtistProjectionItem }?,
+	People: { PersonItem }?,
 	RunTimeTicks: number?,
 	ParentPrimaryImageItemId: string?,
 	ParentPrimaryImageTag: string?,

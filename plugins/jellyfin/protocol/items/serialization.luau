@@ -18,6 +18,7 @@ type JsonObject = { [string]: JsonValue }
 type UserData = item_types.UserData
 type ArtistProjectionItem = item_types.ArtistProjectionItem
 type ImageBlurHashes = item_types.ImageBlurHashes
+type PersonItem = item_types.PersonItem
 export type ItemInfo = item_types.SerializableItemInfo
 
 local module = {}
@@ -80,6 +81,36 @@ local function image_blur_hashes_to_json(blur_hashes: ImageBlurHashes?): JsonObj
 	return {
 		Primary = primary,
 	}
+end
+
+local function person_item_to_json(item: PersonItem): JsonObject
+	local output: JsonObject = {
+		Name = item.Name,
+		Id = item.Id,
+		Type = item.Type,
+	}
+	if item.Role ~= nil then
+		output.Role = item.Role
+	end
+	if item.PrimaryImageTag ~= nil then
+		output.PrimaryImageTag = item.PrimaryImageTag
+	end
+	local image_blur_hashes = image_blur_hashes_to_json(item.ImageBlurHashes)
+	if image_blur_hashes ~= nil then
+		output.ImageBlurHashes = image_blur_hashes
+	end
+	return output
+end
+
+local function person_items_to_json(items: { PersonItem }?): { JsonValue }?
+	if items == nil then
+		return nil
+	end
+	local output: { JsonValue } = {}
+	for _, item: PersonItem in items do
+		table.insert(output, person_item_to_json(item))
+	end
+	return output
 end
 
 local function json_object_array(values: { JsonObject }?): { JsonValue }?
@@ -169,6 +200,10 @@ function module.item_to_json(item: ItemInfo): JsonObject
 	local artist_items = artist_projection_items_to_json(item.ArtistItems)
 	if artist_items ~= nil then
 		output.ArtistItems = artist_items
+	end
+	local people = person_items_to_json(item.People)
+	if people ~= nil then
+		output.People = people
 	end
 	if item.RunTimeTicks ~= nil then
 		output.RunTimeTicks = item.RunTimeTicks
