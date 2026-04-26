@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+mod credits;
+
 use std::collections::{
     BTreeMap,
     HashMap,
@@ -30,6 +32,7 @@ use super::{
     ArtistProjectionIncludes,
     ArtistProjectionInfo,
     ArtistProjectionKind,
+    CreditedArtistProjectionInfo,
     EntityInclude,
     EntityLookupHints,
     EntityProjectionInfo,
@@ -64,6 +67,7 @@ pub(super) struct PreFetchedIncludes {
     pub(super) releases_by_track: Option<HashMap<DbId, Vec<Release>>>,
     pub(super) track_artists: Option<HashMap<DbId, Vec<Artist>>>,
     pub(super) artist_tracks: Option<HashMap<DbId, Vec<Track>>>,
+    pub(super) credits_by_owner: Option<HashMap<DbId, Vec<CreditedArtistProjectionInfo>>>,
 }
 
 fn resolve_entity_id(db: &DbAny, query_id: QueryId) -> anyhow::Result<DbId> {
@@ -283,6 +287,13 @@ pub(super) fn project_release(
                 release_lookup_hints = lookup_hints;
                 projection.includes.tracks = Some(tracks);
             }
+            EntityInclude::Credits => {
+                projection.includes.credits = Some(lookup_or_fetch(
+                    prefetched.credits_by_owner.as_ref(),
+                    release_id,
+                    || credits::fetch_release(db, release_id),
+                )?);
+            }
             EntityInclude::Releases | EntityInclude::Entries => {
                 return Err(include_not_supported("release", *include));
             }
@@ -333,6 +344,13 @@ fn project_track(
                 projection.includes.entries =
                     Some(entries.into_iter().map(ProjectionEntryInfo::from).collect());
             }
+            EntityInclude::Credits => {
+                projection.includes.credits = Some(lookup_or_fetch(
+                    prefetched.credits_by_owner.as_ref(),
+                    track_id,
+                    || credits::fetch_track(db, track_id),
+                )?);
+            }
             EntityInclude::Tracks => {
                 return Err(include_not_supported("track", *include));
             }
@@ -374,7 +392,7 @@ fn project_artist(
                 tracks.sort_by_key(track_sort_key);
                 projection.includes.tracks = Some(tracks);
             }
-            EntityInclude::Artists | EntityInclude::Entries => {
+            EntityInclude::Artists | EntityInclude::Entries | EntityInclude::Credits => {
                 return Err(include_not_supported("artist", *include));
             }
         }
@@ -517,7 +535,10 @@ pub(crate) fn project_entities(
     } else {
         None
     };
-    let releases_by_track = if has_include(EntityInclude::Releases) && !track_ids.is_empty() {
+    let needs_releases_by_track = (has_include(EntityInclude::Releases)
+        || has_include(EntityInclude::Credits))
+        && !track_ids.is_empty();
+    let releases_by_track = if needs_releases_by_track {
         Some(db::releases::get_by_tracks(db, &track_ids)?)
     } else {
         None
@@ -529,6 +550,16 @@ pub(crate) fn project_entities(
         };
         Some(super::resolve_track_artists_with_context(
             db, &track_ids, &ctx,
+        )?)
+    } else {
+        None
+    };
+    let credits_by_owner = if has_include(EntityInclude::Credits) {
+        Some(credits::prefetch_by_owner(
+            db,
+            &release_ids,
+            &track_ids,
+            releases_by_track.as_ref(),
         )?)
     } else {
         None
@@ -555,6 +586,7 @@ pub(crate) fn project_entities(
         } else {
             None
         },
+        credits_by_owner,
     };
 
     let mut projections = Vec::with_capacity(resolved.len());

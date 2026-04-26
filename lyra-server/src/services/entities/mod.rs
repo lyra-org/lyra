@@ -29,6 +29,7 @@ use crate::db::{
     self,
     Artist,
     Credit,
+    CreditType,
     NodeId,
     Release,
     Track,
@@ -51,6 +52,7 @@ pub(crate) enum EntityInclude {
     Artists,
     Tracks,
     Entries,
+    Credits,
 }
 
 impl EntityInclude {
@@ -61,6 +63,7 @@ impl EntityInclude {
             "artists" => Some(Self::Artists),
             "tracks" => Some(Self::Tracks),
             "entries" => Some(Self::Entries),
+            "credits" => Some(Self::Credits),
             _ => None,
         }
     }
@@ -72,6 +75,7 @@ impl EntityInclude {
             Self::Artists => "artists",
             Self::Tracks => "tracks",
             Self::Entries => "entries",
+            Self::Credits => "credits",
         }
     }
 
@@ -81,7 +85,20 @@ impl EntityInclude {
         Self::Artists,
         Self::Tracks,
         Self::Entries,
+        Self::Credits,
     ];
+}
+
+macro_rules! interface_into_lua {
+    ($ty:ident => $($field:tt as $key:literal),* $(,)?) => {
+        impl mlua::IntoLua for $ty {
+            fn into_lua(self, lua: &mlua::Lua) -> mlua::Result<mlua::Value> {
+                let table = lua.create_table()?;
+                $(table.set($key, self.$field)?;)*
+                Ok(mlua::Value::Table(table))
+            }
+        }
+    };
 }
 
 macro_rules! projection_kind {
@@ -103,8 +120,15 @@ macro_rules! projection_kind {
                 TypeAliasDescriptor::new(stringify!($name), Self::luau_type(), Some($doc))
             }
         }
+
+        impl mlua::IntoLua for $name {
+            fn into_lua(self, lua: &mlua::Lua) -> mlua::Result<mlua::Value> {
+                lua.create_string($literal).map(mlua::Value::String)
+            }
+        }
     };
 }
+
 
 projection_kind!(
     ReleaseProjectionKind,
@@ -125,6 +149,7 @@ projection_kind!(
     "Artist entity projection kind."
 );
 
+
 #[derive(Clone, Debug, Default, Serialize)]
 #[harmony_macros::interface]
 pub(crate) struct EntityLookupHints {
@@ -142,6 +167,12 @@ impl From<LookupHints> for EntityLookupHints {
         }
     }
 }
+
+interface_into_lua!(EntityLookupHints =>
+    artist_name as "artist_name",
+    release_title as "release_title",
+    year as "year",
+);
 
 #[derive(Clone, Debug, Serialize)]
 #[harmony_macros::interface]
@@ -170,6 +201,62 @@ impl From<db::Entry> for ProjectionEntryInfo {
         }
     }
 }
+
+interface_into_lua!(ProjectionEntryInfo =>
+    db_id as "db_id",
+    id as "id",
+    full_path as "full_path",
+    kind as "kind",
+    name as "name",
+    hash as "hash",
+    size as "size",
+    mtime as "mtime",
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[harmony_macros::interface]
+pub(crate) struct CreditProjectionInfo {
+    pub(crate) r#type: CreditType,
+    pub(crate) detail: Option<String>,
+}
+
+impl From<Credit> for CreditProjectionInfo {
+    fn from(value: Credit) -> Self {
+        Self {
+            r#type: value.credit_type,
+            detail: value.detail,
+        }
+    }
+}
+
+interface_into_lua!(CreditProjectionInfo =>
+    r#type as "type",
+    detail as "detail",
+);
+
+#[derive(Clone, Debug, Serialize)]
+#[harmony_macros::interface]
+pub(crate) struct CreditedArtistProjectionInfo {
+    pub(crate) artist: Artist,
+    pub(crate) credit: CreditProjectionInfo,
+    pub(crate) source: ArtistCreditSource,
+}
+
+impl From<ResolvedCreditedArtist> for CreditedArtistProjectionInfo {
+    fn from(value: ResolvedCreditedArtist) -> Self {
+        Self {
+            artist: value.artist,
+            credit: value.credit.into(),
+            source: value.source,
+        }
+    }
+}
+
+interface_into_lua!(CreditedArtistProjectionInfo =>
+    artist as "artist",
+    credit as "credit",
+    source as "source",
+);
 
 #[derive(Clone, Debug, Serialize)]
 #[harmony_macros::interface]
@@ -229,13 +316,44 @@ impl ReleaseProjectionTrack {
     }
 }
 
+interface_into_lua!(ReleaseProjectionTrack =>
+    db_id as "db_id",
+    id as "id",
+    track_title as "track_title",
+    sort_title as "sort_title",
+    year as "year",
+    disc as "disc",
+    disc_total as "disc_total",
+    track as "track",
+    track_total as "track_total",
+    duration_ms as "duration_ms",
+    sample_rate_hz as "sample_rate_hz",
+    channel_count as "channel_count",
+    bit_depth as "bit_depth",
+    bitrate_bps as "bitrate_bps",
+    locked as "locked",
+    created_at as "created_at",
+    ctime as "ctime",
+    external_ids as "external_ids",
+    artists as "artists",
+    lookup_hints as "lookup_hints",
+);
+
 #[derive(Clone, Debug, Default, Serialize)]
 #[harmony_macros::interface]
 pub(crate) struct ReleaseProjectionIncludes {
     pub(crate) external_ids: Option<BTreeMap<String, String>>,
     pub(crate) artists: Option<Vec<Artist>>,
     pub(crate) tracks: Option<Vec<ReleaseProjectionTrack>>,
+    pub(crate) credits: Option<Vec<CreditedArtistProjectionInfo>>,
 }
+
+interface_into_lua!(ReleaseProjectionIncludes =>
+    external_ids as "external_ids",
+    artists as "artists",
+    tracks as "tracks",
+    credits as "credits",
+);
 
 #[derive(Clone, Debug, Default, Serialize)]
 #[harmony_macros::interface]
@@ -244,7 +362,16 @@ pub(crate) struct TrackProjectionIncludes {
     pub(crate) releases: Option<Vec<Release>>,
     pub(crate) artists: Option<Vec<Artist>>,
     pub(crate) entries: Option<Vec<ProjectionEntryInfo>>,
+    pub(crate) credits: Option<Vec<CreditedArtistProjectionInfo>>,
 }
+
+interface_into_lua!(TrackProjectionIncludes =>
+    external_ids as "external_ids",
+    releases as "releases",
+    artists as "artists",
+    entries as "entries",
+    credits as "credits",
+);
 
 #[derive(Clone, Debug, Default, Serialize)]
 #[harmony_macros::interface]
@@ -253,6 +380,12 @@ pub(crate) struct ArtistProjectionIncludes {
     pub(crate) releases: Option<Vec<Release>>,
     pub(crate) tracks: Option<Vec<Track>>,
 }
+
+interface_into_lua!(ArtistProjectionIncludes =>
+    external_ids as "external_ids",
+    releases as "releases",
+    tracks as "tracks",
+);
 
 #[derive(Clone, Debug, Serialize)]
 #[harmony_macros::interface]
@@ -263,6 +396,13 @@ pub(crate) struct ReleaseProjectionInfo {
     pub(crate) includes: ReleaseProjectionIncludes,
 }
 
+interface_into_lua!(ReleaseProjectionInfo =>
+    entity_type as "entity_type",
+    entity as "entity",
+    lookup_hints as "lookup_hints",
+    includes as "includes",
+);
+
 #[derive(Clone, Debug, Serialize)]
 #[harmony_macros::interface]
 pub(crate) struct TrackProjectionInfo {
@@ -270,6 +410,12 @@ pub(crate) struct TrackProjectionInfo {
     pub(crate) entity: Track,
     pub(crate) includes: TrackProjectionIncludes,
 }
+
+interface_into_lua!(TrackProjectionInfo =>
+    entity_type as "entity_type",
+    entity as "entity",
+    includes as "includes",
+);
 
 #[derive(Clone, Debug, Serialize)]
 #[harmony_macros::interface]
@@ -279,12 +425,28 @@ pub(crate) struct ArtistProjectionInfo {
     pub(crate) includes: ArtistProjectionIncludes,
 }
 
+interface_into_lua!(ArtistProjectionInfo =>
+    entity_type as "entity_type",
+    entity as "entity",
+    includes as "includes",
+);
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub(crate) enum EntityProjectionInfo {
     Release(ReleaseProjectionInfo),
     Track(TrackProjectionInfo),
     Artist(ArtistProjectionInfo),
+}
+
+impl mlua::IntoLua for EntityProjectionInfo {
+    fn into_lua(self, lua: &mlua::Lua) -> mlua::Result<mlua::Value> {
+        match self {
+            Self::Release(info) => info.into_lua(lua),
+            Self::Track(info) => info.into_lua(lua),
+            Self::Artist(info) => info.into_lua(lua),
+        }
+    }
 }
 
 impl LuauTypeInfo for EntityProjectionInfo {
@@ -323,11 +485,15 @@ pub(super) fn dedupe_artists(artists: Vec<Artist>) -> Vec<Artist> {
     deduped
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[harmony_macros::enumeration]
 pub(crate) enum ArtistCreditSource {
     Track,
     Release,
 }
+
+harmony_macros::compile!(type_path = ArtistCreditSource, variants = true);
 
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedCreditedArtist {

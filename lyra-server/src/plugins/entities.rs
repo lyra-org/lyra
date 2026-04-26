@@ -12,15 +12,18 @@ use crate::{
     db::{
         Artist,
         ArtistType,
+        CreditType,
         Release,
         ReleaseType,
         Track,
     },
-    plugins::LUA_SERIALIZE_OPTIONS,
     services::entities::{
+        ArtistCreditSource,
         ArtistProjectionIncludes,
         ArtistProjectionInfo,
         ArtistProjectionKind,
+        CreditProjectionInfo,
+        CreditedArtistProjectionInfo,
         EntityInclude,
         EntityLookupHints,
         EntityProjectionInfo,
@@ -47,8 +50,8 @@ use harmony_luau::{
 use mlua::{
     ExternalResult,
     FromLua,
+    IntoLua,
     Lua,
-    LuaSerdeExt,
     Result,
     Table,
     Value,
@@ -273,6 +276,8 @@ struct EntitiesModule;
     interfaces(
         EntityLookupHints,
         ProjectionEntryInfo,
+        CreditProjectionInfo,
+        CreditedArtistProjectionInfo,
         ReleaseProjectionTrack,
         ReleaseProjectionIncludes,
         TrackProjectionIncludes,
@@ -283,7 +288,15 @@ struct EntitiesModule;
         EntityQueryRequest,
         EntityQueryManyRequest
     ),
-    classes(Release, ReleaseType, Artist, ArtistType, Track)
+    classes(
+        Release,
+        ReleaseType,
+        Artist,
+        ArtistType,
+        Track,
+        CreditType,
+        ArtistCreditSource
+    )
 )]
 impl EntitiesModule {
     /// Queries a single typed entity projection with optional related includes.
@@ -294,7 +307,7 @@ impl EntitiesModule {
         request_table: Table,
     ) -> Result<Value> {
         let projection = query_projection_info(&lua, &request_table).await?;
-        lua.to_value_with(&projection, LUA_SERIALIZE_OPTIONS)
+        projection.into_lua(&lua)
     }
 
     /// Queries a release projection with optional related includes.
@@ -306,7 +319,7 @@ impl EntitiesModule {
     ) -> Result<Value> {
         let projection =
             expect_release_projection(query_projection_info(&lua, &request_table).await?)?;
-        lua.to_value_with(&projection, LUA_SERIALIZE_OPTIONS)
+        projection.into_lua(&lua)
     }
 
     /// Queries a track projection with optional related includes.
@@ -318,7 +331,7 @@ impl EntitiesModule {
     ) -> Result<Value> {
         let projection =
             expect_track_projection(query_projection_info(&lua, &request_table).await?)?;
-        lua.to_value_with(&projection, LUA_SERIALIZE_OPTIONS)
+        projection.into_lua(&lua)
     }
 
     /// Queries an artist projection with optional related includes.
@@ -330,7 +343,7 @@ impl EntitiesModule {
     ) -> Result<Value> {
         let projection =
             expect_artist_projection(query_projection_info(&lua, &request_table).await?)?;
-        lua.to_value_with(&projection, LUA_SERIALIZE_OPTIONS)
+        projection.into_lua(&lua)
     }
 
     /// Returns the element type string for a given id (e.g. "Library", "Release", "Artist", "Track").
@@ -372,17 +385,30 @@ impl EntitiesModule {
 
         let result = lua.create_table()?;
         for (key, projection) in keys.into_iter().zip(projections.into_iter()) {
-            let lua_projection = lua.to_value_with(&projection, LUA_SERIALIZE_OPTIONS)?;
-            result.set(key, lua_projection)?;
+            result.set(key, projection.into_lua(&lua)?)?;
         }
 
         Ok(result)
     }
 }
 
-crate::plugins::plugin_surface_exports!(
-    EntitiesModule,
-    "lyra.entities",
-    "Schema-level helpers for library entity types.",
-    Negligible
-);
+pub(crate) fn get_module() -> harmony_core::Module {
+    let mut m = EntitiesModule::module();
+    m.scope = harmony_core::Scope {
+        id: "lyra.entities".into(),
+        description: "Schema-level helpers for library entity types.",
+        danger: harmony_core::Danger::Negligible,
+    };
+    let inner = m.setup;
+    m.setup = std::sync::Arc::new(move |lua: &Lua| {
+        let table = inner(lua)?;
+        table.set("CreditType", lua.create_proxy::<CreditType>()?)?;
+        table.set("ArtistCreditSource", lua.create_proxy::<ArtistCreditSource>()?)?;
+        Ok(table)
+    });
+    m
+}
+
+pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
+    EntitiesModule::render_luau_definition()
+}
