@@ -11,6 +11,7 @@ use agdb::{
 use crate::db::{
     self,
     Artist,
+    ArtistRelationType,
     Release,
     Track,
 };
@@ -19,12 +20,57 @@ use crate::db::{
 pub(crate) struct ArtistIncludes {
     pub(crate) releases: bool,
     pub(crate) tracks: bool,
+    pub(crate) relations: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RelationDirection {
+    Incoming,
+    Outgoing,
+}
+
+pub(crate) struct ResolvedRelation {
+    pub(crate) relation_type: ArtistRelationType,
+    pub(crate) attributes: Option<String>,
+    pub(crate) direction: RelationDirection,
+    pub(crate) artist: Artist,
 }
 
 pub(crate) struct ArtistDetails {
     pub(crate) artist: Artist,
     pub(crate) releases: Option<Vec<Release>>,
     pub(crate) tracks: Option<Vec<Track>>,
+    pub(crate) relations: Option<Vec<ResolvedRelation>>,
+}
+
+fn fetch_relations(db: &DbAny, artist_db_id: DbId) -> anyhow::Result<Vec<ResolvedRelation>> {
+    let mut resolved = Vec::new();
+
+    let incoming = db::artists::relations::get_relations_to(db, artist_db_id, None)?;
+    for (relation, peer_id) in incoming {
+        if let Some(peer_artist) = db::artists::get_by_id(db, peer_id)? {
+            resolved.push(ResolvedRelation {
+                relation_type: relation.relation_type,
+                attributes: relation.attributes,
+                direction: RelationDirection::Incoming,
+                artist: peer_artist,
+            });
+        }
+    }
+
+    let outgoing = db::artists::relations::get_relations_from(db, artist_db_id, None)?;
+    for (relation, peer_id) in outgoing {
+        if let Some(peer_artist) = db::artists::get_by_id(db, peer_id)? {
+            resolved.push(ResolvedRelation {
+                relation_type: relation.relation_type,
+                attributes: relation.attributes,
+                direction: RelationDirection::Outgoing,
+                artist: peer_artist,
+            });
+        }
+    }
+
+    Ok(resolved)
 }
 
 pub(crate) fn list_details(
@@ -50,11 +96,17 @@ pub(crate) fn list_details(
         } else {
             None
         };
+        let relations = if includes.relations {
+            Some(fetch_relations(db, artist_db_id)?)
+        } else {
+            None
+        };
 
         details.push(ArtistDetails {
-            artist: artist,
+            artist,
             releases,
             tracks,
+            relations,
         });
     }
 
@@ -80,11 +132,17 @@ pub(crate) fn get_details(
     } else {
         None
     };
+    let relations = if includes.relations {
+        Some(fetch_relations(db, artist_db_id)?)
+    } else {
+        None
+    };
 
     Ok(Some(ArtistDetails {
-        artist: artist,
+        artist,
         releases,
         tracks,
+        relations,
     }))
 }
 
@@ -178,6 +236,7 @@ mod tests {
         let includes = ArtistIncludes {
             releases: true,
             tracks: true,
+            ..Default::default()
         };
         let details = list_details(&db, includes)?;
 
@@ -207,6 +266,7 @@ mod tests {
         let includes = ArtistIncludes {
             releases: false,
             tracks: false,
+            ..Default::default()
         };
         let details = list_details(&db, includes)?;
 
@@ -238,6 +298,7 @@ mod tests {
         let includes = ArtistIncludes {
             releases: true,
             tracks: true,
+            ..Default::default()
         };
         let details = get_details(&db, artist_id, includes)?.expect("artist should exist");
 

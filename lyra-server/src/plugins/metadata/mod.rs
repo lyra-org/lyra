@@ -852,6 +852,62 @@ impl Provider {
         }
         Ok(())
     }
+
+    pub(crate) async fn link_artist_relation(
+        &self,
+        plugin_id: Option<Arc<str>>,
+        from_artist_id: NodeId,
+        to_artist_id: NodeId,
+        relation_type: db::ArtistRelationType,
+        attributes: Option<String>,
+    ) -> Result<()> {
+        let plugin_id = plugin_id
+            .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
+            .transpose()?;
+        self.ensure_owner(plugin_id.as_ref())?;
+        let method = "provider:link_artist_relation";
+        let from_db_id: DbId = from_artist_id.into();
+        let to_db_id: DbId = to_artist_id.into();
+
+        let mut db_write = STATE.db.write().await;
+
+        if db::artists::get_by_id(&db_write, from_db_id)
+            .into_lua_err()?
+            .is_none()
+        {
+            return Err(mlua::Error::runtime(format!(
+                "{method}: from_artist_id does not reference an artist"
+            )));
+        }
+        if db::artists::get_by_id(&db_write, to_db_id)
+            .into_lua_err()?
+            .is_none()
+        {
+            return Err(mlua::Error::runtime(format!(
+                "{method}: to_artist_id does not reference an artist"
+            )));
+        }
+
+        let resolved_attributes = attributes.and_then(|a| {
+            let trimmed = a.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        });
+
+        db::artists::relations::link(
+            &mut db_write,
+            from_db_id,
+            to_db_id,
+            relation_type,
+            resolved_attributes,
+        )
+        .into_lua_err()?;
+
+        Ok(())
+    }
 }
 
 harmony_macros::compile!(type_path = Provider, fields = false, methods = true);
@@ -925,6 +981,7 @@ impl MetadataModule {
             provider,
             layers::class_descriptor(),
             <EntityType as DescribeUserData>::class_descriptor(),
+            <db::ArtistRelationType as DescribeUserData>::class_descriptor(),
             <db::CreditType as DescribeUserData>::class_descriptor(),
             <db::ArtistType as DescribeUserData>::class_descriptor(),
         ]
@@ -969,6 +1026,7 @@ pub(crate) fn get_module() -> Module {
 
             table.set("Provider", lua.create_proxy::<Provider>()?)?;
             table.set("EntityType", lua.create_proxy::<EntityType>()?)?;
+            table.set("ArtistRelationType", lua.create_proxy::<db::ArtistRelationType>()?)?;
             table.set("CreditType", lua.create_proxy::<db::CreditType>()?)?;
             table.set("ArtistType", lua.create_proxy::<db::ArtistType>()?)?;
             ids_table.set("list", lua.create_async_function(ids_list)?)?;

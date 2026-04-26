@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+pub(crate) mod relations;
+
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
