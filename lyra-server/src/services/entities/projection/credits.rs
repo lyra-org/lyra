@@ -11,26 +11,20 @@ use agdb::{
 };
 
 use crate::{
-    db::{
-        self,
-        Release,
-    },
+    db::Release,
     services::entities::{
-        ArtistCreditSource,
         CreditedArtistProjectionInfo,
         ResolvedCreditedArtist,
         TrackCreditedArtistContext,
-        credited_artist_map_with_source,
-        credited_artists_with_source,
         dedupe_db_ids,
+        resolve_release_credited_artists,
+        resolve_release_credited_artists_map,
         resolve_track_credited_artists,
         resolve_track_credited_artists_with_context,
     },
 };
 
-pub(super) fn project(
-    artists: Vec<ResolvedCreditedArtist>,
-) -> Vec<CreditedArtistProjectionInfo> {
+pub(super) fn project(artists: Vec<ResolvedCreditedArtist>) -> Vec<CreditedArtistProjectionInfo> {
     artists.into_iter().map(Into::into).collect()
 }
 
@@ -38,10 +32,7 @@ pub(super) fn fetch_release(
     db: &DbAny,
     release_id: DbId,
 ) -> anyhow::Result<Vec<CreditedArtistProjectionInfo>> {
-    Ok(project(credited_artists_with_source(
-        db::artists::get_credited(db, release_id)?,
-        ArtistCreditSource::Release,
-    )))
+    Ok(project(resolve_release_credited_artists(db, release_id)?))
 }
 
 pub(super) fn fetch_track(
@@ -61,10 +52,7 @@ pub(super) fn prefetch_by_owner(
     let credited_artists_by_release = if credit_release_ids.is_empty() {
         HashMap::new()
     } else {
-        credited_artist_map_with_source(
-            db::artists::get_credited_many_by_owner(db, &credit_release_ids)?,
-            ArtistCreditSource::Release,
-        )
+        resolve_release_credited_artists_map(db, &credit_release_ids)?
     };
 
     let credited_artists_by_track = if track_ids.is_empty() {

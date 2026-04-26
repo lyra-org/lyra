@@ -24,10 +24,9 @@ use crate::db::{
 };
 
 use super::entities::{
-    ArtistCreditSource,
     ResolvedCreditedArtist,
-    credited_artist_map_with_source,
-    credited_artists_with_source,
+    resolve_release_credited_artists,
+    resolve_release_credited_artists_map,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -83,10 +82,7 @@ fn hydrate_release(
 ) -> anyhow::Result<ReleaseDetails> {
     let tracks = db::tracks::get(db, release_db_id)?;
     let artists = if includes.artists {
-        Some(credited_artists_with_source(
-            db::artists::get_credited(db, release_db_id)?,
-            ArtistCreditSource::Release,
-        ))
+        Some(resolve_release_credited_artists(db, release_db_id)?)
     } else {
         None
     };
@@ -240,10 +236,7 @@ pub(crate) fn list_details_with_options(
 
     let mut tracks_by_release = db::tracks::get_direct_many(db, &release_ids)?;
     let artists_by_release = if includes.artists {
-        Some(credited_artist_map_with_source(
-            db::artists::get_credited_many_by_owner(db, &release_ids)?,
-            ArtistCreditSource::Release,
-        ))
+        Some(resolve_release_credited_artists_map(db, &release_ids)?)
     } else {
         None
     };
@@ -348,6 +341,7 @@ mod tests {
         SortKey,
         SortSpec,
     };
+    use crate::services::entities::ArtistCreditSource;
     use nanoid::nanoid;
 
     fn insert_release(

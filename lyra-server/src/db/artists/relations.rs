@@ -3,6 +3,11 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::collections::{
+    HashMap,
+    HashSet,
+};
+
 use agdb::{
     DbElement,
     DbError,
@@ -124,7 +129,6 @@ pub(crate) fn link(
 }
 
 fn collect_relations<F>(
-    db: &DbAny,
     result: QueryResult,
     relation_type: Option<ArtistRelationType>,
     extract_peer: F,
@@ -137,22 +141,14 @@ where
         if element.id.0 >= 0 {
             continue;
         }
-        let edge_data = db.exec(
-            QueryBuilder::select()
-                .elements::<ArtistRelation>()
-                .ids(element.id)
-                .query(),
-        )?;
-        if let Some(edge_element) = edge_data.elements.first() {
-            if let Ok(relation) = ArtistRelation::from_db_element(edge_element) {
-                if let Some(filter_type) = relation_type {
-                    if relation.relation_type != filter_type {
-                        continue;
-                    }
+        if let Ok(relation) = ArtistRelation::from_db_element(element) {
+            if let Some(filter_type) = relation_type {
+                if relation.relation_type != filter_type {
+                    continue;
                 }
-                if let Some(peer_id) = extract_peer(element) {
-                    relations.push((relation, peer_id));
-                }
+            }
+            if let Some(peer_id) = extract_peer(element) {
+                relations.push((relation, peer_id));
             }
         }
     }
@@ -165,12 +161,14 @@ pub(crate) fn get_relations_to(
     relation_type: Option<ArtistRelationType>,
 ) -> anyhow::Result<Vec<(ArtistRelation, DbId)>> {
     let result = db.exec(
-        QueryBuilder::search()
+        QueryBuilder::select()
+            .elements::<ArtistRelation>()
+            .search()
             .to(artist_id)
             .limit(100)
             .query(),
     )?;
-    collect_relations(db, result, relation_type, |e| e.from)
+    collect_relations(result, relation_type, |e| e.from)
 }
 
 pub(crate) fn get_relations_from(
@@ -179,10 +177,102 @@ pub(crate) fn get_relations_from(
     relation_type: Option<ArtistRelationType>,
 ) -> anyhow::Result<Vec<(ArtistRelation, DbId)>> {
     let result = db.exec(
-        QueryBuilder::search()
+        QueryBuilder::select()
+            .elements::<ArtistRelation>()
+            .search()
             .from(artist_id)
             .limit(100)
             .query(),
     )?;
-    collect_relations(db, result, relation_type, |e| e.to)
+    collect_relations(result, relation_type, |e| e.to)
+}
+
+pub(crate) fn get_related_targets_from_many(
+    db: &DbAny,
+    from_artist_ids: &[DbId],
+    candidate_target_ids: &[DbId],
+    relation_type: ArtistRelationType,
+) -> anyhow::Result<HashMap<DbId, HashSet<DbId>>> {
+    let unique_from_artist_ids = super::super::dedup_positive_ids(from_artist_ids);
+    let candidate_target_ids: HashSet<DbId> =
+        super::super::dedup_positive_ids(candidate_target_ids)
+            .into_iter()
+            .collect();
+
+    let mut related_targets: HashMap<DbId, HashSet<DbId>> = unique_from_artist_ids
+        .iter()
+        .copied()
+        .map(|artist_id| (artist_id, HashSet::new()))
+        .collect();
+    if unique_from_artist_ids.is_empty() || candidate_target_ids.is_empty() {
+        return Ok(related_targets);
+    }
+
+    for from_artist_id in unique_from_artist_ids {
+        let targets = related_targets
+            .get_mut(&from_artist_id)
+            .expect("batch relation map initialized for every source artist");
+        for (_, target_id) in get_relations_from(db, from_artist_id, Some(relation_type))? {
+            if candidate_target_ids.contains(&target_id) {
+                targets.insert(target_id);
+            }
+        }
+    }
+
+    Ok(related_targets)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_db::{
+        insert_artist,
+        new_test_db,
+    };
+
+    #[test]
+    fn get_related_targets_from_many_filters_by_relation_and_target() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let voice_actor_id = insert_artist(&mut db, "Voice Actor")?;
+        let unrelated_actor_id = insert_artist(&mut db, "Unrelated")?;
+        let character_id = insert_artist(&mut db, "Character")?;
+        let other_character_id = insert_artist(&mut db, "Other Character")?;
+
+        link(
+            &mut db,
+            voice_actor_id,
+            character_id,
+            ArtistRelationType::VoiceActor,
+            None,
+        )?;
+        link(
+            &mut db,
+            voice_actor_id,
+            other_character_id,
+            ArtistRelationType::MemberOf,
+            None,
+        )?;
+
+        let related = get_related_targets_from_many(
+            &db,
+            &[voice_actor_id, unrelated_actor_id],
+            &[character_id],
+            ArtistRelationType::VoiceActor,
+        )?;
+
+        assert_eq!(
+            related
+                .get(&voice_actor_id)
+                .expect("voice actor batch result should exist"),
+            &HashSet::from([character_id])
+        );
+        assert!(
+            related
+                .get(&unrelated_actor_id)
+                .expect("unrelated actor batch result should exist")
+                .is_empty()
+        );
+
+        Ok(())
+    }
 }
