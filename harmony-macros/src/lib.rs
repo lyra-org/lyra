@@ -973,6 +973,24 @@ pub fn compile(input: TokenStream) -> TokenStream {
         quote! {}
     };
 
+    let variant_eq_call = if variants_enabled {
+        quote! {
+            methods.add_meta_function(
+                ::mlua::MetaMethod::Eq,
+                |_, (lhs, rhs): (::mlua::AnyUserData, ::mlua::AnyUserData)| {
+                    let lhs = lhs.borrow::<Self>();
+                    let rhs = rhs.borrow::<Self>();
+                    match (lhs, rhs) {
+                        (Ok(lhs), Ok(rhs)) => Ok(*lhs == *rhs),
+                        _ => Ok(false),
+                    }
+                },
+            );
+        }
+    } else {
+        quote! {}
+    };
+
     let variant_fields_call = if variants_enabled {
         quote! {
             Self::_harmony_userdata_variant_fields(fields);
@@ -1019,6 +1037,7 @@ pub fn compile(input: TokenStream) -> TokenStream {
 
             fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
                 #methods_call
+                #variant_eq_call
             }
         }
 
