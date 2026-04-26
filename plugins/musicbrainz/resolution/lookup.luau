@@ -1292,7 +1292,6 @@ end
 type CreditType = metadata.CreditType
 local CreditType = metadata.CreditType
 
-
 local MB_RELATION_TO_CREDIT: { [string]: { type: CreditType, detail: string? } } = {
 	-- performance
 	vocal = { type = CreditType.Vocalist },
@@ -1606,6 +1605,14 @@ local function process_release(
 	local tagged_artist_mb_ids: { [number]: string } = {}
 	local fetched_relations_for: { [string]: boolean } = {}
 
+	local function maybe_fetch_artist_relations(db_id: number, mb_artist: ReleaseArtist)
+		if mb_artist.id == nil or fetched_relations_for[mb_artist.id] then
+			return
+		end
+		fetched_relations_for[mb_artist.id] = true
+		fetch_and_link_artist_relations(db_id, mb_artist.id, mb_artist["type"])
+	end
+
 	local function tag_local_artist(db_id: number?, mb_artist: ReleaseArtist?): boolean
 		if not db_id or mb_artist == nil or mb_artist.id == nil then
 			return false
@@ -1614,6 +1621,7 @@ local function process_release(
 		if set_artist_metadata(db_id, mb_artist) then
 			tagged_artist_ids[db_id] = true
 			tagged_artist_mb_ids[db_id] = mb_artist.id
+			maybe_fetch_artist_relations(db_id, mb_artist)
 			return true
 		end
 		return false
@@ -1670,11 +1678,7 @@ local function process_release(
 					tagged_artist_ids[ensured_artist_id] = true
 					tagged_artist_mb_ids[ensured_artist_id] = mb_artist.id
 					matched_release_mb_artist_ids[mb_artist.id] = true
-
-					if not fetched_relations_for[mb_artist.id] then
-						fetched_relations_for[mb_artist.id] = true
-						fetch_and_link_artist_relations(ensured_artist_id, mb_artist.id, mb_artist["type"])
-					end
+					maybe_fetch_artist_relations(ensured_artist_id, mb_artist)
 				end
 			end
 		end
@@ -1832,11 +1836,7 @@ local function process_release(
 								tagged_artist_mb_ids[ensured_artist_id] = mb_artist.id
 								matched_mb_artist_ids[mb_artist.id] = true
 								track_artist_count += 1
-
-								if not fetched_relations_for[mb_artist.id] then
-									fetched_relations_for[mb_artist.id] = true
-									fetch_and_link_artist_relations(ensured_artist_id, mb_artist.id, mb_artist["type"])
-								end
+								maybe_fetch_artist_relations(ensured_artist_id, mb_artist)
 							end
 						end
 					end
@@ -2535,6 +2535,7 @@ local function apply_artist_fallback_updates(
 	end
 	local artists_to_check: { LocalArtist } = {}
 	local seen_artist_ids: { [number]: boolean } = {}
+	local fetched_relations_for: { [string]: boolean } = {}
 	local function queue_local_artist(artist: LocalArtist)
 		if not artist or not artist.db_id then
 			return
@@ -2580,7 +2581,12 @@ local function apply_artist_fallback_updates(
 			end
 		end
 		if matched and matched.id then
-			if set_artist_metadata(local_artist.db_id, matched) then
+			local local_artist_db_id = local_artist.db_id
+			if local_artist_db_id and set_artist_metadata(local_artist_db_id, matched) then
+				if not fetched_relations_for[matched.id] then
+					fetched_relations_for[matched.id] = true
+					fetch_and_link_artist_relations(local_artist_db_id, matched.id, matched["type"])
+				end
 				updated += 1
 			end
 		end
