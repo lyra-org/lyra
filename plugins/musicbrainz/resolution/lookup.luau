@@ -1096,6 +1096,98 @@ local function ensure_artist_entity(mb_artist: ReleaseArtist?): number?
 	return artist_id
 end
 
+type ArtistRelationType = metadata.ArtistRelationType
+local ArtistRelationType = metadata.ArtistRelationType
+
+local MB_ARTIST_RELATION_MAP: { [string]: ArtistRelationType } = {
+	["voice actor"] = ArtistRelationType.VoiceActor,
+	["member of band"] = ArtistRelationType.MemberOf,
+}
+
+local function fetch_and_link_artist_relations(
+	from_artist_db_id: number,
+	mb_artist_id: string,
+	mb_artist_type: string?
+): boolean
+	local current_provider = provider
+	if current_provider == nil then
+		return false
+	end
+
+	local normalized_type = if mb_artist_type then string.lower(mb_artist_type) else nil
+	if normalized_type ~= "character" and normalized_type ~= "group" then
+		return false
+	end
+
+	local response = mb_get(`/artist/{mb_artist_id}?inc=artist-rels`)
+	if response == nil then
+		return false
+	end
+
+	local relations = response.relations
+	if type(relations) ~= "table" then
+		return false
+	end
+
+	local linked_count = 0
+	for _, relation in relations :: { any } do
+		if type(relation) ~= "table" then
+			continue
+		end
+		local target_type = relation["target-type"]
+		if target_type ~= "artist" then
+			continue
+		end
+
+		local relation_type_str = relation["type"]
+		if type(relation_type_str) ~= "string" then
+			continue
+		end
+		local relation_type = MB_ARTIST_RELATION_MAP[string.lower(relation_type_str)]
+		if relation_type == nil then
+			continue
+		end
+
+		local related_artist = relation.artist
+		if type(related_artist) ~= "table" or not related_artist.id or not related_artist.name then
+			continue
+		end
+
+		local related_artist_db_id = ensure_artist_entity(related_artist :: ReleaseArtist)
+		if related_artist_db_id == nil then
+			continue
+		end
+
+		local attributes = relation.attributes
+		local attributes_str: string? = nil
+		if type(attributes) == "table" and #attributes > 0 then
+			local attr_parts: { string } = {}
+			for _, attr in attributes :: { any } do
+				if type(attr) == "string" then
+					table.insert(attr_parts, attr)
+				end
+			end
+			if #attr_parts > 0 then
+				attributes_str = table.concat(attr_parts, ", ")
+			end
+		end
+
+		local link_ok = pcall(
+			current_provider.link_artist_relation,
+			current_provider,
+			related_artist_db_id,
+			from_artist_db_id,
+			relation_type,
+			attributes_str
+		)
+		if link_ok then
+			linked_count += 1
+		end
+	end
+
+	return linked_count > 0
+end
+
 local function extract_track_work_id_from_relations(relations: { Relation }?): string?
 	local fallback: string? = nil
 	if relations == nil then
@@ -1144,21 +1236,6 @@ end
 type CreditType = metadata.CreditType
 local CreditType = metadata.CreditType
 
-local function has_character_credits(credits: { ReleaseArtistCredit }): boolean
-	for _, credit: ReleaseArtistCredit in credits do
-		if credit.artist and credit.artist["type"] == "Character" then
-			return true
-		end
-	end
-	return false
-end
-
-local function resolve_credit_type(mb_artist: ReleaseArtist, credits_have_characters: boolean): (CreditType?, string?)
-	if credits_have_characters and mb_artist["type"] == "Person" then
-		return CreditType.Vocalist, "character voice"
-	end
-	return nil, nil
-end
 
 local MB_RELATION_TO_CREDIT: { [string]: { type: CreditType, detail: string? } } = {
 	-- performance
@@ -1471,6 +1548,7 @@ local function process_release(
 	local artist_credits = release["artist-credit"]
 	local tagged_artist_ids: { [number]: boolean } = {}
 	local tagged_artist_mb_ids: { [number]: string } = {}
+	local fetched_relations_for: { [string]: boolean } = {}
 
 	local function tag_local_artist(db_id: number?, mb_artist: ReleaseArtist?): boolean
 		if not db_id or mb_artist == nil or mb_artist.id == nil then
@@ -1527,17 +1605,20 @@ local function process_release(
 			matched_release_mb_artist_ids[first_mb_artist.id] = true
 		end
 
-		local credits_have_characters = has_character_credits(artist_credits)
 		for _, mb_credit: ReleaseArtistCredit in artist_credits do
 			local mb_artist = mb_credit.artist
 			if mb_artist and mb_artist.id and not matched_release_mb_artist_ids[mb_artist.id] then
 				local ensured_artist_id = ensure_artist_entity(mb_artist)
 				if ensured_artist_id then
-					local credit_type, credit_detail = resolve_credit_type(mb_artist, credits_have_characters)
-					current_provider:link_credit(release_db_id, ensured_artist_id, credit_type, credit_detail)
+					current_provider:link_credit(release_db_id, ensured_artist_id, nil, nil)
 					tagged_artist_ids[ensured_artist_id] = true
 					tagged_artist_mb_ids[ensured_artist_id] = mb_artist.id
 					matched_release_mb_artist_ids[mb_artist.id] = true
+
+					if not fetched_relations_for[mb_artist.id] then
+						fetched_relations_for[mb_artist.id] = true
+						fetch_and_link_artist_relations(ensured_artist_id, mb_artist.id, mb_artist["type"])
+					end
 				end
 			end
 		end
@@ -1631,7 +1712,6 @@ local function process_release(
 
 				if mb_track.artist_credits and local_track.artists then
 					local mb_credit_list = mb_track.artist_credits
-					local track_credits_have_characters = has_character_credits(mb_credit_list)
 					local mb_artist_by_name = build_credit_lookup(mb_credit_list)
 					local matched_mb_artist_ids: { [string]: boolean } = {}
 					local unmatched_local_artists: { LocalArtist } = {}
@@ -1688,18 +1768,16 @@ local function process_release(
 						if local_track.db_id and mb_artist.id and not matched_mb_artist_ids[mb_artist.id] then
 							local ensured_artist_id = ensure_artist_entity(mb_artist)
 							if ensured_artist_id then
-								local credit_type, credit_detail =
-									resolve_credit_type(mb_artist, track_credits_have_characters)
-								current_provider:link_credit(
-									local_track.db_id,
-									ensured_artist_id,
-									credit_type,
-									credit_detail
-								)
+								current_provider:link_credit(local_track.db_id, ensured_artist_id, nil, nil)
 								tagged_artist_ids[ensured_artist_id] = true
 								tagged_artist_mb_ids[ensured_artist_id] = mb_artist.id
 								matched_mb_artist_ids[mb_artist.id] = true
 								track_artist_count += 1
+
+								if not fetched_relations_for[mb_artist.id] then
+									fetched_relations_for[mb_artist.id] = true
+									fetch_and_link_artist_relations(ensured_artist_id, mb_artist.id, mb_artist["type"])
+								end
 							end
 						end
 					end
