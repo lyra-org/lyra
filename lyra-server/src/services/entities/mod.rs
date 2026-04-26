@@ -28,6 +28,7 @@ use serde::Serialize;
 use crate::db::{
     self,
     Artist,
+    ArtistRelationType,
     Credit,
     CreditType,
     NodeId,
@@ -129,7 +130,6 @@ macro_rules! projection_kind {
     };
 }
 
-
 projection_kind!(
     ReleaseProjectionKind,
     Release,
@@ -148,7 +148,6 @@ projection_kind!(
     "artist",
     "Artist entity projection kind."
 );
-
 
 #[derive(Clone, Debug, Default, Serialize)]
 #[harmony_macros::interface]
@@ -546,6 +545,118 @@ fn dedupe_credited_artists(artists: Vec<ResolvedCreditedArtist>) -> Vec<Resolved
     deduped
 }
 
+fn is_character_voice_credit(artist: &ResolvedCreditedArtist) -> bool {
+    artist.credit.credit_type == CreditType::Vocalist
+        && artist.credit.detail.as_deref() == Some("character voice")
+}
+
+fn is_voice_actor_artist_credit(artist: &ResolvedCreditedArtist) -> bool {
+    artist.credit.credit_type == CreditType::Artist
+        && artist.artist.artist_type != Some(db::ArtistType::Character)
+}
+
+fn filter_redundant_character_voice_credits(
+    db: &DbAny,
+    artists: Vec<ResolvedCreditedArtist>,
+) -> anyhow::Result<Vec<ResolvedCreditedArtist>> {
+    if artists.len() < 2 {
+        return Ok(artists);
+    }
+
+    let credited_character_ids: HashSet<DbId> = artists
+        .iter()
+        .filter(|artist| {
+            artist.credit.credit_type == CreditType::Artist
+                && artist.artist.artist_type == Some(db::ArtistType::Character)
+        })
+        .filter_map(|artist| artist.artist.db_id.clone().map(DbId::from))
+        .collect();
+    if credited_character_ids.is_empty() {
+        return Ok(artists);
+    }
+
+    let candidate_voice_actor_ids: Vec<DbId> = artists
+        .iter()
+        .filter(|artist| is_character_voice_credit(artist) || is_voice_actor_artist_credit(artist))
+        .filter_map(|artist| artist.artist.db_id.clone().map(DbId::from))
+        .collect();
+    if candidate_voice_actor_ids.is_empty() {
+        return Ok(artists);
+    }
+
+    let voice_actor_targets = db::artists::relations::get_related_targets_from_many(
+        db,
+        &candidate_voice_actor_ids,
+        &credited_character_ids.iter().copied().collect::<Vec<_>>(),
+        ArtistRelationType::VoiceActor,
+    )?;
+
+    let mut filtered = Vec::with_capacity(artists.len());
+    for artist in artists {
+        let Some(artist_db_id) = artist.artist.db_id.clone().map(DbId::from) else {
+            filtered.push(artist);
+            continue;
+        };
+        if !is_character_voice_credit(&artist) && !is_voice_actor_artist_credit(&artist) {
+            filtered.push(artist);
+            continue;
+        }
+
+        let suppress = voice_actor_targets
+            .get(&artist_db_id)
+            .is_some_and(|target_ids| !target_ids.is_empty());
+
+        if !suppress {
+            filtered.push(artist);
+        }
+    }
+
+    Ok(filtered)
+}
+
+fn normalize_credited_artists(
+    db: &DbAny,
+    artists: Vec<ResolvedCreditedArtist>,
+) -> anyhow::Result<Vec<ResolvedCreditedArtist>> {
+    filter_redundant_character_voice_credits(db, dedupe_credited_artists(artists))
+}
+
+fn normalize_credited_artist_map(
+    db: &DbAny,
+    artists_by_owner: HashMap<DbId, Vec<ResolvedCreditedArtist>>,
+) -> anyhow::Result<HashMap<DbId, Vec<ResolvedCreditedArtist>>> {
+    artists_by_owner
+        .into_iter()
+        .map(|(owner_id, artists)| Ok((owner_id, normalize_credited_artists(db, artists)?)))
+        .collect()
+}
+
+pub(crate) fn resolve_release_credited_artists(
+    db: &DbAny,
+    release_id: DbId,
+) -> anyhow::Result<Vec<ResolvedCreditedArtist>> {
+    normalize_credited_artists(
+        db,
+        credited_artists_with_source(
+            db::artists::get_credited(db, release_id)?,
+            ArtistCreditSource::Release,
+        ),
+    )
+}
+
+pub(crate) fn resolve_release_credited_artists_map(
+    db: &DbAny,
+    release_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, Vec<ResolvedCreditedArtist>>> {
+    normalize_credited_artist_map(
+        db,
+        credited_artist_map_with_source(
+            db::artists::get_credited_many_by_owner(db, release_ids)?,
+            ArtistCreditSource::Release,
+        ),
+    )
+}
+
 pub(crate) fn resolve_track_artists(db: &DbAny, track_id: DbId) -> anyhow::Result<Vec<Artist>> {
     let direct = db::artists::get(db, track_id)?;
     if !direct.is_empty() {
@@ -574,7 +685,7 @@ pub(crate) fn resolve_track_credited_artists(
         ArtistCreditSource::Track,
     );
     if !direct.is_empty() {
-        return Ok(dedupe_credited_artists(direct));
+        return normalize_credited_artists(db, direct);
     }
 
     let mut artists = Vec::new();
@@ -590,7 +701,7 @@ pub(crate) fn resolve_track_credited_artists(
         ));
     }
 
-    Ok(dedupe_credited_artists(artists))
+    normalize_credited_artists(db, artists)
 }
 
 fn dedupe_db_ids(ids: &[DbId]) -> Vec<DbId> {
@@ -734,7 +845,7 @@ pub(crate) fn resolve_track_credited_artists_with_context(
         .collect();
 
     if unresolved.is_empty() {
-        return Ok(artists_by_track);
+        return normalize_credited_artist_map(db, artists_by_track);
     }
 
     // Scoped path: fallback artists come from a single known release, so we
@@ -748,10 +859,7 @@ pub(crate) fn resolve_track_credited_artists_with_context(
         {
             Some(artists) => Some(artists),
             None => {
-                fetched = credited_artists_with_source(
-                    db::artists::get_credited(db, scope_id)?,
-                    ArtistCreditSource::Release,
-                );
+                fetched = resolve_release_credited_artists(db, scope_id)?;
                 Some(&fetched)
             }
         };
@@ -763,14 +871,14 @@ pub(crate) fn resolve_track_credited_artists_with_context(
             {
                 artists.extend(release_artists.clone());
             }
-            artists_by_track.insert(track_id, dedupe_credited_artists(artists));
+            artists_by_track.insert(track_id, artists);
         }
 
         for track_id in track_ids {
             artists_by_track.entry(track_id).or_default();
         }
 
-        return Ok(artists_by_track);
+        return normalize_credited_artist_map(db, artists_by_track);
     }
 
     // Unscoped path: a track may belong to multiple releases; pull artists from
@@ -801,34 +909,29 @@ pub(crate) fn resolve_track_credited_artists_with_context(
     }
 
     let fetched_artists_by_release;
-    let artists_by_release: &HashMap<DbId, Vec<ResolvedCreditedArtist>> =
-        match ctx.credited_artists_by_release {
-            Some(pre) => {
-                let missing: Vec<DbId> = release_ids
-                    .iter()
-                    .copied()
-                    .filter(|id| !pre.contains_key(id))
-                    .collect();
-                if missing.is_empty() {
-                    pre
-                } else {
-                    let mut merged = pre.clone();
-                    merged.extend(credited_artist_map_with_source(
-                        db::artists::get_credited_many_by_owner(db, &missing)?,
-                        ArtistCreditSource::Release,
-                    ));
-                    fetched_artists_by_release = merged;
-                    &fetched_artists_by_release
-                }
-            }
-            None => {
-                fetched_artists_by_release = credited_artist_map_with_source(
-                    db::artists::get_credited_many_by_owner(db, &release_ids)?,
-                    ArtistCreditSource::Release,
-                );
+    let artists_by_release: &HashMap<DbId, Vec<ResolvedCreditedArtist>> = match ctx
+        .credited_artists_by_release
+    {
+        Some(pre) => {
+            let missing: Vec<DbId> = release_ids
+                .iter()
+                .copied()
+                .filter(|id| !pre.contains_key(id))
+                .collect();
+            if missing.is_empty() {
+                pre
+            } else {
+                let mut merged = pre.clone();
+                merged.extend(resolve_release_credited_artists_map(db, &missing)?);
+                fetched_artists_by_release = merged;
                 &fetched_artists_by_release
             }
-        };
+        }
+        None => {
+            fetched_artists_by_release = resolve_release_credited_artists_map(db, &release_ids)?;
+            &fetched_artists_by_release
+        }
+    };
 
     for track_id in unresolved {
         let mut artists = artists_by_track.remove(&track_id).unwrap_or_default();
@@ -844,24 +947,252 @@ pub(crate) fn resolve_track_credited_artists_with_context(
                 }
             }
         }
-        artists_by_track.insert(track_id, dedupe_credited_artists(artists));
+        artists_by_track.insert(track_id, artists);
     }
 
     for track_id in track_ids {
         artists_by_track.entry(track_id).or_default();
     }
 
-    Ok(artists_by_track)
+    normalize_credited_artist_map(db, artists_by_track)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_db::new_test_db;
+    use crate::db::test_db::{
+        connect_artist,
+        insert_artist,
+        insert_release,
+        insert_track,
+        new_test_db,
+    };
     use crate::services::EntityType;
     use nanoid::nanoid;
 
     use agdb::QueryBuilder;
+
+    fn connect_credit(
+        db: &mut DbAny,
+        owner_id: DbId,
+        artist_id: DbId,
+        credit_type: db::CreditType,
+        detail: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let credit = db::Credit {
+            db_id: None,
+            id: nanoid!(),
+            credit_type,
+            detail: detail.map(str::to_string),
+        };
+        let credit_id = db
+            .exec_mut(QueryBuilder::insert().element(&credit).query())?
+            .ids()[0];
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from("credits")
+                .to(credit_id)
+                .query(),
+        )?;
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(owner_id)
+                .to(credit_id)
+                .values_uniform([
+                    ("owned", 1).into(),
+                    (db::credits::EDGE_ORDER_KEY, 0_u64).into(),
+                ])
+                .query(),
+        )?;
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(credit_id)
+                .to(artist_id)
+                .query(),
+        )?;
+        Ok(())
+    }
+
+    fn set_artist_type(
+        db: &mut DbAny,
+        artist_id: DbId,
+        artist_type: db::ArtistType,
+    ) -> anyhow::Result<()> {
+        let mut artist = db::artists::get_by_id(db, artist_id)?
+            .ok_or_else(|| anyhow::anyhow!("artist missing in test"))?;
+        artist.set_artist_type(artist_type);
+        db::artists::update(db, &artist)?;
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_track_credited_artists_omits_redundant_character_voice_credit() -> anyhow::Result<()>
+    {
+        let mut db = new_test_db()?;
+        let track_id = insert_track(&mut db, "Track")?;
+        let character_id = insert_artist(&mut db, "Character")?;
+        let voice_actor_id = insert_artist(&mut db, "Voice Actor")?;
+
+        set_artist_type(&mut db, character_id, db::ArtistType::Character)?;
+        set_artist_type(&mut db, voice_actor_id, db::ArtistType::Person)?;
+        connect_artist(&mut db, track_id, character_id)?;
+        connect_credit(
+            &mut db,
+            track_id,
+            voice_actor_id,
+            db::CreditType::Vocalist,
+            Some("character voice"),
+        )?;
+        db::artists::relations::link(
+            &mut db,
+            voice_actor_id,
+            character_id,
+            db::ArtistRelationType::VoiceActor,
+            None,
+        )?;
+
+        let artists = resolve_track_credited_artists(&db, track_id)?;
+
+        assert_eq!(artists.len(), 1);
+        assert_eq!(
+            artists[0].artist.db_id.clone().map(DbId::from),
+            Some(character_id)
+        );
+        assert_eq!(artists[0].credit.credit_type, db::CreditType::Artist);
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_track_credited_artists_omits_redundant_plain_voice_actor_artist_credit()
+    -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let track_id = insert_track(&mut db, "Track")?;
+        let character_id = insert_artist(&mut db, "Character")?;
+        let voice_actor_id = insert_artist(&mut db, "Voice Actor")?;
+
+        set_artist_type(&mut db, character_id, db::ArtistType::Character)?;
+        set_artist_type(&mut db, voice_actor_id, db::ArtistType::Person)?;
+        connect_artist(&mut db, track_id, character_id)?;
+        connect_artist(&mut db, track_id, voice_actor_id)?;
+        db::artists::relations::link(
+            &mut db,
+            voice_actor_id,
+            character_id,
+            db::ArtistRelationType::VoiceActor,
+            None,
+        )?;
+
+        let artists = resolve_track_credited_artists(&db, track_id)?;
+
+        assert_eq!(artists.len(), 1);
+        assert_eq!(
+            artists[0].artist.db_id.clone().map(DbId::from),
+            Some(character_id)
+        );
+        assert_eq!(artists[0].credit.credit_type, db::CreditType::Artist);
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_release_credited_artists_omits_redundant_character_voice_credit()
+    -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Release")?;
+        let character_id = insert_artist(&mut db, "Character")?;
+        let voice_actor_id = insert_artist(&mut db, "Voice Actor")?;
+
+        set_artist_type(&mut db, character_id, db::ArtistType::Character)?;
+        set_artist_type(&mut db, voice_actor_id, db::ArtistType::Person)?;
+        connect_artist(&mut db, release_id, character_id)?;
+        connect_credit(
+            &mut db,
+            release_id,
+            voice_actor_id,
+            db::CreditType::Vocalist,
+            Some("character voice"),
+        )?;
+        db::artists::relations::link(
+            &mut db,
+            voice_actor_id,
+            character_id,
+            db::ArtistRelationType::VoiceActor,
+            None,
+        )?;
+
+        let artists = resolve_release_credited_artists(&db, release_id)?;
+
+        assert_eq!(artists.len(), 1);
+        assert_eq!(
+            artists[0].artist.db_id.clone().map(DbId::from),
+            Some(character_id)
+        );
+        assert_eq!(artists[0].credit.credit_type, db::CreditType::Artist);
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_release_credited_artists_omits_redundant_plain_voice_actor_artist_credit()
+    -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Release")?;
+        let character_id = insert_artist(&mut db, "Character")?;
+        let voice_actor_id = insert_artist(&mut db, "Voice Actor")?;
+
+        set_artist_type(&mut db, character_id, db::ArtistType::Character)?;
+        set_artist_type(&mut db, voice_actor_id, db::ArtistType::Person)?;
+        connect_artist(&mut db, release_id, character_id)?;
+        connect_artist(&mut db, release_id, voice_actor_id)?;
+        db::artists::relations::link(
+            &mut db,
+            voice_actor_id,
+            character_id,
+            db::ArtistRelationType::VoiceActor,
+            None,
+        )?;
+
+        let artists = resolve_release_credited_artists(&db, release_id)?;
+
+        assert_eq!(artists.len(), 1);
+        assert_eq!(
+            artists[0].artist.db_id.clone().map(DbId::from),
+            Some(character_id)
+        );
+        assert_eq!(artists[0].credit.credit_type, db::CreditType::Artist);
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_release_credited_artists_keeps_voice_actor_without_character_credit()
+    -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Release")?;
+        let character_id = insert_artist(&mut db, "Character")?;
+        let voice_actor_id = insert_artist(&mut db, "Voice Actor")?;
+
+        set_artist_type(&mut db, character_id, db::ArtistType::Character)?;
+        set_artist_type(&mut db, voice_actor_id, db::ArtistType::Person)?;
+        connect_artist(&mut db, release_id, voice_actor_id)?;
+        db::artists::relations::link(
+            &mut db,
+            voice_actor_id,
+            character_id,
+            db::ArtistRelationType::VoiceActor,
+            None,
+        )?;
+
+        let artists = resolve_release_credited_artists(&db, release_id)?;
+
+        assert_eq!(artists.len(), 1);
+        assert_eq!(
+            artists[0].artist.db_id.clone().map(DbId::from),
+            Some(voice_actor_id)
+        );
+        assert_eq!(artists[0].credit.credit_type, db::CreditType::Artist);
+        Ok(())
+    }
 
     #[test]
     fn build_entity_provider_context_detects_release() -> anyhow::Result<()> {

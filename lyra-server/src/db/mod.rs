@@ -286,10 +286,10 @@ where
     Ok(sort)
 }
 
-pub(crate) use artists::relations::ArtistRelationType;
 pub(crate) use artists::Artist;
 pub(crate) use artists::ArtistType;
 pub(crate) use artists::CreditedArtist;
+pub(crate) use artists::relations::ArtistRelationType;
 pub(crate) use covers::Cover;
 pub(crate) use credits::Credit;
 pub(crate) use credits::CreditType;

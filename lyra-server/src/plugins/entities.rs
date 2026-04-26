@@ -403,7 +403,10 @@ pub(crate) fn get_module() -> harmony_core::Module {
     m.setup = std::sync::Arc::new(move |lua: &Lua| {
         let table = inner(lua)?;
         table.set("CreditType", lua.create_proxy::<CreditType>()?)?;
-        table.set("ArtistCreditSource", lua.create_proxy::<ArtistCreditSource>()?)?;
+        table.set(
+            "ArtistCreditSource",
+            lua.create_proxy::<ArtistCreditSource>()?,
+        )?;
         Ok(table)
     });
     m

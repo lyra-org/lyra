@@ -1026,7 +1026,10 @@ pub(crate) fn get_module() -> Module {
 
             table.set("Provider", lua.create_proxy::<Provider>()?)?;
             table.set("EntityType", lua.create_proxy::<EntityType>()?)?;
-            table.set("ArtistRelationType", lua.create_proxy::<db::ArtistRelationType>()?)?;
+            table.set(
+                "ArtistRelationType",
+                lua.create_proxy::<db::ArtistRelationType>()?,
+            )?;
             table.set("CreditType", lua.create_proxy::<db::CreditType>()?)?;
             table.set("ArtistType", lua.create_proxy::<db::ArtistType>()?)?;
             ids_table.set("list", lua.create_async_function(ids_list)?)?;
