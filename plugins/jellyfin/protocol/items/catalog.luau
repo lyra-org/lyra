@@ -1495,6 +1495,8 @@ function helpers.to_artist_item(
 		artist_tracks = helpers.call_module_get(tracks.list, artist.db_id)
 	end
 	local runtime_ticks = helpers.sum_runtime_ticks(artist_tracks)
+	local artist_releases = releases.get_by_artist(artist.db_id)
+	local album_count = if artist_releases then #artist_releases else 0
 	local item: ItemInfo = {
 		Id = artist_item_id,
 		Name = module.trim(artist.artist_name) or "Unknown Artist",
@@ -1503,6 +1505,8 @@ function helpers.to_artist_item(
 		SortName = sort_name,
 		RunTimeTicks = runtime_ticks,
 		DateCreated = helpers.unix_to_iso8601(artist.created_at),
+		AlbumCount = album_count,
+		SongCount = if artist_tracks then #artist_tracks else 0,
 		ImageTags = helpers.default_image_tags(),
 		ImageBlurHashes = helpers.default_image_blur_hashes(),
 		UserData = helpers.build_item_user_data(
@@ -3605,6 +3609,19 @@ function helpers.try_list_jellyfin_parent_children(
 		return helpers.list_release_child_items(options, parent_scope.db_id)
 	end
 
+	if parent_scope.entity_type == "Artist" then
+		local artist_releases = releases.get_by_artist(parent_scope.db_id)
+		if artist_releases == nil then
+			return nil
+		end
+
+		local stubs: { ItemInfo } = {}
+		helpers.append_release_stubs(stubs, artist_releases)
+		module.apply_sort(stubs, options)
+		local items, total_count, start_index = helpers.page_and_realize_stubs(stubs, options)
+		return { items = items, total_count = total_count, start_index = start_index }
+	end
+
 	return nil
 end
 
@@ -3860,9 +3877,12 @@ function helpers.list_items_by_artist_ids(
 	local has_primary_artist_filter = #decoded_primary_artist_ids > 0
 	local has_track_artist_filter = #decoded_track_artist_ids > 0
 	local has_release_artist_filter = #decoded_release_artist_ids > 0
+	local is_contributing_only = #decoded_contributing_artist_ids > 0
+		and #decoded_primary_artist_ids == 0
+		and #decoded_explicit_release_artist_ids == 0
 	local track_query_allowed = entity_type == "track" and (has_track_artist_filter or has_release_artist_filter)
 	local allow_sort_fallback = entity_type == "track" and track_query_allowed
-	local release_query_allowed = entity_type == "release" and not has_primary_artist_filter
+	local release_query_allowed = entity_type == "release" and not has_primary_artist_filter and not is_contributing_only
 	if
 		#options.ids == 0
 		and not is_random
@@ -3947,7 +3967,7 @@ function helpers.list_items_by_artist_ids(
 	end
 
 	local include_values: { string } = {}
-	if wants_releases or needs_release_artist_tracks then
+	if (wants_releases and not is_contributing_only) or needs_release_artist_tracks then
 		table.insert(include_values, "releases")
 	end
 	if wants_tracks and #decoded_track_artist_ids > 0 then
@@ -4034,6 +4054,24 @@ function helpers.list_items_by_artist_ids(
 
 	if wants_releases and has_primary_artist_filter then
 		for _, artist_id: number in decoded_primary_artist_ids do
+			local ok, appearance_releases = pcall(releases.get_appearances, artist_id)
+			if ok and type(appearance_releases) == "table" then
+				for _, release: Release in appearance_releases do
+					local release_item_id = module.encode_jellyfin_item_id(release.id)
+					if
+						release_item_id
+						and releases_by_id[release_item_id] == nil
+						and (allowed_release_ids == nil or allowed_release_ids[release_item_id])
+					then
+						releases_by_id[release_item_id] = release
+					end
+				end
+			end
+		end
+	end
+
+	if wants_releases and is_contributing_only then
+		for _, artist_id: number in decoded_contributing_artist_ids do
 			local ok, appearance_releases = pcall(releases.get_appearances, artist_id)
 			if ok and type(appearance_releases) == "table" then
 				for _, release: Release in appearance_releases do
