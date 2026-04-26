@@ -18,6 +18,7 @@ use crate::{
     db::{
         self,
         Artist,
+        ArtistRelationType,
         ArtistType,
         ResolveId,
     },
@@ -26,6 +27,11 @@ use crate::{
         paged_result_to_table,
         parse_ids,
         parse_list_options,
+    },
+    services::artists::{
+        self as artist_services,
+        RelationDirection,
+        ResolvedRelation,
     },
 };
 
@@ -46,6 +52,41 @@ struct ArtistQueryResult {
     offset: u64,
 }
 
+#[harmony_macros::interface]
+struct ArtistRelationInfo {
+    relation_type: ArtistRelationType,
+    direction: String,
+    attributes: Option<String>,
+    artist: Artist,
+}
+
+impl mlua::IntoLua for ArtistRelationInfo {
+    fn into_lua(self, lua: &mlua::Lua) -> mlua::Result<mlua::Value> {
+        let table = lua.create_table()?;
+        table.set("relation_type", self.relation_type)?;
+        table.set("direction", self.direction)?;
+        table.set("attributes", self.attributes)?;
+        table.set("artist", self.artist)?;
+        Ok(mlua::Value::Table(table))
+    }
+}
+
+fn relation_direction_label(direction: RelationDirection) -> &'static str {
+    match direction {
+        RelationDirection::Incoming => "incoming",
+        RelationDirection::Outgoing => "outgoing",
+    }
+}
+
+fn to_artist_relation_info(relation: ResolvedRelation) -> ArtistRelationInfo {
+    ArtistRelationInfo {
+        relation_type: relation.relation_type,
+        direction: relation_direction_label(relation.direction).to_string(),
+        attributes: relation.attributes,
+        artist: relation.artist,
+    }
+}
+
 struct ArtistsModule;
 
 #[harmony_macros::module(
@@ -53,8 +94,8 @@ struct ArtistsModule;
     name = "Artists",
     local = "artists",
     path = "lyra/artists",
-    interfaces(ArtistQueryOptions, ArtistQueryResult),
-    classes(Artist, ArtistType)
+    interfaces(ArtistQueryOptions, ArtistQueryResult, ArtistRelationInfo),
+    classes(Artist, ArtistType, ArtistRelationType)
 )]
 impl ArtistsModule {
     /// Lists artists related to the given scope, or all artists by default.
@@ -120,11 +161,52 @@ impl ArtistsModule {
         }
         Ok(table)
     }
+
+    /// Lists typed artist relations for each artist id.
+    #[harmony(args(ids: Vec<u64>), returns(std::collections::BTreeMap<u64, Vec<ArtistRelationInfo>>))]
+    pub(crate) async fn list_relations_many(
+        lua: Lua,
+        _plugin_id: Option<Arc<str>>,
+        ids: Table,
+    ) -> Result<Table> {
+        let ids = parse_ids(ids)?;
+        let db = STATE.db.read().await;
+        let relations = artist_services::get_relations_many(&db, &ids).into_lua_err()?;
+        let table = lua.create_table()?;
+        for id in ids {
+            let relation_infos = relations
+                .get(&id)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(to_artist_relation_info)
+                .collect::<Vec<_>>();
+            table.set(id.0, relation_infos)?;
+        }
+        Ok(table)
+    }
 }
 
-crate::plugins::plugin_surface_exports!(
-    ArtistsModule,
-    "lyra.artists",
-    "Read and modify artist records.",
-    Medium
-);
+pub(crate) fn get_module() -> harmony_core::Module {
+    let mut m = ArtistsModule::module();
+    m.scope = harmony_core::Scope {
+        id: "lyra.artists".into(),
+        description: "Read and modify artist records.",
+        danger: harmony_core::Danger::Medium,
+    };
+    let inner = m.setup;
+    m.setup = std::sync::Arc::new(move |lua: &Lua| {
+        let table = inner(lua)?;
+        table.set("ArtistType", lua.create_proxy::<ArtistType>()?)?;
+        table.set(
+            "ArtistRelationType",
+            lua.create_proxy::<ArtistRelationType>()?,
+        )?;
+        Ok(table)
+    });
+    m
+}
+
+pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
+    ArtistsModule::render_luau_definition()
+}

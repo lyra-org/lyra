@@ -3,6 +3,11 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::collections::{
+    HashMap,
+    HashSet,
+};
+
 use agdb::{
     DbAny,
     DbId,
@@ -29,6 +34,7 @@ pub(crate) enum RelationDirection {
     Outgoing,
 }
 
+#[derive(Clone, Debug)]
 pub(crate) struct ResolvedRelation {
     pub(crate) relation_type: ArtistRelationType,
     pub(crate) attributes: Option<String>,
@@ -43,7 +49,10 @@ pub(crate) struct ArtistDetails {
     pub(crate) relations: Option<Vec<ResolvedRelation>>,
 }
 
-fn fetch_relations(db: &DbAny, artist_db_id: DbId) -> anyhow::Result<Vec<ResolvedRelation>> {
+pub(crate) fn get_relations(
+    db: &DbAny,
+    artist_db_id: DbId,
+) -> anyhow::Result<Vec<ResolvedRelation>> {
     let mut resolved = Vec::new();
 
     let incoming = db::artists::relations::get_relations_to(db, artist_db_id, None)?;
@@ -73,6 +82,24 @@ fn fetch_relations(db: &DbAny, artist_db_id: DbId) -> anyhow::Result<Vec<Resolve
     Ok(resolved)
 }
 
+pub(crate) fn get_relations_many(
+    db: &DbAny,
+    artist_db_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, Vec<ResolvedRelation>>> {
+    let mut relations_by_artist_id = HashMap::new();
+    let mut seen = HashSet::new();
+
+    for artist_db_id in artist_db_ids.iter().copied() {
+        if artist_db_id.0 <= 0 || !seen.insert(artist_db_id) {
+            continue;
+        }
+
+        relations_by_artist_id.insert(artist_db_id, get_relations(db, artist_db_id)?);
+    }
+
+    Ok(relations_by_artist_id)
+}
+
 pub(crate) fn list_details(
     db: &DbAny,
     includes: ArtistIncludes,
@@ -97,7 +124,7 @@ pub(crate) fn list_details(
             None
         };
         let relations = if includes.relations {
-            Some(fetch_relations(db, artist_db_id)?)
+            Some(get_relations(db, artist_db_id)?)
         } else {
             None
         };
@@ -133,7 +160,7 @@ pub(crate) fn get_details(
         None
     };
     let relations = if includes.relations {
-        Some(fetch_relations(db, artist_db_id)?)
+        Some(get_relations(db, artist_db_id)?)
     } else {
         None
     };
@@ -213,6 +240,7 @@ pub(crate) fn update(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::artists::relations::link as link_artist_relation;
     use crate::db::test_db::{
         connect,
         connect_artist,
@@ -311,6 +339,63 @@ mod tests {
         let tracks = details.tracks.expect("tracks included");
         assert_eq!(tracks.len(), 1);
         assert_eq!(tracks[0].track_title, "Solo Dancer");
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_relations_returns_incoming_and_outgoing_artist_relations() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let person_id = insert_artist(&mut db, "Voice Actor")?;
+        let character_id = insert_artist(&mut db, "Character")?;
+
+        link_artist_relation(
+            &mut db,
+            person_id,
+            character_id,
+            db::ArtistRelationType::VoiceActor,
+            None,
+        )?;
+
+        let incoming = get_relations(&db, character_id)?;
+        assert_eq!(incoming.len(), 1);
+        assert_eq!(incoming[0].artist.artist_name, "Voice Actor");
+        assert_eq!(incoming[0].direction, RelationDirection::Incoming);
+        assert_eq!(
+            incoming[0].relation_type,
+            db::ArtistRelationType::VoiceActor
+        );
+
+        let outgoing = get_relations(&db, person_id)?;
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(outgoing[0].artist.artist_name, "Character");
+        assert_eq!(outgoing[0].direction, RelationDirection::Outgoing);
+        assert_eq!(
+            outgoing[0].relation_type,
+            db::ArtistRelationType::VoiceActor
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_relations_many_returns_entries_per_requested_artist() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let person_id = insert_artist(&mut db, "Voice Actor")?;
+        let character_id = insert_artist(&mut db, "Character")?;
+
+        link_artist_relation(
+            &mut db,
+            person_id,
+            character_id,
+            db::ArtistRelationType::VoiceActor,
+            None,
+        )?;
+
+        let related = get_relations_many(&db, &[person_id, character_id, person_id])?;
+        assert_eq!(related.len(), 2);
+        assert_eq!(related.get(&person_id).map(Vec::len), Some(1));
+        assert_eq!(related.get(&character_id).map(Vec::len), Some(1));
 
         Ok(())
     }
