@@ -110,30 +110,6 @@ credit_type = "artist"
 [expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."8b845230-334e-46bd-bce0-238119d4d9d7"]
 credit_type = "artist"
 
-[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."9084a3ef-c551-4f0f-b7c6-a260dd268de9"]
-credit_type = "vocalist"
-detail = "character voice"
-
-[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."73e66826-f426-4f22-aa1f-dec4b9ac8acc"]
-credit_type = "vocalist"
-detail = "character voice"
-
-[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."28b47260-6472-470d-b5e3-fde7bb36af3b"]
-credit_type = "vocalist"
-detail = "character voice"
-
-[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."74368b3e-6a26-4e74-a210-e7e616fc49df"]
-credit_type = "vocalist"
-detail = "character voice"
-
-[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."ba8e4d90-e70a-46e0-a0a5-5a6c72d6cbbe"]
-credit_type = "vocalist"
-detail = "character voice"
-
-[expect.tracks."e9652378-6c87-454a-bd32-ce7a19f27bfa".credits."6bb5b751-40aa-40f2-a803-f9abf1530df3"]
-credit_type = "vocalist"
-detail = "character voice"
-
 [expect.tracks."12b88d0e-9601-4d66-b7bd-9d838346090a"]
 fields = { disc = 1, disc_total = 1, track = 2, track_title = "BABY!" }
 

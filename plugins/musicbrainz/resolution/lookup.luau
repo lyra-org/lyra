@@ -1233,6 +1233,62 @@ local function fetch_recording_result(recording_id: string?, recording_cache: Re
 	return result
 end
 
+type WorkCache = { [string]: { Relation } | false }
+
+local function fetch_work_relations(work_id: string?, work_cache: WorkCache?): { Relation }?
+	if type(work_id) ~= "string" or work_id == "" then
+		return nil
+	end
+	if work_cache and work_cache[work_id] ~= nil then
+		local cached = work_cache[work_id]
+		if cached == false then
+			return nil
+		end
+		return cached :: { Relation }
+	end
+	local work_response = mb_get(`/work/{work_id}?inc=artist-rels`)
+	local relations: { Relation }? = nil
+	if work_response then
+		local raw_relations = json_array_field(work_response, "relations")
+		if raw_relations then
+			relations = {}
+			for _, raw_relation: JsonValue in raw_relations do
+				if type(raw_relation) == "table" then
+					local relation = raw_relation :: JsonObject
+					local raw_artist = json_object_field(relation, "artist")
+					local raw_attributes = json_array_field(relation, "attributes")
+					local attributes: { string }? = nil
+					if raw_attributes ~= nil then
+						attributes = {}
+						for _, attr: JsonValue in raw_attributes do
+							if type(attr) == "string" then
+								table.insert(attributes :: { string }, attr :: string)
+							end
+						end
+					end
+					if raw_artist ~= nil then
+						local parsed_relation: Relation = {
+							type = json_string_field(relation, "type"),
+							["target-type"] = json_string_field(relation, "target-type"),
+							artist = {
+								id = json_string_field(raw_artist, "id"),
+								name = json_string_field(raw_artist, "name"),
+								["sort-name"] = json_string_field(raw_artist, "sort-name"),
+							},
+							attributes = attributes,
+						}
+						table.insert(relations :: { Relation }, parsed_relation)
+					end
+				end
+			end
+		end
+	end
+	if work_cache then
+		work_cache[work_id] = relations or false
+	end
+	return relations
+end
+
 type CreditType = metadata.CreditType
 local CreditType = metadata.CreditType
 
@@ -1658,6 +1714,7 @@ local function process_release(
 		local preserve_local_position = preserve_single_track_position or preserve_local_multidisc_position
 		local should_lookup_track_work = #local_tracks == 1
 		local recording_cache: RecordingCache = {}
+		local work_cache: WorkCache = {}
 		local track_artist_count = 0
 
 		for i: number, local_track: LocalTrack in local_tracks do
@@ -1690,17 +1747,19 @@ local function process_release(
 					if inline_relations then
 						recording_relations = inline_relations :: { Relation }?
 					end
-					if should_lookup_track_work then
-						local work_id = extract_track_work_id_from_relations(recording_relations)
-						if work_id == nil and recording_relations == nil then
-							local result = fetch_recording_result(mb_track.recording_id, recording_cache)
-							if result then
-								work_id = extract_track_work_id_from_relations(result.relations)
-								recording_relations = result.relations
-							end
+					local work_id = extract_track_work_id_from_relations(recording_relations)
+					if should_lookup_track_work and work_id == nil and recording_relations == nil then
+						local result = fetch_recording_result(mb_track.recording_id, recording_cache)
+						if result then
+							work_id = extract_track_work_id_from_relations(result.relations)
+							recording_relations = result.relations
 						end
-						if work_id then
-							track_layer:set_field("work_id", work_id)
+					end
+					if work_id then
+						track_layer:set_field("work_id", work_id)
+						local work_relations = fetch_work_relations(work_id, work_cache)
+						if work_relations and local_track.db_id then
+							link_artist_credits_from_relations(local_track.db_id, work_relations)
 						end
 					end
 				end
