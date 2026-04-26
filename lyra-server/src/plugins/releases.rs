@@ -101,6 +101,16 @@ impl ReleasesModule {
         paged_result_to_table(&lua, result)
     }
 
+    pub(crate) async fn get_by_artist(
+        _plugin_id: Option<Arc<str>>,
+        artist_id: crate::db::NodeId,
+    ) -> Result<Vec<Release>> {
+        let db = STATE.db.read().await;
+        let artist_db_id = agdb::DbId::from(artist_id);
+        let releases = crate::db::releases::get_by_artist(&db, artist_db_id).into_lua_err()?;
+        Ok(releases)
+    }
+
     pub(crate) async fn get_appearances(
         _plugin_id: Option<Arc<str>>,
         artist_id: crate::db::NodeId,
