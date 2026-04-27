@@ -258,7 +258,7 @@ pub(super) async fn lua_response_to_axum(
                 },
             );
         }
-        "json" | "empty" | "text" | "file" => {}
+        "json" | "empty" | "text" | "redirect" | "file" => {}
         other => bail!("unsupported response kind: {other}"),
     }
 

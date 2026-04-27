@@ -191,6 +191,29 @@ pub(super) fn response_text(
     Ok(response)
 }
 
+pub(super) fn response_redirect(
+    lua: &Lua,
+    (status, location, headers): (u16, String, Option<Table>),
+) -> mlua::Result<Table> {
+    if !(300..400).contains(&status) {
+        return Err(mlua::Error::runtime(
+            "redirect status must be a 3xx HTTP status code",
+        ));
+    }
+
+    let location = location.trim();
+    if location.is_empty() {
+        return Err(mlua::Error::runtime("redirect location must not be empty"));
+    }
+
+    let response = build_kind_response_table(lua, "redirect")?;
+    response.set("status", status)?;
+    let headers = merge_response_headers(lua, &[], headers)?;
+    headers.set("location", location)?;
+    response.set("headers", headers)?;
+    Ok(response)
+}
+
 pub(super) fn response_file(
     lua: &Lua,
     (status, path, headers, transform_options): (Option<u16>, String, Option<Table>, Option<Table>),
