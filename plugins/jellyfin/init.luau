@@ -41,6 +41,7 @@ local SERVER_ID = constants.SERVER_ID
 local P = constants.ROUTE_PREFIX
 
 type ApiContext = api.ApiContext
+type ApiQueryParams = api.ApiQueryParams
 type ApiResponse = api.ApiResponse
 type JsonValue = api.JsonValue
 type JsonObject = { [string]: JsonValue }
@@ -3321,42 +3322,164 @@ api.head(P .. "/Audio/{itemId}/stream", function(ctx: ApiContext)
 	return handle_audio_stream_route(ctx)
 end, nil, true)
 
-local function handle_audio_hls_playlist_route(ctx: ApiContext): ApiResponse
+type ResolvedAudioHlsPlaylistRequest = {
+	track: Track,
+	track_id: number,
+	query: ApiQueryParams?,
+	codec: string,
+}
+
+local DEFAULT_AUDIO_HLS_BANDWIDTH_BPS = 192000
+
+local function parse_audio_hls_codec(query: ApiQueryParams?): string
+	local raw_codec = if query then (query.audioCodec or query.AudioCodec or query.codec) else nil
+	local trimmed_codec = if type(raw_codec) == "string" and #raw_codec > 0 then string.lower(raw_codec) else nil
+	return if trimmed_codec then trimmed_codec else "aac"
+end
+
+local function encode_hls_query_component(value: string): string
+	local encoded = string.gsub(value, "[^%w%-_%.~]", function(char)
+		return string.format("%%%02X", string.byte(char))
+	end)
+	return encoded
+end
+
+local function build_audio_hls_master_query_string(query: ApiQueryParams?, codec: string): string
+	local keys: { string } = {}
+	if query then
+		for key in query do
+			if key ~= "audioCodec" and key ~= "AudioCodec" and key ~= "codec" then
+				table.insert(keys, key)
+			end
+		end
+	end
+	table.sort(keys)
+
+	local parts: { string } = {
+		string.format("audioCodec=%s", encode_hls_query_component(codec)),
+	}
+	for _, key in keys do
+		local value = if query then query[key] else nil
+		if type(value) == "string" then
+			table.insert(
+				parts,
+				string.format("%s=%s", encode_hls_query_component(key), encode_hls_query_component(value))
+			)
+		end
+	end
+
+	return table.concat(parts, "&")
+end
+
+local function codec_string_for_audio_hls(codec: string): string?
+	if codec == "aac" then
+		return "mp4a.40.2"
+	end
+	if codec == "flac" then
+		return "fLaC"
+	end
+	if codec == "alac" then
+		return "alac"
+	end
+	return nil
+end
+
+local function is_supported_audio_hls_codec(codec: string): boolean
+	return codec == "aac" or codec == "alac" or codec == "flac"
+end
+
+local function resolve_audio_hls_variant_bandwidth(track: Track, query: ApiQueryParams?, codec: string): number
+	local requested_audio_bitrate = base.parse_query_int(query, { "audioBitRate", "AudioBitRate" }, nil, 1, nil)
+	local requested_max_bitrate =
+		base.parse_query_int(query, { "maxStreamingBitrate", "MaxStreamingBitrate" }, nil, 1, nil)
+	local track_bitrate = if track.bitrate_bps and track.bitrate_bps > 0 then track.bitrate_bps else nil
+
+	if codec == "aac" then
+		return DEFAULT_AUDIO_HLS_BANDWIDTH_BPS
+	end
+
+	return track_bitrate or requested_audio_bitrate or requested_max_bitrate or DEFAULT_AUDIO_HLS_BANDWIDTH_BPS
+end
+
+local function build_audio_hls_master_playlist(track: Track, query: ApiQueryParams?, codec: string): string
+	local bandwidth = resolve_audio_hls_variant_bandwidth(track, query, codec)
+	local codec_string = codec_string_for_audio_hls(codec)
+	local stream_inf = string.format("#EXT-X-STREAM-INF:BANDWIDTH=%d,AVERAGE-BANDWIDTH=%d", bandwidth, bandwidth)
+	if codec_string then
+		stream_inf ..= string.format(',CODECS="%s"', codec_string)
+	end
+
+	local variant_uri = `main.m3u8?{build_audio_hls_master_query_string(query, codec)}`
+	return table.concat({
+		"#EXTM3U",
+		stream_inf,
+		variant_uri,
+		"",
+	}, "\n")
+end
+
+local function resolve_audio_hls_playlist_request(ctx: ApiContext): (ResolvedAudioHlsPlaylistRequest?, ApiResponse?)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
-		return session.unauthorized()
+		return nil, session.unauthorized()
 	end
 	if not session.require_matching_user_scope(ctx, principal) then
-		return session.unauthorized()
+		return nil, session.unauthorized()
 	end
 
 	local params = if ctx then ctx.params else nil
 	local item_id = if params then params.itemId else nil
 	if not item_id then
-		return base.bad_request("missing item id")
+		return nil, base.bad_request("missing item id")
 	end
 
 	local track = playback.resolve_track_for_playback(base.decode_jellyfin_item_id(item_id))
 	if not track then
-		return base.not_found("item not found")
+		return nil, base.not_found("item not found")
 	end
 	local track_id = track.db_id
 	if track_id == nil or track_id <= 0 then
-		return base.not_found("item not found")
+		return nil, base.not_found("item not found")
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local raw_codec = if query then (query.audioCodec or query.AudioCodec or query.codec) else nil
-	local trimmed_codec = if type(raw_codec) == "string" and #raw_codec > 0 then string.lower(raw_codec) else nil
-	local codec = if trimmed_codec then trimmed_codec else "aac"
+	local codec = parse_audio_hls_codec(query)
+	if not is_supported_audio_hls_codec(codec) then
+		return nil, base.bad_request("unsupported hls codec; supported values: aac, alac, flac")
+	end
 
-	return api.response.hls_playlist(track_id, codec)
+	return {
+		track = track,
+		track_id = track_id,
+		query = query,
+		codec = codec,
+	}, nil
 end
 
-api.get(P .. "/Audio/{itemId}/master.m3u8", handle_audio_hls_playlist_route, nil, true)
-api.head(P .. "/Audio/{itemId}/master.m3u8", handle_audio_hls_playlist_route, nil, true)
-api.get(P .. "/Audio/{itemId}/main.m3u8", handle_audio_hls_playlist_route, nil, true)
-api.head(P .. "/Audio/{itemId}/main.m3u8", handle_audio_hls_playlist_route, nil, true)
+local function handle_audio_hls_master_playlist_route(ctx: ApiContext): ApiResponse
+	local request, err = resolve_audio_hls_playlist_request(ctx)
+	if request == nil then
+		return err or base.bad_request("invalid hls request")
+	end
+
+	return api.response.text(200, build_audio_hls_master_playlist(request.track, request.query, request.codec), {
+		["content-type"] = "application/x-mpegurl",
+	})
+end
+
+local function handle_audio_hls_main_playlist_route(ctx: ApiContext): ApiResponse
+	local request, err = resolve_audio_hls_playlist_request(ctx)
+	if request == nil then
+		return err or base.bad_request("invalid hls request")
+	end
+
+	return api.response.hls_playlist(request.track_id, request.codec)
+end
+
+api.get(P .. "/Audio/{itemId}/master.m3u8", handle_audio_hls_master_playlist_route, nil, true)
+api.head(P .. "/Audio/{itemId}/master.m3u8", handle_audio_hls_master_playlist_route, nil, true)
+api.get(P .. "/Audio/{itemId}/main.m3u8", handle_audio_hls_main_playlist_route, nil, true)
+api.head(P .. "/Audio/{itemId}/main.m3u8", handle_audio_hls_main_playlist_route, nil, true)
 api.post(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
