@@ -3,7 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::DbId;
 use argon2::password_hash::rand_core::{
     OsRng,
     RngCore,
@@ -44,37 +43,31 @@ fn hls_signed_url_ttl_seconds() -> u64 {
         .unwrap_or(HLS_SIGNED_URL_TTL_SECONDS_DEFAULT)
 }
 
-// Signed tokens are scoped to (track_id, session_id, expiry). The session_id
-// binding prevents cross-session replay: a token minted for one session cannot
-// authorize segment fetches under a different session, even for the same track.
-// Tokens are NOT segment-scoped; any segment within the session's track can be
-// fetched with the same token until it expires.
-fn hls_segment_signature_payload(track_db_id: DbId, session_id: &str, exp: u64) -> String {
-    format!("{}:{session_id}:{exp}", track_db_id.0)
+// Signed tokens are scoped to (session_id, expiry). Tokens are NOT
+// segment-scoped; any segment within the session can be fetched with the same
+// token until it expires.
+fn hls_segment_signature_payload(session_id: &str, exp: u64) -> String {
+    format!("{session_id}:{exp}")
 }
 
-pub(crate) fn hls_sign_segment_token(track_db_id: DbId, session_id: &str, exp: u64) -> String {
-    let payload = hls_segment_signature_payload(track_db_id, session_id, exp);
+pub(crate) fn hls_sign_segment_token(session_id: &str, exp: u64) -> String {
+    let payload = hls_segment_signature_payload(session_id, exp);
     let signature = blake3::keyed_hash(&*HLS_SEGMENT_SIGNING_KEY, payload.as_bytes());
     general_purpose::URL_SAFE_NO_PAD.encode(signature.as_bytes())
 }
 
-pub(crate) fn hls_signed_segment_query(track_db_id: DbId, session_id: &str) -> String {
+pub(crate) fn hls_signed_segment_query(session_id: &str) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
     let exp = now.saturating_add(hls_signed_url_ttl_seconds());
-    let sig = hls_sign_segment_token(track_db_id, session_id, exp);
+    let sig = hls_sign_segment_token(session_id, exp);
 
     format!("?exp={exp}&sig={sig}")
 }
 
-pub(crate) fn validate_signed_segment_query(
-    track_db_id: DbId,
-    session_id: &str,
-    query: &HlsSegmentQuery,
-) -> bool {
+pub(crate) fn validate_signed_segment_query(session_id: &str, query: &HlsSegmentQuery) -> bool {
     let exp = match query.exp {
         Some(exp) => exp,
         None => return false,
@@ -102,7 +95,7 @@ pub(crate) fn validate_signed_segment_query(
     };
     let received_hash = blake3::Hash::from_bytes(sig_arr);
 
-    let payload = hls_segment_signature_payload(track_db_id, session_id, exp);
+    let payload = hls_segment_signature_payload(session_id, exp);
     let expected_hash = blake3::keyed_hash(&*HLS_SEGMENT_SIGNING_KEY, payload.as_bytes());
 
     // blake3::Hash::eq uses constant_time_eq internally
@@ -112,7 +105,6 @@ pub(crate) fn validate_signed_segment_query(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agdb::DbId;
     use std::time::{
         SystemTime,
         UNIX_EPOCH,
@@ -125,27 +117,27 @@ mod tests {
             .expect("valid timestamp")
             .as_secs()
             + 30;
-        let sig = hls_sign_segment_token(DbId(7), "sess", exp);
+        let sig = hls_sign_segment_token("sess", exp);
 
         let query = HlsSegmentQuery {
             exp: Some(exp),
             sig: Some(sig),
         };
 
-        assert!(validate_signed_segment_query(DbId(7), "sess", &query));
+        assert!(validate_signed_segment_query("sess", &query));
     }
 
     #[test]
     fn signed_segment_query_validation_rejects_expired_token() {
         let exp = 1;
-        let sig = hls_sign_segment_token(DbId(7), "sess", exp);
+        let sig = hls_sign_segment_token("sess", exp);
 
         let query = HlsSegmentQuery {
             exp: Some(exp),
             sig: Some(sig),
         };
 
-        assert!(!validate_signed_segment_query(DbId(7), "sess", &query));
+        assert!(!validate_signed_segment_query("sess", &query));
     }
 
     #[test]
@@ -155,13 +147,13 @@ mod tests {
             .expect("valid timestamp")
             .as_secs()
             + 30;
-        let sig = hls_sign_segment_token(DbId(7), "session-a", exp);
+        let sig = hls_sign_segment_token("session-a", exp);
 
         let query = HlsSegmentQuery {
             exp: Some(exp),
             sig: Some(sig),
         };
 
-        assert!(!validate_signed_segment_query(DbId(7), "session-b", &query));
+        assert!(!validate_signed_segment_query("session-b", &query));
     }
 }

@@ -185,7 +185,6 @@ impl From<HlsError> for AppError {
                 Self::service_unavailable("transcode capacity unavailable")
             }
             HlsError::JobNotFound => Self::not_found("HLS transcode job not found"),
-            HlsError::SessionNotFound => Self::not_found("HLS session not found"),
             HlsError::SessionForbidden => {
                 Self::forbidden("HLS session does not belong to current user")
             }
