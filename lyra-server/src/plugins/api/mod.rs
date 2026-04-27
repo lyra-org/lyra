@@ -395,6 +395,7 @@ impl DescribeTypeAlias for ApiResponse {
                 LuauType::literal("ApiJsonResponse"),
                 LuauType::literal("ApiEmptyResponse"),
                 LuauType::literal("ApiTextResponse"),
+                LuauType::literal("ApiRedirectResponse"),
                 LuauType::literal("ApiFileResponse"),
                 LuauType::literal("ApiStreamTrackResponse"),
                 LuauType::literal("ApiDownloadTrackResponse"),
