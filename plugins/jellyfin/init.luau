@@ -3197,6 +3197,8 @@ end, nil, true)
 
 local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
+	local request_path = if ctx and ctx.request then ctx.request.path else nil
+	local normalized_request_path = if type(request_path) == "string" then string.lower(request_path) else nil
 	local raw_static = if query then (query.static or query.Static) else nil
 	local raw_container = if query then (query.container or query.Container) else nil
 	local static_direct_copy = jellyfin_boolean(raw_static) == true
@@ -3265,6 +3267,11 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 	local track_id = track.db_id
 	if track_id == nil or track_id <= 0 then
 		return base.not_found("item not found")
+	end
+
+	local explicit_stream_path = string.lower(`{P}/Audio/{item_id}/stream`)
+	if static_direct_copy and normalized_request_path == explicit_stream_path then
+		return session.handle_item_file_stream_request(ctx)
 	end
 
 	local media_source = playback.build_audio_media_source(item_id, track)
@@ -3356,15 +3363,12 @@ local function build_audio_hls_master_query_string(query: ApiQueryParams?, codec
 	table.sort(keys)
 
 	local parts: { string } = {
-		string.format("audioCodec=%s", encode_hls_query_component(codec)),
+		`audioCodec={encode_hls_query_component(codec)}`,
 	}
 	for _, key in keys do
 		local value = if query then query[key] else nil
 		if type(value) == "string" then
-			table.insert(
-				parts,
-				string.format("%s=%s", encode_hls_query_component(key), encode_hls_query_component(value))
-			)
+			table.insert(parts, `{encode_hls_query_component(key)}={encode_hls_query_component(value)}`)
 		end
 	end
 
@@ -3404,9 +3408,9 @@ end
 local function build_audio_hls_master_playlist(track: Track, query: ApiQueryParams?, codec: string): string
 	local bandwidth = resolve_audio_hls_variant_bandwidth(track, query, codec)
 	local codec_string = codec_string_for_audio_hls(codec)
-	local stream_inf = string.format("#EXT-X-STREAM-INF:BANDWIDTH=%d,AVERAGE-BANDWIDTH=%d", bandwidth, bandwidth)
+	local stream_inf = `#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},AVERAGE-BANDWIDTH={bandwidth}`
 	if codec_string then
-		stream_inf ..= string.format(',CODECS="%s"', codec_string)
+		stream_inf ..= `,CODECS="{codec_string}"`
 	end
 
 	local variant_uri = `main.m3u8?{build_audio_hls_master_query_string(query, codec)}`
