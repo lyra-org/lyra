@@ -83,6 +83,7 @@ use registry::{
     register_route_impl,
 };
 use response::{
+    HlsServeOptions,
     TrackServeOptions,
     response_download_track as build_download_track_response,
     response_empty as build_empty_response,
@@ -264,7 +265,7 @@ struct ApiDownloadTrackResponse {
 struct ApiHlsPlaylistResponse {
     kind: String,
     track_id: i64,
-    codec: Option<String>,
+    options: Option<HlsServeOptions>,
 }
 
 struct ApiMethod;
@@ -515,6 +516,7 @@ struct ApiModule;
         ApiRequest,
         ApiContext,
         ImageTransformOptions,
+        HlsServeOptions,
         TrackServeOptions,
         ApiJsonResponse,
         ApiEmptyResponse,
@@ -765,10 +767,10 @@ impl ApiModule {
     /// Builds an HLS playlist response for a track. Clients follow segment URLs from
     /// the returned M3U8 back to the native Lyra HLS endpoints, which are authorized
     /// via short-lived signed tokens.
-    #[harmony(path = "response.hls_playlist", args(track_id: i64, codec: Option<String>), returns(ApiHlsPlaylistResponse))]
+    #[harmony(path = "response.hls_playlist", args(track_id: i64, options: Option<HlsServeOptions>), returns(ApiHlsPlaylistResponse))]
     pub(crate) fn response_hls_playlist_fn(
         lua: &Lua,
-        args: (i64, Option<String>),
+        args: (i64, Option<Table>),
     ) -> mlua::Result<Table> {
         build_hls_playlist_response(lua, args)
     }
@@ -1901,19 +1903,28 @@ mod tests {
         let _guard = runtime_test_lock().await;
 
         let lua = Lua::new();
-        let table = response::response_hls_playlist(&lua, (42, Some("   ".to_string())))?;
+        let empty_options = lua.create_table()?;
+        empty_options.set("codec", "   ")?;
+        let table = response::response_hls_playlist(&lua, (42, Some(empty_options)))?;
         assert_eq!(table.get::<String>("kind")?, "hls_playlist");
         assert_eq!(table.get::<i64>("track_id")?, 42);
         assert!(
-            table.get::<Option<String>>("codec")?.is_none(),
+            table.get::<Option<Table>>("options")?.is_none(),
             "empty-or-whitespace codec strings should be dropped so the native endpoint falls back to its default"
         );
 
-        let table = response::response_hls_playlist(&lua, (42, Some(" AAC ".to_string())))?;
+        let options = lua.create_table()?;
+        options.set("codec", " AAC ")?;
+        options.set("bitrate_bps", 96_000)?;
+        let table = response::response_hls_playlist(&lua, (42, Some(options)))?;
+        let options = table
+            .get::<Option<Table>>("options")?
+            .expect("non-empty HLS options should be preserved");
         assert_eq!(
-            table.get::<Option<String>>("codec")?.as_deref(),
+            options.get::<Option<String>>("codec")?.as_deref(),
             Some("AAC")
         );
+        assert_eq!(options.get::<Option<u32>>("bitrate_bps")?, Some(96_000));
 
         Ok(())
     }

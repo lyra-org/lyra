@@ -41,6 +41,7 @@ use crate::{
         codec::{
             HLS_SEGMENT_TIME_SECONDS,
             HlsCodecProfile,
+            HlsOutputConfig,
             hls_media_content_type,
         },
         signing::{
@@ -51,11 +52,11 @@ use crate::{
         state::{
             HLS_JOBS,
             HLS_SESSIONS,
+            HlsJobKey,
             attach_session_to_job,
             authorize_hls_segment_session,
             generate_hls_session_id,
             get_or_create_hls_job,
-            hls_job_key,
             hls_registry_counts,
         },
     },
@@ -63,6 +64,7 @@ use crate::{
 use agdb::DbId;
 
 use super::{
+    apply_transcode_policy,
     file_response,
     require_download_access,
     validate_and_get_track_source,
@@ -80,6 +82,14 @@ const HLS_DURATION_MISMATCH_WARN_THRESHOLD_MS: u64 = 10;
 struct HlsQuery {
     #[schemars(description = "Optional HLS audio codec (aac, alac, flac).")]
     codec: Option<String>,
+    #[schemars(
+        description = "Target bitrate cap in bits per second. Applied for lossy outputs when below the source bitrate; ignored for lossless codecs or when above source."
+    )]
+    bitrate_bps: Option<u32>,
+    #[schemars(description = "Target sample rate in Hz. Triggers transcoding when supplied.")]
+    sample_rate_hz: Option<u32>,
+    #[schemars(description = "Target channel count. Triggers transcoding when supplied.")]
+    channels: Option<u32>,
 }
 
 fn sanitize_segment_name(segment: &str) -> Result<&str, AppError> {
@@ -181,6 +191,21 @@ fn build_hls_segment_uri(session_id: &str, segment_name: &str, signed_query: &st
     format!("/api/stream/hls/{session_id}/{segment_name}{signed_query}")
 }
 
+fn bitrate_kbps_from_bps(bitrate_bps: u32) -> u32 {
+    bitrate_bps.saturating_add(999) / 1000
+}
+
+fn resolve_hls_audio_bitrate_kbps(
+    profile: HlsCodecProfile,
+    bitrate_bps: Option<u32>,
+) -> Option<u32> {
+    matches!(profile.codec, lyra_ffmpeg::AudioCodec::Aac).then(|| {
+        bitrate_bps
+            .map(bitrate_kbps_from_bps)
+            .unwrap_or(crate::services::hls::codec::HLS_AUDIO_BITRATE_KBPS)
+    })
+}
+
 fn build_hls_media_playlist(
     session_id: &str,
     duration_ms: u64,
@@ -235,13 +260,24 @@ async fn get_hls_playlist(
         db::lookup::find_node_id_by_id(&*db, &track_id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {track_id}")))?
     };
-    serve_hls_playlist_for_track(&headers, track_db_id, query.codec).await
+    serve_hls_playlist_for_track(
+        &headers,
+        track_db_id,
+        query.codec,
+        query.bitrate_bps,
+        query.sample_rate_hz,
+        query.channels,
+    )
+    .await
 }
 
 pub(crate) async fn serve_hls_playlist_for_track(
     headers: &HeaderMap,
     track_db_id: DbId,
     codec: Option<String>,
+    bitrate_bps: Option<u32>,
+    sample_rate_hz: Option<u32>,
+    channels: Option<u32>,
 ) -> Result<Response<Body>, AppError> {
     let request_started = Instant::now();
     let principal = require_download_access(headers).await?;
@@ -267,17 +303,31 @@ pub(crate) async fn serve_hls_playlist_for_track(
             })?;
     let validated = validate_request(None, codec)?;
     let profile = HlsCodecProfile::from_requested(validated.codec)?;
+    let policy = apply_transcode_policy(
+        bitrate_bps,
+        sample_rate_hz,
+        channels,
+        profile.codec,
+        source.source_bitrate_bps,
+    )?;
+    let audio_bitrate_kbps = resolve_hls_audio_bitrate_kbps(profile, policy.bitrate_bps);
 
     let session_id = generate_hls_session_id();
-    let job_key = hls_job_key(
+    let output = HlsOutputConfig::new(
+        profile,
+        audio_bitrate_kbps,
+        policy.sample_rate_hz,
+        policy.channels,
+    );
+    let job_key = HlsJobKey::new(
         track_db_id,
         source.source_id,
         source.start_ms,
         source.end_ms,
-        profile,
+        output,
     );
 
-    let reused_job = get_or_create_hls_job(&job_key, &source.input_path, profile).await?;
+    let reused_job = get_or_create_hls_job(&job_key, &source.input_path).await?;
     let playlist_segment_count = hls_segment_count(duration_ms);
     attach_session_to_job(
         &session_id,
@@ -303,6 +353,9 @@ pub(crate) async fn serve_hls_playlist_for_track(
         source_db_id = source.source_id.0,
         %session_id,
         codec = profile.ffmpeg_codec_str,
+        audio_bitrate_kbps,
+        sample_rate_hz = policy.sample_rate_hz,
+        channels = policy.channels,
         duration_ms,
         playlist_segment_count,
         startup_latency_ms,
@@ -439,8 +492,8 @@ mod tests {
     use crate::services::hls::{
         signing::hls_sign_segment_token,
         state::{
+            HlsJobKey,
             HlsSession,
-            hls_job_key,
             test_helpers::*,
         },
     };
@@ -563,7 +616,18 @@ mod tests {
             .expect("segment created");
 
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
-        let job_key = hls_job_key(track_db_id, DbId(9991), None, None, profile);
+        let job_key = HlsJobKey::new(
+            track_db_id,
+            DbId(9991),
+            None,
+            None,
+            HlsOutputConfig::new(
+                profile,
+                Some(crate::services::hls::codec::HLS_AUDIO_BITRATE_KBPS),
+                None,
+                None,
+            ),
+        );
         let mut job = build_test_job(test_dir.clone(), test_dir.join("index.m3u8"));
         job.session_ids.insert(session_id.clone());
         {

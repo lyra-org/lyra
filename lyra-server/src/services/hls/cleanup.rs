@@ -437,9 +437,13 @@ pub(crate) async fn ensure_hls_cleanup_worker_started() {
 
 #[cfg(test)]
 mod tests {
-    use super::super::codec::HlsCodecProfile;
+    use super::super::codec::{
+        HLS_AUDIO_BITRATE_KBPS,
+        HlsCodecProfile,
+        HlsOutputConfig,
+    };
     use super::super::state::{
-        hls_job_key,
+        HlsJobKey,
         test_helpers::*,
     };
     use super::*;
@@ -456,9 +460,27 @@ mod tests {
     fn pick_jobs_to_evict_for_budget_prefers_oldest_inactive_jobs() {
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
 
-        let oldest_key = hls_job_key(DbId(1), DbId(1001), None, None, profile);
-        let middle_key = hls_job_key(DbId(2), DbId(1002), None, None, profile);
-        let newest_key = hls_job_key(DbId(3), DbId(1003), None, None, profile);
+        let oldest_key = HlsJobKey::new(
+            DbId(1),
+            DbId(1001),
+            None,
+            None,
+            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None),
+        );
+        let middle_key = HlsJobKey::new(
+            DbId(2),
+            DbId(1002),
+            None,
+            None,
+            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None),
+        );
+        let newest_key = HlsJobKey::new(
+            DbId(3),
+            DbId(1003),
+            None,
+            None,
+            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None),
+        );
 
         let now = Instant::now();
         let selected = pick_jobs_to_evict_for_budget(
@@ -504,7 +526,13 @@ mod tests {
             .expect("test dir created");
 
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
-        let job_key = hls_job_key(track_db_id, DbId(3331), None, None, profile);
+        let job_key = HlsJobKey::new(
+            track_db_id,
+            DbId(3331),
+            None,
+            None,
+            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None),
+        );
         let mut job = build_test_job(test_dir.clone(), test_dir.join("index.m3u8"));
         job.session_ids.insert(session_id.clone());
         {
@@ -569,8 +597,20 @@ mod tests {
             .expect("newer file written");
 
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
-        let older_key = hls_job_key(DbId(901), DbId(9011), None, None, profile);
-        let newer_key = hls_job_key(DbId(902), DbId(9021), None, None, profile);
+        let older_key = HlsJobKey::new(
+            DbId(901),
+            DbId(9011),
+            None,
+            None,
+            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None),
+        );
+        let newer_key = HlsJobKey::new(
+            DbId(902),
+            DbId(9021),
+            None,
+            None,
+            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None),
+        );
 
         let mut older_job = build_test_job(older_dir.clone(), older_dir.join("index.m3u8"));
         older_job.idle_since = Some(Instant::now() - Duration::from_secs(50));
