@@ -1889,6 +1889,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stream_track_response_preserves_start_offset_ms() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+
+        let lua = Lua::new();
+        let options = lua.create_table()?;
+        options.set("start_offset_ms", 12_345)?;
+        let table = response::response_stream_track(&lua, (42, Some(options)))?;
+        assert_eq!(table.get::<String>("kind")?, "stream_track");
+        let options = table
+            .get::<Option<Table>>("options")?
+            .expect("non-empty track options should be preserved");
+        assert_eq!(options.get::<Option<u64>>("start_offset_ms")?, Some(12_345));
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn hls_playlist_responses_require_download_permission() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_auth_test_runtime().await?;
@@ -1941,6 +1958,7 @@ mod tests {
         preferred_codecs.set(3, "opus")?;
         options.set("preferred_codecs", preferred_codecs)?;
         options.set("bitrate_bps", 96_000)?;
+        options.set("start_offset_ms", 12_345)?;
         let table = response::response_hls_playlist(&lua, (42, Some(options)))?;
         let options = table
             .get::<Option<Table>>("options")?
@@ -1953,6 +1971,7 @@ mod tests {
             vec!["AAC".to_string(), "opus".to_string()]
         );
         assert_eq!(options.get::<Option<u32>>("bitrate_bps")?, Some(96_000));
+        assert_eq!(options.get::<Option<u64>>("start_offset_ms")?, Some(12_345));
 
         Ok(())
     }

@@ -64,9 +64,11 @@ use crate::{
 use agdb::DbId;
 
 use super::{
+    apply_request_start_offset,
     apply_transcode_policy,
     file_response,
     require_download_access,
+    source_range_duration_ms,
     validate_and_get_track_source,
     validate_request,
 };
@@ -92,6 +94,8 @@ struct HlsQuery {
     sample_rate_hz: Option<u32>,
     #[schemars(description = "Target channel count. Triggers transcoding when supplied.")]
     channels: Option<u32>,
+    #[schemars(description = "Per-request playback start offset in milliseconds.")]
+    start_offset_ms: Option<u64>,
 }
 
 fn sanitize_segment_name(segment: &str) -> Result<&str, AppError> {
@@ -132,13 +136,6 @@ async fn wait_for_generated_segment(
         }
 
         sleep(HLS_FILE_POLL_INTERVAL).await;
-    }
-}
-
-fn source_range_duration_ms(start_ms: Option<u64>, end_ms: Option<u64>) -> Option<u64> {
-    match (start_ms, end_ms) {
-        (Some(start_ms), Some(end_ms)) if end_ms > start_ms => Some(end_ms - start_ms),
-        _ => None,
     }
 }
 
@@ -269,6 +266,7 @@ async fn get_hls_playlist(
         query.bitrate_bps,
         query.sample_rate_hz,
         query.channels,
+        query.start_offset_ms,
     )
     .await
 }
@@ -280,11 +278,15 @@ pub(crate) async fn serve_hls_playlist_for_track(
     bitrate_bps: Option<u32>,
     sample_rate_hz: Option<u32>,
     channels: Option<u32>,
+    start_offset_ms: Option<u64>,
 ) -> Result<Response<Body>, AppError> {
     let request_started = Instant::now();
     let principal = require_download_access(headers).await?;
 
-    let source = validate_and_get_track_source(track_db_id).await?;
+    let source = apply_request_start_offset(
+        validate_and_get_track_source(track_db_id).await?,
+        start_offset_ms,
+    )?;
     if let (Some(track_duration_ms), Some(range_duration_ms)) = (
         source.duration_ms.filter(|duration_ms| *duration_ms > 0),
         source_range_duration_ms(source.start_ms, source.end_ms),
