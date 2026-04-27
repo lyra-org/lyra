@@ -18,7 +18,7 @@ pub enum AudioFormat {
     Wma,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AudioCodec {
     Copy,
     Mp3,
