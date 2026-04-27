@@ -35,6 +35,13 @@ use lyra_ffmpeg::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::sync::mpsc as std_mpsc;
+use std::sync::{
+    Arc,
+    atomic::{
+        AtomicBool,
+        Ordering,
+    },
+};
 use tokio::sync::{
     mpsc as tokio_mpsc,
     oneshot,
@@ -163,6 +170,7 @@ pub(crate) async fn stream_track_response(
     let (tokio_tx, tokio_rx) = tokio_mpsc::channel::<Result<Bytes, std::io::Error>>(64);
     let (started_tx, started_rx) = oneshot::channel::<()>();
     let (done_tx, done_rx) = oneshot::channel::<Result<(), StreamChannelError>>();
+    let client_disconnected = Arc::new(AtomicBool::new(false));
 
     let write_callback = {
         let sync_tx = sync_tx.clone();
@@ -195,6 +203,7 @@ pub(crate) async fn stream_track_response(
         .output(output)
         .build()?;
 
+    let client_disconnected_for_forwarder = Arc::clone(&client_disconnected);
     tokio::task::spawn_blocking(move || {
         let mut started_tx = Some(started_tx);
         while let Ok(chunk) = sync_rx.recv() {
@@ -203,11 +212,13 @@ pub(crate) async fn stream_track_response(
             }
             let bytes = Bytes::from(chunk);
             if tokio_tx.blocking_send(Ok(bytes)).is_err() {
+                client_disconnected_for_forwarder.store(true, Ordering::Relaxed);
                 break;
             }
         }
     });
 
+    let client_disconnected_for_logger = Arc::clone(&client_disconnected);
     tokio::spawn(async move {
         let result = context.start().and_then(|handle| handle.wait());
         drop(sync_tx);
@@ -223,7 +234,10 @@ pub(crate) async fn stream_track_response(
             Err(e) => {
                 let msg = e.to_string();
                 let eof_str = AVERROR_EOF.to_string();
-                if msg.contains("End of file") || msg.contains(&eof_str) {
+                if client_disconnected_for_logger.load(Ordering::Relaxed)
+                    || msg.contains("End of file")
+                    || msg.contains(&eof_str)
+                {
                     tracing::debug!("stream ended (client disconnected)");
                 } else {
                     tracing::error!("ffmpeg error: {}", e);
