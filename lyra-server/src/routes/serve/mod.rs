@@ -102,7 +102,51 @@ pub async fn validate_and_get_track_source(
 
 pub struct ValidatedRequest {
     pub format: Option<AudioFormat>,
-    pub codec: Option<AudioCodec>,
+    pub preferred_codecs: Vec<AudioCodec>,
+}
+
+fn parse_preferred_codecs(codec: Option<String>) -> Result<Vec<AudioCodec>, AppError> {
+    let Some(codec) = codec else {
+        return Ok(Vec::new());
+    };
+
+    let mut preferred_codecs = Vec::new();
+    for raw_codec in codec.split(',') {
+        let trimmed = raw_codec.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let parsed = AudioCodec::parse(trimmed).ok_or_else(|| {
+            AppError::bad_request(format!(
+                "Unsupported codec: {}. Supported codecs: {:?}",
+                trimmed,
+                lyra_ffmpeg::SUPPORTED_CODECS
+            ))
+        })?;
+        preferred_codecs.push(parsed);
+    }
+
+    Ok(preferred_codecs)
+}
+
+fn codec_names(codecs: &[AudioCodec]) -> String {
+    codecs
+        .iter()
+        .map(AudioCodec::as_str)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn incompatible_codecs_error(
+    output_format: AudioFormat,
+    preferred_codecs: &[AudioCodec],
+) -> AppError {
+    AppError::bad_request(format!(
+        "Requested codecs [{}] are not compatible with format '{}'. Supported codecs: [{}]",
+        codec_names(preferred_codecs),
+        output_format.extension(),
+        codec_names(output_format.compatible_codecs())
+    ))
 }
 
 pub fn validate_request(
@@ -122,36 +166,40 @@ pub fn validate_request(
         }
         None => None,
     };
-    let codec = match codec {
-        Some(c) => {
-            let parsed = AudioCodec::parse(&c).ok_or_else(|| {
-                AppError::bad_request(format!(
-                    "Unsupported codec: {}. Supported codecs: {:?}",
-                    c,
-                    lyra_ffmpeg::SUPPORTED_CODECS
-                ))
-            })?;
-            Some(parsed)
-        }
-        None => None,
-    };
-    Ok(ValidatedRequest { format, codec })
+    let preferred_codecs = parse_preferred_codecs(codec)?;
+    Ok(ValidatedRequest {
+        format,
+        preferred_codecs,
+    })
 }
 
 pub fn resolve_output_format(
     requested_format: Option<AudioFormat>,
-    requested_codec: Option<AudioCodec>,
+    preferred_codecs: &[AudioCodec],
     entry_format: Option<AudioFormat>,
     entry_path: &FsPath,
+    allow_copy: bool,
 ) -> Result<AudioFormat, AppError> {
     if let Some(fmt) = requested_format {
         return Ok(fmt);
     }
-    if let Some(codec) = requested_codec
-        && let Some(fmt) = codec.preferred_format()
+
+    if allow_copy
+        && matches!(preferred_codecs.first(), Some(AudioCodec::Copy))
+        && let Some(entry_format) = entry_format
     {
-        return Ok(fmt);
+        return Ok(entry_format);
     }
+
+    for codec in preferred_codecs {
+        if matches!(codec, AudioCodec::Copy) {
+            continue;
+        }
+        if let Some(fmt) = codec.preferred_format() {
+            return Ok(fmt);
+        }
+    }
+
     entry_format.ok_or_else(|| {
         AppError::bad_request(format!(
             "Track source has unsupported format: {}",
@@ -161,19 +209,32 @@ pub fn resolve_output_format(
 }
 
 pub fn resolve_codec(
-    requested_format: Option<AudioFormat>,
-    requested_codec: Option<AudioCodec>,
+    preferred_codecs: &[AudioCodec],
+    output_format: AudioFormat,
     entry_format: Option<AudioFormat>,
-) -> AudioCodec {
-    if let Some(codec) = requested_codec {
-        return codec;
+    allow_copy: bool,
+) -> Result<AudioCodec, AppError> {
+    if !preferred_codecs.is_empty() {
+        for codec in preferred_codecs {
+            if matches!(codec, AudioCodec::Copy) {
+                if allow_copy && Some(output_format) == entry_format {
+                    return Ok(AudioCodec::Copy);
+                }
+                continue;
+            }
+            if output_format.supports_codec(*codec) {
+                return Ok(*codec);
+            }
+        }
+
+        return Err(incompatible_codecs_error(output_format, preferred_codecs));
     }
-    if let Some(fmt) = requested_format
-        && Some(fmt) != entry_format
-    {
-        return fmt.default_codec();
+
+    if allow_copy && Some(output_format) == entry_format {
+        return Ok(AudioCodec::Copy);
     }
-    AudioCodec::Copy
+
+    Ok(output_format.default_codec())
 }
 
 #[derive(Debug, Clone)]
@@ -372,8 +433,12 @@ mod tests {
     use super::{
         configure_output,
         require_download_access,
+        resolve_codec,
+        resolve_output_format,
+        validate_request,
     };
     use std::{
+        path::Path,
         path::PathBuf,
         time::{
             SystemTime,
@@ -679,6 +744,110 @@ mod tests {
         assert_eq!(policy.bitrate_bps, Some(128_000));
         assert_eq!(policy.sample_rate_hz, Some(44_100));
         assert_eq!(policy.channels, Some(2));
+    }
+
+    #[test]
+    fn validate_request_parses_ordered_codec_preferences() {
+        let validated = validate_request(
+            Some("webm".to_string()),
+            Some("copy, opus,vorbis".to_string()),
+        )
+        .expect("ordered codec preferences should parse");
+        assert_eq!(validated.format, Some(AudioFormat::Webm));
+        assert_eq!(
+            validated.preferred_codecs,
+            vec![AudioCodec::Copy, AudioCodec::Opus, AudioCodec::Vorbis]
+        );
+    }
+
+    #[test]
+    fn resolve_output_format_uses_next_preference_when_copy_is_disallowed() {
+        let entry_path = Path::new("track.flac");
+        let preferred_codecs = vec![AudioCodec::Copy, AudioCodec::Opus];
+        assert_eq!(
+            resolve_output_format(
+                None,
+                &preferred_codecs,
+                Some(AudioFormat::Flac),
+                entry_path,
+                true
+            )
+            .expect("copy-allowed output format"),
+            AudioFormat::Flac
+        );
+        assert_eq!(
+            resolve_output_format(
+                None,
+                &preferred_codecs,
+                Some(AudioFormat::Flac),
+                entry_path,
+                false
+            )
+            .expect("copy-disallowed output format"),
+            AudioFormat::Opus
+        );
+    }
+
+    #[test]
+    fn resolve_codec_matches_first_compatible_codec_for_requested_format() {
+        let preferred_codecs = vec![AudioCodec::Opus, AudioCodec::Flac];
+        let codec = resolve_codec(
+            &preferred_codecs,
+            AudioFormat::Ogg,
+            Some(AudioFormat::Flac),
+            true,
+        )
+        .expect("first compatible codec should be selected");
+        assert_eq!(codec, AudioCodec::Opus);
+    }
+
+    #[test]
+    fn resolve_codec_accepts_24_bit_pcm_for_wav() {
+        let preferred_codecs = vec![AudioCodec::PcmS24Le];
+        let codec = resolve_codec(
+            &preferred_codecs,
+            AudioFormat::Wav,
+            Some(AudioFormat::Flac),
+            true,
+        )
+        .expect("24-bit PCM should be valid for wav");
+        assert_eq!(codec, AudioCodec::PcmS24Le);
+    }
+
+    #[test]
+    fn resolve_codec_rejects_incompatible_requested_codec_list() {
+        let err = resolve_codec(
+            &[AudioCodec::Copy],
+            AudioFormat::Mp3,
+            Some(AudioFormat::Flac),
+            false,
+        )
+        .expect_err("copy cannot satisfy an explicit mp3 transcode request");
+        assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn resolve_codec_prefers_copy_for_matching_mp3_source_before_transcoding() {
+        let codec = resolve_codec(
+            &[AudioCodec::Copy, AudioCodec::Mp3],
+            AudioFormat::Mp3,
+            Some(AudioFormat::Mp3),
+            true,
+        )
+        .expect("mp3 source should preserve copy before mp3 transcode");
+        assert_eq!(codec, AudioCodec::Copy);
+    }
+
+    #[test]
+    fn resolve_codec_falls_back_to_mp3_transcode_when_source_is_not_mp3() {
+        let codec = resolve_codec(
+            &[AudioCodec::Copy, AudioCodec::Mp3],
+            AudioFormat::Mp3,
+            Some(AudioFormat::Flac),
+            true,
+        )
+        .expect("non-mp3 source should fall back to mp3 transcode");
+        assert_eq!(codec, AudioCodec::Mp3);
     }
 
     async fn prepare_streamable_track(test_dir: &PathBuf) -> anyhow::Result<i64> {
