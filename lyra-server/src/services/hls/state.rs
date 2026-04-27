@@ -92,6 +92,7 @@ pub(crate) async fn acquire_hls_transcode_permit() -> Result<Option<OwnedSemapho
 pub(crate) struct HlsSession {
     pub(crate) user_db_id: DbId,
     pub(crate) track_db_id: DbId,
+    pub(crate) playlist_segment_count: u64,
     pub(crate) job_key: HlsJobKey,
     pub(crate) last_access: Instant,
 }
@@ -291,6 +292,7 @@ pub(crate) async fn attach_session_to_job(
     session_id: &str,
     user_db_id: DbId,
     track_db_id: DbId,
+    playlist_segment_count: u64,
     job_key: HlsJobKey,
 ) -> Result<PathBuf, HlsError> {
     let playlist_path = {
@@ -307,6 +309,7 @@ pub(crate) async fn attach_session_to_job(
         HlsSession {
             user_db_id,
             track_db_id,
+            playlist_segment_count,
             job_key,
             last_access: Instant::now(),
         },
@@ -336,10 +339,6 @@ pub(crate) async fn detach_hls_session_with_timestamp(
     }
 
     Some(detached)
-}
-
-pub(crate) async fn detach_hls_session(session_id: &str) -> Option<HlsSession> {
-    detach_hls_session_with_timestamp(session_id, Instant::now()).await
 }
 
 pub(crate) fn authorize_hls_segment_session(
@@ -438,6 +437,7 @@ mod tests {
         let session = HlsSession {
             user_db_id: DbId(10),
             track_db_id: DbId(77),
+            playlist_segment_count: 1,
             job_key: hls_job_key(DbId(77), DbId(7701), None, None, profile),
             last_access: Instant::now(),
         };
@@ -478,10 +478,10 @@ mod tests {
         let key_a = job_key.clone();
         let key_b = job_key.clone();
         let attach_a = tokio::spawn(async move {
-            attach_session_to_job("session-a", DbId(1), track_db_id, key_a).await
+            attach_session_to_job("session-a", DbId(1), track_db_id, 1, key_a).await
         });
         let attach_b = tokio::spawn(async move {
-            attach_session_to_job("session-b", DbId(2), track_db_id, key_b).await
+            attach_session_to_job("session-b", DbId(2), track_db_id, 1, key_b).await
         });
 
         let attach_a_result = attach_a.await.expect("session-a task should finish");

@@ -70,16 +70,6 @@ pub(crate) fn hls_signed_segment_query(track_db_id: DbId, session_id: &str) -> S
     format!("?exp={exp}&sig={sig}")
 }
 
-fn append_signed_query_to_uri(uri: &str, signed_query: &str) -> String {
-    if uri.contains('?') {
-        if let Some(rest) = signed_query.strip_prefix('?') {
-            return format!("{uri}&{rest}");
-        }
-    }
-
-    format!("{uri}{signed_query}")
-}
-
 pub(crate) fn validate_signed_segment_query(
     track_db_id: DbId,
     session_id: &str,
@@ -119,64 +109,6 @@ pub(crate) fn validate_signed_segment_query(
     expected_hash == received_hash
 }
 
-pub(crate) fn rewrite_playlist_segments(
-    playlist: &str,
-    track_db_id: DbId,
-    session_id: &str,
-    signed_query: &str,
-) -> String {
-    let segment_prefix = format!("/api/stream/by-db-id/{}/hls/{session_id}/", track_db_id.0);
-    let mut rewritten = String::with_capacity(playlist.len() + 256);
-
-    for line in playlist.lines() {
-        if line.trim().is_empty() {
-            rewritten.push_str(line);
-        } else if line.starts_with("#EXT-X-MAP:") || line.starts_with("#EXT-X-KEY:") {
-            rewritten.push_str(&rewrite_playlist_uri_attr(
-                line,
-                &segment_prefix,
-                signed_query,
-            ));
-        } else if line.starts_with('#') {
-            rewritten.push_str(line);
-        } else {
-            rewritten.push_str(&segment_prefix);
-            rewritten.push_str(&append_signed_query_to_uri(line.trim(), signed_query));
-        }
-        rewritten.push('\n');
-    }
-
-    rewritten
-}
-
-fn rewrite_playlist_uri_attr(line: &str, segment_prefix: &str, signed_query: &str) -> String {
-    const URI_KEY: &str = "URI=\"";
-
-    let Some(uri_start_idx) = line.find(URI_KEY) else {
-        return line.to_string();
-    };
-    let value_start = uri_start_idx + URI_KEY.len();
-    let value_rest = &line[value_start..];
-    let Some(value_end_rel) = value_rest.find('"') else {
-        return line.to_string();
-    };
-    let uri_value = &value_rest[..value_end_rel];
-
-    if uri_value.is_empty() || uri_value.starts_with('/') || uri_value.contains("://") {
-        return line.to_string();
-    }
-
-    let rewritten_uri = append_signed_query_to_uri(uri_value, signed_query);
-
-    let mut rewritten =
-        String::with_capacity(line.len() + segment_prefix.len() + rewritten_uri.len());
-    rewritten.push_str(&line[..value_start]);
-    rewritten.push_str(segment_prefix);
-    rewritten.push_str(&rewritten_uri);
-    rewritten.push_str(&value_rest[value_end_rel..]);
-    rewritten
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,19 +117,6 @@ mod tests {
         SystemTime,
         UNIX_EPOCH,
     };
-
-    #[test]
-    fn playlist_rewrite_prefixes_ext_x_map_uri() {
-        let original = "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:6.0,\nsegment-00001.m4s\n";
-        let rewritten = rewrite_playlist_segments(original, DbId(99), "sess", "?exp=2&sig=abc");
-
-        assert!(rewritten.contains(
-            "#EXT-X-MAP:URI=\"/api/stream/by-db-id/99/hls/sess/init.mp4?exp=2&sig=abc\""
-        ));
-        assert!(
-            rewritten.contains("/api/stream/by-db-id/99/hls/sess/segment-00001.m4s?exp=2&sig=abc")
-        );
-    }
 
     #[test]
     fn signed_segment_query_validation_accepts_session_scoped_token() {

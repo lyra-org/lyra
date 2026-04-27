@@ -518,6 +518,7 @@ mod tests {
                 super::super::state::HlsSession {
                     user_db_id: DbId(7),
                     track_db_id,
+                    playlist_segment_count: 1,
                     job_key: job_key.clone(),
                     last_access: Instant::now() - HLS_SESSION_TTL - Duration::from_secs(1),
                 },
