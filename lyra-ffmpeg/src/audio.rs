@@ -9,6 +9,7 @@ pub enum AudioFormat {
     Flac,
     Wav,
     Ogg,
+    Webm,
     Aac,
     M4a,
     Opus,
@@ -29,6 +30,8 @@ pub enum AudioCodec {
     Vorbis,
     PcmS16Le,
     PcmS16Be,
+    PcmS24Le,
+    PcmS24Be,
     Wma,
 }
 
@@ -39,6 +42,7 @@ impl AudioFormat {
             "flac" => Some(Self::Flac),
             "wav" => Some(Self::Wav),
             "ogg" => Some(Self::Ogg),
+            "webm" => Some(Self::Webm),
             "aac" => Some(Self::Aac),
             "m4a" => Some(Self::M4a),
             "opus" => Some(Self::Opus),
@@ -56,6 +60,7 @@ impl AudioFormat {
             Self::Flac => "flac",
             Self::Wav => "wav",
             Self::Ogg | Self::Opus => "ogg",
+            Self::Webm => "webm",
             Self::M4a | Self::Alac => "ipod",
             Self::Aac => {
                 if streaming {
@@ -76,6 +81,7 @@ impl AudioFormat {
             Self::Flac => AudioCodec::Flac,
             Self::Wav => AudioCodec::PcmS16Le,
             Self::Ogg => AudioCodec::Vorbis,
+            Self::Webm => AudioCodec::Opus,
             Self::Aac | Self::M4a => AudioCodec::Aac,
             Self::Opus => AudioCodec::Opus,
             Self::Aiff => AudioCodec::PcmS16Be,
@@ -91,6 +97,7 @@ impl AudioFormat {
             Self::Flac => "audio/flac",
             Self::Wav => "audio/wav",
             Self::Ogg => "audio/ogg",
+            Self::Webm => "audio/webm",
             Self::M4a | Self::Alac => "audio/mp4",
             Self::Aac => {
                 if streaming {
@@ -116,12 +123,34 @@ impl AudioFormat {
             Self::Flac => "flac",
             Self::Wav => "wav",
             Self::Ogg => "ogg",
+            Self::Webm => "webm",
             Self::Aac | Self::M4a | Self::Alac => "m4a",
             Self::Opus => "opus",
             Self::Aiff => "aiff",
             Self::Caf => "caf",
             Self::Wma => "wma",
         }
+    }
+
+    pub fn compatible_codecs(&self) -> &'static [AudioCodec] {
+        match self {
+            Self::Mp3 => &[AudioCodec::Mp3],
+            Self::Flac => &[AudioCodec::Flac],
+            Self::Wav => &[AudioCodec::PcmS16Le, AudioCodec::PcmS24Le],
+            Self::Ogg => &[AudioCodec::Vorbis, AudioCodec::Opus, AudioCodec::Flac],
+            Self::Webm => &[AudioCodec::Opus, AudioCodec::Vorbis],
+            Self::Aac => &[AudioCodec::Aac],
+            Self::M4a => &[AudioCodec::Aac, AudioCodec::Alac],
+            Self::Opus => &[AudioCodec::Opus],
+            Self::Aiff => &[AudioCodec::PcmS16Be, AudioCodec::PcmS24Be],
+            Self::Alac => &[AudioCodec::Alac],
+            Self::Caf => &[AudioCodec::Copy],
+            Self::Wma => &[AudioCodec::Wma],
+        }
+    }
+
+    pub fn supports_codec(&self, codec: AudioCodec) -> bool {
+        self.compatible_codecs().contains(&codec)
     }
 }
 
@@ -137,8 +166,27 @@ impl AudioCodec {
             "vorbis" => Some(Self::Vorbis),
             "pcm_s16le" => Some(Self::PcmS16Le),
             "pcm_s16be" => Some(Self::PcmS16Be),
+            "pcm_s24le" => Some(Self::PcmS24Le),
+            "pcm_s24be" => Some(Self::PcmS24Be),
             "wma" => Some(Self::Wma),
             _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Copy => "copy",
+            Self::Mp3 => "mp3",
+            Self::Flac => "flac",
+            Self::Aac => "aac",
+            Self::Alac => "alac",
+            Self::Opus => "opus",
+            Self::Vorbis => "vorbis",
+            Self::PcmS16Le => "pcm_s16le",
+            Self::PcmS16Be => "pcm_s16be",
+            Self::PcmS24Le => "pcm_s24le",
+            Self::PcmS24Be => "pcm_s24be",
+            Self::Wma => "wma",
         }
     }
 
@@ -153,6 +201,8 @@ impl AudioCodec {
             Self::Vorbis => Some("libvorbis"),
             Self::PcmS16Le => Some("pcm_s16le"),
             Self::PcmS16Be => Some("pcm_s16be"),
+            Self::PcmS24Le => Some("pcm_s24le"),
+            Self::PcmS24Be => Some("pcm_s24be"),
             Self::Wma => Some("wmav2"),
         }
     }
@@ -167,6 +217,8 @@ impl AudioCodec {
             Self::Vorbis => Some(AudioFormat::Ogg),
             Self::PcmS16Le => Some(AudioFormat::Wav),
             Self::PcmS16Be => Some(AudioFormat::Aiff),
+            Self::PcmS24Le => Some(AudioFormat::Wav),
+            Self::PcmS24Be => Some(AudioFormat::Aiff),
             Self::Wma => Some(AudioFormat::Wma),
         }
     }
@@ -174,7 +226,12 @@ impl AudioCodec {
     pub fn is_lossless(&self) -> bool {
         matches!(
             self,
-            Self::Flac | Self::Alac | Self::PcmS16Le | Self::PcmS16Be
+            Self::Flac
+                | Self::Alac
+                | Self::PcmS16Le
+                | Self::PcmS16Be
+                | Self::PcmS24Le
+                | Self::PcmS24Be
         )
     }
 
@@ -185,7 +242,13 @@ impl AudioCodec {
             Self::Opus => Some(6_000),
             Self::Vorbis => Some(45_000),
             Self::Wma => Some(32_000),
-            Self::Flac | Self::Alac | Self::PcmS16Le | Self::PcmS16Be | Self::Copy => None,
+            Self::Flac
+            | Self::Alac
+            | Self::PcmS16Le
+            | Self::PcmS16Be
+            | Self::PcmS24Le
+            | Self::PcmS24Be
+            | Self::Copy => None,
         }
     }
 
@@ -198,7 +261,7 @@ impl AudioCodec {
 }
 
 pub const SUPPORTED_FORMATS: &[&str] = &[
-    "mp3", "flac", "wav", "ogg", "aac", "m4a", "opus", "aiff", "alac", "caf", "wma",
+    "mp3", "flac", "wav", "ogg", "webm", "aac", "m4a", "opus", "aiff", "alac", "caf", "wma",
 ];
 
 pub const SUPPORTED_CODECS: &[&str] = &[
@@ -211,5 +274,42 @@ pub const SUPPORTED_CODECS: &[&str] = &[
     "vorbis",
     "pcm_s16le",
     "pcm_s16be",
+    "pcm_s24le",
+    "pcm_s24be",
     "wma",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AudioCodec,
+        AudioFormat,
+    };
+
+    #[test]
+    fn webm_supports_opus_and_vorbis() {
+        assert!(AudioFormat::Webm.supports_codec(AudioCodec::Opus));
+        assert!(AudioFormat::Webm.supports_codec(AudioCodec::Vorbis));
+        assert!(!AudioFormat::Webm.supports_codec(AudioCodec::Flac));
+        assert_eq!(AudioFormat::Webm.mime_type(true), "audio/webm");
+    }
+
+    #[test]
+    fn wav_and_aiff_support_24_bit_pcm() {
+        assert!(AudioFormat::Wav.supports_codec(AudioCodec::PcmS24Le));
+        assert!(AudioFormat::Aiff.supports_codec(AudioCodec::PcmS24Be));
+        assert_eq!(
+            AudioCodec::PcmS24Le.preferred_format(),
+            Some(AudioFormat::Wav)
+        );
+        assert_eq!(
+            AudioCodec::PcmS24Be.preferred_format(),
+            Some(AudioFormat::Aiff)
+        );
+    }
+
+    #[test]
+    fn ogg_supports_flac() {
+        assert!(AudioFormat::Ogg.supports_codec(AudioCodec::Flac));
+    }
+}
