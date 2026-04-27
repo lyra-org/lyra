@@ -23,6 +23,7 @@ use axum::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
+    fmt::Write as _,
     io::ErrorKind,
     path::Path as FsPath,
     time::{
@@ -38,13 +39,13 @@ use crate::{
     routes::AppError,
     services::hls::{
         codec::{
+            HLS_SEGMENT_TIME_SECONDS,
             HlsCodecProfile,
             hls_media_content_type,
         },
         signing::{
             HlsSegmentQuery,
             hls_signed_segment_query,
-            rewrite_playlist_segments,
             validate_signed_segment_query,
         },
         state::{
@@ -52,7 +53,6 @@ use crate::{
             HLS_SESSIONS,
             attach_session_to_job,
             authorize_hls_segment_session,
-            detach_hls_session,
             generate_hls_session_id,
             get_or_create_hls_job,
             hls_job_key,
@@ -69,9 +69,12 @@ use super::{
     validate_request,
 };
 
-const HLS_PLAYLIST_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 const HLS_SEGMENT_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
+const HLS_INITIAL_SEGMENT_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 const HLS_FILE_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const HLS_PLAYLIST_VERSION_MPEGTS: u32 = 6;
+const HLS_PLAYLIST_VERSION_FMP4: u32 = 7;
+const HLS_DURATION_MISMATCH_WARN_THRESHOLD_MS: u64 = 10;
 
 #[derive(Deserialize, JsonSchema)]
 struct HlsQuery {
@@ -99,27 +102,6 @@ fn sanitize_segment_name(segment: &str) -> Result<&str, AppError> {
     Ok(segment)
 }
 
-async fn wait_for_generated_playlist(
-    playlist_path: &FsPath,
-    timeout: Duration,
-) -> Result<Option<String>, std::io::Error> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        match tokio::fs::read_to_string(playlist_path).await {
-            Ok(playlist) if !playlist.trim().is_empty() => return Ok(Some(playlist)),
-            Ok(_) => {}
-            Err(err) if err.kind() == ErrorKind::NotFound => {}
-            Err(err) => return Err(err),
-        }
-
-        if Instant::now() >= deadline {
-            return Ok(None);
-        }
-
-        sleep(HLS_FILE_POLL_INTERVAL).await;
-    }
-}
-
 async fn wait_for_generated_segment(
     segment_path: &FsPath,
     timeout: Duration,
@@ -141,42 +123,116 @@ async fn wait_for_generated_segment(
     }
 }
 
-async fn resolve_generated_playlist(
+fn source_range_duration_ms(start_ms: Option<u64>, end_ms: Option<u64>) -> Option<u64> {
+    match (start_ms, end_ms) {
+        (Some(start_ms), Some(end_ms)) if end_ms > start_ms => Some(end_ms - start_ms),
+        _ => None,
+    }
+}
+
+fn resolve_hls_playlist_duration_ms(
+    track_duration_ms: Option<u64>,
+    start_ms: Option<u64>,
+    end_ms: Option<u64>,
+) -> Option<u64> {
+    if let Some(duration_ms) = source_range_duration_ms(start_ms, end_ms) {
+        return Some(duration_ms);
+    }
+
+    track_duration_ms.filter(|duration_ms| *duration_ms > 0)
+}
+
+fn hls_playlist_version(profile: HlsCodecProfile) -> u32 {
+    if profile.init_filename.is_some() {
+        HLS_PLAYLIST_VERSION_FMP4
+    } else {
+        HLS_PLAYLIST_VERSION_MPEGTS
+    }
+}
+
+fn hls_target_duration_seconds(duration_ms: u64) -> u64 {
+    let max_segment_ms = duration_ms.min(u64::from(HLS_SEGMENT_TIME_SECONDS) * 1000);
+    max_segment_ms.max(1).div_ceil(1000)
+}
+
+fn hls_segment_count(duration_ms: u64) -> u64 {
+    duration_ms.div_ceil(u64::from(HLS_SEGMENT_TIME_SECONDS) * 1000)
+}
+
+fn parse_hls_segment_index(segment: &str) -> Option<u64> {
+    let stem = segment.strip_prefix("segment-")?;
+    let digits = stem.split_once('.')?.0;
+    digits.parse().ok()
+}
+
+fn is_initial_hls_segment(segment: &str) -> bool {
+    segment == "init.mp4" || matches!(parse_hls_segment_index(segment), Some(0))
+}
+
+fn hls_segment_wait_timeout(segment: &str) -> Duration {
+    if is_initial_hls_segment(segment) {
+        HLS_INITIAL_SEGMENT_WAIT_TIMEOUT
+    } else {
+        HLS_SEGMENT_WAIT_TIMEOUT
+    }
+}
+
+fn build_hls_segment_uri(
     track_db_id: DbId,
     session_id: &str,
-    playlist_path: &FsPath,
-    playlist_wait_started: Instant,
-    wait_result: Result<Option<String>, std::io::Error>,
-) -> Result<String, AppError> {
-    match wait_result {
-        Ok(Some(playlist)) => Ok(playlist),
-        Ok(None) => {
-            let playlist_wait_ms = playlist_wait_started.elapsed().as_millis() as u64;
-            let _ = detach_hls_session(session_id).await;
-            tracing::warn!(
-                track_db_id = track_db_id.0,
-                %session_id,
-                playlist_wait_ms,
-                "playlist generation for HLS timed out before first response"
-            );
-            Err(AppError::service_unavailable(
-                "HLS playlist is still being generated",
-            ))
-        }
-        Err(err) => {
-            let playlist_wait_ms = playlist_wait_started.elapsed().as_millis() as u64;
-            tracing::warn!(
-                track_db_id = track_db_id.0,
-                %session_id,
-                path = %playlist_path.display(),
-                playlist_wait_ms,
-                error = %err,
-                "generated HLS playlist could not be read"
-            );
-            let _ = detach_hls_session(session_id).await;
-            Err(err.into())
-        }
+    segment_name: &str,
+    signed_query: &str,
+) -> String {
+    format!(
+        "/api/stream/by-db-id/{}/hls/{session_id}/{segment_name}{signed_query}",
+        track_db_id.0
+    )
+}
+
+fn build_hls_media_playlist(
+    track_db_id: DbId,
+    session_id: &str,
+    duration_ms: u64,
+    profile: HlsCodecProfile,
+) -> String {
+    let segment_ms = u64::from(HLS_SEGMENT_TIME_SECONDS) * 1000;
+    let segment_count = hls_segment_count(duration_ms);
+    let signed_query = hls_signed_segment_query(track_db_id, session_id);
+    let mut playlist = String::with_capacity(256 + (segment_count as usize * 128));
+
+    let _ = writeln!(playlist, "#EXTM3U");
+    let _ = writeln!(playlist, "#EXT-X-VERSION:{}", hls_playlist_version(profile));
+    let _ = writeln!(
+        playlist,
+        "#EXT-X-TARGETDURATION:{}",
+        hls_target_duration_seconds(duration_ms)
+    );
+    let _ = writeln!(playlist, "#EXT-X-MEDIA-SEQUENCE:0");
+    let _ = writeln!(playlist, "#EXT-X-PLAYLIST-TYPE:VOD");
+    let _ = writeln!(playlist, "#EXT-X-INDEPENDENT-SEGMENTS");
+
+    if let Some(init_filename) = profile.init_filename {
+        let init_uri = build_hls_segment_uri(track_db_id, session_id, init_filename, &signed_query);
+        let _ = writeln!(playlist, "#EXT-X-MAP:URI=\"{init_uri}\"");
     }
+
+    for segment_index in 0..segment_count {
+        let segment_start_ms = segment_index * segment_ms;
+        let segment_duration_ms = duration_ms.saturating_sub(segment_start_ms).min(segment_ms);
+        let segment_name = format!("segment-{segment_index:05}.{}", profile.segment_extension);
+        let segment_uri =
+            build_hls_segment_uri(track_db_id, session_id, &segment_name, &signed_query);
+        let _ = writeln!(
+            playlist,
+            "#EXTINF:{:.6},",
+            segment_duration_ms as f64 / 1000.0
+        );
+        let _ = writeln!(playlist, "{segment_uri}");
+    }
+
+    let _ = writeln!(playlist, "#EXT-X-ENDLIST");
+
+    playlist
 }
 
 async fn get_hls_playlist(
@@ -201,6 +257,24 @@ pub(crate) async fn serve_hls_playlist_for_track(
     let principal = require_download_access(headers).await?;
 
     let source = validate_and_get_track_source(track_db_id).await?;
+    if let (Some(track_duration_ms), Some(range_duration_ms)) = (
+        source.duration_ms.filter(|duration_ms| *duration_ms > 0),
+        source_range_duration_ms(source.start_ms, source.end_ms),
+    ) && track_duration_ms.abs_diff(range_duration_ms) >= HLS_DURATION_MISMATCH_WARN_THRESHOLD_MS
+    {
+        tracing::warn!(
+            track_db_id = track_db_id.0,
+            source_db_id = source.source_id.0,
+            track_duration_ms,
+            range_duration_ms,
+            "HLS playlist duration differs from source range; using source range duration"
+        );
+    }
+    let duration_ms =
+        resolve_hls_playlist_duration_ms(source.duration_ms, source.start_ms, source.end_ms)
+            .ok_or_else(|| {
+                AppError::service_unavailable("HLS requires a known positive track duration")
+            })?;
     let validated = validate_request(None, codec)?;
     let profile = HlsCodecProfile::from_requested(validated.codec)?;
 
@@ -214,23 +288,16 @@ pub(crate) async fn serve_hls_playlist_for_track(
     );
 
     let reused_job = get_or_create_hls_job(&job_key, &source.input_path, profile).await?;
-    let playlist_path =
-        attach_session_to_job(&session_id, principal.user_db_id, track_db_id, job_key).await?;
-
-    let playlist_wait_started = Instant::now();
-    let playlist_wait_result =
-        wait_for_generated_playlist(&playlist_path, HLS_PLAYLIST_WAIT_TIMEOUT).await;
-    let playlist = resolve_generated_playlist(
-        track_db_id,
+    let playlist_segment_count = hls_segment_count(duration_ms);
+    attach_session_to_job(
         &session_id,
-        &playlist_path,
-        playlist_wait_started,
-        playlist_wait_result,
+        principal.user_db_id,
+        track_db_id,
+        playlist_segment_count,
+        job_key,
     )
     .await?;
-
-    let signed_query = hls_signed_segment_query(track_db_id, &session_id);
-    let playlist = rewrite_playlist_segments(&playlist, track_db_id, &session_id, &signed_query);
+    let playlist = build_hls_media_playlist(track_db_id, &session_id, duration_ms, profile);
 
     let response = Response::builder()
         .header(header::CONTENT_TYPE, "application/x-mpegurl")
@@ -239,7 +306,6 @@ pub(crate) async fn serve_hls_playlist_for_track(
         .header(header::EXPIRES, "0")
         .body(Body::from(playlist))?;
 
-    let playlist_wait_ms = playlist_wait_started.elapsed().as_millis() as u64;
     let startup_latency_ms = request_started.elapsed().as_millis() as u64;
     let (active_jobs, active_sessions) = hls_registry_counts().await;
     tracing::info!(
@@ -247,8 +313,9 @@ pub(crate) async fn serve_hls_playlist_for_track(
         source_db_id = source.source_id.0,
         %session_id,
         codec = profile.ffmpeg_codec_str,
+        duration_ms,
+        playlist_segment_count,
         startup_latency_ms,
-        playlist_wait_ms,
         active_jobs,
         active_sessions,
         shared_job_reused = reused_job,
@@ -282,8 +349,9 @@ async fn get_hls_segment(
         authorize_hls_segment_session(session, track_db_id, principal.map(|p| p.user_db_id))?;
 
         session.last_access = Instant::now();
-        session.job_key.clone()
+        (session.job_key.clone(), session.playlist_segment_count)
     };
+    let (job_key, playlist_segment_count) = job_key;
 
     let segment_dir = {
         let jobs = HLS_JOBS.read().await;
@@ -295,16 +363,38 @@ async fn get_hls_segment(
 
     let segment_path = segment_dir.join(segment);
     let segment_wait_started = Instant::now();
-    let segment_ready = wait_for_generated_segment(&segment_path, HLS_SEGMENT_WAIT_TIMEOUT).await?;
+    let segment_ready =
+        wait_for_generated_segment(&segment_path, hls_segment_wait_timeout(segment)).await?;
     let segment_wait_ms = segment_wait_started.elapsed().as_millis() as u64;
     if !segment_ready {
+        let requested_segment_index = parse_hls_segment_index(segment);
+        let final_advertised_segment_missing = requested_segment_index
+            .map(|segment_index| segment_index + 1 == playlist_segment_count)
+            .unwrap_or(false);
+
         tracing::warn!(
             track_db_id = track_db_id.0,
             %session_id,
             segment,
             segment_wait_ms,
+            playlist_segment_count,
+            requested_segment_index,
             "segment request for HLS did not resolve to a generated segment"
         );
+        if final_advertised_segment_missing {
+            tracing::warn!(
+                track_db_id = track_db_id.0,
+                %session_id,
+                segment,
+                playlist_segment_count,
+                "final advertised HLS segment was not generated; possible playlist/segment drift"
+            );
+        }
+        if is_initial_hls_segment(segment) {
+            return Err(AppError::service_unavailable(
+                "HLS segment is still being generated",
+            ));
+        }
         return Err(AppError::not_found("HLS segment not found"));
     }
 
@@ -329,7 +419,7 @@ async fn get_hls_segment(
 fn hls_playlist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create HLS playlist")
         .description(
-            "Generates an HLS event playlist for a track and returns M3U8 with segment URLs under `/api/stream/by-db-id/{track_db_id}/hls/{session_id}/...`. Segment URLs include short-lived signed query tokens for client compatibility when auth headers are not forwarded. The optional `codec` query parameter supports `aac` (default), `alac`, and `flac`.",
+            "Generates an HLS VOD media playlist for a finite track and returns M3U8 with segment URLs under `/api/stream/by-db-id/{track_db_id}/hls/{session_id}/...`. Segment URLs include short-lived signed query tokens for client compatibility when auth headers are not forwarded. The optional `codec` query parameter supports `aac` (default), `alac`, and `flac`.",
         )
 }
 
@@ -398,30 +488,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wait_for_generated_playlist_returns_before_timeout_when_created() {
-        let test_dir = unique_test_dir("lyra-hls-playlist-wait-test");
-        tokio::fs::create_dir_all(&test_dir)
-            .await
-            .expect("test dir created");
-        let playlist_path = test_dir.join("index.m3u8");
-        let writer_path = playlist_path.clone();
-
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(120)).await;
-            tokio::fs::write(writer_path, "#EXTM3U\n#EXTINF:6.0,\nsegment-00001.ts\n")
-                .await
-                .expect("playlist written");
-        });
-
-        let playlist = wait_for_generated_playlist(&playlist_path, Duration::from_secs(2))
-            .await
-            .expect("playlist wait succeeded");
-        assert!(playlist.is_some(), "playlist should become available");
-
-        let _ = tokio::fs::remove_dir_all(&test_dir).await;
-    }
-
-    #[tokio::test]
     async fn wait_for_generated_segment_succeeds_when_segment_appears() {
         let test_dir = unique_test_dir("lyra-hls-segment-wait-test");
         tokio::fs::create_dir_all(&test_dir)
@@ -443,6 +509,52 @@ mod tests {
         assert!(ready, "segment should become available");
 
         let _ = tokio::fs::remove_dir_all(&test_dir).await;
+    }
+
+    #[test]
+    fn resolve_hls_playlist_duration_prefers_source_range_over_track_duration() {
+        assert_eq!(
+            resolve_hls_playlist_duration_ms(Some(21_452), Some(1_000), Some(99_000)),
+            Some(98_000)
+        );
+    }
+
+    #[test]
+    fn resolve_hls_playlist_duration_falls_back_to_source_range() {
+        assert_eq!(
+            resolve_hls_playlist_duration_ms(None, Some(12_000), Some(18_250)),
+            Some(6_250)
+        );
+        assert_eq!(
+            resolve_hls_playlist_duration_ms(None, Some(12_000), None),
+            None
+        );
+    }
+
+    #[test]
+    fn build_hls_media_playlist_uses_vod_markers_and_signed_segment_urls() {
+        let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
+        let playlist = build_hls_media_playlist(DbId(99), "sess", 21_452, profile);
+
+        assert!(playlist.contains("#EXT-X-VERSION:6"));
+        assert!(playlist.contains("#EXT-X-PLAYLIST-TYPE:VOD"));
+        assert!(playlist.contains("#EXT-X-INDEPENDENT-SEGMENTS"));
+        assert!(playlist.contains("#EXT-X-ENDLIST"));
+        assert!(playlist.contains("#EXTINF:3.452000,"));
+        assert!(playlist.contains("/api/stream/by-db-id/99/hls/sess/segment-00000.ts?exp="));
+    }
+
+    #[test]
+    fn build_hls_media_playlist_uses_init_map_for_fmp4_profiles() {
+        let profile =
+            HlsCodecProfile::from_requested(Some(AudioCodec::Alac)).expect("alac profile");
+        let playlist = build_hls_media_playlist(DbId(99), "sess", 21_452, profile);
+
+        assert!(playlist.contains("#EXT-X-VERSION:7"));
+        assert!(
+            playlist.contains("#EXT-X-MAP:URI=\"/api/stream/by-db-id/99/hls/sess/init.mp4?exp=")
+        );
+        assert!(playlist.contains("/api/stream/by-db-id/99/hls/sess/segment-00000.m4s?exp="));
     }
 
     #[tokio::test]
@@ -476,6 +588,7 @@ mod tests {
                 HlsSession {
                     user_db_id: DbId(99),
                     track_db_id,
+                    playlist_segment_count: 1,
                     job_key,
                     last_access: Instant::now(),
                 },

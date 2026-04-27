@@ -13,6 +13,7 @@ use super::HlsError;
 
 pub(crate) const HLS_SEGMENT_TIME_SECONDS: u32 = 6;
 pub(crate) const HLS_AUDIO_BITRATE_KBPS: u32 = 192;
+pub(crate) const HLS_START_NUMBER: u32 = 0;
 
 #[derive(Clone, Copy)]
 pub(crate) struct HlsCodecProfile {
@@ -61,8 +62,9 @@ pub(crate) fn build_hls_output(
         .set_format("hls")
         .set_audio_codec(profile.ffmpeg_codec_str)
         .set_format_opt("hls_time", HLS_SEGMENT_TIME_SECONDS.to_string())
-        .set_format_opt("hls_playlist_type", "event")
+        .set_format_opt("hls_playlist_type", "vod")
         .set_format_opt("hls_list_size", "0")
+        .set_format_opt("start_number", HLS_START_NUMBER.to_string())
         .set_format_opt("hls_flags", "independent_segments+temp_file")
         .set_format_opt("hls_segment_type", profile.segment_type)
         .set_format_opt(
@@ -136,6 +138,31 @@ mod tests {
         assert_eq!(
             hls_media_content_type(std::path::Path::new("init.mp4")),
             "audio/mp4"
+        );
+    }
+
+    #[test]
+    fn hls_output_uses_vod_playlists_for_stored_audio() {
+        let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
+        let output = build_hls_output(
+            std::path::Path::new("index.m3u8"),
+            std::path::Path::new("segment-%05d.ts"),
+            profile,
+        );
+
+        assert_eq!(
+            output
+                .get_format_opts()
+                .get("hls_playlist_type")
+                .map(String::as_str),
+            Some("vod")
+        );
+        assert_eq!(
+            output
+                .get_format_opts()
+                .get("start_number")
+                .map(String::as_str),
+            Some("0")
         );
     }
 }
