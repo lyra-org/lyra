@@ -3074,16 +3074,42 @@ local function extract_integer_param(raw: string?): (number?, string?)
 	return math.floor(value), nil
 end
 
-local function parse_preferred_codec(raw: string?): string?
+local function parse_preferred_csv_values(raw: string?): { string }?
 	if type(raw) ~= "string" then
 		return nil
 	end
+
+	local values: { string } = {}
 	for token in string.gmatch(raw, "[^,]+") do
 		local trimmed = base.trim(token)
 		if trimmed and #trimmed > 0 then
-			return string.lower(trimmed)
+			table.insert(values, string.lower(trimmed))
 		end
 	end
+
+	return if #values > 0 then values else nil
+end
+
+local function parse_first_csv_value(raw: string?): string?
+	local values = parse_preferred_csv_values(raw)
+	return if values then values[1] else nil
+end
+
+local function is_supported_audio_hls_codec(codec: string): boolean
+	return codec == "aac" or codec == "alac" or codec == "flac"
+end
+
+local function find_supported_audio_hls_codec(preferred_codecs: { string }?): string?
+	if preferred_codecs == nil then
+		return nil
+	end
+
+	for _, codec in preferred_codecs do
+		if is_supported_audio_hls_codec(codec) then
+			return codec
+		end
+	end
+
 	return nil
 end
 
@@ -3215,8 +3241,9 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 	local raw_enable_transcoding = if query then (query.enableTranscoding or query.EnableTranscoding) else nil
 	local raw_transcoding_protocol = if query then (query.transcodingProtocol or query.TranscodingProtocol) else nil
 
-	local codec = parse_preferred_codec(raw_codec)
-	local transcoding_container = parse_preferred_codec(raw_transcoding_container)
+	local transcoding_container = parse_first_csv_value(raw_transcoding_container)
+	local preferred_codecs = parse_preferred_csv_values(raw_codec)
+	local hls_codec = find_supported_audio_hls_codec(preferred_codecs)
 	local hls_requested = is_hls_transcoding_protocol(raw_transcoding_protocol)
 	-- MaxStreamingBitrate wins over audioBitRate: the former is the broader cap and
 	-- what Jellyfin clients send when they want to communicate a bandwidth ceiling.
@@ -3300,8 +3327,11 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 	end
 
 	if hls_requested then
+		if preferred_codecs ~= nil and hls_codec == nil then
+			return base.bad_request("unsupported hls codec; supported values: aac, alac, flac")
+		end
 		local options: api.HlsServeOptions = {
-			codec = codec or "aac",
+			preferred_codecs = preferred_codecs,
 			bitrate_bps = bitrate_bps,
 			sample_rate_hz = sample_rate_hz,
 			channels = channels,
@@ -3309,11 +3339,18 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 		return api.response.hls_playlist(track_id, options)
 	end
 
-	local effective_codec: string? = if codec then codec elseif transcoding_container == nil then "mp3" else nil
+	local effective_transcoding_container = transcoding_container
+	local effective_preferred_codecs = if preferred_codecs
+		then preferred_codecs
+		elseif transcoding_container == nil then { "copy", "mp3" }
+		else nil
+	if preferred_codecs == nil and transcoding_container == nil then
+		effective_transcoding_container = "mp3"
+	end
 
 	local options: api.TrackServeOptions = {
-		format = transcoding_container,
-		codec = effective_codec,
+		format = effective_transcoding_container,
+		preferred_codecs = effective_preferred_codecs,
 		bitrate_bps = bitrate_bps,
 		sample_rate_hz = sample_rate_hz,
 		channels = channels,
@@ -3339,17 +3376,12 @@ type ResolvedAudioHlsPlaylistRequest = {
 	track: Track,
 	track_id: number,
 	query: ApiQueryParams?,
+	selected_codec: string,
 	options: api.HlsServeOptions,
 }
 
 local DEFAULT_AUDIO_HLS_BANDWIDTH_BPS = 192000
 local MIN_AUDIO_HLS_AAC_BANDWIDTH_BPS = 32000
-
-local function parse_audio_hls_codec(query: ApiQueryParams?): string
-	local raw_codec = if query then (query.audioCodec or query.AudioCodec or query.codec) else nil
-	local trimmed_codec = if type(raw_codec) == "string" and #raw_codec > 0 then string.lower(raw_codec) else nil
-	return if trimmed_codec then trimmed_codec else "aac"
-end
 
 local function encode_hls_query_component(value: string): string
 	local encoded = string.gsub(value, "[^%w%-_%.~]", function(char)
@@ -3395,14 +3427,12 @@ local function codec_string_for_audio_hls(codec: string): string?
 	return nil
 end
 
-local function is_supported_audio_hls_codec(codec: string): boolean
-	return codec == "aac" or codec == "alac" or codec == "flac"
-end
-
-local function resolve_audio_hls_query_options(query: ApiQueryParams?): (api.HlsServeOptions?, ApiResponse?)
-	local codec = parse_audio_hls_codec(query)
-	if not is_supported_audio_hls_codec(codec) then
-		return nil, base.bad_request("unsupported hls codec; supported values: aac, alac, flac")
+local function resolve_audio_hls_query_options(query: ApiQueryParams?): (api.HlsServeOptions?, string?, ApiResponse?)
+	local raw_codec = if query then (query.audioCodec or query.AudioCodec or query.codec) else nil
+	local preferred_codecs = parse_preferred_csv_values(raw_codec)
+	local selected_codec = find_supported_audio_hls_codec(preferred_codecs)
+	if preferred_codecs ~= nil and selected_codec == nil then
+		return nil, nil, base.bad_request("unsupported hls codec; supported values: aac, alac, flac")
 	end
 
 	local raw_audio_bitrate = if query then (query.audioBitRate or query.AudioBitRate) else nil
@@ -3412,32 +3442,37 @@ local function resolve_audio_hls_query_options(query: ApiQueryParams?): (api.Hls
 
 	local requested_audio_bitrate, requested_audio_bitrate_err = extract_integer_param(raw_audio_bitrate)
 	if requested_audio_bitrate_err then
-		return nil, base.bad_request(`audioBitRate {requested_audio_bitrate_err}`)
+		return nil, nil, base.bad_request(`audioBitRate {requested_audio_bitrate_err}`)
 	end
 	local requested_max_bitrate, requested_max_bitrate_err = extract_integer_param(raw_max_bitrate)
 	if requested_max_bitrate_err then
-		return nil, base.bad_request(`MaxStreamingBitrate {requested_max_bitrate_err}`)
+		return nil, nil, base.bad_request(`MaxStreamingBitrate {requested_max_bitrate_err}`)
 	end
 	local sample_rate_hz, sample_rate_err = extract_integer_param(raw_sample_rate)
 	if sample_rate_err then
-		return nil, base.bad_request(`audioSampleRate {sample_rate_err}`)
+		return nil, nil, base.bad_request(`audioSampleRate {sample_rate_err}`)
 	end
 	local channels, channels_err = extract_integer_param(raw_channels)
 	if channels_err then
-		return nil, base.bad_request(`maxAudioChannels {channels_err}`)
+		return nil, nil, base.bad_request(`maxAudioChannels {channels_err}`)
 	end
 
 	return {
-		codec = codec,
+		preferred_codecs = preferred_codecs,
 		bitrate_bps = requested_max_bitrate or requested_audio_bitrate,
 		sample_rate_hz = sample_rate_hz,
 		channels = channels,
 	},
+		selected_codec or "aac",
 		nil
 end
 
-local function resolve_audio_hls_variant_bandwidth(track: Track, options: api.HlsServeOptions): number
-	local codec = options.codec or "aac"
+local function resolve_audio_hls_variant_bandwidth(
+	track: Track,
+	options: api.HlsServeOptions,
+	selected_codec: string
+): number
+	local codec = selected_codec
 	local requested_bitrate = options.bitrate_bps
 	local track_bitrate = if track.bitrate_bps and track.bitrate_bps > 0 then track.bitrate_bps else nil
 
@@ -3460,17 +3495,17 @@ end
 local function build_audio_hls_master_playlist(
 	track: Track,
 	query: ApiQueryParams?,
-	options: api.HlsServeOptions
+	options: api.HlsServeOptions,
+	selected_codec: string
 ): string
-	local codec = options.codec or "aac"
-	local bandwidth = resolve_audio_hls_variant_bandwidth(track, options)
-	local codec_string = codec_string_for_audio_hls(codec)
+	local bandwidth = resolve_audio_hls_variant_bandwidth(track, options, selected_codec)
+	local codec_string = codec_string_for_audio_hls(selected_codec)
 	local stream_inf = `#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},AVERAGE-BANDWIDTH={bandwidth}`
 	if codec_string then
 		stream_inf ..= `,CODECS="{codec_string}"`
 	end
 
-	local variant_uri = `main.m3u8?{build_audio_hls_master_query_string(query, codec)}`
+	local variant_uri = `main.m3u8?{build_audio_hls_master_query_string(query, selected_codec)}`
 	return table.concat({
 		"#EXTM3U",
 		stream_inf,
@@ -3504,7 +3539,7 @@ local function resolve_audio_hls_playlist_request(ctx: ApiContext): (ResolvedAud
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local options, options_err = resolve_audio_hls_query_options(query)
+	local options, selected_codec, options_err = resolve_audio_hls_query_options(query)
 	if options == nil then
 		return nil, options_err or base.bad_request("invalid hls options")
 	end
@@ -3513,8 +3548,10 @@ local function resolve_audio_hls_playlist_request(ctx: ApiContext): (ResolvedAud
 		track = track,
 		track_id = track_id,
 		query = query,
+		selected_codec = selected_codec or "aac",
 		options = options,
-	}, nil
+	},
+		nil
 end
 
 local function handle_audio_hls_master_playlist_route(ctx: ApiContext): ApiResponse
@@ -3523,9 +3560,13 @@ local function handle_audio_hls_master_playlist_route(ctx: ApiContext): ApiRespo
 		return err or base.bad_request("invalid hls request")
 	end
 
-	return api.response.text(200, build_audio_hls_master_playlist(request.track, request.query, request.options), {
-		["content-type"] = "application/x-mpegurl",
-	})
+	return api.response.text(
+		200,
+		build_audio_hls_master_playlist(request.track, request.query, request.options, request.selected_codec),
+		{
+			["content-type"] = "application/x-mpegurl",
+		}
+	)
 end
 
 local function handle_audio_hls_main_playlist_route(ctx: ApiContext): ApiResponse
