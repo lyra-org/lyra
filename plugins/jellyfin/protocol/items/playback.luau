@@ -466,14 +466,24 @@ local function preferred_audio_streaming_profile(device_profile: JsonObject?): J
 	return nil
 end
 
-local function build_hls_transcoding_url(item_id: string, play_session_id: string, codec: string): string
-	return string.format(
-		"%s/Audio/%s/master.m3u8?audioCodec=%s&PlaySessionId=%s",
-		ROUTE_PREFIX,
-		item_id,
-		codec,
-		play_session_id
-	)
+local function build_hls_transcoding_url(
+	item_id: string,
+	play_session_id: string,
+	codec: string,
+	max_streaming_bitrate: number?,
+	max_audio_channels: number?
+): string
+	local parts = {
+		`audioCodec={codec}`,
+		`PlaySessionId={play_session_id}`,
+	}
+	if max_streaming_bitrate ~= nil then
+		table.insert(parts, `MaxStreamingBitrate={max_streaming_bitrate}`)
+	end
+	if max_audio_channels ~= nil then
+		table.insert(parts, `MaxAudioChannels={max_audio_channels}`)
+	end
+	return `{ROUTE_PREFIX}/Audio/{item_id}/master.m3u8?{table.concat(parts, "&")}`
 end
 
 local function apply_preferred_hls_transcoding(
@@ -525,7 +535,13 @@ local function apply_preferred_hls_transcoding(
 	media_source.SupportsTranscoding = true
 	media_source.TranscodingContainer = transcoding_container
 	media_source.TranscodingSubProtocol = "hls"
-	media_source.TranscodingUrl = build_hls_transcoding_url(media_source_id, play_session_id, codec)
+	media_source.TranscodingUrl = build_hls_transcoding_url(
+		media_source_id,
+		play_session_id,
+		codec,
+		json_number_field(request_object, "MaxStreamingBitrate"),
+		json_number_field(request_object, "MaxAudioChannels")
+	)
 end
 
 local function build_media_info(

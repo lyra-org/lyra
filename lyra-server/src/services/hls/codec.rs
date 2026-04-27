@@ -15,13 +15,37 @@ pub(crate) const HLS_SEGMENT_TIME_SECONDS: u32 = 6;
 pub(crate) const HLS_AUDIO_BITRATE_KBPS: u32 = 192;
 pub(crate) const HLS_START_NUMBER: u32 = 0;
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct HlsCodecProfile {
     pub(crate) codec: AudioCodec,
     pub(crate) ffmpeg_codec_str: &'static str,
     pub(crate) segment_type: &'static str,
     pub(crate) segment_extension: &'static str,
     pub(crate) init_filename: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct HlsOutputConfig {
+    pub(crate) profile: HlsCodecProfile,
+    pub(crate) audio_bitrate_kbps: Option<u32>,
+    pub(crate) sample_rate_hz: Option<u32>,
+    pub(crate) channels: Option<u32>,
+}
+
+impl HlsOutputConfig {
+    pub(crate) fn new(
+        profile: HlsCodecProfile,
+        audio_bitrate_kbps: Option<u32>,
+        sample_rate_hz: Option<u32>,
+        channels: Option<u32>,
+    ) -> Self {
+        Self {
+            profile,
+            audio_bitrate_kbps,
+            sample_rate_hz,
+            channels,
+        }
+    }
 }
 
 impl HlsCodecProfile {
@@ -56,27 +80,35 @@ impl HlsCodecProfile {
 pub(crate) fn build_hls_output(
     playlist_path: &FsPath,
     segment_pattern: &FsPath,
-    profile: HlsCodecProfile,
+    config: HlsOutputConfig,
 ) -> Output {
     let mut output = Output::new(playlist_path.to_string_lossy().into_owned())
         .set_format("hls")
-        .set_audio_codec(profile.ffmpeg_codec_str)
+        .set_audio_codec(config.profile.ffmpeg_codec_str)
         .set_format_opt("hls_time", HLS_SEGMENT_TIME_SECONDS.to_string())
         .set_format_opt("hls_playlist_type", "vod")
         .set_format_opt("hls_list_size", "0")
         .set_format_opt("start_number", HLS_START_NUMBER.to_string())
         .set_format_opt("hls_flags", "independent_segments+temp_file")
-        .set_format_opt("hls_segment_type", profile.segment_type)
+        .set_format_opt("hls_segment_type", config.profile.segment_type)
         .set_format_opt(
             "hls_segment_filename",
             segment_pattern.to_string_lossy().into_owned(),
         );
 
-    if matches!(profile.codec, AudioCodec::Aac) {
-        output = output.set_audio_codec_opt("b", format!("{HLS_AUDIO_BITRATE_KBPS}k"));
+    if let Some(audio_bitrate_kbps) = config.audio_bitrate_kbps {
+        output = output.set_audio_codec_opt("b", format!("{audio_bitrate_kbps}k"));
     }
 
-    if let Some(init_filename) = profile.init_filename {
+    if let Some(sample_rate_hz) = config.sample_rate_hz {
+        output = output.set_audio_sample_rate(sample_rate_hz as i32);
+    }
+
+    if let Some(channels) = config.channels {
+        output = output.set_audio_channels(channels as i32);
+    }
+
+    if let Some(init_filename) = config.profile.init_filename {
         output = output.set_format_opt("hls_fmp4_init_filename", init_filename);
     }
 
@@ -147,7 +179,7 @@ mod tests {
         let output = build_hls_output(
             std::path::Path::new("index.m3u8"),
             std::path::Path::new("segment-%05d.ts"),
-            profile,
+            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None),
         );
 
         assert_eq!(
@@ -164,5 +196,26 @@ mod tests {
                 .map(String::as_str),
             Some("0")
         );
+        assert_eq!(
+            output.get_audio_codec_opts().get("b").map(String::as_str),
+            Some("192k")
+        );
+    }
+
+    #[test]
+    fn hls_output_applies_requested_bitrate_sample_rate_and_channels() {
+        let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
+        let output = build_hls_output(
+            std::path::Path::new("index.m3u8"),
+            std::path::Path::new("segment-%05d.ts"),
+            HlsOutputConfig::new(profile, Some(96), Some(44_100), Some(2)),
+        );
+
+        assert_eq!(
+            output.get_audio_codec_opts().get("b").map(String::as_str),
+            Some("96k")
+        );
+        assert_eq!(output.get_audio_sample_rate(), Some(44_100));
+        assert_eq!(output.get_audio_channels(), Some(2));
     }
 }

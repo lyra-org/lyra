@@ -65,7 +65,10 @@ use super::image::{
     transform_image,
 };
 use super::registry::RegisteredRoute;
-use super::response::parse_track_serve_options;
+use super::response::{
+    parse_hls_serve_options,
+    parse_track_serve_options,
+};
 
 pub(super) async fn build_context(
     lua: &Lua,
@@ -238,10 +241,17 @@ pub(super) async fn lua_response_to_axum(
             let track_id = table
                 .get::<Option<i64>>("track_id")?
                 .ok_or_else(|| anyhow!("hls_playlist response requires track_id"))?;
-            let codec = table.get::<Option<String>>("codec")?;
+            let options = parse_hls_serve_options(table.get::<Option<Table>>("options")?)?;
             return Ok(
-                match serve_hls_playlist_for_track(request_headers, agdb::DbId(track_id), codec)
-                    .await
+                match serve_hls_playlist_for_track(
+                    request_headers,
+                    agdb::DbId(track_id),
+                    options.codec,
+                    options.bitrate_bps,
+                    options.sample_rate_hz,
+                    options.channels,
+                )
+                .await
                 {
                     Ok(response) => response,
                     Err(error) => error.into_response(),

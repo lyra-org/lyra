@@ -3300,7 +3300,13 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 	end
 
 	if hls_requested then
-		return api.response.hls_playlist(track_id, codec or "aac")
+		local options: api.HlsServeOptions = {
+			codec = codec or "aac",
+			bitrate_bps = bitrate_bps,
+			sample_rate_hz = sample_rate_hz,
+			channels = channels,
+		}
+		return api.response.hls_playlist(track_id, options)
 	end
 
 	local effective_codec: string? = if codec then codec elseif transcoding_container == nil then "mp3" else nil
@@ -3333,10 +3339,11 @@ type ResolvedAudioHlsPlaylistRequest = {
 	track: Track,
 	track_id: number,
 	query: ApiQueryParams?,
-	codec: string,
+	options: api.HlsServeOptions,
 }
 
 local DEFAULT_AUDIO_HLS_BANDWIDTH_BPS = 192000
+local MIN_AUDIO_HLS_AAC_BANDWIDTH_BPS = 32000
 
 local function parse_audio_hls_codec(query: ApiQueryParams?): string
 	local raw_codec = if query then (query.audioCodec or query.AudioCodec or query.codec) else nil
@@ -3392,21 +3399,71 @@ local function is_supported_audio_hls_codec(codec: string): boolean
 	return codec == "aac" or codec == "alac" or codec == "flac"
 end
 
-local function resolve_audio_hls_variant_bandwidth(track: Track, query: ApiQueryParams?, codec: string): number
-	local requested_audio_bitrate = base.parse_query_int(query, { "audioBitRate", "AudioBitRate" }, nil, 1, nil)
-	local requested_max_bitrate =
-		base.parse_query_int(query, { "maxStreamingBitrate", "MaxStreamingBitrate" }, nil, 1, nil)
+local function resolve_audio_hls_query_options(query: ApiQueryParams?): (api.HlsServeOptions?, ApiResponse?)
+	local codec = parse_audio_hls_codec(query)
+	if not is_supported_audio_hls_codec(codec) then
+		return nil, base.bad_request("unsupported hls codec; supported values: aac, alac, flac")
+	end
+
+	local raw_audio_bitrate = if query then (query.audioBitRate or query.AudioBitRate) else nil
+	local raw_max_bitrate = if query then (query.maxStreamingBitrate or query.MaxStreamingBitrate) else nil
+	local raw_sample_rate = if query then (query.audioSampleRate or query.AudioSampleRate) else nil
+	local raw_channels = if query then (query.maxAudioChannels or query.MaxAudioChannels) else nil
+
+	local requested_audio_bitrate, requested_audio_bitrate_err = extract_integer_param(raw_audio_bitrate)
+	if requested_audio_bitrate_err then
+		return nil, base.bad_request(`audioBitRate {requested_audio_bitrate_err}`)
+	end
+	local requested_max_bitrate, requested_max_bitrate_err = extract_integer_param(raw_max_bitrate)
+	if requested_max_bitrate_err then
+		return nil, base.bad_request(`MaxStreamingBitrate {requested_max_bitrate_err}`)
+	end
+	local sample_rate_hz, sample_rate_err = extract_integer_param(raw_sample_rate)
+	if sample_rate_err then
+		return nil, base.bad_request(`audioSampleRate {sample_rate_err}`)
+	end
+	local channels, channels_err = extract_integer_param(raw_channels)
+	if channels_err then
+		return nil, base.bad_request(`maxAudioChannels {channels_err}`)
+	end
+
+	return {
+		codec = codec,
+		bitrate_bps = requested_max_bitrate or requested_audio_bitrate,
+		sample_rate_hz = sample_rate_hz,
+		channels = channels,
+	},
+		nil
+end
+
+local function resolve_audio_hls_variant_bandwidth(track: Track, options: api.HlsServeOptions): number
+	local codec = options.codec or "aac"
+	local requested_bitrate = options.bitrate_bps
 	local track_bitrate = if track.bitrate_bps and track.bitrate_bps > 0 then track.bitrate_bps else nil
 
 	if codec == "aac" then
+		if requested_bitrate ~= nil then
+			if track_bitrate ~= nil and requested_bitrate > track_bitrate then
+				return DEFAULT_AUDIO_HLS_BANDWIDTH_BPS
+			end
+			if requested_bitrate < MIN_AUDIO_HLS_AAC_BANDWIDTH_BPS then
+				return MIN_AUDIO_HLS_AAC_BANDWIDTH_BPS
+			end
+			return requested_bitrate
+		end
 		return DEFAULT_AUDIO_HLS_BANDWIDTH_BPS
 	end
 
-	return track_bitrate or requested_audio_bitrate or requested_max_bitrate or DEFAULT_AUDIO_HLS_BANDWIDTH_BPS
+	return track_bitrate or DEFAULT_AUDIO_HLS_BANDWIDTH_BPS
 end
 
-local function build_audio_hls_master_playlist(track: Track, query: ApiQueryParams?, codec: string): string
-	local bandwidth = resolve_audio_hls_variant_bandwidth(track, query, codec)
+local function build_audio_hls_master_playlist(
+	track: Track,
+	query: ApiQueryParams?,
+	options: api.HlsServeOptions
+): string
+	local codec = options.codec or "aac"
+	local bandwidth = resolve_audio_hls_variant_bandwidth(track, options)
 	local codec_string = codec_string_for_audio_hls(codec)
 	local stream_inf = `#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},AVERAGE-BANDWIDTH={bandwidth}`
 	if codec_string then
@@ -3447,16 +3504,16 @@ local function resolve_audio_hls_playlist_request(ctx: ApiContext): (ResolvedAud
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local codec = parse_audio_hls_codec(query)
-	if not is_supported_audio_hls_codec(codec) then
-		return nil, base.bad_request("unsupported hls codec; supported values: aac, alac, flac")
+	local options, options_err = resolve_audio_hls_query_options(query)
+	if options == nil then
+		return nil, options_err or base.bad_request("invalid hls options")
 	end
 
 	return {
 		track = track,
 		track_id = track_id,
 		query = query,
-		codec = codec,
+		options = options,
 	}, nil
 end
 
@@ -3466,7 +3523,7 @@ local function handle_audio_hls_master_playlist_route(ctx: ApiContext): ApiRespo
 		return err or base.bad_request("invalid hls request")
 	end
 
-	return api.response.text(200, build_audio_hls_master_playlist(request.track, request.query, request.codec), {
+	return api.response.text(200, build_audio_hls_master_playlist(request.track, request.query, request.options), {
 		["content-type"] = "application/x-mpegurl",
 	})
 end
@@ -3477,7 +3534,7 @@ local function handle_audio_hls_main_playlist_route(ctx: ApiContext): ApiRespons
 		return err or base.bad_request("invalid hls request")
 	end
 
-	return api.response.hls_playlist(request.track_id, request.codec)
+	return api.response.hls_playlist(request.track_id, request.options)
 end
 
 api.get(P .. "/Audio/{itemId}/master.m3u8", handle_audio_hls_master_playlist_route, nil, true)

@@ -29,6 +29,15 @@ pub(super) struct TrackServeOptions {
     pub(super) channels: Option<u32>,
 }
 
+#[derive(Default, Serialize)]
+#[harmony_macros::interface]
+pub(super) struct HlsServeOptions {
+    pub(super) codec: Option<String>,
+    pub(super) bitrate_bps: Option<u32>,
+    pub(super) sample_rate_hz: Option<u32>,
+    pub(super) channels: Option<u32>,
+}
+
 pub(super) fn parse_track_serve_options(options: Option<Table>) -> mlua::Result<TrackServeOptions> {
     let Some(options) = options else {
         return Ok(TrackServeOptions::default());
@@ -48,6 +57,27 @@ pub(super) fn parse_track_serve_options(options: Option<Table>) -> mlua::Result<
 
     Ok(TrackServeOptions {
         format,
+        codec,
+        bitrate_bps,
+        sample_rate_hz,
+        channels,
+    })
+}
+
+pub(super) fn parse_hls_serve_options(options: Option<Table>) -> mlua::Result<HlsServeOptions> {
+    let Some(options) = options else {
+        return Ok(HlsServeOptions::default());
+    };
+
+    let codec = options
+        .get::<Option<String>>("codec")?
+        .map(|codec| codec.trim().to_string())
+        .filter(|codec| !codec.is_empty());
+    let bitrate_bps = options.get::<Option<u32>>("bitrate_bps")?;
+    let sample_rate_hz = options.get::<Option<u32>>("sample_rate_hz")?;
+    let channels = options.get::<Option<u32>>("channels")?;
+
+    Ok(HlsServeOptions {
         codec,
         bitrate_bps,
         sample_rate_hz,
@@ -110,6 +140,13 @@ pub(super) fn image_transform_options_to_lua(
 pub(super) fn track_serve_options_to_lua(
     lua: &Lua,
     options: &TrackServeOptions,
+) -> mlua::Result<Value> {
+    lua.to_value_with(options, LUA_SERIALIZE_OPTIONS)
+}
+
+pub(super) fn hls_serve_options_to_lua(
+    lua: &Lua,
+    options: &HlsServeOptions,
 ) -> mlua::Result<Value> {
     lua.to_value_with(options, LUA_SERIALIZE_OPTIONS)
 }
@@ -199,19 +236,21 @@ pub(super) fn response_stream_track(
 
 pub(super) fn response_hls_playlist(
     lua: &Lua,
-    (track_id, codec): (i64, Option<String>),
+    (track_id, options): (i64, Option<Table>),
 ) -> mlua::Result<Table> {
     if track_id <= 0 {
         return Err(mlua::Error::runtime("track_id must be a positive id"));
     }
 
+    let options = parse_hls_serve_options(options)?;
     let response = build_kind_response_table(lua, "hls_playlist")?;
     response.set("track_id", track_id)?;
-    let codec = codec
-        .map(|c| c.trim().to_string())
-        .filter(|c| !c.is_empty());
-    if let Some(codec) = codec {
-        response.set("codec", codec)?;
+    if options.codec.is_some()
+        || options.bitrate_bps.is_some()
+        || options.sample_rate_hz.is_some()
+        || options.channels.is_some()
+    {
+        response.set("options", hls_serve_options_to_lua(lua, &options)?)?;
     }
     Ok(response)
 }

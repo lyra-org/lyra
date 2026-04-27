@@ -48,9 +48,7 @@ use crate::config::Config;
 
 use super::HlsError;
 use super::codec::{
-    HLS_AUDIO_BITRATE_KBPS,
-    HLS_SEGMENT_TIME_SECONDS,
-    HlsCodecProfile,
+    HlsOutputConfig,
     build_hls_output,
 };
 
@@ -103,12 +101,7 @@ pub(crate) struct HlsJobKey {
     source_db_id: DbId,
     start_ms: Option<u64>,
     end_ms: Option<u64>,
-    codec: &'static str,
-    segment_type: &'static str,
-    segment_extension: &'static str,
-    init_filename: Option<&'static str>,
-    pub(crate) audio_bitrate_kbps: Option<u32>,
-    segment_time_seconds: u32,
+    output: HlsOutputConfig,
 }
 
 pub(crate) struct HlsJob {
@@ -128,25 +121,21 @@ pub(crate) fn generate_hls_session_id() -> String {
     base.encode(bytes)
 }
 
-pub(crate) fn hls_job_key(
-    track_db_id: DbId,
-    source_db_id: DbId,
-    start_ms: Option<u64>,
-    end_ms: Option<u64>,
-    profile: HlsCodecProfile,
-) -> HlsJobKey {
-    HlsJobKey {
-        track_db_id,
-        source_db_id,
-        start_ms,
-        end_ms,
-        codec: profile.ffmpeg_codec_str,
-        segment_type: profile.segment_type,
-        segment_extension: profile.segment_extension,
-        init_filename: profile.init_filename,
-        audio_bitrate_kbps: matches!(profile.codec, lyra_ffmpeg::AudioCodec::Aac)
-            .then_some(HLS_AUDIO_BITRATE_KBPS),
-        segment_time_seconds: HLS_SEGMENT_TIME_SECONDS,
+impl HlsJobKey {
+    pub(crate) fn new(
+        track_db_id: DbId,
+        source_db_id: DbId,
+        start_ms: Option<u64>,
+        end_ms: Option<u64>,
+        output: HlsOutputConfig,
+    ) -> Self {
+        Self {
+            track_db_id,
+            source_db_id,
+            start_ms,
+            end_ms,
+            output,
+        }
     }
 }
 
@@ -184,11 +173,7 @@ pub(crate) async fn hls_registry_counts() -> (usize, usize) {
     (job_count, session_count)
 }
 
-async fn create_hls_job(
-    input_path: &str,
-    job_key: &HlsJobKey,
-    profile: HlsCodecProfile,
-) -> Result<HlsJob, HlsError> {
+async fn create_hls_job(input_path: &str, job_key: &HlsJobKey) -> Result<HlsJob, HlsError> {
     let transcode_permit = acquire_hls_transcode_permit().await?;
 
     let job_id = generate_hls_session_id();
@@ -197,13 +182,16 @@ async fn create_hls_job(
         job_key.track_db_id.0, job_key.source_db_id.0
     ));
     let playlist_path = job_dir.join("index.m3u8");
-    let segment_pattern = job_dir.join(format!("segment-%05d.{}", profile.segment_extension));
+    let segment_pattern = job_dir.join(format!(
+        "segment-%05d.{}",
+        job_key.output.profile.segment_extension
+    ));
 
     tokio::fs::create_dir_all(&job_dir)
         .await
         .map_err(anyhow::Error::from)?;
 
-    let output = build_hls_output(&playlist_path, &segment_pattern, profile);
+    let output = build_hls_output(&playlist_path, &segment_pattern, job_key.output);
     let context = FfmpegContext::builder()
         .input(input_path)
         .start_ms(job_key.start_ms)
@@ -243,7 +231,6 @@ async fn finish_hls_job_creation(job_key: &HlsJobKey) {
 pub(crate) async fn get_or_create_hls_job(
     job_key: &HlsJobKey,
     input_path: &str,
-    profile: HlsCodecProfile,
 ) -> Result<bool, HlsError> {
     loop {
         if HLS_JOBS.read().await.contains_key(job_key) {
@@ -266,7 +253,7 @@ pub(crate) async fn get_or_create_hls_job(
             continue;
         }
 
-        let create_result = create_hls_job(input_path, job_key, profile).await;
+        let create_result = create_hls_job(input_path, job_key).await;
         let replaced_job = match create_result {
             Ok(job) => {
                 let mut jobs = HLS_JOBS.write().await;
@@ -406,6 +393,11 @@ pub(crate) mod test_helpers {
 
 #[cfg(test)]
 mod tests {
+    use super::super::codec::HLS_AUDIO_BITRATE_KBPS;
+    use super::super::codec::{
+        HlsCodecProfile,
+        HlsOutputConfig,
+    };
     use super::test_helpers::*;
     use super::*;
     use agdb::DbId;
@@ -418,11 +410,33 @@ mod tests {
         let alac_profile =
             HlsCodecProfile::from_requested(Some(AudioCodec::Alac)).expect("alac profile");
 
-        let aac_key = hls_job_key(DbId(7), DbId(701), None, None, aac_profile);
-        let alac_key = hls_job_key(DbId(7), DbId(701), None, None, alac_profile);
+        let aac_key = HlsJobKey::new(
+            DbId(7),
+            DbId(701),
+            None,
+            None,
+            HlsOutputConfig::new(
+                aac_profile,
+                Some(HLS_AUDIO_BITRATE_KBPS),
+                Some(44_100),
+                Some(2),
+            ),
+        );
+        let alac_key = HlsJobKey::new(
+            DbId(7),
+            DbId(701),
+            None,
+            None,
+            HlsOutputConfig::new(alac_profile, None, None, None),
+        );
 
-        assert_eq!(aac_key.audio_bitrate_kbps, Some(HLS_AUDIO_BITRATE_KBPS));
-        assert_eq!(alac_key.audio_bitrate_kbps, None);
+        assert_eq!(
+            aac_key.output.audio_bitrate_kbps,
+            Some(HLS_AUDIO_BITRATE_KBPS)
+        );
+        assert_eq!(aac_key.output.sample_rate_hz, Some(44_100));
+        assert_eq!(aac_key.output.channels, Some(2));
+        assert_eq!(alac_key.output.audio_bitrate_kbps, None);
         assert_ne!(aac_key, alac_key);
     }
 
@@ -433,7 +447,13 @@ mod tests {
             user_db_id: DbId(10),
             track_db_id: DbId(77),
             playlist_segment_count: 1,
-            job_key: hls_job_key(DbId(77), DbId(7701), None, None, profile),
+            job_key: HlsJobKey::new(
+                DbId(77),
+                DbId(7701),
+                None,
+                None,
+                HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None),
+            ),
             last_access: Instant::now(),
         };
 
@@ -457,7 +477,13 @@ mod tests {
             .expect("test dir created");
 
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
-        let job_key = hls_job_key(track_db_id, DbId(6011), None, None, profile);
+        let job_key = HlsJobKey::new(
+            track_db_id,
+            DbId(6011),
+            None,
+            None,
+            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None),
+        );
         {
             let mut jobs = HLS_JOBS.write().await;
             jobs.insert(
