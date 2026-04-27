@@ -90,6 +90,7 @@ use response::{
     response_file as build_file_response,
     response_hls_playlist as build_hls_playlist_response,
     response_json as build_json_response,
+    response_redirect as build_redirect_response,
     response_stream_track as build_stream_track_response,
     response_text as build_text_response,
 };
@@ -235,6 +236,13 @@ struct ApiTextResponse {
     kind: String,
     status: u16,
     body: String,
+    headers: Option<ApiHeaders>,
+}
+
+#[harmony_macros::interface]
+struct ApiRedirectResponse {
+    kind: String,
+    status: u16,
     headers: Option<ApiHeaders>,
 }
 
@@ -521,6 +529,7 @@ struct ApiModule;
         ApiJsonResponse,
         ApiEmptyResponse,
         ApiTextResponse,
+        ApiRedirectResponse,
         ApiFileResponse,
         ApiStreamTrackResponse,
         ApiDownloadTrackResponse,
@@ -735,6 +744,14 @@ impl ApiModule {
         args: (u16, String, Option<Table>),
     ) -> mlua::Result<Table> {
         build_text_response(lua, args)
+    }
+
+    #[harmony(path = "response.redirect", args(status: u16, location: String, headers: Option<ApiHeaders>), returns(ApiRedirectResponse))]
+    pub(crate) fn response_redirect_fn(
+        lua: &Lua,
+        args: (u16, String, Option<Table>),
+    ) -> mlua::Result<Table> {
+        build_redirect_response(lua, args)
     }
 
     /// Builds a file response with optional image transforms.
@@ -1925,6 +1942,49 @@ mod tests {
             Some("AAC")
         );
         assert_eq!(options.get::<Option<u32>>("bitrate_bps")?, Some(96_000));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn redirect_response_sets_location_header() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+
+        let lua = Lua::new();
+        let headers = lua.create_table()?;
+        headers.set("cache-control", "no-store")?;
+        let table = response::response_redirect(&lua, (302, "/next".to_string(), Some(headers)))?;
+        assert_eq!(table.get::<String>("kind")?, "redirect");
+        assert_eq!(table.get::<u16>("status")?, 302);
+        let headers = table
+            .get::<Option<Table>>("headers")?
+            .expect("redirect headers should exist");
+        assert_eq!(headers.get::<String>("location")?, "/next");
+        assert_eq!(headers.get::<String>("cache-control")?, "no-store");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn redirect_response_rejects_non_redirect_status() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+
+        let lua = Lua::new();
+        let err = response::response_redirect(&lua, (200, "/next".to_string(), None))
+            .expect_err("non-3xx redirect status must fail fast");
+        assert!(err.to_string().contains("3xx"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn redirect_response_rejects_empty_location() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+
+        let lua = Lua::new();
+        let err = response::response_redirect(&lua, (302, "   ".to_string(), None))
+            .expect_err("empty redirect location must fail fast");
+        assert!(err.to_string().contains("must not be empty"));
 
         Ok(())
     }
