@@ -152,6 +152,10 @@ impl Output {
         &self.audio_codec_opts
     }
 
+    pub fn get_format_opts(&self) -> &HashMap<String, String> {
+        &self.format_opts
+    }
+
     pub fn get_audio_sample_rate(&self) -> Option<i32> {
         self.audio_sample_rate
     }
