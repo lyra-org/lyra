@@ -26,6 +26,8 @@ type ApiRequest = api.ApiRequest
 type ApiResponse = api.ApiResponse
 type ApiJsonValue = api.JsonValue
 type AuthContext = api.ApiAuth
+type JsonObject = { [string]: ApiJsonValue }
+type JsonArray = { ApiJsonValue }
 
 export type PlaybackPayload = { [string]: string | number | boolean? }
 
@@ -76,6 +78,8 @@ type MediaSource = {
 	SupportsProbing: boolean,
 	MediaStreams: { MediaStream },
 	Bitrate: number?,
+	TranscodingContainer: string?,
+	TranscodingUrl: string?,
 	TranscodingSubProtocol: string?,
 	DefaultAudioStreamIndex: number,
 	HasSegments: boolean,
@@ -115,6 +119,20 @@ local function as_playback_payload(value: ApiJsonValue): PlaybackPayload?
 		return nil
 	end
 	return value :: PlaybackPayload
+end
+
+local function as_json_object(value: ApiJsonValue?): JsonObject?
+	if type(value) ~= "table" then
+		return nil
+	end
+	return value :: JsonObject
+end
+
+local function as_json_array(value: ApiJsonValue?): JsonArray?
+	if type(value) ~= "table" then
+		return nil
+	end
+	return value :: JsonArray
 end
 
 local function scalar_field(payload: PlaybackPayload?, key: string): string | number?
@@ -252,6 +270,54 @@ local function ms_to_ticks(duration_ms: number?): number?
 	return math.floor(value * 10000)
 end
 
+local function json_string_field(object: JsonObject?, key: string): string?
+	local value = if object then object[key] else nil
+	if type(value) ~= "string" then
+		return nil
+	end
+	return module.trim(value)
+end
+
+local function json_boolean_field(object: JsonObject?, key: string): boolean?
+	local value = if object then object[key] else nil
+	if type(value) == "boolean" then
+		return value
+	end
+	return nil
+end
+
+local function json_number_field(object: JsonObject?, key: string): number?
+	local value = if object then object[key] else nil
+	if type(value) == "number" then
+		return value
+	end
+	return nil
+end
+
+local function json_object_field(object: JsonObject?, key: string): JsonObject?
+	return as_json_object(if object then object[key] else nil)
+end
+
+local function json_array_field(object: JsonObject?, key: string): JsonArray?
+	return as_json_array(if object then object[key] else nil)
+end
+
+local function csv_contains_token(csv: string?, token: string?): boolean
+	local normalized_token = if token then string.lower(token) else nil
+	if normalized_token == nil then
+		return false
+	end
+
+	for raw_part in string.gmatch(csv or "", "[^,]+") do
+		local part = module.trim(raw_part)
+		if part and string.lower(part) == normalized_token then
+			return true
+		end
+	end
+
+	return false
+end
+
 local function codec_for_extension(extension: string?): string?
 	if extension == "flac" then
 		return "flac"
@@ -276,6 +342,190 @@ local function codec_for_extension(extension: string?): string?
 	end
 
 	return nil
+end
+
+local function media_source_audio_codec(media_source: MediaSource): string?
+	local media_streams = media_source.MediaStreams
+	for _, stream in ipairs(media_streams) do
+		if stream.Type == "Audio" then
+			return stream.Codec
+		end
+	end
+	return nil
+end
+
+local function supports_audio_direct_play(media_source: MediaSource, device_profile: JsonObject?): boolean
+	local direct_play_profiles = json_array_field(device_profile, "DirectPlayProfiles")
+	if direct_play_profiles == nil then
+		return media_source.SupportsDirectPlay
+	end
+
+	local source_container = media_source.Container
+	local source_codec = media_source_audio_codec(media_source)
+	for _, raw_profile in ipairs(direct_play_profiles) do
+		local profile = as_json_object(raw_profile)
+		if profile then
+			local profile_type = json_string_field(profile, "Type")
+			if profile_type and string.lower(profile_type) == "audio" then
+				local profile_container = json_string_field(profile, "Container")
+				if csv_contains_token(profile_container, source_container) then
+					local profile_audio_codec = json_string_field(profile, "AudioCodec")
+					if profile_audio_codec == nil or csv_contains_token(profile_audio_codec, source_codec) then
+						return true
+					end
+				end
+			end
+		end
+	end
+
+	return false
+end
+
+local function audio_stream_respects_basic_limits(
+	media_source: MediaSource,
+	max_bitrate_bps: number?,
+	max_sample_rate_hz: number?,
+	max_bit_depth: number?,
+	max_channels: number?
+): boolean
+	local bitrate = media_source.Bitrate
+	if max_bitrate_bps ~= nil and bitrate ~= nil and bitrate > max_bitrate_bps then
+		return false
+	end
+
+	for _, stream in ipairs(media_source.MediaStreams) do
+		if stream.Type == "Audio" then
+			if max_sample_rate_hz ~= nil and stream.SampleRate ~= nil and stream.SampleRate > max_sample_rate_hz then
+				return false
+			end
+			if max_bit_depth ~= nil and stream.BitDepth ~= nil and stream.BitDepth > max_bit_depth then
+				return false
+			end
+			if max_channels ~= nil and stream.Channels ~= nil and stream.Channels > max_channels then
+				return false
+			end
+			break
+		end
+	end
+
+	return true
+end
+
+local function supports_audio_direct_play_from_container_csv(
+	media_source: MediaSource,
+	direct_play_csv: string?
+): boolean
+	local trimmed_csv = module.trim(direct_play_csv)
+	if trimmed_csv == nil then
+		return false
+	end
+
+	local source_container = media_source.Container
+	local source_codec = media_source_audio_codec(media_source)
+	for raw_token in string.gmatch(trimmed_csv, "[^,]+") do
+		local token = module.trim(raw_token)
+		if token then
+			local delimiter_index = string.find(token, "|", 1, true)
+			local container = if delimiter_index then string.sub(token, 1, delimiter_index - 1) else token
+			local codec_tail = if delimiter_index then string.sub(token, delimiter_index + 1) else nil
+			local codec_csv = if codec_tail then (string.gsub(codec_tail, "|", ",")) else nil
+			if
+				csv_contains_token(container, source_container)
+				and (codec_csv == nil or csv_contains_token(codec_csv, source_codec))
+			then
+				return true
+			end
+		end
+	end
+
+	return false
+end
+
+local function preferred_audio_streaming_profile(device_profile: JsonObject?): JsonObject?
+	local transcoding_profiles = json_array_field(device_profile, "TranscodingProfiles")
+	if transcoding_profiles == nil then
+		return nil
+	end
+
+	for _, raw_profile in ipairs(transcoding_profiles) do
+		local profile = as_json_object(raw_profile)
+		if profile then
+			local profile_type = json_string_field(profile, "Type")
+			local profile_context = json_string_field(profile, "Context")
+			if
+				profile_type
+				and profile_context
+				and string.lower(profile_type) == "audio"
+				and string.lower(profile_context) == "streaming"
+			then
+				return profile
+			end
+		end
+	end
+
+	return nil
+end
+
+local function build_hls_transcoding_url(item_id: string, play_session_id: string, codec: string): string
+	return string.format(
+		"%s/Audio/%s/master.m3u8?audioCodec=%s&PlaySessionId=%s",
+		ROUTE_PREFIX,
+		item_id,
+		codec,
+		play_session_id
+	)
+end
+
+local function apply_preferred_hls_transcoding(
+	media_source: MediaSource,
+	play_session_id: string,
+	request_object: JsonObject?
+): ()
+	if request_object == nil or json_boolean_field(request_object, "EnableTranscoding") == false then
+		return
+	end
+
+	local device_profile = json_object_field(request_object, "DeviceProfile")
+	if device_profile == nil then
+		return
+	end
+
+	local preferred_profile = preferred_audio_streaming_profile(device_profile)
+	if preferred_profile == nil then
+		return
+	end
+
+	local protocol = json_string_field(preferred_profile, "Protocol")
+	if protocol == nil or string.lower(protocol) ~= "hls" then
+		return
+	end
+
+	local direct_play_supported = if json_boolean_field(request_object, "EnableDirectPlay") == false
+		then false
+		else (supports_audio_direct_play(media_source, device_profile) and audio_stream_respects_basic_limits(
+			media_source,
+			json_number_field(request_object, "MaxStreamingBitrate"),
+			nil,
+			nil,
+			json_number_field(request_object, "MaxAudioChannels")
+		))
+	if direct_play_supported then
+		return
+	end
+
+	local media_source_id = module.trim(media_source.Id)
+	local codec = string.lower(json_string_field(preferred_profile, "AudioCodec") or "aac")
+	local transcoding_container = string.lower(json_string_field(preferred_profile, "Container") or "ts")
+	if media_source_id == nil then
+		return
+	end
+
+	media_source.SupportsDirectPlay = false
+	media_source.SupportsDirectStream = false
+	media_source.SupportsTranscoding = true
+	media_source.TranscodingContainer = transcoding_container
+	media_source.TranscodingSubProtocol = "hls"
+	media_source.TranscodingUrl = build_hls_transcoding_url(media_source_id, play_session_id, codec)
 end
 
 local function build_media_info(
@@ -349,6 +599,36 @@ local function build_media_info(
 	end
 
 	return { media_source }, media_streams, container
+end
+
+function module.build_audio_media_source(item_id: string?, track: Track?): MediaSource?
+	local source = module.resolve_playback_source_for_track(track, true)
+	local media_sources, _ = build_media_info(track, source, item_id, if track then track.track_title else item_id)
+	return media_sources[1]
+end
+
+function module.audio_supports_direct_play_from_container_csv(
+	media_source: MediaSource?,
+	direct_play_csv: string?,
+	max_bitrate_bps: number?,
+	max_sample_rate_hz: number?,
+	max_bit_depth: number?,
+	max_channels: number?,
+	enable_direct_play: boolean?,
+	forbid_stream_copy: boolean?
+): boolean
+	if media_source == nil or enable_direct_play == false or forbid_stream_copy == true then
+		return false
+	end
+
+	return supports_audio_direct_play_from_container_csv(media_source, direct_play_csv)
+		and audio_stream_respects_basic_limits(
+			media_source,
+			max_bitrate_bps,
+			max_sample_rate_hz,
+			max_bit_depth,
+			max_channels
+		)
 end
 
 function module.parse_playback_report_body(ctx: ApiContext?): (PlaybackPayload?, ApiResponse?)
@@ -507,11 +787,20 @@ function module.resolve_requested_play_session_id(request: ApiRequest?, request_
 	return module.parse_query_string(query, { "PlaySessionId", "playSessionId" }, nil)
 end
 
-function module.build_playback_info(item_id: string?, track: Track?, existing_play_session_id: string?): ApiJsonValue
+function module.build_playback_info(
+	item_id: string?,
+	track: Track?,
+	existing_play_session_id: string?,
+	request_object: JsonObject?
+): ApiJsonValue
 	local source = module.resolve_playback_source_for_track(track, true)
 	local media_sources, _ = build_media_info(track, source, item_id, if track then track.track_title else item_id)
 
 	local play_session_id = ensure_playback_session_id(existing_play_session_id)
+	local primary_media_source = media_sources[1]
+	if primary_media_source then
+		apply_preferred_hls_transcoding(primary_media_source, play_session_id, request_object)
+	end
 	return {
 		MediaSources = media_sources,
 		PlaySessionId = play_session_id,

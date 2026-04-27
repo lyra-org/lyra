@@ -3046,7 +3046,7 @@ api.get(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 
 	local request = if ctx then ctx.request else nil
 	local play_session_id = playback.resolve_requested_play_session_id(request, nil)
-	local response = playback.build_playback_info(item_id, track, play_session_id)
+	local response = playback.build_playback_info(item_id, track, play_session_id, nil)
 	return api.response.json(200, response)
 end, nil, true)
 api.get(P .. "/Items/{itemId}/File", function(ctx: ApiContext)
@@ -3194,23 +3194,26 @@ api.get(P .. "/Providers/Lyrics/{lyricId}", function(ctx: ApiContext): ApiRespon
 	return base.not_found("lyrics not found")
 end, nil, true)
 
--- Interim: honours transcode query params when present, returns 415 otherwise.
--- Retire this 415 arm alongside the SupportsTranscoding=false advertisement once
--- DeviceProfile parsing lands (pending feature).
 local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local raw_static = if query then (query.static or query.Static) else nil
+	local raw_container = if query then (query.container or query.Container) else nil
 	local static_direct_copy = jellyfin_boolean(raw_static) == true
 
 	local raw_codec = if query then (query.audioCodec or query.AudioCodec) else nil
+	local raw_transcoding_container = if query then (query.transcodingContainer or query.TranscodingContainer) else nil
 	local raw_max_bitrate = if query then (query.MaxStreamingBitrate or query.maxStreamingBitrate) else nil
 	local raw_audio_bitrate = if query then (query.audioBitRate or query.AudioBitRate) else nil
 	local raw_sample_rate = if query then (query.audioSampleRate or query.AudioSampleRate) else nil
+	local raw_bit_depth = if query then (query.maxAudioBitDepth or query.MaxAudioBitDepth) else nil
 	local raw_channels = if query then (query.maxAudioChannels or query.MaxAudioChannels) else nil
 	local raw_auto_copy = if query then (query.enableAutoStreamCopy or query.EnableAutoStreamCopy) else nil
+	local raw_enable_direct_play = if query then (query.enableDirectPlay or query.EnableDirectPlay) else nil
+	local raw_enable_transcoding = if query then (query.enableTranscoding or query.EnableTranscoding) else nil
 	local raw_transcoding_protocol = if query then (query.transcodingProtocol or query.TranscodingProtocol) else nil
 
 	local codec = parse_preferred_codec(raw_codec)
+	local transcoding_container = parse_preferred_codec(raw_transcoding_container)
 	local hls_requested = is_hls_transcoding_protocol(raw_transcoding_protocol)
 	-- MaxStreamingBitrate wins over audioBitRate: the former is the broader cap and
 	-- what Jellyfin clients send when they want to communicate a bandwidth ceiling.
@@ -3228,23 +3231,17 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 	if sample_rate_err then
 		return base.bad_request(`audioSampleRate {sample_rate_err}`)
 	end
+	local bit_depth, bit_depth_err = extract_integer_param(raw_bit_depth)
+	if bit_depth_err then
+		return base.bad_request(`maxAudioBitDepth {bit_depth_err}`)
+	end
 	local channels, channels_err = extract_integer_param(raw_channels)
 	if channels_err then
 		return base.bad_request(`maxAudioChannels {channels_err}`)
 	end
 	local forbid_stream_copy = jellyfin_boolean(raw_auto_copy) == false
-
-	local has_transcode_knob = codec ~= nil or bitrate_bps ~= nil or sample_rate_hz ~= nil or channels ~= nil
-	local transcode_requested = has_transcode_knob or forbid_stream_copy or hls_requested
-
-	if not transcode_requested then
-		if static_direct_copy then
-			return session.handle_item_file_stream_request(ctx)
-		end
-		return api.response.json(415, {
-			Message = "transcoding is not supported; request with static=true or supply transcode parameters",
-		})
-	end
+	local direct_play_enabled = jellyfin_boolean(raw_enable_direct_play) ~= false
+	local transcoding_enabled = jellyfin_boolean(raw_enable_transcoding) ~= false
 
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -3269,15 +3266,39 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 		return base.not_found("item not found")
 	end
 
+	local media_source = playback.build_audio_media_source(item_id, track)
+	if
+		playback.audio_supports_direct_play_from_container_csv(
+			media_source,
+			raw_container,
+			bitrate_bps,
+			sample_rate_hz,
+			bit_depth,
+			channels,
+			direct_play_enabled,
+			forbid_stream_copy
+		)
+	then
+		return session.handle_item_file_stream_request(ctx)
+	end
+
+	if not transcoding_enabled then
+		if static_direct_copy then
+			return session.handle_item_file_stream_request(ctx)
+		end
+		return api.response.json(415, {
+			Message = "transcoding is not supported; request with static=true or supply transcode parameters",
+		})
+	end
+
 	if hls_requested then
 		return api.response.hls_playlist(track_id, codec or "aac")
 	end
 
-	-- Client explicitly forbade stream copy without naming a target codec; pick a
-	-- broad-compat default so we don't fall back to copy against its wishes.
-	local effective_codec: string? = if codec then codec elseif forbid_stream_copy then "aac" else nil
+	local effective_codec: string? = if codec then codec elseif transcoding_container == nil then "mp3" else nil
 
 	local options: api.TrackServeOptions = {
+		format = transcoding_container,
 		codec = effective_codec,
 		bitrate_bps = bitrate_bps,
 		sample_rate_hz = sample_rate_hz,
@@ -3361,7 +3382,7 @@ api.post(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 
 	local playback_request = if request_object then request_object :: PlaybackPayload else nil
 	local play_session_id = playback.resolve_requested_play_session_id(request, playback_request)
-	local response = playback.build_playback_info(item_id, track, play_session_id)
+	local response = playback.build_playback_info(item_id, track, play_session_id, request_object)
 	return api.response.json(200, response)
 end, nil, true)
 
