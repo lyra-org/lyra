@@ -53,6 +53,7 @@ use crate::{
     },
 };
 
+#[derive(Debug)]
 pub struct ValidatedTrackSource {
     pub source_id: DbId,
     pub input_path: String,
@@ -62,6 +63,50 @@ pub struct ValidatedTrackSource {
     pub start_ms: Option<u64>,
     pub end_ms: Option<u64>,
     pub source_bitrate_bps: Option<u32>,
+}
+
+pub(crate) fn source_range_duration_ms(start_ms: Option<u64>, end_ms: Option<u64>) -> Option<u64> {
+    match (start_ms, end_ms) {
+        (Some(start_ms), Some(end_ms)) if end_ms > start_ms => Some(end_ms - start_ms),
+        _ => None,
+    }
+}
+
+pub fn apply_request_start_offset(
+    mut source: ValidatedTrackSource,
+    start_offset_ms: Option<u64>,
+) -> Result<ValidatedTrackSource, AppError> {
+    let Some(start_offset_ms) = start_offset_ms else {
+        return Ok(source);
+    };
+
+    if start_offset_ms == 0 {
+        return Ok(source);
+    }
+
+    let current_start_ms = source.start_ms.unwrap_or(0);
+    let next_start_ms = current_start_ms
+        .checked_add(start_offset_ms)
+        .ok_or_else(|| AppError::bad_request("start_offset_ms is too large"))?;
+
+    if let Some(end_ms) = source.end_ms {
+        if next_start_ms >= end_ms {
+            return Err(AppError::bad_request(
+                "start_offset_ms exceeds the available source duration",
+            ));
+        }
+    } else if let Some(duration_ms) = source.duration_ms.filter(|duration_ms| *duration_ms > 0) {
+        if start_offset_ms >= duration_ms {
+            return Err(AppError::bad_request(
+                "start_offset_ms exceeds the available source duration",
+            ));
+        }
+
+        source.duration_ms = Some(duration_ms - start_offset_ms);
+    }
+
+    source.start_ms = Some(next_start_ms);
+    Ok(source)
 }
 
 pub(crate) async fn require_download_access(headers: &HeaderMap) -> Result<Principal, AppError> {
@@ -431,6 +476,8 @@ pub fn stream_routes() -> ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::{
+        ValidatedTrackSource,
+        apply_request_start_offset,
         configure_output,
         require_download_access,
         resolve_codec,
@@ -850,6 +897,62 @@ mod tests {
         assert_eq!(codec, AudioCodec::Mp3);
     }
 
+    #[test]
+    fn apply_request_start_offset_reduces_duration_for_full_track_sources() {
+        let source = ValidatedTrackSource {
+            source_id: agdb::DbId(2),
+            input_path: "track.flac".to_string(),
+            entry_format: Some(AudioFormat::Flac),
+            full_path: PathBuf::from("track.flac"),
+            duration_ms: Some(20_000),
+            start_ms: None,
+            end_ms: None,
+            source_bitrate_bps: Some(900_000),
+        };
+
+        let offset_source =
+            apply_request_start_offset(source, Some(5_000)).expect("offset should be applied");
+        assert_eq!(offset_source.start_ms, Some(5_000));
+        assert_eq!(offset_source.duration_ms, Some(15_000));
+    }
+
+    #[test]
+    fn apply_request_start_offset_stacks_on_existing_source_range() {
+        let source = ValidatedTrackSource {
+            source_id: agdb::DbId(2),
+            input_path: "track.flac".to_string(),
+            entry_format: Some(AudioFormat::Flac),
+            full_path: PathBuf::from("track.flac"),
+            duration_ms: Some(20_000),
+            start_ms: Some(10_000),
+            end_ms: Some(30_000),
+            source_bitrate_bps: Some(900_000),
+        };
+
+        let offset_source =
+            apply_request_start_offset(source, Some(5_000)).expect("offset should stack");
+        assert_eq!(offset_source.start_ms, Some(15_000));
+        assert_eq!(offset_source.end_ms, Some(30_000));
+    }
+
+    #[test]
+    fn apply_request_start_offset_rejects_offsets_past_available_duration() {
+        let source = ValidatedTrackSource {
+            source_id: agdb::DbId(2),
+            input_path: "track.flac".to_string(),
+            entry_format: Some(AudioFormat::Flac),
+            full_path: PathBuf::from("track.flac"),
+            duration_ms: Some(20_000),
+            start_ms: Some(10_000),
+            end_ms: Some(30_000),
+            source_bitrate_bps: Some(900_000),
+        };
+
+        let err = apply_request_start_offset(source, Some(20_000))
+            .expect_err("offset equal to the available range must be rejected");
+        assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
+    }
+
     async fn prepare_streamable_track(test_dir: &PathBuf) -> anyhow::Result<i64> {
         let fixture_src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/assets/metadata/integration_track.flac");
@@ -897,6 +1000,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -928,6 +1032,7 @@ mod tests {
             Some("mp3".to_string()),
             None,
             Some(96_000),
+            None,
             None,
             None,
         )
@@ -971,6 +1076,7 @@ mod tests {
             None,
             Some(48_000),
             None,
+            None,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1011,6 +1117,7 @@ mod tests {
             Some(96_000),
             None,
             None,
+            None,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1042,6 +1149,7 @@ mod tests {
             Some("mp3".to_string()),
             None,
             Some(0),
+            None,
             None,
             None,
         )

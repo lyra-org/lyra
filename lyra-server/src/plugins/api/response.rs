@@ -27,6 +27,7 @@ pub(super) struct TrackServeOptions {
     pub(super) bitrate_bps: Option<u32>,
     pub(super) sample_rate_hz: Option<u32>,
     pub(super) channels: Option<u32>,
+    pub(super) start_offset_ms: Option<u64>,
 }
 
 #[derive(Default, Serialize)]
@@ -36,6 +37,7 @@ pub(super) struct HlsServeOptions {
     pub(super) bitrate_bps: Option<u32>,
     pub(super) sample_rate_hz: Option<u32>,
     pub(super) channels: Option<u32>,
+    pub(super) start_offset_ms: Option<u64>,
 }
 
 fn parse_string_list_field(options: &Table, key: &str) -> mlua::Result<Option<Vec<String>>> {
@@ -68,6 +70,7 @@ pub(super) fn parse_track_serve_options(options: Option<Table>) -> mlua::Result<
     let bitrate_bps = options.get::<Option<u32>>("bitrate_bps")?;
     let sample_rate_hz = options.get::<Option<u32>>("sample_rate_hz")?;
     let channels = options.get::<Option<u32>>("channels")?;
+    let start_offset_ms = options.get::<Option<u64>>("start_offset_ms")?;
 
     Ok(TrackServeOptions {
         format,
@@ -75,6 +78,7 @@ pub(super) fn parse_track_serve_options(options: Option<Table>) -> mlua::Result<
         bitrate_bps,
         sample_rate_hz,
         channels,
+        start_offset_ms,
     })
 }
 
@@ -87,12 +91,14 @@ pub(super) fn parse_hls_serve_options(options: Option<Table>) -> mlua::Result<Hl
     let bitrate_bps = options.get::<Option<u32>>("bitrate_bps")?;
     let sample_rate_hz = options.get::<Option<u32>>("sample_rate_hz")?;
     let channels = options.get::<Option<u32>>("channels")?;
+    let start_offset_ms = options.get::<Option<u64>>("start_offset_ms")?;
 
     Ok(HlsServeOptions {
         preferred_codecs,
         bitrate_bps,
         sample_rate_hz,
         channels,
+        start_offset_ms,
     })
 }
 
@@ -267,6 +273,7 @@ pub(super) fn response_stream_track(
         || options.bitrate_bps.is_some()
         || options.sample_rate_hz.is_some()
         || options.channels.is_some()
+        || options.start_offset_ms.is_some()
     {
         response.set("options", track_serve_options_to_lua(lua, &options)?)?;
     }
@@ -288,6 +295,7 @@ pub(super) fn response_hls_playlist(
         || options.bitrate_bps.is_some()
         || options.sample_rate_hz.is_some()
         || options.channels.is_some()
+        || options.start_offset_ms.is_some()
     {
         response.set("options", hls_serve_options_to_lua(lua, &options)?)?;
     }
@@ -310,6 +318,7 @@ pub(super) fn response_download_track(
         || options.bitrate_bps.is_some()
         || options.sample_rate_hz.is_some()
         || options.channels.is_some()
+        || options.start_offset_ms.is_some()
     {
         response.set("options", track_serve_options_to_lua(lua, &options)?)?;
     }

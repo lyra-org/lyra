@@ -51,6 +51,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use crate::routes::AppError;
 
 use super::{
+    apply_request_start_offset,
     apply_transcode_policy,
     configure_output,
     file_response,
@@ -85,6 +86,8 @@ struct StreamQuery {
     sample_rate_hz: Option<u32>,
     #[schemars(description = "Target channel count. Triggers transcoding when supplied.")]
     channels: Option<u32>,
+    #[schemars(description = "Per-request playback start offset in milliseconds.")]
+    start_offset_ms: Option<u64>,
 }
 
 async fn get_stream(
@@ -105,6 +108,7 @@ async fn get_stream(
         query.bitrate_bps,
         query.sample_rate_hz,
         query.channels,
+        query.start_offset_ms,
     )
     .await
 }
@@ -117,10 +121,14 @@ pub(crate) async fn stream_track_response(
     bitrate_bps: Option<u32>,
     sample_rate_hz: Option<u32>,
     channels: Option<u32>,
+    start_offset_ms: Option<u64>,
 ) -> Result<Response<Body>, AppError> {
     let _principal = require_download_access(headers).await?;
     let validated = validate_request(format, codec)?;
-    let source = validate_and_get_track_source(track_db_id).await?;
+    let source = apply_request_start_offset(
+        validate_and_get_track_source(track_db_id).await?,
+        start_offset_ms,
+    )?;
 
     let initial_output_format = resolve_output_format(
         validated.format,
