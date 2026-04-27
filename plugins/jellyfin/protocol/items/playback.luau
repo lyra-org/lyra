@@ -803,17 +803,49 @@ function module.resolve_requested_play_session_id(request: ApiRequest?, request_
 	return module.parse_query_string(query, { "PlaySessionId", "playSessionId" }, nil)
 end
 
+function module.resolve_requested_media_source_id(request: ApiRequest?, request_object: JsonObject?): string?
+	local query = if request then request.query else nil
+	local media_source_id = module.parse_query_string(query, { "MediaSourceId", "mediaSourceId" }, nil)
+	if media_source_id then
+		return media_source_id
+	end
+
+	return json_string_field(request_object, "MediaSourceId")
+end
+
 function module.build_playback_info(
 	item_id: string?,
 	track: Track?,
 	existing_play_session_id: string?,
-	request_object: JsonObject?
+	request_object: JsonObject?,
+	requested_media_source_id: string?
 ): ApiJsonValue
 	local source = module.resolve_playback_source_for_track(track, true)
+	if source == nil then
+		return {
+			MediaSources = {},
+			PlaySessionId = nil,
+			ErrorCode = "NoCompatibleStream",
+		}
+	end
+
 	local media_sources, _ = build_media_info(track, source, item_id, if track then track.track_title else item_id)
+	local primary_media_source = media_sources[1]
+	if requested_media_source_id ~= nil then
+		local primary_media_source_id = module.trim(if primary_media_source then primary_media_source.Id else nil)
+		if
+			primary_media_source_id == nil
+			or string.lower(primary_media_source_id) ~= string.lower(requested_media_source_id)
+		then
+			return {
+				MediaSources = {},
+				PlaySessionId = nil,
+				ErrorCode = "NoCompatibleStream",
+			}
+		end
+	end
 
 	local play_session_id = ensure_playback_session_id(existing_play_session_id)
-	local primary_media_source = media_sources[1]
 	if primary_media_source then
 		apply_preferred_hls_transcoding(primary_media_source, play_session_id, request_object)
 	end
