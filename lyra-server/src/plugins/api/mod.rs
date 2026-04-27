@@ -1917,30 +1917,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hls_playlist_response_trims_and_filters_empty_codec() -> anyhow::Result<()> {
+    async fn hls_playlist_response_trims_and_filters_empty_preferred_codecs() -> anyhow::Result<()>
+    {
         let _guard = runtime_test_lock().await;
 
         let lua = Lua::new();
         let empty_options = lua.create_table()?;
-        empty_options.set("codec", "   ")?;
+        let empty_codecs = lua.create_table()?;
+        empty_codecs.set(1, "   ")?;
+        empty_options.set("preferred_codecs", empty_codecs)?;
         let table = response::response_hls_playlist(&lua, (42, Some(empty_options)))?;
         assert_eq!(table.get::<String>("kind")?, "hls_playlist");
         assert_eq!(table.get::<i64>("track_id")?, 42);
         assert!(
             table.get::<Option<Table>>("options")?.is_none(),
-            "empty-or-whitespace codec strings should be dropped so the native endpoint falls back to its default"
+            "empty-or-whitespace codec preferences should be dropped so the native endpoint falls back to its default"
         );
 
         let options = lua.create_table()?;
-        options.set("codec", " AAC ")?;
+        let preferred_codecs = lua.create_table()?;
+        preferred_codecs.set(1, " AAC ")?;
+        preferred_codecs.set(2, " ")?;
+        preferred_codecs.set(3, "opus")?;
+        options.set("preferred_codecs", preferred_codecs)?;
         options.set("bitrate_bps", 96_000)?;
         let table = response::response_hls_playlist(&lua, (42, Some(options)))?;
         let options = table
             .get::<Option<Table>>("options")?
             .expect("non-empty HLS options should be preserved");
+        let preferred_codecs = options
+            .get::<Option<Vec<String>>>("preferred_codecs")?
+            .expect("codec preferences should be preserved");
         assert_eq!(
-            options.get::<Option<String>>("codec")?.as_deref(),
-            Some("AAC")
+            preferred_codecs,
+            vec!["AAC".to_string(), "opus".to_string()]
         );
         assert_eq!(options.get::<Option<u32>>("bitrate_bps")?, Some(96_000));
 

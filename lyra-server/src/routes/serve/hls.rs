@@ -80,7 +80,9 @@ const HLS_DURATION_MISMATCH_WARN_THRESHOLD_MS: u64 = 10;
 
 #[derive(Deserialize, JsonSchema)]
 struct HlsQuery {
-    #[schemars(description = "Optional HLS audio codec (aac, alac, flac).")]
+    #[schemars(
+        description = "Optional ordered HLS audio codec preferences (for example: opus,aac)."
+    )]
     codec: Option<String>,
     #[schemars(
         description = "Target bitrate cap in bits per second. Applied for lossy outputs when below the source bitrate; ignored for lossless codecs or when above source."
@@ -302,7 +304,7 @@ pub(crate) async fn serve_hls_playlist_for_track(
                 AppError::service_unavailable("HLS requires a known positive track duration")
             })?;
     let validated = validate_request(None, codec)?;
-    let profile = HlsCodecProfile::from_requested(validated.codec)?;
+    let profile = HlsCodecProfile::from_requested_codecs(&validated.preferred_codecs)?;
     let policy = apply_transcode_policy(
         bitrate_bps,
         sample_rate_hz,

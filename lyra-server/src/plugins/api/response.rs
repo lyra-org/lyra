@@ -23,7 +23,7 @@ use crate::plugins::LUA_SERIALIZE_OPTIONS;
 #[harmony_macros::interface]
 pub(super) struct TrackServeOptions {
     pub(super) format: Option<String>,
-    pub(super) codec: Option<String>,
+    pub(super) preferred_codecs: Option<Vec<String>>,
     pub(super) bitrate_bps: Option<u32>,
     pub(super) sample_rate_hz: Option<u32>,
     pub(super) channels: Option<u32>,
@@ -32,10 +32,27 @@ pub(super) struct TrackServeOptions {
 #[derive(Default, Serialize)]
 #[harmony_macros::interface]
 pub(super) struct HlsServeOptions {
-    pub(super) codec: Option<String>,
+    pub(super) preferred_codecs: Option<Vec<String>>,
     pub(super) bitrate_bps: Option<u32>,
     pub(super) sample_rate_hz: Option<u32>,
     pub(super) channels: Option<u32>,
+}
+
+fn parse_string_list_field(options: &Table, key: &str) -> mlua::Result<Option<Vec<String>>> {
+    let Some(values) = options.get::<Option<Vec<String>>>(key)? else {
+        return Ok(None);
+    };
+
+    let values = values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(values))
+    }
 }
 
 pub(super) fn parse_track_serve_options(options: Option<Table>) -> mlua::Result<TrackServeOptions> {
@@ -47,17 +64,14 @@ pub(super) fn parse_track_serve_options(options: Option<Table>) -> mlua::Result<
         .get::<Option<String>>("format")?
         .map(|format| format.trim().to_string())
         .filter(|format| !format.is_empty());
-    let codec = options
-        .get::<Option<String>>("codec")?
-        .map(|codec| codec.trim().to_string())
-        .filter(|codec| !codec.is_empty());
+    let preferred_codecs = parse_string_list_field(&options, "preferred_codecs")?;
     let bitrate_bps = options.get::<Option<u32>>("bitrate_bps")?;
     let sample_rate_hz = options.get::<Option<u32>>("sample_rate_hz")?;
     let channels = options.get::<Option<u32>>("channels")?;
 
     Ok(TrackServeOptions {
         format,
-        codec,
+        preferred_codecs,
         bitrate_bps,
         sample_rate_hz,
         channels,
@@ -69,16 +83,13 @@ pub(super) fn parse_hls_serve_options(options: Option<Table>) -> mlua::Result<Hl
         return Ok(HlsServeOptions::default());
     };
 
-    let codec = options
-        .get::<Option<String>>("codec")?
-        .map(|codec| codec.trim().to_string())
-        .filter(|codec| !codec.is_empty());
+    let preferred_codecs = parse_string_list_field(&options, "preferred_codecs")?;
     let bitrate_bps = options.get::<Option<u32>>("bitrate_bps")?;
     let sample_rate_hz = options.get::<Option<u32>>("sample_rate_hz")?;
     let channels = options.get::<Option<u32>>("channels")?;
 
     Ok(HlsServeOptions {
-        codec,
+        preferred_codecs,
         bitrate_bps,
         sample_rate_hz,
         channels,
@@ -251,7 +262,12 @@ pub(super) fn response_stream_track(
     let options = parse_track_serve_options(options)?;
     let response = build_kind_response_table(lua, "stream_track")?;
     response.set("track_id", track_id)?;
-    if options.format.is_some() || options.codec.is_some() {
+    if options.format.is_some()
+        || options.preferred_codecs.is_some()
+        || options.bitrate_bps.is_some()
+        || options.sample_rate_hz.is_some()
+        || options.channels.is_some()
+    {
         response.set("options", track_serve_options_to_lua(lua, &options)?)?;
     }
     Ok(response)
@@ -268,7 +284,7 @@ pub(super) fn response_hls_playlist(
     let options = parse_hls_serve_options(options)?;
     let response = build_kind_response_table(lua, "hls_playlist")?;
     response.set("track_id", track_id)?;
-    if options.codec.is_some()
+    if options.preferred_codecs.is_some()
         || options.bitrate_bps.is_some()
         || options.sample_rate_hz.is_some()
         || options.channels.is_some()
@@ -289,7 +305,12 @@ pub(super) fn response_download_track(
     let options = parse_track_serve_options(options)?;
     let response = build_kind_response_table(lua, "download_track")?;
     response.set("track_id", track_id)?;
-    if options.format.is_some() || options.codec.is_some() {
+    if options.format.is_some()
+        || options.preferred_codecs.is_some()
+        || options.bitrate_bps.is_some()
+        || options.sample_rate_hz.is_some()
+        || options.channels.is_some()
+    {
         response.set("options", track_serve_options_to_lua(lua, &options)?)?;
     }
     Ok(response)

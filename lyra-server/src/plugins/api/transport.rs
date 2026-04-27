@@ -70,6 +70,16 @@ use super::response::{
     parse_track_serve_options,
 };
 
+fn join_preferred_codecs(preferred_codecs: Option<Vec<String>>) -> Option<String> {
+    preferred_codecs.and_then(|preferred_codecs| {
+        if preferred_codecs.is_empty() {
+            None
+        } else {
+            Some(preferred_codecs.join(","))
+        }
+    })
+}
+
 pub(super) async fn build_context(
     lua: &Lua,
     route: &RegisteredRoute,
@@ -170,6 +180,7 @@ fn infer_content_type(path: &str) -> &'static str {
         Some("mp3") => "audio/mpeg",
         Some("ogg") => "audio/ogg",
         Some("opus") => "audio/ogg",
+        Some("webm") => "audio/webm",
         Some("wav") => "audio/wav",
         Some("m3u8") => "application/x-mpegurl",
         _ => "application/octet-stream",
@@ -203,7 +214,7 @@ pub(super) async fn lua_response_to_axum(
                     request_headers,
                     agdb::DbId(track_id),
                     options.format,
-                    options.codec,
+                    join_preferred_codecs(options.preferred_codecs),
                     options.bitrate_bps,
                     options.sample_rate_hz,
                     options.channels,
@@ -225,7 +236,7 @@ pub(super) async fn lua_response_to_axum(
                     request_headers,
                     agdb::DbId(track_id),
                     options.format,
-                    options.codec,
+                    join_preferred_codecs(options.preferred_codecs),
                     options.bitrate_bps,
                     options.sample_rate_hz,
                     options.channels,
@@ -246,7 +257,7 @@ pub(super) async fn lua_response_to_axum(
                 match serve_hls_playlist_for_track(
                     request_headers,
                     agdb::DbId(track_id),
-                    options.codec,
+                    join_preferred_codecs(options.preferred_codecs),
                     options.bitrate_bps,
                     options.sample_rate_hz,
                     options.channels,

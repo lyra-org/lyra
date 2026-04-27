@@ -44,9 +44,13 @@ use super::{
 
 #[derive(Deserialize, JsonSchema)]
 struct DownloadQuery {
-    #[schemars(description = "Optional output format (e.g. mp3, flac, m4a, alac).")]
+    #[schemars(
+        description = "Optional output format (e.g. mp3, flac, wav, ogg, webm, m4a, alac)."
+    )]
     format: Option<String>,
-    #[schemars(description = "Optional audio codec (e.g. aac, alac, opus).")]
+    #[schemars(
+        description = "Optional ordered audio codec preferences (e.g. opus,aac or pcm_s24be,pcm_s16be)."
+    )]
     codec: Option<String>,
     #[schemars(
         description = "Target bitrate cap in bits per second. Applied for lossy outputs when below the source bitrate; ignored for lossless codecs or when above source."
@@ -93,16 +97,38 @@ pub(crate) async fn download_track_response(
     let validated = validate_request(format, codec)?;
     let source = validate_and_get_track_source(track_db_id).await?;
 
-    let output_format = resolve_output_format(
+    let initial_output_format = resolve_output_format(
         validated.format,
-        validated.codec,
+        &validated.preferred_codecs,
         source.entry_format,
         &source.full_path,
+        true,
     )?;
 
-    let initial_codec = resolve_codec(validated.format, validated.codec, source.entry_format);
+    let initial_codec = resolve_codec(
+        &validated.preferred_codecs,
+        initial_output_format,
+        source.entry_format,
+        true,
+    )?;
+    let provisional_output_format = if matches!(initial_codec, AudioCodec::Copy) {
+        resolve_output_format(
+            validated.format,
+            &validated.preferred_codecs,
+            source.entry_format,
+            &source.full_path,
+            false,
+        )?
+    } else {
+        initial_output_format
+    };
     let provisional_codec = if matches!(initial_codec, AudioCodec::Copy) {
-        output_format.default_codec()
+        resolve_codec(
+            &validated.preferred_codecs,
+            provisional_output_format,
+            source.entry_format,
+            false,
+        )?
     } else {
         initial_codec
     };
@@ -117,11 +143,13 @@ pub(crate) async fn download_track_response(
         || policy.sample_rate_hz.is_some()
         || policy.channels.is_some();
 
+    let mut output_format = initial_output_format;
     let mut codec = initial_codec;
     if (source.start_ms.is_some() || source.end_ms.is_some() || forcing_transcode)
         && matches!(codec, AudioCodec::Copy)
     {
-        codec = output_format.default_codec();
+        output_format = provisional_output_format;
+        codec = provisional_codec;
     }
     let output_mime = output_format.mime_type(false);
 

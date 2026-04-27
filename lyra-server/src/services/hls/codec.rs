@@ -75,6 +75,20 @@ impl HlsCodecProfile {
             _ => Err(HlsError::UnsupportedCodec),
         }
     }
+
+    pub(crate) fn from_requested_codecs(preferred_codecs: &[AudioCodec]) -> Result<Self, HlsError> {
+        if preferred_codecs.is_empty() {
+            return Self::from_requested(None);
+        }
+
+        for codec in preferred_codecs {
+            if let Ok(profile) = Self::from_requested(Some(*codec)) {
+                return Ok(profile);
+            }
+        }
+
+        Err(HlsError::UnsupportedCodec)
+    }
 }
 
 pub(crate) fn build_hls_output(
@@ -131,7 +145,7 @@ mod tests {
 
     #[test]
     fn codec_profile_defaults_to_aac() {
-        let profile = HlsCodecProfile::from_requested(None).expect("default codec profile");
+        let profile = HlsCodecProfile::from_requested_codecs(&[]).expect("default codec profile");
         assert!(matches!(profile.codec, AudioCodec::Aac));
         assert_eq!(profile.segment_type, "mpegts");
         assert_eq!(profile.segment_extension, "ts");
@@ -140,12 +154,14 @@ mod tests {
 
     #[test]
     fn codec_profile_supports_fmp4_codecs() {
-        let alac = HlsCodecProfile::from_requested(Some(AudioCodec::Alac)).expect("alac profile");
+        let alac =
+            HlsCodecProfile::from_requested_codecs(&[AudioCodec::Alac]).expect("alac profile");
         assert_eq!(alac.segment_type, "fmp4");
         assert_eq!(alac.segment_extension, "m4s");
         assert_eq!(alac.init_filename, Some("init.mp4"));
 
-        let flac = HlsCodecProfile::from_requested(Some(AudioCodec::Flac)).expect("flac profile");
+        let flac =
+            HlsCodecProfile::from_requested_codecs(&[AudioCodec::Flac]).expect("flac profile");
         assert_eq!(flac.segment_type, "fmp4");
         assert_eq!(flac.segment_extension, "m4s");
         assert_eq!(flac.init_filename, Some("init.mp4"));
@@ -153,8 +169,19 @@ mod tests {
 
     #[test]
     fn codec_profile_rejects_unsupported_codecs() {
-        assert!(HlsCodecProfile::from_requested(Some(AudioCodec::Opus)).is_err());
-        assert!(HlsCodecProfile::from_requested(Some(AudioCodec::Copy)).is_err());
+        assert!(HlsCodecProfile::from_requested_codecs(&[AudioCodec::Opus]).is_err());
+        assert!(HlsCodecProfile::from_requested_codecs(&[AudioCodec::Copy]).is_err());
+    }
+
+    #[test]
+    fn codec_profile_chooses_first_supported_codec_from_preferences() {
+        let profile = HlsCodecProfile::from_requested_codecs(&[
+            AudioCodec::Opus,
+            AudioCodec::Aac,
+            AudioCodec::Flac,
+        ])
+        .expect("first supported codec should be selected");
+        assert!(matches!(profile.codec, AudioCodec::Aac));
     }
 
     #[test]
@@ -175,7 +202,8 @@ mod tests {
 
     #[test]
     fn hls_output_uses_vod_playlists_for_stored_audio() {
-        let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
+        let profile =
+            HlsCodecProfile::from_requested_codecs(&[AudioCodec::Aac]).expect("aac profile");
         let output = build_hls_output(
             std::path::Path::new("index.m3u8"),
             std::path::Path::new("segment-%05d.ts"),
@@ -204,7 +232,8 @@ mod tests {
 
     #[test]
     fn hls_output_applies_requested_bitrate_sample_rate_and_channels() {
-        let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
+        let profile =
+            HlsCodecProfile::from_requested_codecs(&[AudioCodec::Aac]).expect("aac profile");
         let output = build_hls_output(
             std::path::Path::new("index.m3u8"),
             std::path::Path::new("segment-%05d.ts"),
