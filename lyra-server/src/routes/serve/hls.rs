@@ -177,27 +177,18 @@ fn hls_segment_wait_timeout(segment: &str) -> Duration {
     }
 }
 
-fn build_hls_segment_uri(
-    track_db_id: DbId,
-    session_id: &str,
-    segment_name: &str,
-    signed_query: &str,
-) -> String {
-    format!(
-        "/api/stream/by-db-id/{}/hls/{session_id}/{segment_name}{signed_query}",
-        track_db_id.0
-    )
+fn build_hls_segment_uri(session_id: &str, segment_name: &str, signed_query: &str) -> String {
+    format!("/api/stream/hls/{session_id}/{segment_name}{signed_query}")
 }
 
 fn build_hls_media_playlist(
-    track_db_id: DbId,
     session_id: &str,
     duration_ms: u64,
     profile: HlsCodecProfile,
 ) -> String {
     let segment_ms = u64::from(HLS_SEGMENT_TIME_SECONDS) * 1000;
     let segment_count = hls_segment_count(duration_ms);
-    let signed_query = hls_signed_segment_query(track_db_id, session_id);
+    let signed_query = hls_signed_segment_query(session_id);
     let mut playlist = String::with_capacity(256 + (segment_count as usize * 128));
 
     let _ = writeln!(playlist, "#EXTM3U");
@@ -212,7 +203,7 @@ fn build_hls_media_playlist(
     let _ = writeln!(playlist, "#EXT-X-INDEPENDENT-SEGMENTS");
 
     if let Some(init_filename) = profile.init_filename {
-        let init_uri = build_hls_segment_uri(track_db_id, session_id, init_filename, &signed_query);
+        let init_uri = build_hls_segment_uri(session_id, init_filename, &signed_query);
         let _ = writeln!(playlist, "#EXT-X-MAP:URI=\"{init_uri}\"");
     }
 
@@ -220,8 +211,7 @@ fn build_hls_media_playlist(
         let segment_start_ms = segment_index * segment_ms;
         let segment_duration_ms = duration_ms.saturating_sub(segment_start_ms).min(segment_ms);
         let segment_name = format!("segment-{segment_index:05}.{}", profile.segment_extension);
-        let segment_uri =
-            build_hls_segment_uri(track_db_id, session_id, &segment_name, &signed_query);
+        let segment_uri = build_hls_segment_uri(session_id, &segment_name, &signed_query);
         let _ = writeln!(
             playlist,
             "#EXTINF:{:.6},",
@@ -297,7 +287,7 @@ pub(crate) async fn serve_hls_playlist_for_track(
         job_key,
     )
     .await?;
-    let playlist = build_hls_media_playlist(track_db_id, &session_id, duration_ms, profile);
+    let playlist = build_hls_media_playlist(&session_id, duration_ms, profile);
 
     let response = Response::builder()
         .header(header::CONTENT_TYPE, "application/x-mpegurl")
@@ -327,31 +317,32 @@ pub(crate) async fn serve_hls_playlist_for_track(
 
 async fn get_hls_segment(
     headers: HeaderMap,
-    Path((track_db_id, session_id, segment)): Path<(i64, String, String)>,
+    Path((session_id, segment)): Path<(String, String)>,
     Query(query): Query<HlsSegmentQuery>,
 ) -> Result<Response<Body>, AppError> {
-    let track_db_id = DbId(track_db_id);
-
     let segment = sanitize_segment_name(&segment)?;
-    let signed_request_is_valid = validate_signed_segment_query(track_db_id, &session_id, &query);
+    let signed_request_is_valid = validate_signed_segment_query(&session_id, &query);
     let principal = if signed_request_is_valid {
         None
     } else {
         Some(require_download_access(&headers).await?)
     };
 
-    let job_key = {
+    let (track_db_id, job_key, playlist_segment_count) = {
         let mut sessions = HLS_SESSIONS.write().await;
         let session = sessions
             .get_mut(&session_id)
             .ok_or_else(|| AppError::not_found("HLS session not found"))?;
 
-        authorize_hls_segment_session(session, track_db_id, principal.map(|p| p.user_db_id))?;
+        authorize_hls_segment_session(session, principal.map(|p| p.user_db_id))?;
 
         session.last_access = Instant::now();
-        (session.job_key.clone(), session.playlist_segment_count)
+        (
+            session.track_db_id,
+            session.job_key.clone(),
+            session.playlist_segment_count,
+        )
     };
-    let (job_key, playlist_segment_count) = job_key;
 
     let segment_dir = {
         let jobs = HLS_JOBS.read().await;
@@ -419,14 +410,14 @@ async fn get_hls_segment(
 fn hls_playlist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create HLS playlist")
         .description(
-            "Generates an HLS VOD media playlist for a finite track and returns M3U8 with segment URLs under `/api/stream/by-db-id/{track_db_id}/hls/{session_id}/...`. Segment URLs include short-lived signed query tokens for client compatibility when auth headers are not forwarded. The optional `codec` query parameter supports `aac` (default), `alac`, and `flac`.",
+            "Generates an HLS VOD media playlist for a finite track and returns M3U8 with segment URLs under `/api/stream/hls/{session_id}/...`. Segment URLs include short-lived signed query tokens for client compatibility when auth headers are not forwarded. The optional `codec` query parameter supports `aac` (default), `alac`, and `flac`.",
         )
 }
 
 fn hls_segment_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get HLS segment")
         .description(
-            "Serves an HLS segment generated from `/api/stream/{track_id}/hls.m3u8`. Segment URLs use the internal numeric `track_db_id` emitted in the playlist. Accepts either the session owner via bearer auth or a valid short-lived signed URL token.",
+            "Serves an HLS segment generated from `/api/stream/{track_id}/hls.m3u8`. Segment URLs are session-scoped and use either the session owner via bearer auth or a valid short-lived signed URL token.",
         )
 }
 
@@ -437,7 +428,7 @@ pub(crate) fn hls_routes() -> ApiRouter {
             get_with(get_hls_playlist, hls_playlist_docs),
         )
         .api_route(
-            "/by-db-id/{track_db_id}/hls/{session_id}/{segment}",
+            "/hls/{session_id}/{segment}",
             get_with(get_hls_segment, hls_segment_docs),
         )
 }
@@ -534,27 +525,25 @@ mod tests {
     #[test]
     fn build_hls_media_playlist_uses_vod_markers_and_signed_segment_urls() {
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
-        let playlist = build_hls_media_playlist(DbId(99), "sess", 21_452, profile);
+        let playlist = build_hls_media_playlist("sess", 21_452, profile);
 
         assert!(playlist.contains("#EXT-X-VERSION:6"));
         assert!(playlist.contains("#EXT-X-PLAYLIST-TYPE:VOD"));
         assert!(playlist.contains("#EXT-X-INDEPENDENT-SEGMENTS"));
         assert!(playlist.contains("#EXT-X-ENDLIST"));
         assert!(playlist.contains("#EXTINF:3.452000,"));
-        assert!(playlist.contains("/api/stream/by-db-id/99/hls/sess/segment-00000.ts?exp="));
+        assert!(playlist.contains("/api/stream/hls/sess/segment-00000.ts?exp="));
     }
 
     #[test]
     fn build_hls_media_playlist_uses_init_map_for_fmp4_profiles() {
         let profile =
             HlsCodecProfile::from_requested(Some(AudioCodec::Alac)).expect("alac profile");
-        let playlist = build_hls_media_playlist(DbId(99), "sess", 21_452, profile);
+        let playlist = build_hls_media_playlist("sess", 21_452, profile);
 
         assert!(playlist.contains("#EXT-X-VERSION:7"));
-        assert!(
-            playlist.contains("#EXT-X-MAP:URI=\"/api/stream/by-db-id/99/hls/sess/init.mp4?exp=")
-        );
-        assert!(playlist.contains("/api/stream/by-db-id/99/hls/sess/segment-00000.m4s?exp="));
+        assert!(playlist.contains("#EXT-X-MAP:URI=\"/api/stream/hls/sess/init.mp4?exp="));
+        assert!(playlist.contains("/api/stream/hls/sess/segment-00000.m4s?exp="));
     }
 
     #[tokio::test]
@@ -600,10 +589,10 @@ mod tests {
             .expect("valid timestamp")
             .as_secs()
             + 30;
-        let sig = hls_sign_segment_token(track_db_id, &session_id, exp);
+        let sig = hls_sign_segment_token(&session_id, exp);
         let response = match get_hls_segment(
             HeaderMap::new(),
-            Path((track_db_id.0, session_id.clone(), segment_name.to_string())),
+            Path((session_id.clone(), segment_name.to_string())),
             Query(HlsSegmentQuery {
                 exp: Some(exp),
                 sig: Some(sig),

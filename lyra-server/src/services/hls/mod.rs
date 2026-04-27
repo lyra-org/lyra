@@ -17,8 +17,6 @@ pub(crate) enum HlsError {
     TranscodeCapacityUnavailable,
     #[error("HLS transcode job not found")]
     JobNotFound,
-    #[error("HLS session not found")]
-    SessionNotFound,
     #[error("HLS session does not belong to current user")]
     SessionForbidden,
     #[error(transparent)]

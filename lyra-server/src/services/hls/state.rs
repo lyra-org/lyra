@@ -343,13 +343,8 @@ pub(crate) async fn detach_hls_session_with_timestamp(
 
 pub(crate) fn authorize_hls_segment_session(
     session: &HlsSession,
-    track_db_id: DbId,
     principal_user_id: Option<DbId>,
 ) -> Result<(), HlsError> {
-    if session.track_db_id != track_db_id {
-        return Err(HlsError::SessionNotFound);
-    }
-
     if let Some(principal_user_id) = principal_user_id
         && session.user_db_id != principal_user_id
     {
@@ -442,16 +437,12 @@ mod tests {
             last_access: Instant::now(),
         };
 
-        assert!(authorize_hls_segment_session(&session, DbId(77), Some(DbId(10))).is_ok());
-        assert!(authorize_hls_segment_session(&session, DbId(77), None).is_ok());
+        assert!(authorize_hls_segment_session(&session, Some(DbId(10))).is_ok());
+        assert!(authorize_hls_segment_session(&session, None).is_ok());
 
-        let owner_err = authorize_hls_segment_session(&session, DbId(77), Some(DbId(11)))
+        let owner_err = authorize_hls_segment_session(&session, Some(DbId(11)))
             .expect_err("owner mismatch should be forbidden");
         assert!(matches!(owner_err, HlsError::SessionForbidden));
-
-        let track_err = authorize_hls_segment_session(&session, DbId(78), Some(DbId(10)))
-            .expect_err("track mismatch should be not found");
-        assert!(matches!(track_err, HlsError::SessionNotFound));
     }
 
     #[tokio::test]
