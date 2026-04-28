@@ -3249,7 +3249,7 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 	local raw_codec = if query then (query.audioCodec or query.AudioCodec) else nil
 	local raw_transcoding_container = if query then (query.transcodingContainer or query.TranscodingContainer) else nil
 	local raw_max_bitrate = if query then (query.MaxStreamingBitrate or query.maxStreamingBitrate) else nil
-	local raw_audio_bitrate = if query then (query.audioBitRate or query.AudioBitRate) else nil
+	local raw_audio_bitrate = if query then (query.audioBitRate or query.AudioBitRate or query.AudioBitrate) else nil
 	local raw_sample_rate = if query then (query.audioSampleRate or query.AudioSampleRate) else nil
 	local raw_bit_depth = if query then (query.maxAudioBitDepth or query.MaxAudioBitDepth) else nil
 	local raw_channels = if query then (query.maxAudioChannels or query.MaxAudioChannels) else nil
@@ -3482,7 +3482,7 @@ local function resolve_audio_hls_query_options(query: ApiQueryParams?): (api.Hls
 		return nil, nil, base.bad_request("unsupported hls codec; supported values: aac, alac, flac")
 	end
 
-	local raw_audio_bitrate = if query then (query.audioBitRate or query.AudioBitRate) else nil
+	local raw_audio_bitrate = if query then (query.audioBitRate or query.AudioBitRate or query.AudioBitrate) else nil
 	local raw_max_bitrate = if query then (query.maxStreamingBitrate or query.MaxStreamingBitrate) else nil
 	local raw_sample_rate = if query then (query.audioSampleRate or query.AudioSampleRate) else nil
 	local raw_channels = if query then (query.maxAudioChannels or query.MaxAudioChannels) else nil
