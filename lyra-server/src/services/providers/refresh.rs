@@ -31,7 +31,9 @@ use crate::{
         CoverSyncOptions,
         covers::{
             configured_covers_root,
+            resolve_cover_for_artist_id,
             resolve_cover_for_release_id,
+            sync_artist_cover,
             sync_release_cover_for_tracks,
         },
         deduplicate_artists_by_external_id,
@@ -43,6 +45,7 @@ use crate::{
         resolve_release_covers,
         sync_release_cover_metadata_from_resolved,
         sync_release_covers_for_library,
+        upsert_artist_cover_metadata,
         upsert_release_cover_metadata,
     },
 };
@@ -185,72 +188,135 @@ async fn refresh_entity_metadata_inner(
         providers_called.push(provider_id);
     }
 
-    if entity_type == EntityType::Release
-        && let Some(cover_sync_options) = cover_sync_options
-    {
-        let covers_root = configured_covers_root();
-        let mut resolved_cover_path = None;
+    if let Some(cover_sync_options) = cover_sync_options {
+        match entity_type {
+            EntityType::Release => {
+                let covers_root = configured_covers_root();
+                let mut resolved_cover_path = None;
 
-        let (release_entity, tracks, artists, library_root) = {
-            let db = STATE.db.read().await;
-            let library_root = if let Some(library_db_id) = library_db_id {
-                db::libraries::get_by_id(&db, library_db_id)?.map(|library| library.directory)
-            } else {
-                None
-            };
-            let release = db::releases::get_by_id(&db, node_id)?;
-            let tracks = db::tracks::get(&db, node_id)?;
-            let artists = db::artists::get(&db, node_id)?;
-            (release, tracks, artists, library_root)
-        };
+                let (release_entity, tracks, artists, library_root) = {
+                    let db = STATE.db.read().await;
+                    let library_root = if let Some(library_db_id) = library_db_id {
+                        db::libraries::get_by_id(&db, library_db_id)?
+                            .map(|library| library.directory)
+                    } else {
+                        None
+                    };
+                    let release = db::releases::get_by_id(&db, node_id)?;
+                    let tracks = db::tracks::get(&db, node_id)?;
+                    let artists = db::artists::get(&db, node_id)?;
+                    (release, tracks, artists, library_root)
+                };
 
-        let cover_paths = CoverPaths {
-            library_root: library_root.as_deref(),
-            covers_root: covers_root.as_deref(),
-        };
+                let cover_paths = CoverPaths {
+                    library_root: library_root.as_deref(),
+                    covers_root: covers_root.as_deref(),
+                };
 
-        if let Some(release) = release_entity {
-            if let Err(err) = sync_release_cover_for_tracks(
-                &STATE.db.get(),
-                &tracks,
-                &release,
-                &artists,
-                cover_paths,
-                cover_sync_options,
-            )
-            .await
-            {
-                tracing::warn!(
-                    release_db_id = node_id.0,
-                    error = %err,
-                    "cover sync failed during release entity refresh"
-                );
-            }
+                if let Some(release) = release_entity {
+                    if let Err(err) = sync_release_cover_for_tracks(
+                        &STATE.db.get(),
+                        &tracks,
+                        &release,
+                        &artists,
+                        cover_paths,
+                        cover_sync_options,
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            release_db_id = node_id.0,
+                            error = %err,
+                            "cover sync failed during release entity refresh"
+                        );
+                    }
 
-            let db = STATE.db.read().await;
-            match resolve_cover_for_release_id(&db, node_id, cover_paths) {
-                Ok(path) => {
-                    resolved_cover_path = path;
+                    let db = STATE.db.read().await;
+                    match resolve_cover_for_release_id(&db, node_id, cover_paths) {
+                        Ok(path) => {
+                            resolved_cover_path = path;
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                release_db_id = node_id.0,
+                                error = %err,
+                                "cover resolution failed during release entity refresh"
+                            );
+                        }
+                    }
                 }
-                Err(err) => {
-                    tracing::warn!(
-                        release_db_id = node_id.0,
-                        error = %err,
-                        "cover resolution failed during release entity refresh"
-                    );
+
+                if let Some(cover_path) = resolved_cover_path {
+                    if let Err(err) =
+                        upsert_release_cover_metadata(&STATE.db.get(), node_id, &cover_path).await
+                    {
+                        tracing::warn!(
+                            release_db_id = node_id.0,
+                            cover_path = %cover_path.display(),
+                            error = %err,
+                            "cover metadata upsert failed during release entity refresh"
+                        );
+                    }
                 }
             }
-        }
+            EntityType::Artist => {
+                let covers_root = configured_covers_root();
+                let cover_paths = CoverPaths {
+                    // Artist covers are provider-managed and not library-scoped.
+                    library_root: None,
+                    covers_root: covers_root.as_deref(),
+                };
+                let artist_entity = {
+                    let db = STATE.db.read().await;
+                    db::artists::get_by_id(&db, node_id)?
+                };
 
-        if let Some(cover_path) = resolved_cover_path {
-            if let Err(err) =
-                upsert_release_cover_metadata(&STATE.db.get(), node_id, &cover_path).await
-            {
-                tracing::warn!(
-                    release_db_id = node_id.0,
-                    cover_path = %cover_path.display(),
-                    error = %err,
-                    "cover metadata upsert failed during release entity refresh"
+                if let Some(artist) = artist_entity {
+                    if let Err(err) =
+                        sync_artist_cover(&STATE.db.get(), &artist, cover_paths, cover_sync_options)
+                            .await
+                    {
+                        tracing::warn!(
+                            artist_db_id = node_id.0,
+                            error = %err,
+                            "cover sync failed during artist entity refresh"
+                        );
+                    }
+
+                    let resolved_cover_path = {
+                        let db = STATE.db.read().await;
+                        match resolve_cover_for_artist_id(&db, node_id, cover_paths) {
+                            Ok(path) => path,
+                            Err(err) => {
+                                tracing::warn!(
+                                    artist_db_id = node_id.0,
+                                    error = %err,
+                                    "cover resolution failed during artist entity refresh"
+                                );
+                                None
+                            }
+                        }
+                    };
+
+                    if let Some(cover_path) = resolved_cover_path {
+                        if let Err(err) =
+                            upsert_artist_cover_metadata(&STATE.db.get(), node_id, &cover_path)
+                                .await
+                        {
+                            tracing::warn!(
+                                artist_db_id = node_id.0,
+                                cover_path = %cover_path.display(),
+                                error = %err,
+                                "cover metadata upsert failed during artist entity refresh"
+                            );
+                        }
+                    }
+                }
+            }
+            EntityType::Track => {
+                tracing::debug!(
+                    track_db_id = node_id.0,
+                    "skipping cover sync for track entity refresh"
                 );
             }
         }

@@ -17,16 +17,11 @@ use aide::axum::{
 use aide::transform::TransformOperation;
 use axum::{
     Json,
-    body::Body,
     extract::{
         Path,
         Query,
     },
-    http::{
-        HeaderMap,
-        Response,
-        header,
-    },
+    http::HeaderMap,
 };
 use schemars::JsonSchema;
 use serde::{
@@ -48,6 +43,7 @@ use crate::{
     },
     routes::AppError,
     routes::{
+        covers as route_covers,
         deserialize_inc,
         responses::{
             EntryResponse,
@@ -55,7 +51,6 @@ use crate::{
             ReleaseResponse,
             TrackResponse,
         },
-        serve::file_response,
     },
     services::{
         auth::require_authenticated,
@@ -66,28 +61,9 @@ use crate::{
 
 #[derive(Serialize, JsonSchema)]
 #[non_exhaustive]
-pub struct CoverSearchCandidateResponse {
-    pub url: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub width: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub height: Option<u32>,
-}
-
-#[derive(Serialize, JsonSchema)]
-#[non_exhaustive]
-pub struct ProviderCoverSearchResponse {
-    pub provider_id: String,
-    pub candidates: Vec<CoverSearchCandidateResponse>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub selected_index: Option<u32>,
-}
-
-#[derive(Serialize, JsonSchema)]
-#[non_exhaustive]
 pub struct ReleaseCoverSearchResponse {
     pub release_id: String,
-    pub results: Vec<ProviderCoverSearchResponse>,
+    pub results: Vec<route_covers::ProviderCoverSearchResponse>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -120,27 +96,6 @@ pub(crate) struct ReleaseQuery {
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     pub(crate) inc: Option<Vec<String>>,
-}
-
-#[derive(Deserialize, JsonSchema, Default)]
-struct ReleaseCoverQuery {
-    #[schemars(description = "Optional output image format (jpg, png, webp).")]
-    format: Option<String>,
-    #[schemars(description = "Optional output quality (0-100).")]
-    quality: Option<u8>,
-    #[schemars(description = "Optional maximum output width in pixels.")]
-    max_width: Option<u32>,
-    #[schemars(description = "Optional maximum output height in pixels.")]
-    max_height: Option<u32>,
-}
-
-#[derive(Deserialize, JsonSchema, Default)]
-struct ReleaseCoverSearchQuery {
-    #[schemars(description = "Optional provider ID to limit cover search results.")]
-    provider: Option<String>,
-    #[serde(default)]
-    #[schemars(description = "Bypass cached provider cover resolution and refresh it.")]
-    force_refresh: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -261,47 +216,6 @@ fn parse_text_query(query: Option<String>) -> Option<String> {
             Some(value.to_string())
         }
     })
-}
-
-fn parse_cover_transform_options(
-    query: &ReleaseCoverQuery,
-) -> Result<Option<covers::CoverTransformOptions>, AppError> {
-    let format = match query.format.as_deref() {
-        Some(raw) => Some(covers::parse_cover_image_format(raw).ok_or_else(|| {
-            AppError::bad_request(format!(
-                "Unsupported image format: {}. Supported formats: jpg, png, webp",
-                raw
-            ))
-        })?),
-        None => None,
-    };
-
-    if let Some(quality) = query.quality
-        && quality > 100
-    {
-        return Err(AppError::bad_request("quality must be between 0 and 100"));
-    }
-
-    if query.max_width == Some(0) {
-        return Err(AppError::bad_request("max_width must be greater than 0"));
-    }
-
-    if query.max_height == Some(0) {
-        return Err(AppError::bad_request("max_height must be greater than 0"));
-    }
-
-    let options = covers::CoverTransformOptions {
-        format,
-        quality: query.quality,
-        max_width: query.max_width,
-        max_height: query.max_height,
-    };
-
-    if options.is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(options))
 }
 
 pub(crate) fn build_cover_response(
@@ -435,12 +349,13 @@ async fn get_release(
 async fn get_release_cover(
     headers: HeaderMap,
     Path(id): Path<String>,
-    Query(query): Query<ReleaseCoverQuery>,
-) -> Result<Response<Body>, AppError> {
+    Query(query): Query<route_covers::CoverQuery>,
+) -> Result<axum::http::Response<axum::body::Body>, AppError> {
     let _principal = require_authenticated(&headers).await?;
 
-    let transform_options = parse_cover_transform_options(&query)?;
-    let (release_db_id, cover, needs_metadata_upsert) = {
+    let transform_options = route_covers::parse_cover_transform_options(&query)?;
+    let covers_root = covers::configured_covers_root();
+    let (release_db_id, library_root, mut cover, needs_metadata_upsert) = {
         let db = STATE.db.read().await;
         let release_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
@@ -448,7 +363,6 @@ async fn get_release_cover(
             .into_iter()
             .next()
             .map(|library| library.directory);
-        let covers_root = covers::configured_covers_root();
         let cover_paths = covers::CoverPaths {
             library_root: library_root.as_deref(),
             covers_root: covers_root.as_deref(),
@@ -466,10 +380,30 @@ async fn get_release_cover(
         let resolved_path = cover.to_string_lossy().into_owned();
         let needs_upsert = db_cover.is_none_or(|stored| stored.path != resolved_path);
 
-        (release_db_id, cover, needs_upsert)
+        (release_db_id, library_root, cover, needs_upsert)
     };
 
     if needs_metadata_upsert {
+        let cover_paths = covers::CoverPaths {
+            library_root: library_root.as_deref(),
+            covers_root: covers_root.as_deref(),
+        };
+        match {
+            let db = STATE.db.read().await;
+            covers::resolve_cover_for_release_id(&db, release_db_id, cover_paths)
+        } {
+            Ok(Some(latest_cover)) => {
+                cover = latest_cover;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                tracing::warn!(
+                    release_id = release_db_id.0,
+                    error = %err,
+                    "failed to re-resolve release cover before metadata upsert"
+                );
+            }
+        }
         if let Err(err) =
             covers::upsert_release_cover_metadata(&STATE.db.get(), release_db_id, &cover).await
         {
@@ -482,34 +416,13 @@ async fn get_release_cover(
         }
     }
 
-    if let Some(options) = transform_options {
-        let cover_path = cover.clone();
-        let transformed = tokio::task::spawn_blocking(move || {
-            covers::transform_cover_image(&cover_path, &options)
-        })
-        .await
-        .map_err(|err| AppError::from(anyhow::anyhow!("cover transform task failed: {err}")))??;
-
-        let response = Response::builder()
-            .header(header::CONTENT_TYPE, transformed.mime_type)
-            .header(header::CONTENT_LENGTH, transformed.bytes.len().to_string())
-            .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
-            .header(header::PRAGMA, "no-cache")
-            .header(header::EXPIRES, "0")
-            .body(Body::from(transformed.bytes))
-            .map_err(AppError::from)?;
-        return Ok(response);
-    }
-
-    let content_type = covers::cover_mime_from_path(&cover);
-    let headers = HeaderMap::new();
-    file_response(&cover, content_type, &headers).await
+    route_covers::serve_cover_response(&cover, transform_options, &headers).await
 }
 
 async fn search_release_covers(
     headers: HeaderMap,
     Path(id): Path<String>,
-    Json(query): Json<ReleaseCoverSearchQuery>,
+    Json(query): Json<route_covers::CoverSearchQuery>,
 ) -> Result<Json<ReleaseCoverSearchResponse>, AppError> {
     let _principal = require_authenticated(&headers).await?;
 
@@ -530,22 +443,7 @@ async fn search_release_covers(
         query.force_refresh,
     )
     .await?;
-    let results = found
-        .into_iter()
-        .map(|result| ProviderCoverSearchResponse {
-            provider_id: result.provider_id,
-            candidates: result
-                .candidates
-                .into_iter()
-                .map(|candidate| CoverSearchCandidateResponse {
-                    url: candidate.url,
-                    width: candidate.width,
-                    height: candidate.height,
-                })
-                .collect(),
-            selected_index: result.selected_index,
-        })
-        .collect();
+    let results = route_covers::map_provider_cover_search_results(found);
 
     Ok(Json(ReleaseCoverSearchResponse {
         release_id: id,
@@ -573,7 +471,7 @@ fn get_release_cover_docs(op: TransformOperation) -> TransformOperation {
 
 fn search_release_covers_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Search release cover candidates").description(
-        "Returns provider cover candidates for a release. Request body: `{ provider?, force_refresh? }`; \
+        "Returns provider cover candidates for a release. Request body (JSON): `{ provider?, force_refresh? }`; \
         `force_refresh=true` bypasses cached provider cover resolution. Providers may return \
         width, height, and selected_index for automatic selection.",
     )
@@ -748,14 +646,14 @@ mod tests {
 
     #[test]
     fn parse_cover_transform_options_accepts_common_values() -> anyhow::Result<()> {
-        let query = ReleaseCoverQuery {
+        let query = route_covers::CoverQuery {
             format: Some("webp".to_string()),
             quality: Some(85),
             max_width: Some(640),
             max_height: Some(640),
         };
 
-        let options = match parse_cover_transform_options(&query) {
+        let options = match route_covers::parse_cover_transform_options(&query) {
             Ok(options) => options,
             Err(_) => return Err(anyhow::anyhow!("expected valid transform options")),
         }
@@ -769,8 +667,8 @@ mod tests {
 
     #[test]
     fn parse_cover_transform_options_empty_is_none() -> anyhow::Result<()> {
-        let query = ReleaseCoverQuery::default();
-        let options = match parse_cover_transform_options(&query) {
+        let query = route_covers::CoverQuery::default();
+        let options = match route_covers::parse_cover_transform_options(&query) {
             Ok(options) => options,
             Err(_) => return Err(anyhow::anyhow!("expected empty transform options")),
         };
@@ -780,14 +678,15 @@ mod tests {
 
     #[tokio::test]
     async fn parse_cover_transform_options_rejects_invalid_format() -> anyhow::Result<()> {
-        let query = ReleaseCoverQuery {
+        let query = route_covers::CoverQuery {
             format: Some("gif".to_string()),
             quality: None,
             max_width: None,
             max_height: None,
         };
 
-        let err = parse_cover_transform_options(&query).expect_err("expected invalid format error");
+        let err = route_covers::parse_cover_transform_options(&query)
+            .expect_err("expected invalid format error");
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = to_bytes(response.into_body(), usize::MAX).await?;
@@ -799,14 +698,15 @@ mod tests {
     #[tokio::test]
     async fn parse_cover_transform_options_rejects_invalid_quality_and_bounds() -> anyhow::Result<()>
     {
-        let query = ReleaseCoverQuery {
+        let query = route_covers::CoverQuery {
             format: Some("jpg".to_string()),
             quality: Some(101),
             max_width: Some(0),
             max_height: None,
         };
 
-        let err = parse_cover_transform_options(&query).expect_err("expected validation error");
+        let err = route_covers::parse_cover_transform_options(&query)
+            .expect_err("expected validation error");
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = to_bytes(response.into_body(), usize::MAX).await?;
@@ -820,14 +720,15 @@ mod tests {
 
     #[tokio::test]
     async fn parse_cover_transform_options_rejects_zero_bounds() -> anyhow::Result<()> {
-        let query = ReleaseCoverQuery {
+        let query = route_covers::CoverQuery {
             format: None,
             quality: None,
             max_width: Some(0),
             max_height: Some(320),
         };
 
-        let err = parse_cover_transform_options(&query).expect_err("expected bounds error");
+        let err =
+            route_covers::parse_cover_transform_options(&query).expect_err("expected bounds error");
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = to_bytes(response.into_body(), usize::MAX).await?;

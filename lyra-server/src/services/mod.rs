@@ -91,5 +91,6 @@ pub(crate) use covers::{
     resolve_release_covers,
     sync_release_cover_metadata_from_resolved,
     sync_release_covers_for_library,
+    upsert_artist_cover_metadata,
     upsert_release_cover_metadata,
 };

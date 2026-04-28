@@ -8,6 +8,7 @@ use aide::axum::{
     routing::{
         get_with,
         patch_with,
+        post_with,
     },
 };
 use aide::transform::TransformOperation;
@@ -20,23 +21,30 @@ use axum::{
     http::HeaderMap,
 };
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 use crate::{
     STATE,
     db,
     routes::AppError,
-    routes::deserialize_inc,
-    routes::responses::{
-        ArtistRelationResponse,
-        ArtistResponse,
-        RelatedArtistResponse,
-        RelationDirectionResponse,
-        ReleaseResponse,
+    routes::{
+        covers as route_covers,
+        deserialize_inc,
+        responses::{
+            ArtistRelationResponse,
+            ArtistResponse,
+            RelatedArtistResponse,
+            RelationDirectionResponse,
+            ReleaseResponse,
+        },
     },
     services::{
         artists as artist_service,
         auth::require_authenticated,
+        covers,
     },
 };
 
@@ -55,6 +63,13 @@ struct ArtistUpdateRequest {
     sort_name: Option<Option<String>>,
     #[schemars(description = "Updated description; set to null to clear.")]
     description: Option<Option<String>>,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[non_exhaustive]
+pub struct ArtistCoverSearchResponse {
+    pub artist_id: String,
+    pub results: Vec<route_covers::ProviderCoverSearchResponse>,
 }
 
 fn parse_inc(inc: Option<Vec<String>>) -> Result<artist_service::ArtistIncludes, AppError> {
@@ -163,6 +178,108 @@ async fn get_artist(
     Ok(Json(get_artist_response(id, query.inc).await?))
 }
 
+async fn get_artist_cover(
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(query): Query<route_covers::CoverQuery>,
+) -> Result<axum::http::Response<axum::body::Body>, AppError> {
+    let _principal = require_authenticated(&headers).await?;
+
+    let transform_options = route_covers::parse_cover_transform_options(&query)?;
+    let covers_root = covers::configured_covers_root();
+    let (artist_db_id, mut cover, needs_metadata_upsert) = {
+        let db = STATE.db.read().await;
+        let artist_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
+            .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
+        if db::artists::get_by_id(&db, artist_db_id)?.is_none() {
+            return Err(AppError::not_found(format!("Artist not found: {}", id)));
+        }
+
+        let cover_paths = covers::CoverPaths {
+            library_root: None,
+            covers_root: covers_root.as_deref(),
+        };
+
+        let resolved = covers::resolve_cover_for_artist_id(&db, artist_db_id, cover_paths)?;
+        let Some(cover) = resolved else {
+            return Err(AppError::not_found(format!(
+                "Cover not found for artist: {}",
+                id
+            )));
+        };
+
+        let db_cover = db::covers::get(&db, artist_db_id)?;
+        let resolved_path = cover.to_string_lossy().into_owned();
+        let needs_upsert = db_cover.is_none_or(|stored| stored.path != resolved_path);
+
+        (artist_db_id, cover, needs_upsert)
+    };
+
+    if needs_metadata_upsert {
+        let cover_paths = covers::CoverPaths {
+            library_root: None,
+            covers_root: covers_root.as_deref(),
+        };
+        match {
+            let db = STATE.db.read().await;
+            covers::resolve_cover_for_artist_id(&db, artist_db_id, cover_paths)
+        } {
+            Ok(Some(latest_cover)) => {
+                cover = latest_cover;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                tracing::warn!(
+                    artist_id = artist_db_id.0,
+                    error = %err,
+                    "failed to re-resolve artist cover before metadata upsert"
+                );
+            }
+        }
+        if let Err(err) =
+            covers::upsert_artist_cover_metadata(&STATE.db.get(), artist_db_id, &cover).await
+        {
+            tracing::warn!(
+                artist_id = artist_db_id.0,
+                cover_path = %cover.display(),
+                error = %err,
+                "failed to persist cover metadata while serving artist cover"
+            );
+        }
+    }
+
+    route_covers::serve_cover_response(&cover, transform_options, &headers).await
+}
+
+async fn search_artist_covers(
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(query): Json<route_covers::CoverSearchQuery>,
+) -> Result<Json<ArtistCoverSearchResponse>, AppError> {
+    let _principal = require_authenticated(&headers).await?;
+
+    let artist_db_id = {
+        let db = STATE.db.read().await;
+        let artist_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
+            .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
+        if db::artists::get_by_id(&db, artist_db_id)?.is_none() {
+            return Err(AppError::not_found(format!("Artist not found: {}", id)));
+        }
+        artist_db_id
+    };
+
+    let provider_filter = query.provider.as_deref();
+    let found =
+        covers::search_artist_cover_candidates(artist_db_id, provider_filter, query.force_refresh)
+            .await?;
+    let results = route_covers::map_provider_cover_search_results(found);
+
+    Ok(Json(ArtistCoverSearchResponse {
+        artist_id: id,
+        results,
+    }))
+}
+
 async fn update_artist(
     headers: HeaderMap,
     Path(id): Path<String>,
@@ -235,6 +352,20 @@ fn get_artist_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
+fn get_artist_cover_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Get artist cover").description(
+        "Returns the artist cover image for an artist. Supports optional transform parameters: `format`, `quality`, `max_width`, and `max_height`.",
+    )
+}
+
+fn search_artist_covers_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Search artist cover candidates").description(
+        "Returns provider cover candidates for an artist. Request body (JSON): `{ provider?, force_refresh? }`; \
+        `force_refresh=true` bypasses cached provider cover resolution. Providers may return \
+        width, height, and selected_index for automatic selection.",
+    )
+}
+
 fn update_artist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update artist")
         .description("Updates artist name, sort name, and description. Set sort_name or description to null to clear.")
@@ -244,5 +375,110 @@ pub fn artist_routes() -> ApiRouter {
     ApiRouter::new()
         .api_route("/", get_with(get_artists, list_artists_docs))
         .api_route("/{id}", get_with(get_artist, get_artist_docs))
+        .api_route(
+            "/{id}/cover",
+            get_with(get_artist_cover, get_artist_cover_docs),
+        )
+        .api_route(
+            "/{id}/covers/search",
+            post_with(search_artist_covers, search_artist_covers_docs),
+        )
         .api_route("/{id}", patch_with(update_artist, update_artist_docs))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        db::test_db::insert_artist,
+        services::auth::sessions,
+        testing::{
+            LibraryFixtureConfig,
+            initialize_runtime,
+            runtime_test_lock,
+        },
+    };
+    use axum::{
+        Json,
+        extract::Path,
+        http::{
+            HeaderMap,
+            header::AUTHORIZATION,
+        },
+    };
+    use std::{
+        path::PathBuf,
+        time::{
+            SystemTime,
+            UNIX_EPOCH,
+        },
+    };
+
+    struct TestDirGuard(PathBuf);
+
+    impl Drop for TestDirGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    async fn initialize_test_runtime() -> anyhow::Result<TestDirGuard> {
+        let test_dir = std::env::temp_dir().join(format!(
+            "lyra-artist-routes-test-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+        std::fs::create_dir_all(&test_dir)?;
+        initialize_runtime(&LibraryFixtureConfig {
+            directory: test_dir.clone(),
+            language: None,
+            country: None,
+        })
+        .await?;
+        Ok(TestDirGuard(test_dir))
+    }
+
+    async fn create_authenticated_headers(username: &str) -> anyhow::Result<HeaderMap> {
+        let user_db_id = {
+            let mut db = STATE.db.write().await;
+            db::users::create(&mut db, &db::users::test_user(username)?)?
+        };
+
+        let session = sessions::create_session_for_user(user_db_id).await?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            format!("Bearer {}", session.token)
+                .parse()
+                .expect("valid auth header"),
+        );
+        Ok(headers)
+    }
+
+    #[tokio::test]
+    async fn search_artist_covers_returns_empty_results_without_providers() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let _test_dir = initialize_test_runtime().await?;
+
+        let artist_id = {
+            let mut db = STATE.db.write().await;
+            let artist_db_id = insert_artist(&mut db, "Coverless Artist")?;
+            db::artists::get_by_id(&db, artist_db_id)?
+                .expect("artist should exist")
+                .id
+        };
+
+        let headers = create_authenticated_headers("artist-cover-tester").await?;
+        let Json(response) = search_artist_covers(
+            headers,
+            Path(artist_id.clone()),
+            Json(route_covers::CoverSearchQuery::default()),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("search_artist_covers failed: {err:?}"))?;
+
+        assert_eq!(response.artist_id, artist_id);
+        assert!(response.results.is_empty());
+        Ok(())
+    }
 }
