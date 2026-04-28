@@ -17,7 +17,6 @@ use mlua::{
 };
 use mlua_scheduler::{
     LuaSchedulerAsync,
-    LuaSchedulerAsyncUserData,
     MaybeSync,
     XRc,
     taskmgr::{
@@ -206,8 +205,8 @@ pub trait LuaUserDataAsyncExt<T> {
 
     fn add_async_method<M, A, MR, R>(&mut self, name: impl ToString, method: M)
     where
-        T: 'static + MaybeSend,
-        M: Fn(Lua, UserDataRef<T>, A) -> MR + mlua::MaybeSend + MaybeSync + Clone + 'static,
+        T: 'static + MaybeSend + MaybeSync + Clone,
+        M: Fn(Lua, T, A) -> MR + mlua::MaybeSend + MaybeSync + Clone + 'static,
         A: mlua::FromLuaMulti + mlua::MaybeSend + MaybeSync + 'static,
         MR: Future<Output = mlua::Result<R>> + mlua::MaybeSend + MaybeSync + 'static,
         R: mlua::IntoLuaMulti + mlua::MaybeSend + MaybeSync + 'static;
@@ -218,10 +217,10 @@ pub trait LuaUserDataAsyncExt<T> {
         prelude: PFn,
         method: M,
     ) where
-        T: 'static + MaybeSend,
+        T: 'static + MaybeSend + MaybeSync + Clone,
         P: mlua::MaybeSend + MaybeSync + 'static,
         PFn: Fn(&Lua) -> P + mlua::MaybeSend + MaybeSync + Clone + 'static,
-        M: Fn(Lua, P, UserDataRef<T>, A) -> MR + mlua::MaybeSend + MaybeSync + Clone + 'static,
+        M: Fn(Lua, P, T, A) -> MR + mlua::MaybeSend + MaybeSync + Clone + 'static,
         A: mlua::FromLuaMulti + mlua::MaybeSend + MaybeSync + 'static,
         MR: Future<Output = mlua::Result<R>> + mlua::MaybeSend + MaybeSync + 'static,
         R: mlua::IntoLuaMulti + mlua::MaybeSend + MaybeSync + 'static;
@@ -230,7 +229,7 @@ pub trait LuaUserDataAsyncExt<T> {
 impl<T, I> LuaUserDataAsyncExt<T> for I
 where
     I: UserDataMethods<T>,
-    T: 'static + MaybeSend,
+    T: 'static + MaybeSend + MaybeSync + Clone,
 {
     fn add_async_function<F, A, FR, R>(&mut self, name: impl ToString, function: F)
     where
@@ -269,13 +268,45 @@ where
 
     fn add_async_method<M, A, MR, R>(&mut self, name: impl ToString, method: M)
     where
-        T: 'static + MaybeSend,
-        M: Fn(Lua, UserDataRef<T>, A) -> MR + mlua::MaybeSend + MaybeSync + Clone + 'static,
+        T: 'static + MaybeSend + MaybeSync + Clone,
+        M: Fn(Lua, T, A) -> MR + mlua::MaybeSend + MaybeSync + Clone + 'static,
         A: mlua::FromLuaMulti + mlua::MaybeSend + MaybeSync + 'static,
         MR: Future<Output = mlua::Result<R>> + mlua::MaybeSend + MaybeSync + 'static,
         R: mlua::IntoLuaMulti + mlua::MaybeSend + MaybeSync + 'static,
     {
-        self.add_scheduler_async_method(name, method);
+        self.add_function(
+            name.to_string(),
+            move |lua, (this, args): (UserDataRef<T>, A)| {
+                let method_ref = method.clone();
+                let weak_lua = lua.weak();
+                // Own a snapshot before yielding so reentrant calls do not hold a
+                // live userdata borrow across scheduler suspension.
+                let this = (*this).clone();
+                let fut = async move {
+                    let Some(lua) = weak_lua.try_upgrade() else {
+                        return Err(mlua::Error::runtime("lua instance is no longer valid"));
+                    };
+
+                    match method_ref(lua, this, args).await {
+                        Ok(result) => {
+                            let Some(lua) = weak_lua.try_upgrade() else {
+                                return Err(mlua::Error::runtime(
+                                    "lua instance is no longer valid",
+                                ));
+                            };
+
+                            result.into_lua_multi(&lua)
+                        }
+                        Err(error) => Err(error),
+                    }
+                };
+
+                let scheduler = scheduler(&lua)?;
+                scheduler.schedule_async_dyn(lua.current_thread(), Box::pin(fut));
+                lua.yield_with(())?;
+                Ok(())
+            },
+        );
     }
 
     fn add_async_function_with_prelude<P, PFn, F, A, FR, R>(
@@ -322,10 +353,10 @@ where
         prelude: PFn,
         method: M,
     ) where
-        T: 'static + MaybeSend,
+        T: 'static + MaybeSend + MaybeSync + Clone,
         P: mlua::MaybeSend + MaybeSync + 'static,
         PFn: Fn(&Lua) -> P + mlua::MaybeSend + MaybeSync + Clone + 'static,
-        M: Fn(Lua, P, UserDataRef<T>, A) -> MR + mlua::MaybeSend + MaybeSync + Clone + 'static,
+        M: Fn(Lua, P, T, A) -> MR + mlua::MaybeSend + MaybeSync + Clone + 'static,
         A: mlua::FromLuaMulti + mlua::MaybeSend + MaybeSync + 'static,
         MR: Future<Output = mlua::Result<R>> + mlua::MaybeSend + MaybeSync + 'static,
         R: mlua::IntoLuaMulti + mlua::MaybeSend + MaybeSync + 'static,
@@ -336,6 +367,9 @@ where
                 let prelude_val = prelude(&lua);
                 let method_ref = method.clone();
                 let weak_lua = lua.weak();
+                // Own a snapshot before yielding so reentrant calls do not
+                // hold a live userdata borrow across scheduler suspension.
+                let this = (*this).clone();
                 let fut = async move {
                     let Some(lua) = weak_lua.try_upgrade() else {
                         return Err(mlua::Error::runtime("lua instance is no longer valid"));
