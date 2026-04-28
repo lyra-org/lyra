@@ -29,6 +29,7 @@ use axum::{
 use lyra_ffmpeg::{
     AudioCodec,
     AudioFormat,
+    AudioVbrMode,
     Output,
 };
 use std::path::{
@@ -58,11 +59,14 @@ pub struct ValidatedTrackSource {
     pub source_id: DbId,
     pub input_path: String,
     pub entry_format: Option<AudioFormat>,
+    pub source_codec: Option<AudioCodec>,
     pub full_path: PathBuf,
     pub duration_ms: Option<u64>,
     pub start_ms: Option<u64>,
     pub end_ms: Option<u64>,
     pub source_bitrate_bps: Option<u32>,
+    pub source_sample_rate_hz: Option<u32>,
+    pub source_channels: Option<u32>,
 }
 
 pub(crate) fn source_range_duration_ms(start_ms: Option<u64>, end_ms: Option<u64>) -> Option<u64> {
@@ -137,11 +141,16 @@ pub async fn validate_and_get_track_source(
         source_id: source.source_id,
         input_path: source.input_path,
         entry_format: source.entry_format,
+        source_codec: source
+            .entry_format
+            .and_then(|entry_format| entry_format.inferred_codec(track.bit_depth)),
         full_path: source.full_path,
         duration_ms: track.duration_ms,
         start_ms: source.start_ms,
         end_ms: source.end_ms,
         source_bitrate_bps: track.bitrate_bps,
+        source_sample_rate_hz: track.sample_rate_hz,
+        source_channels: track.channel_count,
     })
 }
 
@@ -287,12 +296,14 @@ pub struct TranscodePolicy {
     pub bitrate_bps: Option<u32>,
     pub sample_rate_hz: Option<u32>,
     pub channels: Option<u32>,
+    pub prefer_vbr: bool,
 }
 
 pub fn apply_transcode_policy(
     requested_bitrate_bps: Option<u32>,
     requested_sample_rate_hz: Option<u32>,
     requested_channels: Option<u32>,
+    prefer_vbr: Option<bool>,
     output_codec: AudioCodec,
     source_bitrate_bps: Option<u32>,
 ) -> Result<TranscodePolicy, AppError> {
@@ -375,7 +386,37 @@ pub fn apply_transcode_policy(
         bitrate_bps,
         sample_rate_hz,
         channels,
+        prefer_vbr: prefer_vbr.unwrap_or(false),
     })
+}
+
+fn apply_lossy_rate_control(
+    output: Output,
+    codec: AudioCodec,
+    bitrate_bps: Option<u32>,
+    channels: Option<u32>,
+    prefer_vbr: bool,
+) -> Output {
+    let bitrate_kbps = bitrate_bps
+        .map(|bps| bps.saturating_add(999) / 1000)
+        .filter(|kbps| *kbps > 0)
+        .unwrap_or(192);
+
+    if prefer_vbr
+        && let Some(mode) = codec.vbr_mode(
+            bitrate_bps.unwrap_or(bitrate_kbps.saturating_mul(1000)),
+            channels.unwrap_or(2),
+        )
+    {
+        return match mode {
+            AudioVbrMode::Quality(quality) => output.set_audio_global_quality(quality),
+            AudioVbrMode::Abr => output
+                .set_audio_codec_opt("abr", "1")
+                .set_audio_codec_opt("b", format!("{bitrate_kbps}k")),
+        };
+    }
+
+    output.set_audio_codec_opt("b", format!("{bitrate_kbps}k"))
 }
 
 pub fn configure_output(
@@ -384,15 +425,16 @@ pub fn configure_output(
     codec: AudioCodec,
     policy: &TranscodePolicy,
 ) -> Output {
-    let bitrate_kbps = policy
-        .bitrate_bps
-        .map(|bps| bps.saturating_add(999) / 1000)
-        .filter(|kbps| *kbps > 0)
-        .unwrap_or(192);
-    let mut output = output
-        .audio_format(format)
-        .codec(codec)
-        .bitrate(bitrate_kbps);
+    let mut output = output.audio_format(format).codec(codec);
+    if !matches!(codec, AudioCodec::Copy) && !codec.is_lossless() {
+        output = apply_lossy_rate_control(
+            output,
+            codec,
+            policy.bitrate_bps,
+            policy.channels,
+            policy.prefer_vbr,
+        );
+    }
     if let Some(hz) = policy.sample_rate_hz {
         output = output.set_audio_sample_rate(hz as i32);
     }
@@ -628,6 +670,7 @@ mod tests {
             bitrate_bps,
             sample_rate_hz,
             channels,
+            prefer_vbr: false,
         }
     }
 
@@ -681,30 +724,48 @@ mod tests {
     }
 
     #[test]
+    fn configure_output_uses_vbr_when_preferred() {
+        let output = configure_output(
+            Output::with_callback(|_| 0),
+            AudioFormat::Mp3,
+            AudioCodec::Mp3,
+            &super::TranscodePolicy {
+                bitrate_bps: Some(192_000),
+                sample_rate_hz: None,
+                channels: Some(2),
+                prefer_vbr: true,
+            },
+        );
+        assert_eq!(output.get_audio_global_quality(), Some(2));
+        assert!(output.get_audio_codec_opts().get("b").is_none());
+    }
+
+    #[test]
     fn policy_rejects_zero_bitrate() {
-        let err = super::apply_transcode_policy(Some(0), None, None, AudioCodec::Mp3, None)
+        let err = super::apply_transcode_policy(Some(0), None, None, None, AudioCodec::Mp3, None)
             .expect_err("bitrate_bps=0 must fail fast, not silently fall back to the default");
         assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]
     fn policy_rejects_zero_sample_rate() {
-        let err = super::apply_transcode_policy(None, Some(0), None, AudioCodec::Mp3, None)
+        let err = super::apply_transcode_policy(None, Some(0), None, None, AudioCodec::Mp3, None)
             .expect_err("sample_rate_hz=0 must fail fast");
         assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]
     fn policy_rejects_zero_channels() {
-        let err = super::apply_transcode_policy(None, None, Some(0), AudioCodec::Mp3, None)
+        let err = super::apply_transcode_policy(None, None, Some(0), None, AudioCodec::Mp3, None)
             .expect_err("channels=0 must fail fast");
         assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]
     fn policy_clamps_bitrate_below_codec_minimum() {
-        let policy = super::apply_transcode_policy(Some(1), None, None, AudioCodec::Mp3, None)
-            .expect("below-minimum bitrate should clamp, not reject");
+        let policy =
+            super::apply_transcode_policy(Some(1), None, None, None, AudioCodec::Mp3, None)
+                .expect("below-minimum bitrate should clamp, not reject");
         assert_eq!(
             policy.bitrate_bps,
             Some(AudioCodec::Mp3.min_bitrate_bps().unwrap())
@@ -714,7 +775,7 @@ mod tests {
     #[test]
     fn policy_drops_bitrate_cap_for_lossless_codec() {
         let policy =
-            super::apply_transcode_policy(Some(96_000), None, None, AudioCodec::Flac, None)
+            super::apply_transcode_policy(Some(96_000), None, None, None, AudioCodec::Flac, None)
                 .expect("lossless codec ignores bitrate cap");
         assert_eq!(
             policy.bitrate_bps, None,
@@ -725,7 +786,7 @@ mod tests {
     #[test]
     fn policy_rewrites_opus_sample_rate_to_native_48000() {
         let policy =
-            super::apply_transcode_policy(None, Some(44_100), None, AudioCodec::Opus, None)
+            super::apply_transcode_policy(None, Some(44_100), None, None, AudioCodec::Opus, None)
                 .expect("opus substitutes non-48kHz sample rates");
         assert_eq!(
             policy.sample_rate_hz,
@@ -737,7 +798,7 @@ mod tests {
     #[test]
     fn policy_passes_matching_opus_sample_rate_through() {
         let policy =
-            super::apply_transcode_policy(None, Some(48_000), None, AudioCodec::Opus, None)
+            super::apply_transcode_policy(None, Some(48_000), None, None, AudioCodec::Opus, None)
                 .expect("48kHz request for opus should pass through");
         assert_eq!(policy.sample_rate_hz, Some(48_000));
     }
@@ -745,7 +806,7 @@ mod tests {
     #[test]
     fn policy_passes_bitrate_through_when_source_unknown() {
         let policy =
-            super::apply_transcode_policy(Some(192_000), None, None, AudioCodec::Mp3, None)
+            super::apply_transcode_policy(Some(192_000), None, None, None, AudioCodec::Mp3, None)
                 .expect("source_bitrate_bps=None must not block the cap");
         assert_eq!(
             policy.bitrate_bps,
@@ -760,6 +821,7 @@ mod tests {
             Some(320_000),
             None,
             None,
+            None,
             AudioCodec::Mp3,
             Some(128_000),
         )
@@ -772,9 +834,15 @@ mod tests {
 
     #[test]
     fn policy_retains_bitrate_cap_below_source_bitrate() {
-        let policy =
-            super::apply_transcode_policy(Some(96_000), None, None, AudioCodec::Mp3, Some(320_000))
-                .expect("legitimate cap below source should pass through");
+        let policy = super::apply_transcode_policy(
+            Some(96_000),
+            None,
+            None,
+            None,
+            AudioCodec::Mp3,
+            Some(320_000),
+        )
+        .expect("legitimate cap below source should pass through");
         assert_eq!(policy.bitrate_bps, Some(96_000));
     }
 
@@ -784,6 +852,7 @@ mod tests {
             Some(128_000),
             Some(44_100),
             Some(2),
+            None,
             AudioCodec::Mp3,
             None,
         )
@@ -903,11 +972,14 @@ mod tests {
             source_id: agdb::DbId(2),
             input_path: "track.flac".to_string(),
             entry_format: Some(AudioFormat::Flac),
+            source_codec: Some(AudioCodec::Flac),
             full_path: PathBuf::from("track.flac"),
             duration_ms: Some(20_000),
             start_ms: None,
             end_ms: None,
             source_bitrate_bps: Some(900_000),
+            source_sample_rate_hz: Some(96_000),
+            source_channels: Some(2),
         };
 
         let offset_source =
@@ -922,11 +994,14 @@ mod tests {
             source_id: agdb::DbId(2),
             input_path: "track.flac".to_string(),
             entry_format: Some(AudioFormat::Flac),
+            source_codec: Some(AudioCodec::Flac),
             full_path: PathBuf::from("track.flac"),
             duration_ms: Some(20_000),
             start_ms: Some(10_000),
             end_ms: Some(30_000),
             source_bitrate_bps: Some(900_000),
+            source_sample_rate_hz: Some(96_000),
+            source_channels: Some(2),
         };
 
         let offset_source =
@@ -941,11 +1016,14 @@ mod tests {
             source_id: agdb::DbId(2),
             input_path: "track.flac".to_string(),
             entry_format: Some(AudioFormat::Flac),
+            source_codec: Some(AudioCodec::Flac),
             full_path: PathBuf::from("track.flac"),
             duration_ms: Some(20_000),
             start_ms: Some(10_000),
             end_ms: Some(30_000),
             source_bitrate_bps: Some(900_000),
+            source_sample_rate_hz: Some(96_000),
+            source_channels: Some(2),
         };
 
         let err = apply_request_start_offset(source, Some(20_000))
@@ -1001,6 +1079,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1032,6 +1111,7 @@ mod tests {
             Some("mp3".to_string()),
             None,
             Some(96_000),
+            None,
             None,
             None,
             None,
@@ -1077,6 +1157,7 @@ mod tests {
             Some(48_000),
             None,
             None,
+            None,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1118,6 +1199,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1149,6 +1231,7 @@ mod tests {
             Some("mp3".to_string()),
             None,
             Some(0),
+            None,
             None,
             None,
             None,

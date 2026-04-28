@@ -465,21 +465,21 @@ mod tests {
             DbId(1001),
             None,
             None,
-            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None),
+            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
         );
         let middle_key = HlsJobKey::new(
             DbId(2),
             DbId(1002),
             None,
             None,
-            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None),
+            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
         );
         let newest_key = HlsJobKey::new(
             DbId(3),
             DbId(1003),
             None,
             None,
-            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None),
+            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
         );
 
         let now = Instant::now();
@@ -531,7 +531,7 @@ mod tests {
             DbId(3331),
             None,
             None,
-            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None),
+            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
         );
         let mut job = build_test_job(test_dir.clone(), test_dir.join("index.m3u8"));
         job.session_ids.insert(session_id.clone());
@@ -602,14 +602,14 @@ mod tests {
             DbId(9011),
             None,
             None,
-            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None),
+            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
         );
         let newer_key = HlsJobKey::new(
             DbId(902),
             DbId(9021),
             None,
             None,
-            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None),
+            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
         );
 
         let mut older_job = build_test_job(older_dir.clone(), older_dir.join("index.m3u8"));

@@ -1895,12 +1895,14 @@ mod tests {
         let lua = Lua::new();
         let options = lua.create_table()?;
         options.set("start_offset_ms", 12_345)?;
+        options.set("prefer_vbr", true)?;
         let table = response::response_stream_track(&lua, (42, Some(options)))?;
         assert_eq!(table.get::<String>("kind")?, "stream_track");
         let options = table
             .get::<Option<Table>>("options")?
             .expect("non-empty track options should be preserved");
         assert_eq!(options.get::<Option<u64>>("start_offset_ms")?, Some(12_345));
+        assert_eq!(options.get::<Option<bool>>("prefer_vbr")?, Some(true));
 
         Ok(())
     }
@@ -1958,6 +1960,7 @@ mod tests {
         preferred_codecs.set(3, "opus")?;
         options.set("preferred_codecs", preferred_codecs)?;
         options.set("bitrate_bps", 96_000)?;
+        options.set("prefer_vbr", true)?;
         options.set("start_offset_ms", 12_345)?;
         let table = response::response_hls_playlist(&lua, (42, Some(options)))?;
         let options = table
@@ -1971,6 +1974,7 @@ mod tests {
             vec!["AAC".to_string(), "opus".to_string()]
         );
         assert_eq!(options.get::<Option<u32>>("bitrate_bps")?, Some(96_000));
+        assert_eq!(options.get::<Option<bool>>("prefer_vbr")?, Some(true));
         assert_eq!(options.get::<Option<u64>>("start_offset_ms")?, Some(12_345));
 
         Ok(())

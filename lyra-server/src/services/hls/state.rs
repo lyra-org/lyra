@@ -420,6 +420,7 @@ mod tests {
                 Some(HLS_AUDIO_BITRATE_KBPS),
                 Some(44_100),
                 Some(2),
+                false,
             ),
         );
         let alac_key = HlsJobKey::new(
@@ -427,7 +428,7 @@ mod tests {
             DbId(701),
             None,
             None,
-            HlsOutputConfig::new(alac_profile, None, None, None),
+            HlsOutputConfig::new(alac_profile, None, None, None, false),
         );
 
         assert_eq!(
@@ -452,7 +453,7 @@ mod tests {
                 DbId(7701),
                 None,
                 None,
-                HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None),
+                HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
             ),
             last_access: Instant::now(),
         };
@@ -482,7 +483,7 @@ mod tests {
             DbId(6011),
             None,
             None,
-            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None),
+            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
         );
         {
             let mut jobs = HLS_JOBS.write().await;
