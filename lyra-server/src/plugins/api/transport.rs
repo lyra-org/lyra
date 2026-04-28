@@ -218,6 +218,7 @@ pub(super) async fn lua_response_to_axum(
                     options.bitrate_bps,
                     options.sample_rate_hz,
                     options.channels,
+                    options.prefer_vbr,
                     options.start_offset_ms,
                 )
                 .await
@@ -241,6 +242,7 @@ pub(super) async fn lua_response_to_axum(
                     options.bitrate_bps,
                     options.sample_rate_hz,
                     options.channels,
+                    options.prefer_vbr,
                     options.start_offset_ms,
                 )
                 .await
@@ -263,6 +265,7 @@ pub(super) async fn lua_response_to_axum(
                     options.bitrate_bps,
                     options.sample_rate_hz,
                     options.channels,
+                    options.prefer_vbr,
                     options.start_offset_ms,
                 )
                 .await

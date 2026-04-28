@@ -27,6 +27,7 @@ pub(super) struct TrackServeOptions {
     pub(super) bitrate_bps: Option<u32>,
     pub(super) sample_rate_hz: Option<u32>,
     pub(super) channels: Option<u32>,
+    pub(super) prefer_vbr: Option<bool>,
     pub(super) start_offset_ms: Option<u64>,
 }
 
@@ -37,6 +38,7 @@ pub(super) struct HlsServeOptions {
     pub(super) bitrate_bps: Option<u32>,
     pub(super) sample_rate_hz: Option<u32>,
     pub(super) channels: Option<u32>,
+    pub(super) prefer_vbr: Option<bool>,
     pub(super) start_offset_ms: Option<u64>,
 }
 
@@ -70,6 +72,7 @@ pub(super) fn parse_track_serve_options(options: Option<Table>) -> mlua::Result<
     let bitrate_bps = options.get::<Option<u32>>("bitrate_bps")?;
     let sample_rate_hz = options.get::<Option<u32>>("sample_rate_hz")?;
     let channels = options.get::<Option<u32>>("channels")?;
+    let prefer_vbr = options.get::<Option<bool>>("prefer_vbr")?;
     let start_offset_ms = options.get::<Option<u64>>("start_offset_ms")?;
 
     Ok(TrackServeOptions {
@@ -78,6 +81,7 @@ pub(super) fn parse_track_serve_options(options: Option<Table>) -> mlua::Result<
         bitrate_bps,
         sample_rate_hz,
         channels,
+        prefer_vbr,
         start_offset_ms,
     })
 }
@@ -91,6 +95,7 @@ pub(super) fn parse_hls_serve_options(options: Option<Table>) -> mlua::Result<Hl
     let bitrate_bps = options.get::<Option<u32>>("bitrate_bps")?;
     let sample_rate_hz = options.get::<Option<u32>>("sample_rate_hz")?;
     let channels = options.get::<Option<u32>>("channels")?;
+    let prefer_vbr = options.get::<Option<bool>>("prefer_vbr")?;
     let start_offset_ms = options.get::<Option<u64>>("start_offset_ms")?;
 
     Ok(HlsServeOptions {
@@ -98,6 +103,7 @@ pub(super) fn parse_hls_serve_options(options: Option<Table>) -> mlua::Result<Hl
         bitrate_bps,
         sample_rate_hz,
         channels,
+        prefer_vbr,
         start_offset_ms,
     })
 }

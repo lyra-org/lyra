@@ -61,6 +61,10 @@ struct DownloadQuery {
     sample_rate_hz: Option<u32>,
     #[schemars(description = "Target channel count. Triggers transcoding when supplied.")]
     channels: Option<u32>,
+    #[schemars(
+        description = "Prefer VBR for lossy transcodes when the selected encoder supports it."
+    )]
+    prefer_vbr: Option<bool>,
     #[schemars(description = "Per-request playback start offset in milliseconds.")]
     start_offset_ms: Option<u64>,
 }
@@ -83,6 +87,7 @@ async fn get_download(
         query.bitrate_bps,
         query.sample_rate_hz,
         query.channels,
+        query.prefer_vbr,
         query.start_offset_ms,
     )
     .await
@@ -96,6 +101,7 @@ pub(crate) async fn download_track_response(
     bitrate_bps: Option<u32>,
     sample_rate_hz: Option<u32>,
     channels: Option<u32>,
+    prefer_vbr: Option<bool>,
     start_offset_ms: Option<u64>,
 ) -> Result<Response<Body>, AppError> {
     let _principal = require_download_access(headers).await?;
@@ -144,6 +150,7 @@ pub(crate) async fn download_track_response(
         bitrate_bps,
         sample_rate_hz,
         channels,
+        prefer_vbr,
         provisional_codec,
         source.source_bitrate_bps,
     )?;

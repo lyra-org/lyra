@@ -83,7 +83,7 @@ const HLS_DURATION_MISMATCH_WARN_THRESHOLD_MS: u64 = 10;
 #[derive(Deserialize, JsonSchema)]
 struct HlsQuery {
     #[schemars(
-        description = "Optional ordered HLS audio codec preferences (for example: opus,aac)."
+        description = "Optional ordered HLS audio codec preferences (for example: copy,aac or aac,flac)."
     )]
     codec: Option<String>,
     #[schemars(
@@ -94,6 +94,10 @@ struct HlsQuery {
     sample_rate_hz: Option<u32>,
     #[schemars(description = "Target channel count. Triggers transcoding when supplied.")]
     channels: Option<u32>,
+    #[schemars(
+        description = "Prefer VBR for lossy HLS transcodes when the selected encoder supports it."
+    )]
+    prefer_vbr: Option<bool>,
     #[schemars(description = "Per-request playback start offset in milliseconds.")]
     start_offset_ms: Option<u64>,
 }
@@ -194,10 +198,79 @@ fn bitrate_kbps_from_bps(bitrate_bps: u32) -> u32 {
     bitrate_bps.saturating_add(999) / 1000
 }
 
+// Bare native HLS requests still default to AAC transcoding. Stream copy is only
+// considered when the request explicitly asks for copy or already targets the
+// source codec, and only if the remaining output limits do not require audio
+// changes.
+fn hls_copy_is_eligible_for_request(
+    source: &super::ValidatedTrackSource,
+    copy_requested: bool,
+    requested_codec: Option<lyra_ffmpeg::AudioCodec>,
+    bitrate_bps: Option<u32>,
+    sample_rate_hz: Option<u32>,
+    channels: Option<u32>,
+) -> bool {
+    let Some(source_codec) = source.source_codec else {
+        return false;
+    };
+
+    if !matches!(
+        source_codec,
+        lyra_ffmpeg::AudioCodec::Aac
+            | lyra_ffmpeg::AudioCodec::Alac
+            | lyra_ffmpeg::AudioCodec::Flac
+    ) {
+        return false;
+    }
+
+    if !copy_requested && requested_codec != Some(source_codec) {
+        return false;
+    }
+
+    if let Some(requested_codec) = requested_codec
+        && requested_codec != source_codec
+    {
+        return false;
+    }
+
+    if let Some(requested_bitrate_bps) = bitrate_bps {
+        let Some(source_bitrate_bps) = source.source_bitrate_bps else {
+            return false;
+        };
+        if requested_bitrate_bps < source_bitrate_bps {
+            return false;
+        }
+    }
+
+    if let Some(requested_sample_rate_hz) = sample_rate_hz {
+        let Some(source_sample_rate_hz) = source.source_sample_rate_hz else {
+            return false;
+        };
+        if requested_sample_rate_hz < source_sample_rate_hz {
+            return false;
+        }
+    }
+
+    if let Some(requested_channels) = channels {
+        let Some(source_channels) = source.source_channels else {
+            return false;
+        };
+        if requested_channels < source_channels {
+            return false;
+        }
+    }
+
+    true
+}
+
 fn resolve_hls_audio_bitrate_kbps(
     profile: HlsCodecProfile,
     bitrate_bps: Option<u32>,
 ) -> Option<u32> {
+    if profile.is_copy {
+        return None;
+    }
+
     matches!(profile.codec, lyra_ffmpeg::AudioCodec::Aac).then(|| {
         bitrate_bps
             .map(bitrate_kbps_from_bps)
@@ -266,6 +339,7 @@ async fn get_hls_playlist(
         query.bitrate_bps,
         query.sample_rate_hz,
         query.channels,
+        query.prefer_vbr,
         query.start_offset_ms,
     )
     .await
@@ -278,6 +352,7 @@ pub(crate) async fn serve_hls_playlist_for_track(
     bitrate_bps: Option<u32>,
     sample_rate_hz: Option<u32>,
     channels: Option<u32>,
+    prefer_vbr: Option<bool>,
     start_offset_ms: Option<u64>,
 ) -> Result<Response<Body>, AppError> {
     let request_started = Instant::now();
@@ -306,22 +381,63 @@ pub(crate) async fn serve_hls_playlist_for_track(
                 AppError::service_unavailable("HLS requires a known positive track duration")
             })?;
     let validated = validate_request(None, codec)?;
-    let profile = HlsCodecProfile::from_requested_codecs(&validated.preferred_codecs)?;
+    let copy_requested = validated
+        .preferred_codecs
+        .iter()
+        .any(|codec| matches!(codec, lyra_ffmpeg::AudioCodec::Copy));
+    let requested_hls_codec = validated
+        .preferred_codecs
+        .iter()
+        .copied()
+        .find(|codec| !matches!(codec, lyra_ffmpeg::AudioCodec::Copy));
+    let profile = if hls_copy_is_eligible_for_request(
+        &source,
+        copy_requested,
+        requested_hls_codec,
+        bitrate_bps,
+        sample_rate_hz,
+        channels,
+    ) {
+        HlsCodecProfile::for_copy_source(
+            source
+                .source_codec
+                .expect("copy eligibility requires an inferred source codec"),
+        )?
+    } else {
+        HlsCodecProfile::from_requested_codecs(&validated.preferred_codecs)?
+    };
     let policy = apply_transcode_policy(
         bitrate_bps,
         sample_rate_hz,
         channels,
+        prefer_vbr,
         profile.codec,
         source.source_bitrate_bps,
     )?;
     let audio_bitrate_kbps = resolve_hls_audio_bitrate_kbps(profile, policy.bitrate_bps);
+    let output_sample_rate_hz = if profile.is_copy {
+        None
+    } else {
+        policy.sample_rate_hz
+    };
+    let output_channels = if profile.is_copy {
+        None
+    } else {
+        policy.channels
+    };
+    let output_prefer_vbr = if profile.is_copy {
+        false
+    } else {
+        policy.prefer_vbr
+    };
 
     let session_id = generate_hls_session_id();
     let output = HlsOutputConfig::new(
         profile,
         audio_bitrate_kbps,
-        policy.sample_rate_hz,
-        policy.channels,
+        output_sample_rate_hz,
+        output_channels,
+        output_prefer_vbr,
     );
     let job_key = HlsJobKey::new(
         track_db_id,
@@ -358,8 +474,8 @@ pub(crate) async fn serve_hls_playlist_for_track(
         %session_id,
         codec = profile.ffmpeg_codec_str,
         audio_bitrate_kbps,
-        sample_rate_hz = policy.sample_rate_hz,
-        channels = policy.channels,
+        sample_rate_hz = output_sample_rate_hz,
+        channels = output_channels,
         duration_ms,
         playlist_segment_count,
         startup_latency_ms,
@@ -467,7 +583,7 @@ async fn get_hls_segment(
 fn hls_playlist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create HLS playlist")
         .description(
-            "Generates an HLS VOD media playlist for a finite track and returns M3U8 with segment URLs under `/api/stream/hls/{session_id}/...`. Segment URLs include short-lived signed query tokens for client compatibility when auth headers are not forwarded. The optional `codec` query parameter supports `aac` (default), `alac`, and `flac`.",
+            "Generates an HLS VOD media playlist for a finite track and returns M3U8 with segment URLs under `/api/stream/hls/{session_id}/...`. Segment URLs include short-lived signed query tokens for client compatibility when auth headers are not forwarded. The optional `codec` query parameter supports `aac` (default), `alac`, `flac`, and `copy` when the source audio is already HLS-compatible and the request does not require audio changes.",
         )
 }
 
@@ -630,6 +746,7 @@ mod tests {
                 Some(crate::services::hls::codec::HLS_AUDIO_BITRATE_KBPS),
                 None,
                 None,
+                false,
             ),
         );
         let mut job = build_test_job(test_dir.clone(), test_dir.join("index.m3u8"));

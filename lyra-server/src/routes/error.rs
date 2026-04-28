@@ -179,7 +179,7 @@ impl From<HlsError> for AppError {
     fn from(err: HlsError) -> Self {
         match err {
             HlsError::UnsupportedCodec => {
-                Self::bad_request("Unsupported HLS codec. Supported values: aac, alac, flac.")
+                Self::bad_request("Unsupported HLS codec. Supported values: copy, aac, alac, flac.")
             }
             HlsError::TranscodeCapacityUnavailable => {
                 Self::service_unavailable("transcode capacity unavailable")
