@@ -87,6 +87,13 @@ type MediaSource = {
 	DirectStreamUrl: string?,
 }
 
+type AudioPlaybackLimits = {
+	max_bitrate_bps: number?,
+	max_sample_rate_hz: number?,
+	max_bit_depth: number?,
+	max_channels: number?,
+}
+
 local playback_session_state_by_key: { [string]: PlaybackSessionState } = {}
 local playback_session_state_count = 0
 local MAX_PLAYBACK_SESSION_STATES = 500
@@ -381,31 +388,47 @@ local function supports_audio_direct_play(media_source: MediaSource, device_prof
 	return false
 end
 
-local function audio_stream_respects_basic_limits(
-	media_source: MediaSource,
-	max_bitrate_bps: number?,
-	max_sample_rate_hz: number?,
-	max_bit_depth: number?,
-	max_channels: number?
-): boolean
+local function first_audio_stream(media_source: MediaSource): MediaStream?
+	for _, stream in media_source.MediaStreams do
+		if stream.Type == "Audio" then
+			return stream
+		end
+	end
+
+	return nil
+end
+
+local function request_audio_playback_limits(request_object: JsonObject?): AudioPlaybackLimits
+	return {
+		max_bitrate_bps = json_number_field(request_object, "MaxStreamingBitrate"),
+		max_sample_rate_hz = nil,
+		max_bit_depth = nil,
+		max_channels = json_number_field(request_object, "MaxAudioChannels"),
+	}
+end
+
+local function media_source_respects_audio_limits(media_source: MediaSource, limits: AudioPlaybackLimits): boolean
+	local max_bitrate_bps = limits.max_bitrate_bps
+	local max_sample_rate_hz = limits.max_sample_rate_hz
+	local max_bit_depth = limits.max_bit_depth
+	local max_channels = limits.max_channels
 	local bitrate = media_source.Bitrate
 	if max_bitrate_bps ~= nil and bitrate ~= nil and bitrate > max_bitrate_bps then
 		return false
 	end
 
-	for _, stream in ipairs(media_source.MediaStreams) do
-		if stream.Type == "Audio" then
-			if max_sample_rate_hz ~= nil and stream.SampleRate ~= nil and stream.SampleRate > max_sample_rate_hz then
-				return false
-			end
-			if max_bit_depth ~= nil and stream.BitDepth ~= nil and stream.BitDepth > max_bit_depth then
-				return false
-			end
-			if max_channels ~= nil and stream.Channels ~= nil and stream.Channels > max_channels then
-				return false
-			end
-			break
-		end
+	local stream = first_audio_stream(media_source)
+	if stream == nil then
+		return true
+	end
+	if max_sample_rate_hz ~= nil and stream.SampleRate ~= nil and stream.SampleRate > max_sample_rate_hz then
+		return false
+	end
+	if max_bit_depth ~= nil and stream.BitDepth ~= nil and stream.BitDepth > max_bit_depth then
+		return false
+	end
+	if max_channels ~= nil and stream.Channels ~= nil and stream.Channels > max_channels then
+		return false
 	end
 
 	return true
@@ -466,12 +489,41 @@ local function preferred_audio_streaming_profile(device_profile: JsonObject?): J
 	return nil
 end
 
+local function request_supports_audio_direct_play(media_source: MediaSource, request_object: JsonObject?): boolean
+	if json_boolean_field(request_object, "EnableDirectPlay") == false then
+		return false
+	end
+
+	local limits = request_audio_playback_limits(request_object)
+	local device_profile = json_object_field(request_object, "DeviceProfile")
+	if device_profile == nil then
+		return media_source.SupportsDirectPlay and media_source_respects_audio_limits(media_source, limits)
+	end
+
+	return supports_audio_direct_play(media_source, device_profile)
+		and media_source_respects_audio_limits(media_source, limits)
+end
+
+local function requested_audio_stream_is_supported(request_object: JsonObject?): boolean
+	local requested_audio_stream_index = json_number_field(request_object, "AudioStreamIndex")
+	return requested_audio_stream_index == nil or requested_audio_stream_index == 0
+end
+
+local function no_compatible_stream(): ApiJsonValue
+	return {
+		MediaSources = {},
+		PlaySessionId = nil,
+		ErrorCode = "NoCompatibleStream",
+	}
+end
+
 local function build_hls_transcoding_url(
 	item_id: string,
 	play_session_id: string,
 	codec: string,
 	max_streaming_bitrate: number?,
-	max_audio_channels: number?
+	max_audio_channels: number?,
+	start_time_ticks: number?
 ): string
 	local parts = {
 		`audioCodec={codec}`,
@@ -483,6 +535,9 @@ local function build_hls_transcoding_url(
 	if max_audio_channels ~= nil then
 		table.insert(parts, `MaxAudioChannels={max_audio_channels}`)
 	end
+	if start_time_ticks ~= nil and start_time_ticks > 0 then
+		table.insert(parts, `StartTimeTicks={start_time_ticks}`)
+	end
 	return `{ROUTE_PREFIX}/Audio/{item_id}/master.m3u8?{table.concat(parts, "&")}`
 end
 
@@ -490,44 +545,36 @@ local function apply_preferred_hls_transcoding(
 	media_source: MediaSource,
 	play_session_id: string,
 	request_object: JsonObject?
-): ()
+): boolean
 	if request_object == nil or json_boolean_field(request_object, "EnableTranscoding") == false then
-		return
+		return false
 	end
 
 	local device_profile = json_object_field(request_object, "DeviceProfile")
 	if device_profile == nil then
-		return
+		return false
 	end
 
 	local preferred_profile = preferred_audio_streaming_profile(device_profile)
 	if preferred_profile == nil then
-		return
+		return false
 	end
 
 	local protocol = json_string_field(preferred_profile, "Protocol")
 	if protocol == nil or string.lower(protocol) ~= "hls" then
-		return
+		return false
 	end
 
-	local direct_play_supported = if json_boolean_field(request_object, "EnableDirectPlay") == false
-		then false
-		else (supports_audio_direct_play(media_source, device_profile) and audio_stream_respects_basic_limits(
-			media_source,
-			json_number_field(request_object, "MaxStreamingBitrate"),
-			nil,
-			nil,
-			json_number_field(request_object, "MaxAudioChannels")
-		))
+	local direct_play_supported = request_supports_audio_direct_play(media_source, request_object)
 	if direct_play_supported then
-		return
+		return false
 	end
 
 	local media_source_id = module.trim(media_source.Id)
 	local codec = string.lower(json_string_field(preferred_profile, "AudioCodec") or "aac")
 	local transcoding_container = string.lower(json_string_field(preferred_profile, "Container") or "ts")
 	if media_source_id == nil then
-		return
+		return false
 	end
 
 	media_source.SupportsDirectPlay = false
@@ -540,8 +587,10 @@ local function apply_preferred_hls_transcoding(
 		play_session_id,
 		codec,
 		json_number_field(request_object, "MaxStreamingBitrate"),
-		json_number_field(request_object, "MaxAudioChannels")
+		json_number_field(request_object, "MaxAudioChannels"),
+		json_number_field(request_object, "StartTimeTicks")
 	)
+	return true
 end
 
 local function build_media_info(
@@ -637,14 +686,14 @@ function module.audio_supports_direct_play_from_container_csv(
 		return false
 	end
 
+	local limits: AudioPlaybackLimits = {
+		max_bitrate_bps = max_bitrate_bps,
+		max_sample_rate_hz = max_sample_rate_hz,
+		max_bit_depth = max_bit_depth,
+		max_channels = max_channels,
+	}
 	return supports_audio_direct_play_from_container_csv(media_source, direct_play_csv)
-		and audio_stream_respects_basic_limits(
-			media_source,
-			max_bitrate_bps,
-			max_sample_rate_hz,
-			max_bit_depth,
-			max_channels
-		)
+		and media_source_respects_audio_limits(media_source, limits)
 end
 
 function module.parse_playback_report_body(ctx: ApiContext?): (PlaybackPayload?, ApiResponse?)
@@ -822,11 +871,7 @@ function module.build_playback_info(
 ): ApiJsonValue
 	local source = module.resolve_playback_source_for_track(track, true)
 	if source == nil then
-		return {
-			MediaSources = {},
-			PlaySessionId = nil,
-			ErrorCode = "NoCompatibleStream",
-		}
+		return no_compatible_stream()
 	end
 
 	local media_sources, _ = build_media_info(track, source, item_id, if track then track.track_title else item_id)
@@ -837,17 +882,27 @@ function module.build_playback_info(
 			primary_media_source_id == nil
 			or string.lower(primary_media_source_id) ~= string.lower(requested_media_source_id)
 		then
-			return {
-				MediaSources = {},
-				PlaySessionId = nil,
-				ErrorCode = "NoCompatibleStream",
-			}
+			return no_compatible_stream()
 		end
+	end
+	if not requested_audio_stream_is_supported(request_object) then
+		return no_compatible_stream()
 	end
 
 	local play_session_id = ensure_playback_session_id(existing_play_session_id)
+	local direct_play_supported = if primary_media_source
+		then request_supports_audio_direct_play(primary_media_source, request_object)
+		else false
 	if primary_media_source then
-		apply_preferred_hls_transcoding(primary_media_source, play_session_id, request_object)
+		if not direct_play_supported then
+			primary_media_source.SupportsDirectPlay = false
+			primary_media_source.SupportsDirectStream = false
+		end
+		local transcoding_applied =
+			apply_preferred_hls_transcoding(primary_media_source, play_session_id, request_object)
+		if request_object ~= nil and not direct_play_supported and not transcoding_applied then
+			return no_compatible_stream()
+		end
 	end
 	return {
 		MediaSources = media_sources,
