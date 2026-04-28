@@ -1824,6 +1824,12 @@ end, nil, true)
 api.head(P .. "/Items/{imageId}/Images/Primary", function(ctx: ApiContext)
 	return session.handle_primary_image_request(ctx)
 end, nil, true)
+api.get(P .. "/Artists/{name}/Images/{imageType}/{imageIndex}", function(ctx: ApiContext)
+	return session.handle_artist_image_request(ctx)
+end, nil, true)
+api.head(P .. "/Artists/{name}/Images/{imageType}/{imageIndex}", function(ctx: ApiContext)
+	return session.handle_artist_image_request(ctx)
+end, nil, true)
 -- Merge rule: Full wins on collision, non-Full fills gaps. Without a live
 -- WS entry there's nowhere to stash caps; 204 silently so non-WS clients
 -- aren't broken.

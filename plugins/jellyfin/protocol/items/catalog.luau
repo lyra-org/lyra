@@ -201,6 +201,8 @@ type ItemContext = {
 	tag_infos_by_item_id: TagInfoMap?,
 	cover_info_by_release_id: { [number]: base.ResolvedCoverInfo }?,
 	cover_prefetch_release_ids: { [number]: boolean }?,
+	cover_info_by_artist_id: { [number]: base.ResolvedCoverInfo }?,
+	cover_prefetch_artist_ids: { [number]: boolean }?,
 	library_hex_id: string?,
 	library_hex_id_by_entity_id: { [number]: string }?,
 	playlist_track_ids_by_playlist_id: { [number]: { number } }?,
@@ -396,6 +398,24 @@ function helpers.resolve_cover_info(release_db_id: number?, context: ItemContext
 		end
 	end
 	return module.get_cover_info(release_db_id)
+end
+
+function helpers.resolve_artist_cover_info(artist_db_id: number?, context: ItemContext?): base.ResolvedCoverInfo?
+	if artist_db_id == nil or artist_db_id <= 0 then
+		return nil
+	end
+	if context then
+		if context.cover_info_by_artist_id then
+			local cached = context.cover_info_by_artist_id[artist_db_id]
+			if cached then
+				return cached
+			end
+		end
+		if context.cover_prefetch_artist_ids and context.cover_prefetch_artist_ids[artist_db_id] then
+			return nil
+		end
+	end
+	return module.get_cover_info(artist_db_id)
 end
 
 function helpers.default_image_tags(): nil
@@ -1607,6 +1627,8 @@ function helpers.to_artist_item(
 	local runtime_ticks = helpers.sum_runtime_ticks(artist_tracks)
 	local artist_releases = releases.get_by_artist(artist.db_id)
 	local album_count = if artist_releases then #artist_releases else 0
+	local include_images = helpers.should_include_images(context)
+	local cover_info = if include_images then helpers.resolve_artist_cover_info(artist.db_id, context) else nil
 	local item: ItemInfo = {
 		Id = artist_item_id,
 		Name = module.trim(artist.artist_name) or "Unknown Artist",
@@ -1617,8 +1639,8 @@ function helpers.to_artist_item(
 		DateCreated = helpers.unix_to_iso8601(artist.created_at),
 		AlbumCount = album_count,
 		SongCount = if artist_tracks then #artist_tracks else 0,
-		ImageTags = helpers.default_image_tags(),
-		ImageBlurHashes = helpers.default_image_blur_hashes(),
+		ImageTags = if cover_info then { Primary = cover_info.hash } else nil,
+		ImageBlurHashes = helpers.default_image_blur_hashes(cover_info),
 		UserData = helpers.build_item_user_data(
 			artist.db_id,
 			artist_item_id,
@@ -3315,6 +3337,30 @@ function helpers.prefetch_release_covers(context: ItemContext, seed: Realization
 	end
 end
 
+function helpers.prefetch_artist_covers(context: ItemContext, seed: RealizationSeedInfo): ()
+	if context.include_images ~= true or not seed.has_artist_stubs or #seed.artist_ids == 0 then
+		return
+	end
+
+	local ok, raw_covers = pcall(covers.get_many, seed.artist_ids)
+	if ok and type(raw_covers) == "table" then
+		local cover_lookup: { [number]: base.ResolvedCoverInfo } = {}
+		local prefetch_set: { [number]: boolean } = {}
+		for _, artist_id: number in seed.artist_ids do
+			prefetch_set[artist_id] = true
+			local raw = raw_covers[artist_id]
+			if type(raw) == "table" then
+				local resolved = base.normalize_cover_info(raw)
+				if resolved then
+					cover_lookup[artist_id] = resolved
+				end
+			end
+		end
+		context.cover_info_by_artist_id = cover_lookup
+		context.cover_prefetch_artist_ids = prefetch_set
+	end
+end
+
 function helpers.prefetch_release_artists_and_genres(
 	context: ItemContext,
 	seed: RealizationSeedInfo,
@@ -3524,6 +3570,7 @@ function helpers.build_realization_context(stubs: { ItemInfo }, options: ItemsQu
 	helpers.prefetch_track_artists(context, seed)
 	helpers.prefetch_track_releases(context, seed)
 	helpers.prefetch_release_covers(context, seed)
+	helpers.prefetch_artist_covers(context, seed)
 	helpers.prefetch_release_artists_and_genres(context, seed, options)
 	helpers.prefetch_credit_relations(context, seed)
 	helpers.prefetch_release_tracks(context, seed)
