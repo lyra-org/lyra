@@ -384,9 +384,9 @@ impl Provider {
             .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
             .transpose()?;
         self.ensure_owner(plugin_id.as_ref())?;
-        if entity_type != EntityType::Release {
+        if !matches!(entity_type, EntityType::Release | EntityType::Artist) {
             return Err(mlua::Error::runtime(
-                "provider:cover entity_type must be 'release'",
+                "provider:cover entity_type must be 'release' or 'artist'",
             ));
         }
 
@@ -1530,7 +1530,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn provider_cover_registration_requires_release_entity() -> anyhow::Result<()> {
+    async fn provider_cover_registration_requires_supported_entity() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         let provider_id = next_provider_id("cover-entity");
         let lua_provider_id = provider_id.clone();
@@ -1555,9 +1555,34 @@ mod tests {
             .await
             .expect_err("expected provider:cover non-release entity to fail");
         assert!(
-            err.to_string().contains("entity_type must be 'release'"),
+            err.to_string()
+                .contains("entity_type must be 'release' or 'artist'"),
             "unexpected error: {err}"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn provider_cover_registration_accepts_artist_entity() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let provider_id = next_provider_id("cover-artist");
+        let lua_provider_id = provider_id.clone();
+
+        setup_metadata_module(STATE.lua.get().as_ref())?;
+
+        let register_fn = STATE
+            .lua
+            .get()
+            .load(chunk! {
+                local provider = metadata.Provider.new($lua_provider_id)
+                provider:cover(metadata.EntityType.Artist, {}, function(_)
+                    return nil
+                end)
+            })
+            .set_name(&harmony_core::format_plugin_chunk_name("test", "init"))
+            .into_function()?;
+        register_fn.call_async::<()>(()).await?;
 
         Ok(())
     }

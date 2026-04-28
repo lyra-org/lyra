@@ -5,6 +5,7 @@
 
 mod app;
 mod artists;
+mod covers;
 mod entries;
 mod error;
 mod favorites;

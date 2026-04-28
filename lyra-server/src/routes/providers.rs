@@ -271,7 +271,7 @@ pub struct SearchQuery {
     pub q: String,
     #[serde(default)]
     #[schemars(
-        description = "Resolve provider cover URLs for release search results using provider cover handlers."
+        description = "Resolve provider cover URLs for release or artist search results using provider cover handlers."
     )]
     pub include_cover_urls: bool,
     #[serde(default)]
@@ -538,7 +538,7 @@ pub struct RefreshResponse {
 pub struct RefreshEntityQuery {
     #[serde(default)]
     #[schemars(
-        description = "Replace existing cover image with provider results for release entity refresh."
+        description = "Replace existing cover image with provider results for release or artist entity refresh."
     )]
     pub replace_cover: bool,
     #[serde(default)]
@@ -587,7 +587,7 @@ fn search_provider_docs(op: TransformOperation) -> TransformOperation {
         "Invokes a provider's search handler for a given entity type and query.\n\n\
         Request body: `{ type: \"release\"|\"artist\"|\"track\", q: string }`.\n\
         `raw` always contains the original provider payload, and `title` is normalized from provider keys in priority order: `title`, `album_title`, `track_title`, `artist_name`, `name`.\n\n\
-        Set `include_cover_urls=true` to resolve `cover_url` for release results via provider cover handlers. Requires ManageMetadata permission.",
+        Set `include_cover_urls=true` to resolve `cover_url` for release and artist results via provider cover handlers. Requires ManageMetadata permission.",
     )
 }
 
@@ -622,7 +622,7 @@ fn unlock_entity_docs(op: TransformOperation) -> TransformOperation {
 fn refresh_entity_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Refresh entity metadata").description(
         "Triggers a metadata refresh for an entity from all enabled providers.\n\n\
-            For release entities, cover downloads replace only missing covers by default.\
+            For release and artist entities, cover downloads replace only missing covers by default.\
             Set `replace_cover=true` to overwrite an existing cover. Requires SyncMetadata permission.",
     )
 }
