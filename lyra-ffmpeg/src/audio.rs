@@ -35,6 +35,12 @@ pub enum AudioCodec {
     Wma,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioVbrMode {
+    Quality(i32),
+    Abr,
+}
+
 impl AudioFormat {
     pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
@@ -152,6 +158,37 @@ impl AudioFormat {
     pub fn supports_codec(&self, codec: AudioCodec) -> bool {
         self.compatible_codecs().contains(&codec)
     }
+
+    pub fn inferred_codec(&self, bit_depth: Option<u32>) -> Option<AudioCodec> {
+        match self {
+            Self::Mp3 => Some(AudioCodec::Mp3),
+            Self::Flac => Some(AudioCodec::Flac),
+            Self::Wav => Some(if bit_depth.unwrap_or(16) > 16 {
+                AudioCodec::PcmS24Le
+            } else {
+                AudioCodec::PcmS16Le
+            }),
+            Self::Ogg => bit_depth
+                .filter(|bit_depth| *bit_depth > 0)
+                .map(|_| AudioCodec::Flac),
+            Self::Webm => None,
+            Self::Aac => Some(AudioCodec::Aac),
+            Self::M4a => Some(if bit_depth.unwrap_or(0) > 0 {
+                AudioCodec::Alac
+            } else {
+                AudioCodec::Aac
+            }),
+            Self::Opus => Some(AudioCodec::Opus),
+            Self::Aiff => Some(if bit_depth.unwrap_or(16) > 16 {
+                AudioCodec::PcmS24Be
+            } else {
+                AudioCodec::PcmS16Be
+            }),
+            Self::Alac => Some(AudioCodec::Alac),
+            Self::Caf => None,
+            Self::Wma => Some(AudioCodec::Wma),
+        }
+    }
 }
 
 impl AudioCodec {
@@ -258,6 +295,40 @@ impl AudioCodec {
             _ => None,
         }
     }
+
+    pub fn vbr_mode(&self, bitrate_bps: u32, channels: u32) -> Option<AudioVbrMode> {
+        let bitrate_per_channel = bitrate_bps / channels.max(1);
+
+        match self {
+            Self::Aac => Some(AudioVbrMode::Quality(match bitrate_per_channel {
+                0..=31_999 => 1,
+                32_000..=47_999 => 2,
+                48_000..=63_999 => 3,
+                64_000..=95_999 => 4,
+                _ => 5,
+            })),
+            Self::Mp3 => {
+                if (48_001..122_500).contains(&bitrate_per_channel) {
+                    Some(AudioVbrMode::Quality(match bitrate_per_channel {
+                        0..=63_999 => 6,
+                        64_000..=87_999 => 4,
+                        88_000..=111_999 => 2,
+                        _ => 0,
+                    }))
+                } else {
+                    Some(AudioVbrMode::Abr)
+                }
+            }
+            Self::Vorbis => Some(AudioVbrMode::Quality(match bitrate_per_channel {
+                0..=39_999 => 0,
+                40_000..=55_999 => 2,
+                56_000..=79_999 => 4,
+                80_000..=111_999 => 6,
+                _ => 8,
+            })),
+            _ => None,
+        }
+    }
 }
 
 pub const SUPPORTED_FORMATS: &[&str] = &[
@@ -284,6 +355,7 @@ mod tests {
     use super::{
         AudioCodec,
         AudioFormat,
+        AudioVbrMode,
     };
 
     #[test]
@@ -311,5 +383,36 @@ mod tests {
     #[test]
     fn ogg_supports_flac() {
         assert!(AudioFormat::Ogg.supports_codec(AudioCodec::Flac));
+    }
+
+    #[test]
+    fn inferred_codec_uses_bit_depth_for_ambiguous_formats() {
+        assert_eq!(AudioFormat::M4a.inferred_codec(None), Some(AudioCodec::Aac));
+        assert_eq!(
+            AudioFormat::M4a.inferred_codec(Some(24)),
+            Some(AudioCodec::Alac)
+        );
+        assert_eq!(AudioFormat::Ogg.inferred_codec(None), None);
+        assert_eq!(
+            AudioFormat::Ogg.inferred_codec(Some(24)),
+            Some(AudioCodec::Flac)
+        );
+    }
+
+    #[test]
+    fn vbr_mode_uses_codec_specific_mapping() {
+        assert_eq!(
+            AudioCodec::Aac.vbr_mode(128_000, 2),
+            Some(AudioVbrMode::Quality(4))
+        );
+        assert_eq!(
+            AudioCodec::Mp3.vbr_mode(320_000, 2),
+            Some(AudioVbrMode::Abr)
+        );
+        assert_eq!(
+            AudioCodec::Vorbis.vbr_mode(160_000, 2),
+            Some(AudioVbrMode::Quality(6))
+        );
+        assert_eq!(AudioCodec::Flac.vbr_mode(160_000, 2), None);
     }
 }

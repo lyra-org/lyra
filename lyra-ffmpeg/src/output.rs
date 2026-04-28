@@ -21,6 +21,7 @@ pub struct Output {
     pub(crate) format: Option<String>,
     pub(crate) audio_codec: Option<String>,
     pub(crate) audio_codec_opts: HashMap<String, String>,
+    pub(crate) audio_global_quality: Option<i32>,
     pub(crate) format_opts: HashMap<String, String>,
     pub(crate) swr_opts: HashMap<String, String>,
     pub(crate) audio_sample_rate: Option<i32>,
@@ -38,6 +39,7 @@ impl Output {
             format: None,
             audio_codec: None,
             audio_codec_opts: HashMap::new(),
+            audio_global_quality: None,
             format_opts: HashMap::new(),
             swr_opts: HashMap::new(),
             audio_sample_rate: None,
@@ -58,6 +60,7 @@ impl Output {
             format: None,
             audio_codec: None,
             audio_codec_opts: HashMap::new(),
+            audio_global_quality: None,
             format_opts: HashMap::new(),
             swr_opts: HashMap::new(),
             audio_sample_rate: None,
@@ -87,6 +90,11 @@ impl Output {
 
     pub fn set_audio_codec_opt(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.audio_codec_opts.insert(key.into(), value.into());
+        self
+    }
+
+    pub fn set_audio_global_quality(mut self, quality: i32) -> Self {
+        self.audio_global_quality = Some(quality);
         self
     }
 
@@ -150,6 +158,10 @@ impl Output {
 
     pub fn get_audio_codec_opts(&self) -> &HashMap<String, String> {
         &self.audio_codec_opts
+    }
+
+    pub fn get_audio_global_quality(&self) -> Option<i32> {
+        self.audio_global_quality
     }
 
     pub fn get_format_opts(&self) -> &HashMap<String, String> {
