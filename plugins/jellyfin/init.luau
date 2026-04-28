@@ -3253,6 +3253,7 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 	local raw_sample_rate = if query then (query.audioSampleRate or query.AudioSampleRate) else nil
 	local raw_bit_depth = if query then (query.maxAudioBitDepth or query.MaxAudioBitDepth) else nil
 	local raw_channels = if query then (query.maxAudioChannels or query.MaxAudioChannels) else nil
+	local raw_enable_audio_vbr = if query then (query.enableAudioVbrEncoding or query.EnableAudioVbrEncoding) else nil
 	local raw_auto_copy = if query then (query.enableAutoStreamCopy or query.EnableAutoStreamCopy) else nil
 	local raw_enable_direct_play = if query then (query.enableDirectPlay or query.EnableDirectPlay) else nil
 	local raw_enable_transcoding = if query then (query.enableTranscoding or query.EnableTranscoding) else nil
@@ -3263,8 +3264,6 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 	local preferred_codecs = parse_preferred_csv_values(raw_codec)
 	local hls_codec = find_supported_audio_hls_codec(preferred_codecs)
 	local hls_requested = is_hls_transcoding_protocol(raw_transcoding_protocol)
-	-- MaxStreamingBitrate wins over audioBitRate: the former is the broader cap and
-	-- what Jellyfin clients send when they want to communicate a bandwidth ceiling.
 	local max_bitrate_value, max_bitrate_err = extract_integer_param(raw_max_bitrate)
 	if max_bitrate_err then
 		return base.bad_request(`MaxStreamingBitrate {max_bitrate_err}`)
@@ -3273,7 +3272,7 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 	if audio_bitrate_err then
 		return base.bad_request(`audioBitRate {audio_bitrate_err}`)
 	end
-	local bitrate_bps = max_bitrate_value or audio_bitrate_value
+	local bitrate_bps = audio_bitrate_value or max_bitrate_value
 
 	local sample_rate_hz, sample_rate_err = extract_integer_param(raw_sample_rate)
 	if sample_rate_err then
@@ -3292,6 +3291,7 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 		return base.bad_request(`StartTimeTicks {start_ticks_err}`)
 	end
 	local start_offset_ms = jellyfin_ticks_to_ms(start_ticks)
+	local prefer_vbr = jellyfin_boolean(raw_enable_audio_vbr)
 	local forbid_stream_copy = jellyfin_boolean(raw_auto_copy) == false
 	local direct_play_enabled = jellyfin_boolean(raw_enable_direct_play) ~= false
 	local transcoding_enabled = jellyfin_boolean(raw_enable_transcoding) ~= false
@@ -3370,6 +3370,7 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 			bitrate_bps = bitrate_bps,
 			sample_rate_hz = sample_rate_hz,
 			channels = channels,
+			prefer_vbr = prefer_vbr,
 			start_offset_ms = start_offset_ms,
 		}
 		if is_head_request then
@@ -3395,6 +3396,7 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 		bitrate_bps = bitrate_bps,
 		sample_rate_hz = sample_rate_hz,
 		channels = channels,
+		prefer_vbr = prefer_vbr,
 		start_offset_ms = start_offset_ms,
 	}
 	if is_head_request then
@@ -3484,6 +3486,7 @@ local function resolve_audio_hls_query_options(query: ApiQueryParams?): (api.Hls
 	local raw_max_bitrate = if query then (query.maxStreamingBitrate or query.MaxStreamingBitrate) else nil
 	local raw_sample_rate = if query then (query.audioSampleRate or query.AudioSampleRate) else nil
 	local raw_channels = if query then (query.maxAudioChannels or query.MaxAudioChannels) else nil
+	local raw_enable_audio_vbr = if query then (query.enableAudioVbrEncoding or query.EnableAudioVbrEncoding) else nil
 	local raw_start_ticks = if query then (query.startTimeTicks or query.StartTimeTicks) else nil
 
 	local requested_audio_bitrate, requested_audio_bitrate_err = extract_integer_param(raw_audio_bitrate)
@@ -3509,9 +3512,10 @@ local function resolve_audio_hls_query_options(query: ApiQueryParams?): (api.Hls
 
 	return {
 		preferred_codecs = preferred_codecs,
-		bitrate_bps = requested_max_bitrate or requested_audio_bitrate,
+		bitrate_bps = requested_audio_bitrate or requested_max_bitrate,
 		sample_rate_hz = sample_rate_hz,
 		channels = channels,
+		prefer_vbr = jellyfin_boolean(raw_enable_audio_vbr),
 		start_offset_ms = jellyfin_ticks_to_ms(start_ticks),
 	},
 		selected_codec or "aac",

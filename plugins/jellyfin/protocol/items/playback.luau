@@ -521,19 +521,27 @@ local function build_hls_transcoding_url(
 	item_id: string,
 	play_session_id: string,
 	codec: string,
+	audio_bitrate: number?,
 	max_streaming_bitrate: number?,
 	max_audio_channels: number?,
+	enable_audio_vbr_encoding: boolean?,
 	start_time_ticks: number?
 ): string
 	local parts = {
 		`audioCodec={codec}`,
 		`PlaySessionId={play_session_id}`,
 	}
+	if audio_bitrate ~= nil then
+		table.insert(parts, `audioBitRate={audio_bitrate}`)
+	end
 	if max_streaming_bitrate ~= nil then
 		table.insert(parts, `MaxStreamingBitrate={max_streaming_bitrate}`)
 	end
 	if max_audio_channels ~= nil then
 		table.insert(parts, `MaxAudioChannels={max_audio_channels}`)
+	end
+	if enable_audio_vbr_encoding ~= nil then
+		table.insert(parts, `EnableAudioVbrEncoding={tostring(enable_audio_vbr_encoding)}`)
 	end
 	if start_time_ticks ~= nil and start_time_ticks > 0 then
 		table.insert(parts, `StartTimeTicks={start_time_ticks}`)
@@ -586,8 +594,10 @@ local function apply_preferred_hls_transcoding(
 		media_source_id,
 		play_session_id,
 		codec,
+		json_number_field(request_object, "AudioBitRate"),
 		json_number_field(request_object, "MaxStreamingBitrate"),
 		json_number_field(request_object, "MaxAudioChannels"),
+		json_boolean_field(preferred_profile, "EnableAudioVbrEncoding"),
 		json_number_field(request_object, "StartTimeTicks")
 	)
 	return true
