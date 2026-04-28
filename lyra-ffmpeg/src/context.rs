@@ -572,6 +572,11 @@ unsafe fn setup_encoder(
             av_opt_set(enc_ctx as *mut _, key_c.as_ptr(), value_c.as_ptr(), 0);
         }
 
+        if let Some(quality) = output.audio_global_quality {
+            (*enc_ctx).flags |= AV_CODEC_FLAG_QSCALE as i32;
+            (*enc_ctx).global_quality = quality * FF_QP2LAMBDA;
+        }
+
         if ((*(*out_fmt_ctx).oformat).flags & AVFMT_GLOBALHEADER) != 0 {
             (*enc_ctx).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as i32;
         }

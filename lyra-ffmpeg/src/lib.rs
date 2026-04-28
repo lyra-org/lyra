@@ -11,6 +11,7 @@ mod output;
 pub use audio::{
     AudioCodec,
     AudioFormat,
+    AudioVbrMode,
     SUPPORTED_CODECS,
     SUPPORTED_FORMATS,
 };
