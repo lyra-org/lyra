@@ -10,7 +10,7 @@ Lyra is a music server with a Luau plugin system and an emphasis on metadata cor
 
 The recommended installation method is to use Cargo:
 ```bash
-cargo +nightly install --locked --git https://github.com/lyra-org/lyra lyra-server
+cargo +nightly install --locked --git https://git.lyra.pub/lyra/lyra lyra-server
 ```
 
 You may then run the installed binary to start the server with `serve`:
