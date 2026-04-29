@@ -20,6 +20,13 @@ use crate::locale::{
 };
 
 fn config_candidate_paths() -> Vec<PathBuf> {
+    if let Some(path) = env::var_os("LYRA_CONFIG_PATH") {
+        let path = PathBuf::from(path);
+        if !path.as_os_str().is_empty() {
+            return vec![path];
+        }
+    }
+
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let manifest_parent = manifest_dir
         .parent()
@@ -194,11 +201,14 @@ fn default_session_ttl_seconds() -> u64 {
 }
 
 pub(crate) fn load_config() -> Result<Config> {
-    let Some(path) = config_candidate_paths()
-        .into_iter()
-        .find(|path| path.is_file())
-    else {
-        return Err(anyhow::anyhow!(
+    let candidates = config_candidate_paths();
+    let Some(path) = candidates.iter().find(|path| path.is_file()).cloned() else {
+        if let Ok(explicit) = env::var("LYRA_CONFIG_PATH") {
+            return Err(anyhow!(
+                "config file not found at LYRA_CONFIG_PATH '{explicit}'"
+            ));
+        }
+        return Err(anyhow!(
             "failed to locate config.json at any known location"
         ));
     };

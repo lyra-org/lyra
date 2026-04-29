@@ -21,13 +21,18 @@ use crate::{
 };
 
 pub(crate) fn initialize_harmony() -> Result<Arc<Harmony>> {
+    let plugins_dir = std::env::var_os("LYRA_PLUGINS_DIR")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| PathBuf::from("plugins"));
+
     let harmony = Arc::new(Harmony::new(
         STATE.lua.get(),
         "/",
         crate::plugins::docs::runtime_modules().into(),
         crate::plugins::globals::plugin_globals().into(),
         Some(crate::plugins::globals::caller_resolver()),
-        Some(PathBuf::from("plugins")),
+        Some(plugins_dir),
     )?);
     STATE
         .plugin_manifests
