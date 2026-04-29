@@ -83,6 +83,8 @@ RUN cargo build --release -p lyra-server || true
 
 COPY . .
 
+RUN find harmony-* lyra-* -name '*.rs' -exec touch {} +
+
 RUN cargo build --release --locked -p lyra-server
 
 FROM debian:trixie-slim
