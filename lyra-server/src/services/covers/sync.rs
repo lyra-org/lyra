@@ -36,6 +36,7 @@ use crate::db::{
     self,
     Artist,
     Cover,
+    ProviderConfig,
     Release,
     Track,
 };
@@ -69,6 +70,25 @@ use super::{
 };
 
 const MAX_COVER_BYTES: usize = 20 * 1024 * 1024;
+
+fn sorted_enabled_providers(
+    mut providers: Vec<ProviderConfig>,
+    provider_filter: Option<&str>,
+) -> Vec<ProviderConfig> {
+    providers.retain(|provider| provider.enabled);
+    if let Some(provider_filter) = provider_filter
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        providers.retain(|provider| provider.provider_id == provider_filter);
+    }
+    providers.sort_by(|a, b| {
+        b.priority
+            .cmp(&a.priority)
+            .then(a.provider_id.cmp(&b.provider_id))
+    });
+    providers
+}
 
 fn extension_from_url(url: &str) -> Option<&'static str> {
     let parsed = Url::parse(url).ok()?;
@@ -334,6 +354,7 @@ pub(crate) async fn sync_artist_cover(
     artist: &Artist,
     paths: CoverPaths<'_>,
     options: CoverSyncOptions,
+    provider_filter: Option<&str>,
 ) -> Result<bool> {
     let Some(artist_id) = artist.db_id.clone().map(Into::<DbId>::into) else {
         return Ok(false);
@@ -354,13 +375,7 @@ pub(crate) async fn sync_artist_cover(
                 .collect()
         };
 
-        let mut sorted_providers = providers;
-        sorted_providers.retain(|provider| provider.enabled);
-        sorted_providers.sort_by(|a, b| {
-            b.priority
-                .cmp(&a.priority)
-                .then(a.provider_id.cmp(&b.provider_id))
-        });
+        let sorted_providers = sorted_enabled_providers(providers, provider_filter);
         let mut provider_contexts = Vec::new();
         for provider in sorted_providers {
             let provider_ids =
@@ -563,6 +578,33 @@ async fn execute_cover_download(task: CoverDownloadTask) -> bool {
     true
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CoverScope {
+    Release,
+    Artist,
+}
+
+impl CoverScope {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Release => "release",
+            Self::Artist => "artist",
+        }
+    }
+}
+
+fn resolve_covers_for_library(
+    scope: CoverScope,
+    db: &agdb::DbAny,
+    library_id: DbId,
+    paths: CoverPaths<'_>,
+) -> Result<Vec<(DbId, PathBuf)>> {
+    match scope {
+        CoverScope::Release => resolve_release_covers(db, library_id, paths),
+        CoverScope::Artist => resolve_artist_covers(db, library_id, paths),
+    }
+}
+
 pub(crate) fn resolve_release_covers(
     db: &agdb::DbAny,
     library_id: DbId,
@@ -582,28 +624,40 @@ pub(crate) fn resolve_release_covers(
     Ok(resolved)
 }
 
+pub(crate) fn resolve_artist_covers(
+    db: &agdb::DbAny,
+    library_id: DbId,
+    paths: CoverPaths<'_>,
+) -> Result<Vec<(DbId, PathBuf)>> {
+    let artists = db::artists::get_by_library(db, library_id)?;
+    let mut resolved = Vec::new();
+    for artist in &artists {
+        let Some(artist_id) = artist.db_id.clone().map(Into::<DbId>::into) else {
+            continue;
+        };
+        if let Some(cover_path) = resolve_cover_for_artist_id(db, artist_id, paths)? {
+            resolved.push((artist_id, cover_path));
+        }
+    }
+    Ok(resolved)
+}
+
 pub(crate) async fn sync_release_covers_for_library(
     db: &crate::db::DbAsync,
     paths: CoverPaths<'_>,
     library_id: DbId,
     options: CoverSyncOptions,
+    provider_filter: Option<&str>,
 ) -> Result<usize> {
     let resolve_contexts = {
         let db_read = db.read().await;
         let releases = db::releases::get(&db_read, library_id)?;
 
-        let mut sorted_providers: Vec<_> = db::providers::get(&db_read)?
-            .into_iter()
-            .filter(|p| p.enabled)
-            .collect();
+        let sorted_providers =
+            sorted_enabled_providers(db::providers::get(&db_read)?, provider_filter);
         if sorted_providers.is_empty() {
             return Ok(0);
         }
-        sorted_providers.sort_by(|a, b| {
-            b.priority
-                .cmp(&a.priority)
-                .then(a.provider_id.cmp(&b.provider_id))
-        });
 
         let mut contexts = Vec::new();
         for release in &releases {
@@ -752,6 +806,46 @@ pub(crate) async fn sync_release_covers_for_library(
     Ok(synced)
 }
 
+pub(crate) async fn sync_artist_covers_for_library(
+    db: &crate::db::DbAsync,
+    paths: CoverPaths<'_>,
+    library_id: DbId,
+    options: CoverSyncOptions,
+    provider_filter: Option<&str>,
+) -> Result<usize> {
+    let artists = {
+        let db_read = db.read().await;
+        db::artists::get_by_library(&db_read, library_id)?
+    };
+
+    let mut synced = 0usize;
+    for artist in &artists {
+        if sync_artist_cover(db, artist, paths, options, provider_filter).await? {
+            synced += 1;
+        }
+    }
+
+    Ok(synced)
+}
+
+async fn sync_covers_for_library_scope(
+    scope: CoverScope,
+    db: &crate::db::DbAsync,
+    paths: CoverPaths<'_>,
+    library_id: DbId,
+    options: CoverSyncOptions,
+    provider_filter: Option<&str>,
+) -> Result<usize> {
+    match scope {
+        CoverScope::Release => {
+            sync_release_covers_for_library(db, paths, library_id, options, provider_filter).await
+        }
+        CoverScope::Artist => {
+            sync_artist_covers_for_library(db, paths, library_id, options, provider_filter).await
+        }
+    }
+}
+
 pub(crate) async fn upsert_cover_metadata(
     db: &crate::db::DbAsync,
     owner_id: DbId,
@@ -819,31 +913,32 @@ pub(crate) async fn upsert_artist_cover_metadata(
 }
 
 struct PendingCover {
-    release_id: DbId,
+    owner_id: DbId,
     path: PathBuf,
     mime_type: String,
 }
 
 struct ComputedCover {
-    release_id: DbId,
+    owner_id: DbId,
     path: String,
     mime_type: String,
     hash: String,
     blurhash: Option<String>,
 }
 
-pub(crate) async fn sync_release_cover_metadata_from_resolved(
+async fn sync_cover_metadata_from_resolved(
     db: &crate::db::DbAsync,
     resolved: &[(DbId, PathBuf)],
+    entity_type: &'static str,
 ) -> Result<usize> {
     let mut pending: Vec<PendingCover> = Vec::new();
 
-    for (release_id, cover_path) in resolved {
+    for (owner_id, cover_path) in resolved {
         let mime_type = cover_mime_from_path(cover_path).to_string();
 
         let skip = {
             let db_read = db.read().await;
-            if let Some(existing) = db::covers::get(&db_read, *release_id)? {
+            if let Some(existing) = db::covers::get(&db_read, *owner_id)? {
                 cover_hash(cover_path).is_some_and(|hash| existing.hash == hash)
             } else {
                 false
@@ -854,7 +949,7 @@ pub(crate) async fn sync_release_cover_metadata_from_resolved(
         }
 
         pending.push(PendingCover {
-            release_id: *release_id,
+            owner_id: *owner_id,
             path: cover_path.clone(),
             mime_type,
         });
@@ -870,7 +965,7 @@ pub(crate) async fn sync_release_cover_metadata_from_resolved(
             let hash = cover_hash(&p.path)?;
             let blurhash = cover_blurhash(&p.path);
             Some(ComputedCover {
-                release_id: p.release_id,
+                owner_id: p.owner_id,
                 path: p.path.to_string_lossy().into_owned(),
                 mime_type: p.mime_type,
                 hash,
@@ -890,11 +985,59 @@ pub(crate) async fn sync_release_cover_metadata_from_resolved(
             blurhash: c.blurhash,
         };
         let mut db_write = db.write().await;
-        db_write.transaction_mut(|t| db::covers::upsert(t, c.release_id, cover))?;
+        db_write.transaction_mut(|t| db::covers::upsert(t, c.owner_id, cover))?;
     }
 
-    tracing::info!(count, "persisted release cover metadata");
+    tracing::info!(count, entity_type, "persisted cover metadata");
     Ok(count)
+}
+
+pub(crate) async fn sync_release_cover_metadata_from_resolved(
+    db: &crate::db::DbAsync,
+    resolved: &[(DbId, PathBuf)],
+) -> Result<usize> {
+    sync_cover_metadata_from_resolved(db, resolved, "release").await
+}
+
+pub(crate) async fn sync_artist_cover_metadata_from_resolved(
+    db: &crate::db::DbAsync,
+    resolved: &[(DbId, PathBuf)],
+) -> Result<usize> {
+    sync_cover_metadata_from_resolved(db, resolved, "artist").await
+}
+
+async fn sync_cover_metadata_for_scope(
+    scope: CoverScope,
+    db: &crate::db::DbAsync,
+    resolved: &[(DbId, PathBuf)],
+) -> Result<usize> {
+    match scope {
+        CoverScope::Release => sync_release_cover_metadata_from_resolved(db, resolved).await,
+        CoverScope::Artist => sync_artist_cover_metadata_from_resolved(db, resolved).await,
+    }
+}
+
+pub(crate) async fn sync_and_persist_covers_for_library(
+    db: &crate::db::DbAsync,
+    paths: CoverPaths<'_>,
+    library_id: DbId,
+    options: CoverSyncOptions,
+    provider_filter: Option<&str>,
+    scope: CoverScope,
+) -> Result<usize> {
+    let _synced =
+        sync_covers_for_library_scope(scope, db, paths, library_id, options, provider_filter)
+            .await?;
+
+    let resolved = {
+        let db_read = db.read().await;
+        resolve_covers_for_library(scope, &db_read, library_id, paths)?
+    };
+    if resolved.is_empty() {
+        return Ok(0);
+    }
+
+    sync_cover_metadata_for_scope(scope, db, &resolved).await
 }
 
 pub(crate) async fn eager_sync_cover_metadata(

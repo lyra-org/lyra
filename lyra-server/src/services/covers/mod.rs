@@ -86,12 +86,11 @@ pub(crate) use resolve::{
     resolve_cover_for_release_id,
 };
 pub(crate) use sync::{
+    CoverScope,
     eager_sync_cover_metadata,
-    resolve_release_covers,
+    sync_and_persist_covers_for_library,
     sync_artist_cover,
     sync_release_cover_for_tracks,
-    sync_release_cover_metadata_from_resolved,
-    sync_release_covers_for_library,
     upsert_artist_cover_metadata,
     upsert_release_cover_metadata,
 };
