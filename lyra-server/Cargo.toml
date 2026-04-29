@@ -30,6 +30,7 @@ matchit = "0.8" # pinned to axum's transitive version to avoid a duplicate
 multimap = "0.10"
 gethostname = "1"
 nanoid = "0.4"
+nucleo-matcher = "0.3"
 rand = "0.9"
 rayon = "1"
 blurhash = "0.2.3"

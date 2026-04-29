@@ -595,6 +595,7 @@ struct ReleaseSortEntry {
     db_id: Option<i64>,
     release_date: Option<String>,
     date_created: Option<u64>,
+    match_score: u32,
 }
 
 impl ReleaseSortEntry {
@@ -609,6 +610,7 @@ impl ReleaseSortEntry {
             release_date: release.release_date.clone(),
             date_created: release.ctime.or(release.created_at),
             release,
+            match_score: 0,
         }
     }
 }
@@ -642,6 +644,11 @@ fn compare_release_entries(
         if ord != Ordering::Equal {
             return ord;
         }
+    }
+
+    let score_ord = b.match_score.cmp(&a.match_score);
+    if score_ord != Ordering::Equal {
+        return score_ord;
     }
 
     let name_ord = a.lower_title.cmp(&b.lower_title);
@@ -765,10 +772,13 @@ pub(crate) fn query(
     let mut entries: Vec<ReleaseSortEntry> =
         releases.into_iter().map(ReleaseSortEntry::new).collect();
 
-    // Text search filter
     if let Some(ref term) = options.search_term {
-        let lower_term = term.to_lowercase();
-        entries.retain(|entry| entry.lower_title.contains(&lower_term));
+        super::search::fuzzy_filter(
+            &mut entries,
+            term,
+            |entry| entry.release.release_title.as_str(),
+            |entry, score| entry.match_score = score,
+        );
     }
 
     Ok(sort_and_paginate_releases(entries, options))
@@ -802,10 +812,13 @@ pub(crate) fn query_by_artists(
     let mut entries: Vec<ReleaseSortEntry> =
         releases.into_iter().map(ReleaseSortEntry::new).collect();
 
-    // Text search filter
     if let Some(ref term) = options.search_term {
-        let lower_term = term.to_lowercase();
-        entries.retain(|entry| entry.lower_title.contains(&lower_term));
+        super::search::fuzzy_filter(
+            &mut entries,
+            term,
+            |entry| entry.release.release_title.as_str(),
+            |entry, score| entry.match_score = score,
+        );
     }
 
     Ok(sort_and_paginate_releases(entries, options))
@@ -991,6 +1004,71 @@ mod tests {
             .map(|a| a.release_title.as_str())
             .collect();
         assert_eq!(titles, vec!["Alpha", "Middle", "Zebra"]);
+        Ok(())
+    }
+
+    #[test]
+    fn query_with_blank_search_term_does_not_filter() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        insert_release(&mut db, "Rock Anthems")?;
+        insert_release(&mut db, "Jazz Classics")?;
+
+        let options = ListOptions {
+            sort: vec![],
+            offset: None,
+            limit: None,
+            search_term: Some("   ".to_string()),
+        };
+        let result = query(&db, "releases", &options)?;
+        assert_eq!(result.total_count, 2);
+        assert_eq!(result.entries.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn query_orders_by_match_score_when_sort_is_empty() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        insert_release(&mut db, "Alpha Rock")?;
+        insert_release(&mut db, "Rock Solid")?;
+
+        let options = ListOptions {
+            sort: vec![],
+            offset: None,
+            limit: None,
+            search_term: Some("rock".to_string()),
+        };
+        let result = query(&db, "releases", &options)?;
+        let titles: Vec<&str> = result
+            .entries
+            .iter()
+            .map(|a| a.release_title.as_str())
+            .collect();
+        assert_eq!(titles, vec!["Rock Solid", "Alpha Rock"]);
+        Ok(())
+    }
+
+    #[test]
+    fn query_explicit_sort_overrides_match_score() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        insert_release(&mut db, "Alpha Rock")?;
+        insert_release(&mut db, "Rock Solid")?;
+
+        let options = ListOptions {
+            sort: vec![SortSpec {
+                key: SortKey::Name,
+                direction: super::super::SortDirection::Ascending,
+            }],
+            offset: None,
+            limit: None,
+            search_term: Some("rock".to_string()),
+        };
+        let result = query(&db, "releases", &options)?;
+        let titles: Vec<&str> = result
+            .entries
+            .iter()
+            .map(|a| a.release_title.as_str())
+            .collect();
+        assert_eq!(titles, vec!["Alpha Rock", "Rock Solid"]);
         Ok(())
     }
 }

@@ -29,6 +29,7 @@ pub(crate) mod playlists;
 pub(crate) mod providers;
 pub(crate) mod releases;
 pub(crate) mod roles;
+pub(crate) mod search;
 pub(crate) mod server;
 pub(crate) mod settings;
 pub(crate) mod tags;

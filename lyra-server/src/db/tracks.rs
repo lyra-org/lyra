@@ -366,6 +366,7 @@ struct TrackSortEntry {
     track_number: Option<u32>,
     disc_number: Option<u32>,
     duration: Option<u64>,
+    match_score: u32,
 }
 
 impl TrackSortEntry {
@@ -379,6 +380,7 @@ impl TrackSortEntry {
             disc_number: track.disc,
             duration: track.duration_ms,
             track,
+            match_score: 0,
         }
     }
 }
@@ -410,6 +412,11 @@ fn compare_track_entries(a: &TrackSortEntry, b: &TrackSortEntry, sort: &[SortSpe
         if ord != Ordering::Equal {
             return ord;
         }
+    }
+
+    let score_ord = b.match_score.cmp(&a.match_score);
+    if score_ord != Ordering::Equal {
+        return score_ord;
     }
 
     let name_ord = a.lower_title.cmp(&b.lower_title);
@@ -470,8 +477,12 @@ fn query_tracks_from_candidates(
     let mut entries: Vec<TrackSortEntry> = tracks.into_iter().map(TrackSortEntry::new).collect();
 
     if let Some(ref term) = options.search_term {
-        let lower_term = term.to_lowercase();
-        entries.retain(|entry| entry.lower_title.contains(&lower_term));
+        super::search::fuzzy_filter(
+            &mut entries,
+            term,
+            |entry| entry.track.track_title.as_str(),
+            |entry, score| entry.match_score = score,
+        );
     }
 
     Ok(sort_and_paginate_tracks(entries, options))
@@ -585,10 +596,13 @@ pub(crate) fn query(
 
     let mut entries: Vec<TrackSortEntry> = tracks.into_iter().map(TrackSortEntry::new).collect();
 
-    // Text search filter
     if let Some(ref term) = options.search_term {
-        let lower_term = term.to_lowercase();
-        entries.retain(|entry| entry.lower_title.contains(&lower_term));
+        super::search::fuzzy_filter(
+            &mut entries,
+            term,
+            |entry| entry.track.track_title.as_str(),
+            |entry, score| entry.match_score = score,
+        );
     }
 
     Ok(sort_and_paginate_tracks(entries, options))
@@ -782,6 +796,29 @@ mod tests {
         let tracks = get_by_entry(&db, entry_db_id)?;
         assert!(tracks.is_empty());
 
+        Ok(())
+    }
+
+    #[test]
+    fn query_with_search_term_filters_and_orders_by_score() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        insert_track(&mut db, "Alpha Rock")?;
+        insert_track(&mut db, "Jazz Tune")?;
+        insert_track(&mut db, "Rock Solid")?;
+
+        let options = ListOptions {
+            sort: vec![],
+            offset: None,
+            limit: None,
+            search_term: Some("rock".to_string()),
+        };
+        let result = query(&db, "tracks", &options)?;
+        let titles: Vec<&str> = result
+            .entries
+            .iter()
+            .map(|t| t.track_title.as_str())
+            .collect();
+        assert_eq!(titles, vec!["Rock Solid", "Alpha Rock"]);
         Ok(())
     }
 }
