@@ -10,6 +10,7 @@ use std::collections::{
 };
 
 use agdb::{
+    Comparison,
     CountComparison,
     DbAny,
     DbElement,
@@ -17,8 +18,14 @@ use agdb::{
     DbId,
     DbTypeMarker,
     DbValue,
+    KeyValueComparison,
     QueryBuilder,
+    QueryCondition,
+    QueryConditionData,
+    QueryConditionLogic,
+    QueryConditionModifier,
     QueryId,
+    QueryIds,
 };
 use schemars::JsonSchema;
 use serde::{
@@ -252,6 +259,68 @@ pub(crate) fn get_direct(db: &DbAny, from: impl Into<QueryId>) -> anyhow::Result
         )?
         .try_into()?;
 
+    Ok(releases)
+}
+
+#[derive(Default, Clone, Debug)]
+pub(crate) struct ReleaseQueryFilters {
+    pub year: Option<u32>,
+    pub ids: Option<HashSet<DbId>>,
+}
+
+impl ReleaseQueryFilters {
+    fn is_empty(&self) -> bool {
+        self.year.is_none() && self.ids.is_none()
+    }
+}
+
+fn extra_condition(data: QueryConditionData) -> QueryCondition {
+    QueryCondition {
+        logic: QueryConditionLogic::And,
+        modifier: QueryConditionModifier::None,
+        data,
+    }
+}
+
+fn get_direct_filtered(
+    db: &DbAny,
+    from: impl Into<QueryId>,
+    filters: &ReleaseQueryFilters,
+) -> anyhow::Result<Vec<Release>> {
+    if filters.is_empty() {
+        return get_direct(db, from);
+    }
+
+    let mut query = QueryBuilder::select()
+        .elements::<Release>()
+        .search()
+        .from(from)
+        .where_()
+        .neighbor()
+        .end_where()
+        .query();
+
+    if let QueryIds::Search(search) = &mut query.ids {
+        if let Some(year) = filters.year {
+            search
+                .conditions
+                .push(extra_condition(QueryConditionData::KeyValue(
+                    KeyValueComparison {
+                        key: DbValue::from("release_date"),
+                        value: Comparison::StartsWith(DbValue::from(format!("{year:04}"))),
+                    },
+                )));
+        }
+        if let Some(ref ids) = filters.ids {
+            search
+                .conditions
+                .push(extra_condition(QueryConditionData::Ids(
+                    ids.iter().map(|id| QueryId::Id(*id)).collect(),
+                )));
+        }
+    }
+
+    let releases: Vec<Release> = db.exec(&query)?.try_into()?;
     Ok(releases)
 }
 
@@ -762,8 +831,9 @@ pub(crate) fn query(
     db: &DbAny,
     from: impl Into<QueryId>,
     options: &ListOptions,
+    filters: &ReleaseQueryFilters,
 ) -> anyhow::Result<PagedResult<Release>> {
-    let releases = get_direct(db, from)?;
+    let releases = get_direct_filtered(db, from, filters)?;
 
     if options.search_term.is_none() && options.sort.is_empty() {
         return Ok(paginate_releases(releases, options));
@@ -789,6 +859,7 @@ pub(crate) fn query_by_artists(
     artist_db_ids: &[DbId],
     scope: Option<QueryId>,
     options: &ListOptions,
+    filters: &ReleaseQueryFilters,
 ) -> anyhow::Result<PagedResult<Release>> {
     let mut releases = get_by_artists(db, artist_db_ids)?;
     if let Some(scope) = scope {
@@ -802,6 +873,19 @@ pub(crate) fn query_by_artists(
                 .clone()
                 .map(DbId::from)
                 .is_some_and(|release_db_id| scoped_ids.contains(&release_db_id))
+        });
+    }
+
+    if let Some(year) = filters.year {
+        releases.retain(|release| release_year(release.release_date.as_deref()) == Some(year));
+    }
+    if let Some(ref id_set) = filters.ids {
+        releases.retain(|release| {
+            release
+                .db_id
+                .clone()
+                .map(DbId::from)
+                .is_some_and(|id| id_set.contains(&id))
         });
     }
 
@@ -933,7 +1017,7 @@ mod tests {
             limit: None,
             search_term: None,
         };
-        let result = query(&db, "releases", &options)?;
+        let result = query(&db, "releases", &options, &ReleaseQueryFilters::default())?;
         assert_eq!(result.total_count, 3);
         assert_eq!(result.entries.len(), 3);
         Ok(())
@@ -955,7 +1039,7 @@ mod tests {
             limit: Some(1),
             search_term: None,
         };
-        let result = query(&db, "releases", &options)?;
+        let result = query(&db, "releases", &options, &ReleaseQueryFilters::default())?;
         assert_eq!(result.total_count, 3);
         assert_eq!(result.entries.len(), 1);
         assert_eq!(result.offset, 1);
@@ -975,7 +1059,7 @@ mod tests {
             limit: None,
             search_term: Some("rock".to_string()),
         };
-        let result = query(&db, "releases", &options)?;
+        let result = query(&db, "releases", &options, &ReleaseQueryFilters::default())?;
         assert_eq!(result.total_count, 2);
         assert_eq!(result.entries.len(), 2);
         Ok(())
@@ -997,7 +1081,7 @@ mod tests {
             limit: None,
             search_term: None,
         };
-        let result = query(&db, "releases", &options)?;
+        let result = query(&db, "releases", &options, &ReleaseQueryFilters::default())?;
         let titles: Vec<&str> = result
             .entries
             .iter()
@@ -1019,7 +1103,7 @@ mod tests {
             limit: None,
             search_term: Some("   ".to_string()),
         };
-        let result = query(&db, "releases", &options)?;
+        let result = query(&db, "releases", &options, &ReleaseQueryFilters::default())?;
         assert_eq!(result.total_count, 2);
         assert_eq!(result.entries.len(), 2);
         Ok(())
@@ -1037,7 +1121,7 @@ mod tests {
             limit: None,
             search_term: Some("rock".to_string()),
         };
-        let result = query(&db, "releases", &options)?;
+        let result = query(&db, "releases", &options, &ReleaseQueryFilters::default())?;
         let titles: Vec<&str> = result
             .entries
             .iter()
@@ -1062,13 +1146,96 @@ mod tests {
             limit: None,
             search_term: Some("rock".to_string()),
         };
-        let result = query(&db, "releases", &options)?;
+        let result = query(&db, "releases", &options, &ReleaseQueryFilters::default())?;
         let titles: Vec<&str> = result
             .entries
             .iter()
             .map(|a| a.release_title.as_str())
             .collect();
         assert_eq!(titles, vec!["Alpha Rock", "Rock Solid"]);
+        Ok(())
+    }
+
+    fn insert_dated_release(
+        db: &mut DbAny,
+        title: &str,
+        release_date: &str,
+    ) -> anyhow::Result<DbId> {
+        let release = Release {
+            db_id: None,
+            id: nanoid::nanoid!(),
+            release_title: title.to_string(),
+            sort_title: None,
+            release_type: None,
+            release_date: Some(release_date.to_string()),
+            locked: None,
+            created_at: None,
+            ctime: None,
+        };
+        let id = db
+            .exec_mut(QueryBuilder::insert().element(&release).query())?
+            .ids()[0];
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from("releases")
+                .to(id)
+                .query(),
+        )?;
+        Ok(id)
+    }
+
+    #[test]
+    fn query_pushes_year_filter_into_agdb() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        insert_dated_release(&mut db, "Old Album", "1995-03-04")?;
+        insert_dated_release(&mut db, "New Album", "2024-07-19")?;
+        insert_dated_release(&mut db, "Other 2024", "2024-12-01")?;
+
+        let options = ListOptions {
+            sort: vec![],
+            offset: None,
+            limit: None,
+            search_term: None,
+        };
+        let filters = ReleaseQueryFilters {
+            year: Some(2024),
+            ids: None,
+        };
+        let result = query(&db, "releases", &options, &filters)?;
+        let titles: HashSet<&str> = result
+            .entries
+            .iter()
+            .map(|r| r.release_title.as_str())
+            .collect();
+        assert_eq!(titles, HashSet::from(["New Album", "Other 2024"]));
+        Ok(())
+    }
+
+    #[test]
+    fn query_pushes_id_filter_into_agdb() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let keep_a = insert_release(&mut db, "Keep A")?;
+        insert_release(&mut db, "Drop B")?;
+        let keep_c = insert_release(&mut db, "Keep C")?;
+
+        let options = ListOptions {
+            sort: vec![],
+            offset: None,
+            limit: None,
+            search_term: None,
+        };
+        let filters = ReleaseQueryFilters {
+            year: None,
+            ids: Some(HashSet::from([keep_a, keep_c])),
+        };
+        let result = query(&db, "releases", &options, &filters)?;
+        let titles: HashSet<&str> = result
+            .entries
+            .iter()
+            .map(|r| r.release_title.as_str())
+            .collect();
+        assert_eq!(titles, HashSet::from(["Keep A", "Keep C"]));
         Ok(())
     }
 }

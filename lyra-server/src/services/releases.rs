@@ -183,7 +183,12 @@ pub(crate) fn query(
                 offset,
             })
         }
-        other => db::releases::query(db, other, list_options),
+        other => db::releases::query(
+            db,
+            other,
+            list_options,
+            &db::releases::ReleaseQueryFilters::default(),
+        ),
     }
 }
 
@@ -193,7 +198,13 @@ pub(crate) fn query_by_artists(
     scope: Option<QueryId>,
     list_options: &ListOptions,
 ) -> anyhow::Result<PagedResult<Release>> {
-    db::releases::query_by_artists(db, artist_ids, scope, list_options)
+    db::releases::query_by_artists(
+        db,
+        artist_ids,
+        scope,
+        list_options,
+        &db::releases::ReleaseQueryFilters::default(),
+    )
 }
 
 pub(crate) fn get_appearances(db: &DbAny, artist_id: DbId) -> anyhow::Result<Vec<Release>> {
@@ -206,7 +217,7 @@ pub(crate) fn list_details_with_options(
     list_options: ListOptions,
     filters: ReleaseListFilters,
 ) -> anyhow::Result<Vec<ReleaseDetails>> {
-    let genre_release_ids = if !filters.genres.is_empty() {
+    let ids = if !filters.genres.is_empty() {
         Some(db::genres::release_ids_matching_genres(
             db,
             &filters.genres,
@@ -215,19 +226,17 @@ pub(crate) fn list_details_with_options(
         None
     };
 
-    let mut releases = query(db, None, &list_options)?.entries;
-    releases.retain(|release| {
-        if let Some(year) = filters.year {
-            if db::releases::release_year(release.release_date.as_deref()) != Some(year) {
-                return false;
-            }
-        }
-        if let Some(ref genre_ids) = genre_release_ids {
-            let release_db_id = release.db_id.clone().map(DbId::from);
-            return release_db_id.is_some_and(|id| genre_ids.contains(&id));
-        }
-        true
-    });
+    let query_filters = db::releases::ReleaseQueryFilters {
+        year: filters.year,
+        ids,
+    };
+    let releases = db::releases::query(
+        db,
+        QueryId::Alias("releases".to_string()),
+        &list_options,
+        &query_filters,
+    )?
+    .entries;
 
     let release_ids: Vec<DbId> = releases
         .iter()
