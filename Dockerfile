@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libvorbis-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone --depth 1 --branch n8.0 https://git.ffmpeg.org/ffmpeg.git /ffmpeg-src
+RUN git clone --depth 1 --branch n8.0 https://github.com/FFmpeg/FFmpeg.git /ffmpeg-src
 
 WORKDIR /ffmpeg-src
 RUN ./configure \
