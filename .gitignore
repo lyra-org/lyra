@@ -6,3 +6,4 @@ config.json
 *.db
 .lyra/
 .luaurc
+.DS_Store
