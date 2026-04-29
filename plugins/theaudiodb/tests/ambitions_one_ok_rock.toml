@@ -1,0 +1,126 @@
+plugin = "theaudiodb"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ONE OK ROCK - Ambitions (FLAC)/14 Take what you want (featuring 5 Seconds of Summer).flac"
+album = "Ambitions"
+artists = ["ONE OK ROCK"]
+title = "Take what you want (featuring 5 Seconds of Summer)"
+track = 14
+duration_ms = 244062
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Ambitions (FLAC)/13 Start Again.flac"
+album = "Ambitions"
+artists = ["ONE OK ROCK"]
+title = "Start Again"
+track = 13
+duration_ms = 194263
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Ambitions (FLAC)/12 Bon Voyage.flac"
+album = "Ambitions"
+artists = ["ONE OK ROCK"]
+title = "Bon Voyage"
+track = 12
+duration_ms = 245996
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Ambitions (FLAC)/11 One Way Ticket.flac"
+album = "Ambitions"
+artists = ["ONE OK ROCK"]
+title = "One Way Ticket"
+track = 11
+duration_ms = 216970
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Ambitions (FLAC)/10 Listen (featuring Avril Lavigne).flac"
+album = "Ambitions"
+artists = ["ONE OK ROCK"]
+title = "Listen (featuring Avril Lavigne)"
+track = 10
+duration_ms = 218992
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Ambitions (FLAC)/09 I was King.flac"
+album = "Ambitions"
+artists = ["ONE OK ROCK"]
+title = "I was King"
+track = 9
+duration_ms = 238826
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Ambitions (FLAC)/08 Lost in Tonight.flac"
+album = "Ambitions"
+artists = ["ONE OK ROCK"]
+title = "Lost in Tonight"
+track = 8
+duration_ms = 172139
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Ambitions (FLAC)/07 Bedroom Warfare.flac"
+album = "Ambitions"
+artists = ["ONE OK ROCK"]
+title = "Bedroom Warfare"
+track = 7
+duration_ms = 203442
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Ambitions (FLAC)/06 Always coming back.flac"
+album = "Ambitions"
+artists = ["ONE OK ROCK"]
+title = "Always coming back"
+track = 6
+duration_ms = 213573
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Ambitions (FLAC)/05 2020.flac"
+album = "Ambitions"
+artists = ["ONE OK ROCK"]
+title = "20/20"
+track = 5
+duration_ms = 199220
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Ambitions (FLAC)/04 We are.flac"
+album = "Ambitions"
+artists = ["ONE OK ROCK"]
+title = "We are"
+track = 4
+duration_ms = 255484
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Ambitions (FLAC)/03 Taking Off.flac"
+album = "Ambitions"
+artists = ["ONE OK ROCK"]
+title = "Taking Off"
+track = 3
+duration_ms = 219084
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Ambitions (FLAC)/02 Bombs away.flac"
+album = "Ambitions"
+artists = ["ONE OK ROCK"]
+title = "Bombs away"
+track = 2
+duration_ms = 263853
+
+[[raw_tags]]
+file_path = "ONE OK ROCK - Ambitions (FLAC)/01 Ambitions -Introduction-.flac"
+album = "Ambitions"
+artists = ["ONE OK ROCK"]
+title = "Ambitions -Introduction-"
+track = 1
+duration_ms = 83041
+
+[expect.release]
+ids = { album_id = "2326895" }
+fields = { release_title = "Ambitions" }
+
+[expect.artists."121943"]
+ids = { artist_id = "121943" }
+fields = { artist_name = "ONE OK ROCK" }

@@ -1,0 +1,183 @@
+plugin = "theaudiodb"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+
+[[raw_tags]]
+file_path = "YELLOW DANCER/14 Friend Ship.m4a"
+album = "YELLOW DANCER"
+artists = ["星野源"]
+title = "Friend Ship"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 14
+duration_ms = 282517
+
+[[raw_tags]]
+file_path = "YELLOW DANCER/13 夜.m4a"
+album = "YELLOW DANCER"
+artists = ["星野源"]
+title = "夜"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 14
+duration_ms = 251124
+
+[[raw_tags]]
+file_path = "YELLOW DANCER/12 Down Town.m4a"
+album = "YELLOW DANCER"
+artists = ["星野源"]
+title = "Down Town"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 14
+duration_ms = 231665
+
+[[raw_tags]]
+file_path = "YELLOW DANCER/11 Snow Men.m4a"
+album = "YELLOW DANCER"
+artists = ["星野源"]
+title = "Snow Men"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 14
+duration_ms = 274065
+
+[[raw_tags]]
+file_path = "YELLOW DANCER/10 Crazy Crazy.m4a"
+album = "YELLOW DANCER"
+artists = ["星野源"]
+title = "Crazy Crazy"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 14
+duration_ms = 214320
+
+[[raw_tags]]
+file_path = "YELLOW DANCER/09 桜の森.m4a"
+album = "YELLOW DANCER"
+artists = ["星野源"]
+title = "桜の森"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 14
+duration_ms = 310404
+
+[[raw_tags]]
+file_path = "YELLOW DANCER/08 Nerd Strut (Instrumental).m4a"
+album = "YELLOW DANCER"
+artists = ["星野源"]
+title = "Nerd Strut (Instrumental)"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 14
+duration_ms = 80922
+
+[[raw_tags]]
+file_path = "YELLOW DANCER/07 地獄でなぜ悪い.m4a"
+album = "YELLOW DANCER"
+artists = ["星野源"]
+title = "地獄でなぜ悪い"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 14
+duration_ms = 221333
+
+[[raw_tags]]
+file_path = "YELLOW DANCER/06 口づけ.m4a"
+album = "YELLOW DANCER"
+artists = ["星野源"]
+title = "口づけ"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 14
+duration_ms = 229669
+
+[[raw_tags]]
+file_path = "YELLOW DANCER/05 Soul.m4a"
+album = "YELLOW DANCER"
+artists = ["星野源"]
+title = "Soul"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 14
+duration_ms = 229251
+
+[[raw_tags]]
+file_path = "YELLOW DANCER/04 ミスユー.m4a"
+album = "YELLOW DANCER"
+artists = ["星野源"]
+title = "ミスユー"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 14
+duration_ms = 295056
+
+[[raw_tags]]
+file_path = "YELLOW DANCER/03 SUN.m4a"
+album = "YELLOW DANCER"
+artists = ["星野源"]
+title = "SUN"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 14
+duration_ms = 241534
+
+[[raw_tags]]
+file_path = "YELLOW DANCER/02 Week End.m4a"
+album = "YELLOW DANCER"
+artists = ["星野源"]
+title = "Week End"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 14
+duration_ms = 270536
+
+[[raw_tags]]
+file_path = "YELLOW DANCER/01 時よ.m4a"
+album = "YELLOW DANCER"
+artists = ["星野源"]
+title = "時よ"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 14
+duration_ms = 255721
+
+[expect.release]
+ids = { album_id = "2370705" }
+fields = { release_title = "YELLOW DANCER" }
+
+[expect.artists."167887"]
+ids = { artist_id = "167887" }
+fields = { artist_name = "星野源" }
