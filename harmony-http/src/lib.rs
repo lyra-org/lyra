@@ -40,6 +40,29 @@ use tokio::sync::RwLock;
 #[derive(Clone, Debug, Default)]
 struct BodyBytes(Vec<u8>);
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LuaBinaryInput(Vec<u8>);
+
+impl LuauTypeInfo for LuaBinaryInput {
+    fn luau_type() -> LuauType {
+        LuauType::union(vec![String::luau_type(), LuauType::literal("buffer")])
+    }
+}
+
+impl FromLua for LuaBinaryInput {
+    fn from_lua(value: Value, _lua: &Lua) -> mlua::Result<Self> {
+        match value {
+            Value::String(text) => Ok(Self(text.as_bytes().to_vec())),
+            Value::Buffer(buffer) => Ok(Self(buffer.to_vec())),
+            other => Err(mlua::Error::FromLuaConversionError {
+                from: other.type_name(),
+                to: "(string | buffer)".to_string(),
+                message: Some("expected raw byte payload".to_string()),
+            }),
+        }
+    }
+}
+
 impl LuauTypeInfo for BodyBytes {
     fn luau_type() -> LuauType {
         String::luau_type()
@@ -286,7 +309,7 @@ harmony_macros::compile!(type_path = HttpMethod, variants = true);
 struct HttpRequestOptions {
     url: String,
     method: HttpMethod,
-    body: Option<String>,
+    body: Option<LuaBinaryInput>,
     headers: Option<HttpHeaderMap>,
     cookies: Option<HttpHeaderMap>,
 }
@@ -490,7 +513,7 @@ fn apply_body(
     options: &HttpRequestOptions,
 ) -> reqwest::RequestBuilder {
     match options.body {
-        Some(ref body) => req.body(body.clone()),
+        Some(ref body) => req.body(body.0.clone()),
         None => req,
     }
 }
@@ -761,7 +784,9 @@ pub fn render_luau_definition() -> Result<String, std::fmt::Error> {
 #[cfg(test)]
 mod tests {
     use super::{
+        HttpMethod,
         HttpRequestOptions,
+        LuaBinaryInput,
         extract_domain,
         get_module,
         render_luau_definition,
@@ -834,6 +859,47 @@ mod tests {
     }
 
     #[test]
+    fn request_options_accept_string_and_buffer_bodies() {
+        let lua = Lua::new();
+
+        let string_table = lua.create_table().expect("create string request table");
+        string_table
+            .set("url", "https://example.com/upload")
+            .expect("set string url");
+        string_table
+            .set("method", HttpMethod::Post)
+            .expect("set string method");
+        string_table
+            .set(
+                "body",
+                lua.create_string(b"\0abc").expect("create string body"),
+            )
+            .expect("set string body");
+
+        let string_options = HttpRequestOptions::from_lua(Value::Table(string_table), &lua)
+            .expect("convert string request options");
+        assert_eq!(string_options.body, Some(LuaBinaryInput(b"\0abc".to_vec())));
+
+        let buffer_table = lua.create_table().expect("create buffer request table");
+        buffer_table
+            .set("url", "https://example.com/upload")
+            .expect("set buffer url");
+        buffer_table
+            .set("method", HttpMethod::Post)
+            .expect("set buffer method");
+        buffer_table
+            .set(
+                "body",
+                Value::Buffer(lua.create_buffer([0, 255, 65]).expect("create buffer body")),
+            )
+            .expect("set buffer body");
+
+        let buffer_options = HttpRequestOptions::from_lua(Value::Table(buffer_table), &lua)
+            .expect("convert buffer request options");
+        assert_eq!(buffer_options.body, Some(LuaBinaryInput(vec![0, 255, 65])));
+    }
+
+    #[test]
     fn renders_http_module_definition() {
         let rendered = render_luau_definition().expect("render harmony/http docs");
 
@@ -846,5 +912,6 @@ mod tests {
         assert!(
             !rendered.contains("function http.set_rate_limit(options: HttpRateLimitOptions): ()")
         );
+        assert!(rendered.contains("string | buffer"));
     }
 }
