@@ -162,9 +162,12 @@ pub(crate) fn query(
             // Preserve releases-by-track behavior with manual search/pagination.
             let mut releases = db::releases::get_by_track(db, node_id)?;
             if let Some(ref term) = list_options.search_term {
-                let lower_term = term.to_lowercase();
-                releases
-                    .retain(|release| release.release_title.to_lowercase().contains(&lower_term));
+                db::search::fuzzy_filter(
+                    &mut releases,
+                    term,
+                    |release| release.release_title.as_str(),
+                    |_, _| {},
+                );
             }
             let total_count = releases.len() as u64;
             let offset = list_options.offset.unwrap_or(0).min(total_count);
