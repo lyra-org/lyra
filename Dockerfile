@@ -102,11 +102,16 @@ RUN useradd -r -s /bin/false lyra
 WORKDIR /lyra
 
 COPY --from=builder /build/target/release/lyra /usr/local/bin/lyra
-COPY --from=builder /build/plugins/ plugins/
+COPY --from=builder /build/plugins/ /lyra/plugins/
 
 RUN chown -R lyra:lyra /lyra
 
 USER lyra
+
+ENV LYRA_CONFIG_PATH=/lyra/config.json \
+    LYRA_PLUGINS_DIR=/lyra/plugins
+
+VOLUME ["/lyra/plugins"]
 
 EXPOSE 4746
 
