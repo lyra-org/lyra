@@ -2122,6 +2122,7 @@ function helpers.to_track_item(
 	local release_db_id = if release then release.db_id else nil
 	local track_genres = helpers.lookup_by_id(if context then context.genre_infos_by_release_id else nil, release_db_id)
 		or helpers.resolve_release_genres(release_db_id)
+	local track_sort_name = helpers.track_sort_name(track)
 
 	local item: ItemInfo = {
 		Id = track_item_id,
@@ -2131,7 +2132,7 @@ function helpers.to_track_item(
 		MediaType = "Audio",
 		LocationType = "FileSystem",
 		Container = container,
-		SortName = module.trim(track.sort_title) or module.trim(track.track_title) or "Unknown Track",
+		SortName = track_sort_name,
 		RunTimeTicks = helpers.ms_to_ticks(track.duration_ms),
 		DateCreated = helpers.unix_to_iso8601(track.ctime or track.created_at),
 		IndexNumber = track.track,
@@ -2170,6 +2171,24 @@ function helpers.to_track_item(
 	return item
 end
 
+function helpers.track_sort_name(track: TrackLike?): string
+	local title = if track then module.trim(track.sort_title) or module.trim(track.track_title) else nil
+	local sort_name: string = if type(title) == "string" then title else "Unknown Track"
+	local prefix: string = ""
+
+	local disc = if track then tonumber(track.disc) else nil
+	if disc ~= nil then
+		prefix ..= string.format("%04d - ", math.floor(disc))
+	end
+
+	local track_number = if track then tonumber(track.track) else nil
+	if track_number ~= nil then
+		prefix ..= string.format("%04d - ", math.floor(track_number))
+	end
+
+	return prefix .. sort_name
+end
+
 function helpers.to_release_stub(release: ReleaseLike?): ItemInfo?
 	if not release or not release.db_id then
 		return nil
@@ -2195,7 +2214,7 @@ function helpers.to_track_stub(track: TrackLike?): ItemInfo?
 		_raw = track,
 		Id = module.encode_jellyfin_item_id(track.id),
 		Name = module.trim(track.track_title) or "Unknown Track",
-		SortName = module.trim(track.sort_title) or module.trim(track.track_title) or "Unknown Track",
+		SortName = helpers.track_sort_name(track),
 		IndexNumber = track.track,
 		ParentIndexNumber = track.disc,
 		DateCreated = helpers.unix_to_iso8601(track.ctime or track.created_at),
