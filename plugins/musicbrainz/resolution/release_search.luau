@@ -5,6 +5,7 @@
 -- www.meshiplaw.com/lyra.
 
 local json = require("@harmony/json")
+local metadata = require("@lyra/metadata")
 
 local text_helpers = require("./text_helpers")
 local track_helpers = require("./track_helpers")
@@ -79,7 +80,7 @@ export type ReleaseContext = {
 	library: LookupHintLibrary?,
 	library_id: number?,
 	ids: ReleaseIds?,
-	external_ids: ReleaseIds?,
+	external_ids: metadata.ExternalIdsByProvider?,
 	[string]: JsonValue,
 }
 

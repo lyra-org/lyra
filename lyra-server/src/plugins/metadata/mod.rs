@@ -122,6 +122,42 @@ impl DescribeTypeAlias for LuaCallback {
     }
 }
 
+struct ProviderExternalIdMap;
+
+impl LuauTypeInfo for ProviderExternalIdMap {
+    fn luau_type() -> LuauType {
+        LuauType::literal("ProviderExternalIdMap")
+    }
+}
+
+impl DescribeTypeAlias for ProviderExternalIdMap {
+    fn type_alias_descriptor() -> TypeAliasDescriptor {
+        TypeAliasDescriptor::new(
+            "ProviderExternalIdMap",
+            LuauType::map(String::luau_type(), String::luau_type()),
+            Some("String-keyed external IDs for a single provider."),
+        )
+    }
+}
+
+struct ExternalIdsByProvider;
+
+impl LuauTypeInfo for ExternalIdsByProvider {
+    fn luau_type() -> LuauType {
+        LuauType::literal("ExternalIdsByProvider")
+    }
+}
+
+impl DescribeTypeAlias for ExternalIdsByProvider {
+    fn type_alias_descriptor() -> TypeAliasDescriptor {
+        TypeAliasDescriptor::new(
+            "ExternalIdsByProvider",
+            LuauType::map(String::luau_type(), ProviderExternalIdMap::luau_type()),
+            Some("Provider-keyed external ID maps."),
+        )
+    }
+}
+
 #[harmony_macros::interface]
 struct ReleaseRefreshLookupHints {
     artist_name: Option<String>,
@@ -150,7 +186,7 @@ struct ReleaseRefreshTrack {
     track: Option<u32>,
     track_total: Option<u32>,
     duration_ms: Option<u64>,
-    external_ids: std::collections::HashMap<String, String>,
+    external_ids: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     artists: Vec<ReleaseRefreshTrackArtist>,
 }
 
@@ -178,7 +214,8 @@ struct ReleaseRefreshContext {
     created_at: Option<u64>,
     ctime: Option<u64>,
     lookup_hints: Option<ReleaseRefreshLookupHints>,
-    external_ids: Option<std::collections::HashMap<String, String>>,
+    external_ids:
+        Option<std::collections::HashMap<String, std::collections::HashMap<String, String>>>,
     artists: Option<Vec<ReleaseRefreshArtist>>,
     tracks: Option<Vec<ReleaseRefreshTrack>>,
     library_id: Option<u64>,
@@ -942,6 +979,26 @@ impl DescribeModule for MetadataModule {
                 returns: vec![LuauType::array(LuauType::literal("MetadataIdRow"))],
                 yields: true,
             },
+            ModuleFunctionDescriptor {
+                path: vec!["ids", "for_provider"],
+                description: Some("Returns the external ID map for a provider from an ExternalIdsByProvider value."),
+                params: vec![
+                    ParameterDescriptor {
+                        name: "external_ids",
+                        ty: LuauType::optional(ExternalIdsByProvider::luau_type()),
+                        description: None,
+                        variadic: false,
+                    },
+                    ParameterDescriptor {
+                        name: "provider_id",
+                        ty: String::luau_type(),
+                        description: None,
+                        variadic: false,
+                    },
+                ],
+                returns: vec![LuauType::optional(ProviderExternalIdMap::luau_type())],
+                yields: false,
+            },
         ]);
         descriptor
     }
@@ -951,6 +1008,8 @@ impl MetadataModule {
     fn support_aliases() -> Vec<TypeAliasDescriptor> {
         vec![
             LuaCallback::type_alias_descriptor(),
+            ProviderExternalIdMap::type_alias_descriptor(),
+            ExternalIdsByProvider::type_alias_descriptor(),
             covers::ProviderCoverHandler::type_alias_descriptor(),
             harmony_luau::JsonValue::type_alias_descriptor(),
         ]
@@ -1017,6 +1076,19 @@ async fn ids_list(lua: Lua, node_id: NodeId) -> Result<Value> {
     lua.to_value_with(&rows, LUA_SERIALIZE_OPTIONS)
 }
 
+fn ids_for_provider(
+    lua: &Lua,
+    (external_ids, provider_id): (Option<HashMap<String, HashMap<String, String>>>, String),
+) -> Result<Value> {
+    let provider_id = provider_id.trim();
+    let ids = if provider_id.is_empty() {
+        None
+    } else {
+        external_ids.and_then(|all| all.get(provider_id).cloned())
+    };
+    lua.to_value_with(&ids, LUA_SERIALIZE_OPTIONS)
+}
+
 pub(crate) fn get_module() -> Module {
     Module {
         path: "lyra/metadata".into(),
@@ -1033,6 +1105,7 @@ pub(crate) fn get_module() -> Module {
             table.set("CreditType", lua.create_proxy::<db::CreditType>()?)?;
             table.set("ArtistType", lua.create_proxy::<db::ArtistType>()?)?;
             ids_table.set("list", lua.create_async_function(ids_list)?)?;
+            ids_table.set("for_provider", lua.create_function(ids_for_provider)?)?;
             table.set("ids", ids_table)?;
 
             Ok(table)

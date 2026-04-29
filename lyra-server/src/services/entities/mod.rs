@@ -46,6 +46,8 @@ pub(crate) use projection::{
     project_entity,
 };
 
+pub(crate) type ExternalIdsByProvider = BTreeMap<String, BTreeMap<String, String>>;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) enum EntityInclude {
     ExternalIds,
@@ -277,7 +279,7 @@ pub(crate) struct ReleaseProjectionTrack {
     pub(crate) locked: Option<bool>,
     pub(crate) created_at: Option<u64>,
     pub(crate) ctime: Option<u64>,
-    pub(crate) external_ids: BTreeMap<String, String>,
+    pub(crate) external_ids: ExternalIdsByProvider,
     pub(crate) artists: Vec<Artist>,
     pub(crate) lookup_hints: EntityLookupHints,
 }
@@ -285,7 +287,7 @@ pub(crate) struct ReleaseProjectionTrack {
 impl ReleaseProjectionTrack {
     pub(super) fn from_track(
         track: Track,
-        external_ids: BTreeMap<String, String>,
+        external_ids: ExternalIdsByProvider,
         artists: Vec<Artist>,
         lookup_hints: EntityLookupHints,
     ) -> Self {
@@ -341,7 +343,7 @@ interface_into_lua!(ReleaseProjectionTrack =>
 #[derive(Clone, Debug, Default, Serialize)]
 #[harmony_macros::interface]
 pub(crate) struct ReleaseProjectionIncludes {
-    pub(crate) external_ids: Option<BTreeMap<String, String>>,
+    pub(crate) external_ids: Option<ExternalIdsByProvider>,
     pub(crate) artists: Option<Vec<Artist>>,
     pub(crate) tracks: Option<Vec<ReleaseProjectionTrack>>,
     pub(crate) credits: Option<Vec<CreditedArtistProjectionInfo>>,
@@ -357,7 +359,7 @@ interface_into_lua!(ReleaseProjectionIncludes =>
 #[derive(Clone, Debug, Default, Serialize)]
 #[harmony_macros::interface]
 pub(crate) struct TrackProjectionIncludes {
-    pub(crate) external_ids: Option<BTreeMap<String, String>>,
+    pub(crate) external_ids: Option<ExternalIdsByProvider>,
     pub(crate) releases: Option<Vec<Release>>,
     pub(crate) artists: Option<Vec<Artist>>,
     pub(crate) entries: Option<Vec<ProjectionEntryInfo>>,
@@ -375,7 +377,7 @@ interface_into_lua!(TrackProjectionIncludes =>
 #[derive(Clone, Debug, Default, Serialize)]
 #[harmony_macros::interface]
 pub(crate) struct ArtistProjectionIncludes {
-    pub(crate) external_ids: Option<BTreeMap<String, String>>,
+    pub(crate) external_ids: Option<ExternalIdsByProvider>,
     pub(crate) releases: Option<Vec<Release>>,
     pub(crate) tracks: Option<Vec<Track>>,
 }

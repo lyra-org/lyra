@@ -4,6 +4,7 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
+local metadata = require("@lyra/metadata")
 local text_helpers = require("./text_helpers")
 
 local normalize_title = text_helpers.normalize_title
@@ -16,10 +17,6 @@ export type LocalArtist = {
 	artist_name: string?,
 }
 
-export type LocalExternalIds = {
-	recording_id: string?,
-}
-
 export type LocalTrack = {
 	db_id: number?,
 	track_title: string,
@@ -29,7 +26,7 @@ export type LocalTrack = {
 	track: number?,
 	track_total: number?,
 	duration_ms: number?,
-	external_ids: LocalExternalIds?,
+	external_ids: metadata.ExternalIdsByProvider?,
 }
 
 export type ReleaseArtist = {
@@ -134,6 +131,14 @@ type DiscRemap = {
 type TrackAssignments = {
 	[number]: FlattenedMbTrack,
 }
+
+local function local_recording_id(local_track: LocalTrack): string?
+	local musicbrainz_ids = metadata.ids.for_provider(local_track.external_ids, "musicbrainz")
+	if musicbrainz_ids == nil then
+		return nil
+	end
+	return musicbrainz_ids.recording_id
+end
 
 function module.max_declared_track_total(tracks: { LocalTrack }?): number
 	local max_total = 0
@@ -343,7 +348,7 @@ function module.assign_mb_tracks_to_local_tracks(
 	end
 
 	for local_index, local_track in local_tracks do
-		local recording_id = local_track.external_ids and local_track.external_ids.recording_id
+		local recording_id = local_recording_id(local_track)
 		if recording_id then
 			local mb_index, mb_track = find_unique_unmatched_mb_track(mb_tracks, used_mb_indices, function(candidate)
 				return candidate.recording_id == recording_id

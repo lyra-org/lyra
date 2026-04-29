@@ -913,8 +913,12 @@ mod tests {
             .get("external_ids")
             .and_then(Value::as_object)
             .ok_or_else(|| anyhow!("track external_ids missing"))?;
+        let musicbrainz_ids = external_ids
+            .get("musicbrainz")
+            .and_then(Value::as_object)
+            .ok_or_else(|| anyhow!("musicbrainz track external_ids missing"))?;
         assert_eq!(
-            external_ids.get("recording_id").and_then(Value::as_str),
+            musicbrainz_ids.get("recording_id").and_then(Value::as_str),
             Some("recording-123")
         );
 
