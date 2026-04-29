@@ -1,0 +1,170 @@
+plugin = "theaudiodb"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "LiSA - LEO-NiNE (2020-10-14) [WEB FLAC]/1.13. BEAUTIFUL WORLD.flac"
+album = "LEO-NiNE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "BEAUTIFUL WORLD"
+copyright = "(P) 2018(7),2019(2,9),2020(1,3-6,8,10-13) Sony Music Labels Inc."
+disc = 1
+track = 13
+track_total = 13
+duration_ms = 312186
+
+[[raw_tags]]
+file_path = "LiSA - LEO-NiNE (2020-10-14) [WEB FLAC]/1.12. ハウル (LEO-NiNE ver.).flac"
+album = "LEO-NiNE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "ハウル (LEO-NiNE ver.)"
+copyright = "(P) 2018(7),2019(2,9),2020(1,3-6,8,10-13) Sony Music Labels Inc."
+disc = 1
+track = 12
+track_total = 13
+duration_ms = 293866
+
+[[raw_tags]]
+file_path = "LiSA - LEO-NiNE (2020-10-14) [WEB FLAC]/1.11. 1センチ.flac"
+album = "LEO-NiNE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "1センチ"
+copyright = "(P) 2018(7),2019(2,9),2020(1,3-6,8,10-13) Sony Music Labels Inc."
+disc = 1
+track = 11
+track_total = 13
+duration_ms = 87506
+
+[[raw_tags]]
+file_path = "LiSA - LEO-NiNE (2020-10-14) [WEB FLAC]/1.10. ADAMAS (LEO-NiNE ver.).flac"
+album = "LEO-NiNE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "ADAMAS (LEO-NiNE ver.)"
+copyright = "(P) 2018(7),2019(2,9),2020(1,3-6,8,10-13) Sony Music Labels Inc."
+disc = 1
+track = 10
+track_total = 13
+duration_ms = 223680
+
+[[raw_tags]]
+file_path = "LiSA - LEO-NiNE (2020-10-14) [WEB FLAC]/1.09. unlasting.flac"
+album = "LEO-NiNE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "unlasting"
+copyright = "(P) 2018(7),2019(2,9),2020(1,3-6,8,10-13) Sony Music Labels Inc."
+disc = 1
+track = 9
+track_total = 13
+duration_ms = 296813
+
+[[raw_tags]]
+file_path = "LiSA - LEO-NiNE (2020-10-14) [WEB FLAC]/1.08. わがままケット・シー.flac"
+album = "LEO-NiNE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "わがままケット・シー"
+copyright = "(P) 2018(7),2019(2,9),2020(1,3-6,8,10-13) Sony Music Labels Inc."
+disc = 1
+track = 8
+track_total = 13
+duration_ms = 251400
+
+[[raw_tags]]
+file_path = "LiSA - LEO-NiNE (2020-10-14) [WEB FLAC]/1.07. 赤い罠(who loves it).flac"
+album = "LEO-NiNE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "赤い罠(who loves it?)"
+copyright = "(P) 2018(7),2019(2,9),2020(1,3-6,8,10-13) Sony Music Labels Inc."
+disc = 1
+track = 7
+track_total = 13
+duration_ms = 252320
+
+[[raw_tags]]
+file_path = "LiSA - LEO-NiNE (2020-10-14) [WEB FLAC]/1.06. 愛錠.flac"
+album = "LEO-NiNE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "愛錠"
+copyright = "(P) 2018(7),2019(2,9),2020(1,3-6,8,10-13) Sony Music Labels Inc."
+disc = 1
+track = 6
+track_total = 13
+duration_ms = 245600
+
+[[raw_tags]]
+file_path = "LiSA - LEO-NiNE (2020-10-14) [WEB FLAC]/1.05. cancellation.flac"
+album = "LEO-NiNE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "cancellation"
+copyright = "(P) 2018(7),2019(2,9),2020(1,3-6,8,10-13) Sony Music Labels Inc."
+disc = 1
+track = 5
+track_total = 13
+duration_ms = 251346
+
+[[raw_tags]]
+file_path = "LiSA - LEO-NiNE (2020-10-14) [WEB FLAC]/1.04. マコトシヤカ.flac"
+album = "LEO-NiNE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "マコトシヤカ"
+copyright = "(P) 2018(7),2019(2,9),2020(1,3-6,8,10-13) Sony Music Labels Inc."
+disc = 1
+track = 4
+track_total = 13
+duration_ms = 238173
+
+[[raw_tags]]
+file_path = "LiSA - LEO-NiNE (2020-10-14) [WEB FLAC]/1.03. 晴レ舞台.flac"
+album = "LEO-NiNE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "晴レ舞台"
+copyright = "(P) 2018(7),2019(2,9),2020(1,3-6,8,10-13) Sony Music Labels Inc."
+disc = 1
+track = 3
+track_total = 13
+duration_ms = 299306
+
+[[raw_tags]]
+file_path = "LiSA - LEO-NiNE (2020-10-14) [WEB FLAC]/1.02. 紅蓮華.flac"
+album = "LEO-NiNE"
+album_artists = ["LiSA"]
+artists = ["LiSA"]
+title = "紅蓮華"
+copyright = "(P) 2018(7),2019(2,9),2020(1,3-6,8,10-13) Sony Music Labels Inc."
+disc = 1
+track = 2
+track_total = 13
+duration_ms = 237586
+
+[[raw_tags]]
+file_path = "LiSA - LEO-NiNE (2020-10-14) [WEB FLAC]/1.01. play the world!.flac"
+album = "LEO-NiNE"
+album_artists = ["LiSA"]
+artists = ["LiSA feat. PABLO"]
+title = "play the world!"
+copyright = "(P) 2018(7),2019(2,9),2020(1,3-6,8,10-13) Sony Music Labels Inc."
+disc = 1
+track = 1
+track_total = 13
+duration_ms = 258960
+
+[expect.release]
+ids = { album_id = "2365671" }
+fields = { release_title = "LEO-NiNE" }
+
+[expect.artists."122120"]
+ids = { artist_id = "122120" }
+fields = { artist_name = "LiSA" }

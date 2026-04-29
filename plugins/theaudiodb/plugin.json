@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "theaudiodb",
+  "name": "TheAudioDB Provider",
+  "version": "0.0.1",
+  "description": "Resolves artist and release artwork and metadata from TheAudioDB",
+  "entrypoint": "init.luau",
+  "scopes": [
+    "harmony.http",
+    "harmony.json",
+    "lyra.metadata",
+    "lyra.plugins"
+  ]
+}
