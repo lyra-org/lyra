@@ -20,6 +20,7 @@ use crate::{
         Artist,
         ArtistRelationType,
         ArtistType,
+        CreditType,
         ResolveId,
     },
     plugins::{
@@ -43,6 +44,20 @@ struct ArtistQueryOptions {
     offset: Option<u64>,
     limit: Option<u64>,
     search_term: Option<String>,
+    artist_type: Option<ArtistType>,
+}
+
+#[harmony_macros::interface]
+struct CreditedArtistQueryOptions {
+    scope: Option<ResolveId>,
+    sort_by: Option<Vec<String>>,
+    sort_order: Option<PluginSortOrder>,
+    offset: Option<u64>,
+    limit: Option<u64>,
+    search_term: Option<String>,
+    artist_type: Option<ArtistType>,
+    credit_types: Option<Vec<CreditType>>,
+    exclude_credit_types: Option<Vec<CreditType>>,
 }
 
 #[harmony_macros::interface]
@@ -94,8 +109,13 @@ struct ArtistsModule;
     name = "Artists",
     local = "artists",
     path = "lyra/artists",
-    interfaces(ArtistQueryOptions, ArtistQueryResult, ArtistRelationInfo),
-    classes(Artist, ArtistType, ArtistRelationType)
+    interfaces(
+        ArtistQueryOptions,
+        CreditedArtistQueryOptions,
+        ArtistQueryResult,
+        ArtistRelationInfo
+    ),
+    classes(Artist, ArtistType, ArtistRelationType, CreditType)
 )]
 impl ArtistsModule {
     /// Lists artists related to the given scope, or all artists by default.
@@ -122,6 +142,7 @@ impl ArtistsModule {
         opts: Table,
     ) -> Result<Table> {
         let scope: Option<ResolveId> = opts.get("scope")?;
+        let artist_type: Option<ArtistType> = opts.get("artist_type")?;
         let list_options = parse_list_options(&opts)?;
 
         let resolve_id = scope.unwrap_or_else(|| ResolveId::alias("artists"));
@@ -130,7 +151,29 @@ impl ArtistsModule {
             .to_query_id(&db)
             .into_lua_err()?
             .ok_or_else(|| mlua::Error::runtime("could not resolve scope"))?;
-        let result = db::artists::query(&db, query_id, &list_options).into_lua_err()?;
+        let result =
+            db::artists::query(&db, query_id, &list_options, artist_type).into_lua_err()?;
+        paged_result_to_table(&lua, result)
+    }
+
+    /// Queries deduplicated credited artists with optional artist-type and credit-type filters.
+    #[harmony(args(opts: CreditedArtistQueryOptions), returns(ArtistQueryResult))]
+    pub(crate) async fn query_credited(
+        lua: Lua,
+        _plugin_id: Option<Arc<str>>,
+        opts: Table,
+    ) -> Result<Table> {
+        let scope: Option<ResolveId> = opts.get("scope")?;
+        let list_options = parse_list_options(&opts)?;
+        let filters = artist_services::CreditedArtistFilters {
+            artist_type: opts.get("artist_type")?,
+            credit_types: opts.get("credit_types")?,
+            exclude_credit_types: opts.get("exclude_credit_types")?,
+        };
+
+        let db = STATE.db.read().await;
+        let result = artist_services::query_credited(&db, scope.as_ref(), &filters, &list_options)
+            .into_lua_err()?;
         paged_result_to_table(&lua, result)
     }
 
@@ -202,6 +245,7 @@ pub(crate) fn get_module() -> harmony_core::Module {
             "ArtistRelationType",
             lua.create_proxy::<ArtistRelationType>()?,
         )?;
+        table.set("CreditType", lua.create_proxy::<CreditType>()?)?;
         Ok(table)
     });
     m

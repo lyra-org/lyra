@@ -325,6 +325,17 @@ pub(crate) fn get_credited_many_by_owner(
     Ok(related)
 }
 
+fn filter_artists_by_type(artists: Vec<Artist>, artist_type: Option<ArtistType>) -> Vec<Artist> {
+    let Some(artist_type) = artist_type else {
+        return artists;
+    };
+
+    artists
+        .into_iter()
+        .filter(|artist| artist.artist_type == Some(artist_type))
+        .collect()
+}
+
 pub(crate) fn get_by_id(
     db: &impl super::DbAccess,
     artist_db_id: DbId,
@@ -826,15 +837,9 @@ fn sort_and_paginate_artists(
     }
 }
 
-pub(crate) fn query(
-    db: &DbAny,
-    from: impl Into<QueryId>,
-    options: &ListOptions,
-) -> anyhow::Result<PagedResult<Artist>> {
-    let artists = get(db, from)?;
-
+pub(crate) fn query_items(artists: Vec<Artist>, options: &ListOptions) -> PagedResult<Artist> {
     if options.search_term.is_none() && options.sort.is_empty() {
-        return Ok(paginate_artists(artists, options));
+        return paginate_artists(artists, options);
     }
 
     let mut entries: Vec<ArtistSortEntry> = artists.into_iter().map(ArtistSortEntry::new).collect();
@@ -845,7 +850,17 @@ pub(crate) fn query(
         entries.retain(|entry| entry.lower_name.contains(&lower_term));
     }
 
-    Ok(sort_and_paginate_artists(entries, options))
+    sort_and_paginate_artists(entries, options)
+}
+
+pub(crate) fn query(
+    db: &DbAny,
+    from: impl Into<QueryId>,
+    options: &ListOptions,
+    artist_type: Option<ArtistType>,
+) -> anyhow::Result<PagedResult<Artist>> {
+    let artists = filter_artists_by_type(get(db, from)?, artist_type);
+    Ok(query_items(artists, options))
 }
 
 #[cfg(test)]
@@ -922,6 +937,38 @@ mod tests {
     }
 
     #[test]
+    fn query_filters_by_artist_type() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let person_id = insert_artist(&mut db, "Person Artist")?;
+        let group_id = insert_artist(&mut db, "Group Artist")?;
+
+        let mut person = get_by_id(&db, person_id)?.expect("person artist should exist");
+        person.set_artist_type(ArtistType::Person);
+        update(&mut db, &person)?;
+
+        let mut group = get_by_id(&db, group_id)?.expect("group artist should exist");
+        group.set_artist_type(ArtistType::Group);
+        update(&mut db, &group)?;
+
+        let result = query(
+            &db,
+            "artists",
+            &ListOptions {
+                sort: vec![],
+                offset: None,
+                limit: None,
+                search_term: None,
+            },
+            Some(ArtistType::Person),
+        )?;
+
+        assert_eq!(result.total_count, 1);
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0].artist_name, "Person Artist");
+        Ok(())
+    }
+
+    #[test]
     fn get_returns_artists_linked_to_owner() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_id = insert_release(&mut db, "Release")?;
@@ -991,7 +1038,7 @@ mod tests {
             limit: None,
             search_term: None,
         };
-        let result = query(&db, "artists", &options)?;
+        let result = query(&db, "artists", &options, None)?;
         assert_eq!(result.total_count, 2);
         assert_eq!(result.entries.len(), 2);
         Ok(())
@@ -1010,7 +1057,7 @@ mod tests {
             limit: None,
             search_term: Some("rock".to_string()),
         };
-        let result = query(&db, "artists", &options)?;
+        let result = query(&db, "artists", &options, None)?;
         assert_eq!(result.total_count, 2);
         assert_eq!(result.entries.len(), 2);
         Ok(())
@@ -1032,7 +1079,7 @@ mod tests {
             limit: None,
             search_term: None,
         };
-        let result = query(&db, "artists", &options)?;
+        let result = query(&db, "artists", &options, None)?;
         let names: Vec<&str> = result
             .entries
             .iter()
@@ -1058,7 +1105,7 @@ mod tests {
             limit: Some(1),
             search_term: None,
         };
-        let result = query(&db, "artists", &options)?;
+        let result = query(&db, "artists", &options, None)?;
         assert_eq!(result.total_count, 3);
         assert_eq!(result.entries.len(), 1);
         assert_eq!(result.offset, 1);
