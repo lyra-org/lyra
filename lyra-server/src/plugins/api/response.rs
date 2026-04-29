@@ -4,8 +4,14 @@
 // www.meshiplaw.com/lyra.
 
 use axum::http::StatusCode;
+use harmony_luau::{
+    LuauType,
+    LuauTypeInfo,
+};
 use image::ImageFormat;
 use mlua::{
+    FromLua,
+    IntoLua,
     Lua,
     LuaSerdeExt,
     Table,
@@ -18,6 +24,47 @@ use super::image::{
     parse_image_transform_options,
 };
 use crate::plugins::LUA_SERIALIZE_OPTIONS;
+
+#[derive(Clone, Debug)]
+pub(super) enum LuaBinaryInput {
+    String(mlua::String),
+    Buffer(mlua::Buffer),
+}
+
+impl LuaBinaryInput {
+    pub(super) fn into_lua_value(self) -> Value {
+        match self {
+            Self::String(text) => Value::String(text),
+            Self::Buffer(buffer) => Value::Buffer(buffer),
+        }
+    }
+}
+
+impl FromLua for LuaBinaryInput {
+    fn from_lua(value: Value, _lua: &Lua) -> mlua::Result<Self> {
+        match value {
+            Value::String(text) => Ok(Self::String(text)),
+            Value::Buffer(buffer) => Ok(Self::Buffer(buffer)),
+            other => Err(mlua::Error::FromLuaConversionError {
+                from: other.type_name(),
+                to: "(string | buffer)".to_string(),
+                message: Some("expected raw byte payload".to_string()),
+            }),
+        }
+    }
+}
+
+impl IntoLua for LuaBinaryInput {
+    fn into_lua(self, _lua: &Lua) -> mlua::Result<Value> {
+        Ok(self.into_lua_value())
+    }
+}
+
+impl LuauTypeInfo for LuaBinaryInput {
+    fn luau_type() -> LuauType {
+        LuauType::union(vec![String::luau_type(), LuauType::literal("buffer")])
+    }
+}
 
 #[derive(Default, Serialize)]
 #[harmony_macros::interface]
@@ -210,6 +257,22 @@ pub(super) fn response_text(
     let response = build_kind_response_table(lua, "text")?;
     response.set("status", status)?;
     response.set("body", body)?;
+    response.set("headers", headers)?;
+    Ok(response)
+}
+
+pub(super) fn response_bytes(
+    lua: &Lua,
+    (status, body, headers): (u16, LuaBinaryInput, Option<Table>),
+) -> mlua::Result<Table> {
+    let headers = merge_response_headers(
+        lua,
+        &[("content-type", "application/octet-stream")],
+        headers,
+    )?;
+    let response = build_kind_response_table(lua, "bytes")?;
+    response.set("status", status)?;
+    response.set("body", body.into_lua_value())?;
     response.set("headers", headers)?;
     Ok(response)
 }
