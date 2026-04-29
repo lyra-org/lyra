@@ -1186,13 +1186,67 @@ api.get(P .. "/System/Endpoint", function(ctx: ApiContext)
 		IsInNetwork = in_network,
 	})
 end, nil, true)
+local BITRATE_TEST_DEFAULT_SIZE = 102400
+local BITRATE_TEST_MIN_SIZE = 1
+local BITRATE_TEST_MAX_SIZE = 100000000
+local BITRATE_TEST_CHUNK = string.rep("0", 65536)
+
+local function parse_bitrate_test_size(ctx: ApiContext): (number?, ApiResponse?)
+	local query = if ctx and ctx.request then ctx.request.query else nil
+	local raw_size = if query then query.Size or query.size else nil
+	if raw_size == nil then
+		return BITRATE_TEST_DEFAULT_SIZE, nil
+	end
+
+	local size = if type(raw_size) == "number" then raw_size else tonumber(base.trim(raw_size) or "")
+	if type(size) ~= "number" or size ~= size or math.floor(size) ~= size then
+		return nil,
+			base.bad_request(
+				"The requested size must be greater than or equal to 1 and less than or equal to 100000000"
+			)
+	end
+
+	local parsed = size :: number
+	if parsed < BITRATE_TEST_MIN_SIZE or parsed > BITRATE_TEST_MAX_SIZE then
+		return nil,
+			base.bad_request(
+				"The requested size must be greater than or equal to 1 and less than or equal to 100000000"
+			)
+	end
+
+	return parsed, nil
+end
+
+local function build_bitrate_test_body(size: number): string
+	if size <= #BITRATE_TEST_CHUNK then
+		return string.sub(BITRATE_TEST_CHUNK, 1, size)
+	end
+
+	local remaining = size
+	local chunks = {}
+	while remaining > #BITRATE_TEST_CHUNK do
+		table.insert(chunks, BITRATE_TEST_CHUNK)
+		remaining -= #BITRATE_TEST_CHUNK
+	end
+	if remaining > 0 then
+		table.insert(chunks, string.sub(BITRATE_TEST_CHUNK, 1, remaining))
+	end
+
+	return table.concat(chunks)
+end
+
 api.get(P .. "/Playback/BitrateTest", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
 		return session.unauthorized()
 	end
 
-	return api.response.text(200, "", { ["content-type"] = "application/octet-stream" })
+	local size, size_err = parse_bitrate_test_size(ctx)
+	if size_err then
+		return size_err
+	end
+
+	return api.response.bytes(200, build_bitrate_test_body(size :: number))
 end, nil, true)
 api.get(P .. "/Library/VirtualFolders", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
