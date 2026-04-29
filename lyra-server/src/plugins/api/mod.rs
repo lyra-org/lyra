@@ -84,7 +84,9 @@ use registry::{
 };
 use response::{
     HlsServeOptions,
+    LuaBinaryInput,
     TrackServeOptions,
+    response_bytes as build_bytes_response,
     response_download_track as build_download_track_response,
     response_empty as build_empty_response,
     response_file as build_file_response,
@@ -236,6 +238,14 @@ struct ApiTextResponse {
     kind: String,
     status: u16,
     body: String,
+    headers: Option<ApiHeaders>,
+}
+
+#[harmony_macros::interface]
+struct ApiBytesResponse {
+    kind: String,
+    status: u16,
+    body: LuaBinaryInput,
     headers: Option<ApiHeaders>,
 }
 
@@ -395,6 +405,7 @@ impl DescribeTypeAlias for ApiResponse {
                 LuauType::literal("ApiJsonResponse"),
                 LuauType::literal("ApiEmptyResponse"),
                 LuauType::literal("ApiTextResponse"),
+                LuauType::literal("ApiBytesResponse"),
                 LuauType::literal("ApiRedirectResponse"),
                 LuauType::literal("ApiFileResponse"),
                 LuauType::literal("ApiStreamTrackResponse"),
@@ -530,6 +541,7 @@ struct ApiModule;
         ApiJsonResponse,
         ApiEmptyResponse,
         ApiTextResponse,
+        ApiBytesResponse,
         ApiRedirectResponse,
         ApiFileResponse,
         ApiStreamTrackResponse,
@@ -747,6 +759,14 @@ impl ApiModule {
         build_text_response(lua, args)
     }
 
+    #[harmony(path = "response.bytes", args(status: u16, body: LuaBinaryInput, headers: Option<ApiHeaders>), returns(ApiBytesResponse))]
+    pub(crate) fn response_bytes_fn(
+        lua: &Lua,
+        args: (u16, LuaBinaryInput, Option<Table>),
+    ) -> mlua::Result<Table> {
+        build_bytes_response(lua, args)
+    }
+
     #[harmony(path = "response.redirect", args(status: u16, location: String, headers: Option<ApiHeaders>), returns(ApiRedirectResponse))]
     pub(crate) fn response_redirect_fn(
         lua: &Lua,
@@ -870,12 +890,14 @@ mod tests {
         Method,
         StatusCode,
     };
+    use mlua::FromLua;
     use nanoid::nanoid;
     use registry::{
         API_ROUTE_REGISTRY,
         RouteAuthMode,
     };
     use response::{
+        response_bytes,
         response_file,
         response_json,
         response_text,
@@ -1593,6 +1615,67 @@ mod tests {
         assert!(
             !object.contains_key("BitDepth"),
             "nil BitDepth must be omitted from wire response"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn lua_response_bytes_round_trips_binary_payloads() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+
+        let lua = Lua::new();
+        let body = response::LuaBinaryInput::from_lua(
+            Value::Buffer(lua.create_buffer([0, 255, 65])?),
+            &lua,
+        )?;
+        let table = response_bytes(&lua, (206, body, None))?;
+        match table.get::<Value>("body")? {
+            Value::Buffer(buffer) => assert_eq!(buffer.to_vec(), vec![0, 255, 65]),
+            other => panic!(
+                "expected bytes helper to preserve buffer, got {}",
+                other.type_name()
+            ),
+        }
+        let response = lua_response_to_axum(&lua, Value::Table(table), &HeaderMap::new()).await?;
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            response
+                .headers()
+                .get(CONTENT_TYPE)
+                .and_then(|header| header.to_str().ok()),
+            Some("application/octet-stream")
+        );
+
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        assert_eq!(body.as_ref(), &[0, 255, 65]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn lua_response_bytes_rejects_non_string_transport_body() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+
+        let lua = Lua::new();
+        let value: Value = lua
+            .load(
+                r#"
+                return {
+                    kind = "bytes",
+                    status = 200,
+                    body = { value = 1 },
+                }
+            "#,
+            )
+            .eval()?;
+
+        let err = lua_response_to_axum(&lua, value, &HeaderMap::new())
+            .await
+            .expect_err("expected bytes response transport failure");
+        assert!(
+            err.to_string()
+                .contains("bytes responses require a string or buffer body")
         );
 
         Ok(())

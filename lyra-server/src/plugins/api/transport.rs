@@ -275,7 +275,7 @@ pub(super) async fn lua_response_to_axum(
                 },
             );
         }
-        "json" | "empty" | "text" | "redirect" | "file" => {}
+        "json" | "empty" | "text" | "bytes" | "redirect" | "file" => {}
         other => bail!("unsupported response kind: {other}"),
     }
 
@@ -334,10 +334,14 @@ pub(super) async fn lua_response_to_axum(
             }
             Value::Nil => Body::empty(),
             Value::String(text) => Body::from(text.as_bytes().to_vec()),
+            Value::Buffer(buffer) if response_kind == "bytes" => Body::from(buffer.to_vec()),
             other => {
                 let json: serde_json::Value = from_lua_json_value(lua, other)?;
                 if response_kind == "text" {
                     bail!("text responses require a string body");
+                }
+                if response_kind == "bytes" {
+                    bail!("bytes responses require a string or buffer body");
                 }
                 content_type = Some(HeaderValue::from_static("application/json"));
                 Body::from(serde_json::to_vec(&json)?)
