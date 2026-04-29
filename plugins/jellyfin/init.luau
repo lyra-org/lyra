@@ -1839,6 +1839,17 @@ api.get(P .. "/Artists", function(ctx: ApiContext)
 	local items, total_count, start_index = catalog.list_artist_items(options)
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 end, nil, true)
+api.get(P .. "/Persons", function(ctx: ApiContext)
+	local principal = session.require_jellyfin_principal(ctx)
+	if not principal then
+		return session.unauthorized()
+	end
+
+	local query = if ctx and ctx.request then ctx.request.query else nil
+	local options = catalog.with_user_query_options(catalog.coerce_items_query(query), principal.user_id)
+	local items, total_count, start_index = catalog.list_person_items(options)
+	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
+end, nil, true)
 api.get(P .. "/Artists/AlbumArtists", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
@@ -1892,6 +1903,18 @@ api.get(P .. "/Items/{imageId}/Images/Primary", function(ctx: ApiContext)
 end, nil, true)
 api.head(P .. "/Items/{imageId}/Images/Primary", function(ctx: ApiContext)
 	return session.handle_primary_image_request(ctx)
+end, nil, true)
+api.get(P .. "/Persons/{name}/Images/{imageType}", function(ctx: ApiContext)
+	return session.handle_person_image_request(ctx)
+end, nil, true)
+api.head(P .. "/Persons/{name}/Images/{imageType}", function(ctx: ApiContext)
+	return session.handle_person_image_request(ctx)
+end, nil, true)
+api.get(P .. "/Persons/{name}/Images/{imageType}/{imageIndex}", function(ctx: ApiContext)
+	return session.handle_person_image_request(ctx)
+end, nil, true)
+api.head(P .. "/Persons/{name}/Images/{imageType}/{imageIndex}", function(ctx: ApiContext)
+	return session.handle_person_image_request(ctx)
 end, nil, true)
 api.get(P .. "/Artists/{name}/Images/{imageType}/{imageIndex}", function(ctx: ApiContext)
 	return session.handle_artist_image_request(ctx)
@@ -3931,6 +3954,24 @@ api.get(P .. "/Artists/{name}", function(ctx: ApiContext)
 	local found = catalog.find_artist_by_name(name, principal.user_id)
 	if not found then
 		return base.not_found("artist not found")
+	end
+	return api.response.json(200, catalog.item_to_json(found))
+end, nil, true)
+api.get(P .. "/Persons/{name}", function(ctx: ApiContext)
+	local principal = session.require_jellyfin_principal(ctx)
+	if not principal then
+		return session.unauthorized()
+	end
+
+	local params = if ctx then ctx.params else nil
+	local name = if params then params.name else nil
+	if not name or name == "" then
+		return base.bad_request("missing person name")
+	end
+
+	local found = catalog.find_person_by_name(name, principal.user_id)
+	if not found then
+		return base.not_found("person not found")
 	end
 	return api.response.json(200, catalog.item_to_json(found))
 end, nil, true)

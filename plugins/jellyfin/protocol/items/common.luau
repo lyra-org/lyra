@@ -365,6 +365,17 @@ local function query_lookup(query: api.ApiQueryParams?, keys: { string }): strin
 		end
 	end
 
+	local normalized_keys: { [string]: boolean } = {}
+	for _, key in keys do
+		normalized_keys[string.lower(key)] = true
+	end
+
+	for key, value in query do
+		if normalized_keys[string.lower(tostring(key))] then
+			return value
+		end
+	end
+
 	return nil
 end
 
