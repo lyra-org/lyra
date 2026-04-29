@@ -21,7 +21,7 @@ jobs:
       - name: Log in to Gitea container registry
         uses: docker/login-action@v4
         with:
-          registry: git.lyra.pub
+          registry: git.home.local
           # Use REGISTRY_USER and REGISTRY_TOKEN while https://github.com/go-gitea/gitea/issues/23642 is fixed
           username: ${{ secrets.REGISTRY_USER }}
           password: ${{ secrets.REGISTRY_TOKEN }}
@@ -30,7 +30,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: git.lyra.pub/${{ gitea.repository }}
+          images: git.home.local/${{ gitea.repository }}
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -46,5 +46,5 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             LYRA_GIT_HASH=${{ gitea.sha }}
-          cache-from: type=registry,ref=git.lyra.pub/${{ gitea.repository }}:buildcache
-          cache-to: type=registry,ref=git.lyra.pub/${{ gitea.repository }}:buildcache,mode=max
+          cache-from: type=registry,ref=git.home.local/${{ gitea.repository }}:buildcache
+          cache-to: type=registry,ref=git.home.local/${{ gitea.repository }}:buildcache,mode=max
