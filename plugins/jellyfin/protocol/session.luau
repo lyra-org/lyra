@@ -732,6 +732,40 @@ function module.handle_artist_image_request(ctx: ApiContext?): ApiResponse
 	return serve_primary_image_for_item(ctx, base.decode_jellyfin_item_id(artist.Id))
 end
 
+function module.handle_person_image_request(ctx: ApiContext?): ApiResponse
+	local principal = module.require_jellyfin_principal(ctx)
+	if not principal then
+		return module.unauthorized()
+	end
+
+	local params = if ctx then ctx.params else nil
+	local name = if params then params.name else nil
+	if not name or name == "" then
+		return base.bad_request("missing person name")
+	end
+
+	local image_type = if params then params.imageType else nil
+	if type(image_type) ~= "string" or string.lower(image_type) ~= "primary" then
+		return base.not_found("image not found")
+	end
+
+	local raw_image_index = if params then params.imageIndex else nil
+	local image_index = if type(raw_image_index) == "string" then tonumber(raw_image_index) else 0
+	if image_index == nil or image_index ~= math.floor(image_index) or image_index < 0 then
+		return base.bad_request("invalid image index")
+	end
+	if image_index ~= 0 then
+		return base.not_found("image not found")
+	end
+
+	local person = catalog.find_person_by_name(name, principal.user_id)
+	if not person or not person.Id then
+		return base.not_found("person not found")
+	end
+
+	return serve_primary_image_for_item(ctx, base.decode_jellyfin_item_id(person.Id))
+end
+
 local MAX_SESSION_KEY_DISPLAY_LENGTH = 64
 
 -- Client-supplied; strip control/NUL to keep the value safe in displayable fields.

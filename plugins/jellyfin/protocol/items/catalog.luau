@@ -63,6 +63,7 @@ type ApiQueryParams = api.ApiQueryParams
 type ReleaseQueryOptions = releases.ReleaseQueryOptions
 type ReleaseQueryResult = releases.ReleaseQueryResult
 type ArtistQueryOptions = artists_module.ArtistQueryOptions
+type CreditedArtistQueryOptions = artists_module.CreditedArtistQueryOptions
 type ArtistQueryResult = artists_module.ArtistQueryResult
 type ArtistRelationInfo = artists_module.ArtistRelationInfo
 type TrackQueryOptions = tracks.TrackQueryOptions
@@ -136,9 +137,11 @@ export type ItemsQueryOptions = {
 	release_artist_ids: { string },
 	album_ids: { string },
 	artist_ids: { string },
+	person_ids: { string },
 	genre_ids: { string },
 	filters: { string },
 	is_favorite: boolean?,
+	appears_in_item_id: string?,
 	parent_id: string?,
 	start_index: number,
 	limit: number?,
@@ -484,6 +487,7 @@ function helpers.clone_items_query_options(options: ItemsQueryOptions): ItemsQue
 		release_artist_ids = options.release_artist_ids,
 		album_ids = options.album_ids,
 		artist_ids = options.artist_ids,
+		person_ids = options.person_ids,
 		genre_ids = options.genre_ids,
 		filters = options.filters,
 		is_favorite = options.is_favorite,
@@ -757,6 +761,17 @@ function helpers.query_lookup(query: ApiQueryParams?, keys: { string }): string?
 	for _, key in keys do
 		local value = query[key]
 		if value ~= nil then
+			return value
+		end
+	end
+
+	local normalized_keys: { [string]: boolean } = {}
+	for _, key in keys do
+		normalized_keys[string.lower(key)] = true
+	end
+
+	for key, value in query do
+		if normalized_keys[string.lower(tostring(key))] then
 			return value
 		end
 	end
@@ -1467,6 +1482,9 @@ function helpers.people_from_credits(credits: { CreditedArtistProjectionInfo }?)
 		end
 
 		local credit = credited_artist.credit
+		if credit.type == CreditType.Artist then
+			continue
+		end
 		local person_type = helpers.person_type_for_credit(credit.type, credited_artist.source)
 		local role = module.trim(credit.detail)
 		local key = artist_id .. "\t" .. person_type .. "\t" .. (role or "")
@@ -1657,6 +1675,21 @@ function helpers.to_artist_item(
 		MediaType = "Unknown",
 		Tags = helpers.tag_names(helpers.resolve_tag_infos(artist.db_id, context)),
 	}
+	return item
+end
+
+function helpers.to_person_item(
+	artist: ArtistLike?,
+	user_id: number?,
+	favorite_lookup: FavoriteLookup?,
+	context: ItemContext?
+): ItemInfo?
+	local item = helpers.to_artist_item(artist, user_id, favorite_lookup, context)
+	if item == nil then
+		return nil
+	end
+
+	item.Type = "Person"
 	return item
 end
 
@@ -2239,6 +2272,16 @@ function helpers.to_artist_stub(artist: ArtistLike?): ItemInfo?
 	return item
 end
 
+function helpers.to_person_stub(artist: ArtistLike?): ItemInfo?
+	local item = helpers.to_artist_stub(artist)
+	if item == nil then
+		return nil
+	end
+
+	item.Type = "Person"
+	return item
+end
+
 function helpers.to_playlist_stub(playlist: PlaylistInfo?, child_count: number?): ItemInfo?
 	if not playlist or not playlist.db_id then
 		return nil
@@ -2295,9 +2338,31 @@ function helpers.append_artist_stubs(stubs: { ItemInfo }, artist_items: { Artist
 	end
 end
 
+function helpers.append_person_stubs(stubs: { ItemInfo }, artist_items: { Artist }): ()
+	for _, artist: Artist in artist_items do
+		if artist.artist_type ~= artists_module.ArtistType.Person then
+			continue
+		end
+
+		local stub = helpers.to_person_stub(artist)
+		if stub then
+			table.insert(stubs, stub)
+		end
+	end
+end
+
 function helpers.append_artist_record_map_stubs(stubs: { ItemInfo }, artist_items: { [string]: ArtistRecord }): ()
 	for _, artist: ArtistRecord in artist_items do
 		local stub = helpers.to_artist_stub(artist)
+		if stub then
+			table.insert(stubs, stub)
+		end
+	end
+end
+
+function helpers.append_person_record_map_stubs(stubs: { ItemInfo }, artist_items: { [string]: ArtistRecord }): ()
+	for _, artist: ArtistRecord in artist_items do
+		local stub = helpers.to_person_stub(artist)
 		if stub then
 			table.insert(stubs, stub)
 		end
@@ -2618,6 +2683,88 @@ function helpers.apply_exclude_ids_filter(items: { ItemInfo }, ids: { string }):
 	for _, item in items do
 		local item_id = if item then item.Id else nil
 		if item_id == nil or not excluded_ids[item_id] then
+			table.insert(filtered, item)
+		end
+	end
+
+	return filtered
+end
+
+function helpers.person_ids_for_item(appears_in_item_id: string?): { [string]: boolean }
+	local item_id = helpers.decode_jellyfin_item_id(appears_in_item_id)
+	if item_id == nil then
+		return {}
+	end
+
+	local request: EntityQueryRequest = { id = item_id }
+	local ok, projection = pcall(entities.query, request)
+	if not ok or type(projection) ~= "table" then
+		return {}
+	end
+
+	local allowed_ids: { [string]: boolean } = {}
+	local typed_projection = projection :: EntityProjectionInfo
+	if typed_projection.entity_type == "release" or typed_projection.entity_type == "track" then
+		local credits = helpers.query_credits(item_id, typed_projection.entity_type)
+		if type(credits) ~= "table" then
+			return allowed_ids
+		end
+
+		for _, credited_artist: CreditedArtistProjectionInfo in credits do
+			local artist = credited_artist.artist
+			if credited_artist.credit.type == CreditType.Artist then
+				continue
+			end
+			local artist_id = module.encode_jellyfin_item_id(artist.id)
+			if artist_id and artist.artist_type == artists_module.ArtistType.Person then
+				allowed_ids[artist_id] = true
+			end
+		end
+	elseif typed_projection.entity_type == "artist" then
+		local artist = (typed_projection :: ArtistProjectionInfo).entity
+		local artist_db_id = helpers.resolve_numeric_id(artist.db_id)
+		if artist_db_id == nil then
+			return allowed_ids
+		end
+
+		local relations = helpers.query_artist_relations(artist_db_id)
+		if type(relations) ~= "table" then
+			return allowed_ids
+		end
+
+		for _, relation: ArtistRelationInfo in relations do
+			if helpers.lower_or_empty(relation.direction) ~= "incoming" then
+				continue
+			end
+			if relation.relation_type ~= artists_module.ArtistRelationType.VoiceActor then
+				continue
+			end
+
+			local related_artist = relation.artist
+			local artist_id = module.encode_jellyfin_item_id(related_artist.id)
+			if artist_id and related_artist.artist_type == artists_module.ArtistType.Person then
+				allowed_ids[artist_id] = true
+			end
+		end
+	end
+
+	return allowed_ids
+end
+
+function helpers.apply_person_appears_in_item_filter(items: { ItemInfo }, appears_in_item_id: string?): { ItemInfo }
+	if appears_in_item_id == nil then
+		return items
+	end
+
+	local allowed_ids = helpers.person_ids_for_item(appears_in_item_id)
+	if next(allowed_ids) == nil then
+		return {}
+	end
+
+	local filtered: { ItemInfo } = {}
+	for _, item in items do
+		local item_id = if item then item.Id else nil
+		if item_id and allowed_ids[item_id] then
 			table.insert(filtered, item)
 		end
 	end
@@ -3065,9 +3212,11 @@ function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 		release_artist_ids = {},
 		album_ids = {},
 		artist_ids = {},
+		person_ids = {},
 		genre_ids = {},
 		filters = {},
 		is_favorite = nil,
+		appears_in_item_id = nil,
 		parent_id = nil,
 		start_index = 0,
 		limit = nil,
@@ -3096,24 +3245,29 @@ function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 		helpers.normalize_item_ids(helpers.parse_query_csv(query, { "StudioIds", "studioIds", "studioids" }))
 	local artist_ids =
 		helpers.normalize_item_ids(helpers.parse_query_csv(query, { "ArtistIds", "artistIds", "artistids" }))
+	local person_ids =
+		helpers.normalize_item_ids(helpers.parse_query_csv(query, { "PersonIds", "personIds", "personids" }))
 	local release_artist_ids = helpers.normalize_item_ids(
 		helpers.parse_query_csv(query, { "AlbumArtistIds", "albumArtistIds", "albumartistids" })
 	)
 	local contributing_artist_ids = helpers.normalize_item_ids(
 		helpers.parse_query_csv(query, { "ContributingArtistIds", "contributingArtistIds", "contributingartistids" })
 	)
+	artist_ids = helpers.merge_id_lists(artist_ids, person_ids)
 	options.primary_artist_ids = artist_ids
 	options.contributing_artist_ids = contributing_artist_ids
 	options.track_artist_ids = helpers.merge_id_lists(artist_ids, contributing_artist_ids)
 	options.release_artist_ids = release_artist_ids
 	options.album_ids =
 		helpers.normalize_item_ids(helpers.parse_query_csv(query, { "AlbumIds", "albumIds", "albumids" }))
+	options.person_ids = person_ids
 	options.artist_ids =
 		helpers.merge_id_lists(helpers.merge_id_lists(artist_ids, release_artist_ids), contributing_artist_ids)
 	options.genre_ids =
 		helpers.normalize_item_ids(helpers.parse_query_csv(query, { "GenreIds", "genreIds", "genreids" }))
 	options.filters = helpers.parse_query_csv(query, { "Filters", "filters" })
 	options.is_favorite = helpers.parse_query_bool(query, { "IsFavorite", "isFavorite" }, false)
+	options.appears_in_item_id = helpers.parse_query_id(query, { "AppearsInItemId", "appearsInItemId" })
 	options.parent_id = helpers.parse_query_id(query, { "ParentId", "parentId" })
 	options.start_index = module.parse_query_int(query, { "StartIndex", "startIndex" }, 0, 0, nil) or 0
 	options.limit = module.parse_query_int(query, { "Limit", "limit" }, nil, 0, nil)
@@ -3620,7 +3774,11 @@ function helpers.realize_stubs(stubs: { ItemInfo }, options: ItemsQueryOptions):
 		if stub._type == "release" then
 			item = helpers.to_release_item(helpers.release_like_from_raw(raw), user_id, favorite_lookup, context)
 		elseif stub._type == "artist" then
-			item = helpers.to_artist_item(helpers.artist_like_from_raw(raw), user_id, favorite_lookup, context)
+			if stub.Type == "Person" then
+				item = helpers.to_person_item(helpers.artist_like_from_raw(raw), user_id, favorite_lookup, context)
+			else
+				item = helpers.to_artist_item(helpers.artist_like_from_raw(raw), user_id, favorite_lookup, context)
+			end
 		elseif stub._type == "track" then
 			item = helpers.to_track_item(
 				helpers.track_like_from_raw(raw),
@@ -3758,6 +3916,64 @@ function helpers.artist_items_by_scope(scope: number?): { Artist }
 		return if ok and type(result) == "table" then result else {}
 	end
 	return helpers.call_module_get(artists_module.list, scope)
+end
+
+function helpers.resolve_person_credit_query_scope(
+	options: ItemsQueryOptions,
+	parent_scope: ParentScopeInfo
+): (number?, boolean)
+	if options.appears_in_item_id ~= nil then
+		local scope = helpers.decode_jellyfin_item_id(options.appears_in_item_id)
+		if scope == nil then
+			return nil, false
+		end
+
+		local entity_type = helpers.scope_entity_type(scope)
+		if entity_type == "Release" or entity_type == "Track" then
+			return scope, true
+		end
+
+		return nil, false
+	end
+
+	local scope = parent_scope.db_id
+	if scope == nil then
+		return nil, true
+	end
+
+	if
+		parent_scope.entity_type == "Library"
+		or parent_scope.entity_type == "Release"
+		or parent_scope.entity_type == "Track"
+	then
+		return scope, true
+	end
+
+	return nil, false
+end
+
+function helpers.query_person_artists(
+	scope: number?,
+	options: ItemsQueryOptions,
+	sort_tokens: { string }?,
+	paginated: boolean
+): ArtistQueryResult?
+	local query_opts: CreditedArtistQueryOptions = {
+		scope = scope,
+		sort_by = if sort_tokens then helpers.rust_sort_tokens(sort_tokens) else nil,
+		sort_order = if sort_tokens then helpers.normalize_sort_order(options.sort_order) else nil,
+		offset = if paginated then options.start_index else nil,
+		limit = if paginated then options.limit else nil,
+		search_term = options.search_term,
+		artist_type = artists_module.ArtistType.Person,
+		credit_types = nil,
+		exclude_credit_types = { artists_module.CreditType.Artist },
+	}
+	local ok, result = pcall(artists_module.query_credited, query_opts)
+	if ok and type(result) == "table" then
+		return result :: ArtistQueryResult
+	end
+	return nil
 end
 
 function helpers.direct_track_items_by_release(release_id: number): { Track }
@@ -3913,7 +4129,12 @@ function helpers.list_items_by_ids(options: ItemsQueryOptions)
 				if entity_type == "release" and selected_types.releases then
 					stub = helpers.to_release_stub(helpers.release_record_from_projection(projection))
 				elseif entity_type == "artist" and selected_types.artists then
-					stub = helpers.to_artist_stub(helpers.artist_record_from_projection(projection))
+					local artist_projection = projection :: ArtistProjectionInfo
+					if artist_projection.entity.artist_type == artists_module.ArtistType.Person then
+						stub = helpers.to_person_stub(artist_projection.entity)
+					else
+						stub = helpers.to_artist_stub(helpers.artist_record_from_projection(projection))
+					end
 				elseif entity_type == "track" and selected_types.tracks then
 					stub = helpers.to_track_stub(helpers.track_record_from_projection(projection))
 				end
@@ -4061,6 +4282,10 @@ function helpers.list_items_by_artist_ids(
 	local decoded_contributing_artist_ids = helpers.decode_artist_filter_ids(options.contributing_artist_ids or {})
 	local decoded_explicit_track_artist_ids = helpers.decode_artist_filter_ids(options.track_artist_ids or {})
 	local decoded_explicit_release_artist_ids = helpers.decode_artist_filter_ids(options.release_artist_ids or {})
+	local explicit_person_item_ids: { [string]: boolean } = {}
+	for _, person_item_id in options.person_ids or {} do
+		explicit_person_item_ids[person_item_id] = true
+	end
 	local decoded_track_artist_ids =
 		helpers.merge_numeric_id_lists(decoded_primary_artist_ids, decoded_contributing_artist_ids)
 	if #decoded_track_artist_ids == 0 then
@@ -4313,7 +4538,22 @@ function helpers.list_items_by_artist_ids(
 	end
 
 	if wants_artists then
-		helpers.append_artist_record_map_stubs(stubs, artists_by_id)
+		local requested_person_items = next(explicit_person_item_ids) ~= nil
+		if requested_person_items then
+			local person_records: { [string]: ArtistRecord } = {}
+			local artist_records: { [string]: ArtistRecord } = {}
+			for artist_item_id, artist in artists_by_id do
+				if explicit_person_item_ids[artist_item_id] then
+					person_records[artist_item_id] = artist
+				else
+					artist_records[artist_item_id] = artist
+				end
+			end
+			helpers.append_person_record_map_stubs(stubs, person_records)
+			helpers.append_artist_record_map_stubs(stubs, artist_records)
+		else
+			helpers.append_artist_record_map_stubs(stubs, artists_by_id)
+		end
 	end
 
 	if wants_tracks then
@@ -5213,6 +5453,7 @@ function module.find_item_by_id(item_id: number?, user_id: number?): ItemInfo?
 		include_people = true,
 		search_term = nil,
 		artist_ids = {},
+		person_ids = {},
 		genre_ids = {},
 		primary_artist_ids = {},
 		contributing_artist_ids = {},
@@ -5275,6 +5516,59 @@ function module.list_artist_items(options: ItemsQueryOptions): ({ ItemInfo }, nu
 	helpers.append_artist_stubs(stubs, helpers.artist_items_by_scope(scope))
 
 	stubs = module.apply_search_filter(stubs, options.search_term)
+	stubs = helpers.apply_ids_filter(stubs, options.ids)
+	stubs = helpers.apply_exclude_ids_filter(stubs, options.exclude_item_ids)
+	stubs = helpers.apply_favorite_filter(stubs, options)
+	module.apply_sort(stubs, options)
+
+	return helpers.page_and_realize_stubs(stubs, options)
+end
+
+function module.list_person_items(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
+	if helpers.uses_unsupported_studio_filter(options) then
+		local empty = helpers.empty_item_list_result(options.start_index or 0)
+		return empty.items, empty.total_count, empty.start_index
+	end
+
+	local parent_scope = helpers.resolve_parent_scope(options.parent_id)
+	local scope, can_query = helpers.resolve_person_credit_query_scope(options, parent_scope)
+	local sort_tokens = helpers.sort_tokens_from_options(options)
+	if
+		can_query
+		and sort_tokens[1] ~= "random"
+		and helpers.all_sort_tokens_query_eligible(sort_tokens)
+		and not helpers.wants_favorite_only(options)
+		and helpers.can_use_paginated_query(options)
+	then
+		local result = helpers.query_person_artists(scope, options, sort_tokens, true)
+		if result then
+			local stubs: { ItemInfo } = {}
+			helpers.append_person_stubs(stubs, result.entities)
+
+			local items = helpers.realize_stubs(stubs, options)
+			return items, result.total_count, result.offset
+		end
+	end
+
+	local stubs: { ItemInfo } = {}
+	if can_query then
+		local query_sort_tokens: { string }? = nil
+		if sort_tokens[1] ~= "random" and helpers.all_sort_tokens_query_eligible(sort_tokens) then
+			query_sort_tokens = sort_tokens
+		end
+
+		local result = helpers.query_person_artists(scope, options, query_sort_tokens, false)
+		if result then
+			helpers.append_person_stubs(stubs, result.entities)
+		else
+			helpers.append_person_stubs(stubs, helpers.artist_items_by_scope(parent_scope.db_id))
+		end
+	else
+		helpers.append_person_stubs(stubs, helpers.artist_items_by_scope(parent_scope.db_id))
+	end
+
+	stubs = module.apply_search_filter(stubs, options.search_term)
+	stubs = helpers.apply_person_appears_in_item_filter(stubs, options.appears_in_item_id)
 	stubs = helpers.apply_ids_filter(stubs, options.ids)
 	stubs = helpers.apply_exclude_ids_filter(stubs, options.exclude_item_ids)
 	stubs = helpers.apply_favorite_filter(stubs, options)
@@ -5479,6 +5773,10 @@ end
 
 function module.find_artist_by_name(name: string, user_id: number): ItemInfo?
 	return helpers.paginate_name_lookup(name, user_id, module.list_artist_items)
+end
+
+function module.find_person_by_name(name: string, user_id: number): ItemInfo?
+	return helpers.paginate_name_lookup(name, user_id, module.list_person_items)
 end
 
 -- Single page since list_genre_items is exhaustive; pagination would be wasted.
