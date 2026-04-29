@@ -785,7 +785,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 	end
 
 	-- Save layer and cache only when all genres succeeded. If some failed,
-	-- don't write the QID — the sync filter checks external_ids.qid, so
+	-- don't write the QID — the sync filter checks external_ids.wikidata.qid, so
 	-- writing it would permanently skip the release and prevent retry.
 	if all_genres_ok and #genre_names > 0 then
 		local release_layer = provider:layer(release_db_id)
@@ -807,8 +807,12 @@ end, function(ctx: metadata.ReleaseRefreshContext): boolean
 	-- Once a QID is in external_ids, this release is permanently skipped.
 	-- A wrong QID requires manual correction (no automatic recovery path).
 	if ctx.external_ids then
-		local ids = ctx.external_ids :: { [string]: string }
-		if (ids.qid and ids.qid ~= "") or (ids.wikidata_qid and ids.wikidata_qid ~= "") then
+		local wikidata_ids = ctx.external_ids.wikidata
+		if wikidata_ids and wikidata_ids.qid and wikidata_ids.qid ~= "" then
+			return false
+		end
+		local musicbrainz_ids = ctx.external_ids.musicbrainz
+		if musicbrainz_ids and musicbrainz_ids.wikidata_qid and musicbrainz_ids.wikidata_qid ~= "" then
 			return false
 		end
 	end

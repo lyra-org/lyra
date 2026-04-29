@@ -40,6 +40,7 @@ type ReleaseMedium = track_helpers.ReleaseMedium
 type Release = track_helpers.Release
 type ArtistIdSet = release_search.ArtistIdSet
 type ReleaseIds = release_search.ReleaseIds
+type ExternalIdsByProvider = metadata.ExternalIdsByProvider
 type ReleaseContext = release_search.ReleaseContext
 type ProviderLayer = release_search.ProviderLayer
 type ProviderHandle = release_search.ProviderHandle
@@ -97,6 +98,14 @@ local release_has_track_title = track_helpers.release_has_track_title
 local validate_release_durations = track_helpers.validate_release_durations
 local should_preserve_local_track_positions = track_helpers.should_preserve_local_track_positions
 local single_track_duration_diff = track_helpers.single_track_duration_diff
+
+local function musicbrainz_external_ids(external_ids: ExternalIdsByProvider?): ReleaseIds?
+	local ids = metadata.ids.for_provider(external_ids, "musicbrainz")
+	if ids == nil then
+		return nil
+	end
+	return ids :: ReleaseIds
+end
 
 local function json_string_field(object: JsonObject?, key: string): string?
 	if object == nil then
@@ -657,7 +666,9 @@ local function release_lookup_inputs(
 end
 
 local function cover_cache_context(release_context: ReleaseContext?)
-	local ids = if release_context then release_context.ids or release_context.external_ids else nil
+	local ids = if release_context
+		then release_context.ids or musicbrainz_external_ids(release_context.external_ids)
+		else nil
 	local lookup_input = release_lookup_inputs(release_context)
 	local search_title = clean_release_title(lookup_input.release_title or "")
 	if search_title == "" and release_context and release_context.tracks and #release_context.tracks > 0 then
@@ -2375,7 +2386,9 @@ local function process_release_via_group(
 end
 
 function module.resolve_cover_release_id(release_context: ReleaseContext): string?
-	local ids = if release_context then release_context.ids or release_context.external_ids else nil
+	local ids = if release_context
+		then release_context.ids or musicbrainz_external_ids(release_context.external_ids)
+		else nil
 	if not ids then
 		return nil
 	end
@@ -2675,8 +2688,9 @@ function module.register_refresh(provider_instance: Provider, acoustid_config: A
 	provider_instance:refresh(metadata.EntityType.Release, function(ctx: metadata.ReleaseRefreshContext)
 		local release: ReleaseContext = ctx :: ReleaseContext
 		local lookup_input = release_lookup_inputs(release)
-		if release.external_ids and release.external_ids.release_id then
-			if fetch_release_by_id(release.external_ids.release_id, release) then
+		local musicbrainz_ids = musicbrainz_external_ids(release.external_ids)
+		if musicbrainz_ids and musicbrainz_ids.release_id then
+			if fetch_release_by_id(musicbrainz_ids.release_id, release) then
 				return nil
 			end
 		end
@@ -2742,7 +2756,8 @@ function module.register_refresh(provider_instance: Provider, acoustid_config: A
 		return nil
 	end, function(ctx: metadata.ReleaseRefreshContext): boolean
 		local release: ReleaseContext = ctx :: ReleaseContext
-		if release.external_ids and release.external_ids.release_id then
+		local musicbrainz_ids = musicbrainz_external_ids(release.external_ids)
+		if musicbrainz_ids and musicbrainz_ids.release_id then
 			return false
 		end
 		if not release.tracks or #release.tracks == 0 then

@@ -36,6 +36,7 @@ use super::{
     EntityInclude,
     EntityLookupHints,
     EntityProjectionInfo,
+    ExternalIdsByProvider,
     ProjectionEntryInfo,
     ReleaseProjectionIncludes,
     ReleaseProjectionInfo,
@@ -62,7 +63,7 @@ enum ResolvedEntity {
 
 #[derive(Default)]
 pub(super) struct PreFetchedIncludes {
-    pub(super) external_ids: Option<HashMap<DbId, BTreeMap<String, String>>>,
+    pub(super) external_ids: Option<HashMap<DbId, ExternalIdsByProvider>>,
     pub(super) artists_by_owner: Option<HashMap<DbId, Vec<Artist>>>,
     pub(super) releases_by_track: Option<HashMap<DbId, Vec<Release>>>,
     pub(super) track_artists: Option<HashMap<DbId, Vec<Artist>>>,
@@ -91,11 +92,13 @@ fn resolve_entity_id(db: &DbAny, query_id: QueryId) -> anyhow::Result<DbId> {
     }
 }
 
-fn build_external_ids_map(db: &DbAny, entity_id: DbId) -> anyhow::Result<BTreeMap<String, String>> {
+fn build_external_ids_map(db: &DbAny, entity_id: DbId) -> anyhow::Result<ExternalIdsByProvider> {
     let ids = db::external_ids::get_for_entity(db, entity_id)?;
     let mut map = BTreeMap::new();
     for id in ids {
-        map.insert(id.id_type, id.id_value);
+        map.entry(id.provider_id)
+            .or_insert_with(BTreeMap::new)
+            .insert(id.id_type, id.id_value);
     }
 
     Ok(map)

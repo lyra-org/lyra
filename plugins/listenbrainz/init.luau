@@ -7,6 +7,7 @@
 local entities = require("@lyra/entities")
 local http = require("@harmony/http")
 local json = require("@harmony/json")
+local metadata = require("@lyra/metadata")
 local playbacks = require("@lyra/playback_sessions")
 local plugins = require("@lyra/plugins")
 
@@ -31,7 +32,7 @@ type ReleaseProjectionInfo = entities.ReleaseProjectionInfo
 type ArtistProjectionInfo = entities.ArtistProjectionInfo
 type TrackProjectionIncludes = entities.TrackProjectionIncludes
 type EntityQueryRequest = entities.EntityQueryRequest
-type ExternalIdMap = { [string]: string }
+type ExternalIdsByProvider = metadata.ExternalIdsByProvider
 
 type AdditionalInfo = {
 	submission_client: string,
@@ -71,6 +72,8 @@ local function require_non_empty_string(value: string?): string?
 	end
 	return nil
 end
+
+local provider_external_ids = metadata.ids.for_provider
 
 local function query_release_projection(entity_id: number, include: string | { string }): ReleaseProjectionInfo?
 	local request: EntityQueryRequest = {
@@ -133,10 +136,9 @@ local function resolve_release_metadata(releases_list: { ReleaseProjection }?): 
 		if release_db_id ~= nil then
 			local release_projection = query_release_projection(release_db_id, "external_ids")
 			local release_external_ids = if release_projection then release_projection.includes.external_ids else nil
-			local release_mbid = if release_external_ids ~= nil then release_external_ids["release_id"] else nil
-			local release_group_mbid = if release_external_ids ~= nil
-				then release_external_ids["release_group_id"]
-				else nil
+			local musicbrainz_ids = provider_external_ids(release_external_ids, "musicbrainz")
+			local release_mbid = if musicbrainz_ids ~= nil then musicbrainz_ids.release_id else nil
+			local release_group_mbid = if musicbrainz_ids ~= nil then musicbrainz_ids.release_group_id else nil
 
 			return release_name, release_mbid, release_group_mbid
 		end
@@ -157,7 +159,8 @@ local function collect_artist_mbids(artists_list: { ArtistProjection }?): { stri
 		if artist_id ~= nil then
 			local artist_projection = query_artist_projection(artist_id, "external_ids")
 			local artist_external_ids = if artist_projection then artist_projection.includes.external_ids else nil
-			local artist_mbid = if artist_external_ids ~= nil then artist_external_ids["artist_id"] else nil
+			local musicbrainz_ids = provider_external_ids(artist_external_ids, "musicbrainz")
+			local artist_mbid = if musicbrainz_ids ~= nil then musicbrainz_ids.artist_id else nil
 			local resolved_artist_mbid = require_non_empty_string(artist_mbid)
 			if resolved_artist_mbid ~= nil and not seen[resolved_artist_mbid] then
 				seen[resolved_artist_mbid] = true
@@ -171,7 +174,7 @@ end
 
 local function build_additional_info(
 	track: TrackProjection?,
-	external_ids: ExternalIdMap?,
+	external_ids: ExternalIdsByProvider?,
 	artists_list: { ArtistProjection }?,
 	release_mbid: string?,
 	release_group_mbid: string?
@@ -193,11 +196,9 @@ local function build_additional_info(
 		additional_info.discnumber = tostring(track.disc)
 	end
 
-	if external_ids ~= nil then
-		local recording_id = external_ids.recording_id
-		if is_non_empty_string(recording_id) then
-			additional_info.recording_mbid = recording_id
-		end
+	local musicbrainz_ids = provider_external_ids(external_ids, "musicbrainz")
+	if musicbrainz_ids ~= nil and is_non_empty_string(musicbrainz_ids.recording_id) then
+		additional_info.recording_mbid = musicbrainz_ids.recording_id
 	end
 
 	if is_non_empty_string(release_mbid) then
