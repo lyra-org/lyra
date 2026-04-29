@@ -30,9 +30,11 @@ use crate::{
         CoverPaths,
         CoverSyncOptions,
         covers::{
+            CoverScope,
             configured_covers_root,
             resolve_cover_for_artist_id,
             resolve_cover_for_release_id,
+            sync_and_persist_covers_for_library,
             sync_artist_cover,
             sync_release_cover_for_tracks,
         },
@@ -42,9 +44,6 @@ use crate::{
             build_entity_provider_context,
             build_release_context,
         },
-        resolve_release_covers,
-        sync_release_cover_metadata_from_resolved,
-        sync_release_covers_for_library,
         upsert_artist_cover_metadata,
         upsert_release_cover_metadata,
     },
@@ -69,6 +68,32 @@ impl Drop for LibraryRefreshGuard {
         tokio::task::spawn(async move {
             LIBRARY_REFRESH_LOCKS.lock().await.remove(&library_db_id);
         });
+    }
+}
+
+async fn sync_library_cover_scope(
+    library_db_id: DbId,
+    cover_paths: CoverPaths<'_>,
+    cover_sync_options: CoverSyncOptions,
+    provider_filter: Option<&str>,
+    scope: CoverScope,
+) {
+    if let Err(err) = sync_and_persist_covers_for_library(
+        &STATE.db.get(),
+        cover_paths,
+        library_db_id,
+        cover_sync_options,
+        provider_filter,
+        scope,
+    )
+    .await
+    {
+        tracing::warn!(
+            library_db_id = library_db_id.0,
+            scope = scope.as_str(),
+            error = %err,
+            "cover sync failed during library refresh"
+        );
     }
 }
 
@@ -272,9 +297,14 @@ async fn refresh_entity_metadata_inner(
                 };
 
                 if let Some(artist) = artist_entity {
-                    if let Err(err) =
-                        sync_artist_cover(&STATE.db.get(), &artist, cover_paths, cover_sync_options)
-                            .await
+                    if let Err(err) = sync_artist_cover(
+                        &STATE.db.get(),
+                        &artist,
+                        cover_paths,
+                        cover_sync_options,
+                        None,
+                    )
+                    .await
                     {
                         tracing::warn!(
                             artist_db_id = node_id.0,
@@ -552,47 +582,332 @@ async fn refresh_library_metadata_inner(
         library_root: Some(library.directory.as_path()),
         covers_root: covers_root.as_deref(),
     };
-    if let Err(err) = sync_release_covers_for_library(
-        &STATE.db.get(),
-        cover_paths,
+    sync_library_cover_scope(
         library_db_id,
+        cover_paths,
         cover_sync_options,
+        options.provider_id,
+        CoverScope::Release,
     )
-    .await
-    {
-        tracing::warn!(
-            library_db_id = library_db_id.0,
-            error = %err,
-            "cover sync failed during library refresh"
-        );
-    }
+    .await;
 
-    let resolved = {
-        let db_read = STATE.db.read().await;
-        match resolve_release_covers(&db_read, library_db_id, cover_paths) {
-            Ok(r) => r,
-            Err(err) => {
-                tracing::warn!(
-                    library_db_id = library_db_id.0,
-                    error = %err,
-                    "cover resolution failed during library refresh"
-                );
-                Vec::new()
-            }
-        }
+    let artist_cover_paths = CoverPaths {
+        library_root: None,
+        covers_root: covers_root.as_deref(),
     };
-
-    if !resolved.is_empty() {
-        if let Err(err) =
-            sync_release_cover_metadata_from_resolved(&STATE.db.get(), &resolved).await
-        {
-            tracing::warn!(
-                library_db_id = library_db_id.0,
-                error = %err,
-                "cover metadata sync failed during library refresh"
-            );
-        }
-    }
+    sync_library_cover_scope(
+        library_db_id,
+        artist_cover_paths,
+        cover_sync_options,
+        options.provider_id,
+        CoverScope::Artist,
+    )
+    .await;
 
     Ok(refreshed_releases.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::HashMap,
+        fs,
+        io::Cursor,
+        path::PathBuf,
+        sync::Arc,
+        time::{
+            SystemTime,
+            UNIX_EPOCH,
+        },
+    };
+
+    use agdb::DbId;
+    use anyhow::Context;
+    use axum::{
+        Router,
+        extract::Path as AxumPath,
+        http::{
+            HeaderValue,
+            StatusCode,
+            header::CONTENT_TYPE,
+        },
+        response::IntoResponse,
+        routing::get,
+    };
+    use harmony_core::LuaFunctionAsyncExt;
+    use image::{
+        DynamicImage,
+        ImageBuffer,
+        ImageFormat,
+        Rgba,
+    };
+    use mlua as mluau;
+    use mlua::Lua;
+    use mlua::chunk;
+    use nanoid::nanoid;
+    use tokio::{
+        net::TcpListener,
+        task::JoinHandle,
+    };
+
+    use crate::{
+        STATE,
+        db,
+        plugins::metadata,
+        testing::{
+            LibraryFixtureConfig,
+            PreparedFixture,
+            initialize_runtime,
+            prepare_fixture,
+            runtime_test_lock,
+        },
+    };
+
+    struct TestDirGuard(PathBuf);
+
+    impl Drop for TestDirGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn setup_metadata_module(lua: &Lua) -> anyhow::Result<()> {
+        let table = (metadata::get_module().setup)(lua)?;
+        lua.globals().set("metadata", table)?;
+        Ok(())
+    }
+
+    fn make_test_png(color: [u8; 4]) -> anyhow::Result<Vec<u8>> {
+        let image = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(1, 1, Rgba::<u8>(color)));
+        let mut bytes = Cursor::new(Vec::new());
+        image.write_to(&mut bytes, ImageFormat::Png)?;
+        Ok(bytes.into_inner())
+    }
+
+    async fn spawn_cover_server(
+        responses: HashMap<String, Vec<u8>>,
+    ) -> anyhow::Result<(String, JoinHandle<()>)> {
+        let responses = Arc::new(responses);
+        let app = Router::new().route(
+            "/{*path}",
+            get({
+                let responses = responses.clone();
+                move |AxumPath(path): AxumPath<String>| {
+                    let responses = responses.clone();
+                    async move {
+                        if let Some(bytes) = responses.get(&path) {
+                            (
+                                [(CONTENT_TYPE, HeaderValue::from_static("image/png"))],
+                                bytes.clone(),
+                            )
+                                .into_response()
+                        } else {
+                            StatusCode::NOT_FOUND.into_response()
+                        }
+                    }
+                }
+            }),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        Ok((format!("http://{addr}"), handle))
+    }
+
+    async fn initialize_runtime_with_covers() -> anyhow::Result<(TestDirGuard, PathBuf)> {
+        let root = std::env::temp_dir().join(format!(
+            "lyra-library-refresh-cover-test-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+        let music_dir = root.join("music");
+        let covers_dir = root.join("covers");
+        fs::create_dir_all(&music_dir)?;
+        fs::create_dir_all(&covers_dir)?;
+
+        initialize_runtime(&LibraryFixtureConfig {
+            directory: music_dir.clone(),
+            language: None,
+            country: None,
+        })
+        .await?;
+
+        let mut config = STATE.config.get().as_ref().clone();
+        config.covers_path = Some(covers_dir.clone());
+        STATE.config.replace(Arc::new(config));
+
+        Ok((TestDirGuard(root), music_dir))
+    }
+
+    async fn prepare_single_artist_fixture(
+        music_dir: &std::path::Path,
+    ) -> anyhow::Result<PreparedFixture> {
+        let track_path = music_dir
+            .join("Selected Artist")
+            .join("Selected Album")
+            .join("01 Track.flac");
+        prepare_fixture(
+            &LibraryFixtureConfig {
+                directory: music_dir.to_path_buf(),
+                language: None,
+                country: None,
+            },
+            vec![lyra_metadata::RawTrackTags {
+                file_path: track_path.to_string_lossy().into_owned(),
+                album: Some("Selected Album".to_string()),
+                album_artists: vec!["Selected Artist".to_string()],
+                artists: vec!["Selected Artist".to_string()],
+                title: Some("Track 1".to_string()),
+                date: Some("2024-01-01".to_string()),
+                copyright: None,
+                genre: None,
+                label: None,
+                catalog_number: None,
+                disc: Some(1),
+                disc_total: Some(1),
+                track: Some(1),
+                track_total: Some(1),
+                duration_ms: 60_000,
+                sample_rate_hz: None,
+                channel_count: None,
+                bit_depth: None,
+                bitrate_bps: None,
+            }],
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn library_refresh_syncs_artist_covers_and_respects_provider_filter() -> anyhow::Result<()>
+    {
+        let _guard = runtime_test_lock().await;
+        let (_test_dir, music_dir) = initialize_runtime_with_covers().await?;
+        setup_metadata_module(STATE.lua.get().as_ref())?;
+
+        let selected_release_png = make_test_png([0, 255, 0, 255])?;
+        let selected_artist_png = make_test_png([0, 0, 255, 255])?;
+        let ignored_release_png = make_test_png([255, 0, 0, 255])?;
+        let ignored_artist_png = make_test_png([255, 255, 0, 255])?;
+        let (server_root, server_handle) = spawn_cover_server(HashMap::from([
+            (
+                "selected-release.png".to_string(),
+                selected_release_png.clone(),
+            ),
+            (
+                "selected-artist.png".to_string(),
+                selected_artist_png.clone(),
+            ),
+            (
+                "ignored-release.png".to_string(),
+                ignored_release_png.clone(),
+            ),
+            ("ignored-artist.png".to_string(), ignored_artist_png.clone()),
+        ]))
+        .await?;
+
+        let selected_provider_id = format!("selected-{}", nanoid!());
+        let ignored_provider_id = format!("ignored-{}", nanoid!());
+        let lua_selected_provider_id = selected_provider_id.clone();
+        let lua_ignored_provider_id = ignored_provider_id.clone();
+
+        let register_fn = STATE
+            .lua
+            .get()
+            .load(chunk! {
+                local ET = metadata.EntityType
+
+                local selected = metadata.Provider.new($lua_selected_provider_id)
+                selected:refresh(ET.Release, function(_ctx) end)
+                selected:cover(ET.Release, {}, function(_ctx)
+                    return $server_root .. "/selected-release.png"
+                end)
+                selected:cover(ET.Artist, {}, function(_ctx)
+                    return $server_root .. "/selected-artist.png"
+                end)
+
+                local ignored = metadata.Provider.new($lua_ignored_provider_id)
+                ignored:cover(ET.Release, {}, function(_ctx)
+                    return $server_root .. "/ignored-release.png"
+                end)
+                ignored:cover(ET.Artist, {}, function(_ctx)
+                    return $server_root .. "/ignored-artist.png"
+                end)
+            })
+            .set_name(&harmony_core::format_plugin_chunk_name("test", "init"))
+            .into_function()?;
+        register_fn.call_async::<()>(()).await?;
+
+        {
+            let mut db_write = STATE.db.write().await;
+            db::providers::update_priority(&mut db_write, &selected_provider_id, 10)?;
+            db::providers::update_priority(&mut db_write, &ignored_provider_id, 100)?;
+        }
+
+        let prepared = prepare_single_artist_fixture(&music_dir).await?;
+        let library_db_id = DbId(prepared.library_id);
+        let release_db_id = DbId(prepared.release_id);
+
+        let refreshed = super::refresh_library_metadata(
+            library_db_id,
+            &super::LibraryRefreshOptions {
+                replace_cover: false,
+                force_refresh: true,
+                apply_sync_filters: false,
+                provider_id: Some(&selected_provider_id),
+            },
+        )
+        .await?;
+        assert_eq!(refreshed, 1);
+
+        let (artist_db_id, release_cover_path, artist_cover_path) = {
+            let db_read = STATE.db.read().await;
+            let artists = db::artists::get_by_library(&db_read, library_db_id)?;
+            let artist_db_id = artists
+                .first()
+                .and_then(|artist| artist.db_id.clone().map(Into::<DbId>::into))
+                .context("expected one library artist")?;
+
+            let release_cover_path = db::covers::get(&db_read, release_db_id)?
+                .map(|cover| cover.path)
+                .context("release cover metadata missing after library refresh")?;
+            let artist_cover_path = db::covers::get(&db_read, artist_db_id)?
+                .map(|cover| cover.path)
+                .context("artist cover metadata missing after library refresh")?;
+
+            (artist_db_id, release_cover_path, artist_cover_path)
+        };
+
+        let release_bytes = fs::read(&release_cover_path)?;
+        let artist_bytes = fs::read(&artist_cover_path)?;
+        assert_eq!(release_bytes, selected_release_png);
+        assert_eq!(artist_bytes, selected_artist_png);
+        assert_ne!(release_bytes, ignored_release_png);
+        assert_ne!(artist_bytes, ignored_artist_png);
+
+        let covers_root = STATE
+            .config
+            .get()
+            .covers_path
+            .clone()
+            .context("covers_path should be configured for test")?;
+        assert_eq!(
+            PathBuf::from(release_cover_path),
+            covers_root
+                .join(release_db_id.0.to_string())
+                .join("cover.png")
+        );
+        assert_eq!(
+            PathBuf::from(artist_cover_path),
+            covers_root
+                .join("artists")
+                .join(artist_db_id.0.to_string())
+                .join("cover.png")
+        );
+
+        server_handle.abort();
+        Ok(())
+    }
 }
