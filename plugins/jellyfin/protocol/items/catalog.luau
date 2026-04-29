@@ -129,6 +129,7 @@ export type ItemsQueryOptions = {
 	ids: { string },
 	exclude_item_ids: { string },
 	exclude_artist_ids: { string },
+	studio_ids: { string },
 	primary_artist_ids: { string },
 	contributing_artist_ids: { string },
 	track_artist_ids: { string },
@@ -476,6 +477,7 @@ function helpers.clone_items_query_options(options: ItemsQueryOptions): ItemsQue
 		ids = options.ids,
 		exclude_item_ids = options.exclude_item_ids,
 		exclude_artist_ids = options.exclude_artist_ids,
+		studio_ids = options.studio_ids,
 		primary_artist_ids = options.primary_artist_ids,
 		contributing_artist_ids = options.contributing_artist_ids,
 		track_artist_ids = options.track_artist_ids,
@@ -3056,6 +3058,7 @@ function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 		ids = {},
 		exclude_item_ids = {},
 		exclude_artist_ids = {},
+		studio_ids = {},
 		primary_artist_ids = {},
 		contributing_artist_ids = {},
 		track_artist_ids = {},
@@ -3089,6 +3092,8 @@ function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 	options.exclude_artist_ids = helpers.normalize_item_ids(
 		helpers.parse_query_csv(query, { "ExcludeArtistIds", "excludeArtistIds", "excludeartistids" })
 	)
+	options.studio_ids =
+		helpers.normalize_item_ids(helpers.parse_query_csv(query, { "StudioIds", "studioIds", "studioids" }))
 	local artist_ids =
 		helpers.normalize_item_ids(helpers.parse_query_csv(query, { "ArtistIds", "artistIds", "artistids" }))
 	local release_artist_ids = helpers.normalize_item_ids(
@@ -3727,6 +3732,10 @@ end
 function helpers.empty_item_list_result(start_index: number): ItemListResult
 	local empty_items: { ItemInfo } = {}
 	return helpers.item_list_result(empty_items, 0, start_index)
+end
+
+function helpers.uses_unsupported_studio_filter(options: ItemsQueryOptions): boolean
+	return #options.studio_ids > 0
 end
 
 function helpers.track_items_by_scope(scope: number?): { Track }
@@ -4500,6 +4509,11 @@ function helpers.try_list_root_favorite_items(
 end
 
 function module.list_items(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
+	if helpers.uses_unsupported_studio_filter(options) then
+		local empty = helpers.empty_item_list_result(options.start_index or 0)
+		return empty.items, empty.total_count, empty.start_index
+	end
+
 	local direct_items = helpers.try_list_direct_item_filters(options)
 	if direct_items then
 		return direct_items.items, direct_items.total_count, direct_items.start_index
@@ -5187,6 +5201,7 @@ function module.find_item_by_id(item_id: number?, user_id: number?): ItemInfo?
 		ids = { encoded_item_id },
 		exclude_item_ids = {},
 		exclude_artist_ids = {},
+		studio_ids = {},
 		parent_id = nil,
 		start_index = 0,
 		limit = 1,
@@ -5217,6 +5232,11 @@ function module.find_item_by_id(item_id: number?, user_id: number?): ItemInfo?
 end
 
 function module.list_artist_items(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
+	if helpers.uses_unsupported_studio_filter(options) then
+		local empty = helpers.empty_item_list_result(options.start_index or 0)
+		return empty.items, empty.total_count, empty.start_index
+	end
+
 	local parent_scope = helpers.resolve_parent_scope(options.parent_id)
 	local scope = parent_scope.db_id
 	local sort_tokens = helpers.sort_tokens_from_options(options)
@@ -5264,6 +5284,11 @@ function module.list_artist_items(options: ItemsQueryOptions): ({ ItemInfo }, nu
 end
 
 function module.list_genre_items(options: ItemsQueryOptions): ({ ItemInfo }, number, number)
+	if helpers.uses_unsupported_studio_filter(options) then
+		local empty = helpers.empty_item_list_result(options.start_index or 0)
+		return empty.items, empty.total_count, empty.start_index
+	end
+
 	local parent_scope = helpers.resolve_parent_scope(options.parent_id)
 	local scope = parent_scope.db_id
 	local unique: { [string]: { name: string, id: string, db_id: number? } } = {}

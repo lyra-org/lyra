@@ -1812,11 +1812,26 @@ local function handle_genres_route(ctx: ApiContext): ApiResponse
 	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
 end
 
+local function handle_studios_route(ctx: ApiContext): ApiResponse
+	local principal = session.require_jellyfin_principal(ctx)
+	if not principal then
+		return session.unauthorized()
+	end
+
+	local query = if ctx and ctx.request then ctx.request.query else nil
+	local options = catalog.with_user_query_options(catalog.coerce_items_query(query), principal.user_id)
+	local empty_items = {}
+	return api.response.json(200, catalog.build_item_query_result(empty_items, 0, options.start_index))
+end
+
 api.get(P .. "/Genres", function(ctx: ApiContext)
 	return handle_genres_route(ctx)
 end, nil, true)
 api.get(P .. "/MusicGenres", function(ctx: ApiContext)
 	return handle_genres_route(ctx)
+end, nil, true)
+api.get(P .. "/Studios", function(ctx: ApiContext)
+	return handle_studios_route(ctx)
 end, nil, true)
 api.get(P .. "/Items/{imageId}/Images/Primary", function(ctx: ApiContext)
 	return session.handle_primary_image_request(ctx)
