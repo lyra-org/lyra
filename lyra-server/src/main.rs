@@ -12,6 +12,12 @@ use anyhow::{
 enum Command {
     Serve { capture_path: Option<String> },
     Docs(Vec<String>),
+    Db(DbCommand),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DbCommand {
+    Optimize,
 }
 
 #[tokio::main]
@@ -20,6 +26,7 @@ async fn main() -> Result<()> {
     match parse_command_args(&args)? {
         Command::Serve { capture_path } => lyra_server::run_server(capture_path).await,
         Command::Docs(args) => lyra_server::run_docs_command(&args),
+        Command::Db(DbCommand::Optimize) => lyra_server::run_db_optimize().await,
     }
 }
 
@@ -30,18 +37,22 @@ fn parse_command_args(args: &[String]) -> Result<Command> {
             capture_path: Some(path.clone()),
         }),
         [command, rest @ ..] if command == "docs" => Ok(Command::Docs(rest.to_vec())),
+        [command, action] if command == "db" && action == "optimize" => {
+            Ok(Command::Db(DbCommand::Optimize))
+        }
         _ => bail!(usage()),
     }
 }
 
 fn usage() -> &'static str {
-    "usage:\n  lyra serve [--capture <output-path>]\n  lyra docs <list|print|generate|setup> [options]"
+    "usage:\n  lyra serve [--capture <output-path>]\n  lyra docs <list|print|generate|setup> [options]\n  lyra db optimize"
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         Command,
+        DbCommand,
         parse_command_args,
     };
 
@@ -85,5 +96,11 @@ mod tests {
             error.to_string(),
             "usage:\n  lyra docs list\n  lyra docs print <source>\n  lyra docs generate --out-dir <dir>\n  lyra docs setup"
         );
+    }
+
+    #[test]
+    fn parse_db_optimize_command() {
+        let parsed = parse_command_args(&args(&["db", "optimize"])).expect("parse db optimize");
+        assert_eq!(parsed, Command::Db(DbCommand::Optimize));
     }
 }
