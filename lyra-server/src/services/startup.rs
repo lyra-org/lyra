@@ -46,16 +46,14 @@ pub(crate) async fn run_server(capture_path: Option<String>) -> Result<()> {
     hls_init::initialize_for_config(&config).await;
 
     let db = STATE.db.get();
-    let storage_monitor_shutdown = if capture_mode {
+    let maintenance_shutdown = if capture_mode {
         None
     } else {
-        match config.db.kind {
+        let storage_path = match config.db.kind {
             DbKind::Memory => None,
-            _ => Some(services::storage_monitor::spawn(
-                db.clone(),
-                config.db.path.clone(),
-            )),
-        }
+            _ => Some(config.db.path.clone()),
+        };
+        Some(services::maintenance::spawn(db.clone(), storage_path))
     };
     services::auth::ensure_default_user(&config).await?;
     {
@@ -107,8 +105,8 @@ pub(crate) async fn run_server(capture_path: Option<String>) -> Result<()> {
     serve(app, config.as_ref()).await?;
 
     tracing::info!("server stopped, running shutdown cleanup");
-    if let Some(ref monitor_shutdown) = storage_monitor_shutdown {
-        monitor_shutdown.notify_one();
+    if let Some(ref maintenance_shutdown) = maintenance_shutdown {
+        maintenance_shutdown.notify_one();
     }
     shutdown.notify_one();
     let _ = bg_handle.await;

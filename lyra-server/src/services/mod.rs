@@ -44,6 +44,7 @@ pub(crate) mod entries;
 pub(crate) mod favorites;
 pub(crate) mod hls;
 pub(crate) mod libraries;
+pub(crate) mod maintenance;
 pub(crate) mod metadata;
 pub(crate) mod mix;
 pub(crate) mod options;
@@ -56,7 +57,6 @@ pub(crate) mod providers;
 pub(crate) mod releases;
 pub(crate) mod remote;
 pub(crate) mod startup;
-pub(crate) mod storage_monitor;
 pub(crate) mod tags;
 pub(crate) mod tracks;
 
