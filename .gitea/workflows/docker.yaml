@@ -20,7 +20,7 @@ jobs:
         with:
           buildkitd-config-inline: |
             [registry."git.home.local"]
-              ca = ["/etc/certs/homelab-ca.crt"]
+              insecure = true
 
       - name: Log in to Gitea container registry
         uses: docker/login-action@v4
