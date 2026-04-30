@@ -168,3 +168,28 @@ pub async fn run_server(capture_path: Option<String>) -> Result<()> {
 pub fn run_docs_command(args: &[String]) -> Result<()> {
     plugins::docs::run_command(args)
 }
+
+/// Force-compact the DB. Takes the agdb write lock.
+pub async fn run_db_optimize() -> Result<()> {
+    let config = load_config()?;
+    let db_path = config.db.path.clone();
+    let mut db = db::bootstrap::open(config.db.kind, db_path.to_string_lossy().as_ref())?;
+
+    let before_logical = db.size();
+    let before_file = std::fs::metadata(&db_path).map(|m| m.len()).ok();
+
+    db.optimize_storage()
+        .map_err(|err| anyhow::anyhow!("optimize_storage failed: {err}"))?;
+    let after_logical = db.size();
+    drop(db);
+    let after_file = std::fs::metadata(&db_path).map(|m| m.len()).ok();
+
+    eprintln!("optimize_storage complete:");
+    eprintln!("  logical bytes: {before_logical} -> {after_logical}");
+    if let (Some(before), Some(after)) = (before_file, after_file) {
+        let reclaimed = before.saturating_sub(after);
+        eprintln!("  file bytes:    {before} -> {after} (reclaimed {reclaimed})");
+    }
+
+    Ok(())
+}
