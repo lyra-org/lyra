@@ -77,6 +77,35 @@ impl DataStore {
 
         Ok(())
     }
+
+    /// Removes an entry from this store by key. Returns whether a value was removed.
+    pub(crate) async fn remove(
+        &self,
+        _plugin_id: Option<Arc<str>>,
+        key: String,
+    ) -> anyhow::Result<bool> {
+        let datastore_id = self
+            .db_id
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("datastore missing db_id"))?
+            .into();
+
+        let db = &mut *STATE.db.write().await;
+        db::datastore::remove_entry(db, datastore_id, &key)
+    }
+
+    /// Removes every entry from this store. Returns the number removed.
+    pub(crate) async fn clear(&self, _plugin_id: Option<Arc<str>>) -> anyhow::Result<u64> {
+        let datastore_id = self
+            .db_id
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("datastore missing db_id"))?
+            .into();
+
+        let db = &mut *STATE.db.write().await;
+        let removed = db::datastore::clear_entries(db, datastore_id)?;
+        Ok(removed as u64)
+    }
 }
 
 harmony_macros::compile!(type_path = DataStore, fields = false, methods = true);
