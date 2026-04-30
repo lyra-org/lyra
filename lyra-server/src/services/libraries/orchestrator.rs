@@ -28,7 +28,6 @@ use tokio::time::{
     sleep,
 };
 
-use crate::STATE;
 use crate::db::{
     DbAsync,
     Library,
@@ -213,7 +212,6 @@ async fn run_library_sync(db: DbAsync, library: Library, library_db_id: DbId, ru
                 tracing::warn!(error = %err, "failed to optimize storage after sync");
             }
             drop(db_write);
-            super::super::storage_monitor::record_baseline(&STATE.config.get().db.path);
             mark_succeeded(library_db_id, run_id).await;
         }
         Err(err) => {
