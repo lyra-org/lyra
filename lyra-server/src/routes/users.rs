@@ -518,6 +518,21 @@ async fn get_me(
 }
 
 async fn login_user(Json(user): Json<UserRequest>) -> Result<Json<LoginResponse>, AppError> {
+    let config = STATE.config.get();
+    if !config.auth.enabled {
+        let default_username = config.auth.default_username.to_lowercase();
+        if !config.auth.allow_default_login_when_disabled {
+            return Err(AppError::forbidden(
+                "password login is disabled because authentication is disabled",
+            ));
+        }
+        if user.username.trim().to_lowercase() != default_username {
+            return Err(AppError::forbidden(
+                "password login for non-default users is disabled because authentication is disabled",
+            ));
+        }
+    }
+
     let Some(login_result) = login_with_password(&user.username, &user.password).await? else {
         return Err(AppError::unauthorized("invalid username or password"));
     };
@@ -681,6 +696,7 @@ mod tests {
     };
     use axum::{
         Json,
+        body::to_bytes,
         extract::Path,
         http::{
             HeaderMap,
@@ -782,6 +798,38 @@ mod tests {
         };
 
         create_headers_for_user(user_db_id).await
+    }
+
+    #[tokio::test]
+    async fn login_non_default_user_when_auth_disabled_reports_configuration() -> anyhow::Result<()>
+    {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let mut config = STATE.config.get().as_ref().clone();
+        config.auth.enabled = false;
+        STATE.config.replace(std::sync::Arc::new(config));
+
+        let err = match login_user(Json(UserRequest {
+            username: "listener".to_string(),
+            password: "password123".to_string(),
+        }))
+        .await
+        {
+            Ok(_) => panic!("non-default login should explain disabled auth"),
+            Err(err) => err,
+        };
+
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let body = String::from_utf8(body.to_vec())?;
+        assert!(
+            body.contains("authentication is disabled"),
+            "unexpected error: {body}"
+        );
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
     }
 
     #[tokio::test]
