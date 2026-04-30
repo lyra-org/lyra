@@ -18,7 +18,10 @@ use aide::transform::TransformOperation;
 use axum::{
     Json,
     extract::Path,
-    http::HeaderMap,
+    http::{
+        HeaderMap,
+        StatusCode,
+    },
 };
 use schemars::JsonSchema;
 use serde::{
@@ -80,12 +83,6 @@ struct PluginManifestResponse {
     version: String,
     description: String,
     entrypoint: String,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-struct RestartPluginResponse {
-    plugin_id: String,
-    status: String,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -325,7 +322,7 @@ async fn list_plugins(headers: HeaderMap) -> Result<Json<Vec<PluginManifestRespo
 async fn restart_plugin(
     headers: HeaderMap,
     Path(plugin_id): Path<String>,
-) -> Result<Json<RestartPluginResponse>, AppError> {
+) -> Result<StatusCode, AppError> {
     let _principal = require_manage_plugins(&headers).await?;
     let plugin_id = PluginId::new(plugin_id)
         .map_err(|err| AppError::bad_request(format!("invalid plugin id: {err}")))?;
@@ -340,10 +337,7 @@ async fn restart_plugin(
         .await
         .map_err(map_plugin_restart_error)?;
 
-    Ok(Json(RestartPluginResponse {
-        plugin_id: plugin_id.to_string(),
-        status: "restarted".to_string(),
-    }))
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn get_settings(
@@ -456,7 +450,7 @@ fn list_plugins_docs(op: TransformOperation) -> TransformOperation {
 fn restart_plugin_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Restart plugin").description(
         "Tears down the plugin's current runtime registrations, re-runs its entrypoint, and activates its routes.",
-    )
+    ).response::<204, ()>()
 }
 
 fn update_settings_docs(op: TransformOperation) -> TransformOperation {
