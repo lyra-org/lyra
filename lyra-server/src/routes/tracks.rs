@@ -35,7 +35,10 @@ use serde::Deserialize;
 
 use crate::{
     STATE,
-    db,
+    db::{
+        self,
+        ListOptions,
+    },
     routes::AppError,
     routes::deserialize_inc,
     routes::responses::{
@@ -57,6 +60,15 @@ struct TrackQuery {
     #[schemars(description = "Comma-separated or repeated values: releases, artists.")]
     #[serde(default, deserialize_with = "deserialize_inc")]
     inc: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct TrackListQuery {
+    #[schemars(description = "Comma-separated or repeated values: releases, artists.")]
+    #[serde(default, deserialize_with = "deserialize_inc")]
+    inc: Option<Vec<String>>,
+    #[schemars(description = "Optional fuzzy text query matched against track titles.")]
+    query: Option<String>,
 }
 
 fn parse_inc(inc: Option<Vec<String>>) -> Result<track_service::TrackIncludes, AppError> {
@@ -101,10 +113,17 @@ fn track_detail_to_response(
 
 pub(crate) async fn list_track_responses(
     inc: Option<Vec<String>>,
+    query: Option<String>,
 ) -> Result<Vec<TrackResponse>, AppError> {
     let db = &*STATE.db.read().await;
     let includes = parse_inc(inc)?;
-    let details = track_service::list_details(db, includes)?;
+    let options = ListOptions {
+        sort: Vec::new(),
+        offset: None,
+        limit: None,
+        search_term: super::parse_text_query(query),
+    };
+    let details = track_service::list_details(db, includes, &options)?;
 
     details
         .into_iter()
@@ -129,10 +148,12 @@ pub(crate) async fn get_track_response(
 
 async fn get_tracks(
     headers: HeaderMap,
-    Query(query): Query<TrackQuery>,
+    Query(list_query): Query<TrackListQuery>,
 ) -> Result<Json<Vec<TrackResponse>>, AppError> {
     let _principal = require_authenticated(&headers).await?;
-    Ok(Json(list_track_responses(query.inc).await?))
+    Ok(Json(
+        list_track_responses(list_query.inc, list_query.query).await?,
+    ))
 }
 
 async fn get_track(
@@ -146,7 +167,7 @@ async fn get_track(
 
 fn list_tracks_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tracks").description(
-        "Returns tracks. Use `inc` to include releases and/or artists. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
+        "Returns tracks. Supported query parameters: `inc`, `query`. `query` is a fuzzy text match against track titles. Use `inc` to include releases and/or artists. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 

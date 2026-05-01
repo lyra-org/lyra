@@ -264,8 +264,9 @@ pub(crate) fn get_relations_many(
 pub(crate) fn list_details(
     db: &DbAny,
     includes: ArtistIncludes,
+    options: &ListOptions,
 ) -> anyhow::Result<Vec<ArtistDetails>> {
-    let artists = db::artists::get(db, "artists")?;
+    let artists = db::artists::query(db, "artists", options, None)?.entries;
     let mut details = Vec::with_capacity(artists.len());
 
     for artist in artists {
@@ -415,6 +416,15 @@ mod tests {
     use agdb::QueryBuilder;
     use nanoid::nanoid;
 
+    fn default_options() -> ListOptions {
+        ListOptions {
+            sort: Vec::new(),
+            offset: None,
+            limit: None,
+            search_term: None,
+        }
+    }
+
     fn set_artist_type(
         db: &mut DbAny,
         artist_db_id: DbId,
@@ -486,7 +496,7 @@ mod tests {
             tracks: true,
             ..Default::default()
         };
-        let details = list_details(&db, includes)?;
+        let details = list_details(&db, includes, &default_options())?;
 
         assert_eq!(details.len(), 1);
         assert_eq!(details[0].artist.artist_name, "Coltrane");
@@ -516,7 +526,7 @@ mod tests {
             tracks: false,
             ..Default::default()
         };
-        let details = list_details(&db, includes)?;
+        let details = list_details(&db, includes, &default_options())?;
 
         assert_eq!(details.len(), 1);
         assert!(details[0].releases.is_none());
