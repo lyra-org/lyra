@@ -143,6 +143,7 @@ async fn run_capture_mode(
     library_db_id: DbId,
     output_path: &str,
 ) -> Result<()> {
+    // Pre-open compaction has already run; otherwise mmap OOMs on a fragmented DB.
     plugin_bootstrap::exec_for_capture(harmony).await?;
     services::providers::run_capture(library_db_id, output_path).await
 }
