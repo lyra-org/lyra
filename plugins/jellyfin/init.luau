@@ -1454,6 +1454,69 @@ end
 api.get(P .. "/Artists/{itemId}/Similar", handle_similar_items_route, nil, true)
 api.get(P .. "/Items/{itemId}/Similar", handle_similar_items_route, nil, true)
 api.get(P .. "/Albums/{itemId}/Similar", handle_similar_items_route, nil, true)
+local function handle_instant_mix_route(ctx: ApiContext): ApiResponse
+	local principal = session.require_jellyfin_principal(ctx)
+	if not principal then
+		return session.unauthorized()
+	end
+
+	if not session.require_matching_user_scope(ctx, principal) then
+		return session.unauthorized()
+	end
+
+	local params = if ctx then ctx.params else nil
+	local raw_item_id = if params then params.itemId else nil
+	if not raw_item_id then
+		return base.bad_request("missing item id")
+	end
+
+	local item_id = base.decode_jellyfin_item_id(raw_item_id)
+	if not item_id then
+		return base.not_found("item not found")
+	end
+
+	local query = if ctx and ctx.request then ctx.request.query else nil
+	local options = catalog.with_user_query_options(catalog.coerce_items_query(query), principal.user_id)
+	local items, total_count, start_index, found = catalog.list_instant_mix_audio(item_id, options)
+	if not found then
+		return base.not_found("item not found")
+	end
+
+	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
+end
+
+local function handle_instant_mix_genre_name_route(ctx: ApiContext): ApiResponse
+	local principal = session.require_jellyfin_principal(ctx)
+	if not principal then
+		return session.unauthorized()
+	end
+
+	if not session.require_matching_user_scope(ctx, principal) then
+		return session.unauthorized()
+	end
+
+	local params = if ctx then ctx.params else nil
+	local name = if params then (params.name or params.genreName) else nil
+	if not name or name == "" then
+		return base.bad_request("missing genre name")
+	end
+
+	local query = if ctx and ctx.request then ctx.request.query else nil
+	local options = catalog.with_user_query_options(catalog.coerce_items_query(query), principal.user_id)
+	local items, total_count, start_index, found = catalog.list_instant_mix_audio_from_genre_name(name, options)
+	if not found then
+		return base.not_found("genre not found")
+	end
+
+	return api.response.json(200, catalog.build_item_query_result(items, total_count, start_index))
+end
+
+api.get(P .. "/Items/{itemId}/InstantMix", handle_instant_mix_route, nil, true)
+api.get(P .. "/Songs/{itemId}/InstantMix", handle_instant_mix_route, nil, true)
+api.get(P .. "/Albums/{itemId}/InstantMix", handle_instant_mix_route, nil, true)
+api.get(P .. "/Artists/{itemId}/InstantMix", handle_instant_mix_route, nil, true)
+api.get(P .. "/Playlists/{itemId}/InstantMix", handle_instant_mix_route, nil, true)
+api.get(P .. "/MusicGenres/{name}/InstantMix", handle_instant_mix_genre_name_route, nil, true)
 local function respond_with_latest_items(ctx: ApiContext, principal: session.Principal): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local options = catalog.with_user_query_options(catalog.coerce_items_query(query), principal.user_id)
