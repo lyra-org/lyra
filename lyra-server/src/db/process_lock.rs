@@ -129,8 +129,25 @@ fn held_error(path: &Path) -> anyhow::Error {
 
 fn acquire_or_probe(file: &File, mode: LockMode, path: &Path) -> Result<()> {
     match mode {
-        LockMode::Blocking => FileExt::lock_exclusive(file)
-            .with_context(|| format!("failed to acquire blocking db lock at {}", path.display())),
+        LockMode::Blocking => {
+            match FileExt::try_lock_exclusive(file) {
+                Ok(true) => return Ok(()),
+                Ok(false) => {}
+                Err(err) if would_block(&err) => {}
+                Err(err) => {
+                    return Err(anyhow::Error::from(err)
+                        .context(format!("failed to probe db lock at {}", path.display())));
+                }
+            }
+            tracing::warn!(
+                path = %path.display(),
+                "another lyra process holds the db lock; waiting for it to be released"
+            );
+            FileExt::lock_exclusive(file)
+                .with_context(|| format!("failed to acquire blocking db lock at {}", path.display()))?;
+            tracing::info!(path = %path.display(), "db lock acquired");
+            Ok(())
+        }
         LockMode::NonBlocking => match FileExt::try_lock_exclusive(file) {
             Ok(true) => Ok(()),
             Ok(false) => Err(held_error(path)),
