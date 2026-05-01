@@ -86,7 +86,7 @@ pub(super) async fn build_context(
     method: &Method,
     uri: &Uri,
     headers: &HeaderMap,
-    query: &HashMap<String, String>,
+    query: &HashMap<String, Vec<String>>,
     params: Option<&HashMap<String, String>>,
     body: &Bytes,
 ) -> Result<Table> {
@@ -114,8 +114,12 @@ pub(super) async fn build_context(
     request.set("headers", headers_table)?;
 
     let query_table = lua.create_table()?;
-    for (name, value) in query {
-        query_table.set(name.as_str(), value.as_str())?;
+    for (name, values) in query {
+        let values_table = lua.create_table_with_capacity(values.len(), 0)?;
+        for (index, value) in values.iter().enumerate() {
+            values_table.set(index + 1, value.as_str())?;
+        }
+        query_table.set(name.as_str(), values_table)?;
     }
     request.set("query", query_table)?;
     request.set("body_raw", lua.create_string(body.as_ref())?)?;

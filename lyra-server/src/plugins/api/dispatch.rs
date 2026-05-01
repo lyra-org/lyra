@@ -320,11 +320,12 @@ fn build_http_method_router(route: &RegisteredRoute) -> Result<MethodRouter> {
         move |method: Method,
               uri: Uri,
               headers: HeaderMap,
-              Query(query): Query<HashMap<String, String>>,
+              Query(pairs): Query<Vec<(String, String)>>,
               params: Option<Path<HashMap<String, String>>>,
               body: Bytes| {
             let route = dispatch_route.clone();
             async move {
+                let query = collect_query_pairs(pairs);
                 dispatch_registered_route(route, method, uri, headers, query, params, body).await
             }
         },
@@ -336,15 +337,24 @@ fn build_websocket_method_router(route: &RegisteredRoute) -> MethodRouter {
     get(
         move |uri: Uri,
               headers: HeaderMap,
-              Query(query): Query<HashMap<String, String>>,
+              Query(pairs): Query<Vec<(String, String)>>,
               params: Option<Path<HashMap<String, String>>>,
               ws: WebSocketUpgrade| {
             let route = dispatch_route.clone();
             async move {
+                let query = collect_query_pairs(pairs);
                 dispatch_websocket_route(route, uri, headers, query, params.map(|p| p.0), ws).await
             }
         },
     )
+}
+
+fn collect_query_pairs(pairs: Vec<(String, String)>) -> HashMap<String, Vec<String>> {
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    for (key, value) in pairs {
+        map.entry(key).or_default().push(value);
+    }
+    map
 }
 
 fn method_filter_for(method: &str) -> Result<MethodFilter> {
@@ -366,7 +376,7 @@ async fn dispatch_registered_route(
     method: Method,
     uri: Uri,
     headers: HeaderMap,
-    query: HashMap<String, String>,
+    query: HashMap<String, Vec<String>>,
     params: Option<Path<HashMap<String, String>>>,
     body: Bytes,
 ) -> Response {
@@ -503,5 +513,31 @@ mod tests {
         let pattern = ci.find_pattern("/users/abc/items").unwrap();
         assert_eq!(pattern.as_ref(), "/users/{userid}/items");
         assert!(ci.find_pattern("/unknown").is_none());
+    }
+
+    #[test]
+    fn collect_query_pairs_preserves_repeated_keys_in_order() {
+        let pairs = vec![
+            ("tag".to_string(), "alpha".to_string()),
+            ("tag".to_string(), "beta".to_string()),
+            ("count".to_string(), "10".to_string()),
+            ("tag".to_string(), "gamma".to_string()),
+        ];
+        let collected = collect_query_pairs(pairs);
+        assert_eq!(
+            collected.get("tag"),
+            Some(&vec![
+                "alpha".to_string(),
+                "beta".to_string(),
+                "gamma".to_string(),
+            ])
+        );
+        assert_eq!(collected.get("count"), Some(&vec!["10".to_string()]));
+    }
+
+    #[test]
+    fn collect_query_pairs_handles_empty_input() {
+        let collected = collect_query_pairs(Vec::new());
+        assert!(collected.is_empty());
     }
 }
