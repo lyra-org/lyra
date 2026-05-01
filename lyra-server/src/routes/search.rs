@@ -28,8 +28,6 @@ use crate::{
     },
 };
 
-/// Hard cap on accepted `query` length. Keeps `Pattern::parse` and the
-/// per-entity in-memory scan bounded against pathological input.
 const MAX_QUERY_LEN: usize = 256;
 
 #[derive(Deserialize, JsonSchema)]
@@ -80,10 +78,7 @@ async fn search(
 
     let options = search_service::SearchOptions::new(trimmed.to_string(), params.limit);
 
-    // The fuzzy scan is CPU-bound and walks the full root collection per
-    // entity before paginating; running it inline pins the tokio worker for
-    // the duration. spawn_blocking moves it onto the blocking pool, matching
-    // how lyra handles other CPU-bound DB-read work (audio probes, blurhash).
+    // CPU-bound: each entity's `query` walks the full root collection in memory.
     let guard = STATE.db.read().await;
     let results = tokio::task::spawn_blocking(move || search_service::search(&guard, &options))
         .await
@@ -119,15 +114,12 @@ async fn search(
 
 fn search_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Cross-entity fuzzy search").description(
-        "Returns up to `limit` matching tracks, artists, and releases for the supplied `query`. \
-         Each branch is a minimal autocomplete shape (`id` + title/name); fetch a per-entity \
-         resource endpoint for full detail. `limit` defaults to 20 and is capped at 50; no \
-         offset/pagination — use the per-entity list endpoints for deeper paging within a single type. \
-         `query` is required, must be 1-256 characters after trimming, and is matched case-insensitively. \
-         The matcher accepts these per-token modifiers: `'foo` exact substring, `^foo` prefix, \
-         `foo$` suffix, `!foo` negation, `\\` escapes a leading modifier. Plain tokens are scored \
-         as fuzzy matches. Visibility is gated only by `require_authenticated`: any authenticated \
-         principal can search the full library. Per-user/library scoping is not applied here.",
+        "Returns up to `limit` matching tracks, artists, and releases for `query`. Each branch \
+         is a minimal autocomplete shape (`id` + title/name); use the per-entity resource \
+         endpoints for detail and for paging within a single type. `limit` defaults to 20, \
+         capped at 50. `query` is 1-256 characters after trimming, matched case-insensitively. \
+         Per-token modifiers: `'foo` exact, `^foo` prefix, `foo$` suffix, `!foo` negation, `\\` \
+         escapes a leading modifier; plain tokens are fuzzy.",
     )
 }
 

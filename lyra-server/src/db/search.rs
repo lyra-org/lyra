@@ -20,30 +20,10 @@ thread_local! {
     static MATCHER: RefCell<Matcher> = RefCell::new(Matcher::new(Config::DEFAULT));
 }
 
-/// Filter and score `entries` against `needle` using a thread-local nucleo matcher.
-///
-/// Two reentrancy hazards to watch for:
-///
-/// 1. The `text_of` / `set_score` closures must NOT call `fuzzy_filter` again,
-///    directly or transitively. The matcher lives in a `RefCell` borrowed for
-///    the whole `retain_mut` pass; recursive entry will panic on
-///    `RefCell::borrow_mut`.
-/// 2. Do not introduce any `.await` (or any other point that yields control
-///    back to the tokio scheduler) inside the borrow region — the synchronous
-///    closure above is intentional. A future maintainer adding async work here
-///    invites the matcher being held across a yield point, at which a
-///    different future polled on the same task could reenter and panic.
-///
-/// Cross-task / cross-thread parallelism is fine: the matcher is thread-local,
-/// and `tokio::join!` of two callers in different tasks (or `tokio::spawn`'d
-/// onto separate workers) each gets its own matcher instance.
-///
-/// Behavior on inputs that produce no atoms:
-///
-/// - Empty / whitespace-only `needle` → no-op (caller didn't supply a query).
-/// - Non-empty `needle` whose `Pattern::parse` produces zero atoms (e.g.
-///   `^^^`, `!!`) → entries are cleared. This avoids a silent enumeration
-///   oracle where garbage queries return the unfiltered list.
+/// Empty/whitespace `needle` is a no-op; a non-empty `needle` that parses to
+/// zero atoms (e.g. `^^^`) clears `entries` rather than leaking the unfiltered
+/// list. Not reentrant: the matcher is held across `retain_mut`, so `text_of`
+/// and `set_score` must not call back in, and no `.await` may be added inside.
 pub(crate) fn fuzzy_filter<T>(
     entries: &mut Vec<T>,
     needle: &str,
@@ -108,8 +88,6 @@ mod tests {
 
     #[test]
     fn case_matching_is_case_insensitive() {
-        // Pinned to CaseMatching::Ignore — uppercase needle must match
-        // lowercase content the same as lowercase needle.
         let lower = run("blue", vec!["Blue Train", "Red Album"]);
         let upper = run("BLUE", vec!["Blue Train", "Red Album"]);
         assert_eq!(lower, upper);
