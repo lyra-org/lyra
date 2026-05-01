@@ -58,7 +58,7 @@ pub(crate) fn acquire(config: &DbConfig, mode: LockMode) -> Result<Option<DbProc
         DbKind::Memory => Ok(None),
         DbKind::File | DbKind::Mmap => {
             let path = lockfile_path_for(&config.path);
-            warn_if_network_filesystem(path.parent().unwrap_or_else(|| Path::new(".")));
+            warn_if_network_filesystem(parent_or_cwd(&path));
             let file = open_lockfile(&path)?;
             acquire_or_probe(&file, mode, &path)?;
             #[cfg(test)]
@@ -76,12 +76,19 @@ pub(crate) fn acquire(config: &DbConfig, mode: LockMode) -> Result<Option<DbProc
 
 /// `<db_dir>/.<db_filename>.lock` — dotfile, co-located with agdb's `.{filename}` WAL.
 fn lockfile_path_for(db_path: &Path) -> PathBuf {
-    let parent = db_path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = parent_or_cwd(db_path);
     let file_name = db_path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "lyra.db".to_string());
     parent.join(format!(".{file_name}.lock"))
+}
+
+fn parent_or_cwd(path: &Path) -> &Path {
+    match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    }
 }
 
 #[cfg(unix)]
