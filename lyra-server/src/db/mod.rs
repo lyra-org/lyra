@@ -26,6 +26,7 @@ pub(crate) mod metadata;
 pub(crate) mod mixers;
 pub(crate) mod playback_sessions;
 pub(crate) mod playlists;
+pub(crate) mod process_lock;
 pub(crate) mod providers;
 pub(crate) mod releases;
 pub(crate) mod roles;
@@ -325,7 +326,11 @@ pub(crate) use users::{
 };
 
 pub(crate) type DbAsync = Arc<RwLock<DbAny>>;
-pub(crate) use bootstrap::create;
+pub(crate) use bootstrap::{
+    Created,
+    create,
+};
+pub(crate) use process_lock::DbProcessLock;
 
 pub fn is_supported_extension(path: &std::path::Path) -> bool {
     entries::classify_file_kind(path).is_some()

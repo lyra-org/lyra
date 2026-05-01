@@ -57,7 +57,11 @@ lyra-chromaprint = { path = "../lyra-chromaprint" }
 lyra-ffmpeg = { path = "../lyra-ffmpeg" }
 lyra-metadata = { path = "../lyra-metadata" }
 celes = "2.8.2"
+fs4 = "0.13"
 isolang = "2.4.0"
 unicode-normalization = "0.1"
 unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
 url = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs"] }
