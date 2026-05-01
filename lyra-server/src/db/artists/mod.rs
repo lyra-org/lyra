@@ -390,6 +390,7 @@ struct ArtistSortEntry {
     lower_sort_name: Option<String>,
     db_id: Option<i64>,
     date_created: Option<u64>,
+    match_score: u32,
 }
 
 fn resolve_owner_id(db: &impl super::DbAccess, from: &QueryId) -> Option<DbId> {
@@ -698,6 +699,7 @@ impl ArtistSortEntry {
             db_id: artist.db_id.as_ref().map(|id| DbId::from(id.clone()).0),
             date_created: artist.created_at,
             artist,
+            match_score: 0,
         }
     }
 }
@@ -728,6 +730,11 @@ fn compare_artist_entries(a: &ArtistSortEntry, b: &ArtistSortEntry, sort: &[Sort
         if ord != Ordering::Equal {
             return ord;
         }
+    }
+
+    let score_ord = b.match_score.cmp(&a.match_score);
+    if score_ord != Ordering::Equal {
+        return score_ord;
     }
 
     let name_ord = a.lower_name.cmp(&b.lower_name);
@@ -844,10 +851,13 @@ pub(crate) fn query_items(artists: Vec<Artist>, options: &ListOptions) -> PagedR
 
     let mut entries: Vec<ArtistSortEntry> = artists.into_iter().map(ArtistSortEntry::new).collect();
 
-    // Text search filter
     if let Some(ref term) = options.search_term {
-        let lower_term = term.to_lowercase();
-        entries.retain(|entry| entry.lower_name.contains(&lower_term));
+        super::search::fuzzy_filter(
+            &mut entries,
+            term,
+            |entry| entry.artist.artist_name.as_str(),
+            |entry, score| entry.match_score = score,
+        );
     }
 
     sort_and_paginate_artists(entries, options)
