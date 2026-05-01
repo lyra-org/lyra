@@ -156,7 +156,7 @@ end
 
 function module.resolve_upload_content_type(ctx: ApiContext): (string?, ApiResponse?)
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local file_name = if query then (query.fileName or query.FileName or query.filename) else nil
+	local file_name = base.parse_query_string(query, { "fileName", "FileName", "filename" }, nil)
 	if not base.trim(file_name) then
 		return nil, base.bad_request("fileName is required")
 	end

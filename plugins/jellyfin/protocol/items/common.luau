@@ -359,9 +359,9 @@ local function query_lookup(query: api.ApiQueryParams?, keys: { string }): strin
 	end
 
 	for _, key in keys do
-		local value = query[key]
-		if value ~= nil then
-			return value
+		local values = query[key]
+		if values ~= nil and #values > 0 then
+			return values[1]
 		end
 	end
 
@@ -370,9 +370,9 @@ local function query_lookup(query: api.ApiQueryParams?, keys: { string }): strin
 		normalized_keys[string.lower(key)] = true
 	end
 
-	for key, value in query do
-		if normalized_keys[string.lower(tostring(key))] then
-			return value
+	for key, values in query do
+		if normalized_keys[string.lower(tostring(key))] and #values > 0 then
+			return values[1]
 		end
 	end
 

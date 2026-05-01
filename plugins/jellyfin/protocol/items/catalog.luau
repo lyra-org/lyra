@@ -128,6 +128,8 @@ type LibraryInfo = {
 export type FavoriteLookup = { [number]: boolean }
 export type ItemsQueryOptions = {
 	include_item_types: { string },
+	exclude_item_types: { string },
+	media_types: { string },
 	ids: { string },
 	exclude_item_ids: { string },
 	exclude_artist_ids: { string },
@@ -478,6 +480,8 @@ end
 function helpers.clone_items_query_options(options: ItemsQueryOptions): ItemsQueryOptions
 	return {
 		include_item_types = options.include_item_types,
+		exclude_item_types = options.exclude_item_types,
+		media_types = options.media_types,
 		ids = options.ids,
 		exclude_item_ids = options.exclude_item_ids,
 		exclude_artist_ids = options.exclude_artist_ids,
@@ -760,9 +764,9 @@ function helpers.query_lookup(query: ApiQueryParams?, keys: { string }): string?
 	end
 
 	for _, key in keys do
-		local value = query[key]
-		if value ~= nil then
-			return value
+		local values = query[key]
+		if values ~= nil and #values > 0 then
+			return values[1]
 		end
 	end
 
@@ -771,9 +775,9 @@ function helpers.query_lookup(query: ApiQueryParams?, keys: { string }): string?
 		normalized_keys[string.lower(key)] = true
 	end
 
-	for key, value in query do
-		if normalized_keys[string.lower(tostring(key))] then
-			return value
+	for key, values in query do
+		if normalized_keys[string.lower(tostring(key))] and #values > 0 then
+			return values[1]
 		end
 	end
 
@@ -801,12 +805,44 @@ function helpers.parse_query_bool(query: ApiQueryParams?, keys: { string }, defa
 end
 
 function helpers.parse_query_csv(query: ApiQueryParams?, keys: { string }): { string }
-	local value = helpers.query_lookup(query, keys)
-	if type(value) ~= "string" then
+	if type(query) ~= "table" then
 		return {}
 	end
 
-	return helpers.split_csv(value)
+	local results: { string } = {}
+	local seen_keys: { [string]: boolean } = {}
+	local function consume(values: { string })
+		for _, raw in values do
+			for _, item in helpers.split_csv(raw) do
+				table.insert(results, item)
+			end
+		end
+	end
+
+	for _, key in keys do
+		if not seen_keys[key] then
+			seen_keys[key] = true
+			local values = query[key]
+			if values ~= nil then
+				consume(values)
+			end
+		end
+	end
+
+	local normalized_keys: { [string]: boolean } = {}
+	for _, key in keys do
+		normalized_keys[string.lower(key)] = true
+	end
+
+	for query_key, values in query do
+		local key_str = tostring(query_key)
+		if not seen_keys[key_str] and normalized_keys[string.lower(key_str)] then
+			seen_keys[key_str] = true
+			consume(values)
+		end
+	end
+
+	return results
 end
 
 function helpers.decode_jellyfin_item_id(value: JsonValue): number?
@@ -923,16 +959,44 @@ function helpers.resolve_library_hex_id_for_entity(entity_db_id: number?): strin
 end
 
 function helpers.resolve_entity_library_hex_id(entity_db_id: number?, context: ItemContext?): string?
+	local _, hex = helpers.resolve_entity_library_attribution(entity_db_id, context)
+	return hex
+end
+
+-- (in_library, library_hex_id). Truth is independent of encode success so callers gating
+-- IsFolder on it survive a transient encode failure; encode failure on a scoped entity warns.
+function helpers.resolve_entity_library_attribution(entity_db_id: number?, context: ItemContext?): (boolean, string?)
 	if context and context.library_hex_id then
-		return context.library_hex_id
+		return true, context.library_hex_id
 	end
 	if entity_db_id and context and context.library_hex_id_by_entity_id then
 		local cached = context.library_hex_id_by_entity_id[entity_db_id]
 		if cached then
-			return cached
+			return true, cached
 		end
 	end
-	return helpers.resolve_library_hex_id_for_entity(entity_db_id)
+	if not entity_db_id or entity_db_id <= 0 then
+		return false, nil
+	end
+	local ok, libs = pcall(libraries.get_for_entity, entity_db_id)
+	if not ok then
+		warn(`libraries.get_for_entity failed for entity {entity_db_id}: {libs}`)
+		return false, nil
+	end
+	if not libs or #libs == 0 then
+		return false, nil
+	end
+	local first = libs[1] :: libraries.Library
+	if not first.id then
+		warn(`library row for entity {entity_db_id} has no public id; ParentId will be nil`)
+		return true, nil
+	end
+	local hex = base.nanoid_to_hex(first.id)
+	if hex == nil then
+		warn(`nanoid_to_hex failed for library id of entity {entity_db_id}; ParentId will be nil`)
+		return true, nil
+	end
+	return true, hex
 end
 
 function helpers.normalize_parent_scope(parent_id: string?): number?
@@ -1650,11 +1714,14 @@ function helpers.to_artist_item(
 	local album_count = if artist_releases then #artist_releases else 0
 	local include_images = helpers.should_include_images(context)
 	local cover_info = if include_images then helpers.resolve_artist_cover_info(artist.db_id, context) else nil
+	-- Mirrors upstream `MusicArtist.IsFolder => !IsAccessedByName`.
+	local in_library, parent_id = helpers.resolve_entity_library_attribution(artist.db_id, context)
 	local item: ItemInfo = {
 		Id = artist_item_id,
 		Name = module.trim(artist.artist_name) or "Unknown Artist",
 		Type = "MusicArtist",
-		ParentId = helpers.resolve_entity_library_hex_id(artist.db_id, context),
+		IsFolder = in_library,
+		ParentId = parent_id,
 		SortName = sort_name,
 		RunTimeTicks = runtime_ticks,
 		DateCreated = helpers.unix_to_iso8601(artist.created_at),
@@ -1691,6 +1758,8 @@ function helpers.to_person_item(
 	end
 
 	item.Type = "Person"
+	-- Person extends BaseItem (IsFolder=false), not Folder. Override the artist default.
+	item.IsFolder = false
 	return item
 end
 
@@ -1963,7 +2032,6 @@ function helpers.to_release_item(
 	-- Jellyfin exposes image tags by default, but honors EnableImages=false.
 	local cover_info = if include_images then helpers.resolve_cover_info(release.db_id, context) else nil
 	local release_item_id = module.encode_jellyfin_item_id(release.id)
-	local image_resource_id = if cover_info then module.encode_jellyfin_item_id(release.id) else nil
 	local release_genres = helpers.lookup_by_id(
 		if context then context.genre_infos_by_release_id else nil,
 		release.db_id
@@ -1992,8 +2060,6 @@ function helpers.to_release_item(
 		ChildCount = #release_tracks,
 		RunTimeTicks = runtime_ticks,
 		ImageTags = if cover_info then { Primary = cover_info.hash } else nil,
-		ParentPrimaryImageItemId = image_resource_id,
-		ParentPrimaryImageTag = if cover_info then cover_info.hash else nil,
 		AlbumPrimaryImageTag = if cover_info then cover_info.hash else nil,
 		ImageBlurHashes = helpers.default_image_blur_hashes(cover_info),
 		UserData = helpers.build_item_user_data(
@@ -2151,10 +2217,7 @@ function helpers.to_track_item(
 	end
 	local release_id = if release and release.id then module.encode_jellyfin_item_id(release.id) else nil
 	local track_item_id = module.encode_jellyfin_item_id(track.id)
-	local parent_primary_image_item_id = if release and release_cover_info
-		then module.encode_jellyfin_item_id(release.id)
-		else nil
-	local parent_primary_image_tag = if release_cover_info then release_cover_info.hash else nil
+	local album_primary_image_tag = if release_cover_info then release_cover_info.hash else nil
 	local release_db_id = if release then release.db_id else nil
 	local track_genres = helpers.lookup_by_id(if context then context.genre_infos_by_release_id else nil, release_db_id)
 		or helpers.resolve_release_genres(release_db_id)
@@ -2176,7 +2239,6 @@ function helpers.to_track_item(
 		Album = if release then release.release_title else nil,
 		AlbumId = release_id,
 		ParentId = release_id,
-		Artist = artist_name,
 		AlbumArtist = release_artist_name,
 		AlbumArtists = release_artist_items,
 		Artists = artist_names,
@@ -2185,9 +2247,7 @@ function helpers.to_track_item(
 		Genres = helpers.genre_names(track_genres),
 		GenreItems = helpers.genre_items(track_genres),
 		Tags = helpers.tag_names(helpers.resolve_tag_infos(track.db_id, context)),
-		ParentPrimaryImageItemId = parent_primary_image_item_id,
-		ParentPrimaryImageTag = parent_primary_image_tag,
-		AlbumPrimaryImageTag = parent_primary_image_tag,
+		AlbumPrimaryImageTag = album_primary_image_tag,
 		ImageTags = helpers.default_image_tags(),
 		ImageBlurHashes = helpers.default_image_blur_hashes(release_cover_info),
 		HasLyrics = false,
@@ -2477,10 +2537,13 @@ function helpers.sort_value_for_item(item: ItemInfo?, sort_token: string): (Sort
 		return "string", helpers.lower_or_empty(if item then item.Name else nil)
 	end
 	if sort_token == "albumartist" then
-		return "string", helpers.lower_or_empty(if item then (item.AlbumArtist or item.Artist or item.Name) else nil)
+		local first_artist = if item and item.Artists then item.Artists[1] else nil
+		return "string", helpers.lower_or_empty(if item then (item.AlbumArtist or first_artist or item.Name) else nil)
 	end
 	if sort_token == "artist" then
-		return "string", helpers.lower_or_empty(if item then (item.Artist or item.AlbumArtist or item.Name) else nil)
+		-- Per-track Artists first; AlbumArtist would collapse compilation tracks under one credit.
+		local first_artist = if item and item.Artists then item.Artists[1] else nil
+		return "string", helpers.lower_or_empty(if item then (first_artist or item.AlbumArtist or item.Name) else nil)
 	end
 	if sort_token == "release" then
 		return "string", helpers.lower_or_empty(if item then (item.Album or item.Name) else nil)
@@ -3203,6 +3266,8 @@ end
 function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 	local options: ItemsQueryOptions = {
 		include_item_types = {},
+		exclude_item_types = {},
+		media_types = {},
 		ids = {},
 		exclude_item_ids = {},
 		exclude_artist_ids = {},
@@ -3235,6 +3300,8 @@ function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 		_favorite_id_lookup = nil,
 	}
 	options.include_item_types = helpers.parse_query_csv(query, { "IncludeItemTypes", "includeItemTypes" })
+	options.exclude_item_types = helpers.parse_query_csv(query, { "ExcludeItemTypes", "excludeItemTypes" })
+	options.media_types = helpers.parse_query_csv(query, { "MediaTypes", "mediaTypes" })
 	options.ids = helpers.parse_query_csv(query, { "ids", "Ids" })
 	options.exclude_item_ids = helpers.normalize_item_ids(
 		helpers.parse_query_csv(query, { "ExcludeItemIds", "excludeItemIds", "excludeitemids" })
@@ -3295,12 +3362,36 @@ function module.with_user_query_options(options: ItemsQueryOptions, user_id: num
 end
 
 function helpers.wants_item_type(options: ItemsQueryOptions, item_type: string): boolean
+	local target = string.lower(item_type)
+
+	-- ExcludeItemTypes wins over IncludeItemTypes.
+	for _, excluded in options.exclude_item_types do
+		if helpers.lower_or_empty(excluded) == target then
+			return false
+		end
+	end
+
+	-- Tracks emit MediaType="Audio"; folder-like items emit "Unknown".
+	if #options.media_types > 0 then
+		local item_media_type: string = if target == "audio" then "audio" else "unknown"
+		local matched = false
+		for _, media_type in options.media_types do
+			if helpers.lower_or_empty(media_type) == item_media_type then
+				matched = true
+				break
+			end
+		end
+		if not matched then
+			return false
+		end
+	end
+
 	if #options.include_item_types == 0 then
 		return true
 	end
 
 	for _, include_item_type in options.include_item_types do
-		if helpers.lower_or_empty(include_item_type) == item_type then
+		if helpers.lower_or_empty(include_item_type) == target then
 			return true
 		end
 	end
@@ -3309,8 +3400,10 @@ function helpers.wants_item_type(options: ItemsQueryOptions, item_type: string):
 end
 
 function helpers.item_type_selection(options: ItemsQueryOptions): ItemTypeSelection
+	-- Any item-type filter — gates the single-entity fast path.
+	local constrained = #options.include_item_types > 0 or #options.exclude_item_types > 0 or #options.media_types > 0
 	return {
-		constrained = #options.include_item_types > 0,
+		constrained = constrained,
 		releases = helpers.wants_item_type(options, "musicalbum"),
 		artists = helpers.wants_item_type(options, "musicartist"),
 		tracks = helpers.wants_item_type(options, "audio"),
@@ -3815,7 +3908,7 @@ function module.list_playlist_track_items(
 		return empty_items, 0, options.start_index or 0
 	end
 
-	if #options.include_item_types > 0 and not helpers.wants_item_type(options, "audio") then
+	if not helpers.wants_item_type(options, "audio") then
 		local empty_items: { ItemInfo } = {}
 		return empty_items, 0, options.start_index or 0
 	end
@@ -4032,6 +4125,12 @@ function helpers.try_list_jellyfin_parent_children(
 	end
 
 	if parent_scope.entity_type == "Artist" then
+		-- Without this guard, MediaTypes=Video would still return the artist's albums.
+		if not helpers.wants_item_type(options, "musicalbum") then
+			local empty_items: { ItemInfo } = {}
+			return { items = empty_items, total_count = 0, start_index = options.start_index or 0 }
+		end
+
 		local artist_releases = releases.get_by_artist(parent_scope.db_id)
 		if artist_releases == nil then
 			return nil
@@ -5572,6 +5671,8 @@ function module.find_item_by_id(item_id: number?, user_id: number?): ItemInfo?
 
 	local options: ItemsQueryOptions = {
 		include_item_types = {},
+		exclude_item_types = {},
+		media_types = {},
 		ids = { encoded_item_id },
 		exclude_item_ids = {},
 		exclude_artist_ids = {},
