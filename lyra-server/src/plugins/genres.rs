@@ -182,6 +182,34 @@ impl GenresModule {
         }
     }
 
+    /// Case-insensitive name lookup. Aliases are not consulted; nil on miss.
+    #[harmony(returns(Option<GenreInfo>))]
+    pub(crate) async fn find_by_name(
+        lua: Lua,
+        _plugin_id: Option<Arc<str>>,
+        name: String,
+    ) -> Result<Value> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Ok(Value::Nil);
+        }
+        let db = STATE.db.read().await;
+        let Some(db_id) = db::genres::find_by_name(&*db, trimmed).into_lua_err()? else {
+            return Ok(Value::Nil);
+        };
+        let Some(genre) = db::genres::get_by_id(&*db, db_id).into_lua_err()? else {
+            return Ok(Value::Nil);
+        };
+        lua.to_value_with(
+            &GenreInfo {
+                db_id: genre.db_id,
+                id: genre.id,
+                name: genre.name,
+            },
+            crate::plugins::LUA_SERIALIZE_OPTIONS,
+        )
+    }
+
     #[harmony(returns(Vec<GenreInfo>))]
     pub(crate) async fn get_parents(
         lua: Lua,
