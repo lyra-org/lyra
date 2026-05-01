@@ -69,8 +69,8 @@ pub(crate) async fn add_metadata(
 
     let mut parsed_groups = Vec::new();
     for (coalesce_group_key, entries) in groups.into_iter().enumerate() {
-        let source_dir = source_directory_for_group_entries(&entries)
-            .unwrap_or_else(|| library.directory.clone());
+        let source_dir =
+            source_directory_for_group_entries(&entries).unwrap_or_else(|| library.directory.clone());
         let entry_source_dirs: BTreeMap<DbId, std::path::PathBuf> = entries
             .iter()
             .filter_map(|entry| {

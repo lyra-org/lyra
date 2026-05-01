@@ -3,13 +3,15 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::QueryBuilder;
 use nanoid::nanoid;
 
 use crate::{
     STATE,
     config::Config,
-    db::Library,
+    db::{
+        self,
+        Library,
+    },
 };
 
 use super::{
@@ -17,6 +19,10 @@ use super::{
     start_library_sync,
     sync_library,
 };
+
+/// Override `library.name` in config.json if another library already uses
+/// this default — names must be unique.
+const DEFAULT_CONFIGURED_LIBRARY_NAME: &str = "Music";
 
 pub(crate) async fn prepare_configured_library(
     config: &Config,
@@ -31,74 +37,82 @@ pub(crate) async fn prepare_configured_library(
 }
 
 async fn resolve_configured_library(config: &Config) -> anyhow::Result<Option<Library>> {
-    let Some(library) = &config.library else {
+    let Some(library_config) = &config.library else {
         return Ok(None);
     };
-    let Some(path) = library.path.as_ref() else {
+    let Some(path) = library_config.path.as_ref() else {
         return Ok(None);
     };
 
+    // Store the user's raw path so symlink retargeting still works; canonical
+    // form is the comparison key only. `canonicalize` is a syscall — keep it
+    // off the write lock.
+    let stored_path = path.clone();
+    let directory_key = {
+        let candidate = stored_path.clone();
+        tokio::task::spawn_blocking(move || db::libraries::directory_key_for(&candidate))
+            .await
+            .map_err(|e| anyhow::anyhow!("path canonicalize task panicked: {e}"))?
+    };
+
+    let display_name = match library_config.name.as_deref() {
+        Some(raw) => db::libraries::normalize_library_name_display(raw)
+            .map_err(|e| anyhow::anyhow!("invalid config library.name '{raw}': {e}"))?,
+        None => DEFAULT_CONFIGURED_LIBRARY_NAME.to_string(),
+    };
+    let language = library_config.language.clone();
+    let country = library_config.country.clone();
+
+    // Lookup-or-create in one txn so a crash between the node and edge
+    // inserts can't orphan a Library invisible to subsequent `find`s.
     let db = STATE.db.get();
-    let mut library = {
-        let existing = {
-            let db_read = db.read().await;
-            let libraries: Vec<Library> = db_read
-                .exec(
-                    QueryBuilder::select()
-                        .elements::<Library>()
-                        .search()
-                        .from("libraries")
-                        .query(),
-                )?
-                .try_into()?;
-            let mut matching: Vec<Library> = libraries
-                .into_iter()
-                .filter(|lib| lib.directory == *path)
-                .collect();
-            if matching.len() > 1 {
-                tracing::warn!(
-                    path = %path.display(),
-                    count = matching.len(),
-                    "multiple libraries found for configured path"
-                );
+    let mut db_write = db.write().await;
+    let lookup_path = stored_path.clone();
+    let lookup_key = directory_key.clone();
+    let outcome =
+        db_write.transaction_mut(|t| -> Result<Library, db::libraries::LibraryCreateError> {
+            if let Some(existing) = db::libraries::find_by_directory_key(t, &lookup_key)? {
+                return Ok(existing);
             }
-            matching.pop()
-        };
+            db::libraries::create(
+                t,
+                db::libraries::LibraryInsert {
+                    id: nanoid!(),
+                    name: display_name,
+                    directory: lookup_path,
+                    directory_key: lookup_key,
+                    language,
+                    country,
+                },
+            )
+        });
 
-        existing.unwrap_or_else(|| Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Music".to_string(),
-            directory: path.clone(),
-            language: library.language.clone(),
-            country: library.country.clone(),
-        })
-    };
-
-    if library.db_id.is_none() {
-        let library_db_id =
-            db.write()
-                .await
-                .transaction_mut(|t| -> anyhow::Result<agdb::DbId> {
-                    let qr = t.exec_mut(QueryBuilder::insert().element(&library).query())?;
-                    let id = qr
-                        .ids()
-                        .first()
-                        .copied()
-                        .ok_or_else(|| anyhow::anyhow!("library insert missing id"))?;
-                    t.exec_mut(
-                        QueryBuilder::insert()
-                            .edges()
-                            .from("libraries")
-                            .to(id)
-                            .query(),
-                    )?;
-                    Ok(id)
-                })?;
-        library.db_id = Some(library_db_id);
+    match outcome {
+        Ok(library) => Ok(Some(library)),
+        Err(db::libraries::LibraryCreateError::NameInUse(name)) => Err(anyhow::anyhow!(
+            "configured library name '{name}' is already in use; set `library.name` in \
+             config.json to a unique value"
+        )),
+        Err(db::libraries::LibraryCreateError::DirectoryInUse(conflicting_path)) => {
+            // Unreachable unless `find_by_directory_key` and `create` disagree on
+            // normalization — log the inputs so the divergence is debuggable.
+            tracing::error!(
+                conflicting = %conflicting_path.display(),
+                configured = %stored_path.display(),
+                directory_key = %directory_key,
+                "configured-library directory_key divergence"
+            );
+            Err(anyhow::anyhow!(
+                "configured library path {} is already in use by another library; \
+                 schema invariant violated",
+                conflicting_path.display()
+            ))
+        }
+        Err(db::libraries::LibraryCreateError::InvalidName(e)) => {
+            Err(anyhow::anyhow!("invalid configured library name: {e}"))
+        }
+        Err(db::libraries::LibraryCreateError::Db(e)) => Err(e),
     }
-
-    Ok(Some(library))
 }
 
 async fn sync_configured_library(

@@ -1065,7 +1065,9 @@ mod tests {
             db_id: Some(DbId(99)),
             id: nanoid!(),
             name: "Library".to_string(),
+            name_key: "library".to_string(),
             directory: PathBuf::from("/music"),
+            directory_key: "/music".to_string(),
             language: Some("jpn".to_string()),
             country: Some("JP".to_string()),
         };

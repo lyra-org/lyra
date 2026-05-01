@@ -166,23 +166,29 @@ async fn create_library(
 ) -> Result<StatusCode, AppError> {
     let _principal = require_manage_libraries(&headers).await?;
 
-    let name = library.name.trim();
-    if name.is_empty() {
-        return Err(AppError::bad_request("library name cannot be empty"));
-    }
-
-    let directory = library.directory.trim();
-    if directory.is_empty() {
+    let directory_input = library.directory.trim();
+    if directory_input.is_empty() {
         return Err(AppError::bad_request("library directory cannot be empty"));
     }
 
-    let directory = PathBuf::from(directory);
-    if !directory.is_dir() {
-        return Err(AppError::bad_request(format!(
-            "library directory not found: {}",
-            directory.display()
-        )));
-    }
+    let directory = PathBuf::from(directory_input);
+    // `is_dir`/`canonicalize` are syscalls; offload to keep a stale mount from
+    // stalling the worker, and to keep them off the write lock. `directory`
+    // stays as user input so the library follows symlink retargeting.
+    let directory_key = {
+        let candidate = directory.clone();
+        tokio::task::spawn_blocking(move || -> Result<String, AppError> {
+            if !candidate.is_dir() {
+                return Err(AppError::bad_request(format!(
+                    "library directory not found: {}",
+                    candidate.display()
+                )));
+            }
+            Ok(db::libraries::directory_key_for(&candidate))
+        })
+        .await
+        .map_err(|e| anyhow!("directory canonicalize task panicked: {e}"))??
+    };
 
     let language = library
         .language
@@ -196,30 +202,35 @@ async fn create_library(
         .transpose()
         .map_err(|e| AppError::bad_request(e.to_string()))?;
 
-    {
-        let db_read = STATE.db.read().await;
-        let existing = db::libraries::get(&db_read)?;
-        if existing.iter().any(|lib| lib.directory == directory) {
-            return Err(AppError::bad_request(format!(
-                "a library already exists for directory: {}",
-                directory.display()
-            )));
-        }
-    }
-
     let library = {
         let mut db_write = STATE.db.write().await;
-        db::libraries::create(
-            &mut db_write,
-            &Library {
-                db_id: None,
-                id: nanoid!(),
-                name: name.to_string(),
-                directory,
-                language,
-                country,
-            },
-        )?
+        let outcome =
+            db_write.transaction_mut(|t| -> Result<Library, db::libraries::LibraryCreateError> {
+                db::libraries::create(
+                    t,
+                    db::libraries::LibraryInsert {
+                        id: nanoid!(),
+                        name: library.name,
+                        directory,
+                        directory_key,
+                        language,
+                        country,
+                    },
+                )
+            });
+        match outcome {
+            Ok(library) => library,
+            Err(err @ db::libraries::LibraryCreateError::InvalidName(_)) => {
+                return Err(AppError::bad_request(err.to_string()));
+            }
+            Err(
+                err @ (db::libraries::LibraryCreateError::NameInUse(_)
+                | db::libraries::LibraryCreateError::DirectoryInUse(_)),
+            ) => {
+                return Err(AppError::conflict(err.to_string()));
+            }
+            Err(db::libraries::LibraryCreateError::Db(e)) => return Err(AppError::from(e)),
+        }
     };
 
     let library_db_id = library
@@ -261,9 +272,6 @@ async fn update_library(
     let mut updated_country = library.country;
 
     if let Some(name) = update.name {
-        if name.trim().is_empty() {
-            return Err(AppError::bad_request("name cannot be empty"));
-        }
         updated_name = name;
     }
 
@@ -297,18 +305,34 @@ async fn update_library(
         }
     }
 
+    // `name_key` is rederived inside `update`; we pass the prior key (not
+    // empty) so any read before overwrite still sees a valid value.
     let updated = Library {
         db_id: Some(library_db_id),
         id: library.id,
         name: updated_name,
+        name_key: library.name_key,
         directory: library.directory,
+        directory_key: library.directory_key,
         language: updated_language,
         country: updated_country,
     };
 
-    db::libraries::update(&mut db, &updated, clear_language, clear_country)?;
+    let outcome = db.transaction_mut(|t| -> Result<Library, db::libraries::LibraryUpdateError> {
+        db::libraries::update(t, &updated, clear_language, clear_country)
+    });
+    let stored = match outcome {
+        Ok(library) => library,
+        Err(err @ db::libraries::LibraryUpdateError::InvalidName(_)) => {
+            return Err(AppError::bad_request(err.to_string()));
+        }
+        Err(err @ db::libraries::LibraryUpdateError::NameInUse(_)) => {
+            return Err(AppError::conflict(err.to_string()));
+        }
+        Err(db::libraries::LibraryUpdateError::Db(e)) => return Err(AppError::from(e)),
+    };
 
-    Ok(Json(LibraryResponse::from_library(updated, true)))
+    Ok(Json(LibraryResponse::from_library(stored, true)))
 }
 
 fn create_library_docs(op: TransformOperation) -> TransformOperation {

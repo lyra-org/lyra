@@ -167,7 +167,10 @@ pub(crate) fn apply_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_db::TestDb;
+    use crate::db::test_db::{
+        self,
+        TestDb,
+    };
     use crate::db::{
         self,
         Artist,
@@ -706,16 +709,7 @@ mod tests {
         assert!(fixture.is_file());
         let dir_path = fixture.parent().expect("fixture has parent").to_path_buf();
 
-        let mut library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Test Library".to_string(),
-            directory: dir_path.clone(),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        library.db_id = Some(qr.elements[0].id);
+        let library = test_db::insert_test_library_node(&mut db, "Test Library", dir_path.clone())?;
 
         let dir_id =
             insert_entry_with_kind(&mut db, &dir_path, crate::db::entries::EntryKind::Dir)?;
@@ -776,16 +770,7 @@ mod tests {
             assert!(path.is_file());
         }
 
-        let mut library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Test Library".to_string(),
-            directory: dir_path.clone(),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        library.db_id = Some(qr.elements[0].id);
+        let library = test_db::insert_test_library_node(&mut db, "Test Library", dir_path.clone())?;
 
         let dir_id =
             insert_entry_with_kind(&mut db, &dir_path, crate::db::entries::EntryKind::Dir)?;
@@ -848,16 +833,12 @@ mod tests {
     fn apply_metadata_preserves_inferred_release_artist_order() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
-        let library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Test Library".to_string(),
-            directory: PathBuf::from("/music/ordered"),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        let library_db_id = qr.elements[0].id;
+        let library = test_db::insert_test_library_node(
+            &mut db,
+            "Test Library",
+            PathBuf::from("/music/ordered"),
+        )?;
+        let library_db_id = library.db_id.expect("test library has db_id");
 
         let entry_db_id = insert_entry(&mut db, "/music/ordered/capsule.flac")?;
         connect(&mut db, library_db_id, entry_db_id)?;
@@ -956,16 +937,12 @@ mod tests {
     fn apply_metadata_propagates_multichannel_high_rate_24bit() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
-        let library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Audio Props Library".to_string(),
-            directory: PathBuf::from("/music/audio_props"),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        let library_db_id = qr.elements[0].id;
+        let library = test_db::insert_test_library_node(
+            &mut db,
+            "Audio Props Library",
+            PathBuf::from("/music/audio_props"),
+        )?;
+        let library_db_id = library.db_id.expect("test library has db_id");
 
         let entry_db_id = insert_entry(&mut db, "/music/audio_props/surround.flac")?;
         connect(&mut db, library_db_id, entry_db_id)?;
@@ -999,16 +976,12 @@ mod tests {
     fn apply_metadata_preserves_none_bit_depth_for_lossy_sources() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
-        let library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Lossy Library".to_string(),
-            directory: PathBuf::from("/music/lossy"),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        let library_db_id = qr.elements[0].id;
+        let library = test_db::insert_test_library_node(
+            &mut db,
+            "Lossy Library",
+            PathBuf::from("/music/lossy"),
+        )?;
+        let library_db_id = library.db_id.expect("test library has db_id");
 
         let entry_db_id = insert_entry(&mut db, "/music/lossy/song.mp3")?;
         connect(&mut db, library_db_id, entry_db_id)?;
@@ -1041,16 +1014,12 @@ mod tests {
     fn apply_metadata_refreshes_audio_properties_on_reingest() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
-        let library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Refresh Library".to_string(),
-            directory: PathBuf::from("/music/refresh"),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        let library_db_id = qr.elements[0].id;
+        let library = test_db::insert_test_library_node(
+            &mut db,
+            "Refresh Library",
+            PathBuf::from("/music/refresh"),
+        )?;
+        let library_db_id = library.db_id.expect("test library has db_id");
 
         let entry_db_id = insert_entry(&mut db, "/music/refresh/track.flac")?;
         connect(&mut db, library_db_id, entry_db_id)?;
@@ -1105,16 +1074,8 @@ mod tests {
     fn apply_metadata_pulls_label_and_cat_number_from_same_track() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
-        let mut library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Test Library".to_string(),
-            directory: PathBuf::from("/music"),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        library.db_id = Some(qr.elements[0].id);
+        let library =
+            test_db::insert_test_library_node(&mut db, "Test Library", PathBuf::from("/music"))?;
         let library_db_id = library
             .db_id
             .ok_or_else(|| anyhow!("library missing db_id"))?;
@@ -1191,16 +1152,8 @@ mod tests {
     fn apply_metadata_fills_cat_number_from_same_label_on_other_track() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
-        let mut library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Test Library".to_string(),
-            directory: PathBuf::from("/music"),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        library.db_id = Some(qr.elements[0].id);
+        let library =
+            test_db::insert_test_library_node(&mut db, "Test Library", PathBuf::from("/music"))?;
         let library_db_id = library
             .db_id
             .ok_or_else(|| anyhow!("library missing db_id"))?;
@@ -1274,16 +1227,8 @@ mod tests {
     fn apply_metadata_cross_track_cat_number_match_is_unicode_aware() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
-        let mut library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Test Library".to_string(),
-            directory: PathBuf::from("/music"),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        library.db_id = Some(qr.elements[0].id);
+        let library =
+            test_db::insert_test_library_node(&mut db, "Test Library", PathBuf::from("/music"))?;
         let library_db_id = library
             .db_id
             .ok_or_else(|| anyhow!("library missing db_id"))?;
@@ -1376,16 +1321,7 @@ FILE "album.flac" WAVE
 "#,
         )?;
 
-        let mut library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Cue Library".to_string(),
-            directory: dir_path.clone(),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        library.db_id = Some(qr.elements[0].id);
+        let library = test_db::insert_test_library_node(&mut db, "Cue Library", dir_path.clone())?;
 
         let dir_id =
             insert_entry_with_kind(&mut db, &dir_path, crate::db::entries::EntryKind::Dir)?;
@@ -1512,16 +1448,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
 ";
         fs::write(&cue_path, cue_text)?;
 
-        let mut library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Cue Unicode Library".to_string(),
-            directory: dir_path.clone(),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        library.db_id = Some(qr.elements[0].id);
+        let library =
+            test_db::insert_test_library_node(&mut db, "Cue Unicode Library", dir_path.clone())?;
 
         let dir_id =
             insert_entry_with_kind(&mut db, &dir_path, crate::db::entries::EntryKind::Dir)?;
@@ -1586,16 +1514,11 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
     fn apply_metadata_groups_unicode_equivalent_release_titles() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
-        let mut library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Unicode Grouping Library".to_string(),
-            directory: PathBuf::from("/music"),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        library.db_id = Some(qr.elements[0].id);
+        let library = test_db::insert_test_library_node(
+            &mut db,
+            "Unicode Grouping Library",
+            PathBuf::from("/music"),
+        )?;
         let library_db_id = library
             .db_id
             .ok_or_else(|| anyhow!("library missing db_id"))?;
@@ -1690,16 +1613,11 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
     fn apply_metadata_infers_disc_total_from_max_disc_when_missing() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
-        let mut library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Disc Total Inference Library".to_string(),
-            directory: PathBuf::from("/music"),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        library.db_id = Some(qr.elements[0].id);
+        let library = test_db::insert_test_library_node(
+            &mut db,
+            "Disc Total Inference Library",
+            PathBuf::from("/music"),
+        )?;
         let library_db_id = library
             .db_id
             .ok_or_else(|| anyhow!("library missing db_id"))?;
@@ -1796,16 +1714,11 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
     -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
-        let mut library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Disc Total Preserve Library".to_string(),
-            directory: PathBuf::from("/music"),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        library.db_id = Some(qr.elements[0].id);
+        let library = test_db::insert_test_library_node(
+            &mut db,
+            "Disc Total Preserve Library",
+            PathBuf::from("/music"),
+        )?;
         let library_db_id = library
             .db_id
             .ok_or_else(|| anyhow!("library missing db_id"))?;
@@ -2155,16 +2068,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
     fn rescan_preserves_provider_owned_release_and_track_fields() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
-        let mut library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Test Library".to_string(),
-            directory: PathBuf::from("/music"),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        library.db_id = Some(qr.elements[0].id);
+        let library =
+            test_db::insert_test_library_node(&mut db, "Test Library", PathBuf::from("/music"))?;
         let library_db_id = library
             .db_id
             .ok_or_else(|| anyhow!("library missing db_id"))?;
@@ -2343,16 +2248,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
     fn rescan_preserves_provider_owned_labels() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
-        let mut library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Test Library".to_string(),
-            directory: PathBuf::from("/music"),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        library.db_id = Some(qr.elements[0].id);
+        let library =
+            test_db::insert_test_library_node(&mut db, "Test Library", PathBuf::from("/music"))?;
         let library_db_id = library
             .db_id
             .ok_or_else(|| anyhow!("library missing db_id"))?;
@@ -2488,16 +2385,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
     fn apply_merged_metadata_to_entity_skips_labels_on_locked_release() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
-        let mut library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Test Library".to_string(),
-            directory: PathBuf::from("/music"),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        library.db_id = Some(qr.elements[0].id);
+        let library =
+            test_db::insert_test_library_node(&mut db, "Test Library", PathBuf::from("/music"))?;
         let library_db_id = library
             .db_id
             .ok_or_else(|| anyhow!("library missing db_id"))?;

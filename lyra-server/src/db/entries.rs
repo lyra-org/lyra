@@ -343,17 +343,7 @@ mod tests {
     }
 
     fn new_library(db: &mut DbAny, root: &Path) -> anyhow::Result<Library> {
-        let mut library = Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Test".to_string(),
-            directory: root.to_path_buf(),
-            language: None,
-            country: None,
-        };
-        let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
-        library.db_id = Some(qr.elements[0].id);
-        Ok(library)
+        crate::db::test_db::insert_test_library_node(db, "Test", root.to_path_buf())
     }
 
     fn full_sync(db: &mut DbAny, library: &Library) -> anyhow::Result<Vec<DbId>> {
