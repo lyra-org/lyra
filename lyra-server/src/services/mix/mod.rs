@@ -11,17 +11,21 @@ use std::collections::{
 use agdb::{
     DbAny,
     DbId,
+    QueryBuilder,
+};
+use harmony_core::{
+    cancel_thread,
+    run_thread,
 };
 use mlua::Table;
 use rand::seq::SliceRandom;
-
-use agdb::QueryBuilder;
 
 use crate::STATE;
 use crate::db::{
     self,
     Track,
 };
+use crate::plugins::lifecycle::PluginFunctionHandle;
 
 mod registry;
 
@@ -34,7 +38,10 @@ pub(crate) use registry::{
 
 const DEFAULT_LIMIT: usize = 200;
 const MAX_PER_ARTIST: usize = 3;
-const MIXER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Per-request budget across all plugin handlers.
+const MIX_DISPATCH_BUDGET: std::time::Duration = std::time::Duration::from_secs(15);
+/// Per-handler ceiling.
+const MIXER_HANDLER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MixOptions {
@@ -90,8 +97,20 @@ pub(crate) async fn from_recent_listens(
     builtin_from_recent_listens(db, user_db_id, options)
 }
 
-/// Returns mixer IDs sorted by priority (highest first), filtered to those
-/// that have a handler for the given seed type.
+/// Per-handler timeout. `None` = budget exhausted.
+fn handler_timeout_slice(
+    elapsed: std::time::Duration,
+    total_budget: std::time::Duration,
+    max_per_handler: std::time::Duration,
+) -> Option<std::time::Duration> {
+    if elapsed >= total_budget {
+        return None;
+    }
+    let remaining = total_budget - elapsed;
+    Some(remaining.min(max_per_handler))
+}
+
+/// Mixer IDs with a handler for `seed_type`, highest priority first.
 async fn prioritized_mixer_ids(seed_type: MixSeedType) -> anyhow::Result<Vec<String>> {
     let db = STATE.db.read().await;
     let mut configs = db::mixers::get(&*db)?;
@@ -107,9 +126,8 @@ async fn prioritized_mixer_ids(seed_type: MixSeedType) -> anyhow::Result<Vec<Str
     Ok(ids)
 }
 
-/// Tries plugin mixers in descending priority and returns the first non-empty
-/// result. `Ok(None)` when every mixer errored, timed out, or returned empty —
-/// the caller falls through to the built-in mixer in that case.
+/// First non-empty mixer wins; `None` falls through to builtin. Per-handler
+/// slice is `min(remaining_budget, MIXER_HANDLER_TIMEOUT)`.
 async fn dispatch_mixer(
     seed_type: MixSeedType,
     seed_id: DbId,
@@ -120,7 +138,21 @@ async fn dispatch_mixer(
         return Ok(None);
     }
 
+    let deadline = tokio::time::Instant::now() + MIX_DISPATCH_BUDGET;
+
     for mixer_id in &mixer_ids {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            tracing::warn!(
+                remaining = ?mixer_ids
+                    .iter()
+                    .skip_while(|id| *id != mixer_id)
+                    .count(),
+                "mix dispatch budget exhausted, falling through to builtin"
+            );
+            break;
+        }
+        let handler_timeout = (deadline - now).min(MIXER_HANDLER_TIMEOUT);
         let handler = {
             let registry = MIX_REGISTRY.read().await;
             registry.get_handler(mixer_id, seed_type).cloned()
@@ -143,34 +175,83 @@ async fn dispatch_mixer(
         }
         set_extra_options(&lua, &ctx, mixer_id, &options.extra).await?;
 
-        match tokio::time::timeout(MIXER_TIMEOUT, handler.call_async::<_, Table>(ctx)).await {
-            Ok(Ok(result)) => match parse_mix_result(&result).await {
-                Ok(mut tracks) if !tracks.is_empty() => {
-                    let limit = options.limit.unwrap_or(DEFAULT_LIMIT);
-                    tracks.truncate(limit);
-                    return Ok(Some(tracks));
-                }
-                Ok(_) => {
-                    tracing::debug!(mixer = %mixer_id, "mixer returned empty, trying next");
-                }
-                Err(err) => {
-                    tracing::warn!(mixer = %mixer_id, error = %err, "mixer result parse error, trying next");
-                }
-            },
-            Ok(Err(err)) => {
-                tracing::warn!(mixer = %mixer_id, error = %err, "mixer handler error, trying next");
+        match run_handler_with_timeout(&lua, &handler, ctx, handler_timeout, mixer_id).await? {
+            HandlerOutcome::Tracks(mut tracks) => {
+                let limit = options.limit.unwrap_or(DEFAULT_LIMIT);
+                tracks.truncate(limit);
+                return Ok(Some(tracks));
             }
-            Err(_) => {
-                tracing::warn!(mixer = %mixer_id, "mixer handler timed out, trying next");
-            }
+            HandlerOutcome::FellThrough => {}
         }
     }
 
     Ok(None)
 }
 
-/// Same as `dispatch_mixer` for the recent-listens seed type; the context
-/// receives pre-resolved recent track IDs.
+enum HandlerOutcome {
+    Tracks(Vec<Track>),
+    FellThrough,
+}
+
+/// Runs on a separate Lua thread so timeout can cancel the coroutine, not
+/// just drop the future. Cooperative — bounded by sync-binding timeouts.
+async fn run_handler_with_timeout(
+    lua: &mlua::Lua,
+    handler: &PluginFunctionHandle,
+    ctx: Table,
+    timeout: std::time::Duration,
+    mixer_id: &str,
+) -> anyhow::Result<HandlerOutcome> {
+    // Pre-create so the timeout branch can cancel and force-close.
+    let thread = match lua.create_thread(handler.inner_function().clone()) {
+        Ok(t) => t,
+        Err(err) => {
+            tracing::error!(
+                mixer = %mixer_id,
+                error = %err,
+                "failed to create mixer handler thread, trying next"
+            );
+            return Ok(HandlerOutcome::FellThrough);
+        }
+    };
+
+    match tokio::time::timeout(timeout, run_thread::<Table>(lua, thread.clone(), ctx)).await {
+        Ok(Ok(result)) => match parse_mix_result(&result).await {
+            Ok(tracks) if !tracks.is_empty() => Ok(HandlerOutcome::Tracks(tracks)),
+            Ok(_) => {
+                // Explicit "no tracks for this seed" — debug, not warn.
+                tracing::debug!(mixer = %mixer_id, "mixer returned empty, trying next");
+                Ok(HandlerOutcome::FellThrough)
+            }
+            Err(err) => {
+                tracing::error!(mixer = %mixer_id, error = %err, "mixer result parse error, trying next");
+                Ok(HandlerOutcome::FellThrough)
+            }
+        },
+        Ok(Err(err)) => {
+            tracing::error!(mixer = %mixer_id, error = %err, "mixer handler crashed, trying next");
+            Ok(HandlerOutcome::FellThrough)
+        }
+        Err(_) => {
+            let _ = cancel_thread(lua, &thread);
+            if let Err(err) = thread.close() {
+                tracing::warn!(
+                    mixer = %mixer_id,
+                    error = %err,
+                    "failed to close timed-out mix handler thread"
+                );
+            }
+            tracing::error!(
+                mixer = %mixer_id,
+                timeout_ms = timeout.as_millis() as u64,
+                "mixer handler timed out; thread cancelled, trying next"
+            );
+            Ok(HandlerOutcome::FellThrough)
+        }
+    }
+}
+
+/// `dispatch_mixer` variant; context carries pre-resolved recent track IDs.
 async fn dispatch_recent_listens_mixer(
     user_db_id: DbId,
     options: &MixOptions,
@@ -185,7 +266,21 @@ async fn dispatch_recent_listens_mixer(
         recent_listen_track_ids(&db, user_db_id)?
     };
 
+    let deadline = tokio::time::Instant::now() + MIX_DISPATCH_BUDGET;
+
     for mixer_id in &mixer_ids {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            tracing::warn!(
+                remaining = ?mixer_ids
+                    .iter()
+                    .skip_while(|id| *id != mixer_id)
+                    .count(),
+                "mix dispatch budget exhausted, falling through to builtin"
+            );
+            break;
+        }
+        let handler_timeout = (deadline - now).min(MIXER_HANDLER_TIMEOUT);
         let handler = {
             let registry = MIX_REGISTRY.read().await;
             registry
@@ -212,26 +307,13 @@ async fn dispatch_recent_listens_mixer(
         }
         ctx.set("recent_track_ids", track_ids_table)?;
 
-        match tokio::time::timeout(MIXER_TIMEOUT, handler.call_async::<_, Table>(ctx)).await {
-            Ok(Ok(result)) => match parse_mix_result(&result).await {
-                Ok(mut tracks) if !tracks.is_empty() => {
-                    let limit = options.limit.unwrap_or(DEFAULT_LIMIT);
-                    tracks.truncate(limit);
-                    return Ok(Some(tracks));
-                }
-                Ok(_) => {
-                    tracing::debug!(mixer = %mixer_id, "mixer returned empty, trying next");
-                }
-                Err(err) => {
-                    tracing::warn!(mixer = %mixer_id, error = %err, "mixer result parse error, trying next");
-                }
-            },
-            Ok(Err(err)) => {
-                tracing::warn!(mixer = %mixer_id, error = %err, "mixer handler error, trying next");
+        match run_handler_with_timeout(&lua, &handler, ctx, handler_timeout, mixer_id).await? {
+            HandlerOutcome::Tracks(mut tracks) => {
+                let limit = options.limit.unwrap_or(DEFAULT_LIMIT);
+                tracks.truncate(limit);
+                return Ok(Some(tracks));
             }
-            Err(_) => {
-                tracing::warn!(mixer = %mixer_id, "mixer handler timed out, trying next");
-            }
+            HandlerOutcome::FellThrough => {}
         }
     }
 
@@ -240,8 +322,7 @@ async fn dispatch_recent_listens_mixer(
 
 use super::options::coerce_option_value;
 
-/// Sets extra options from the query string as a typed `options` table on the context,
-/// coercing values using declared option types from the mixer registry.
+/// Coerces `extra` via declared types into `ctx.options`.
 async fn set_extra_options(
     lua: &mlua::Lua,
     ctx: &Table,
@@ -1071,5 +1152,35 @@ mod tests {
         assert!(result.is_empty());
 
         Ok(())
+    }
+
+    // --- handler_timeout_slice (dispatch budget arithmetic) ---
+
+    #[test]
+    fn handler_timeout_slice_returns_full_per_handler_when_budget_remains() {
+        let elapsed = std::time::Duration::from_secs(2);
+        let total = std::time::Duration::from_secs(15);
+        let per_handler = std::time::Duration::from_secs(10);
+        let slice = handler_timeout_slice(elapsed, total, per_handler);
+        assert_eq!(slice, Some(per_handler));
+    }
+
+    #[test]
+    fn handler_timeout_slice_clamps_to_remaining_budget() {
+        // Remaining budget below the per-handler ceiling wins.
+        let elapsed = std::time::Duration::from_secs(12);
+        let total = std::time::Duration::from_secs(15);
+        let per_handler = std::time::Duration::from_secs(10);
+        let slice = handler_timeout_slice(elapsed, total, per_handler);
+        assert_eq!(slice, Some(std::time::Duration::from_secs(3)));
+    }
+
+    #[test]
+    fn handler_timeout_slice_returns_none_when_budget_exhausted() {
+        let total = std::time::Duration::from_secs(15);
+        let per_handler = std::time::Duration::from_secs(10);
+        assert_eq!(handler_timeout_slice(total, total, per_handler), None);
+        let past = total + std::time::Duration::from_secs(1);
+        assert_eq!(handler_timeout_slice(past, total, per_handler), None);
     }
 }
