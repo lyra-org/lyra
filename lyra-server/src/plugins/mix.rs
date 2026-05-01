@@ -3,13 +3,12 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use crate::plugins::lifecycle::{
-    PluginFunctionHandle,
-    PluginId,
-};
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use agdb::DbId;
 use harmony_core::{
+    LuaAsyncExt,
     LuaUserDataAsyncExt,
     Module,
 };
@@ -28,6 +27,7 @@ use mlua::{
     Lua,
     Result,
     Table,
+    Value,
 };
 use nanoid::nanoid;
 
@@ -36,8 +36,15 @@ use crate::db::{
     self,
     mixers::MixerConfig,
 };
+use crate::plugins::lifecycle::{
+    PluginFunctionHandle,
+    PluginId,
+};
 use crate::services::mix::{
+    self as mix_service,
+    MAX_LIMIT,
     MIX_REGISTRY,
+    MixOptions,
     MixSeedType,
 };
 use crate::services::options::{
@@ -378,7 +385,7 @@ impl MixModule {
                         name: "seed_id",
                         ty: f64::luau_type(),
                         description: Some(
-                            "The database ID of the seed entity (track, release, or artist).",
+                            "The database ID of the seed entity (track, release, artist, genre, or playlist).",
                         ),
                     },
                     harmony_luau::FieldDescriptor {
@@ -452,6 +459,35 @@ impl MixModule {
                     description: Some("Ordered list of tracks for the mix."),
                 }],
             },
+            harmony_luau::InterfaceDescriptor {
+                name: "MixConsumerOptions",
+                description: Some("Options for mix.from_* and instant_mix_from_audio."),
+                fields: vec![
+                    harmony_luau::FieldDescriptor {
+                        name: "limit",
+                        ty: LuauType::Optional(Box::new(f64::luau_type())),
+                        description: Some(
+                            "Max tracks. Positive whole number, ≤ server ceiling, default 200.",
+                        ),
+                    },
+                    harmony_luau::FieldDescriptor {
+                        name: "user_id",
+                        ty: LuauType::Optional(Box::new(f64::luau_type())),
+                        description: Some(
+                            "DB ID of the user the mix is for; drives heard/unheard partitioning. Leave nil to let the route inject from the authenticated principal.",
+                        ),
+                    },
+                    harmony_luau::FieldDescriptor {
+                        name: "options",
+                        ty: LuauType::Optional(Box::new(LuauType::literal(
+                            "{ [string]: boolean | string | number }",
+                        ))),
+                        description: Some(
+                            "Per-mixer options keyed by name. Forwarded to plugin mixers and coerced using their declare_option types.",
+                        ),
+                    },
+                ],
+            },
         ]
     }
 
@@ -461,7 +497,9 @@ impl MixModule {
         mixer.methods.retain(|method| {
             !(method.kind == harmony_luau::MethodKind::Static && method.name == "new")
         });
-        vec![mixer]
+        // Re-declare Track for `{ Track }` returns; generated modules are scoped independently.
+        let track = <crate::db::Track as DescribeUserData>::class_descriptor();
+        vec![mixer, track]
     }
 
     fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
@@ -477,20 +515,220 @@ impl MixModule {
 impl DescribeModule for MixModule {
     fn module_descriptor() -> ModuleDescriptor {
         let mut descriptor = ModuleDescriptor::new("Mix", "mix", None);
-        descriptor.functions.extend(vec![ModuleFunctionDescriptor {
-            path: vec!["Mixer", "new"],
-            description: Some("Creates or loads a mixer."),
-            params: vec![ParameterDescriptor {
-                name: "id",
-                ty: String::luau_type(),
-                description: None,
-                variadic: false,
-            }],
-            returns: vec![LuauType::literal("Mixer")],
-            yields: true,
-        }]);
+        let id_param = || ParameterDescriptor {
+            name: "id",
+            ty: f64::luau_type(),
+            description: Some("Database ID of the seed entity."),
+            variadic: false,
+        };
+        let opts_param = || ParameterDescriptor {
+            name: "opts",
+            ty: LuauType::Optional(Box::new(LuauType::literal("MixConsumerOptions"))),
+            description: None,
+            variadic: false,
+        };
+        let optional_track_list =
+            || vec![LuauType::Optional(Box::new(LuauType::literal("{ Track }")))];
+
+        descriptor.functions.extend(vec![
+            ModuleFunctionDescriptor {
+                path: vec!["Mixer", "new"],
+                description: Some("Creates or loads a mixer."),
+                params: vec![ParameterDescriptor {
+                    name: "id",
+                    ty: String::luau_type(),
+                    description: None,
+                    variadic: false,
+                }],
+                returns: vec![LuauType::literal("Mixer")],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["from_track"],
+                description: Some("Mix from a seed track. Nil if missing."),
+                params: vec![id_param(), opts_param()],
+                returns: optional_track_list(),
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["from_release"],
+                description: Some("Mix from a seed release (album). Nil if missing."),
+                params: vec![id_param(), opts_param()],
+                returns: optional_track_list(),
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["from_artist"],
+                description: Some("Mix from a seed artist. Nil if missing."),
+                params: vec![id_param(), opts_param()],
+                returns: optional_track_list(),
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["from_genre"],
+                description: Some("Mix from a seed genre. Nil if missing."),
+                params: vec![id_param(), opts_param()],
+                returns: optional_track_list(),
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["from_playlist"],
+                description: Some("Mix from a seed playlist. Nil if missing."),
+                params: vec![id_param(), opts_param()],
+                returns: optional_track_list(),
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["instant_mix_from_audio"],
+                description: Some(
+                    "Mix from a seed track with the seed pinned at index 1. Nil if missing.",
+                ),
+                params: vec![id_param(), opts_param()],
+                returns: optional_track_list(),
+                yields: true,
+            },
+        ]);
         descriptor
     }
+}
+
+/// Strict; `user_id` is a trust assertion — audit call sites.
+fn parse_consumer_options(opts: Option<Table>) -> Result<MixOptions> {
+    let Some(opts) = opts else {
+        return Ok(MixOptions::default());
+    };
+
+    let limit = parse_limit(opts.get::<Value>("limit")?)?;
+    let user_db_id = parse_user_db_id(opts.get::<Value>("user_id")?)?;
+
+    let mut extra = HashMap::new();
+    match opts.get::<Value>("options")? {
+        Value::Nil => {}
+        Value::Table(extras) => {
+            extras.for_each(|key: Value, value: Value| {
+                let key_str = key
+                    .as_string()
+                    .and_then(|s| s.to_str().ok().map(|c| c.to_string()))
+                    .ok_or_else(|| {
+                        mlua::Error::runtime(format!(
+                            "mix options 'options' keys must be strings, got {}",
+                            key.type_name()
+                        ))
+                    })?;
+                let value_str = match &value {
+                    Value::String(s) => {
+                        s.to_str().map(|c| c.to_string()).map_err(|err| {
+                            mlua::Error::runtime(format!(
+                                "mix options 'options.{key_str}' string is not valid UTF-8: {err}"
+                            ))
+                        })?
+                    }
+                    Value::Boolean(b) => b.to_string(),
+                    Value::Integer(i) => i.to_string(),
+                    Value::Number(n) if n.is_finite() => n.to_string(),
+                    other => {
+                        return Err(mlua::Error::runtime(format!(
+                            "mix options 'options.{key_str}' must be a string, boolean, or finite number, got {}",
+                            other.type_name()
+                        )));
+                    }
+                };
+                extra.insert(key_str, value_str);
+                Ok(())
+            })?;
+        }
+        other => {
+            return Err(mlua::Error::runtime(format!(
+                "mix options 'options' must be a table, got {}",
+                other.type_name()
+            )));
+        }
+    }
+
+    Ok(MixOptions {
+        limit,
+        user_db_id,
+        extra,
+    })
+}
+
+fn parse_user_db_id(value: Value) -> Result<Option<DbId>> {
+    let n = match value {
+        Value::Nil => return Ok(None),
+        Value::Integer(n) => n,
+        Value::Number(n) => {
+            if !n.is_finite() {
+                return Err(mlua::Error::runtime(format!(
+                    "mix options 'user_id' must be a finite number, got {n}"
+                )));
+            }
+            if n.fract() != 0.0 {
+                return Err(mlua::Error::runtime(format!(
+                    "mix options 'user_id' must be a whole number, got {n}"
+                )));
+            }
+            n as i64
+        }
+        other => {
+            return Err(mlua::Error::runtime(format!(
+                "mix options 'user_id' must be a number, got {}",
+                other.type_name()
+            )));
+        }
+    };
+    if n <= 0 {
+        return Err(mlua::Error::runtime(format!(
+            "mix options 'user_id' must be positive, got {n}"
+        )));
+    }
+    Ok(Some(DbId(n)))
+}
+
+fn parse_limit(value: Value) -> Result<Option<usize>> {
+    let n = match value {
+        Value::Nil => return Ok(None),
+        Value::Integer(n) => n,
+        Value::Number(n) => {
+            if !n.is_finite() {
+                return Err(mlua::Error::runtime(format!(
+                    "mix options 'limit' must be a finite number, got {n}"
+                )));
+            }
+            if n.fract() != 0.0 {
+                return Err(mlua::Error::runtime(format!(
+                    "mix options 'limit' must be a whole number, got {n}"
+                )));
+            }
+            n as i64
+        }
+        other => {
+            return Err(mlua::Error::runtime(format!(
+                "mix options 'limit' must be a number, got {}",
+                other.type_name()
+            )));
+        }
+    };
+    if n <= 0 {
+        return Err(mlua::Error::runtime(format!(
+            "mix options 'limit' must be positive, got {n}"
+        )));
+    }
+    let limit = n as usize;
+    if limit > MAX_LIMIT {
+        return Err(mlua::Error::runtime(format!(
+            "mix options 'limit' must be <= {MAX_LIMIT}, got {limit}"
+        )));
+    }
+    Ok(Some(limit))
+}
+
+fn parse_seed_id(seed_id: i64, label: &'static str) -> Result<DbId> {
+    if seed_id <= 0 {
+        return Err(mlua::Error::runtime(format!(
+            "mix.{label}: seed id must be a positive number, got {seed_id}"
+        )));
+    }
+    Ok(DbId(seed_id))
 }
 
 pub(crate) fn get_module() -> Module {
@@ -499,6 +737,85 @@ pub(crate) fn get_module() -> Module {
         setup: Arc::new(|lua: &Lua| -> anyhow::Result<mlua::Table> {
             let table = lua.create_table()?;
             table.set("Mixer", lua.create_proxy::<Mixer>()?)?;
+
+            table.set(
+                "from_track",
+                lua.create_async_function(
+                    |_lua, (seed_id, opts): (i64, Option<Table>)| async move {
+                        let seed = parse_seed_id(seed_id, "from_track")?;
+                        let options = parse_consumer_options(opts)?;
+                        mix_service::from_track(seed, &options)
+                            .await
+                            .map_err(mlua::Error::external)
+                    },
+                )?,
+            )?;
+
+            table.set(
+                "from_release",
+                lua.create_async_function(
+                    |_lua, (seed_id, opts): (i64, Option<Table>)| async move {
+                        let seed = parse_seed_id(seed_id, "from_release")?;
+                        let options = parse_consumer_options(opts)?;
+                        mix_service::from_release(seed, &options)
+                            .await
+                            .map_err(mlua::Error::external)
+                    },
+                )?,
+            )?;
+
+            table.set(
+                "from_artist",
+                lua.create_async_function(
+                    |_lua, (seed_id, opts): (i64, Option<Table>)| async move {
+                        let seed = parse_seed_id(seed_id, "from_artist")?;
+                        let options = parse_consumer_options(opts)?;
+                        mix_service::from_artist(seed, &options)
+                            .await
+                            .map_err(mlua::Error::external)
+                    },
+                )?,
+            )?;
+
+            table.set(
+                "from_genre",
+                lua.create_async_function(
+                    |_lua, (seed_id, opts): (i64, Option<Table>)| async move {
+                        let seed = parse_seed_id(seed_id, "from_genre")?;
+                        let options = parse_consumer_options(opts)?;
+                        mix_service::from_genre(seed, &options)
+                            .await
+                            .map_err(mlua::Error::external)
+                    },
+                )?,
+            )?;
+
+            table.set(
+                "from_playlist",
+                lua.create_async_function(
+                    |_lua, (seed_id, opts): (i64, Option<Table>)| async move {
+                        let seed = parse_seed_id(seed_id, "from_playlist")?;
+                        let options = parse_consumer_options(opts)?;
+                        mix_service::from_playlist(seed, &options)
+                            .await
+                            .map_err(mlua::Error::external)
+                    },
+                )?,
+            )?;
+
+            table.set(
+                "instant_mix_from_audio",
+                lua.create_async_function(
+                    |_lua, (seed_id, opts): (i64, Option<Table>)| async move {
+                        let seed = parse_seed_id(seed_id, "instant_mix_from_audio")?;
+                        let options = parse_consumer_options(opts)?;
+                        mix_service::instant_mix_from_audio(seed, &options)
+                            .await
+                            .map_err(mlua::Error::external)
+                    },
+                )?,
+            )?;
+
             Ok(table)
         }),
         scope: harmony_core::Scope {

@@ -210,6 +210,58 @@ fn filter_existing_tracks(db: &DbAny, tracks: Vec<Track>) -> anyhow::Result<Vec<
         .collect())
 }
 
+/// Pins the seed at index 0 under one read guard, then truncates to `limit`.
+pub(crate) async fn instant_mix_from_audio(
+    track_db_id: DbId,
+    options: &MixOptions,
+) -> anyhow::Result<Option<Vec<Track>>> {
+    {
+        let db = STATE.db.read().await;
+        if db::tracks::get_by_id(&*db, track_db_id)?.is_none() {
+            return Ok(None);
+        }
+    }
+    let dispatched = dispatch_mixer(MixSeedType::Track, track_db_id, options).await?;
+
+    let db = STATE.db.read().await;
+    let Some(seed) = db::tracks::get_by_id(&*db, track_db_id)? else {
+        return Ok(None);
+    };
+
+    let mix_tracks = match dispatched {
+        Some(tracks) => filter_existing_tracks(&*db, tracks)?,
+        None => builtin_from_track(&*db, track_db_id, options)?,
+    };
+
+    let effective_limit = options.limit.unwrap_or(DEFAULT_LIMIT);
+    Ok(Some(pin_seed_and_truncate(
+        seed,
+        mix_tracks,
+        effective_limit,
+    )))
+}
+
+/// Pins `seed` at index 0 (moves if already in `tracks`), then truncates.
+fn pin_seed_and_truncate(seed: Track, mut tracks: Vec<Track>, limit: usize) -> Vec<Track> {
+    let seed_db_id_opt = seed.db_id.clone().map(DbId::from);
+    let existing_pos = seed_db_id_opt.and_then(|seed_id| {
+        tracks
+            .iter()
+            .position(|t| t.db_id.clone().map(DbId::from) == Some(seed_id))
+    });
+    match existing_pos {
+        Some(pos) => {
+            let s = tracks.remove(pos);
+            tracks.insert(0, s);
+        }
+        None => {
+            tracks.insert(0, seed);
+        }
+    }
+    tracks.truncate(limit);
+    tracks
+}
+
 /// Per-handler timeout. `None` = budget exhausted.
 fn handler_timeout_slice(
     elapsed: std::time::Duration,
@@ -1450,6 +1502,85 @@ mod tests {
         let playlist_db_id = playlists::create(&mut db, &playlist, user_id)?;
         let result = builtin_from_playlist(&db, playlist_db_id, &MixOptions::default())?;
         assert!(result.is_empty());
+        Ok(())
+    }
+
+    // --- pin_seed_and_truncate (instant_mix_from_audio's novel control flow) ---
+
+    fn track_with_id(db: &mut DbAny, title: &str) -> anyhow::Result<Track> {
+        let id = insert_track(db, title)?;
+        Ok(crate::db::tracks::get_by_id(db, id)?.expect("track should exist after insert"))
+    }
+
+    #[test]
+    fn pin_seed_prepends_when_missing_from_engine_output() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let seed = track_with_id(&mut db, "Seed")?;
+        let other_a = track_with_id(&mut db, "A")?;
+        let other_b = track_with_id(&mut db, "B")?;
+
+        let result = pin_seed_and_truncate(seed.clone(), vec![other_a, other_b], 10);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].track_title, "Seed");
+        assert_eq!(result[1].track_title, "A");
+        assert_eq!(result[2].track_title, "B");
+        Ok(())
+    }
+
+    #[test]
+    fn pin_seed_moves_existing_seed_to_front() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let seed = track_with_id(&mut db, "Seed")?;
+        let other_a = track_with_id(&mut db, "A")?;
+        let other_b = track_with_id(&mut db, "B")?;
+
+        // Engine output already contains the seed at index 1 — move, don't dup.
+        let result = pin_seed_and_truncate(seed.clone(), vec![other_a, seed.clone(), other_b], 10);
+        assert_eq!(result.len(), 3, "no duplication: count unchanged");
+        assert_eq!(result[0].track_title, "Seed");
+        let seed_count = result.iter().filter(|t| t.track_title == "Seed").count();
+        assert_eq!(seed_count, 1, "seed should not be duplicated");
+        Ok(())
+    }
+
+    #[test]
+    fn pin_seed_truncates_to_limit_after_prepend() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let seed = track_with_id(&mut db, "Seed")?;
+        let a = track_with_id(&mut db, "A")?;
+        let b = track_with_id(&mut db, "B")?;
+        let c = track_with_id(&mut db, "C")?;
+
+        // [Seed, A, B, C] truncated to 2 — seed kept, tail dropped.
+        let result = pin_seed_and_truncate(seed.clone(), vec![a, b, c], 2);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].track_title, "Seed");
+        assert_eq!(result[1].track_title, "A");
+        Ok(())
+    }
+
+    #[test]
+    fn pin_seed_handles_limit_one() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let seed = track_with_id(&mut db, "Seed")?;
+        let a = track_with_id(&mut db, "A")?;
+
+        // limit=1: seed wins the only slot.
+        let result = pin_seed_and_truncate(seed.clone(), vec![a], 1);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].track_title, "Seed");
+        Ok(())
+    }
+
+    #[test]
+    fn pin_seed_handles_empty_engine_output() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let seed = track_with_id(&mut db, "Seed")?;
+
+        // Genre-less seed: engine returns nothing, caller still gets the seed.
+        let result = pin_seed_and_truncate(seed.clone(), vec![], 200);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].track_title, "Seed");
         Ok(())
     }
 
