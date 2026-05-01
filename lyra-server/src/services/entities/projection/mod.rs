@@ -422,7 +422,7 @@ pub(crate) fn project_entity(
             let release = Release::from_db_element(&element)?;
             let library_root = if let Some(lib_id) = library_id {
                 db::libraries::get_by_id(db, lib_id)?
-                    .map(|library| library.directory.to_string_lossy().to_string())
+                    .map(|library| library.path.to_string_lossy().to_string())
             } else {
                 None
             };
@@ -525,7 +525,7 @@ pub(crate) fn project_entities(
     let library_root = if has_include(EntityInclude::Tracks) {
         if let Some(lib_id) = library_id {
             db::libraries::get_by_id(db, lib_id)?
-                .map(|library| library.directory.to_string_lossy().to_string())
+                .map(|library| library.path.to_string_lossy().to_string())
         } else {
             None
         }

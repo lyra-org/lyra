@@ -193,7 +193,7 @@ pub async fn prepare_fixture(
 
     let mut db = STATE.db.write().await;
     let directory = library.directory.clone();
-    let directory_key = db::libraries::directory_key_for(&directory);
+    let path_key = db::libraries::path_key_for(&directory);
     let created_library = db.transaction_mut(
         |t| -> Result<db::Library, db::libraries::LibraryCreateError> {
             db::libraries::create(
@@ -201,8 +201,8 @@ pub async fn prepare_fixture(
                 db::libraries::LibraryInsert {
                     id: nanoid!(),
                     name: "Harmony Test Library".to_string(),
-                    directory,
-                    directory_key,
+                    path: directory,
+                    path_key,
                     language: library.language.clone(),
                     country: library.country.clone(),
                 },

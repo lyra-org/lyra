@@ -167,9 +167,9 @@ pub(crate) fn insert_library(db: &mut DbAny, name: &str, directory: &str) -> any
 pub(crate) fn insert_test_library_node(
     db: &mut DbAny,
     name: &str,
-    directory: std::path::PathBuf,
+    path: std::path::PathBuf,
 ) -> anyhow::Result<super::libraries::Library> {
-    let mut library = build_test_library(name, directory)?;
+    let mut library = build_test_library(name, path)?;
     let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
     library.db_id = Some(qr.elements[0].id);
     Ok(library)
@@ -177,17 +177,17 @@ pub(crate) fn insert_test_library_node(
 
 fn build_test_library(
     name: &str,
-    directory: std::path::PathBuf,
+    path: std::path::PathBuf,
 ) -> anyhow::Result<super::libraries::Library> {
     let (display, key) = super::libraries::normalize_library_name(name)?;
-    let directory_key = super::libraries::directory_key_for(&directory);
+    let path_key = super::libraries::path_key_for(&path);
     Ok(super::libraries::Library {
         db_id: None,
         id: nanoid!(),
         name: display,
         name_key: key,
-        directory,
-        directory_key,
+        path,
+        path_key,
         language: None,
         country: None,
     })

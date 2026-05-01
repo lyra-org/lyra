@@ -482,7 +482,7 @@ mod tests {
         for (coalesce_group_key, entries) in groups.into_iter().enumerate() {
             tracing::debug!(entry_count = entries.len(), "metadata group entries");
             let source_dir = source_directory_for_group_entries(&entries)
-                .unwrap_or_else(|| library.directory.clone());
+                .unwrap_or_else(|| library.path.clone());
             let entry_source_dirs: std::collections::BTreeMap<DbId, PathBuf> = entries
                 .iter()
                 .filter_map(|entry| {

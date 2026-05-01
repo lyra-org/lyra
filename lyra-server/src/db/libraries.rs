@@ -21,8 +21,8 @@ use unicode_properties::{
     UnicodeGeneralCategory,
 };
 
-/// `directory` is the raw user input (preserves symlinks, surfaced to API);
-/// `directory_key` is the canonical form used only for uniqueness lookups.
+/// `path` is the raw user input (preserves symlinks, surfaced to API);
+/// `path_key` is the canonical form used only for uniqueness lookups.
 /// `name_key` is `name` lowercased + NFC, indexed for the same reason.
 /// Storing the keys avoids Unicode/canonicalize work under the write lock.
 #[derive(DbElement, Clone, Debug)]
@@ -31,8 +31,8 @@ pub(crate) struct Library {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) name_key: String,
-    pub(crate) directory: PathBuf,
-    pub(crate) directory_key: String,
+    pub(crate) path: PathBuf,
+    pub(crate) path_key: String,
     pub(crate) language: Option<String>,
     pub(crate) country: Option<String>,
 }
@@ -45,10 +45,7 @@ impl mlua::IntoLua for Library {
         }
         table.set("id", self.id)?;
         table.set("name", self.name)?;
-        table.set(
-            "directory",
-            self.directory.to_string_lossy().to_string(),
-        )?;
+        table.set("path", self.path.to_string_lossy().to_string())?;
         if let Some(language) = self.language {
             table.set("language", language)?;
         }
@@ -158,16 +155,16 @@ fn lexical_normalize_path(path: &Path) -> PathBuf {
 /// on any IO error. **Sync syscall** — never call from inside a transaction;
 /// wrap in `spawn_blocking` from async contexts. The lexical fallback won't
 /// unify case on case-insensitive filesystems.
-pub(crate) fn normalize_library_directory(path: &Path) -> PathBuf {
+pub(crate) fn normalize_library_path(path: &Path) -> PathBuf {
     match std::fs::canonicalize(path) {
         Ok(canonical) => canonical,
         Err(_) => lexical_normalize_path(path),
     }
 }
 
-/// String form of [`normalize_library_directory`] for agdb value-match.
-pub(crate) fn directory_key_for(path: &Path) -> String {
-    normalize_library_directory(path).to_string_lossy().into_owned()
+/// String form of [`normalize_library_path`] for agdb value-match.
+pub(crate) fn path_key_for(path: &Path) -> String {
+    normalize_library_path(path).to_string_lossy().into_owned()
 }
 
 /// Indexed lookup; safe to call inside a transaction.
@@ -179,12 +176,12 @@ pub(crate) fn find_by_name_key(
 }
 
 /// Indexed lookup; safe to call inside a transaction. Compute `key` via
-/// [`directory_key_for`] *outside* the lock — `canonicalize` is a sync syscall.
-pub(crate) fn find_by_directory_key(
+/// [`path_key_for`] *outside* the lock — `canonicalize` is a sync syscall.
+pub(crate) fn find_by_path_key(
     db: &impl super::DbAccess,
     key: &str,
 ) -> anyhow::Result<Option<Library>> {
-    find_indexed_library(db, "directory_key", key)
+    find_indexed_library(db, "path_key", key)
 }
 
 // `index_name` must be registered in [`crate::db::bootstrap::CORE_INDEXES`].
@@ -361,7 +358,7 @@ pub(crate) enum LibraryCreateError {
     #[error("a library named '{0}' already exists")]
     NameInUse(String),
     #[error("a library already exists for directory: {}", .0.display())]
-    DirectoryInUse(PathBuf),
+    PathInUse(PathBuf),
     #[error("invalid library name: {0}")]
     InvalidName(#[from] LibraryNameError),
     #[error(transparent)]
@@ -378,9 +375,9 @@ impl From<agdb::DbError> for LibraryCreateError {
 pub(crate) struct LibraryInsert {
     pub(crate) id: String,
     pub(crate) name: String,
-    pub(crate) directory: PathBuf,
-    /// Computed via [`directory_key_for`] off the lock — `canonicalize` is a sync syscall.
-    pub(crate) directory_key: String,
+    pub(crate) path: PathBuf,
+    /// Computed via [`path_key_for`] off the lock — `canonicalize` is a sync syscall.
+    pub(crate) path_key: String,
     pub(crate) language: Option<String>,
     pub(crate) country: Option<String>,
 }
@@ -389,7 +386,7 @@ pub(crate) struct LibraryInsert {
 /// insert, and the `from("libraries")` edge insert share one lock — otherwise
 /// concurrent callers race past the check, and a crash between the element
 /// and edge inserts orphans a node that's invisible to `get`. **No
-/// filesystem syscalls inside.** `request.directory_key` must already be canonical.
+/// filesystem syscalls inside.** `request.path_key` must already be canonical.
 pub(crate) fn create(
     db: &mut impl super::DbAccess,
     request: LibraryInsert,
@@ -399,8 +396,8 @@ pub(crate) fn create(
     if find_by_name_key(db, &name_key)?.is_some() {
         return Err(LibraryCreateError::NameInUse(name));
     }
-    if find_by_directory_key(db, &request.directory_key)?.is_some() {
-        return Err(LibraryCreateError::DirectoryInUse(request.directory));
+    if find_by_path_key(db, &request.path_key)?.is_some() {
+        return Err(LibraryCreateError::PathInUse(request.path));
     }
 
     let mut created = Library {
@@ -408,8 +405,8 @@ pub(crate) fn create(
         id: request.id,
         name,
         name_key,
-        directory: request.directory,
-        directory_key: request.directory_key,
+        path: request.path,
+        path_key: request.path_key,
         language: request.language,
         country: request.country,
     };
@@ -448,9 +445,9 @@ impl From<agdb::DbError> for LibraryUpdateError {
 }
 
 /// Re-derives `name_key` from `library.name`. Self (matching `db_id`) is
-/// excluded from the uniqueness check. `directory`/`directory_key` are not
+/// excluded from the uniqueness check. `directory`/`path_key` are not
 /// validated — directory edits aren't supported; if added, recompute
-/// `directory_key` off the lock and re-check via [`find_by_directory_key`].
+/// `path_key` off the lock and re-check via [`find_by_path_key`].
 pub(crate) fn update(
     db: &mut impl super::DbAccess,
     library: &Library,
@@ -504,26 +501,26 @@ mod tests {
     // Path is randomized so canonicalize() always falls through to the lexical
     // path — that's what these tests exercise.
     fn insert_request(name: &str, dir_suffix: &str) -> LibraryInsert {
-        let directory = PathBuf::from(format!("/tmp/lyra-test-{}-{dir_suffix}", nanoid!()));
-        let directory_key = directory_key_for(&directory);
+        let path = PathBuf::from(format!("/tmp/lyra-test-{}-{dir_suffix}", nanoid!()));
+        let path_key = path_key_for(&path);
         LibraryInsert {
             id: nanoid!(),
             name: name.to_string(),
-            directory,
-            directory_key,
+            path,
+            path_key,
             language: None,
             country: None,
         }
     }
 
     fn insert_request_at(name: &str, dir: &str) -> LibraryInsert {
-        let directory = PathBuf::from(dir);
-        let directory_key = directory_key_for(&directory);
+        let path = PathBuf::from(dir);
+        let path_key = path_key_for(&path);
         LibraryInsert {
             id: nanoid!(),
             name: name.to_string(),
-            directory,
-            directory_key,
+            path,
+            path_key,
             language: None,
             country: None,
         }
@@ -645,7 +642,7 @@ mod tests {
         let outcome = db.transaction_mut(|t| -> anyhow::Result<_> {
             Ok(create(t, insert_request_at("Second", &dup_input)))
         })?;
-        assert!(matches!(outcome, Err(LibraryCreateError::DirectoryInUse(_))));
+        assert!(matches!(outcome, Err(LibraryCreateError::PathInUse(_))));
         Ok(())
     }
 

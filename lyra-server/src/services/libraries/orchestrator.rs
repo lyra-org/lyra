@@ -184,7 +184,7 @@ async fn run_library_sync(db: DbAsync, library: Library, library_db_id: DbId, ru
         set_phase(library_db_id, run_id, LibrarySyncPhase::Metadata).await;
         add_metadata(&db, &library, entries).await?;
 
-        eager_sync_cover_metadata(&db, library_db_id, &library.directory).await;
+        eager_sync_cover_metadata(&db, library_db_id, &library.path).await;
 
         set_phase(library_db_id, run_id, LibrarySyncPhase::ProviderRefresh).await;
         let options = LibraryRefreshOptions {

@@ -222,7 +222,7 @@ async fn refresh_entity_metadata_inner(
                 let (release_entity, tracks, artists, library_root) = {
                     let db = STATE.db.read().await;
                     let library_root = if let Some(library_db_id) = library_db_id {
-                        db::libraries::get_by_id(&db, library_db_id)?.map(|library| library.directory)
+                        db::libraries::get_by_id(&db, library_db_id)?.map(|library| library.path)
                     } else {
                         None
                     };
@@ -578,7 +578,7 @@ async fn refresh_library_metadata_inner(
     };
     let covers_root = configured_covers_root();
     let cover_paths = CoverPaths {
-        library_root: Some(library.directory.as_path()),
+        library_root: Some(library.path.as_path()),
         covers_root: covers_root.as_deref(),
     };
     sync_library_cover_scope(

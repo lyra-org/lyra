@@ -151,7 +151,7 @@ pub(crate) async fn run_capture(library_db_id: DbId, output_path: &str) -> anyho
     let provider_ids: Vec<String> = providers.iter().map(|p| p.provider_id.clone()).collect();
 
     let capture_library = CaptureLibrary {
-        directory: library.directory.to_string_lossy().to_string(),
+        directory: library.path.to_string_lossy().to_string(),
         language: library.language.clone(),
         country: library.country.clone(),
     };
