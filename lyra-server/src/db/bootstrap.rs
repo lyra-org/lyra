@@ -15,11 +15,22 @@ use tokio::sync::RwLock;
 use super::{
     DbAsync,
     indexes,
+    process_lock::{
+        self,
+        DbProcessLock,
+        LockMode,
+    },
 };
 use crate::config::{
     DbConfig,
     DbKind,
 };
+
+/// Result of `create`: opened DB plus the lock guard for its on-disk file.
+pub(crate) struct Created {
+    pub(crate) db: DbAsync,
+    pub(crate) lock: Option<DbProcessLock>,
+}
 
 pub(crate) const ROOT_COLLECTION_ALIASES: &[&str] = &[
     "api_keys",
@@ -129,9 +140,45 @@ pub(crate) fn initialize(db: &mut DbAny) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn create(config: &DbConfig) -> anyhow::Result<DbAsync> {
+/// Server-side path: lock + open + schema init.
+pub(crate) fn create(config: &DbConfig) -> anyhow::Result<Created> {
+    let lock = process_lock::acquire(config, LockMode::Blocking)?;
+
     let db_path = config.path.to_string_lossy();
+    if !matches!(config.kind, DbKind::Memory) {
+        tracing::info!(
+            path = %config.path.display(),
+            kind = kind_label(config.kind),
+            "opening db (may apply WAL recovery)"
+        );
+    } else {
+        tracing::debug!(
+            path = %config.path.display(),
+            "opening in-memory db"
+        );
+    }
     let mut db = open(config.kind, db_path.as_ref())?;
     initialize(&mut db)?;
+    Ok(Created {
+        db: Arc::new(RwLock::new(db)),
+        lock,
+    })
+}
+
+fn kind_label(kind: DbKind) -> &'static str {
+    match kind {
+        DbKind::Memory => "memory",
+        DbKind::File => "file",
+        DbKind::Mmap => "mmap",
+    }
+}
+
+/// In-memory placeholder for `DbHandle::reset_with`. `temp_dir()`-anchored
+/// because `DbMemory::new()` loads from file if one exists; `nanoid` for
+/// per-call uniqueness even if external serialization breaks down.
+pub(crate) fn placeholder() -> anyhow::Result<DbAsync> {
+    let placeholder_path =
+        std::env::temp_dir().join(format!("lyra-db-placeholder-{}", nanoid::nanoid!()));
+    let db = open(DbKind::Memory, placeholder_path.to_string_lossy().as_ref())?;
     Ok(Arc::new(RwLock::new(db)))
 }
