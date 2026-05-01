@@ -1193,12 +1193,12 @@ local BITRATE_TEST_CHUNK = string.rep("0", 65536)
 
 local function parse_bitrate_test_size(ctx: ApiContext): (number?, ApiResponse?)
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local raw_size = if query then query.Size or query.size else nil
+	local raw_size = base.parse_query_string(query, { "Size", "size" }, nil)
 	if raw_size == nil then
 		return BITRATE_TEST_DEFAULT_SIZE, nil
 	end
 
-	local size = if type(raw_size) == "number" then raw_size else tonumber(base.trim(raw_size) or "")
+	local size = tonumber(base.trim(raw_size) or "")
 	if type(size) ~= "number" or size ~= size or math.floor(size) ~= size then
 		return nil,
 			base.bad_request(
@@ -3006,7 +3006,8 @@ api.post(P .. "/Sessions/{sessionId}/Playing/{command}", function(ctx: ApiContex
 		end
 		resolved_command = resolved
 	elseif command == "Seek" then
-		seek_ticks = if query then tonumber(query.seekPositionTicks or query.SeekPositionTicks) else nil
+		local raw_ticks = base.parse_query_string(query, { "seekPositionTicks", "SeekPositionTicks" }, nil)
+		seek_ticks = if raw_ticks then tonumber(raw_ticks) else nil
 		if not seek_ticks then
 			return base.bad_request("seekPositionTicks is required for Seek")
 		end
@@ -3403,23 +3404,26 @@ local function handle_audio_stream_route(ctx: ApiContext): ApiResponse
 	local is_head_request = request_method == "HEAD"
 	local request_path = if ctx and ctx.request then ctx.request.path else nil
 	local normalized_request_path = if type(request_path) == "string" then string.lower(request_path) else nil
-	local raw_static = if query then (query.static or query.Static) else nil
-	local raw_container = if query then (query.container or query.Container) else nil
+	local raw_static = base.parse_query_string(query, { "static", "Static" }, nil)
+	local raw_container = base.parse_query_string(query, { "container", "Container" }, nil)
 	local static_direct_copy = jellyfin_boolean(raw_static) == true
 
-	local raw_codec = if query then (query.audioCodec or query.AudioCodec) else nil
-	local raw_transcoding_container = if query then (query.transcodingContainer or query.TranscodingContainer) else nil
-	local raw_max_bitrate = if query then (query.MaxStreamingBitrate or query.maxStreamingBitrate) else nil
-	local raw_audio_bitrate = if query then (query.audioBitRate or query.AudioBitRate or query.AudioBitrate) else nil
-	local raw_sample_rate = if query then (query.audioSampleRate or query.AudioSampleRate) else nil
-	local raw_bit_depth = if query then (query.maxAudioBitDepth or query.MaxAudioBitDepth) else nil
-	local raw_channels = if query then (query.maxAudioChannels or query.MaxAudioChannels) else nil
-	local raw_enable_audio_vbr = if query then (query.enableAudioVbrEncoding or query.EnableAudioVbrEncoding) else nil
-	local raw_auto_copy = if query then (query.enableAutoStreamCopy or query.EnableAutoStreamCopy) else nil
-	local raw_enable_direct_play = if query then (query.enableDirectPlay or query.EnableDirectPlay) else nil
-	local raw_enable_transcoding = if query then (query.enableTranscoding or query.EnableTranscoding) else nil
-	local raw_transcoding_protocol = if query then (query.transcodingProtocol or query.TranscodingProtocol) else nil
-	local raw_start_ticks = if query then (query.startTimeTicks or query.StartTimeTicks) else nil
+	local raw_codec = base.parse_query_string(query, { "audioCodec", "AudioCodec" }, nil)
+	local raw_transcoding_container =
+		base.parse_query_string(query, { "transcodingContainer", "TranscodingContainer" }, nil)
+	local raw_max_bitrate = base.parse_query_string(query, { "MaxStreamingBitrate", "maxStreamingBitrate" }, nil)
+	local raw_audio_bitrate = base.parse_query_string(query, { "audioBitRate", "AudioBitRate", "AudioBitrate" }, nil)
+	local raw_sample_rate = base.parse_query_string(query, { "audioSampleRate", "AudioSampleRate" }, nil)
+	local raw_bit_depth = base.parse_query_string(query, { "maxAudioBitDepth", "MaxAudioBitDepth" }, nil)
+	local raw_channels = base.parse_query_string(query, { "maxAudioChannels", "MaxAudioChannels" }, nil)
+	local raw_enable_audio_vbr =
+		base.parse_query_string(query, { "enableAudioVbrEncoding", "EnableAudioVbrEncoding" }, nil)
+	local raw_auto_copy = base.parse_query_string(query, { "enableAutoStreamCopy", "EnableAutoStreamCopy" }, nil)
+	local raw_enable_direct_play = base.parse_query_string(query, { "enableDirectPlay", "EnableDirectPlay" }, nil)
+	local raw_enable_transcoding = base.parse_query_string(query, { "enableTranscoding", "EnableTranscoding" }, nil)
+	local raw_transcoding_protocol =
+		base.parse_query_string(query, { "transcodingProtocol", "TranscodingProtocol" }, nil)
+	local raw_start_ticks = base.parse_query_string(query, { "startTimeTicks", "StartTimeTicks" }, nil)
 
 	local transcoding_container = parse_first_csv_value(raw_transcoding_container)
 	local preferred_codecs = parse_preferred_csv_values(raw_codec)
@@ -3613,9 +3617,11 @@ local function build_audio_hls_master_query_string(query: ApiQueryParams?, codec
 		`audioCodec={encode_hls_query_component(codec)}`,
 	}
 	for _, key in keys do
-		local value = if query then query[key] else nil
-		if type(value) == "string" then
-			table.insert(parts, `{encode_hls_query_component(key)}={encode_hls_query_component(value)}`)
+		local values = if query then query[key] else nil
+		if values ~= nil then
+			for _, value in values do
+				table.insert(parts, `{encode_hls_query_component(key)}={encode_hls_query_component(value)}`)
+			end
 		end
 	end
 
@@ -3636,19 +3642,20 @@ local function codec_string_for_audio_hls(codec: string): string?
 end
 
 local function resolve_audio_hls_query_options(query: ApiQueryParams?): (api.HlsServeOptions?, string?, ApiResponse?)
-	local raw_codec = if query then (query.audioCodec or query.AudioCodec or query.codec) else nil
+	local raw_codec = base.parse_query_string(query, { "audioCodec", "AudioCodec", "codec" }, nil)
 	local preferred_codecs = parse_preferred_csv_values(raw_codec)
 	local selected_codec = find_supported_audio_hls_codec(preferred_codecs)
 	if preferred_codecs ~= nil and selected_codec == nil then
 		return nil, nil, base.bad_request("unsupported hls codec; supported values: aac, alac, flac")
 	end
 
-	local raw_audio_bitrate = if query then (query.audioBitRate or query.AudioBitRate or query.AudioBitrate) else nil
-	local raw_max_bitrate = if query then (query.maxStreamingBitrate or query.MaxStreamingBitrate) else nil
-	local raw_sample_rate = if query then (query.audioSampleRate or query.AudioSampleRate) else nil
-	local raw_channels = if query then (query.maxAudioChannels or query.MaxAudioChannels) else nil
-	local raw_enable_audio_vbr = if query then (query.enableAudioVbrEncoding or query.EnableAudioVbrEncoding) else nil
-	local raw_start_ticks = if query then (query.startTimeTicks or query.StartTimeTicks) else nil
+	local raw_audio_bitrate = base.parse_query_string(query, { "audioBitRate", "AudioBitRate", "AudioBitrate" }, nil)
+	local raw_max_bitrate = base.parse_query_string(query, { "maxStreamingBitrate", "MaxStreamingBitrate" }, nil)
+	local raw_sample_rate = base.parse_query_string(query, { "audioSampleRate", "AudioSampleRate" }, nil)
+	local raw_channels = base.parse_query_string(query, { "maxAudioChannels", "MaxAudioChannels" }, nil)
+	local raw_enable_audio_vbr =
+		base.parse_query_string(query, { "enableAudioVbrEncoding", "EnableAudioVbrEncoding" }, nil)
+	local raw_start_ticks = base.parse_query_string(query, { "startTimeTicks", "StartTimeTicks" }, nil)
 
 	local requested_audio_bitrate, requested_audio_bitrate_err = extract_integer_param(raw_audio_bitrate)
 	if requested_audio_bitrate_err then

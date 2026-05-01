@@ -166,7 +166,15 @@ local function get_query_token(query: ApiQueryParams?): string?
 		return nil
 	end
 
-	return base.trim(query.ApiKey) or base.trim(query.api_key)
+	local function first(key: string): string?
+		local values = query[key]
+		if values ~= nil and #values > 0 then
+			return values[1]
+		end
+		return nil
+	end
+
+	return base.trim(first("ApiKey")) or base.trim(first("api_key"))
 end
 
 local function build_jellyfin_user_configuration(): JsonObject
