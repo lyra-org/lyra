@@ -426,7 +426,7 @@ fn library_context_value(library: &Library) -> Value {
         "db_id": library.db_id.map(|id| id.0),
         "id": library.id,
         "name": library.name,
-        "directory": library.directory.to_string_lossy().to_string(),
+        "directory": library.path.to_string_lossy().to_string(),
         "language": library.language,
         "country": library.country,
     })
@@ -1066,8 +1066,8 @@ mod tests {
             id: nanoid!(),
             name: "Library".to_string(),
             name_key: "library".to_string(),
-            directory: PathBuf::from("/music"),
-            directory_key: "/music".to_string(),
+            path: PathBuf::from("/music"),
+            path_key: "/music".to_string(),
             language: Some("jpn".to_string()),
             country: Some("JP".to_string()),
         };

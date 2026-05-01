@@ -203,7 +203,7 @@ pub(crate) fn sync_entries(
 
     for (path, e) in &disk_by_path {
         // skip the root directory entry, as we store that as the library itself
-        if path == &PathBuf::from(&library.directory) {
+        if path == &PathBuf::from(&library.path) {
             continue;
         }
 

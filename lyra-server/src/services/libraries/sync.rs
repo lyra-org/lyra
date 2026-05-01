@@ -70,7 +70,7 @@ pub(crate) async fn add_metadata(
     let mut parsed_groups = Vec::new();
     for (coalesce_group_key, entries) in groups.into_iter().enumerate() {
         let source_dir =
-            source_directory_for_group_entries(&entries).unwrap_or_else(|| library.directory.clone());
+            source_directory_for_group_entries(&entries).unwrap_or_else(|| library.path.clone());
         let entry_source_dirs: BTreeMap<DbId, std::path::PathBuf> = entries
             .iter()
             .filter_map(|entry| {
@@ -138,7 +138,7 @@ pub(crate) async fn sync_library(db: &DbAsync, library: &Library) -> anyhow::Res
         .db_id
         .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
 
-    eager_sync_cover_metadata(db, library_db_id, &library.directory).await;
+    eager_sync_cover_metadata(db, library_db_id, &library.path).await;
 
     let options = LibraryRefreshOptions {
         replace_cover: false,

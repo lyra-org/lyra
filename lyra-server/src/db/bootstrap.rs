@@ -76,7 +76,7 @@ const CORE_INDEXES: &[&str] = &[
     // filters output but doesn't stop traversal, so without these the checks
     // walk the entire libraries subgraph on every create/update.
     "name_key",
-    "directory_key",
+    "path_key",
     "provider_id",
     "track_id",
     "state",

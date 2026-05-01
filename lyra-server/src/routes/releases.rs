@@ -362,7 +362,7 @@ async fn get_release_cover(
         let library_root = db::libraries::get_by_release(&db, release_db_id)?
             .into_iter()
             .next()
-            .map(|library| library.directory);
+            .map(|library| library.path);
         let cover_paths = covers::CoverPaths {
             library_root: library_root.as_deref(),
             covers_root: covers_root.as_deref(),

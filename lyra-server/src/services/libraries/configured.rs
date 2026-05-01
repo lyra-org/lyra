@@ -48,9 +48,9 @@ async fn resolve_configured_library(config: &Config) -> anyhow::Result<Option<Li
     // form is the comparison key only. `canonicalize` is a syscall — keep it
     // off the write lock.
     let stored_path = path.clone();
-    let directory_key = {
+    let path_key = {
         let candidate = stored_path.clone();
-        tokio::task::spawn_blocking(move || db::libraries::directory_key_for(&candidate))
+        tokio::task::spawn_blocking(move || db::libraries::path_key_for(&candidate))
             .await
             .map_err(|e| anyhow::anyhow!("path canonicalize task panicked: {e}"))?
     };
@@ -68,10 +68,10 @@ async fn resolve_configured_library(config: &Config) -> anyhow::Result<Option<Li
     let db = STATE.db.get();
     let mut db_write = db.write().await;
     let lookup_path = stored_path.clone();
-    let lookup_key = directory_key.clone();
+    let lookup_key = path_key.clone();
     let outcome =
         db_write.transaction_mut(|t| -> Result<Library, db::libraries::LibraryCreateError> {
-            if let Some(existing) = db::libraries::find_by_directory_key(t, &lookup_key)? {
+            if let Some(existing) = db::libraries::find_by_path_key(t, &lookup_key)? {
                 return Ok(existing);
             }
             db::libraries::create(
@@ -79,8 +79,8 @@ async fn resolve_configured_library(config: &Config) -> anyhow::Result<Option<Li
                 db::libraries::LibraryInsert {
                     id: nanoid!(),
                     name: display_name,
-                    directory: lookup_path,
-                    directory_key: lookup_key,
+                    path: lookup_path,
+                    path_key: lookup_key,
                     language,
                     country,
                 },
@@ -93,14 +93,14 @@ async fn resolve_configured_library(config: &Config) -> anyhow::Result<Option<Li
             "configured library name '{name}' is already in use; set `library.name` in \
              config.json to a unique value"
         )),
-        Err(db::libraries::LibraryCreateError::DirectoryInUse(conflicting_path)) => {
-            // Unreachable unless `find_by_directory_key` and `create` disagree on
+        Err(db::libraries::LibraryCreateError::PathInUse(conflicting_path)) => {
+            // Unreachable unless `find_by_path_key` and `create` disagree on
             // normalization — log the inputs so the divergence is debuggable.
             tracing::error!(
                 conflicting = %conflicting_path.display(),
                 configured = %stored_path.display(),
-                directory_key = %directory_key,
-                "configured-library directory_key divergence"
+                path_key = %path_key,
+                "configured-library path_key divergence"
             );
             Err(anyhow::anyhow!(
                 "configured library path {} is already in use by another library; \

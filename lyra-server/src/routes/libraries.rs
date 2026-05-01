@@ -92,7 +92,7 @@ impl LibraryResponse {
         Self {
             id: lib.id,
             name: lib.name,
-            directory: include_directory.then_some(lib.directory),
+            directory: include_directory.then_some(lib.path),
             language: lib.language,
             country: lib.country,
         }
@@ -175,7 +175,7 @@ async fn create_library(
     // `is_dir`/`canonicalize` are syscalls; offload to keep a stale mount from
     // stalling the worker, and to keep them off the write lock. `directory`
     // stays as user input so the library follows symlink retargeting.
-    let directory_key = {
+    let path_key = {
         let candidate = directory.clone();
         tokio::task::spawn_blocking(move || -> Result<String, AppError> {
             if !candidate.is_dir() {
@@ -184,7 +184,7 @@ async fn create_library(
                     candidate.display()
                 )));
             }
-            Ok(db::libraries::directory_key_for(&candidate))
+            Ok(db::libraries::path_key_for(&candidate))
         })
         .await
         .map_err(|e| anyhow!("directory canonicalize task panicked: {e}"))??
@@ -211,8 +211,8 @@ async fn create_library(
                     db::libraries::LibraryInsert {
                         id: nanoid!(),
                         name: library.name,
-                        directory,
-                        directory_key,
+                        path: directory,
+                        path_key,
                         language,
                         country,
                     },
@@ -225,7 +225,7 @@ async fn create_library(
             }
             Err(
                 err @ (db::libraries::LibraryCreateError::NameInUse(_)
-                | db::libraries::LibraryCreateError::DirectoryInUse(_)),
+                | db::libraries::LibraryCreateError::PathInUse(_)),
             ) => {
                 return Err(AppError::conflict(err.to_string()));
             }
@@ -312,8 +312,8 @@ async fn update_library(
         id: library.id,
         name: updated_name,
         name_key: library.name_key,
-        directory: library.directory,
-        directory_key: library.directory_key,
+        path: library.path,
+        path_key: library.path_key,
         language: updated_language,
         country: updated_country,
     };
