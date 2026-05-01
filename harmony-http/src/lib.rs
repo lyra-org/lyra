@@ -34,7 +34,11 @@ use percent_encoding::{
 };
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
-use tokio::sync::RwLock;
+use tokio::sync::{
+    OwnedSemaphorePermit,
+    RwLock,
+    Semaphore,
+};
 
 /// Raw response body bytes that report as `string` in Luau type annotations.
 #[derive(Clone, Debug, Default)]
@@ -90,6 +94,8 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
 
 static RATE_LIMITER: LazyLock<Arc<RwLock<RateLimiter>>> =
     LazyLock::new(|| Arc::new(RwLock::new(RateLimiter::new())));
+static CONCURRENCY_LIMITER: LazyLock<Arc<RwLock<ConcurrencyLimiter>>> =
+    LazyLock::new(|| Arc::new(RwLock::new(ConcurrencyLimiter::new())));
 static DEFAULT_USER_AGENT: LazyLock<StdRwLock<Option<String>>> =
     LazyLock::new(|| StdRwLock::new(None));
 
@@ -190,6 +196,62 @@ impl RateLimiter {
             state.next_allowed = now + interval;
             None
         }
+    }
+}
+
+struct ConcurrencyEntry {
+    semaphore: Arc<Semaphore>,
+    max_in_flight: usize,
+}
+
+/// Process-wide host-keyed in-flight cap, complementary to [`RateLimiter`]
+/// (which paces requests-per-second). Keyed on the host string from
+/// [`extract_domain`] so a single registration covers every caller in the
+/// process; per-handle keying would re-introduce bursts as soon as a second
+/// caller appeared.
+struct ConcurrencyLimiter {
+    entries: HashMap<String, ConcurrencyEntry>,
+}
+
+impl ConcurrencyLimiter {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+        }
+    }
+
+    /// Tighten-only: a registration is replaced only when the new cap is
+    /// strictly tighter. Last-write-wins would let any caller silently widen
+    /// another caller's cap for the same host; min-wins removes that footgun
+    /// without requiring per-plugin identity at this surface.
+    fn set_limit(&mut self, host: String, max_in_flight: usize) {
+        if let Some(existing) = self.entries.get(&host)
+            && max_in_flight >= existing.max_in_flight
+        {
+            tracing::trace!(
+                host = %host,
+                requested = max_in_flight,
+                effective = existing.max_in_flight,
+                "ignoring concurrency relaxation; tighter cap remains in force",
+            );
+            return;
+        }
+        self.entries.insert(
+            host,
+            ConcurrencyEntry {
+                semaphore: Arc::new(Semaphore::new(max_in_flight)),
+                max_in_flight,
+            },
+        );
+    }
+
+    fn get(&self, host: &str) -> Option<Arc<Semaphore>> {
+        self.entries.get(host).map(|e| e.semaphore.clone())
+    }
+
+    #[cfg(test)]
+    fn max_in_flight(&self, host: &str) -> Option<usize> {
+        self.entries.get(host).map(|e| e.max_in_flight)
     }
 }
 
@@ -350,6 +412,32 @@ struct HttpRateLimitOptions {
     max_retries: Option<u32>,
     /// Defaults to `1000`.
     backoff_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+#[harmony_macros::interface]
+struct HttpConcurrencyOptions {
+    /// Host or full URL; only the host portion is keyed, matching the
+    /// request-time lookup in [`extract_domain`].
+    host: String,
+    /// Maximum simultaneous in-flight requests to this host. Must be ≥ 1.
+    max_in_flight: u32,
+}
+
+impl FromLua for HttpConcurrencyOptions {
+    fn from_lua(value: Value, lua: &Lua) -> mlua::Result<Self> {
+        let table = Table::from_lua(value, lua)
+            .map_err(|_| mlua::Error::runtime("expected options table"))?;
+
+        Ok(Self {
+            host: table
+                .get("host")
+                .map_err(|_| mlua::Error::runtime("missing 'host' field"))?,
+            max_in_flight: table
+                .get("max_in_flight")
+                .map_err(|e| mlua::Error::runtime(format!("invalid 'max_in_flight' field: {e}")))?,
+        })
+    }
 }
 
 impl FromLua for HttpRateLimitOptions {
@@ -620,8 +708,49 @@ async fn execute_single_request(options: &HttpRequestOptions) -> HttpResponse {
     HttpResponse::success(status_code, status_message, headers, cookies, body)
 }
 
-async fn execute_request_with_rate_limit(options: HttpRequestOptions) -> HttpResponse {
+async fn acquire_concurrency_permit(domain: Option<&str>) -> Option<OwnedSemaphorePermit> {
+    let host = domain?;
+    let semaphore = {
+        let limiter = CONCURRENCY_LIMITER.read().await;
+        match limiter.get(host) {
+            Some(s) => s,
+            None => {
+                // Trace level so unregistered hosts stay quiet at info but
+                // remain visible when diagnosing burst behaviour.
+                tracing::trace!(
+                    host = %host,
+                    "no concurrency cap registered; request will not be capped",
+                );
+                return None;
+            }
+        }
+    };
+    // Permit lives for the whole request — including retry-backoff sleep —
+    // so a sibling can't burst past a `Retry-After` cooldown.
+    // The semaphore is never closed, so `acquire_owned` can only fail if it is.
+    Some(
+        semaphore
+            .acquire_owned()
+            .await
+            .expect("concurrency semaphore is never closed"),
+    )
+}
+
+/// Drives the rate-limit + retry + concurrency-cap loop. `request_fn` is
+/// called once per attempt; production passes [`execute_single_request`] while
+/// tests inject a deterministic fake to exercise retry/permit-hold paths
+/// without real HTTP.
+async fn execute_request_loop<F, Fut>(options: HttpRequestOptions, request_fn: F) -> HttpResponse
+where
+    F: Fn(HttpRequestOptions) -> Fut,
+    Fut: std::future::Future<Output = HttpResponse>,
+{
     let domain = extract_domain(&options.url);
+
+    // Acquire the permit before rate-limit pacing: pacing alone lets N tasks
+    // sleep concurrently then burst-fire; the semaphore caps the
+    // "paced + executing" phase to `max_in_flight`.
+    let _concurrency_permit = acquire_concurrency_permit(domain.as_deref()).await;
 
     let config = if let Some(ref d) = domain {
         let limiter = RATE_LIMITER.read().await;
@@ -646,7 +775,7 @@ async fn execute_request_with_rate_limit(options: HttpRequestOptions) -> HttpRes
             }
         }
 
-        let response = execute_single_request(&options).await;
+        let response = request_fn(options.clone()).await;
 
         if let Some(ref d) = domain {
             if let Some(info) = parse_rate_limit_headers(&response.headers) {
@@ -697,6 +826,13 @@ async fn execute_request_with_rate_limit(options: HttpRequestOptions) -> HttpRes
     }
 }
 
+async fn execute_request_with_rate_limit(options: HttpRequestOptions) -> HttpResponse {
+    execute_request_loop(options, |opts| async move {
+        execute_single_request(&opts).await
+    })
+    .await
+}
+
 pub fn set_default_user_agent(user_agent: impl Into<String>) {
     let user_agent = user_agent.into().trim().to_string();
     let mut guard = DEFAULT_USER_AGENT
@@ -724,7 +860,12 @@ struct HttpModule;
     path = "harmony/http",
     aliases(HttpHeaderMap),
     classes(HttpMethod),
-    interfaces(HttpRequestOptions, HttpRateLimitOptions, HttpResponse)
+    interfaces(
+        HttpRequestOptions,
+        HttpRateLimitOptions,
+        HttpConcurrencyOptions,
+        HttpResponse,
+    )
 )]
 impl HttpModule {
     pub async fn request(options: HttpRequestOptions) -> mlua::Result<HttpResponse> {
@@ -740,8 +881,12 @@ impl HttpModule {
         }
 
         // Normalize via extract_domain so callers can pass either a bare host
-        // or a full URL and match the request-time lookup key.
-        let domain = extract_domain(&options.domain).unwrap_or(options.domain);
+        // or a full URL and match the request-time lookup key. `url::Url`
+        // lowercases hosts on parse; lowercase the bare-host fallback too so
+        // `set_rate_limit("EXAMPLE.com", ...)` and a request to
+        // `https://example.com/...` hit the same key.
+        let domain = extract_domain(&options.domain)
+            .unwrap_or_else(|| options.domain.to_ascii_lowercase());
 
         let config = RateLimitConfig {
             requests_per_second,
@@ -752,6 +897,26 @@ impl HttpModule {
 
         let mut limiter = RATE_LIMITER.write().await;
         limiter.set_config(domain, config);
+
+        Ok(())
+    }
+
+    /// Register an in-flight cap for `host`. Tighten-only — see
+    /// [`ConcurrencyLimiter::set_limit`]. Reconfiguring mid-burst briefly
+    /// allows `old_in_flight + new_in_flight` permits while the old
+    /// semaphore drains; avoid live reconfiguration in hot windows.
+    pub async fn set_max_in_flight(_lua: Lua, options: HttpConcurrencyOptions) -> mlua::Result<()> {
+        if options.max_in_flight == 0 {
+            return Err(mlua::Error::runtime("max_in_flight must be at least 1"));
+        }
+
+        // Mirror the set_rate_limit normalization (see above) so registrations
+        // share the host key the request path looks up.
+        let host = extract_domain(&options.host)
+            .unwrap_or_else(|| options.host.to_ascii_lowercase());
+
+        let mut limiter = CONCURRENCY_LIMITER.write().await;
+        limiter.set_limit(host, options.max_in_flight as usize);
 
         Ok(())
     }
@@ -843,8 +1008,211 @@ mod tests {
             .get("set_rate_limit")
             .expect("register set_rate_limit");
         let _: Function = table
+            .get("set_max_in_flight")
+            .expect("register set_max_in_flight");
+        let _: Function = table
             .get("encode_uri_component")
             .expect("register encode_uri_component");
+    }
+
+    #[tokio::test]
+    async fn concurrency_limiter_stores_host_key_for_full_url_input() {
+        let mut limiter = super::ConcurrencyLimiter::new();
+        let normalized =
+            super::extract_domain("https://lrclib.net/api/get").unwrap_or("lrclib.net".to_string());
+        limiter.set_limit(normalized, 1);
+        assert!(limiter.get("lrclib.net").is_some());
+        assert!(limiter.get("musicbrainz.org").is_none());
+    }
+
+    #[tokio::test]
+    async fn concurrency_limiter_serializes_in_flight_requests() {
+        let mut limiter = super::ConcurrencyLimiter::new();
+        limiter.set_limit("example.com".to_string(), 1);
+
+        let sem = limiter.get("example.com").expect("limit set above");
+
+        let permit = sem
+            .clone()
+            .try_acquire_owned()
+            .expect("first acquire succeeds while host is uncontended");
+
+        assert!(
+            sem.clone().try_acquire_owned().is_err(),
+            "second permit must fail while first is held",
+        );
+
+        drop(permit);
+
+        let _ = sem
+            .clone()
+            .try_acquire_owned()
+            .expect("second acquire succeeds after release");
+    }
+
+    #[tokio::test]
+    async fn concurrency_limiter_tighten_only_rejects_relaxation() {
+        let mut limiter = super::ConcurrencyLimiter::new();
+        limiter.set_limit("example.com".to_string(), 5);
+        assert_eq!(limiter.max_in_flight("example.com"), Some(5));
+
+        limiter.set_limit("example.com".to_string(), 10);
+        assert_eq!(limiter.max_in_flight("example.com"), Some(5));
+
+        limiter.set_limit("example.com".to_string(), 2);
+        assert_eq!(limiter.max_in_flight("example.com"), Some(2));
+
+        limiter.set_limit("example.com".to_string(), 2);
+        assert_eq!(limiter.max_in_flight("example.com"), Some(2));
+    }
+
+    #[tokio::test]
+    async fn concurrency_permit_shared_across_callers() {
+        // Unique host to avoid bleed with siblings sharing the global limiter.
+        let host = "permit-shared-test.example".to_string();
+        {
+            let mut limiter = super::CONCURRENCY_LIMITER.write().await;
+            limiter.set_limit(host.clone(), 1);
+        }
+
+        let sem = {
+            let limiter = super::CONCURRENCY_LIMITER.read().await;
+            limiter.get(&host).expect("cap registered above")
+        };
+        assert_eq!(sem.available_permits(), 1);
+
+        let first = super::acquire_concurrency_permit(Some(&host))
+            .await
+            .expect("first caller registered cap");
+        assert_eq!(
+            sem.available_permits(),
+            0,
+            "first caller must consume the only permit on the shared semaphore",
+        );
+
+        drop(first);
+        assert_eq!(
+            sem.available_permits(),
+            1,
+            "permit must return to the shared semaphore on release",
+        );
+
+        let _second = super::acquire_concurrency_permit(Some(&host))
+            .await
+            .expect("second caller proceeds after first releases");
+        assert_eq!(sem.available_permits(), 0);
+    }
+
+    #[test]
+    fn bare_host_setter_fallback_matches_url_request_extraction() {
+        // url::Url lowercases hosts on parse; the bare-host fallback must
+        // lowercase too or registrations under uppercase keys silently miss.
+        let bare_uppercase = "EXAMPLE.com";
+        let stored_key = super::extract_domain(bare_uppercase)
+            .unwrap_or_else(|| bare_uppercase.to_ascii_lowercase());
+        let url_extracted =
+            super::extract_domain("https://example.com/foo").expect("URL parses to host");
+
+        assert_eq!(stored_key, "example.com");
+        assert_eq!(stored_key, url_extracted);
+    }
+
+    #[tokio::test]
+    async fn concurrency_permit_held_across_retries() {
+        use std::sync::Arc;
+        use std::sync::atomic::{
+            AtomicUsize,
+            Ordering,
+        };
+
+        // Unique host to avoid global-state bleed between tests.
+        let host = "permit-retries-test.example".to_string();
+        let url = format!("https://{host}/x");
+
+        {
+            let mut limiter = super::CONCURRENCY_LIMITER.write().await;
+            limiter.set_limit(host.clone(), 1);
+        }
+        {
+            let mut limiter = super::RATE_LIMITER.write().await;
+            limiter.set_config(
+                host.clone(),
+                super::RateLimitConfig {
+                    requests_per_second: 100.0,
+                    retry_status_codes: vec![503],
+                    max_retries: 1,
+                    initial_backoff: std::time::Duration::from_millis(40),
+                },
+            );
+        }
+
+        let options = super::HttpRequestOptions {
+            url: url.clone(),
+            method: super::HttpMethod::Get,
+            body: None,
+            headers: None,
+            cookies: None,
+        };
+
+        let attempt_counter = Arc::new(AtomicUsize::new(0));
+        let (signal_tx, mut signal_rx) = tokio::sync::mpsc::unbounded_channel::<usize>();
+
+        let request_fn = {
+            let attempt_counter = attempt_counter.clone();
+            let signal_tx = signal_tx.clone();
+            move |_opts: super::HttpRequestOptions| {
+                let attempt_counter = attempt_counter.clone();
+                let signal_tx = signal_tx.clone();
+                async move {
+                    let n = attempt_counter.fetch_add(1, Ordering::SeqCst);
+                    let _ = signal_tx.send(n);
+                    if n == 0 {
+                        super::HttpResponse::error("retry", Some(503), "first attempt".into())
+                    } else {
+                        super::HttpResponse::success(
+                            200,
+                            "OK".into(),
+                            super::HttpHeaderMap::default(),
+                            super::HttpHeaderMap::default(),
+                            Vec::new(),
+                        )
+                    }
+                }
+            }
+        };
+
+        let h = tokio::spawn(super::execute_request_loop(options, request_fn));
+
+        signal_rx
+            .recv()
+            .await
+            .expect("first attempt must fire and signal");
+
+        let sem = {
+            let limiter = super::CONCURRENCY_LIMITER.read().await;
+            limiter.get(&host).expect("cap registered above")
+        };
+        assert!(
+            sem.clone().try_acquire_owned().is_err(),
+            "sibling acquire must be blocked while main request is in retry backoff",
+        );
+
+        signal_rx
+            .recv()
+            .await
+            .expect("second attempt must fire after backoff");
+        let response = h.await.expect("request loop completes");
+
+        assert_eq!(response.status_code, Some(200));
+        assert_eq!(
+            response.retries, 1,
+            "retry count must reflect the 503-then-200 sequence",
+        );
+
+        let _ = sem
+            .clone()
+            .try_acquire_owned()
+            .expect("sibling acquires immediately after main releases");
     }
 
     #[test]
@@ -911,6 +1279,9 @@ mod tests {
         assert!(rendered.contains("function http.set_rate_limit(options: HttpRateLimitOptions)"));
         assert!(
             !rendered.contains("function http.set_rate_limit(options: HttpRateLimitOptions): ()")
+        );
+        assert!(
+            rendered.contains("function http.set_max_in_flight(options: HttpConcurrencyOptions)")
         );
         assert!(rendered.contains("string | buffer"));
     }
