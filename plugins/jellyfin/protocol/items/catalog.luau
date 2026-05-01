@@ -1488,7 +1488,7 @@ function helpers.people_from_credits(credits: { CreditedArtistProjectionInfo }?)
 		end
 		local person_type = helpers.person_type_for_credit(credit.type, credited_artist.source)
 		local role = module.trim(credit.detail)
-		local key = artist_id .. "\t" .. person_type .. "\t" .. (role or "")
+		local key = `{artist_id}\t{person_type}\t{role or ""}`
 		if seen[key] then
 			continue
 		end
@@ -1666,7 +1666,7 @@ function helpers.to_artist_item(
 			artist.db_id,
 			artist_item_id,
 			user_id,
-			"Artist-" .. (module.trim(artist.artist_name) or ""),
+			`Artist-{module.trim(artist.artist_name) or ""}`,
 			true,
 			favorite_lookup,
 			context
@@ -1730,7 +1730,7 @@ function helpers.to_genre_item(
 		SongCount = if counts then counts.song_count else nil,
 		ArtistCount = if counts then counts.artist_count else nil,
 		ChildCount = if counts then counts.release_count + counts.song_count + counts.artist_count else nil,
-		UserData = module.get_user_data({ key = "MusicGenre-" .. safe_name, item_hex_id = hex_id }),
+		UserData = module.get_user_data({ key = `MusicGenre-{safe_name}`, item_hex_id = hex_id }),
 		ImageTags = if image_tag then { Primary = image_tag } else nil,
 		ImageBlurHashes = nil,
 		LocationType = "FileSystem",
@@ -1754,7 +1754,7 @@ function helpers.to_library_view_item(lib: LibraryInfo?): ItemInfo?
 		Type = "CollectionFolder",
 		CollectionType = "music",
 		IsFolder = true,
-		UserData = module.get_user_data({ key = "CollectionFolder-" .. hex_id, item_hex_id = hex_id }),
+		UserData = module.get_user_data({ key = `CollectionFolder-{hex_id}`, item_hex_id = hex_id }),
 		LocationType = "FileSystem",
 		MediaType = "Unknown",
 	} :: ItemInfo
@@ -1929,7 +1929,7 @@ function helpers.to_playlist_item(
 			playlist.db_id,
 			playlist_item_id,
 			user_id,
-			"Playlist-" .. (playlist.name or ""),
+			`Playlist-{playlist.name or ""}`,
 			false,
 			if context then context.favorite_lookup else nil,
 			context
@@ -2000,7 +2000,7 @@ function helpers.to_release_item(
 			release.db_id,
 			release_item_id,
 			user_id,
-			(release_artist or "") .. "-" .. (module.trim(release.release_title) or ""),
+			`{release_artist or ""}-{module.trim(release.release_title) or ""}`,
 			true,
 			favorite_lookup,
 			context
@@ -2196,7 +2196,7 @@ function helpers.to_track_item(
 			track.db_id,
 			track_item_id,
 			user_id,
-			tostring(track.disc or 0) .. "-" .. tostring(track.track or 0) .. (module.trim(track.track_title) or ""),
+			`{track.disc or 0}-{track.track or 0}{module.trim(track.track_title) or ""}`,
 			true,
 			favorite_lookup,
 			context
@@ -3118,7 +3118,7 @@ function helpers.favorite_id_lookup(options: ItemsQueryOptions?, force_load: boo
 			-- `favorites.list_ids` errors rather than silently truncating above the server cap.
 			-- Surface as a warning so power users with very large favorite sets see why the
 			-- IsFavorite filter returns zero items for that kind.
-			print(`favorites.list_ids failed for user_id={user_id} kind={kind}: {tostring(ids)}`)
+			warn(`favorites.list_ids failed for user_id={user_id} kind={kind}: {tostring(ids)}`)
 		end
 	end
 

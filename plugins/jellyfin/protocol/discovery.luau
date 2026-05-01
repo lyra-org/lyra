@@ -50,7 +50,7 @@ function module.start(server_info: ServerInfo)
 		local bind_ok, bind_result =
 			pcall(net.udp_bind, { address = "0.0.0.0", port = constants.DISCOVERY_PORT } :: net.UdpBindOptions)
 		if not bind_ok then
-			print("auto-discovery unavailable: " .. tostring(bind_result))
+			warn(`auto-discovery unavailable: {bind_result}`)
 			return
 		end
 		local socket = bind_result :: net.UdpSocket
@@ -107,7 +107,7 @@ function module.start(server_info: ServerInfo)
 				continue
 			end
 
-			local address = "http://" .. local_ip .. ":" .. tostring(server_info.port) .. constants.ROUTE_PREFIX
+			local address = `http://{local_ip}:{server_info.port}{constants.ROUTE_PREFIX}`
 			local response = json.encode({
 				Address = address,
 				Id = constants.SERVER_ID,
