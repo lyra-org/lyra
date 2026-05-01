@@ -29,12 +29,13 @@ use crate::{
     db::{
         self,
         DbAsync,
+        compact::FRAGMENTATION_RATIO_THRESHOLD,
     },
     services::playback_sessions,
 };
 
 const SWEEP_INTERVAL: Duration = Duration::from_secs(60);
-const FRAGMENTATION_RATIO_THRESHOLD: f64 = 1.3;
+// `db::compact` shares the ratio with a higher waste floor (cold-start is visible).
 const MIN_WASTE_BYTES: u64 = 50 * 1024 * 1024;
 
 /// `storage_path` is `None` for in-memory DBs.

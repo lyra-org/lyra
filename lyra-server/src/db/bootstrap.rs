@@ -14,6 +14,7 @@ use tokio::sync::RwLock;
 
 use super::{
     DbAsync,
+    compact,
     indexes,
     process_lock::{
         self,
@@ -140,9 +141,10 @@ pub(crate) fn initialize(db: &mut DbAny) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Server-side path: lock + open + schema init.
+/// Server-side path: lock + pre-open compaction (mmap) + open + schema init.
 pub(crate) fn create(config: &DbConfig) -> anyhow::Result<Created> {
     let lock = process_lock::acquire(config, LockMode::Blocking)?;
+    compact::pre_open(config)?;
 
     let db_path = config.path.to_string_lossy();
     if !matches!(config.kind, DbKind::Memory) {

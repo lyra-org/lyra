@@ -6,6 +6,7 @@
 pub(crate) mod api_keys;
 pub(crate) mod artists;
 pub(crate) mod bootstrap;
+pub(crate) mod compact;
 pub(crate) mod covers;
 pub(crate) mod credits;
 pub(crate) mod cue;

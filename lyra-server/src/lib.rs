@@ -270,6 +270,12 @@ pub async fn run_db_optimize() -> Result<()> {
         })?
         .len();
 
+    // Same disk-full guard as the pre-open path.
+    let parent = db_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    db::compact::ensure_space_for_optimize(parent, before_file, before_logical)?;
+
     db.optimize_storage()
         .map_err(|err| anyhow::anyhow!("optimize_storage failed: {err}"))?;
     let after_logical = db.size();
