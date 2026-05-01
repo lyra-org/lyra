@@ -76,24 +76,26 @@ async fn resolve_configured_library(config: &Config) -> anyhow::Result<Option<Li
     };
 
     if library.db_id.is_none() {
-        let qr = db
-            .write()
-            .await
-            .exec_mut(QueryBuilder::insert().element(&library).query())?;
-        let library_db_id = qr
-            .ids()
-            .first()
-            .copied()
-            .ok_or_else(|| anyhow::anyhow!("library insert missing id"))?;
+        let library_db_id =
+            db.write()
+                .await
+                .transaction_mut(|t| -> anyhow::Result<agdb::DbId> {
+                    let qr = t.exec_mut(QueryBuilder::insert().element(&library).query())?;
+                    let id = qr
+                        .ids()
+                        .first()
+                        .copied()
+                        .ok_or_else(|| anyhow::anyhow!("library insert missing id"))?;
+                    t.exec_mut(
+                        QueryBuilder::insert()
+                            .edges()
+                            .from("libraries")
+                            .to(id)
+                            .query(),
+                    )?;
+                    Ok(id)
+                })?;
         library.db_id = Some(library_db_id);
-
-        db.write().await.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("libraries")
-                .to(library_db_id)
-                .query(),
-        )?;
     }
 
     Ok(Some(library))
