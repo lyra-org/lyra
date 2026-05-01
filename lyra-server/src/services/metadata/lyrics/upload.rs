@@ -125,7 +125,12 @@ pub(crate) fn input_from_upload(
             let text = std::str::from_utf8(body).map_err(|_| {
                 LyricsUploadError::BadRequest("LRC upload must be valid UTF-8".into())
             })?;
-            lrc_to_input(text, language.unwrap_or_else(|| "und".to_string()), now_ms)
+            lrc_to_input(
+                text,
+                "user".to_string(),
+                language.unwrap_or_else(|| "und".to_string()),
+                now_ms,
+            )
         }
         "text/plain" => {
             let text = std::str::from_utf8(body).map_err(|_| {
@@ -236,8 +241,12 @@ fn plain_text_to_input(contents: &str, language: String, now_ms: u64) -> LyricsI
     }
 }
 
-fn lrc_to_input(
+/// Parse LRC text into a `LyricsInput`. Handles the standard `[mm:ss.xx]` line
+/// timestamps plus Enhanced-LRC `<mm:ss.xx>` word cues, with per-`WordInput`
+/// offsets keyed to character positions in the cleaned line.
+pub(crate) fn lrc_to_input(
     contents: &str,
+    id: String,
     language: String,
     now_ms: u64,
 ) -> Result<LyricsInput, LyricsUploadError> {
@@ -257,11 +266,17 @@ fn lrc_to_input(
             continue;
         }
 
+        let (cleaned_text, words) = parse_enhanced_lrc_words(text).map_err(|message| {
+            LyricsUploadError::BadRequest(format!(
+                "invalid LRC word cue at line {line_no}: {message}"
+            ))
+        })?;
+
         for ts_ms in timestamps {
             lines.push(LineInput {
                 ts_ms,
-                text: text.to_string(),
-                words: Vec::new(),
+                text: cleaned_text.clone(),
+                words: words.clone(),
             });
         }
     }
@@ -280,7 +295,7 @@ fn lrc_to_input(
         .join("\n");
 
     Ok(LyricsInput {
-        id: "user".to_string(),
+        id,
         provider_id: String::new(),
         language,
         plain_text,
@@ -350,6 +365,65 @@ fn parse_lrc_timestamp(value: &str) -> Result<Option<u64>, &'static str> {
     Ok(Some((minutes * 60 + seconds) * 1000 + millis))
 }
 
+/// Strip Enhanced-LRC `<mm:ss.xx>` word cues and emit the corresponding
+/// [`WordInput`]s. Each cue marks the start time of the segment that follows;
+/// `char_start`/`char_end` are character offsets (not bytes) into the cleaned
+/// line text.
+fn parse_enhanced_lrc_words(text: &str) -> Result<(String, Vec<WordInput>), &'static str> {
+    let mut cleaned = String::new();
+    let mut words: Vec<WordInput> = Vec::new();
+    let mut rest = text;
+    let mut pending_ts: Option<u64> = None;
+
+    loop {
+        let Some(open_idx) = rest.find('<') else {
+            if let Some(ts_ms) = pending_ts.take() {
+                let char_start = cleaned.chars().count() as u32;
+                cleaned.push_str(rest);
+                let char_end = cleaned.chars().count() as u32;
+                words.push(WordInput {
+                    ts_ms,
+                    char_start,
+                    char_end,
+                });
+            } else {
+                cleaned.push_str(rest);
+            }
+            break;
+        };
+
+        let segment = &rest[..open_idx];
+        if let Some(ts_ms) = pending_ts.take() {
+            let char_start = cleaned.chars().count() as u32;
+            cleaned.push_str(segment);
+            let char_end = cleaned.chars().count() as u32;
+            // Emit even when char_start == char_end so consumers can derive
+            // the previous word's end-time from this cue's ts_ms.
+            words.push(WordInput {
+                ts_ms,
+                char_start,
+                char_end,
+            });
+        } else {
+            cleaned.push_str(segment);
+        }
+
+        rest = &rest[open_idx + 1..];
+        let Some(close_idx) = rest.find('>') else {
+            return Err("missing closing '>' for word cue");
+        };
+        let cue_value = &rest[..close_idx];
+        rest = &rest[close_idx + 1..];
+
+        match parse_lrc_timestamp(cue_value)? {
+            Some(ts_ms) => pending_ts = Some(ts_ms),
+            None => return Err("word cue must be a valid timestamp"),
+        }
+    }
+
+    Ok((cleaned, words))
+}
+
 fn looks_like_lrc_metadata(raw_line: &str) -> bool {
     let Some(stripped) = raw_line.strip_prefix('[') else {
         return false;
@@ -389,6 +463,7 @@ mod tests {
     fn lrc_to_input_ignores_metadata_and_sorts_lines() {
         let input = lrc_to_input(
             "[ar:artist]\n[00:03.00]third\n[00:01.00]first\n[00:02.00]second",
+            "user".to_string(),
             "eng".to_string(),
             42,
         )
@@ -409,8 +484,115 @@ mod tests {
     }
 
     #[test]
+    fn lrc_to_input_uses_caller_supplied_id() {
+        let input = lrc_to_input(
+            "[00:01.00]hello",
+            "lrclib:42".to_string(),
+            "eng".to_string(),
+            0,
+        )
+        .unwrap();
+        assert_eq!(input.id, "lrclib:42");
+    }
+
+    #[test]
     fn lrc_to_input_rejects_non_timestamped_lyrics() {
-        assert!(lrc_to_input("plain lyric line", "und".to_string(), 0).is_err());
+        assert!(
+            lrc_to_input(
+                "plain lyric line",
+                "user".to_string(),
+                "und".to_string(),
+                0
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parse_enhanced_lrc_words_passes_through_text_without_cues() {
+        let (cleaned, words) = parse_enhanced_lrc_words("hello world").unwrap();
+        assert_eq!(cleaned, "hello world");
+        assert!(words.is_empty());
+    }
+
+    #[test]
+    fn parse_enhanced_lrc_words_emits_words_for_each_cue() {
+        let (cleaned, words) =
+            parse_enhanced_lrc_words("<00:01.00>Hello <00:01.50>world<00:02.00>").unwrap();
+        assert_eq!(cleaned, "Hello world");
+        assert_eq!(words.len(), 3);
+        assert_eq!(words[0].ts_ms, 1_000);
+        assert_eq!(words[0].char_start, 0);
+        assert_eq!(words[0].char_end, 6);
+        assert_eq!(words[1].ts_ms, 1_500);
+        assert_eq!(words[1].char_start, 6);
+        assert_eq!(words[1].char_end, 11);
+        assert_eq!(words[2].ts_ms, 2_000);
+        assert_eq!(words[2].char_start, 11);
+        // Trailing zero-width word: lets consumers derive prev word's end-time.
+        assert_eq!(words[2].char_end, 11);
+    }
+
+    #[test]
+    fn parse_enhanced_lrc_words_uses_character_positions_not_bytes() {
+        // "héllo" is 5 chars / 6 bytes — assertions catch a byte-counting regression.
+        let (cleaned, words) = parse_enhanced_lrc_words("<00:01.00>héllo<00:02.00>").unwrap();
+        assert_eq!(cleaned, "héllo");
+        assert_eq!(words.len(), 2);
+        assert_eq!(words[0].char_start, 0);
+        assert_eq!(words[0].char_end, 5);
+    }
+
+    #[test]
+    fn parse_enhanced_lrc_words_rejects_unclosed_cue() {
+        let err = parse_enhanced_lrc_words("<00:01.00 hello").unwrap_err();
+        assert!(err.contains("closing"));
+    }
+
+    #[test]
+    fn parse_enhanced_lrc_words_rejects_invalid_timestamp() {
+        // `<i>`-style markup must not be silently swallowed as a cue.
+        let err = parse_enhanced_lrc_words("<i>hello<00:01.00>world").unwrap_err();
+        assert!(err.contains("valid timestamp"));
+    }
+
+    #[test]
+    fn lrc_to_input_threads_word_cues_into_each_line() {
+        let input = lrc_to_input(
+            "[00:01.00]<00:01.00>Hello <00:01.50>world<00:02.00>",
+            "user".to_string(),
+            "eng".to_string(),
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(input.lines.len(), 1);
+        let line = &input.lines[0];
+        assert_eq!(line.ts_ms, 1_000);
+        assert_eq!(line.text, "Hello world");
+        assert_eq!(line.words.len(), 3);
+        assert_eq!(line.words[0].ts_ms, 1_000);
+        assert_eq!(line.words[1].ts_ms, 1_500);
+        assert_eq!(line.words[2].ts_ms, 2_000);
+        assert_eq!(input.plain_text, "Hello world");
+    }
+
+    #[test]
+    fn lrc_to_input_clones_words_for_repeated_line_timestamps() {
+        let input = lrc_to_input(
+            "[00:01.00][00:02.00]<00:00.10>Hello",
+            "user".to_string(),
+            "eng".to_string(),
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(input.lines.len(), 2);
+        for line in &input.lines {
+            assert_eq!(line.text, "Hello");
+            assert_eq!(line.words.len(), 1);
+            assert_eq!(line.words[0].ts_ms, 100);
+        }
     }
 
     #[test]
