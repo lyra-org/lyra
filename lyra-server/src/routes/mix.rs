@@ -68,6 +68,17 @@ async fn get_mix(
                 .to_string(),
         ));
     }
+    if let Some(limit) = query.limit {
+        if limit == 0 {
+            return Err(AppError::bad_request("limit must be > 0".to_string()));
+        }
+        if limit > mix::MAX_LIMIT {
+            return Err(AppError::bad_request(format!(
+                "limit must be <= {}, got {limit}",
+                mix::MAX_LIMIT
+            )));
+        }
+    }
 
     let options = mix::MixOptions {
         limit: query.limit,
@@ -75,44 +86,56 @@ async fn get_mix(
         extra: sanitize_extra(query.extra),
     };
 
-    let tracks = if let Some(ref id) = query.seed_track {
-        let db_id = {
-            let db = &*STATE.db.read().await;
-            let db_id = db::lookup::find_node_id_by_id(db, id)?
-                .ok_or_else(|| AppError::not_found(format!("track not found: {id}")))?;
-            db::tracks::get_by_id(db, db_id)?
-                .ok_or_else(|| AppError::not_found(format!("track not found: {id}")))?;
-            db_id
-        };
-        mix::from_track(db_id, &options).await?
+    // Service enforces existence + type; `verify_id_stable` catches DbId reuse.
+    let result = if let Some(ref id) = query.seed_track {
+        let db_id = resolve_seed_id(id, "track").await?;
+        let mix_result = mix::from_track(db_id, &options).await?;
+        verify_id_stable(id, db_id, "track").await?;
+        mix_result.ok_or_else(|| AppError::not_found(format!("track not found: {id}")))?
     } else if let Some(ref id) = query.seed_release {
-        let db_id = {
-            let db = &*STATE.db.read().await;
-            let db_id = db::lookup::find_node_id_by_id(db, id)?
-                .ok_or_else(|| AppError::not_found(format!("release not found: {id}")))?;
-            db::releases::get_by_id(db, db_id)?
-                .ok_or_else(|| AppError::not_found(format!("release not found: {id}")))?;
-            db_id
-        };
-        mix::from_release(db_id, &options).await?
+        let db_id = resolve_seed_id(id, "release").await?;
+        let mix_result = mix::from_release(db_id, &options).await?;
+        verify_id_stable(id, db_id, "release").await?;
+        mix_result.ok_or_else(|| AppError::not_found(format!("release not found: {id}")))?
     } else if let Some(ref id) = query.seed_artist {
-        let db_id = {
-            let db = &*STATE.db.read().await;
-            let db_id = db::lookup::find_node_id_by_id(db, id)?
-                .ok_or_else(|| AppError::not_found(format!("artist not found: {id}")))?;
-            db::artists::get_by_id(db, db_id)?
-                .ok_or_else(|| AppError::not_found(format!("artist not found: {id}")))?;
-            db_id
-        };
-        mix::from_artist(db_id, &options).await?
+        let db_id = resolve_seed_id(id, "artist").await?;
+        let mix_result = mix::from_artist(db_id, &options).await?;
+        verify_id_stable(id, db_id, "artist").await?;
+        mix_result.ok_or_else(|| AppError::not_found(format!("artist not found: {id}")))?
     } else if query.seed_recent {
-        mix::from_recent_listens(principal.user_db_id, &options).await?
+        // Seed is the authenticated user — no public-id round-trip.
+        mix::from_recent_listens(principal.user_db_id, &options)
+            .await?
+            .ok_or_else(|| AppError::not_found("user not found".to_string()))?
     } else {
         unreachable!()
     };
 
-    let responses: Vec<TrackResponse> = tracks.into_iter().map(TrackResponse::from).collect();
+    let responses: Vec<TrackResponse> = result.into_iter().map(TrackResponse::from).collect();
     Ok(Json(responses))
+}
+
+/// 404s on unknown public id. Type-mismatch is the service layer's job.
+async fn resolve_seed_id(id: &str, label: &str) -> Result<agdb::DbId, AppError> {
+    let db = &*STATE.db.read().await;
+    db::lookup::find_node_id_by_id(db, id)?
+        .ok_or_else(|| AppError::not_found(format!("{label} not found: {id}")))
+}
+
+/// Asserts the id still maps to `expected_db_id` — agdb reuses DbIds, so
+/// a delete+create during dispatch could redirect the response.
+async fn verify_id_stable(
+    public_id: &str,
+    expected_db_id: agdb::DbId,
+    label: &str,
+) -> Result<(), AppError> {
+    let db = &*STATE.db.read().await;
+    match db::lookup::find_node_id_by_id(db, public_id)? {
+        Some(now) if now == expected_db_id => Ok(()),
+        _ => Err(AppError::not_found(format!(
+            "{label} not found: {public_id}"
+        ))),
+    }
 }
 
 const KNOWN_QUERY_KEYS: &[&str] = &[

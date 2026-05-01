@@ -37,6 +37,7 @@ pub(crate) use registry::{
 };
 
 const DEFAULT_LIMIT: usize = 200;
+pub(crate) const MAX_LIMIT: usize = 2000;
 const MAX_PER_ARTIST: usize = 3;
 /// Per-request budget across all plugin handlers.
 const MIX_DISPATCH_BUDGET: std::time::Duration = std::time::Duration::from_secs(15);
@@ -47,54 +48,122 @@ const MIXER_HANDLER_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 pub(crate) struct MixOptions {
     pub(crate) limit: Option<usize>,
     pub(crate) user_db_id: Option<DbId>,
-    /// Arbitrary key-value options forwarded from query parameters.
-    /// Plugins declare these via `declare_option` and values are coerced
-    /// using declared types before being set as `ctx.options`.
+    /// Query-param options coerced via `declare_option` for `ctx.options`.
     pub(crate) extra: HashMap<String, String>,
 }
 
+/// `Ok(None)` = missing/wrong-type seed (route 404s); validated before and after
+/// dispatch. Other `from_*` wrappers share this shape.
 pub(crate) async fn from_track(
     track_db_id: DbId,
     options: &MixOptions,
-) -> anyhow::Result<Vec<Track>> {
-    if let Some(tracks) = dispatch_mixer(MixSeedType::Track, track_db_id, options).await? {
-        return Ok(tracks);
+) -> anyhow::Result<Option<Vec<Track>>> {
+    {
+        let db = STATE.db.read().await;
+        if db::tracks::get_by_id(&*db, track_db_id)?.is_none() {
+            return Ok(None);
+        }
     }
-    let db = &*STATE.db.read().await;
-    builtin_from_track(db, track_db_id, options)
+    let dispatched = dispatch_mixer(MixSeedType::Track, track_db_id, options).await?;
+    let db = STATE.db.read().await;
+    if db::tracks::get_by_id(&*db, track_db_id)?.is_none() {
+        return Ok(None);
+    }
+    let tracks = match dispatched {
+        Some(tracks) => filter_existing_tracks(&*db, tracks)?,
+        None => builtin_from_track(&*db, track_db_id, options)?,
+    };
+    Ok(Some(tracks))
 }
 
 pub(crate) async fn from_release(
     release_db_id: DbId,
     options: &MixOptions,
-) -> anyhow::Result<Vec<Track>> {
-    if let Some(tracks) = dispatch_mixer(MixSeedType::Release, release_db_id, options).await? {
-        return Ok(tracks);
+) -> anyhow::Result<Option<Vec<Track>>> {
+    {
+        let db = STATE.db.read().await;
+        if db::releases::get_by_id(&*db, release_db_id)?.is_none() {
+            return Ok(None);
+        }
     }
-    let db = &*STATE.db.read().await;
-    builtin_from_release(db, release_db_id, options)
+    let dispatched = dispatch_mixer(MixSeedType::Release, release_db_id, options).await?;
+    let db = STATE.db.read().await;
+    if db::releases::get_by_id(&*db, release_db_id)?.is_none() {
+        return Ok(None);
+    }
+    let tracks = match dispatched {
+        Some(tracks) => filter_existing_tracks(&*db, tracks)?,
+        None => builtin_from_release(&*db, release_db_id, options)?,
+    };
+    Ok(Some(tracks))
 }
 
 pub(crate) async fn from_artist(
     artist_db_id: DbId,
     options: &MixOptions,
-) -> anyhow::Result<Vec<Track>> {
-    if let Some(tracks) = dispatch_mixer(MixSeedType::Artist, artist_db_id, options).await? {
-        return Ok(tracks);
+) -> anyhow::Result<Option<Vec<Track>>> {
+    {
+        let db = STATE.db.read().await;
+        if db::artists::get_by_id(&*db, artist_db_id)?.is_none() {
+            return Ok(None);
+        }
     }
-    let db = &*STATE.db.read().await;
-    builtin_from_artist(db, artist_db_id, options)
+    let dispatched = dispatch_mixer(MixSeedType::Artist, artist_db_id, options).await?;
+    let db = STATE.db.read().await;
+    if db::artists::get_by_id(&*db, artist_db_id)?.is_none() {
+        return Ok(None);
+    }
+    let tracks = match dispatched {
+        Some(tracks) => filter_existing_tracks(&*db, tracks)?,
+        None => builtin_from_artist(&*db, artist_db_id, options)?,
+    };
+    Ok(Some(tracks))
 }
 
 pub(crate) async fn from_recent_listens(
     user_db_id: DbId,
     options: &MixOptions,
-) -> anyhow::Result<Vec<Track>> {
-    if let Some(tracks) = dispatch_recent_listens_mixer(user_db_id, options).await? {
+) -> anyhow::Result<Option<Vec<Track>>> {
+    {
+        let db = STATE.db.read().await;
+        if db::users::get_by_id(&*db, user_db_id)?.is_none() {
+            return Ok(None);
+        }
+    }
+    let dispatched = dispatch_recent_listens_mixer(user_db_id, options).await?;
+    let db = STATE.db.read().await;
+    if db::users::get_by_id(&*db, user_db_id)?.is_none() {
+        return Ok(None);
+    }
+    let tracks = match dispatched {
+        Some(tracks) => filter_existing_tracks(&*db, tracks)?,
+        None => builtin_from_recent_listens(&*db, user_db_id, options)?,
+    };
+    Ok(Some(tracks))
+}
+
+/// Drops tracks deleted between `parse_mix_result` and the post-dispatch guard.
+fn filter_existing_tracks(db: &DbAny, tracks: Vec<Track>) -> anyhow::Result<Vec<Track>> {
+    if tracks.is_empty() {
         return Ok(tracks);
     }
-    let db = &*STATE.db.read().await;
-    builtin_from_recent_listens(db, user_db_id, options)
+    let track_ids: Vec<DbId> = tracks
+        .iter()
+        .filter_map(|t| t.db_id.clone().map(DbId::from))
+        .collect();
+    if track_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let existing = db::tracks::get_by_ids(db, &track_ids)?;
+    Ok(tracks
+        .into_iter()
+        .filter(|t| {
+            t.db_id
+                .clone()
+                .map(DbId::from)
+                .is_some_and(|id| existing.contains_key(&id))
+        })
+        .collect())
 }
 
 /// Per-handler timeout. `None` = budget exhausted.
@@ -346,11 +415,9 @@ async fn set_extra_options(
     Ok(())
 }
 
-/// Hard ceiling on the number of track IDs we'll resolve from a plugin result,
-/// preventing a buggy or malicious plugin from triggering unbounded DB queries.
-const MAX_MIXER_RESULT_IDS: usize = 500;
+/// Aligned with `MAX_LIMIT`; drift causes silent truncation surprises.
+const MAX_MIXER_RESULT_IDS: usize = MAX_LIMIT;
 
-/// Parse the MixResult table returned by a mixer handler into Track objects.
 async fn parse_mix_result(result: &Table) -> anyhow::Result<Vec<Track>> {
     let tracks_table: Table = result.get("tracks")?;
     let mut track_ids = Vec::new();
