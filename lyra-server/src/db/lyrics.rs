@@ -681,30 +681,35 @@ pub(crate) fn delete_by_db_id(db: &mut DbAny, lyrics_db_id: DbId) -> anyhow::Res
     })
 }
 
-pub(crate) fn delete_for_track(db: &mut DbAny, track_id: DbId) -> anyhow::Result<()> {
-    db.transaction_mut(|t| -> anyhow::Result<()> {
-        let ids: Vec<DbId> = t
-            .exec(
-                QueryBuilder::search()
-                    .from(track_id)
-                    .where_()
-                    .distance(CountComparison::Equal(2))
-                    .and()
-                    .key("db_element_id")
-                    .value("Lyrics")
-                    .query(),
-            )?
-            .ids()
-            .into_iter()
-            .filter(|id| id.0 > 0)
-            .collect();
+pub(crate) fn delete_for_track_in_txn(
+    db: &mut impl DbAccess,
+    track_id: DbId,
+) -> anyhow::Result<()> {
+    let ids: Vec<DbId> = db
+        .exec(
+            QueryBuilder::search()
+                .from(track_id)
+                .where_()
+                .distance(CountComparison::Equal(2))
+                .and()
+                .key("db_element_id")
+                .value("Lyrics")
+                .query(),
+        )?
+        .ids()
+        .into_iter()
+        .filter(|id| id.0 > 0)
+        .collect();
 
-        for lyrics_db_id in ids {
-            remove_children(t, lyrics_db_id)?;
-            t.exec_mut(QueryBuilder::remove().ids(lyrics_db_id).query())?;
-        }
-        Ok(())
-    })
+    for lyrics_db_id in ids {
+        remove_children(db, lyrics_db_id)?;
+        db.exec_mut(QueryBuilder::remove().ids(lyrics_db_id).query())?;
+    }
+    Ok(())
+}
+
+pub(crate) fn delete_for_track(db: &mut DbAny, track_id: DbId) -> anyhow::Result<()> {
+    db.transaction_mut(|t| -> anyhow::Result<()> { delete_for_track_in_txn(t, track_id) })
 }
 
 #[cfg(test)]
@@ -1294,6 +1299,36 @@ mod tests {
         assert_eq!(get_for_track(&db, track_id)?.len(), 1);
         delete_for_track(&mut db, track_id)?;
         assert!(get_for_track(&db, track_id)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn cascade_remove_entities_removes_lyrics_for_orphan_track() -> anyhow::Result<()> {
+        let mut db = test_db::new_test_db()?;
+        let track_id = test_db::insert_track(&mut db, "song")?;
+
+        let mut input = plugin_input("abc", "plug", "");
+        input.lines = vec![LineInput {
+            ts_ms: 0,
+            text: "one".to_string(),
+            words: vec![WordInput {
+                ts_ms: 0,
+                char_start: 0,
+                char_end: 3,
+            }],
+        }];
+        let lyrics_db_id = upsert_from_plugin(&mut db, track_id, input, Some(10_000))?;
+
+        crate::db::metadata::cascade_remove_entities(&mut db, &[track_id])?;
+
+        let still_present = match db.exec(QueryBuilder::select().ids(lyrics_db_id).query()) {
+            Ok(result) => !result.elements.is_empty(),
+            Err(_) => false,
+        };
+        assert!(
+            !still_present,
+            "lyrics node leaked after cascade_remove_entities removed its track",
+        );
         Ok(())
     }
 
