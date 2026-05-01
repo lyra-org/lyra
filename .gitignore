@@ -4,6 +4,7 @@
 config.json
 
 *.db
+*.db.lock
 .lyra/
 .luaurc
 .DS_Store
