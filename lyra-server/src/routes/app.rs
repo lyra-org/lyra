@@ -61,7 +61,7 @@ pub(crate) fn build_core_api() -> Result<CoreApi> {
         .finish_api(&mut api);
     configure_rest_openapi(&mut api);
 
-    let (app, ws_reserved) = super::install_ws(app);
+    let (app, ws_reserved) = super::install_websocket(app);
 
     let api = Arc::new(api);
     let app = app.route(

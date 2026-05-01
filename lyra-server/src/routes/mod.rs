@@ -29,7 +29,7 @@ mod server;
 mod tags;
 mod tracks;
 mod users;
-mod ws;
+mod websocket;
 
 use serde::{
     Deserialize,
@@ -74,7 +74,7 @@ pub use users::{
     me_routes,
     user_routes,
 };
-pub(crate) use ws::install as install_ws;
+pub(crate) use websocket::install as install_websocket;
 
 pub(crate) fn parse_inc_values(
     inc: Option<Vec<String>>,
