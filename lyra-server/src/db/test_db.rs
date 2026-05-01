@@ -148,14 +148,7 @@ pub(crate) fn insert_artist(db: &mut DbAny, name: &str) -> anyhow::Result<DbId> 
 }
 
 pub(crate) fn insert_library(db: &mut DbAny, name: &str, directory: &str) -> anyhow::Result<DbId> {
-    let library = super::libraries::Library {
-        db_id: None,
-        id: nanoid!(),
-        name: name.to_string(),
-        directory: std::path::PathBuf::from(directory),
-        language: None,
-        country: None,
-    };
+    let library = build_test_library(name, std::path::PathBuf::from(directory))?;
     let library_id = db
         .exec_mut(QueryBuilder::insert().element(&library).query())?
         .ids()[0];
@@ -167,6 +160,37 @@ pub(crate) fn insert_library(db: &mut DbAny, name: &str, directory: &str) -> any
             .query(),
     )?;
     Ok(library_id)
+}
+
+/// Library node without the `from("libraries")` edge — for ingestion tests
+/// that need a graph entity unreachable from the root alias.
+pub(crate) fn insert_test_library_node(
+    db: &mut DbAny,
+    name: &str,
+    directory: std::path::PathBuf,
+) -> anyhow::Result<super::libraries::Library> {
+    let mut library = build_test_library(name, directory)?;
+    let qr = db.exec_mut(QueryBuilder::insert().element(&library).query())?;
+    library.db_id = Some(qr.elements[0].id);
+    Ok(library)
+}
+
+fn build_test_library(
+    name: &str,
+    directory: std::path::PathBuf,
+) -> anyhow::Result<super::libraries::Library> {
+    let (display, key) = super::libraries::normalize_library_name(name)?;
+    let directory_key = super::libraries::directory_key_for(&directory);
+    Ok(super::libraries::Library {
+        db_id: None,
+        id: nanoid!(),
+        name: display,
+        name_key: key,
+        directory,
+        directory_key,
+        language: None,
+        country: None,
+    })
 }
 
 pub(crate) fn connect(db: &mut DbAny, from: DbId, to: DbId) -> anyhow::Result<()> {

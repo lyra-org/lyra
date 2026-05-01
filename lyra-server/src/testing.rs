@@ -44,7 +44,6 @@ use crate::config::{
 use crate::db::{
     self,
     Entry,
-    Library,
 };
 use crate::outbound_user_agent;
 use crate::services;
@@ -112,6 +111,7 @@ pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Resul
         cors: config::CorsConfig::default(),
         library: Some(config::LibraryConfig {
             path: Some(library.directory.clone()),
+            name: None,
             language: library.language.clone(),
             country: library.country.clone(),
         }),
@@ -192,15 +192,21 @@ pub async fn prepare_fixture(
     let coalesced_tracks = coalesced.pop().expect("coalesced release group");
 
     let mut db = STATE.db.write().await;
-    let created_library = db::libraries::create(
-        &mut db,
-        &Library {
-            db_id: None,
-            id: nanoid!(),
-            name: "Harmony Test Library".to_string(),
-            directory: library.directory.clone(),
-            language: library.language.clone(),
-            country: library.country.clone(),
+    let directory = library.directory.clone();
+    let directory_key = db::libraries::directory_key_for(&directory);
+    let created_library = db.transaction_mut(
+        |t| -> Result<db::Library, db::libraries::LibraryCreateError> {
+            db::libraries::create(
+                t,
+                db::libraries::LibraryInsert {
+                    id: nanoid!(),
+                    name: "Harmony Test Library".to_string(),
+                    directory,
+                    directory_key,
+                    language: library.language.clone(),
+                    country: library.country.clone(),
+                },
+            )
         },
     )?;
     let library_db_id = created_library

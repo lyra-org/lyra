@@ -94,6 +94,10 @@ pub(crate) struct CorsConfig {
 pub(crate) struct LibraryConfig {
     #[serde(default)]
     pub(crate) path: Option<PathBuf>,
+    /// Display name; defaults to `"Music"`. Override when another library
+    /// already uses the default — names are unique.
+    #[serde(default)]
+    pub(crate) name: Option<String>,
     #[serde(default)]
     pub(crate) language: Option<String>,
     #[serde(default)]
@@ -144,6 +148,7 @@ impl Default for LibraryConfig {
     fn default() -> Self {
         Self {
             path: None,
+            name: None,
             language: None,
             country: None,
         }
@@ -352,6 +357,7 @@ mod tests {
     fn config_library_locale_inputs_are_normalized() -> anyhow::Result<()> {
         let mut config = base_config_with_library(Some(LibraryConfig {
             path: None,
+            name: None,
             language: Some("Japanese".to_string()),
             country: Some("Japan".to_string()),
         }));
@@ -368,6 +374,7 @@ mod tests {
     fn invalid_library_language_returns_error() {
         let mut config = base_config_with_library(Some(LibraryConfig {
             path: None,
+            name: None,
             language: Some("not-a-language".to_string()),
             country: None,
         }));

@@ -26,7 +26,7 @@ fn string_field_value<'a>(element: &'a DbElement, field_name: &str) -> Option<&'
     })
 }
 
-fn collection_contains_id(
+pub(crate) fn collection_contains_id(
     db: &impl DbAccess,
     collection_alias: &str,
     id: DbId,

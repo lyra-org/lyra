@@ -222,8 +222,7 @@ async fn refresh_entity_metadata_inner(
                 let (release_entity, tracks, artists, library_root) = {
                     let db = STATE.db.read().await;
                     let library_root = if let Some(library_db_id) = library_db_id {
-                        db::libraries::get_by_id(&db, library_db_id)?
-                            .map(|library| library.directory)
+                        db::libraries::get_by_id(&db, library_db_id)?.map(|library| library.directory)
                     } else {
                         None
                     };
