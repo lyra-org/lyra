@@ -43,7 +43,7 @@ local BASE_URL = config.base_url :: string
 local TOKEN = config.token :: string
 
 if not BASE_URL or BASE_URL == "" then
-	print("base_url not configured; skipping initialization.")
+	warn("base_url not configured; skipping initialization.")
 	return
 end
 
@@ -95,7 +95,7 @@ local function query_similar_tracks(item_id: string, n: number): { MixResultTrac
 		if response.status_code == 404 then
 			return {}
 		end
-		print(
+		warn(
 			`similar_tracks({item_id}) backend failure: status={response.status_code} kind={response.error_kind or ""}`
 		)
 		return nil
@@ -103,7 +103,7 @@ local function query_similar_tracks(item_id: string, n: number): { MixResultTrac
 
 	local body = safe_json_decode(response.body)
 	if type(body) ~= "table" then
-		print(`similar_tracks({item_id}) returned non-JSON or non-object body`)
+		warn(`similar_tracks({item_id}) returned non-JSON or non-object body`)
 		return nil
 	end
 
@@ -136,12 +136,12 @@ local function query_similar_tracks(item_id: string, n: number): { MixResultTrac
 
 	-- Encoder/version mismatch; escalate above routine orphans.
 	if decode_failed > 0 then
-		print(
-			`[error] similar_tracks({item_id}): {decode_failed}/{#items} hex decode failed — possible ID format mismatch`
+		warn(
+			`similar_tracks({item_id}): {decode_failed}/{#items} hex decode failed — possible ID format mismatch`
 		)
 	end
 	if orphaned > 0 then
-		print(`similar_tracks({item_id}): {#items} returned, {#results} resolved, {orphaned} orphaned`)
+		warn(`similar_tracks({item_id}): {#items} returned, {#results} resolved, {orphaned} orphaned`)
 	end
 
 	return results
@@ -191,7 +191,7 @@ local function multi_seed_mix(seed_track_db_ids: { number }, limit: number, max_
 	end
 
 	if failed > 0 then
-		print(`{failed}/{seeds_to_use} seed queries failed`)
+		warn(`{failed}/{seeds_to_use} seed queries failed`)
 	end
 
 	return { tracks = all_results }
@@ -203,7 +203,7 @@ local mixer = mix.Mixer.new("audiomuse")
 mixer:from_track(function(ctx: MixContext): MixResult
 	local hex_id = resolve_hex_id(ctx.seed_id)
 	if not hex_id then
-		print(`from_track: seed {ctx.seed_id} could not be encoded; returning empty mix`)
+		warn(`from_track: seed {ctx.seed_id} could not be encoded; returning empty mix`)
 		return { tracks = {} }
 	end
 
@@ -227,7 +227,7 @@ end)
 mixer:from_release(function(ctx: MixContext): MixResult
 	local release_tracks = tracks.list(ctx.seed_id)
 	if not release_tracks or #release_tracks == 0 then
-		print(`from_release: seed {ctx.seed_id} has no tracks; returning empty mix`)
+		warn(`from_release: seed {ctx.seed_id} has no tracks; returning empty mix`)
 		return { tracks = {} }
 	end
 
@@ -246,7 +246,7 @@ mixer:from_artist(function(ctx: MixContext): MixResult
 	local result = tracks.query({ artist_ids = { ctx.seed_id } })
 	local artist_tracks = result.entities
 	if #artist_tracks == 0 then
-		print(`from_artist: seed {ctx.seed_id} has no tracks; returning empty mix`)
+		warn(`from_artist: seed {ctx.seed_id} has no tracks; returning empty mix`)
 		return { tracks = {} }
 	end
 
@@ -324,5 +324,3 @@ api.get("/audiomuse/health", function(): ApiResponse
 		backend_url = BASE_URL,
 	})
 end)
-
-print("initialized with backend at " .. BASE_URL)

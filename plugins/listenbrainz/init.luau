@@ -258,9 +258,9 @@ local function submit_listens(token: string, document: JsonValue): boolean
 
 	local status_code = tonumber(response.status_code) or 0
 	if not response.success or status_code < 200 or status_code >= 300 then
-		print(`submit to ListenBrainz failed: status={response.status_code} message={response.status_message}`)
+		warn(`submit to ListenBrainz failed: status={response.status_code} message={response.status_message}`)
 		if response.body and response.body ~= "" then
-			print(`response body from ListenBrainz: {response.body}`)
+			warn(`response body from ListenBrainz: {response.body}`)
 		end
 
 		return false
@@ -272,7 +272,7 @@ end
 local function submit_playing_now(token: string, update: PlaybackUpdatePayload): boolean
 	local track_metadata = build_track_metadata(update)
 	if not track_metadata then
-		print(`skipping ListenBrainz playing_now for track_id={update.track_id}: missing artist_name or track_name`)
+		warn(`skipping ListenBrainz playing_now for track_id={update.track_id}: missing artist_name or track_name`)
 		return false
 	end
 
@@ -289,7 +289,7 @@ end
 local function submit_single_listen(token: string, update: PlaybackUpdatePayload): boolean
 	local track_metadata = build_track_metadata(update)
 	if not track_metadata then
-		print(`skipping ListenBrainz single for track_id={update.track_id}: missing artist_name or track_name`)
+		warn(`skipping ListenBrainz single for track_id={update.track_id}: missing artist_name or track_name`)
 		return false
 	end
 
@@ -337,9 +337,6 @@ playbacks.on_update(function(update)
 		local qualifies_single_listen = update.qualifies_single_listen == true
 		local is_completed = update.event == "completed"
 		if not is_completed and not qualifies_single_listen then
-			print(
-				`skipping ListenBrainz single for playback_session_id={update.playback_session_id}: insufficient playback activity`
-			)
 			started_at_sec_by_playback_session_id[update.playback_session_id] = nil
 			return
 		end

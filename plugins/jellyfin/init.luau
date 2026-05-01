@@ -181,7 +181,7 @@ local function get_owned_session(session_id: string?, principal: session.Princip
 		return nil
 	end
 	if entry.user_id ~= principal.user_id then
-		print(`session user_id mismatch: principal={principal.user_id}, entry={entry.user_id}, session_id={session_id}`)
+		warn(`session user_id mismatch: principal={principal.user_id}, entry={entry.user_id}, session_id={session_id}`)
 		return nil
 	end
 	if entry.sender:is_closed() then
@@ -781,7 +781,7 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 
 	local identity = session.resolve_client_identity(ctx)
 	if not identity then
-		print(`socket rejected: missing Client/DeviceId`)
+		warn(`socket rejected: missing Client/DeviceId`)
 		return
 	end
 
@@ -814,7 +814,7 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 		elseif existing.user_id ~= principal.user_id then
 			-- Different-user means a collision on the id function; refuse to
 			-- overwrite another user's live socket.
-			print(
+			warn(
 				`session id collision; refusing overwrite: existing.user_id={existing.user_id}, new.user_id={principal.user_id}`
 			)
 			return
@@ -858,7 +858,7 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 				else
 					consecutive_errors += 1
 					if consecutive_errors >= JELLYFIN_WS_REAUTH_MAX_ERRORS then
-						print(`re-auth failed repeatedly, closing (user_id={principal.user_id}): {tostring(result)}`)
+						warn(`re-auth failed repeatedly, closing (user_id={principal.user_id}): {tostring(result)}`)
 						sender:close()
 						break
 					end
@@ -867,7 +867,7 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 		end, function(err)
 			-- Can't safely restart without risking runaway-loop exceptions,
 			-- so close the socket and surface the failure.
-			print(`re-auth thread crashed, closing (user_id={principal.user_id}): {tostring(err)}`)
+			warn(`re-auth thread crashed, closing (user_id={principal.user_id}): {tostring(err)}`)
 			pcall(function()
 				sender:close()
 			end)
@@ -901,7 +901,7 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 				if session.handle_ws_playback_event(resolved_auth, envelope.Data, "started", identity.device_id) then
 					entry.last_playback_event_s = os.time()
 				else
-					print(`discarded malformed PlaybackStart (user_id={principal.user_id})`)
+					warn(`discarded malformed PlaybackStart (user_id={principal.user_id})`)
 					entry.last_playback_event_s = os.time()
 				end
 			elseif mt == "PlaybackProgress" then
@@ -913,20 +913,20 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 				if session.handle_ws_playback_event(resolved_auth, envelope.Data, "progress", identity.device_id) then
 					entry.last_playback_event_s = now_s
 				else
-					print(`discarded malformed PlaybackProgress (user_id={principal.user_id})`)
+					warn(`discarded malformed PlaybackProgress (user_id={principal.user_id})`)
 					entry.last_playback_event_s = now_s
 				end
 			elseif mt == "PlaybackStopped" then
 				if session.handle_ws_playback_event(resolved_auth, envelope.Data, "stopped", identity.device_id) then
 					entry.last_playback_event_s = os.time()
 				else
-					print(`discarded malformed PlaybackStopped (user_id={principal.user_id})`)
+					warn(`discarded malformed PlaybackStopped (user_id={principal.user_id})`)
 					entry.last_playback_event_s = os.time()
 				end
 			end
 		end
 	end, function(err)
-		print(`socket handler error (user_id={principal.user_id}): {tostring(err)}`)
+		warn(`socket handler error (user_id={principal.user_id}): {tostring(err)}`)
 	end)
 
 	task.cancel(reauth_thread)
@@ -2108,7 +2108,7 @@ local function resolve_ws_entry_for_dispatch(
 		return nil, nil
 	end
 	if not session.can_control_user(principal, entry.user_id) then
-		print(`dispatch scope mismatch: principal={principal.user_id}, entry={entry.user_id}, session_id={session_id}`)
+		warn(`dispatch scope mismatch: principal={principal.user_id}, entry={entry.user_id}, session_id={session_id}`)
 		return nil, session.unauthorized()
 	end
 	return entry, nil
@@ -4214,7 +4214,7 @@ task.spawn(function()
 						end)
 					end
 				end, function(err)
-					print(`sessions broadcast failed for user {user_id}: {tostring(err)}`)
+					warn(`sessions broadcast failed for user {user_id}: {tostring(err)}`)
 				end)
 			end
 			if #admin_senders > 0 then
@@ -4227,22 +4227,20 @@ task.spawn(function()
 						end)
 					end
 				end, function(err)
-					print(`sessions broadcast failed for admins: {tostring(err)}`)
+					warn(`sessions broadcast failed for admins: {tostring(err)}`)
 				end)
 			end
 		end, function(err)
-			print(`sessions broadcast tick failed: {tostring(err)}`)
+			warn(`sessions broadcast tick failed: {tostring(err)}`)
 		end)
 		if tick_ok then
 			consecutive_errors = 0
 		else
 			consecutive_errors += 1
 			if consecutive_errors >= JELLYFIN_SESSIONS_BROADCAST_MAX_ERRORS then
-				print(`sessions broadcast disabled after {consecutive_errors} consecutive failures`)
+				warn(`sessions broadcast disabled after {consecutive_errors} consecutive failures`)
 				break
 			end
 		end
 	end
 end)
-
-print("loaded Jellyfin plugin")
