@@ -129,3 +129,30 @@ where
         IncValue::Multiple(entries) => entries,
     }))
 }
+
+/// Trim a raw `?query=` value, treating empty/whitespace-only inputs as absent.
+pub(crate) fn parse_text_query(query: Option<String>) -> Option<String> {
+    query.and_then(|value| {
+        let value = value.trim();
+        if value.is_empty() {
+            None
+        } else {
+            Some(value.to_string())
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_text_query_trims_and_ignores_empty_values() {
+        assert_eq!(
+            parse_text_query(Some("  blue  ".to_string())),
+            Some("blue".to_string())
+        );
+        assert!(parse_text_query(Some("   ".to_string())).is_none());
+        assert!(parse_text_query(None).is_none());
+    }
+}

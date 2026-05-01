@@ -28,7 +28,10 @@ use serde::{
 
 use crate::{
     STATE,
-    db,
+    db::{
+        self,
+        ListOptions,
+    },
     routes::AppError,
     routes::{
         covers as route_covers,
@@ -53,6 +56,15 @@ struct ArtistQuery {
     #[schemars(description = "Comma-separated or repeated values: releases, tracks, relations.")]
     #[serde(default, deserialize_with = "deserialize_inc")]
     inc: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct ArtistListQuery {
+    #[schemars(description = "Comma-separated or repeated values: releases, tracks, relations.")]
+    #[serde(default, deserialize_with = "deserialize_inc")]
+    inc: Option<Vec<String>>,
+    #[schemars(description = "Optional fuzzy text query matched against artist names.")]
+    query: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -135,10 +147,17 @@ fn artist_detail_to_response(
 
 pub(crate) async fn list_artist_responses(
     inc: Option<Vec<String>>,
+    query: Option<String>,
 ) -> Result<Vec<ArtistResponse>, AppError> {
     let db = &*STATE.db.read().await;
     let includes = parse_inc(inc)?;
-    let details = artist_service::list_details(db, includes)?;
+    let options = ListOptions {
+        sort: Vec::new(),
+        offset: None,
+        limit: None,
+        search_term: super::parse_text_query(query),
+    };
+    let details = artist_service::list_details(db, includes, &options)?;
 
     details
         .into_iter()
@@ -163,10 +182,12 @@ pub(crate) async fn get_artist_response(
 
 async fn get_artists(
     headers: HeaderMap,
-    Query(query): Query<ArtistQuery>,
+    Query(list_query): Query<ArtistListQuery>,
 ) -> Result<Json<Vec<ArtistResponse>>, AppError> {
     let _principal = require_authenticated(&headers).await?;
-    Ok(Json(list_artist_responses(query.inc).await?))
+    Ok(Json(
+        list_artist_responses(list_query.inc, list_query.query).await?,
+    ))
 }
 
 async fn get_artist(
@@ -342,7 +363,7 @@ async fn update_artist(
 
 fn list_artists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List artists").description(
-        "Returns artists. Use `inc` to include releases, tracks, and/or relations. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
+        "Returns artists. Supported query parameters: `inc`, `query`. `query` is a fuzzy text match against artist names. Use `inc` to include releases, tracks, and/or relations. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
     )
 }
 

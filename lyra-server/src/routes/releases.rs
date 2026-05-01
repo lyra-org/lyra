@@ -207,17 +207,6 @@ fn parse_genre_filter(genre: Option<Vec<String>>) -> Vec<String> {
     values
 }
 
-fn parse_text_query(query: Option<String>) -> Option<String> {
-    query.and_then(|value| {
-        let value = value.trim();
-        if value.is_empty() {
-            None
-        } else {
-            Some(value.to_string())
-        }
-    })
-}
-
 pub(crate) fn build_cover_response(
     db: &DbAny,
     release_db_id: DbId,
@@ -299,7 +288,7 @@ async fn get_releases(
         sort: parse_sort_specs(list_query.sort_by, list_query.sort_order)?,
         offset: None,
         limit: None,
-        search_term: parse_text_query(list_query.query),
+        search_term: super::parse_text_query(list_query.query),
     };
     let filters = releases::ReleaseListFilters {
         year: list_query.year,
@@ -623,16 +612,6 @@ mod tests {
         let text = std::str::from_utf8(&body)?;
         assert!(text.contains("Supported values: ascending, descending"));
         Ok(())
-    }
-
-    #[test]
-    fn parse_text_query_trims_and_ignores_empty_values() {
-        assert_eq!(
-            parse_text_query(Some("  blue  ".to_string())),
-            Some("blue".to_string())
-        );
-        assert!(parse_text_query(Some("   ".to_string())).is_none());
-        assert!(parse_text_query(None).is_none());
     }
 
     #[test]

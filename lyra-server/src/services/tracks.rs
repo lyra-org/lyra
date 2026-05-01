@@ -14,6 +14,7 @@ use super::entities::{
 };
 use crate::db::{
     self,
+    ListOptions,
     Release,
     Track,
 };
@@ -33,8 +34,9 @@ pub(crate) struct TrackDetails {
 pub(crate) fn list_details(
     db: &DbAny,
     includes: TrackIncludes,
+    options: &ListOptions,
 ) -> anyhow::Result<Vec<TrackDetails>> {
-    let tracks = db::tracks::get(db, "tracks")?;
+    let tracks = db::tracks::query(db, "tracks", options)?.entries;
 
     let track_ids: Vec<DbId> = tracks
         .iter()
@@ -121,6 +123,15 @@ mod tests {
     };
     use crate::services::entities::ArtistCreditSource;
 
+    fn default_options() -> ListOptions {
+        ListOptions {
+            sort: Vec::new(),
+            offset: None,
+            limit: None,
+            search_term: None,
+        }
+    }
+
     #[test]
     fn list_details_returns_tracks_with_releases_and_artists() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
@@ -135,7 +146,7 @@ mod tests {
             releases: true,
             artists: true,
         };
-        let details = list_details(&db, includes)?;
+        let details = list_details(&db, includes, &default_options())?;
 
         assert_eq!(details.len(), 1);
         assert_eq!(details[0].track.track_title, "Blue Train");
@@ -166,7 +177,7 @@ mod tests {
             releases: false,
             artists: false,
         };
-        let details = list_details(&db, includes)?;
+        let details = list_details(&db, includes, &default_options())?;
 
         assert_eq!(details.len(), 1);
         assert!(details[0].releases.is_none());
