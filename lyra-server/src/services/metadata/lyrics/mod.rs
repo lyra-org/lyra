@@ -16,6 +16,7 @@ pub(crate) use upload::{
     delete_user_lyrics_for_track,
     delete_user_lyrics_for_track_by_db_id,
     input_from_upload,
+    lrc_to_input,
     now_ms,
     upsert_plugin_lyrics,
     upsert_user_lyrics,

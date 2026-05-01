@@ -60,7 +60,7 @@ impl From<IdSource> for LyricsOrigin {
 
 harmony_macros::compile!(type_path = LyricsOrigin, variants = true);
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[harmony_macros::interface]
 struct PluginLyricWordInput {
     ts_ms: u64,
@@ -68,7 +68,7 @@ struct PluginLyricWordInput {
     char_end: u32,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[harmony_macros::interface]
 struct PluginLyricLineInput {
     ts_ms: u64,
@@ -77,7 +77,7 @@ struct PluginLyricLineInput {
     words: Vec<PluginLyricWordInput>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[harmony_macros::interface]
 struct PluginLyricsInput {
     id: String,
@@ -86,6 +86,33 @@ struct PluginLyricsInput {
     plain_text: String,
     #[serde(default)]
     lines: Vec<PluginLyricLineInput>,
+}
+
+impl PluginLyricsInput {
+    fn from_lyrics_input(input: LyricsInput) -> Self {
+        Self {
+            id: input.id,
+            language: input.language,
+            plain_text: input.plain_text,
+            lines: input
+                .lines
+                .into_iter()
+                .map(|line| PluginLyricLineInput {
+                    ts_ms: line.ts_ms,
+                    text: line.text,
+                    words: line
+                        .words
+                        .into_iter()
+                        .map(|word| PluginLyricWordInput {
+                            ts_ms: word.ts_ms,
+                            char_start: word.char_start,
+                            char_end: word.char_end,
+                        })
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
 }
 
 impl PluginLyricsInput {
@@ -247,6 +274,29 @@ impl LyricsModule {
             Some(detail) => lyrics_detail_to_value(&lua, detail),
             None => Ok(Value::Nil),
         }
+    }
+
+    /// Parses an LRC payload (line timestamps + Enhanced-LRC word cues) into a
+    /// [`PluginLyricsInput`]-shaped table. The returned table has an empty `id`;
+    /// the plugin must stamp a provider-namespaced id before passing it to
+    /// [`upsert`], which rejects empty ids loudly. `language` defaults to
+    /// `"und"` when omitted or blank.
+    #[harmony(args(text: String, language: Option<String>), returns(PluginLyricsInput))]
+    pub(crate) async fn parse_lrc(
+        lua: Lua,
+        _plugin_id: Option<Arc<str>>,
+        text: String,
+        language: Option<String>,
+    ) -> Result<Value> {
+        let language = language
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "und".to_string());
+        let now = lyrics_service::now_ms().into_lua_err()?;
+        let input = lyrics_service::lrc_to_input(&text, String::new(), language, now)
+            .map_err(|err| mlua::Error::runtime(err.to_string()))?;
+        let plugin_input = PluginLyricsInput::from_lyrics_input(input);
+        lua.to_value_with(&plugin_input, LUA_SERIALIZE_OPTIONS)
     }
 
     /// Upserts plugin-provided lyrics for a track. The provider id is always the caller's plugin id.
