@@ -96,11 +96,8 @@ impl Mixer {
         ))
     }
 
-    /// Reject cross-plugin access. All plugins share one Lua, so a
-    /// Mixer userdata stashed in `_G` can be picked up by another
-    /// plugin; without this check, handlers would register under the
-    /// owner's counter and bucket and get wiped on the owner's
-    /// teardown.
+    /// Reject cross-plugin access — stashed userdata could otherwise
+    /// register under the wrong owner's counter.
     fn ensure_owner(&self, caller: Option<&PluginId>) -> mlua::Result<()> {
         match caller {
             Some(id) if id == &self.plugin_id => Ok(()),
@@ -232,6 +229,48 @@ impl Mixer {
         let handle = self.wrap_handler(handler).await?;
         let mut registry = MIX_REGISTRY.write().await;
         registry.set_handler(&self.id, MixSeedType::RecentListens, handle);
+        Ok(())
+    }
+
+    /// Registers a handler for generating a mix from a seed genre.
+    #[harmony(args(handler: MixHandler))]
+    pub(crate) async fn from_genre(
+        &self,
+        plugin_id: Option<Arc<str>>,
+        handler: Function,
+    ) -> Result<()> {
+        let plugin_id = plugin_id
+            .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
+            .transpose()?;
+        self.ensure_owner(plugin_id.as_ref())?;
+        let _registration = STATE
+            .plugin_registries
+            .ensure_registrations_open(&self.plugin_id)
+            .await?;
+        let handle = self.wrap_handler(handler).await?;
+        let mut registry = MIX_REGISTRY.write().await;
+        registry.set_handler(&self.id, MixSeedType::Genre, handle);
+        Ok(())
+    }
+
+    /// Registers a handler for generating a mix from a seed playlist.
+    #[harmony(args(handler: MixHandler))]
+    pub(crate) async fn from_playlist(
+        &self,
+        plugin_id: Option<Arc<str>>,
+        handler: Function,
+    ) -> Result<()> {
+        let plugin_id = plugin_id
+            .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
+            .transpose()?;
+        self.ensure_owner(plugin_id.as_ref())?;
+        let _registration = STATE
+            .plugin_registries
+            .ensure_registrations_open(&self.plugin_id)
+            .await?;
+        let handle = self.wrap_handler(handler).await?;
+        let mut registry = MIX_REGISTRY.write().await;
+        registry.set_handler(&self.id, MixSeedType::Playlist, handle);
         Ok(())
     }
 
