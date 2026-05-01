@@ -214,7 +214,7 @@ pub(super) async fn dispatch_websocket_route(
     route: RegisteredRoute,
     uri: Uri,
     headers: HeaderMap,
-    query: HashMap<String, String>,
+    query: HashMap<String, Vec<String>>,
     params: Option<HashMap<String, String>>,
     ws: WebSocketUpgrade,
 ) -> Response {

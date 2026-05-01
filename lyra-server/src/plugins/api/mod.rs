@@ -365,8 +365,12 @@ impl DescribeTypeAlias for ApiQueryParams {
     fn type_alias_descriptor() -> TypeAliasDescriptor {
         TypeAliasDescriptor::new(
             "ApiQueryParams",
-            LuauType::map(String::luau_type(), String::luau_type()),
-            Some("String-keyed query parameter map."),
+            LuauType::map(String::luau_type(), Vec::<String>::luau_type()),
+            Some(
+                "Query parameter map. Values are the ordered occurrences for each key, so \
+                 `?x=a&x=b` preserves both entries. Keys are case-sensitive; ordering across \
+                 case-variants (`?X=a&x=b`) is unstable.",
+            ),
         )
     }
 }
@@ -456,11 +460,18 @@ fn parse_query_bool(value: &str) -> Option<bool> {
     }
 }
 
+fn first_query_value(query: &Table, key: &str) -> mlua::Result<Option<String>> {
+    let Some(values) = query.get::<Option<Table>>(key)? else {
+        return Ok(None);
+    };
+    values.get::<Option<String>>(1)
+}
+
 fn query_bool_impl(
     _lua: &Lua,
     (query, key, default): (Table, String, Option<bool>),
 ) -> mlua::Result<Option<bool>> {
-    let value = query.get::<Option<String>>(key.as_str())?;
+    let value = first_query_value(&query, key.as_str())?;
     let parsed = value.as_deref().and_then(parse_query_bool);
     Ok(parsed.or(default))
 }
@@ -469,7 +480,7 @@ fn query_int_impl(
     _lua: &Lua,
     (query, key, default, min, max): (Table, String, Option<i64>, Option<i64>, Option<i64>),
 ) -> mlua::Result<Option<i64>> {
-    let Some(raw) = query.get::<Option<String>>(key.as_str())? else {
+    let Some(raw) = first_query_value(&query, key.as_str())? else {
         return Ok(default);
     };
 
@@ -494,18 +505,21 @@ fn query_int_impl(
 
 fn query_csv_impl(lua: &Lua, (query, key): (Table, String)) -> mlua::Result<Table> {
     let values = lua.create_table()?;
-    let Some(raw) = query.get::<Option<String>>(key.as_str())? else {
+    let Some(occurrences) = query.get::<Option<Table>>(key.as_str())? else {
         return Ok(values);
     };
 
     let mut index = 1;
-    for part in raw.split(',') {
-        let item = part.trim();
-        if item.is_empty() {
-            continue;
+    for occurrence in occurrences.sequence_values::<String>() {
+        let raw = occurrence?;
+        for part in raw.split(',') {
+            let item = part.trim();
+            if item.is_empty() {
+                continue;
+            }
+            values.set(index, item)?;
+            index += 1;
         }
-        values.set(index, item)?;
-        index += 1;
     }
 
     Ok(values)
@@ -993,6 +1007,65 @@ mod tests {
             .eval()?;
         let plugin_id = crate::plugins::id_from_function(&handler)?;
         assert_eq!(plugin_id.as_ref(), "demo");
+        Ok(())
+    }
+
+    fn build_query_table(lua: &Lua, entries: &[(&str, &[&str])]) -> mlua::Result<Table> {
+        let query = lua.create_table()?;
+        for (key, values) in entries {
+            let arr = lua.create_table_with_capacity(values.len(), 0)?;
+            for (i, v) in values.iter().enumerate() {
+                arr.set(i + 1, *v)?;
+            }
+            query.set(*key, arr)?;
+        }
+        Ok(query)
+    }
+
+    #[test]
+    fn query_csv_walks_every_occurrence_and_splits_each() -> anyhow::Result<()> {
+        let lua = Lua::new();
+        let query = build_query_table(&lua, &[("tag", &["alpha,beta", "gamma"])])?;
+        let result = query_csv_impl(&lua, (query, "tag".to_string()))?;
+        let collected: Vec<String> = result.sequence_values::<String>().collect::<mlua::Result<_>>()?;
+        assert_eq!(collected, vec!["alpha", "beta", "gamma"]);
+        Ok(())
+    }
+
+    #[test]
+    fn query_csv_returns_empty_when_key_absent() -> anyhow::Result<()> {
+        let lua = Lua::new();
+        let query = build_query_table(&lua, &[])?;
+        let result = query_csv_impl(&lua, (query, "tag".to_string()))?;
+        assert_eq!(result.len()?, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn query_csv_drops_empty_segments_and_trims_whitespace() -> anyhow::Result<()> {
+        let lua = Lua::new();
+        let query = build_query_table(&lua, &[("tag", &[" a , , b ", ",c,"])])?;
+        let result = query_csv_impl(&lua, (query, "tag".to_string()))?;
+        let collected: Vec<String> = result.sequence_values::<String>().collect::<mlua::Result<_>>()?;
+        assert_eq!(collected, vec!["a", "b", "c"]);
+        Ok(())
+    }
+
+    #[test]
+    fn query_int_uses_first_occurrence() -> anyhow::Result<()> {
+        let lua = Lua::new();
+        let query = build_query_table(&lua, &[("count", &["10", "20"])])?;
+        let parsed = query_int_impl(&lua, (query, "count".to_string(), None, None, None))?;
+        assert_eq!(parsed, Some(10));
+        Ok(())
+    }
+
+    #[test]
+    fn query_bool_uses_first_occurrence() -> anyhow::Result<()> {
+        let lua = Lua::new();
+        let query = build_query_table(&lua, &[("enabled", &["true", "false"])])?;
+        let parsed = query_bool_impl(&lua, (query, "enabled".to_string(), None))?;
+        assert_eq!(parsed, Some(true));
         Ok(())
     }
 
