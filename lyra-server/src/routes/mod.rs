@@ -23,6 +23,7 @@ pub(crate) mod registry;
 mod releases;
 pub(crate) mod responses;
 mod roles;
+mod search;
 mod serve;
 mod server;
 mod tags;
@@ -55,6 +56,7 @@ pub use providers::{
 };
 pub use releases::release_routes;
 pub use roles::role_routes;
+pub use search::search_routes;
 pub(crate) use serve::{
     build_ranged_file_body,
     download_track_response,

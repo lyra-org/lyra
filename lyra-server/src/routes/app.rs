@@ -57,6 +57,7 @@ pub(crate) fn build_core_api() -> Result<CoreApi> {
         .nest("/api/entities", super::entity_routes())
         .nest("/api/plugins", super::plugin_routes())
         .nest("/api/mix", super::mix_routes())
+        .nest("/api/search", super::search_routes())
         .finish_api(&mut api);
     configure_rest_openapi(&mut api);
 

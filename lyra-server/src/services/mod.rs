@@ -56,6 +56,7 @@ pub(crate) mod plugin_settings;
 pub(crate) mod providers;
 pub(crate) mod releases;
 pub(crate) mod remote;
+pub(crate) mod search;
 pub(crate) mod startup;
 pub(crate) mod tags;
 pub(crate) mod tracks;
