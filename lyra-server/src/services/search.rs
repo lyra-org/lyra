@@ -23,8 +23,6 @@ pub(crate) struct SearchOptions {
 }
 
 impl SearchOptions {
-    /// Build options from a raw query and an optional client-supplied limit.
-    /// `limit` is clamped into `[1, MAX_LIMIT]` and defaults to `DEFAULT_LIMIT`.
     pub(crate) fn new(query: String, limit: Option<u64>) -> Self {
         let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
         Self { query, limit }
@@ -50,14 +48,6 @@ pub(crate) struct SearchResults {
     pub(crate) releases: Vec<TitleHit>,
 }
 
-/// Cross-entity fuzzy search. Runs three per-entity queries
-/// (`db::tracks::query`, `db::artists::query`, `db::releases::query`) with the
-/// same search term and per-type limit, returning minimal autocomplete-shaped
-/// hits. No hydration — clients hit the per-entity routes for detail.
-///
-/// CPU-bound: each `db::*::query` loads the full root collection before
-/// fuzzy-filtering in memory. The route layer wraps this call in
-/// `spawn_blocking` to keep the tokio worker free.
 pub(crate) fn search(db: &DbAny, options: &SearchOptions) -> anyhow::Result<SearchResults> {
     let list_options = ListOptions {
         sort: Vec::new(),

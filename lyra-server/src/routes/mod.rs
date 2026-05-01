@@ -132,7 +132,6 @@ where
     }))
 }
 
-/// Trim a raw `?query=` value, treating empty/whitespace-only inputs as absent.
 pub(crate) fn parse_text_query(query: Option<String>) -> Option<String> {
     query.and_then(|value| {
         let value = value.trim();
