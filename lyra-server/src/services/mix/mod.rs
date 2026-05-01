@@ -262,19 +262,6 @@ fn pin_seed_and_truncate(seed: Track, mut tracks: Vec<Track>, limit: usize) -> V
     tracks
 }
 
-/// Per-handler timeout. `None` = budget exhausted.
-fn handler_timeout_slice(
-    elapsed: std::time::Duration,
-    total_budget: std::time::Duration,
-    max_per_handler: std::time::Duration,
-) -> Option<std::time::Duration> {
-    if elapsed >= total_budget {
-        return None;
-    }
-    let remaining = total_budget - elapsed;
-    Some(remaining.min(max_per_handler))
-}
-
 /// Mixer IDs with a handler for `seed_type`, highest priority first.
 async fn prioritized_mixer_ids(seed_type: MixSeedType) -> anyhow::Result<Vec<String>> {
     let db = STATE.db.read().await;
@@ -1582,35 +1569,5 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].track_title, "Seed");
         Ok(())
-    }
-
-    // --- handler_timeout_slice (dispatch budget arithmetic) ---
-
-    #[test]
-    fn handler_timeout_slice_returns_full_per_handler_when_budget_remains() {
-        let elapsed = std::time::Duration::from_secs(2);
-        let total = std::time::Duration::from_secs(15);
-        let per_handler = std::time::Duration::from_secs(10);
-        let slice = handler_timeout_slice(elapsed, total, per_handler);
-        assert_eq!(slice, Some(per_handler));
-    }
-
-    #[test]
-    fn handler_timeout_slice_clamps_to_remaining_budget() {
-        // Remaining budget below the per-handler ceiling wins.
-        let elapsed = std::time::Duration::from_secs(12);
-        let total = std::time::Duration::from_secs(15);
-        let per_handler = std::time::Duration::from_secs(10);
-        let slice = handler_timeout_slice(elapsed, total, per_handler);
-        assert_eq!(slice, Some(std::time::Duration::from_secs(3)));
-    }
-
-    #[test]
-    fn handler_timeout_slice_returns_none_when_budget_exhausted() {
-        let total = std::time::Duration::from_secs(15);
-        let per_handler = std::time::Duration::from_secs(10);
-        assert_eq!(handler_timeout_slice(total, total, per_handler), None);
-        let past = total + std::time::Duration::from_secs(1);
-        assert_eq!(handler_timeout_slice(past, total, per_handler), None);
     }
 }
