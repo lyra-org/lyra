@@ -23,6 +23,7 @@
     "lyra.libraries",
     "lyra.listens",
     "lyra.lyrics",
+    "lyra.mix",
     "lyra.playback_sessions",
     "lyra.playback_sources",
     "lyra.playlists",
