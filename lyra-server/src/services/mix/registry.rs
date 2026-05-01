@@ -30,6 +30,8 @@ pub(crate) enum MixSeedType {
     Track,
     Release,
     Artist,
+    Genre,
+    Playlist,
     RecentListens,
 }
 

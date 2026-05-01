@@ -142,6 +142,50 @@ pub(crate) async fn from_recent_listens(
     Ok(Some(tracks))
 }
 
+pub(crate) async fn from_genre(
+    genre_db_id: DbId,
+    options: &MixOptions,
+) -> anyhow::Result<Option<Vec<Track>>> {
+    {
+        let db = STATE.db.read().await;
+        if db::genres::get_by_id(&*db, genre_db_id)?.is_none() {
+            return Ok(None);
+        }
+    }
+    let dispatched = dispatch_mixer(MixSeedType::Genre, genre_db_id, options).await?;
+    let db = STATE.db.read().await;
+    if db::genres::get_by_id(&*db, genre_db_id)?.is_none() {
+        return Ok(None);
+    }
+    let tracks = match dispatched {
+        Some(tracks) => filter_existing_tracks(&*db, tracks)?,
+        None => builtin_from_genre(&*db, genre_db_id, options)?,
+    };
+    Ok(Some(tracks))
+}
+
+pub(crate) async fn from_playlist(
+    playlist_db_id: DbId,
+    options: &MixOptions,
+) -> anyhow::Result<Option<Vec<Track>>> {
+    {
+        let db = STATE.db.read().await;
+        if db::playlists::get_by_id(&*db, playlist_db_id)?.is_none() {
+            return Ok(None);
+        }
+    }
+    let dispatched = dispatch_mixer(MixSeedType::Playlist, playlist_db_id, options).await?;
+    let db = STATE.db.read().await;
+    if db::playlists::get_by_id(&*db, playlist_db_id)?.is_none() {
+        return Ok(None);
+    }
+    let tracks = match dispatched {
+        Some(tracks) => filter_existing_tracks(&*db, tracks)?,
+        None => builtin_from_playlist(&*db, playlist_db_id, options)?,
+    };
+    Ok(Some(tracks))
+}
+
 /// Drops tracks deleted between `parse_mix_result` and the post-dispatch guard.
 fn filter_existing_tracks(db: &DbAny, tracks: Vec<Track>) -> anyhow::Result<Vec<Track>> {
     if tracks.is_empty() {
@@ -500,6 +544,47 @@ fn builtin_from_artist(
 ) -> anyhow::Result<Vec<Track>> {
     let releases = db::releases::get_by_artist(db, artist_db_id)?;
     let seed_genres = collect_genres_from_releases(db, &releases)?;
+    let weighted = expand_and_weight(db, &seed_genres)?;
+    tracks_for_genres(db, &weighted, options)
+}
+
+fn builtin_from_genre(
+    db: &DbAny,
+    genre_db_id: DbId,
+    options: &MixOptions,
+) -> anyhow::Result<Vec<Track>> {
+    // Existence verified by the `from_genre` wrapper under the same read guard.
+    let weighted = db::genres::expand_related(db, &[genre_db_id], 2)?;
+    tracks_for_genres(db, &weighted, options)
+}
+
+fn builtin_from_playlist(
+    db: &DbAny,
+    playlist_db_id: DbId,
+    options: &MixOptions,
+) -> anyhow::Result<Vec<Track>> {
+    let playlist_tracks = db::playlists::get_tracks(db, playlist_db_id)?;
+    if playlist_tracks.is_empty() {
+        return Ok(Vec::new());
+    }
+    let edge_ids: Vec<DbId> = playlist_tracks.iter().map(|t| t.edge_id).collect();
+    let track_ids = db::playlists::resolve_edge_targets(db, &edge_ids)?;
+    if track_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let releases_by_track = db::releases::get_by_tracks(db, &track_ids)?;
+    let mut seen_release_ids = HashSet::new();
+    // Skip None-id (sibling-helper convention); persisted releases always have ids.
+    let all_releases: Vec<db::Release> = releases_by_track
+        .into_values()
+        .flatten()
+        .filter_map(|r| {
+            let id = r.db_id.clone().map(DbId::from)?;
+            seen_release_ids.insert(id).then_some(r)
+        })
+        .collect();
+    let seed_genres = collect_genres_from_releases(db, &all_releases)?;
     let weighted = expand_and_weight(db, &seed_genres)?;
     tracks_for_genres(db, &weighted, options)
 }
@@ -1218,6 +1303,153 @@ mod tests {
         let result = builtin_from_recent_listens(&db, user_id, &options)?;
         assert!(result.is_empty());
 
+        Ok(())
+    }
+
+    #[test]
+    fn from_genre_returns_tracks_in_that_genre() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+
+        let rock_id = genres::resolve_by_name(&mut db, "Rock")?;
+        let jazz_id = genres::resolve_by_name(&mut db, "Jazz")?;
+
+        let release_a = insert_release(&mut db, "Rock A")?;
+        genres::link_to_release(&mut db, rock_id, release_a)?;
+        let track_a = insert_track(&mut db, "Rock Track A")?;
+        connect(&mut db, release_a, track_a)?;
+
+        let release_b = insert_release(&mut db, "Rock B")?;
+        genres::link_to_release(&mut db, rock_id, release_b)?;
+        let track_b = insert_track(&mut db, "Rock Track B")?;
+        connect(&mut db, release_b, track_b)?;
+
+        let release_c = insert_release(&mut db, "Jazz C")?;
+        genres::link_to_release(&mut db, jazz_id, release_c)?;
+        let track_c = insert_track(&mut db, "Jazz Track C")?;
+        connect(&mut db, release_c, track_c)?;
+
+        let result = builtin_from_genre(&db, rock_id, &MixOptions::default())?;
+        let titles: HashSet<&str> = result.iter().map(|t| t.track_title.as_str()).collect();
+        assert!(titles.contains("Rock Track A"));
+        assert!(titles.contains("Rock Track B"));
+        assert!(!titles.contains("Jazz Track C"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn from_genre_returns_empty_for_non_genre_seed() -> anyhow::Result<()> {
+        // Real id pointing at a non-Genre node (`i64::MAX` errors instead).
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Not A Genre")?;
+        assert!(
+            db::releases::get_by_id(&db, release_id)?.is_some(),
+            "fixture should produce a real Release node"
+        );
+        assert!(
+            db::genres::get_by_id(&db, release_id)?.is_none(),
+            "Release id should not resolve as a Genre"
+        );
+
+        let result = builtin_from_genre(&db, release_id, &MixOptions::default())?;
+        assert!(result.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn from_playlist_uses_track_genres() -> anyhow::Result<()> {
+        use crate::db::playlists::{
+            self,
+            Playlist,
+        };
+
+        let mut db = new_test_db()?;
+
+        let rock_id = genres::resolve_by_name(&mut db, "Rock")?;
+        let jazz_id = genres::resolve_by_name(&mut db, "Jazz")?;
+        let pop_id = genres::resolve_by_name(&mut db, "Pop")?;
+        let user_id = insert_user(&mut db)?;
+
+        // Pin the fixture invariant so a future taxonomy seeding Pop fails loudly.
+        let related_to_rock = genres::expand_related(&db, &[rock_id], 2)?;
+        let related_to_jazz = genres::expand_related(&db, &[jazz_id], 2)?;
+        assert!(
+            !related_to_rock.iter().any(|(id, _)| *id == pop_id),
+            "fixture invariant broken: Pop is reachable from Rock at depth 2"
+        );
+        assert!(
+            !related_to_jazz.iter().any(|(id, _)| *id == pop_id),
+            "fixture invariant broken: Pop is reachable from Jazz at depth 2"
+        );
+
+        let release_p1 = insert_release(&mut db, "Playlist Rock")?;
+        genres::link_to_release(&mut db, rock_id, release_p1)?;
+        let track_p1 = insert_track(&mut db, "Playlist Rock Track")?;
+        connect(&mut db, release_p1, track_p1)?;
+
+        let release_p2 = insert_release(&mut db, "Playlist Jazz")?;
+        genres::link_to_release(&mut db, jazz_id, release_p2)?;
+        let track_p2 = insert_track(&mut db, "Playlist Jazz Track")?;
+        connect(&mut db, release_p2, track_p2)?;
+
+        let release_other_rock = insert_release(&mut db, "Other Rock")?;
+        genres::link_to_release(&mut db, rock_id, release_other_rock)?;
+        let track_other_rock = insert_track(&mut db, "Other Rock Track")?;
+        connect(&mut db, release_other_rock, track_other_rock)?;
+
+        let release_other_jazz = insert_release(&mut db, "Other Jazz")?;
+        genres::link_to_release(&mut db, jazz_id, release_other_jazz)?;
+        let track_other_jazz = insert_track(&mut db, "Other Jazz Track")?;
+        connect(&mut db, release_other_jazz, track_other_jazz)?;
+
+        let release_pop = insert_release(&mut db, "Pop Release")?;
+        genres::link_to_release(&mut db, pop_id, release_pop)?;
+        let track_pop = insert_track(&mut db, "Pop Track")?;
+        connect(&mut db, release_pop, track_pop)?;
+
+        let playlist = Playlist {
+            db_id: None,
+            id: nanoid::nanoid!(),
+            name: "Mix Seed".to_string(),
+            description: None,
+            is_public: Some(true),
+            created_at: Some(0),
+            updated_at: Some(0),
+        };
+        let playlist_db_id = playlists::create(&mut db, &playlist, user_id)?;
+        playlists::add_track(&mut db, playlist_db_id, track_p1)?;
+        playlists::add_track(&mut db, playlist_db_id, track_p2)?;
+
+        let result = builtin_from_playlist(&db, playlist_db_id, &MixOptions::default())?;
+        let titles: HashSet<&str> = result.iter().map(|t| t.track_title.as_str()).collect();
+        assert!(titles.contains("Other Rock Track"));
+        assert!(titles.contains("Other Jazz Track"));
+        assert!(!titles.contains("Pop Track"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn from_playlist_returns_empty_for_empty_playlist() -> anyhow::Result<()> {
+        use crate::db::playlists::{
+            self,
+            Playlist,
+        };
+
+        let mut db = new_test_db()?;
+        let user_id = insert_user(&mut db)?;
+        let playlist = Playlist {
+            db_id: None,
+            id: nanoid::nanoid!(),
+            name: "Empty".to_string(),
+            description: None,
+            is_public: Some(true),
+            created_at: Some(0),
+            updated_at: Some(0),
+        };
+        let playlist_db_id = playlists::create(&mut db, &playlist, user_id)?;
+        let result = builtin_from_playlist(&db, playlist_db_id, &MixOptions::default())?;
+        assert!(result.is_empty());
         Ok(())
     }
 

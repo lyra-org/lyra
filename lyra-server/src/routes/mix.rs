@@ -37,6 +37,10 @@ struct MixQuery {
     seed_release: Option<String>,
     #[schemars(description = "Seed artist ID to generate a mix from.")]
     seed_artist: Option<String>,
+    #[schemars(description = "Seed genre ID to generate a mix from.")]
+    seed_genre: Option<String>,
+    #[schemars(description = "Seed playlist ID to generate a mix from.")]
+    seed_playlist: Option<String>,
     #[schemars(description = "Seed from recent listen history.")]
     #[serde(default)]
     seed_recent: bool,
@@ -56,15 +60,17 @@ async fn get_mix(
     let seed_count = query.seed_track.is_some() as u8
         + query.seed_release.is_some() as u8
         + query.seed_artist.is_some() as u8
+        + query.seed_genre.is_some() as u8
+        + query.seed_playlist.is_some() as u8
         + query.seed_recent as u8;
     if seed_count == 0 {
         return Err(AppError::bad_request(
-            "one of seed_track, seed_release, seed_artist, or seed_recent is required".to_string(),
+            "one of seed_track, seed_release, seed_artist, seed_genre, seed_playlist, or seed_recent is required".to_string(),
         ));
     }
     if seed_count > 1 {
         return Err(AppError::bad_request(
-            "provide exactly one of seed_track, seed_release, seed_artist, or seed_recent"
+            "provide exactly one of seed_track, seed_release, seed_artist, seed_genre, seed_playlist, or seed_recent"
                 .to_string(),
         ));
     }
@@ -102,6 +108,16 @@ async fn get_mix(
         let mix_result = mix::from_artist(db_id, &options).await?;
         verify_id_stable(id, db_id, "artist").await?;
         mix_result.ok_or_else(|| AppError::not_found(format!("artist not found: {id}")))?
+    } else if let Some(ref id) = query.seed_genre {
+        let db_id = resolve_seed_id(id, "genre").await?;
+        let mix_result = mix::from_genre(db_id, &options).await?;
+        verify_id_stable(id, db_id, "genre").await?;
+        mix_result.ok_or_else(|| AppError::not_found(format!("genre not found: {id}")))?
+    } else if let Some(ref id) = query.seed_playlist {
+        let db_id = resolve_seed_id(id, "playlist").await?;
+        let mix_result = mix::from_playlist(db_id, &options).await?;
+        verify_id_stable(id, db_id, "playlist").await?;
+        mix_result.ok_or_else(|| AppError::not_found(format!("playlist not found: {id}")))?
     } else if query.seed_recent {
         // Seed is the authenticated user — no public-id round-trip.
         mix::from_recent_listens(principal.user_db_id, &options)
@@ -142,6 +158,8 @@ const KNOWN_QUERY_KEYS: &[&str] = &[
     "seed_track",
     "seed_release",
     "seed_artist",
+    "seed_genre",
+    "seed_playlist",
     "seed_recent",
     "limit",
 ];
@@ -164,7 +182,7 @@ fn sanitize_extra(mut extra: HashMap<String, String>) -> HashMap<String, String>
 
 fn mix_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Generate mix")
-        .description("Returns a shuffled list of tracks that share genres with the seed item. Provide exactly one of seed_track, seed_release, seed_artist, or seed_recent.")
+        .description("Returns a shuffled list of tracks that share genres with the seed item. Provide exactly one of seed_track, seed_release, seed_artist, seed_genre, seed_playlist, or seed_recent.")
 }
 
 pub fn mix_routes() -> ApiRouter {
