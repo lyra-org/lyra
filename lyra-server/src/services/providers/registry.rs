@@ -29,6 +29,7 @@ use crate::plugins::lifecycle::{
     ScopedRegistry,
 };
 use crate::services::EntityType;
+use crate::services::metadata::lyrics::providers::unregister_handlers_for_plugin as unregister_lyrics_handlers_for_plugin;
 
 pub(crate) static PROVIDER_REGISTRY: LazyLock<Arc<RwLock<ProviderRegistry>>> =
     LazyLock::new(|| Arc::new(RwLock::new(ProviderRegistry::new())));
@@ -334,6 +335,10 @@ pub(crate) async fn teardown_plugin_providers(plugin_id: &PluginId) {
     ScopedRegistry::from_shared(PROVIDER_REGISTRY.clone())
         .teardown(plugin_id)
         .await;
+
+    // Lyrics handlers have their own registry; without this purge a reload
+    // would leave handles backed by a torn-down Lua function.
+    unregister_lyrics_handlers_for_plugin(plugin_id).await;
 
     if !owned_provider_ids.is_empty() {
         let mut locks = SYNC_LOCKS.lock().await;

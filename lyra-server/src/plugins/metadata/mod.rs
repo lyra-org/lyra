@@ -10,6 +10,7 @@ use crate::plugins::lifecycle::{
 mod covers;
 mod ensure;
 mod layers;
+mod lyrics;
 
 pub(crate) use layers::Layer;
 
@@ -67,6 +68,7 @@ use crate::{
     STATE,
     db::NodeId,
     plugins::LUA_SERIALIZE_OPTIONS,
+    services::metadata::lyrics::providers as lyrics_dispatcher,
     services::options::{
         OptionDeclaration,
         OptionType,
@@ -454,6 +456,67 @@ impl Provider {
                 handler: handle,
             },
         );
+        Ok(())
+    }
+
+    /// Requires `http.set_rate_limit` first. Handlers MUST resolve
+    /// cooldown / known-miss / known-instrumental without awaiting HTTP;
+    /// `ctx.force_refresh = true` skips Miss/Instrumental but not cooldown.
+    #[harmony(args(config: lyrics::ProviderLyricsConfig, handler: lyrics::ProviderLyricsHandler))]
+    pub(crate) async fn lyrics(
+        &self,
+        plugin_id: Option<Arc<str>>,
+        config: Table,
+        handler: Function,
+    ) -> Result<()> {
+        let plugin_id = plugin_id
+            .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
+            .transpose()?;
+        self.ensure_owner(plugin_id.as_ref())?;
+
+        if !harmony_http::has_rate_limit_for_plugin(self.plugin_id.as_str()).await {
+            return Err(mlua::Error::runtime(format!(
+                "provider:lyrics requires http.set_rate_limit to be configured for at \
+                 least one domain before registration; call set_rate_limit in plugin \
+                 init for plugin '{}'",
+                self.plugin_id
+            )));
+        }
+
+        let (priority, timeout, require) = lyrics::parse_lyrics_spec(config)?;
+        let _registration = STATE
+            .plugin_registries
+            .ensure_registrations_open(&self.plugin_id)
+            .await?;
+        let handle = self.wrap_handler(handler).await?;
+
+        let handler_fn: lyrics_dispatcher::HandlerFn = Arc::new(move |context| {
+            let handle = handle.clone();
+            Box::pin(async move {
+                let lua = handle
+                    .try_upgrade_lua()
+                    .ok_or_else(|| anyhow::anyhow!("lua state for lyrics handler is gone"))?;
+                let lua_ctx = lyrics::track_context_to_lua(&lua, &context)
+                    .map_err(|err| anyhow::anyhow!(err))?;
+                let returned: Value = handle
+                    .call_async(lua_ctx)
+                    .await
+                    .map_err(|err| anyhow::anyhow!(err))?;
+                lyrics::parse_handler_result(&lua, returned).map_err(|err| anyhow::anyhow!(err))
+            })
+        });
+
+        let cancel = lyrics_dispatcher::make_plugin_cancellation_child(&self.plugin_id).await;
+        lyrics_dispatcher::register_handler(lyrics_dispatcher::RegisteredHandler {
+            provider_id: Arc::from(self.id.as_str()),
+            plugin_id: self.plugin_id.clone(),
+            priority,
+            timeout,
+            require,
+            handler: handler_fn,
+            cancel,
+        })
+        .await;
         Ok(())
     }
 
@@ -1022,6 +1085,7 @@ impl MetadataModule {
             ProviderExternalIdMap::type_alias_descriptor(),
             ExternalIdsByProvider::type_alias_descriptor(),
             covers::ProviderCoverHandler::type_alias_descriptor(),
+            lyrics::ProviderLyricsHandler::type_alias_descriptor(),
             harmony_luau::JsonValue::type_alias_descriptor(),
         ]
     }
@@ -1038,6 +1102,7 @@ impl MetadataModule {
             ReleaseRefreshContext::interface_descriptor(),
         ];
         interfaces.extend(covers::interface_descriptors());
+        interfaces.extend(lyrics::interface_descriptors());
         interfaces.extend(ensure::interface_descriptors());
         interfaces
     }
@@ -2404,5 +2469,437 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    mod lyrics_provider_tests {
+        use super::*;
+        use crate::db::test_db;
+        use crate::services::metadata::lyrics::providers::{
+            LYRICS_PROVIDER_REGISTRY,
+            dispatch_for_track,
+            reset_registry_for_test,
+        };
+        use std::sync::Arc;
+
+        const TEST_PLUGIN_ID: &str = "test";
+        const TEST_DOMAIN: &str = "lyrics-tests.example";
+
+        async fn initialize_dispatcher_runtime() -> anyhow::Result<()> {
+            crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
+                directory: std::path::PathBuf::from("."),
+                language: None,
+                country: None,
+            })
+            .await?;
+            reset_registry_for_test().await;
+            harmony_http::test_clear_rate_limits_for_plugin(TEST_PLUGIN_ID).await;
+            Ok(())
+        }
+
+        async fn install_track(
+            title: &str,
+            artist: &str,
+            duration_ms: u64,
+        ) -> anyhow::Result<DbId> {
+            let mut db = STATE.db.write().await;
+            let track_id = test_db::insert_track(&mut *db, title)?;
+            let mut track = db::tracks::get_by_id(&*db, track_id)?
+                .ok_or_else(|| anyhow!("just-inserted track missing"))?;
+            track.duration_ms = Some(duration_ms);
+            db.exec_mut(QueryBuilder::insert().element(&track).query())?;
+            let artist_id = test_db::insert_artist(&mut *db, artist)?;
+            test_db::connect(&mut *db, track_id, artist_id)?;
+            Ok(track_id)
+        }
+
+        async fn seed_rate_limit() {
+            harmony_http::test_seed_rate_limit(TEST_DOMAIN, Arc::<str>::from(TEST_PLUGIN_ID)).await;
+        }
+
+        #[tokio::test]
+        async fn lyrics_handler_hit_round_trip_writes_lyrics_row() -> anyhow::Result<()> {
+            let _guard = runtime_test_lock().await;
+            initialize_dispatcher_runtime().await?;
+            seed_rate_limit().await;
+
+            let provider_id = next_provider_id("lyrics-hit");
+            let lua_provider_id = provider_id.clone();
+            let track_id =
+                install_track("Round Trip Title For Hit", "Round Trip Artist For Hit", 200_000)
+                    .await?;
+            let track_db_id_value = track_id.0;
+
+            setup_metadata_module(STATE.lua.get().as_ref())?;
+            let register_fn = STATE
+                .lua
+                .get()
+                .load(chunk! {
+                    local provider = metadata.Provider.new($lua_provider_id)
+                    provider:lyrics({ priority = 60 }, function(ctx)
+                        assert(ctx.track_db_id == $track_db_id_value, "expected matching track id")
+                        return {
+                            kind = "hit",
+                            candidates = {
+                                {
+                                    lyrics = {
+                                        id = "lyrics-id-1",
+                                        language = "eng",
+                                        plain_text = "verse",
+                                        lines = {
+                                            { ts_ms = 1000, text = "verse" },
+                                        },
+                                    },
+                                    title = "Round Trip Title For Hit",
+                                    artist = "Round Trip Artist For Hit",
+                                    duration_ms = 200000,
+                                    language = "eng",
+                                },
+                            },
+                        }
+                    end)
+                })
+                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .into_function()?;
+            register_fn.call_async::<()>(()).await?;
+
+            dispatch_for_track(track_id, false).await?;
+
+            let db = STATE.db.read().await;
+            let lyrics_rows = db::lyrics::get_for_track(&*db, track_id)?;
+            assert!(
+                lyrics_rows.iter().any(|l| l.provider_id == provider_id),
+                "expected lyrics row written for {provider_id}"
+            );
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn lyrics_handler_miss_does_not_write_lyrics_row() -> anyhow::Result<()> {
+            let _guard = runtime_test_lock().await;
+            initialize_dispatcher_runtime().await?;
+            seed_rate_limit().await;
+
+            let provider_id = next_provider_id("lyrics-miss");
+            let lua_provider_id = provider_id.clone();
+            let track_id = install_track("Miss Title", "Miss Artist", 200_000).await?;
+
+            setup_metadata_module(STATE.lua.get().as_ref())?;
+            let register_fn = STATE
+                .lua
+                .get()
+                .load(chunk! {
+                    local provider = metadata.Provider.new($lua_provider_id)
+                    provider:lyrics({}, function(_ctx)
+                        return { kind = "miss" }
+                    end)
+                })
+                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .into_function()?;
+            register_fn.call_async::<()>(()).await?;
+
+            dispatch_for_track(track_id, false).await?;
+
+            let db = STATE.db.read().await;
+            let lyrics_rows = db::lyrics::get_for_track(&*db, track_id)?;
+            assert!(
+                lyrics_rows.iter().all(|l| l.provider_id != provider_id),
+                "miss must not write a lyrics row"
+            );
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn lyrics_handler_instrumental_does_not_write_lyrics_row() -> anyhow::Result<()> {
+            let _guard = runtime_test_lock().await;
+            initialize_dispatcher_runtime().await?;
+            seed_rate_limit().await;
+
+            let provider_id = next_provider_id("lyrics-instrumental");
+            let lua_provider_id = provider_id.clone();
+            let track_id =
+                install_track("Instrumental Title", "Instrumental Artist", 200_000).await?;
+
+            setup_metadata_module(STATE.lua.get().as_ref())?;
+            let register_fn = STATE
+                .lua
+                .get()
+                .load(chunk! {
+                    local provider = metadata.Provider.new($lua_provider_id)
+                    provider:lyrics({}, function(_ctx)
+                        return { kind = "instrumental" }
+                    end)
+                })
+                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .into_function()?;
+            register_fn.call_async::<()>(()).await?;
+
+            dispatch_for_track(track_id, false).await?;
+
+            let db = STATE.db.read().await;
+            let lyrics_rows = db::lyrics::get_for_track(&*db, track_id)?;
+            assert!(
+                lyrics_rows.iter().all(|l| l.provider_id != provider_id),
+                "instrumental must not write a lyrics row"
+            );
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn lyrics_handler_rate_limited_does_not_write_lyrics_row() -> anyhow::Result<()> {
+            let _guard = runtime_test_lock().await;
+            initialize_dispatcher_runtime().await?;
+            seed_rate_limit().await;
+
+            let provider_id = next_provider_id("lyrics-rl");
+            let lua_provider_id = provider_id.clone();
+            let track_id = install_track("RL Title", "RL Artist", 200_000).await?;
+
+            setup_metadata_module(STATE.lua.get().as_ref())?;
+            let register_fn = STATE
+                .lua
+                .get()
+                .load(chunk! {
+                    local provider = metadata.Provider.new($lua_provider_id)
+                    provider:lyrics({}, function(_ctx)
+                        return { kind = "rate_limited", retry_after_ms = 5000 }
+                    end)
+                })
+                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .into_function()?;
+            register_fn.call_async::<()>(()).await?;
+
+            dispatch_for_track(track_id, false).await?;
+
+            let db = STATE.db.read().await;
+            let lyrics_rows = db::lyrics::get_for_track(&*db, track_id)?;
+            assert!(
+                lyrics_rows.iter().all(|l| l.provider_id != provider_id),
+                "rate_limited must not write a lyrics row"
+            );
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn lyrics_handler_hit_without_candidates_errors() -> anyhow::Result<()> {
+            let _guard = runtime_test_lock().await;
+            initialize_dispatcher_runtime().await?;
+            seed_rate_limit().await;
+
+            let provider_id = next_provider_id("lyrics-hit-empty");
+            let lua_provider_id = provider_id.clone();
+            let track_id = install_track("Hit Empty Title", "Hit Empty Artist", 200_000).await?;
+
+            setup_metadata_module(STATE.lua.get().as_ref())?;
+            let register_fn = STATE
+                .lua
+                .get()
+                .load(chunk! {
+                    local provider = metadata.Provider.new($lua_provider_id)
+                    provider:lyrics({}, function(_ctx)
+                        return { kind = "hit" }
+                    end)
+                })
+                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .into_function()?;
+            register_fn.call_async::<()>(()).await?;
+
+            dispatch_for_track(track_id, false).await?;
+
+            let db = STATE.db.read().await;
+            let lyrics_rows = db::lyrics::get_for_track(&*db, track_id)?;
+            assert!(
+                lyrics_rows.iter().all(|l| l.provider_id != provider_id),
+                "malformed hit must not write a lyrics row"
+            );
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn lyrics_handler_typo_kind_errors() -> anyhow::Result<()> {
+            let _guard = runtime_test_lock().await;
+            initialize_dispatcher_runtime().await?;
+            seed_rate_limit().await;
+
+            let provider_id = next_provider_id("lyrics-typo");
+            let lua_provider_id = provider_id.clone();
+            let track_id = install_track("Typo Title", "Typo Artist", 200_000).await?;
+
+            setup_metadata_module(STATE.lua.get().as_ref())?;
+            let register_fn = STATE
+                .lua
+                .get()
+                .load(chunk! {
+                    local provider = metadata.Provider.new($lua_provider_id)
+                    provider:lyrics({}, function(_ctx)
+                        return { kind = "intsrumental" }
+                    end)
+                })
+                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .into_function()?;
+            register_fn.call_async::<()>(()).await?;
+
+            dispatch_for_track(track_id, false).await?;
+
+            let db = STATE.db.read().await;
+            let lyrics_rows = db::lyrics::get_for_track(&*db, track_id)?;
+            assert!(
+                lyrics_rows.iter().all(|l| l.provider_id != provider_id),
+                "typo kind must not write a lyrics row"
+            );
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn lyrics_handler_string_return_errors() -> anyhow::Result<()> {
+            let _guard = runtime_test_lock().await;
+            initialize_dispatcher_runtime().await?;
+            seed_rate_limit().await;
+
+            let provider_id = next_provider_id("lyrics-string-return");
+            let lua_provider_id = provider_id.clone();
+            let track_id = install_track("String Return", "String Artist", 200_000).await?;
+
+            setup_metadata_module(STATE.lua.get().as_ref())?;
+            let register_fn = STATE
+                .lua
+                .get()
+                .load(chunk! {
+                    local provider = metadata.Provider.new($lua_provider_id)
+                    provider:lyrics({}, function(_ctx)
+                        return "oops"
+                    end)
+                })
+                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .into_function()?;
+            register_fn.call_async::<()>(()).await?;
+
+            dispatch_for_track(track_id, false).await?;
+
+            let db = STATE.db.read().await;
+            let lyrics_rows = db::lyrics::get_for_track(&*db, track_id)?;
+            assert!(
+                lyrics_rows.iter().all(|l| l.provider_id != provider_id),
+                "string return must not write a lyrics row"
+            );
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn lyrics_handler_lua_error_logged_without_writing_lyrics() -> anyhow::Result<()> {
+            let _guard = runtime_test_lock().await;
+            initialize_dispatcher_runtime().await?;
+            seed_rate_limit().await;
+
+            let provider_id = next_provider_id("lyrics-lua-error");
+            let lua_provider_id = provider_id.clone();
+            let track_id = install_track("Lua Error", "Lua Error Artist", 200_000).await?;
+
+            setup_metadata_module(STATE.lua.get().as_ref())?;
+            let register_fn = STATE
+                .lua
+                .get()
+                .load(chunk! {
+                    local provider = metadata.Provider.new($lua_provider_id)
+                    provider:lyrics({}, function(_ctx)
+                        error("boom")
+                    end)
+                })
+                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .into_function()?;
+            register_fn.call_async::<()>(()).await?;
+
+            dispatch_for_track(track_id, false).await?;
+
+            let db = STATE.db.read().await;
+            let lyrics_rows = db::lyrics::get_for_track(&*db, track_id)?;
+            assert!(
+                lyrics_rows.iter().all(|l| l.provider_id != provider_id),
+                "lua error must not write a lyrics row"
+            );
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn lyrics_registration_requires_set_rate_limit() -> anyhow::Result<()> {
+            let _guard = runtime_test_lock().await;
+            initialize_dispatcher_runtime().await?;
+            // Deliberately do NOT seed a rate limit.
+
+            let provider_id = next_provider_id("lyrics-no-rl");
+            let lua_provider_id = provider_id.clone();
+
+            setup_metadata_module(STATE.lua.get().as_ref())?;
+            let register_fn = STATE
+                .lua
+                .get()
+                .load(chunk! {
+                    local provider = metadata.Provider.new($lua_provider_id)
+                    provider:lyrics({}, function(_ctx)
+                        return { kind = "miss" }
+                    end)
+                })
+                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .into_function()?;
+
+            let err = register_fn
+                .call_async::<()>(())
+                .await
+                .expect_err("expected provider:lyrics to refuse without set_rate_limit");
+            assert!(
+                err.to_string().contains("set_rate_limit"),
+                "error must mention set_rate_limit: {err}"
+            );
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn teardown_purges_lyrics_handlers_for_plugin() -> anyhow::Result<()> {
+            let _guard = runtime_test_lock().await;
+            initialize_dispatcher_runtime().await?;
+            seed_rate_limit().await;
+
+            let provider_id = next_provider_id("lyrics-teardown");
+            let lua_provider_id = provider_id.clone();
+            let _track_id = install_track("Teardown", "Teardown Artist", 200_000).await?;
+
+            setup_metadata_module(STATE.lua.get().as_ref())?;
+            let register_fn = STATE
+                .lua
+                .get()
+                .load(chunk! {
+                    local provider = metadata.Provider.new($lua_provider_id)
+                    provider:lyrics({}, function(_ctx)
+                        return { kind = "miss" }
+                    end)
+                })
+                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .into_function()?;
+            register_fn.call_async::<()>(()).await?;
+
+            {
+                let registry = LYRICS_PROVIDER_REGISTRY.read().await;
+                assert!(
+                    registry
+                        .list_sorted()
+                        .iter()
+                        .any(|h| h.provider_id.as_ref() == provider_id),
+                    "handler must be registered before teardown"
+                );
+            }
+
+            let plugin_id = crate::plugins::lifecycle::PluginId::new(TEST_PLUGIN_ID)
+                .expect("valid plugin id");
+            crate::services::providers::teardown_plugin_providers(&plugin_id).await;
+
+            let registry = LYRICS_PROVIDER_REGISTRY.read().await;
+            assert!(
+                registry
+                    .list_sorted()
+                    .iter()
+                    .all(|h| h.provider_id.as_ref() != provider_id),
+                "handler must be removed after teardown_plugin_providers"
+            );
+            Ok(())
+        }
     }
 }
