@@ -12,6 +12,7 @@ use std::{
         Arc,
         LazyLock,
     },
+    time::Duration,
 };
 
 use anyhow::{
@@ -63,6 +64,10 @@ pub(crate) struct ProviderCoverRequireSpec {
 #[derive(Clone)]
 pub(crate) struct ProviderCoverSpec {
     pub(crate) priority: i64,
+    /// Per-call handler timeout. Mirrors the lyrics dispatcher's `timeout`
+    /// field; defaulted at parse time to `DEFAULT_COVER_HANDLER_TIMEOUT`
+    /// so existing plugins that don't pass `timeout_ms` keep working.
+    pub(crate) timeout: Duration,
     pub(crate) require: ProviderCoverRequireSpec,
     pub(crate) handler: PluginFunctionHandle,
 }

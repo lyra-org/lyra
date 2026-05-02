@@ -44,6 +44,7 @@ use super::CoverImageCandidate;
 
 const PROVIDER_COVER_CACHE_HIT_TTL: Duration = Duration::from_secs(30 * 60);
 const PROVIDER_COVER_CACHE_MISS_TTL: Duration = Duration::from_secs(5 * 60);
+pub(crate) const DEFAULT_COVER_HANDLER_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub(crate) use crate::services::EntityType;
 
@@ -693,10 +694,22 @@ async fn resolve_provider_cover_search_result_uncached(
         let lua_ctx = lua
             .to_value_with(&handler_context, crate::plugins::LUA_SERIALIZE_OPTIONS)
             .map_err(anyhow::Error::from)?;
-        let result: LuaValue = cover_spec
-            .handler
-            .call_async::<_, LuaValue>(lua_ctx)
-            .await?;
+        let timeout = if cover_spec.timeout.is_zero() {
+            DEFAULT_COVER_HANDLER_TIMEOUT
+        } else {
+            cover_spec.timeout
+        };
+        let call = cover_spec.handler.call_async::<_, LuaValue>(lua_ctx);
+        let result: LuaValue = match tokio::time::timeout(timeout, call).await {
+            Ok(Ok(value)) => value,
+            Ok(Err(err)) => return Err(err.into()),
+            Err(_elapsed) => {
+                return Err(anyhow!(
+                    "cover handler for provider '{provider_id}' timed out after {}ms",
+                    timeout.as_millis()
+                ));
+            }
+        };
         let value = serde_json::to_value(&result)?;
         if value.is_null() {
             continue;

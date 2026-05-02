@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::time::Duration;
+
 use harmony_luau::{
     FunctionParameter,
     JsonValue,
@@ -16,7 +18,10 @@ use mlua::{
     Value,
 };
 
-use crate::services::providers::ProviderCoverRequireSpec;
+use crate::services::{
+    covers::providers::DEFAULT_COVER_HANDLER_TIMEOUT,
+    providers::ProviderCoverRequireSpec,
+};
 
 #[harmony_macros::interface]
 pub(crate) struct ProviderCoverRequire {
@@ -27,6 +32,7 @@ pub(crate) struct ProviderCoverRequire {
 #[harmony_macros::interface]
 pub(crate) struct ProviderCoverConfig {
     priority: Option<i64>,
+    timeout_ms: Option<u64>,
     require: Option<ProviderCoverRequire>,
 }
 
@@ -157,7 +163,7 @@ pub(super) fn parse_cover_require_spec(require: Table) -> Result<ProviderCoverRe
     Ok(ProviderCoverRequireSpec { all_of, any_of })
 }
 
-pub(super) fn parse_cover_spec(config: Table) -> Result<(i64, ProviderCoverRequireSpec)> {
+pub(super) fn parse_cover_spec(config: Table) -> Result<(i64, Duration, ProviderCoverRequireSpec)> {
     let priority = match config.get::<Value>("priority")? {
         Value::Nil => 50,
         Value::Integer(value) => value,
@@ -176,6 +182,31 @@ pub(super) fn parse_cover_spec(config: Table) -> Result<(i64, ProviderCoverRequi
         }
     };
 
+    let timeout = match config.get::<Value>("timeout_ms")? {
+        Value::Nil => DEFAULT_COVER_HANDLER_TIMEOUT,
+        Value::Integer(value) => {
+            if value < 1 {
+                return Err(mlua::Error::runtime(
+                    "provider:cover config.timeout_ms must be >= 1",
+                ));
+            }
+            Duration::from_millis(value as u64)
+        }
+        Value::Number(value) => {
+            if !value.is_finite() || value.fract() != 0.0 || value < 1.0 {
+                return Err(mlua::Error::runtime(
+                    "provider:cover config.timeout_ms must be an integer >= 1",
+                ));
+            }
+            Duration::from_millis(value as u64)
+        }
+        _ => {
+            return Err(mlua::Error::runtime(
+                "provider:cover config.timeout_ms must be a positive integer when set",
+            ));
+        }
+    };
+
     let require = match config.get::<Value>("require")? {
         Value::Nil => ProviderCoverRequireSpec::default(),
         Value::Table(require) => parse_cover_require_spec(require)?,
@@ -186,7 +217,7 @@ pub(super) fn parse_cover_spec(config: Table) -> Result<(i64, ProviderCoverRequi
         }
     };
 
-    Ok((priority, require))
+    Ok((priority, timeout, require))
 }
 
 pub(super) fn interface_descriptors() -> Vec<harmony_luau::InterfaceDescriptor> {
