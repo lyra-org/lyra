@@ -6,6 +6,8 @@
 use agdb::DbId;
 use std::collections::BTreeMap;
 
+use std::collections::BTreeSet;
+
 use super::scanning::prepare_entries;
 use crate::{
     Library,
@@ -26,6 +28,7 @@ use crate::{
                 source_directory_for_group_entries,
             },
             log_skip_summary,
+            lyrics::providers::dispatch_for_track as dispatch_lyrics_for_track,
             parse_metadata,
         },
         providers::{
@@ -61,6 +64,9 @@ pub(crate) async fn add_metadata(
     if entries.is_empty() {
         return Ok(());
     }
+
+    // Cloned for the lyrics-dispatch hook below; `group_entries` consumes the original.
+    let touched_entries = entries.clone();
 
     let groups = {
         let db_read = db.read().await;
@@ -126,6 +132,33 @@ pub(crate) async fn add_metadata(
 
     let mut db_write = db.write().await;
     cleanup_orphaned_metadata(&mut db_write)?;
+    drop(db_write);
+
+    // Dedupe entries → tracks (cue sheets fan one entry to many; one track
+    // is reachable from several entries).
+    let track_ids: Vec<DbId> = {
+        let db_read = db.read().await;
+        let mut seen = BTreeSet::new();
+        for entry_db_id in touched_entries {
+            for track in db::tracks::get_by_entry(&db_read, entry_db_id)? {
+                if let Some(track_db_id) = track.db_id.map(DbId::from) {
+                    seen.insert(track_db_id);
+                }
+            }
+        }
+        seen.into_iter().collect()
+    };
+    for track_db_id in track_ids {
+        tokio::spawn(async move {
+            if let Err(err) = dispatch_lyrics_for_track(track_db_id, false).await {
+                tracing::warn!(
+                    track_db_id = track_db_id.0,
+                    error = %err,
+                    "lyrics dispatch failed for newly-added track"
+                );
+            }
+        });
+    }
 
     Ok(())
 }
