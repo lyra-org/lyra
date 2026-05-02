@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+pub(crate) mod providers;
+pub(crate) mod scorer;
 mod selection;
 mod upload;
 

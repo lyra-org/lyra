@@ -62,30 +62,30 @@ harmony_macros::compile!(type_path = LyricsOrigin, variants = true);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[harmony_macros::interface]
-struct PluginLyricWordInput {
-    ts_ms: u64,
-    char_start: u32,
-    char_end: u32,
+pub(crate) struct PluginLyricWordInput {
+    pub(crate) ts_ms: u64,
+    pub(crate) char_start: u32,
+    pub(crate) char_end: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[harmony_macros::interface]
-struct PluginLyricLineInput {
-    ts_ms: u64,
-    text: String,
+pub(crate) struct PluginLyricLineInput {
+    pub(crate) ts_ms: u64,
+    pub(crate) text: String,
     #[serde(default)]
-    words: Vec<PluginLyricWordInput>,
+    pub(crate) words: Vec<PluginLyricWordInput>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[harmony_macros::interface]
-struct PluginLyricsInput {
-    id: String,
-    language: String,
+pub(crate) struct PluginLyricsInput {
+    pub(crate) id: String,
+    pub(crate) language: String,
     #[serde(default)]
-    plain_text: String,
+    pub(crate) plain_text: String,
     #[serde(default)]
-    lines: Vec<PluginLyricLineInput>,
+    pub(crate) lines: Vec<PluginLyricLineInput>,
 }
 
 impl PluginLyricsInput {
@@ -116,7 +116,7 @@ impl PluginLyricsInput {
 }
 
 impl PluginLyricsInput {
-    fn into_lyrics_input(self, now_ms: u64) -> Result<LyricsInput> {
+    pub(crate) fn into_lyrics_input(self, now_ms: u64) -> Result<LyricsInput> {
         if self.id.trim().is_empty() {
             return Err(mlua::Error::runtime("lyrics id cannot be empty"));
         }
