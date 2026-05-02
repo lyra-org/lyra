@@ -35,7 +35,7 @@ type HandlerResult = {
 
 http.set_rate_limit({
 	domain = "lrclib.net",
-	requests_per_second = 1,
+	requests_per_second = 4,
 	max_retries = 1,
 })
 
@@ -507,22 +507,6 @@ local function fetch_by_id(id: string): (HttpResponse, JsonObject?)
 	return response, as_json_object(body)
 end
 
-local function fetch_get(ctx: ProviderLyricsContext): (HttpResponse, JsonObject?)
-	local params: { [string]: string? } = {
-		track_name = ctx.track_name,
-		artist_name = ctx.artist_name,
-	}
-	local album = trim(ctx.album_name)
-	if album ~= "" then
-		params.album_name = album
-	end
-	if ctx.duration_ms ~= nil then
-		params.duration = tostring(math.floor(ctx.duration_ms / 1000))
-	end
-	local response, body = request_json(`{API_BASE}/get{build_query(params)}`)
-	return response, as_json_object(body)
-end
-
 local function fetch_search(ctx: ProviderLyricsContext): (HttpResponse, JsonArray?)
 	local params: { [string]: string? } = {
 		track_name = ctx.track_name,
@@ -582,24 +566,6 @@ local function handle(ctx: ProviderLyricsContext): HandlerResult
 			end
 			return result
 		end
-		-- 404 / unexpected falls through to a fresh /get.
-	end
-
-	local get_response, get_body = fetch_get(ctx)
-	if get_response.status_code == 429 then
-		return rate_limited_result(get_response)
-	end
-	if get_response.status_code == 200 and get_body ~= nil then
-		local matched_id = json_id_field(get_body, "id")
-		if matched_id ~= nil then
-			write_cached_id(ctx, matched_id)
-		end
-		local result = build_hit_or_miss(ctx, get_body)
-		clear_cooldown_429_counter()
-		return result
-	end
-	if get_response.status_code ~= 404 then
-		error(`lrclib /get failed with status {get_response.status_code}`)
 	end
 
 	local search_response, search_body = fetch_search(ctx)
@@ -633,6 +599,7 @@ local function handle(ctx: ProviderLyricsContext): HandlerResult
 		clear_cooldown_429_counter()
 		return { kind = "miss" }
 	end
+	write_cached_id(ctx, candidates[1].lyrics.id)
 	record_hit(ctx)
 	clear_cooldown_429_counter()
 	return { kind = "hit", candidates = candidates }
@@ -643,7 +610,7 @@ local provider = metadata.Provider.new("lrclib")
 provider:lyrics({
 	require = { all_of = { "track_name", "artist_name" } },
 	priority = 50,
-	timeout_ms = 5000,
+	timeout_ms = 30000,
 }, function(ctx: ProviderLyricsContext): JsonValue
-	return handle(ctx) :: any
+	return handle(ctx) :: JsonValue
 end)
