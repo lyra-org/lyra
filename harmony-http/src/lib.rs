@@ -815,15 +815,33 @@ where
             .headers
             .iter()
             .find(|(k, _)| *k == "retry-after")
-            .and_then(|(_, v)| v.parse::<u64>().ok())
-            .map(Duration::from_secs);
+            .and_then(|(_, v)| parse_retry_after(v, SystemTime::now()));
 
-        let wait_time = retry_after.unwrap_or(backoff);
+        let wait_time = retry_after.unwrap_or_else(|| jittered_backoff(backoff));
         tokio::time::sleep(wait_time).await;
 
         retries += 1;
         backoff = backoff.saturating_mul(2);
     }
+}
+
+/// RFC 7231: integer seconds or HTTP-date.
+fn parse_retry_after(value: &str, now: SystemTime) -> Option<Duration> {
+    let trimmed = value.trim();
+    if let Ok(secs) = trimmed.parse::<u64>() {
+        return Some(Duration::from_secs(secs));
+    }
+    let target = httpdate::parse_http_date(trimmed).ok()?;
+    Some(target.duration_since(now).unwrap_or(Duration::ZERO))
+}
+
+/// Full-jitter sleep in `[0, cap]` — prevents thundering-herd retry bursts.
+fn jittered_backoff(cap: Duration) -> Duration {
+    let cap_nanos = cap.as_nanos().min(u64::MAX as u128) as u64;
+    if cap_nanos == 0 {
+        return Duration::ZERO;
+    }
+    Duration::from_nanos(fastrand::u64(0..=cap_nanos))
 }
 
 async fn execute_request_with_rate_limit(options: HttpRequestOptions) -> HttpResponse {
@@ -1284,5 +1302,88 @@ mod tests {
             rendered.contains("function http.set_max_in_flight(options: HttpConcurrencyOptions)")
         );
         assert!(rendered.contains("string | buffer"));
+    }
+
+    #[test]
+    fn jittered_backoff_spreads_wakeups_across_window() {
+        use std::time::Duration;
+
+        let cap = Duration::from_millis(800);
+        let samples: Vec<Duration> = (0..256).map(|_| super::jittered_backoff(cap)).collect();
+
+        for s in &samples {
+            assert!(*s <= cap, "sample {s:?} exceeded cap {cap:?}");
+        }
+
+        let min = samples.iter().min().copied().unwrap();
+        let max = samples.iter().max().copied().unwrap();
+        // Without jitter every sample equals `cap`. Demand a non-trivial spread
+        // (>25% of cap) so a future regression to a fixed-wait backoff fails here.
+        let spread = max.saturating_sub(min);
+        assert!(
+            spread > cap / 4,
+            "expected jitter spread > {:?}, got min={min:?} max={max:?}",
+            cap / 4,
+        );
+
+        // Sanity-check that we're hitting both halves of the window.
+        let half = cap / 2;
+        assert!(
+            samples.iter().any(|s| *s < half) && samples.iter().any(|s| *s > half),
+            "samples clustered to one half of [0, cap]: min={min:?} max={max:?}",
+        );
+    }
+
+    #[test]
+    fn jittered_backoff_zero_cap_returns_zero() {
+        assert_eq!(
+            super::jittered_backoff(std::time::Duration::ZERO),
+            std::time::Duration::ZERO,
+        );
+    }
+
+    #[test]
+    fn parse_retry_after_accepts_integer_seconds() {
+        let now = std::time::SystemTime::now();
+        assert_eq!(
+            super::parse_retry_after("12", now),
+            Some(std::time::Duration::from_secs(12)),
+        );
+        assert_eq!(
+            super::parse_retry_after("  7  ", now),
+            Some(std::time::Duration::from_secs(7)),
+        );
+    }
+
+    #[test]
+    fn parse_retry_after_accepts_http_date() {
+        // Anchor "now" at a fixed instant so the assertion is hermetic.
+        let now = httpdate::parse_http_date("Wed, 21 Oct 2026 07:28:00 GMT")
+            .expect("parse anchor date");
+        let target = "Wed, 21 Oct 2026 07:28:30 GMT";
+
+        let waited = super::parse_retry_after(target, now).expect("HTTP-date is accepted");
+        assert_eq!(waited, std::time::Duration::from_secs(30));
+    }
+
+    #[test]
+    fn parse_retry_after_past_http_date_yields_zero() {
+        // RFC 7231 doesn't forbid a date already in the past; treat it as
+        // "retry now" rather than panicking on the SystemTime subtraction.
+        let now = httpdate::parse_http_date("Wed, 21 Oct 2026 07:28:00 GMT")
+            .expect("parse anchor date");
+        let past = "Wed, 21 Oct 2026 07:27:00 GMT";
+
+        assert_eq!(
+            super::parse_retry_after(past, now),
+            Some(std::time::Duration::ZERO),
+        );
+    }
+
+    #[test]
+    fn parse_retry_after_rejects_garbage() {
+        let now = std::time::SystemTime::now();
+        assert_eq!(super::parse_retry_after("not-a-date", now), None);
+        assert_eq!(super::parse_retry_after("", now), None);
     }
 }
