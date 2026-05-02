@@ -28,7 +28,10 @@ use crate::{
                 source_directory_for_group_entries,
             },
             log_skip_summary,
-            lyrics::providers::dispatch_for_track as dispatch_lyrics_for_track,
+            lyrics::providers::{
+                MAX_CONCURRENT_DISPATCHES,
+                dispatch_for_track as dispatch_lyrics_for_track,
+            },
             parse_metadata,
         },
         providers::{
@@ -148,15 +151,23 @@ pub(crate) async fn add_metadata(
         }
         seen.into_iter().collect()
     };
-    for track_db_id in track_ids {
+    if !track_ids.is_empty() {
         tokio::spawn(async move {
-            if let Err(err) = dispatch_lyrics_for_track(track_db_id, false).await {
-                tracing::warn!(
-                    track_db_id = track_db_id.0,
-                    error = %err,
-                    "lyrics dispatch failed for newly-added track"
-                );
-            }
+            use futures::stream::{
+                self,
+                StreamExt,
+            };
+            stream::iter(track_ids)
+                .for_each_concurrent(MAX_CONCURRENT_DISPATCHES, |track_db_id| async move {
+                    if let Err(err) = dispatch_lyrics_for_track(track_db_id, false).await {
+                        tracing::warn!(
+                            track_db_id = track_db_id.0,
+                            error = %err,
+                            "lyrics dispatch failed for newly-added track"
+                        );
+                    }
+                })
+                .await;
         });
     }
 
