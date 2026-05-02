@@ -9,6 +9,8 @@ harmony-core = { path = "../harmony-core" }
 harmony-luau = { path = "../harmony-luau" }
 harmony-macros = { path = "../harmony-macros" }
 anyhow = { workspace = true }
+fastrand = "2"
+httpdate = "1"
 mlua = { workspace = true, features = ["luau", "anyhow", "serialize"] }
 percent-encoding = { workspace = true }
 reqwest = { workspace = true, default-features = false, features = ["charset", "http2", "json", "rustls-no-provider", "system-proxy"] }

@@ -1081,9 +1081,11 @@ name = "harmony-http"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "fastrand",
  "harmony-core",
  "harmony-luau",
  "harmony-macros",
+ "httpdate",
  "mluau",
  "percent-encoding",
  "reqwest",
