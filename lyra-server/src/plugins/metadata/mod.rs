@@ -408,7 +408,8 @@ impl Provider {
         Ok(())
     }
 
-    /// Registers a cover handler for this provider.
+    /// Requires `http.set_rate_limit` for at least one domain before
+    /// registration.
     #[harmony(args(entity_type: EntityType, config: covers::ProviderCoverConfig, handler: covers::ProviderCoverHandler))]
     pub(crate) async fn cover(
         &self,
@@ -427,7 +428,16 @@ impl Provider {
             ));
         }
 
-        let (priority, require) = parse_cover_spec(config)?;
+        if !harmony_http::has_rate_limit_for_plugin(self.plugin_id.as_str()).await {
+            return Err(mlua::Error::runtime(format!(
+                "provider:cover requires http.set_rate_limit to be configured for at \
+                 least one domain before registration; call set_rate_limit in plugin \
+                 init for plugin '{}'",
+                self.plugin_id
+            )));
+        }
+
+        let (priority, timeout, require) = parse_cover_spec(config)?;
         let _registration = STATE
             .plugin_registries
             .ensure_registrations_open(&self.plugin_id)
@@ -439,6 +449,7 @@ impl Provider {
             entity_type,
             ProviderCoverSpec {
                 priority,
+                timeout,
                 require,
                 handler: handle,
             },
@@ -1133,6 +1144,7 @@ mod tests {
         Value,
         chunk,
     };
+    use std::sync::Arc;
     use std::sync::atomic::{
         AtomicU64,
         Ordering,
@@ -1153,6 +1165,11 @@ mod tests {
     fn next_provider_id(prefix: &str) -> String {
         let idx = PROVIDER_SEQ.fetch_add(1, Ordering::SeqCst);
         format!("{prefix}-{idx}")
+    }
+
+    /// Stand-in for `http.set_rate_limit` so registration clears the gate.
+    async fn seed_test_rate_limit() {
+        harmony_http::test_seed_rate_limit("provider-tests.example", Arc::<str>::from("test")).await;
     }
 
     fn setup_metadata_module(lua: &Lua) -> anyhow::Result<()> {
@@ -1489,6 +1506,7 @@ mod tests {
     #[tokio::test]
     async fn provider_handlers_execute_from_lua_registration() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
+        seed_test_rate_limit().await;
         let provider_id = next_provider_id("provider-handlers");
         let search_term = "find-track";
         let refresh_title = "Refreshed By Provider";
@@ -1639,6 +1657,7 @@ mod tests {
     #[tokio::test]
     async fn provider_cover_registration_accepts_artist_entity() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
+        seed_test_rate_limit().await;
         let provider_id = next_provider_id("cover-artist");
         let lua_provider_id = provider_id.clone();
 
@@ -1663,6 +1682,7 @@ mod tests {
     #[tokio::test]
     async fn provider_cover_registration_accepts_empty_require() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
+        seed_test_rate_limit().await;
         let provider_id = next_provider_id("cover-empty-require");
         let lua_provider_id = provider_id.clone();
 
@@ -1680,6 +1700,140 @@ mod tests {
             .set_name(&harmony_core::format_plugin_chunk_name("test", "init"))
             .into_function()?;
         register_fn.call_async::<()>(()).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn provider_cover_registration_requires_set_rate_limit() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        // No seed — gate must refuse and the error must mention set_rate_limit.
+        harmony_http::test_clear_rate_limits_for_plugin("test").await;
+
+        let provider_id = next_provider_id("cover-no-rl");
+        let lua_provider_id = provider_id.clone();
+
+        setup_metadata_module(STATE.lua.get().as_ref())?;
+
+        let register_fn = STATE
+            .lua
+            .get()
+            .load(chunk! {
+                local provider = metadata.Provider.new($lua_provider_id)
+                provider:cover(metadata.EntityType.Release, {}, function(_)
+                    return nil
+                end)
+            })
+            .set_name(&harmony_core::format_plugin_chunk_name("test", "init"))
+            .into_function()?;
+        let err = register_fn
+            .call_async::<()>(())
+            .await
+            .expect_err("expected provider:cover to refuse without set_rate_limit");
+        assert!(
+            err.to_string().contains("set_rate_limit"),
+            "error must mention set_rate_limit: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn provider_cover_handler_timeout_surfaces_error() -> anyhow::Result<()> {
+        use std::time::Duration;
+        let _guard = runtime_test_lock().await;
+        seed_test_rate_limit().await;
+        crate::services::covers::providers::clear_cover_search_cache().await;
+
+        let provider_id = next_provider_id("cover-timeout");
+        let lua_provider_id = provider_id.clone();
+
+        setup_metadata_module(STATE.lua.get().as_ref())?;
+
+        // Lua-side sleep so the handler can outlast `timeout_ms`.
+        let lua = STATE.lua.get();
+        let sleep_fn = lua.create_async_function(|_lua, ms: u64| async move {
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+            Ok(())
+        })?;
+        lua.globals().set("__test_sleep_ms", sleep_fn)?;
+
+        let register_fn = lua
+            .load(chunk! {
+                local provider = metadata.Provider.new($lua_provider_id)
+                provider:cover(metadata.EntityType.Release, {
+                    timeout_ms = 50,
+                }, function(_)
+                    __test_sleep_ms(500)
+                    return nil
+                end)
+            })
+            .set_name(&harmony_core::format_plugin_chunk_name("test", "init"))
+            .into_function()?;
+        register_fn.call_async::<()>(()).await?;
+
+        // Call the dispatcher. The handler sleeps 500ms; the timeout is 50ms,
+        // so the dispatcher must surface a timeout error.
+        let context = serde_json::json!({});
+        let err = crate::services::covers::providers::resolve_provider_cover_url(
+            &provider_id,
+            EntityType::Release,
+            &context,
+            true,
+        )
+        .await
+        .expect_err("expected dispatcher to surface a timeout error");
+        assert!(
+            err.to_string().contains("timed out"),
+            "error must mention 'timed out': {err}"
+        );
+
+        // Sanity: the registered spec carries the parsed timeout.
+        let registry = PROVIDER_REGISTRY.read().await;
+        let spec = registry
+            .get_cover_handlers(&provider_id, EntityType::Release)
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("expected cover spec registered"))?;
+        assert_eq!(spec.timeout, Duration::from_millis(50));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn provider_cover_config_defaults_timeout_when_omitted() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        seed_test_rate_limit().await;
+
+        let provider_id = next_provider_id("cover-default-timeout");
+        let lua_provider_id = provider_id.clone();
+
+        setup_metadata_module(STATE.lua.get().as_ref())?;
+
+        let register_fn = STATE
+            .lua
+            .get()
+            .load(chunk! {
+                local provider = metadata.Provider.new($lua_provider_id)
+                provider:cover(metadata.EntityType.Release, {}, function(_)
+                    return nil
+                end)
+            })
+            .set_name(&harmony_core::format_plugin_chunk_name("test", "init"))
+            .into_function()?;
+        register_fn.call_async::<()>(()).await?;
+
+        let registry = PROVIDER_REGISTRY.read().await;
+        let spec = registry
+            .get_cover_handlers(&provider_id, EntityType::Release)
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("expected cover spec registered"))?;
+        assert_eq!(
+            spec.timeout,
+            crate::services::covers::providers::DEFAULT_COVER_HANDLER_TIMEOUT,
+            "omitted timeout_ms must fall back to DEFAULT_COVER_HANDLER_TIMEOUT"
+        );
 
         Ok(())
     }
