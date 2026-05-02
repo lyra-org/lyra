@@ -92,6 +92,7 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         .expect("Failed to create HTTP client")
 });
 
+// TODO(provider-cooldown): persist per-domain state so cooldowns survive restart.
 static RATE_LIMITER: LazyLock<Arc<RwLock<RateLimiter>>> =
     LazyLock::new(|| Arc::new(RwLock::new(RateLimiter::new())));
 static CONCURRENCY_LIMITER: LazyLock<Arc<RwLock<ConcurrencyLimiter>>> =
@@ -116,6 +117,8 @@ struct DomainState {
     next_allowed: Instant,
     server_remaining: Option<u32>,
     server_reset_at: Option<Instant>,
+    /// Drives `has_rate_limit_for_plugin`.
+    set_by: Option<Arc<str>>,
 }
 
 struct ServerRateLimitInfo {
@@ -134,7 +137,7 @@ impl RateLimiter {
         }
     }
 
-    fn set_config(&mut self, domain: String, config: RateLimitConfig) {
+    fn set_config(&mut self, domain: String, config: RateLimitConfig, set_by: Option<Arc<str>>) {
         self.domains.insert(
             domain,
             DomainState {
@@ -142,8 +145,15 @@ impl RateLimiter {
                 next_allowed: Instant::now(),
                 server_remaining: None,
                 server_reset_at: None,
+                set_by,
             },
         );
+    }
+
+    fn has_entry_for_plugin(&self, plugin_id: &str) -> bool {
+        self.domains
+            .values()
+            .any(|state| state.set_by.as_deref() == Some(plugin_id))
     }
 
     fn get_config(&self, domain: &str) -> Option<&RateLimitConfig> {
@@ -873,6 +883,7 @@ fn get_default_user_agent() -> Option<String> {
 struct HttpModule;
 
 #[harmony_macros::module(
+    plugin_scoped,
     name = "Http",
     local = "http",
     path = "harmony/http",
@@ -886,11 +897,18 @@ struct HttpModule;
     )
 )]
 impl HttpModule {
-    pub async fn request(options: HttpRequestOptions) -> mlua::Result<HttpResponse> {
+    pub async fn request(
+        _plugin_id: Option<Arc<str>>,
+        options: HttpRequestOptions,
+    ) -> mlua::Result<HttpResponse> {
         Ok(execute_request_with_rate_limit(options).await)
     }
 
-    pub async fn set_rate_limit(_lua: Lua, options: HttpRateLimitOptions) -> mlua::Result<()> {
+    pub async fn set_rate_limit(
+        _lua: Lua,
+        plugin_id: Option<Arc<str>>,
+        options: HttpRateLimitOptions,
+    ) -> mlua::Result<()> {
         let requests_per_second = options.requests_per_second.unwrap_or(1.0);
         if !requests_per_second.is_finite() || requests_per_second <= 0.0 {
             return Err(mlua::Error::runtime(
@@ -914,7 +932,7 @@ impl HttpModule {
         };
 
         let mut limiter = RATE_LIMITER.write().await;
-        limiter.set_config(domain, config);
+        limiter.set_config(domain, config, plugin_id);
 
         Ok(())
     }
@@ -923,7 +941,11 @@ impl HttpModule {
     /// [`ConcurrencyLimiter::set_limit`]. Reconfiguring mid-burst briefly
     /// allows `old_in_flight + new_in_flight` permits while the old
     /// semaphore drains; avoid live reconfiguration in hot windows.
-    pub async fn set_max_in_flight(_lua: Lua, options: HttpConcurrencyOptions) -> mlua::Result<()> {
+    pub async fn set_max_in_flight(
+        _lua: Lua,
+        _plugin_id: Option<Arc<str>>,
+        options: HttpConcurrencyOptions,
+    ) -> mlua::Result<()> {
         if options.max_in_flight == 0 {
             return Err(mlua::Error::runtime("max_in_flight must be at least 1"));
         }
@@ -942,6 +964,36 @@ impl HttpModule {
     pub fn encode_uri_component(_lua: &Lua, input: String) -> mlua::Result<String> {
         Ok(percent_encoding::utf8_percent_encode(&input, URI_COMPONENT_SET).to_string())
     }
+}
+
+/// True when at least one `set_rate_limit` entry was registered under
+/// `plugin_id`. Plugin surfaces gate on this before registering.
+pub async fn has_rate_limit_for_plugin(plugin_id: &str) -> bool {
+    let limiter = RATE_LIMITER.read().await;
+    limiter.has_entry_for_plugin(plugin_id)
+}
+
+#[doc(hidden)]
+pub async fn test_seed_rate_limit(domain: impl Into<String>, plugin_id: impl Into<Arc<str>>) {
+    let mut limiter = RATE_LIMITER.write().await;
+    limiter.set_config(
+        domain.into(),
+        RateLimitConfig {
+            requests_per_second: 1.0,
+            retry_status_codes: vec![429],
+            max_retries: 0,
+            initial_backoff: Duration::from_millis(100),
+        },
+        Some(plugin_id.into()),
+    );
+}
+
+#[doc(hidden)]
+pub async fn test_clear_rate_limits_for_plugin(plugin_id: &str) {
+    let mut limiter = RATE_LIMITER.write().await;
+    limiter
+        .domains
+        .retain(|_, state| state.set_by.as_deref() != Some(plugin_id));
 }
 
 pub fn get_module() -> Module {
@@ -1069,6 +1121,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn has_rate_limit_for_plugin_walks_set_by() {
+        use std::sync::Arc;
+        let plugin_id: Arc<str> = Arc::from("plugin-rl-walker");
+        let domain = "rate-limit-walker.example".to_string();
+        {
+            let mut limiter = super::RATE_LIMITER.write().await;
+            limiter.set_config(
+                domain.clone(),
+                super::RateLimitConfig {
+                    requests_per_second: 1.0,
+                    retry_status_codes: vec![429],
+                    max_retries: 0,
+                    initial_backoff: std::time::Duration::from_millis(10),
+                },
+                Some(plugin_id.clone()),
+            );
+        }
+        assert!(super::has_rate_limit_for_plugin("plugin-rl-walker").await);
+        assert!(!super::has_rate_limit_for_plugin("plugin-rl-other").await);
+
+        // Overwrite without a plugin id; the predicate must report false.
+        {
+            let mut limiter = super::RATE_LIMITER.write().await;
+            limiter.set_config(
+                domain,
+                super::RateLimitConfig {
+                    requests_per_second: 1.0,
+                    retry_status_codes: vec![429],
+                    max_retries: 0,
+                    initial_backoff: std::time::Duration::from_millis(10),
+                },
+                None,
+            );
+        }
+        assert!(!super::has_rate_limit_for_plugin("plugin-rl-walker").await);
+    }
+
+    #[tokio::test]
     async fn concurrency_limiter_tighten_only_rejects_relaxation() {
         let mut limiter = super::ConcurrencyLimiter::new();
         limiter.set_limit("example.com".to_string(), 5);
@@ -1161,6 +1251,7 @@ mod tests {
                     max_retries: 1,
                     initial_backoff: std::time::Duration::from_millis(40),
                 },
+                None,
             );
         }
 
