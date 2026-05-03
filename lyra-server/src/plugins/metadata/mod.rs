@@ -1234,7 +1234,8 @@ mod tests {
 
     /// Stand-in for `http.set_rate_limit` so registration clears the gate.
     async fn seed_test_rate_limit() {
-        harmony_http::test_seed_rate_limit("provider-tests.example", Arc::<str>::from("test")).await;
+        harmony_http::test_seed_rate_limit("provider-tests.example", Arc::<str>::from("test"))
+            .await;
     }
 
     fn setup_metadata_module(lua: &Lua) -> anyhow::Result<()> {
@@ -2524,9 +2525,12 @@ mod tests {
 
             let provider_id = next_provider_id("lyrics-hit");
             let lua_provider_id = provider_id.clone();
-            let track_id =
-                install_track("Round Trip Title For Hit", "Round Trip Artist For Hit", 200_000)
-                    .await?;
+            let track_id = install_track(
+                "Round Trip Title For Hit",
+                "Round Trip Artist For Hit",
+                200_000,
+            )
+            .await?;
             let track_db_id_value = track_id.0;
 
             setup_metadata_module(STATE.lua.get().as_ref())?;
@@ -2558,7 +2562,10 @@ mod tests {
                         }
                     end)
                 })
-                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .set_name(&harmony_core::format_plugin_chunk_name(
+                    TEST_PLUGIN_ID,
+                    "init",
+                ))
                 .into_function()?;
             register_fn.call_async::<()>(()).await?;
 
@@ -2593,7 +2600,10 @@ mod tests {
                         return { kind = "miss" }
                     end)
                 })
-                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .set_name(&harmony_core::format_plugin_chunk_name(
+                    TEST_PLUGIN_ID,
+                    "init",
+                ))
                 .into_function()?;
             register_fn.call_async::<()>(()).await?;
 
@@ -2629,7 +2639,10 @@ mod tests {
                         return { kind = "instrumental" }
                     end)
                 })
-                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .set_name(&harmony_core::format_plugin_chunk_name(
+                    TEST_PLUGIN_ID,
+                    "init",
+                ))
                 .into_function()?;
             register_fn.call_async::<()>(()).await?;
 
@@ -2664,7 +2677,10 @@ mod tests {
                         return { kind = "rate_limited", retry_after_ms = 5000 }
                     end)
                 })
-                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .set_name(&harmony_core::format_plugin_chunk_name(
+                    TEST_PLUGIN_ID,
+                    "init",
+                ))
                 .into_function()?;
             register_fn.call_async::<()>(()).await?;
 
@@ -2699,7 +2715,10 @@ mod tests {
                         return { kind = "hit" }
                     end)
                 })
-                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .set_name(&harmony_core::format_plugin_chunk_name(
+                    TEST_PLUGIN_ID,
+                    "init",
+                ))
                 .into_function()?;
             register_fn.call_async::<()>(()).await?;
 
@@ -2734,7 +2753,10 @@ mod tests {
                         return { kind = "intsrumental" }
                     end)
                 })
-                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .set_name(&harmony_core::format_plugin_chunk_name(
+                    TEST_PLUGIN_ID,
+                    "init",
+                ))
                 .into_function()?;
             register_fn.call_async::<()>(()).await?;
 
@@ -2769,7 +2791,10 @@ mod tests {
                         return "oops"
                     end)
                 })
-                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .set_name(&harmony_core::format_plugin_chunk_name(
+                    TEST_PLUGIN_ID,
+                    "init",
+                ))
                 .into_function()?;
             register_fn.call_async::<()>(()).await?;
 
@@ -2804,7 +2829,10 @@ mod tests {
                         error("boom")
                     end)
                 })
-                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .set_name(&harmony_core::format_plugin_chunk_name(
+                    TEST_PLUGIN_ID,
+                    "init",
+                ))
                 .into_function()?;
             register_fn.call_async::<()>(()).await?;
 
@@ -2838,7 +2866,10 @@ mod tests {
                         return { kind = "miss" }
                     end)
                 })
-                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .set_name(&harmony_core::format_plugin_chunk_name(
+                    TEST_PLUGIN_ID,
+                    "init",
+                ))
                 .into_function()?;
 
             let err = register_fn
@@ -2872,7 +2903,10 @@ mod tests {
                         return { kind = "miss" }
                     end)
                 })
-                .set_name(&harmony_core::format_plugin_chunk_name(TEST_PLUGIN_ID, "init"))
+                .set_name(&harmony_core::format_plugin_chunk_name(
+                    TEST_PLUGIN_ID,
+                    "init",
+                ))
                 .into_function()?;
             register_fn.call_async::<()>(()).await?;
 
@@ -2887,8 +2921,8 @@ mod tests {
                 );
             }
 
-            let plugin_id = crate::plugins::lifecycle::PluginId::new(TEST_PLUGIN_ID)
-                .expect("valid plugin id");
+            let plugin_id =
+                crate::plugins::lifecycle::PluginId::new(TEST_PLUGIN_ID).expect("valid plugin id");
             crate::services::providers::teardown_plugin_providers(&plugin_id).await;
 
             let registry = LYRICS_PROVIDER_REGISTRY.read().await;

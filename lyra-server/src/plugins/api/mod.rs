@@ -1027,7 +1027,9 @@ mod tests {
         let lua = Lua::new();
         let query = build_query_table(&lua, &[("tag", &["alpha,beta", "gamma"])])?;
         let result = query_csv_impl(&lua, (query, "tag".to_string()))?;
-        let collected: Vec<String> = result.sequence_values::<String>().collect::<mlua::Result<_>>()?;
+        let collected: Vec<String> = result
+            .sequence_values::<String>()
+            .collect::<mlua::Result<_>>()?;
         assert_eq!(collected, vec!["alpha", "beta", "gamma"]);
         Ok(())
     }
@@ -1046,7 +1048,9 @@ mod tests {
         let lua = Lua::new();
         let query = build_query_table(&lua, &[("tag", &[" a , , b ", ",c,"])])?;
         let result = query_csv_impl(&lua, (query, "tag".to_string()))?;
-        let collected: Vec<String> = result.sequence_values::<String>().collect::<mlua::Result<_>>()?;
+        let collected: Vec<String> = result
+            .sequence_values::<String>()
+            .collect::<mlua::Result<_>>()?;
         assert_eq!(collected, vec!["a", "b", "c"]);
         Ok(())
     }
