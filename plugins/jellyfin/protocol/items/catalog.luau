@@ -13,6 +13,7 @@ local genres = require("@lyra/genres")
 local ids_module = require("@lyra/ids")
 local images = require("@lyra/images")
 local listens = require("@lyra/listens")
+local lyrics = require("@lyra/lyrics")
 local mix = require("@lyra/mix")
 local playback_sources = require("@lyra/playback_sources")
 local playlists = require("@lyra/playlists")
@@ -177,6 +178,7 @@ type TrackRelationMap = { [number]: { Track }? }
 type CreditRelationMap = { [number]: { CreditedArtistProjectionInfo }? }
 type PlaybackSourceMap = { [number]: PlaybackSourceInfo? }
 type ContainerMap = { [number]: string? }
+type LyricsLookup = { [number]: boolean }
 type PlayCountLookup = { [number]: number }
 type LastPlayedLookup = { [number]: number }
 type ItemContext = {
@@ -195,9 +197,11 @@ type ItemContext = {
 	artist_tracks_by_artist_id: TrackRelationMap,
 	playback_source_by_track_id: PlaybackSourceMap,
 	container_by_track_id: ContainerMap,
+	lyrics_by_track_id: LyricsLookup,
 	track_release_lookup_complete: boolean?,
 	has_source_prefetch: boolean?,
 	has_container_prefetch: boolean?,
+	has_lyrics_prefetch: boolean?,
 	has_track_artists_prefetch: boolean?,
 	has_track_releases_prefetch: boolean?,
 	has_release_artists_prefetch: boolean?,
@@ -1374,7 +1378,8 @@ function helpers.build_media_info(
 	track: TrackLike?,
 	source: PlaybackSourceInfo?,
 	item_id: string?,
-	fallback_name: string?
+	fallback_name: string?,
+	has_lyrics: boolean?
 ): ({ MediaSourceInfo }, { MediaStreamInfo }, string?)
 	local entry = if source then source.entry else nil
 	local media_item_id = module.encode_jellyfin_item_id(item_id)
@@ -1404,6 +1409,20 @@ function helpers.build_media_info(
 	end
 	local media_streams: { MediaStreamInfo } = { media_stream }
 	local media_stream_values: { JsonValue } = { media_stream }
+	if has_lyrics then
+		local lyric_stream: MediaStreamInfo = {
+			Type = "Lyric",
+			Index = 1,
+			IsDefault = false,
+			IsForced = false,
+			IsInterlaced = false,
+			IsExternal = false,
+			IsTextSubtitleStream = false,
+			SupportsExternalStream = false,
+		}
+		table.insert(media_streams, lyric_stream)
+		table.insert(media_stream_values, lyric_stream)
+	end
 
 	local media_source: MediaSourceInfo = {
 		Protocol = "File",
@@ -2197,6 +2216,13 @@ function helpers.to_track_item(
 			artist_items = release_artist_items
 		end
 	end
+	local has_lyrics: boolean
+	if context and context.has_lyrics_prefetch then
+		has_lyrics = context.lyrics_by_track_id[track.db_id] == true
+	else
+		local ok, value = pcall(lyrics.has, track.db_id)
+		has_lyrics = ok and value == true
+	end
 	local media_sources: { MediaSourceInfo }? = nil
 	local media_streams: { MediaStreamInfo }? = nil
 	local container = nil
@@ -2207,7 +2233,8 @@ function helpers.to_track_item(
 		else
 			source = module.resolve_playback_source_for_track(track, true)
 		end
-		media_sources, media_streams, container = helpers.build_media_info(track, source, track.id, track.track_title)
+		media_sources, media_streams, container =
+			helpers.build_media_info(track, source, track.id, track.track_title, has_lyrics)
 	else
 		if context and context.has_container_prefetch then
 			container = module.trim(helpers.lookup_by_id(context.container_by_track_id, track.db_id))
@@ -2250,7 +2277,7 @@ function helpers.to_track_item(
 		AlbumPrimaryImageTag = album_primary_image_tag,
 		ImageTags = helpers.default_image_tags(),
 		ImageBlurHashes = helpers.default_image_blur_hashes(release_cover_info),
-		HasLyrics = false,
+		HasLyrics = has_lyrics,
 		NormalizationGain = nil,
 		UserData = helpers.build_item_user_data(
 			track.db_id,
@@ -3473,8 +3500,10 @@ function helpers.new_realization_context(options: ItemsQueryOptions): ItemContex
 		artist_tracks_by_artist_id = {},
 		playback_source_by_track_id = {},
 		container_by_track_id = {},
+		lyrics_by_track_id = {},
 		has_source_prefetch = false,
 		has_container_prefetch = false,
+		has_lyrics_prefetch = false,
 		tag_infos_by_item_id = options._tag_infos_by_item_id,
 		library_hex_id = helpers.resolve_library_hex_id_from_parent(options.parent_id),
 	}
@@ -3774,6 +3803,27 @@ function helpers.prefetch_track_stats_and_media(
 	end
 end
 
+function helpers.prefetch_track_lyrics(context: ItemContext, seed: RealizationSeedInfo): ()
+	if #seed.track_ids == 0 then
+		return
+	end
+
+	local ok, lookup = pcall(lyrics.has_many, seed.track_ids)
+	if not ok or type(lookup) ~= "table" then
+		return
+	end
+
+	local resolved: LyricsLookup = {}
+	for key, value in lookup do
+		local id = helpers.resolve_numeric_id(key)
+		if id ~= nil then
+			resolved[id] = value == true
+		end
+	end
+	context.lyrics_by_track_id = resolved
+	context.has_lyrics_prefetch = true
+end
+
 function helpers.prefetch_playlist_track_ids(context: ItemContext, seed: RealizationSeedInfo): ()
 	if #seed.playlist_db_ids == 0 then
 		return
@@ -3849,6 +3899,7 @@ function helpers.build_realization_context(stubs: { ItemInfo }, options: ItemsQu
 	helpers.prefetch_artist_tracks(context, seed)
 	helpers.prefetch_artist_people_relations(context, seed)
 	helpers.prefetch_track_stats_and_media(context, seed, options)
+	helpers.prefetch_track_lyrics(context, seed)
 	helpers.prefetch_playlist_track_ids(context, seed)
 	helpers.prefetch_item_tags(context, seed, options)
 
