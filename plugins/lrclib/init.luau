@@ -432,12 +432,17 @@ local function handle(ctx: ProviderLyricsContext): HandlerResult
 	end
 
 	local candidates: { LyricsCandidate } = {}
+	local parsed_entries = 0
+	local instrumental_entries = 0
 	for _, entry in search_body do
-		if #candidates >= SEARCH_CANDIDATE_CAP then
-			break
-		end
 		local entry_object = as_json_object(entry)
-		if entry_object ~= nil and json_boolean_field(entry_object, "instrumental") ~= true then
+		if entry_object == nil then
+			continue
+		end
+		parsed_entries += 1
+		if json_boolean_field(entry_object, "instrumental") == true then
+			instrumental_entries += 1
+		elseif #candidates < SEARCH_CANDIDATE_CAP then
 			local candidate = candidate_from_response(entry_object)
 			if candidate ~= nil then
 				table.insert(candidates, candidate)
@@ -445,6 +450,13 @@ local function handle(ctx: ProviderLyricsContext): HandlerResult
 		end
 	end
 	if #candidates == 0 then
+		-- Every parseable entry was explicitly instrumental — use the longer
+		-- backoff so we don't re-poll LRCLIB hourly for a known instrumental.
+		if parsed_entries > 0 and instrumental_entries == parsed_entries then
+			set_attempt("instrumental", now_ms() + INSTRUMENTAL_BACKOFF_MS)
+			flush()
+			return { kind = "instrumental" }
+		end
 		set_attempt("miss", now_ms() + miss_backoff_ms(prev_attempt))
 		flush()
 		return { kind = "miss" }
