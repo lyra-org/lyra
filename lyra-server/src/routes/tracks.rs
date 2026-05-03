@@ -8,6 +8,7 @@ use aide::axum::{
     routing::{
         delete_with,
         get_with,
+        post_with,
         put_with,
     },
 };
@@ -294,6 +295,22 @@ async fn delete_track_lyrics(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn refresh_track_lyrics(
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let _principal = require_authenticated(&headers).await?;
+
+    let track_db_id = {
+        let db = &*STATE.db.read().await;
+        db::lookup::find_node_id_by_id(db, &id)?
+            .ok_or_else(|| AppError::not_found(format!("No track: {id}")))?
+    };
+
+    lyrics_service::providers::dispatch_for_track(track_db_id, true).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 fn lyrics_upload_error_to_app_error(error: lyrics_service::LyricsUploadError) -> AppError {
     match error {
         lyrics_service::LyricsUploadError::BadRequest(message) => AppError::bad_request(message),
@@ -421,6 +438,17 @@ fn delete_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
     ).response::<204, ()>()
 }
 
+fn refresh_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Refresh track lyrics")
+        .description(
+            "Re-runs every registered lyrics provider for the track with `force_refresh=true`, \
+         bypassing each provider's negative cache. Awaits all dispatches before returning. \
+         Returns 204 once dispatch completes; the caller should then GET the lyrics to read \
+         what was stored. 404 if the track does not exist.",
+        )
+        .response::<204, ()>()
+}
+
 pub fn track_routes() -> ApiRouter {
     ApiRouter::new()
         .api_route("/", get_with(get_tracks, list_tracks_docs))
@@ -436,5 +464,9 @@ pub fn track_routes() -> ApiRouter {
         .api_route(
             "/{id}/lyrics",
             delete_with(delete_track_lyrics, delete_track_lyrics_docs),
+        )
+        .api_route(
+            "/{id}/lyrics/refresh",
+            post_with(refresh_track_lyrics, refresh_track_lyrics_docs),
         )
 }
