@@ -4280,12 +4280,7 @@ function helpers.list_items_by_ids(options: ItemsQueryOptions)
 				if entity_type == "release" and selected_types.releases then
 					stub = helpers.to_release_stub(helpers.release_record_from_projection(projection))
 				elseif entity_type == "artist" and selected_types.artists then
-					local artist_projection = projection :: ArtistProjectionInfo
-					if artist_projection.entity.artist_type == artists_module.ArtistType.Person then
-						stub = helpers.to_person_stub(artist_projection.entity)
-					else
-						stub = helpers.to_artist_stub(helpers.artist_record_from_projection(projection))
-					end
+					stub = helpers.to_artist_stub(helpers.artist_record_from_projection(projection))
 				elseif entity_type == "track" and selected_types.tracks then
 					stub = helpers.to_track_stub(helpers.track_record_from_projection(projection))
 				end
