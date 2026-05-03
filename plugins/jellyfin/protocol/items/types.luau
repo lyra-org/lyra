@@ -93,6 +93,7 @@ export type SerializableItemInfo = {
 	Etag: string?,
 	Tags: { string }?,
 	ProviderIds: { [string]: string }?,
+	Overview: string?,
 }
 
 export type ItemKind = "release" | "artist" | "track" | "playlist"
