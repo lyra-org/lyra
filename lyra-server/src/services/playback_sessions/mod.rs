@@ -61,6 +61,9 @@ pub(crate) use updates::{
 pub(crate) const ACTIVE_SESSION_TTL_MS: u64 = 5 * 60 * 1000;
 const POSITION_DELTA_GRACE_MS: u64 = 5_000;
 const PREVIOUS_PLAYBACK_GRACE_MS: u64 = 30_000;
+/// Backward-seek landing zone that counts as a same-session replay; anything
+/// further from zero is treated as ordinary scrubbing.
+const RESTART_POSITION_MS: u64 = 3_000;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PlaybackServiceError {
@@ -270,6 +273,7 @@ mod tests {
         apply_playback_mutation,
         collect_unique_track_external_id_keys,
         report_playback_session,
+        report_playback_session_with_cleanup,
     };
     use super::*;
     use crate::db;
@@ -358,6 +362,29 @@ mod tests {
         now_ms: u64,
     ) -> anyhow::Result<Option<PlaybackRecord>> {
         Ok(report_playback_session(
+            db,
+            SessionPlaybackReportRequest {
+                plugin_id: "jellyfin",
+                user_db_id,
+                session_key: "auth:1",
+                track_db_id,
+                mutation,
+                now_ms,
+                active_event,
+                stale_ttl_ms: ACTIVE_SESSION_TTL_MS,
+            },
+        )?)
+    }
+
+    fn report_test_playback_session_with_cleanup(
+        db: &mut DbAny,
+        user_db_id: DbId,
+        track_db_id: DbId,
+        active_event: ActiveEvent,
+        mutation: PlaybackMutation,
+        now_ms: u64,
+    ) -> anyhow::Result<OptionalPlaybackUpdateResult> {
+        Ok(report_playback_session_with_cleanup(
             db,
             SessionPlaybackReportRequest {
                 plugin_id: "jellyfin",
@@ -1001,6 +1028,481 @@ mod tests {
         )?;
 
         assert!(!is_remote_control_degraded(&scope, 50_000 + 30_000));
+        Ok(())
+    }
+
+    #[test]
+    fn playback_mutation_resets_listen_marker_on_seek_to_start_after_listen() {
+        let mut playback = PlaybackSession {
+            db_id: None,
+            id: nanoid!(),
+            position_ms: 150_000,
+            duration_ms: Some(200_000),
+            activity_ms: Some(150_000),
+            last_position_ms: Some(150_000),
+            state: PlaybackState::Playing,
+            listen_recorded: Some(true),
+            updated_at_ms: 150_000,
+            created_at_ms: 0,
+        };
+
+        apply_playback_mutation(
+            &mut playback,
+            &PlaybackMutation {
+                position_ms: Some(1_500),
+                duration_ms: None,
+                state: Some(PlaybackState::Playing),
+            },
+            151_000,
+            ActivityPolicy::PlayingOnly,
+        )
+        .expect("mutation should succeed");
+
+        assert_eq!(playback.listen_recorded, Some(false));
+        assert_eq!(playback.activity_ms, Some(1_500));
+        assert_eq!(playback.last_position_ms, Some(1_500));
+        assert_eq!(playback.position_ms, 1_500);
+    }
+
+    #[test]
+    fn playback_mutation_does_not_reset_listen_marker_on_terminal_near_zero_report() {
+        let mut playback = PlaybackSession {
+            db_id: None,
+            id: nanoid!(),
+            position_ms: 150_000,
+            duration_ms: Some(200_000),
+            activity_ms: Some(150_000),
+            last_position_ms: Some(150_000),
+            state: PlaybackState::Playing,
+            listen_recorded: Some(true),
+            updated_at_ms: 150_000,
+            created_at_ms: 0,
+        };
+
+        apply_playback_mutation(
+            &mut playback,
+            &PlaybackMutation {
+                position_ms: Some(0),
+                duration_ms: None,
+                state: Some(PlaybackState::Stopped),
+            },
+            151_000,
+            ActivityPolicy::PlayingOnly,
+        )
+        .expect("mutation should succeed");
+
+        // Terminal near zero is not a replay.
+        assert_eq!(playback.listen_recorded, Some(true));
+    }
+
+    #[test]
+    fn playback_mutation_resets_listen_marker_on_paused_seek_to_start_after_listen() {
+        // Players that pause-on-scrub before resuming still get replay credit.
+        let mut playback = PlaybackSession {
+            db_id: None,
+            id: nanoid!(),
+            position_ms: 150_000,
+            duration_ms: Some(200_000),
+            activity_ms: Some(150_000),
+            last_position_ms: Some(150_000),
+            state: PlaybackState::Playing,
+            listen_recorded: Some(true),
+            updated_at_ms: 150_000,
+            created_at_ms: 0,
+        };
+
+        apply_playback_mutation(
+            &mut playback,
+            &PlaybackMutation {
+                position_ms: Some(1_500),
+                duration_ms: None,
+                state: Some(PlaybackState::Paused),
+            },
+            151_000,
+            ActivityPolicy::PlayingOnly,
+        )
+        .expect("mutation should succeed");
+
+        assert_eq!(playback.listen_recorded, Some(false));
+        assert_eq!(playback.activity_ms, Some(1_500));
+        assert_eq!(playback.last_position_ms, Some(1_500));
+    }
+
+    #[test]
+    fn playback_mutation_does_not_reset_listen_marker_when_position_meets_short_track_threshold() {
+        // 10s track → 2s listen threshold; landing at 2.5s would let
+        // maybe_record_listen credit a second listen immediately.
+        let mut playback = PlaybackSession {
+            db_id: None,
+            id: nanoid!(),
+            position_ms: 8_000,
+            duration_ms: Some(10_000),
+            activity_ms: Some(8_000),
+            last_position_ms: Some(8_000),
+            state: PlaybackState::Playing,
+            listen_recorded: Some(true),
+            updated_at_ms: 8_000,
+            created_at_ms: 0,
+        };
+
+        apply_playback_mutation(
+            &mut playback,
+            &PlaybackMutation {
+                position_ms: Some(2_500),
+                duration_ms: None,
+                state: Some(PlaybackState::Playing),
+            },
+            9_000,
+            ActivityPolicy::PlayingOnly,
+        )
+        .expect("mutation should succeed");
+
+        assert_eq!(playback.listen_recorded, Some(true));
+        assert_eq!(playback.activity_ms, Some(8_000));
+    }
+
+    #[test]
+    fn playback_mutation_does_not_reset_listen_marker_on_short_backward_seek() {
+        let mut playback = PlaybackSession {
+            db_id: None,
+            id: nanoid!(),
+            position_ms: 150_000,
+            duration_ms: Some(200_000),
+            activity_ms: Some(150_000),
+            last_position_ms: Some(150_000),
+            state: PlaybackState::Playing,
+            listen_recorded: Some(true),
+            updated_at_ms: 150_000,
+            created_at_ms: 0,
+        };
+
+        apply_playback_mutation(
+            &mut playback,
+            &PlaybackMutation {
+                position_ms: Some(120_000),
+                duration_ms: None,
+                state: Some(PlaybackState::Playing),
+            },
+            151_000,
+            ActivityPolicy::PlayingOnly,
+        )
+        .expect("mutation should succeed");
+
+        // Mid-track scrub, not a restart.
+        assert_eq!(playback.listen_recorded, Some(true));
+        assert_eq!(playback.activity_ms, Some(150_000));
+        assert_eq!(playback.last_position_ms, Some(120_000));
+    }
+
+    #[test]
+    fn playback_mutation_does_not_reset_listen_marker_when_no_listen_credited() {
+        let mut playback = PlaybackSession {
+            db_id: None,
+            id: nanoid!(),
+            position_ms: 25_000,
+            duration_ms: Some(200_000),
+            activity_ms: Some(25_000),
+            last_position_ms: Some(25_000),
+            state: PlaybackState::Playing,
+            listen_recorded: None,
+            updated_at_ms: 25_000,
+            created_at_ms: 0,
+        };
+
+        apply_playback_mutation(
+            &mut playback,
+            &PlaybackMutation {
+                position_ms: Some(0),
+                duration_ms: None,
+                state: Some(PlaybackState::Playing),
+            },
+            26_000,
+            ActivityPolicy::PlayingOnly,
+        )
+        .expect("mutation should succeed");
+
+        // No credited listen → keep accumulated activity for the threshold.
+        assert_eq!(playback.listen_recorded, None);
+        assert_eq!(playback.activity_ms, Some(25_000));
+        assert_eq!(playback.last_position_ms, Some(0));
+    }
+
+    #[tokio::test]
+    async fn report_playback_session_credits_two_listens_for_started_replay() -> anyhow::Result<()>
+    {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user_db_id = insert_user(&mut db, "alice")?;
+        let track_db_id = insert_track(&mut db, "Track A", 200_000)?;
+
+        report_test_playback_session_with_cleanup(
+            &mut db,
+            user_db_id,
+            track_db_id,
+            ActiveEvent::Started,
+            PlaybackMutation {
+                position_ms: Some(0),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            1_000,
+        )?;
+        report_test_playback_session_with_cleanup(
+            &mut db,
+            user_db_id,
+            track_db_id,
+            ActiveEvent::Progress,
+            PlaybackMutation {
+                position_ms: Some(60_000),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            61_000,
+        )?;
+
+        let counts_after_first = db::listens::get_counts(&db, &[track_db_id], Some(user_db_id))?;
+        assert_eq!(counts_after_first.get(&track_db_id).copied(), Some(1));
+
+        // Explicit restart of the same track.
+        report_test_playback_session_with_cleanup(
+            &mut db,
+            user_db_id,
+            track_db_id,
+            ActiveEvent::Started,
+            PlaybackMutation {
+                position_ms: Some(0),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            62_000,
+        )?;
+        report_test_playback_session_with_cleanup(
+            &mut db,
+            user_db_id,
+            track_db_id,
+            ActiveEvent::Progress,
+            PlaybackMutation {
+                position_ms: Some(60_000),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            122_000,
+        )?;
+
+        let counts_after_replay = db::listens::get_counts(&db, &[track_db_id], Some(user_db_id))?;
+        assert_eq!(counts_after_replay.get(&track_db_id).copied(), Some(2));
+
+        let records = workflow::collect_playback_records(&db)?;
+        assert_eq!(records.len(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn report_playback_session_credits_two_listens_for_seek_to_start_replay()
+    -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user_db_id = insert_user(&mut db, "alice")?;
+        let track_db_id = insert_track(&mut db, "Track A", 200_000)?;
+
+        report_test_playback_session_with_cleanup(
+            &mut db,
+            user_db_id,
+            track_db_id,
+            ActiveEvent::Started,
+            PlaybackMutation {
+                position_ms: Some(0),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            1_000,
+        )?;
+        report_test_playback_session_with_cleanup(
+            &mut db,
+            user_db_id,
+            track_db_id,
+            ActiveEvent::Progress,
+            PlaybackMutation {
+                position_ms: Some(60_000),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            61_000,
+        )?;
+
+        let counts_after_first = db::listens::get_counts(&db, &[track_db_id], Some(user_db_id))?;
+        assert_eq!(counts_after_first.get(&track_db_id).copied(), Some(1));
+
+        // No Started event — pure seek-to-zero replay within the same session.
+        report_test_playback_session_with_cleanup(
+            &mut db,
+            user_db_id,
+            track_db_id,
+            ActiveEvent::Progress,
+            PlaybackMutation {
+                position_ms: Some(1_000),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            62_000,
+        )?;
+        report_test_playback_session_with_cleanup(
+            &mut db,
+            user_db_id,
+            track_db_id,
+            ActiveEvent::Progress,
+            PlaybackMutation {
+                position_ms: Some(60_000),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            122_000,
+        )?;
+
+        let counts_after_replay = db::listens::get_counts(&db, &[track_db_id], Some(user_db_id))?;
+        assert_eq!(counts_after_replay.get(&track_db_id).copied(), Some(2));
+
+        // Heuristic resets in place; no second session.
+        let records = workflow::collect_playback_records(&db)?;
+        assert_eq!(records.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn report_playback_session_credits_two_listens_for_started_replay_via_previous_binding()
+    -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user_db_id = insert_user(&mut db, "alice")?;
+        let track_a_id = insert_track(&mut db, "Track A", 200_000)?;
+        let track_b_id = insert_track(&mut db, "Track B", 200_000)?;
+
+        let started_a = report_test_playback_session_with_cleanup(
+            &mut db,
+            user_db_id,
+            track_a_id,
+            ActiveEvent::Started,
+            PlaybackMutation {
+                position_ms: Some(0),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            1_000,
+        )?
+        .playback
+        .expect("track A should start");
+        report_test_playback_session_with_cleanup(
+            &mut db,
+            user_db_id,
+            track_a_id,
+            ActiveEvent::Progress,
+            PlaybackMutation {
+                position_ms: Some(60_000),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            61_000,
+        )?;
+
+        // Switch to B; A rotates to previous.
+        report_test_playback_session_with_cleanup(
+            &mut db,
+            user_db_id,
+            track_b_id,
+            ActiveEvent::Started,
+            PlaybackMutation {
+                position_ms: Some(0),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            62_000,
+        )?;
+
+        // Started for A from the previous slot must open a fresh session.
+        let restarted_a = report_test_playback_session_with_cleanup(
+            &mut db,
+            user_db_id,
+            track_a_id,
+            ActiveEvent::Started,
+            PlaybackMutation {
+                position_ms: Some(0),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            80_000,
+        )?
+        .playback
+        .expect("restart should produce a record");
+        assert_ne!(restarted_a.playback_session_id, started_a.playback_session_id);
+
+        report_test_playback_session_with_cleanup(
+            &mut db,
+            user_db_id,
+            track_a_id,
+            ActiveEvent::Progress,
+            PlaybackMutation {
+                position_ms: Some(60_000),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            140_000,
+        )?;
+
+        let counts = db::listens::get_counts(&db, &[track_a_id], Some(user_db_id))?;
+        assert_eq!(counts.get(&track_a_id).copied(), Some(2));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn report_playback_session_does_not_split_started_without_credited_listen()
+    -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user_db_id = insert_user(&mut db, "alice")?;
+        let track_db_id = insert_track(&mut db, "Track A", 200_000)?;
+
+        let started = report_test_playback_session_with_cleanup(
+            &mut db,
+            user_db_id,
+            track_db_id,
+            ActiveEvent::Started,
+            PlaybackMutation {
+                position_ms: Some(0),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            1_000,
+        )?
+        .playback
+        .expect("track should start");
+        report_test_playback_session_with_cleanup(
+            &mut db,
+            user_db_id,
+            track_db_id,
+            ActiveEvent::Progress,
+            PlaybackMutation {
+                position_ms: Some(5_000),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            6_000,
+        )?;
+
+        // Duplicate Started before a credited listen must not split.
+        let restarted = report_test_playback_session_with_cleanup(
+            &mut db,
+            user_db_id,
+            track_db_id,
+            ActiveEvent::Started,
+            PlaybackMutation {
+                position_ms: Some(0),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            7_000,
+        )?
+        .playback
+        .expect("restart should produce a record");
+        assert_eq!(restarted.playback_session_id, started.playback_session_id);
+
+        let records = workflow::collect_playback_records(&db)?;
+        assert_eq!(records.len(), 1);
         Ok(())
     }
 }

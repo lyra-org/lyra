@@ -40,6 +40,7 @@ use super::{
     PlaybackRecord,
     PlaybackServiceError,
     PlaybackUpdateResult,
+    RESTART_POSITION_MS,
     ReportPlaybackRequest,
     ServiceResult,
     SessionPlaybackReportRequest,
@@ -375,17 +376,32 @@ pub(super) fn apply_playback_mutation(
 
     let mut activity_ms = playback.activity_ms.unwrap_or(playback.position_ms);
     let mut last_position_ms = playback.last_position_ms.unwrap_or(playback.position_ms);
+    let mut listen_recorded = playback.listen_recorded;
     if mutation.position_ms.is_some() {
-        let delta_ms = position_ms.saturating_sub(last_position_ms);
-        let elapsed_since_last_update_ms = now_ms.saturating_sub(playback.updated_at_ms);
-        let expected_progress_window_ms =
-            elapsed_since_last_update_ms.saturating_add(POSITION_DELTA_GRACE_MS);
-        if delta_ms <= expected_progress_window_ms
-            && activity_policy.records_position_delta(previous_state, state)
+        let listen_threshold_ms = db::playback_sessions::min_required_activity_ms(duration_ms);
+        if listen_recorded.unwrap_or(false)
+            && !state.is_terminal()
+            && position_ms <= RESTART_POSITION_MS
+            && position_ms < listen_threshold_ms
+            && last_position_ms > RESTART_POSITION_MS
         {
-            activity_ms = activity_ms.saturating_add(delta_ms);
+            // Same-session replay; clear via Some(false) since agdb omits
+            // None on upsert.
+            listen_recorded = Some(false);
+            activity_ms = position_ms;
+            last_position_ms = position_ms;
+        } else {
+            let delta_ms = position_ms.saturating_sub(last_position_ms);
+            let elapsed_since_last_update_ms = now_ms.saturating_sub(playback.updated_at_ms);
+            let expected_progress_window_ms =
+                elapsed_since_last_update_ms.saturating_add(POSITION_DELTA_GRACE_MS);
+            if delta_ms <= expected_progress_window_ms
+                && activity_policy.records_position_delta(previous_state, state)
+            {
+                activity_ms = activity_ms.saturating_add(delta_ms);
+            }
+            last_position_ms = position_ms;
         }
-        last_position_ms = position_ms;
     }
 
     playback.position_ms = position_ms;
@@ -393,6 +409,7 @@ pub(super) fn apply_playback_mutation(
     playback.state = state;
     playback.activity_ms = Some(activity_ms);
     playback.last_position_ms = Some(last_position_ms);
+    playback.listen_recorded = listen_recorded;
     playback.updated_at_ms = now_ms;
 
     Ok(())
@@ -698,16 +715,27 @@ pub(crate) fn report_playback_session(
                 .map(|bound| bound.playback.state),
         };
 
-        if let Some(bound_state) = bound_state
-            && bound_state.is_terminal()
-        {
-            if !should_reopen_terminal_same_track_session(active_event) {
-                if let Some(session) = session.as_ref() {
-                    persist_playback_session_state(&scope, session, &session_state);
+        if let Some(bound_state) = bound_state {
+            if bound_state.is_terminal() {
+                if !should_reopen_terminal_same_track_session(active_event) {
+                    if let Some(session) = session.as_ref() {
+                        persist_playback_session_state(&scope, session, &session_state);
+                    }
+                    return Ok(None);
                 }
-                return Ok(None);
+                target = None;
+            } else if active_event == ActiveEvent::Started {
+                let credited_listen = match target_slot {
+                    SessionTrackTarget::Current => current_bound_playback.as_ref(),
+                    SessionTrackTarget::Previous => previous_bound_playback.as_ref(),
+                }
+                .is_some_and(|bound| bound.playback.listen_recorded.unwrap_or(false));
+                if credited_listen {
+                    // Restart after a credited listen: split so the replay
+                    // opens a fresh session.
+                    target = None;
+                }
             }
-            target = None;
         }
     }
 
