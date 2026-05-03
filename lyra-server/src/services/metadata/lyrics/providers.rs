@@ -72,7 +72,9 @@ pub(crate) enum LyricsHandlerResult {
     },
     Miss,
     Instrumental,
-    RateLimited { retry_after_ms: Option<u64> },
+    RateLimited {
+        retry_after_ms: Option<u64>,
+    },
 }
 
 /// Paths reference the [`LyricsTrackContext`] tree.
@@ -216,12 +218,11 @@ pub(crate) async fn reset_registry_for_test() {
 /// each gate-passing `Hit` writes a row; `selection.rs` picks the winner.
 pub(crate) async fn dispatch_for_track(track_db_id: DbId, force_refresh: bool) -> Result<()> {
     let now = upload::now_ms().map_err(|err| anyhow::anyhow!("now_ms() failed: {err}"))?;
-    let (mut context, preferred_languages, local) = match build_track_context(track_db_id, now)
-        .await?
-    {
-        Some(parts) => parts,
-        None => return Ok(()),
-    };
+    let (mut context, preferred_languages, local) =
+        match build_track_context(track_db_id, now).await? {
+            Some(parts) => parts,
+            None => return Ok(()),
+        };
     context.force_refresh = force_refresh;
 
     let registry_snapshot = {
@@ -467,26 +468,35 @@ async fn build_track_context(
     track_db_id: DbId,
     _now_ms: u64,
 ) -> Result<Option<(LyricsTrackContext, Vec<String>, LocalTrackContext)>> {
-    let db = STATE.db.read().await;
-    let Some(track) = db::tracks::get_by_id(&*db, track_db_id)? else {
-        return Ok(None);
+    // Collect everything we need under one short read lock; defer all CPU-side
+    // shaping (string trimming, HashMap building) until after the lock drops
+    // so concurrent dispatches don't pin readers across owned-data work.
+    let (track, artists, release, external_ids_raw, libraries) = {
+        let db = STATE.db.read().await;
+        let Some(track) = db::tracks::get_by_id(&*db, track_db_id)? else {
+            return Ok(None);
+        };
+        let artists = db::artists::get(&*db, track_db_id)?;
+        let release = db::releases::get_by_track(&*db, track_db_id)?
+            .into_iter()
+            .next();
+        let external_ids_raw = db::providers::external_ids::get_for_entity(&*db, track_db_id)?;
+        let libraries = db::libraries::get_for_entity(&*db, track_db_id)
+            .ok()
+            .unwrap_or_default();
+        (track, artists, release, external_ids_raw, libraries)
     };
 
-    let artists = db::artists::get(&*db, track_db_id)?;
     let primary_artist = artists
         .iter()
         .map(|a| a.artist_name.trim())
         .find(|n| !n.is_empty())
         .unwrap_or("")
         .to_string();
-
-    let release = db::releases::get_by_track(&*db, track_db_id)?
-        .into_iter()
-        .next();
-    let album_name = release.as_ref().map(|r| r.release_title.clone());
+    let album_name = release.map(|r| r.release_title);
 
     let mut external_ids: HashMap<String, HashMap<String, String>> = HashMap::new();
-    for ext in db::providers::external_ids::get_for_entity(&*db, track_db_id)? {
+    for ext in external_ids_raw {
         external_ids
             .entry(ext.provider_id)
             .or_default()
@@ -494,15 +504,11 @@ async fn build_track_context(
     }
 
     // Library language stands in for a per-track language preference.
-    let preferred_languages: Vec<String> = db::libraries::get_for_entity(&*db, track_db_id)
-        .ok()
+    let preferred_languages: Vec<String> = libraries
         .into_iter()
-        .flatten()
-        .filter_map(|lib| lib.language.clone())
+        .filter_map(|lib| lib.language)
         .filter(|s| !s.trim().is_empty())
         .collect();
-
-    drop(db);
 
     let context = LyricsTrackContext {
         track_db_id: track_db_id.0,
@@ -684,13 +690,7 @@ mod tests {
             })
         });
         let cancel = make_plugin_cancellation_child(&test_plugin_id()).await;
-        install_handler_for_test(make_handler(
-            "test_hit",
-            test_plugin_id(),
-            cancel,
-            handler,
-        ))
-        .await;
+        install_handler_for_test(make_handler("test_hit", test_plugin_id(), cancel, handler)).await;
 
         dispatch_for_track(track_id, false).await?;
 
