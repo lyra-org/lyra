@@ -498,13 +498,7 @@ mod tests {
     #[test]
     fn lrc_to_input_rejects_non_timestamped_lyrics() {
         assert!(
-            lrc_to_input(
-                "plain lyric line",
-                "user".to_string(),
-                "und".to_string(),
-                0
-            )
-            .is_err()
+            lrc_to_input("plain lyric line", "user".to_string(), "und".to_string(), 0).is_err()
         );
     }
 

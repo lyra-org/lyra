@@ -145,9 +145,7 @@ pub(super) fn parse_require_spec(require: Table) -> Result<LyricsRequireSpec> {
 }
 
 /// Returns `(priority, timeout, require)` parsed from the plugin config table.
-pub(super) fn parse_lyrics_spec(
-    config: Table,
-) -> Result<(i32, Duration, LyricsRequireSpec)> {
+pub(super) fn parse_lyrics_spec(config: Table) -> Result<(i32, Duration, LyricsRequireSpec)> {
     let priority_i64 = match config.get::<Value>("priority")? {
         Value::Nil => 50,
         Value::Integer(value) => value,
@@ -165,9 +163,8 @@ pub(super) fn parse_lyrics_spec(
             ));
         }
     };
-    let priority = i32::try_from(priority_i64).map_err(|_| {
-        mlua::Error::runtime("provider:lyrics config.priority must fit in i32")
-    })?;
+    let priority = i32::try_from(priority_i64)
+        .map_err(|_| mlua::Error::runtime("provider:lyrics config.priority must fit in i32"))?;
 
     let timeout = match config.get::<Value>("timeout_ms")? {
         Value::Nil => DEFAULT_HANDLER_TIMEOUT,

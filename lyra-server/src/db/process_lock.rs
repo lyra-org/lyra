@@ -143,8 +143,9 @@ fn acquire_or_probe(file: &File, mode: LockMode, path: &Path) -> Result<()> {
                 path = %path.display(),
                 "another lyra process holds the db lock; waiting for it to be released"
             );
-            FileExt::lock_exclusive(file)
-                .with_context(|| format!("failed to acquire blocking db lock at {}", path.display()))?;
+            FileExt::lock_exclusive(file).with_context(|| {
+                format!("failed to acquire blocking db lock at {}", path.display())
+            })?;
             tracing::info!(path = %path.display(), "db lock acquired");
             Ok(())
         }
