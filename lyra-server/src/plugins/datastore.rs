@@ -94,6 +94,70 @@ impl DataStore {
         db::datastore::remove_entry(db, datastore_id, &key)
     }
 
+    /// Gets multiple JSON values from this store under one read lock.
+    /// Returns an array parallel to `keys` with `nil` for missing entries.
+    #[harmony(args(keys: Vec<String>), returns(Vec<Option<JsonValue>>))]
+    pub(crate) async fn get_many(
+        &self,
+        _plugin_id: Option<Arc<str>>,
+        keys: Vec<String>,
+    ) -> anyhow::Result<Vec<Option<mlua::Value>>> {
+        let datastore_id = self
+            .db_id
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("datastore missing db_id"))?
+            .into();
+
+        let raw_values = {
+            let db = &*STATE.db.read().await;
+            let mut out = Vec::with_capacity(keys.len());
+            for key in &keys {
+                out.push(db::datastore::get_entry(db, datastore_id, key)?.map(|entry| entry.value));
+            }
+            out
+        };
+
+        let lua = STATE.lua.get();
+        let mut results = Vec::with_capacity(raw_values.len());
+        for raw in raw_values {
+            match raw {
+                Some(s) => {
+                    let json: serde_json::Value = serde_json::from_str(&s)?;
+                    results.push(Some(lua.to_value_with(&json, LUA_SERIALIZE_OPTIONS)?));
+                }
+                None => results.push(None),
+            }
+        }
+        Ok(results)
+    }
+
+    /// Writes multiple JSON values to this store under one write lock.
+    #[harmony(args(entries: std::collections::BTreeMap<String, JsonValue>))]
+    pub(crate) async fn set_many(
+        &self,
+        _plugin_id: Option<Arc<str>>,
+        entries: std::collections::BTreeMap<String, mlua::Value>,
+    ) -> anyhow::Result<()> {
+        let datastore_id = self
+            .db_id
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("datastore missing db_id"))?
+            .into();
+
+        let lua = STATE.lua.get();
+        let mut prepared = Vec::with_capacity(entries.len());
+        for (key, value) in entries {
+            let json: serde_json::Value = from_lua_json_value(lua.as_ref(), value)?;
+            prepared.push((key, serde_json::to_string(&json)?));
+        }
+
+        let db = &mut *STATE.db.write().await;
+        for (key, json_str) in prepared {
+            db::datastore::upsert_entry(db, datastore_id, key, json_str)?;
+        }
+        Ok(())
+    }
+
     /// Removes every entry from this store. Returns the number removed.
     pub(crate) async fn clear(&self, _plugin_id: Option<Arc<str>>) -> anyhow::Result<u64> {
         let datastore_id = self
