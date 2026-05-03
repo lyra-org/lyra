@@ -33,6 +33,10 @@ type HandlerResult = {
 	retry_after_ms: number?,
 }
 
+-- Lyra requires `provider:lyrics` registration to declare a rate limit on at
+-- least one domain. LRCLIB itself documents no server-side limits, so 4 req/s
+-- is a self-imposed politeness floor; harmony_http handles transient 429s via
+-- max_retries + Retry-After if they ever appear.
 http.set_rate_limit({
 	domain = "lrclib.net",
 	requests_per_second = 4,
@@ -40,59 +44,28 @@ http.set_rate_limit({
 })
 
 local API_BASE = "https://lrclib.net/api"
-local CACHE_STORE_NAME = "lrclib_cache"
-local COOLDOWN_STORE_NAME = "lrclib_cooldown"
-local ATTEMPTS_STORE_NAME = "lrclib_attempts"
+local STATE_STORE_NAME = "lrclib_state"
+local ATTEMPT_KEY_PREFIX = "attempt:"
+local CACHE_KEY_PREFIX = "cache:id:"
 local CACHE_HIT_TTL_SEC = 30 * 24 * 60 * 60
-local CACHE_KEY_PREFIX = "id:"
 local SEARCH_CANDIDATE_CAP = 5
 local DEFAULT_LANGUAGE = "und"
-local COOLDOWN_KEY = "state"
-local ATTEMPT_KEY_PREFIX = "attempt:"
 
 local MISS_BACKOFF_BASE_MS = 60 * 60 * 1000
 local MISS_BACKOFF_MAX_MS = 24 * 60 * 60 * 1000
 local INSTRUMENTAL_BACKOFF_MS = 7 * 24 * 60 * 60 * 1000
-local COOLDOWN_BASE_429_MS = 30 * 1000
-local COOLDOWN_MAX_429_MS = 60 * 60 * 1000
 
-local cache_store: DataStore? = nil
-local cooldown_store: DataStore? = nil
-local attempts_store: DataStore? = nil
+local state_store: DataStore? = nil
 
-local function get_cache_store(): DataStore?
-	if cache_store ~= nil then
-		return cache_store
+local function get_state_store(): DataStore?
+	if state_store ~= nil then
+		return state_store
 	end
-	local ok, store = pcall(datastore.get_or_create, CACHE_STORE_NAME)
+	local ok, store = pcall(datastore.get_or_create, STATE_STORE_NAME)
 	if not ok then
 		return nil
 	end
-	cache_store = store
-	return store
-end
-
-local function get_cooldown_store(): DataStore?
-	if cooldown_store ~= nil then
-		return cooldown_store
-	end
-	local ok, store = pcall(datastore.get_or_create, COOLDOWN_STORE_NAME)
-	if not ok then
-		return nil
-	end
-	cooldown_store = store
-	return store
-end
-
-local function get_attempts_store(): DataStore?
-	if attempts_store ~= nil then
-		return attempts_store
-	end
-	local ok, store = pcall(datastore.get_or_create, ATTEMPTS_STORE_NAME)
-	if not ok then
-		return nil
-	end
-	attempts_store = store
+	state_store = store
 	return store
 end
 
@@ -170,10 +143,7 @@ local function build_query(params: { [string]: string? }): string
 	local parts: { string } = {}
 	for key, value in params do
 		if value ~= nil and trim(value) ~= "" then
-			table.insert(
-				parts,
-				`{http.encode_uri_component(key)}={http.encode_uri_component(value)}`
-			)
+			table.insert(parts, `{http.encode_uri_component(key)}={http.encode_uri_component(value)}`)
 		end
 	end
 	if #parts == 0 then
@@ -257,9 +227,7 @@ local function candidate_from_response(response_object: JsonObject?): LyricsCand
 	end
 
 	local duration_seconds = json_number_field(response_object, "duration")
-	local duration_ms: number? = if duration_seconds ~= nil
-		then math.floor(duration_seconds * 1000)
-		else nil
+	local duration_ms: number? = if duration_seconds ~= nil then math.floor(duration_seconds * 1000) else nil
 
 	local synced = json_string_field(response_object, "syncedLyrics")
 	local plain = json_string_field(response_object, "plainLyrics")
@@ -292,9 +260,7 @@ local function cache_key(ctx: ProviderLyricsContext): string
 	local track = trim(ctx.track_name)
 	local artist = trim(ctx.artist_name)
 	local album = trim(ctx.album_name)
-	local duration_rounded = if ctx.duration_ms ~= nil
-		then tostring(math.floor(ctx.duration_ms / 1000))
-		else ""
+	local duration_rounded = if ctx.duration_ms ~= nil then tostring(math.floor(ctx.duration_ms / 1000)) else ""
 	return `{CACHE_KEY_PREFIX}{track}|{artist}|{album}|{duration_rounded}`
 end
 
@@ -302,15 +268,39 @@ local function attempt_key(ctx: ProviderLyricsContext): string
 	return `{ATTEMPT_KEY_PREFIX}{ctx.track_db_id}`
 end
 
-local function read_cached_id(ctx: ProviderLyricsContext): string?
-	local store = get_cache_store()
-	if store == nil then
+type AttemptStatus = "miss" | "instrumental" | "hit"
+
+type AttemptRecord = {
+	status: AttemptStatus,
+	last_attempt_at_ms: number,
+	next_attempt_at_ms: number,
+}
+
+local function decode_attempt(raw: JsonValue?): AttemptRecord?
+	local obj = as_json_object(raw)
+	if obj == nil then
 		return nil
 	end
-	local ok, raw = pcall(store.get, store, cache_key(ctx))
-	if not ok then
+	local status = json_string_field(obj, "status")
+	if status ~= "miss" and status ~= "instrumental" and status ~= "hit" then
 		return nil
 	end
+	return {
+		status = status :: AttemptStatus,
+		last_attempt_at_ms = json_number_field(obj, "last_attempt_at_ms") or 0,
+		next_attempt_at_ms = json_number_field(obj, "next_attempt_at_ms") or 0,
+	}
+end
+
+local function encode_attempt(record: AttemptRecord): JsonObject
+	return {
+		status = record.status :: JsonValue,
+		last_attempt_at_ms = record.last_attempt_at_ms :: JsonValue,
+		next_attempt_at_ms = record.next_attempt_at_ms :: JsonValue,
+	}
+end
+
+local function decode_cache(raw: JsonValue?): string?
 	local entry = as_json_object(raw)
 	if entry == nil then
 		return nil
@@ -322,136 +312,11 @@ local function read_cached_id(ctx: ProviderLyricsContext): string?
 	return json_string_field(entry, "lrclib_id")
 end
 
-local function write_cached_id(ctx: ProviderLyricsContext, lrclib_id: string)
-	local store = get_cache_store()
-	if store == nil then
-		return
-	end
-	local entry: JsonObject = {
+local function encode_cache(lrclib_id: string): JsonObject
+	return {
 		lrclib_id = lrclib_id :: JsonValue,
 		expires_at = (now_ms() + CACHE_HIT_TTL_SEC * 1000) :: JsonValue,
 	}
-	pcall(store.set, store, cache_key(ctx), entry :: JsonValue)
-end
-
-type CooldownState = {
-	cooldown_until_ms: number,
-	consecutive_429s: number,
-	last_429_at_ms: number,
-}
-
-local function read_cooldown(): CooldownState?
-	local store = get_cooldown_store()
-	if store == nil then
-		return nil
-	end
-	local ok, raw = pcall(store.get, store, COOLDOWN_KEY)
-	if not ok then
-		return nil
-	end
-	local obj = as_json_object(raw)
-	if obj == nil then
-		return nil
-	end
-	local cooldown_until_ms = json_number_field(obj, "cooldown_until_ms") or 0
-	local consecutive_429s = json_number_field(obj, "consecutive_429s") or 0
-	local last_429_at_ms = json_number_field(obj, "last_429_at_ms") or 0
-	return {
-		cooldown_until_ms = cooldown_until_ms,
-		consecutive_429s = consecutive_429s,
-		last_429_at_ms = last_429_at_ms,
-	}
-end
-
-local function write_cooldown(state: CooldownState)
-	local store = get_cooldown_store()
-	if store == nil then
-		return
-	end
-	local entry: JsonObject = {
-		cooldown_until_ms = state.cooldown_until_ms :: JsonValue,
-		consecutive_429s = state.consecutive_429s :: JsonValue,
-		last_429_at_ms = state.last_429_at_ms :: JsonValue,
-	}
-	pcall(store.set, store, COOLDOWN_KEY, entry :: JsonValue)
-end
-
-local function clear_cooldown_429_counter()
-	local current = read_cooldown()
-	if current == nil or current.consecutive_429s == 0 then
-		return
-	end
-	write_cooldown({
-		cooldown_until_ms = current.cooldown_until_ms,
-		consecutive_429s = 0,
-		last_429_at_ms = current.last_429_at_ms,
-	})
-end
-
-local function bump_cooldown(retry_after_ms: number?): number
-	local now = now_ms()
-	local current = read_cooldown()
-	local prev_count = if current then current.consecutive_429s else 0
-	local next_count = prev_count + 1
-	local shift = math.min(next_count - 1, 20)
-	local exponential = COOLDOWN_BASE_429_MS * (2 ^ shift)
-	local capped = math.min(exponential, COOLDOWN_MAX_429_MS)
-	local floor_until = now + math.floor(capped)
-	local explicit_until = if retry_after_ms ~= nil then now + retry_after_ms else floor_until
-	local cooldown_until_ms = math.max(floor_until, explicit_until)
-	write_cooldown({
-		cooldown_until_ms = cooldown_until_ms,
-		consecutive_429s = next_count,
-		last_429_at_ms = now,
-	})
-	return cooldown_until_ms
-end
-
-type AttemptStatus = "miss" | "instrumental" | "hit"
-
-type AttemptRecord = {
-	status: AttemptStatus,
-	last_attempt_at_ms: number,
-	next_attempt_at_ms: number,
-}
-
-local function read_attempt(ctx: ProviderLyricsContext): AttemptRecord?
-	local store = get_attempts_store()
-	if store == nil then
-		return nil
-	end
-	local ok, raw = pcall(store.get, store, attempt_key(ctx))
-	if not ok then
-		return nil
-	end
-	local obj = as_json_object(raw)
-	if obj == nil then
-		return nil
-	end
-	local status = json_string_field(obj, "status")
-	if status ~= "miss" and status ~= "instrumental" and status ~= "hit" then
-		return nil
-	end
-	local last_attempt_at_ms = json_number_field(obj, "last_attempt_at_ms") or 0
-	local next_attempt_at_ms = json_number_field(obj, "next_attempt_at_ms") or 0
-	return {
-		status = status :: AttemptStatus,
-		last_attempt_at_ms = last_attempt_at_ms,
-		next_attempt_at_ms = next_attempt_at_ms,
-	}
-end
-
-local function write_attempt(ctx: ProviderLyricsContext, record: AttemptRecord)
-	local store = get_attempts_store()
-	if store == nil then
-		return
-	end
-	local entry: JsonObject = {
-		status = record.status :: JsonValue,
-		last_attempt_at_ms = record.last_attempt_at_ms :: JsonValue,
-		next_attempt_at_ms = record.next_attempt_at_ms :: JsonValue,
-	}
-	pcall(store.set, store, attempt_key(ctx), entry :: JsonValue)
 end
 
 local function miss_backoff_ms(prev_record: AttemptRecord?): number
@@ -461,45 +326,6 @@ local function miss_backoff_ms(prev_record: AttemptRecord?): number
 	local elapsed = math.max(prev_record.next_attempt_at_ms - prev_record.last_attempt_at_ms, 0)
 	local doubled = math.max(elapsed * 2, MISS_BACKOFF_BASE_MS)
 	return math.min(doubled, MISS_BACKOFF_MAX_MS)
-end
-
-local function rate_limited_result(response: HttpResponse): HandlerResult
-	local retry_after_ms = parse_retry_after_ms(response)
-	bump_cooldown(retry_after_ms)
-	return {
-		kind = "rate_limited",
-		retry_after_ms = retry_after_ms,
-	}
-end
-
-local function record_miss(ctx: ProviderLyricsContext)
-	local now = now_ms()
-	local prev = read_attempt(ctx)
-	local backoff = miss_backoff_ms(prev)
-	write_attempt(ctx, {
-		status = "miss",
-		last_attempt_at_ms = now,
-		next_attempt_at_ms = now + backoff,
-	})
-end
-
-local function record_instrumental(ctx: ProviderLyricsContext)
-	local now = now_ms()
-	write_attempt(ctx, {
-		status = "instrumental",
-		last_attempt_at_ms = now,
-		next_attempt_at_ms = now + INSTRUMENTAL_BACKOFF_MS,
-	})
-end
-
-local function record_hit(ctx: ProviderLyricsContext)
-	local now = now_ms()
-	write_attempt(ctx, {
-		status = "hit",
-		last_attempt_at_ms = now,
-		-- Hits stay final until force-refresh.
-		next_attempt_at_ms = math.huge,
-	})
 end
 
 local function fetch_by_id(id: string): (HttpResponse, JsonObject?)
@@ -516,68 +342,92 @@ local function fetch_search(ctx: ProviderLyricsContext): (HttpResponse, JsonArra
 	return response, as_json_array(body)
 end
 
-local function build_hit_or_miss(ctx: ProviderLyricsContext, response_object: JsonObject): HandlerResult
-	if json_boolean_field(response_object, "instrumental") == true then
-		record_instrumental(ctx)
-		return { kind = "instrumental" }
-	end
-	local candidate = candidate_from_response(response_object)
-	if candidate == nil then
-		record_miss(ctx)
-		return { kind = "miss" }
-	end
-	record_hit(ctx)
-	return { kind = "hit", candidates = { candidate } }
-end
-
--- Hot-path contract: cooldown / known-miss / known-instrumental decisions
--- must resolve without awaiting HTTP — datastore reads only.
+-- Hot-path contract: known-miss / known-instrumental decisions must resolve
+-- without awaiting HTTP — datastore reads only.
+--
+-- DB lock budget: one batched read at entry, one batched write at exit.
+-- All state mutations between them go into `pending` and flush together.
 local function handle(ctx: ProviderLyricsContext): HandlerResult
-	-- Cooldown gate runs even when force_refresh = true.
-	local cooldown = read_cooldown()
-	if cooldown ~= nil and now_ms() < cooldown.cooldown_until_ms then
-		return {
-			kind = "rate_limited",
-			retry_after_ms = cooldown.cooldown_until_ms - now_ms(),
-		}
+	local store = get_state_store()
+	local attempt_k = attempt_key(ctx)
+	local cache_k = cache_key(ctx)
+
+	local raws: { JsonValue? } = if store ~= nil then store:get_many({ attempt_k, cache_k }) else { nil, nil }
+
+	local prev_attempt: AttemptRecord? = decode_attempt(raws[1])
+	local cached_id: string? = decode_cache(raws[2])
+
+	local pending: { [string]: JsonValue } = {}
+	local function flush()
+		if store == nil then
+			return
+		end
+		if next(pending) == nil then
+			return
+		end
+		pcall(store.set_many, store, pending)
+	end
+
+	local function set_attempt(status: AttemptStatus, next_attempt_at_ms: number)
+		pending[attempt_k] = encode_attempt({
+			status = status,
+			last_attempt_at_ms = now_ms(),
+			next_attempt_at_ms = next_attempt_at_ms,
+		}) :: JsonValue
+	end
+
+	local function set_cache(lrclib_id: string)
+		pending[cache_k] = encode_cache(lrclib_id) :: JsonValue
 	end
 
 	-- Negative-cache gate — skipped on force_refresh.
-	if not ctx.force_refresh then
-		local prev = read_attempt(ctx)
-		if prev ~= nil and (prev.status == "miss" or prev.status == "instrumental") then
-			if now_ms() < prev.next_attempt_at_ms then
-				return { kind = prev.status }
-			end
+	if
+		not ctx.force_refresh
+		and prev_attempt ~= nil
+		and (prev_attempt.status == "miss" or prev_attempt.status == "instrumental")
+		and now_ms() < prev_attempt.next_attempt_at_ms
+	then
+		return { kind = prev_attempt.status }
+	end
+
+	local function resolve_response(body: JsonObject): HandlerResult
+		if json_boolean_field(body, "instrumental") == true then
+			set_attempt("instrumental", now_ms() + INSTRUMENTAL_BACKOFF_MS)
+			flush()
+			return { kind = "instrumental" }
 		end
+		local candidate = candidate_from_response(body)
+		if candidate == nil then
+			set_attempt("miss", now_ms() + miss_backoff_ms(prev_attempt))
+			flush()
+			return { kind = "miss" }
+		end
+		set_attempt("hit", math.huge)
+		flush()
+		return { kind = "hit", candidates = { candidate } }
 	end
 
 	-- Positive-cache fast path on the lrclib id.
-	local cached_id = read_cached_id(ctx)
 	if cached_id ~= nil then
 		local response, body = fetch_by_id(cached_id)
 		if response.status_code == 429 then
-			return rate_limited_result(response)
+			return { kind = "rate_limited", retry_after_ms = parse_retry_after_ms(response) }
 		end
 		if response.status_code == 200 and body ~= nil then
-			local result = build_hit_or_miss(ctx, body)
-			if result.kind == "hit" or result.kind == "miss" or result.kind == "instrumental" then
-				clear_cooldown_429_counter()
-			end
-			return result
+			return resolve_response(body)
 		end
 	end
 
 	local search_response, search_body = fetch_search(ctx)
 	if search_response.status_code == 429 then
-		return rate_limited_result(search_response)
+		return { kind = "rate_limited", retry_after_ms = parse_retry_after_ms(search_response) }
 	end
 	if search_response.status_code ~= 200 then
 		error(`lrclib /search failed with status {search_response.status_code}`)
 	end
 	if search_body == nil or #search_body == 0 then
-		record_miss(ctx)
-		clear_cooldown_429_counter()
+		set_attempt("miss", now_ms() + miss_backoff_ms(prev_attempt))
+		flush()
 		return { kind = "miss" }
 	end
 
@@ -595,13 +445,13 @@ local function handle(ctx: ProviderLyricsContext): HandlerResult
 		end
 	end
 	if #candidates == 0 then
-		record_miss(ctx)
-		clear_cooldown_429_counter()
+		set_attempt("miss", now_ms() + miss_backoff_ms(prev_attempt))
+		flush()
 		return { kind = "miss" }
 	end
-	write_cached_id(ctx, candidates[1].lyrics.id)
-	record_hit(ctx)
-	clear_cooldown_429_counter()
+	set_cache(candidates[1].lyrics.id)
+	set_attempt("hit", math.huge)
+	flush()
 	return { kind = "hit", candidates = candidates }
 end
 
