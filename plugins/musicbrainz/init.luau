@@ -467,7 +467,6 @@ provider:search(
 			title = artist_name,
 			artist_name = artist_name,
 			sort_name = json_string_field(artist, "sort-name"),
-			description = json_string_field(artist, "disambiguation"),
 			redirect_url = redirect_url("artist", artist_id),
 			ids = { artist_id = artist_id },
 		}
