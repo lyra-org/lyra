@@ -1307,6 +1307,7 @@ local MB_RELATION_TO_CREDIT: { [string]: { type: CreditType, detail: string? } }
 	-- performance
 	vocal = { type = CreditType.Vocalist },
 	instrument = { type = CreditType.Instrumentalist },
+	programming = { type = CreditType.Instrumentalist, detail = "programming" },
 	conductor = { type = CreditType.Conductor },
 	-- composition
 	arranger = { type = CreditType.Arranger },
@@ -1319,8 +1320,10 @@ local MB_RELATION_TO_CREDIT: { [string]: { type: CreditType, detail: string? } }
 	["audio engineer"] = { type = CreditType.Engineer, detail = "audio" },
 	["sound engineer"] = { type = CreditType.Engineer, detail = "sound" },
 	mix = { type = CreditType.Mixer },
+	recording = { type = CreditType.Engineer, detail = "recording" },
 	["recording engineer"] = { type = CreditType.Engineer, detail = "recording" },
 	["balance engineer"] = { type = CreditType.Engineer, detail = "balance" },
+	["instrument technician"] = { type = CreditType.Engineer, detail = "instrument technician" },
 	editor = { type = CreditType.Engineer, detail = "editor" },
 	["instrument arranger"] = { type = CreditType.Arranger, detail = "instrument" },
 	-- remix
