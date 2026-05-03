@@ -5,6 +5,7 @@
 -- www.meshiplaw.com/lyra.
 
 local api = require("@lyra/api")
+local lyrics = require("@lyra/lyrics")
 local playback_sources = require("@lyra/playback_sources")
 local playbacks = require("@lyra/playback_sessions")
 local tracks = require("@lyra/tracks")
@@ -607,7 +608,8 @@ local function build_media_info(
 	track: Track?,
 	source: PlaybackSourceInfo?,
 	item_id: string?,
-	fallback_name: string?
+	fallback_name: string?,
+	has_lyrics: boolean?
 ): ({ MediaSource }, { MediaStream }, string?)
 	local entry: EntryInfo? = if source and type(source.entry) == "table" then source.entry else nil
 	local media_item_id = module.encode_jellyfin_item_id(item_id)
@@ -636,6 +638,19 @@ local function build_media_info(
 		media_stream.BitRate = bitrate
 	end
 	local media_streams = { media_stream }
+	if has_lyrics then
+		local lyric_stream: MediaStream = {
+			Type = "Lyric",
+			Index = 1,
+			IsDefault = false,
+			IsForced = false,
+			IsInterlaced = false,
+			IsExternal = false,
+			IsTextSubtitleStream = false,
+			SupportsExternalStream = false,
+		}
+		table.insert(media_streams, lyric_stream)
+	end
 
 	local media_source: MediaSource = {
 		Protocol = "File",
@@ -678,7 +693,14 @@ end
 
 function module.build_audio_media_source(item_id: string?, track: Track?): MediaSource?
 	local source = module.resolve_playback_source_for_track(track, true)
-	local media_sources, _ = build_media_info(track, source, item_id, if track then track.track_title else item_id)
+	local has_lyrics = false
+	local track_db_id = if track then track.db_id else nil
+	if track_db_id then
+		local ok, value = pcall(lyrics.has, track_db_id)
+		has_lyrics = ok and value == true
+	end
+	local media_sources, _ =
+		build_media_info(track, source, item_id, if track then track.track_title else item_id, has_lyrics)
 	return media_sources[1]
 end
 
@@ -884,7 +906,14 @@ function module.build_playback_info(
 		return no_compatible_stream()
 	end
 
-	local media_sources, _ = build_media_info(track, source, item_id, if track then track.track_title else item_id)
+	local has_lyrics = false
+	local track_db_id = if track then track.db_id else nil
+	if track_db_id then
+		local ok, value = pcall(lyrics.has, track_db_id)
+		has_lyrics = ok and value == true
+	end
+	local media_sources, _ =
+		build_media_info(track, source, item_id, if track then track.track_title else item_id, has_lyrics)
 	local primary_media_source = media_sources[1]
 	if requested_media_source_id ~= nil then
 		local primary_media_source_id = module.trim(if primary_media_source then primary_media_source.Id else nil)
