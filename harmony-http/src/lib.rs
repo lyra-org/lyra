@@ -921,8 +921,8 @@ impl HttpModule {
         // lowercases hosts on parse; lowercase the bare-host fallback too so
         // `set_rate_limit("EXAMPLE.com", ...)` and a request to
         // `https://example.com/...` hit the same key.
-        let domain = extract_domain(&options.domain)
-            .unwrap_or_else(|| options.domain.to_ascii_lowercase());
+        let domain =
+            extract_domain(&options.domain).unwrap_or_else(|| options.domain.to_ascii_lowercase());
 
         let config = RateLimitConfig {
             requests_per_second,
@@ -952,8 +952,8 @@ impl HttpModule {
 
         // Mirror the set_rate_limit normalization (see above) so registrations
         // share the host key the request path looks up.
-        let host = extract_domain(&options.host)
-            .unwrap_or_else(|| options.host.to_ascii_lowercase());
+        let host =
+            extract_domain(&options.host).unwrap_or_else(|| options.host.to_ascii_lowercase());
 
         let mut limiter = CONCURRENCY_LIMITER.write().await;
         limiter.set_limit(host, options.max_in_flight as usize);
@@ -1449,8 +1449,8 @@ mod tests {
     #[test]
     fn parse_retry_after_accepts_http_date() {
         // Anchor "now" at a fixed instant so the assertion is hermetic.
-        let now = httpdate::parse_http_date("Wed, 21 Oct 2026 07:28:00 GMT")
-            .expect("parse anchor date");
+        let now =
+            httpdate::parse_http_date("Wed, 21 Oct 2026 07:28:00 GMT").expect("parse anchor date");
         let target = "Wed, 21 Oct 2026 07:28:30 GMT";
 
         let waited = super::parse_retry_after(target, now).expect("HTTP-date is accepted");
@@ -1461,8 +1461,8 @@ mod tests {
     fn parse_retry_after_past_http_date_yields_zero() {
         // RFC 7231 doesn't forbid a date already in the past; treat it as
         // "retry now" rather than panicking on the SystemTime subtraction.
-        let now = httpdate::parse_http_date("Wed, 21 Oct 2026 07:28:00 GMT")
-            .expect("parse anchor date");
+        let now =
+            httpdate::parse_http_date("Wed, 21 Oct 2026 07:28:00 GMT").expect("parse anchor date");
         let past = "Wed, 21 Oct 2026 07:27:00 GMT";
 
         assert_eq!(
