@@ -94,6 +94,7 @@ type ArtistRecord = {
 	db_id: index<Artist, "db_id">,
 	artist_name: index<Artist, "artist_name">,
 	sort_name: index<Artist, "sort_name">,
+	description: index<Artist, "description">,
 	created_at: index<Artist, "created_at">,
 }
 type TrackRecord = {
@@ -158,6 +159,7 @@ export type ItemsQueryOptions = {
 	enable_images: boolean?,
 	include_media_info: boolean,
 	include_people: boolean,
+	include_overview: boolean,
 	group_items: boolean,
 	user_id: number?,
 	_favorite_id_lookup: FavoriteLookup?,
@@ -189,6 +191,7 @@ type ItemContext = {
 	include_user_data: boolean,
 	include_images: boolean,
 	include_people: boolean,
+	include_overview: boolean,
 	related_artists_by_owner_id: ArtistRelationMap,
 	artist_relations_by_artist_id: ArtistRelationInfoMap,
 	credited_artists_by_owner_id: CreditRelationMap,
@@ -512,6 +515,7 @@ function helpers.clone_items_query_options(options: ItemsQueryOptions): ItemsQue
 		enable_images = options.enable_images,
 		include_media_info = options.include_media_info,
 		include_people = options.include_people,
+		include_overview = options.include_overview,
 		group_items = options.group_items,
 		user_id = options.user_id,
 		_favorite_id_lookup = options._favorite_id_lookup,
@@ -632,6 +636,7 @@ function helpers.artist_record_from_artist(artist: Artist?): ArtistRecord?
 		db_id = artist.db_id,
 		artist_name = artist.artist_name,
 		sort_name = artist.sort_name,
+		description = artist.description,
 		created_at = artist.created_at,
 	}
 end
@@ -1761,6 +1766,7 @@ function helpers.to_artist_item(
 		LocationType = "FileSystem",
 		MediaType = "Unknown",
 		Tags = helpers.tag_names(helpers.resolve_tag_infos(artist.db_id, context)),
+		Overview = if context == nil or context.include_overview == true then module.trim(artist.description) else nil,
 	}
 	return item
 end
@@ -3290,6 +3296,15 @@ function helpers.query_requests_people(fields: { string }): boolean
 	return false
 end
 
+function helpers.query_requests_overview(fields: { string }): boolean
+	for _, field in fields do
+		if helpers.lower_or_empty(field) == "overview" then
+			return true
+		end
+	end
+	return false
+end
+
 function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 	local options: ItemsQueryOptions = {
 		include_item_types = {},
@@ -3322,6 +3337,7 @@ function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 		enable_images = nil,
 		include_media_info = false,
 		include_people = false,
+		include_overview = false,
 		group_items = true,
 		user_id = nil,
 		_favorite_id_lookup = nil,
@@ -3378,6 +3394,7 @@ function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 	end
 	options.include_media_info = helpers.query_requests_media_fields(options.fields)
 	options.include_people = helpers.query_requests_people(options.fields)
+	options.include_overview = helpers.query_requests_overview(options.fields)
 	options.group_items = helpers.parse_query_bool(query, { "GroupItems", "groupItems" }, true) ~= false
 	return options
 end
@@ -3492,6 +3509,7 @@ function helpers.new_realization_context(options: ItemsQueryOptions): ItemContex
 		include_user_data = options.enable_user_data ~= false,
 		include_images = options.enable_images ~= false,
 		include_people = options.include_people == true,
+		include_overview = options.include_overview == true,
 		related_artists_by_owner_id = {},
 		artist_relations_by_artist_id = {},
 		credited_artists_by_owner_id = {},
@@ -5732,6 +5750,7 @@ function module.find_item_by_id(item_id: number?, user_id: number?): ItemInfo?
 		fields = DEFAULT_ITEMS_FIELDS,
 		include_media_info = true,
 		include_people = true,
+		include_overview = true,
 		search_term = nil,
 		artist_ids = {},
 		person_ids = {},
