@@ -55,6 +55,108 @@ fn event_for_state(state: PlaybackState, active_event: ActiveEvent) -> String {
     }
 }
 
+fn resolve_library_public_id_for_track(
+    db: &impl db::DbAccess,
+    track_db_id: DbId,
+) -> ServiceResult<Option<String>> {
+    let libraries = map_internal(db::libraries::get_for_entity(db, track_db_id))?;
+    debug_assert!(
+        libraries.len() <= 1,
+        "track {} maps to {} libraries; expected at most 1",
+        track_db_id.0,
+        libraries.len(),
+    );
+    Ok(libraries.into_iter().next().map(|library| library.id))
+}
+
+fn resolve_kind_validated_public_id(
+    db: &impl db::DbAccess,
+    collection_alias: &str,
+    db_id: DbId,
+) -> ServiceResult<Option<String>> {
+    if !map_internal(db::lookup::collection_contains_id(
+        db,
+        collection_alias,
+        db_id,
+    ))? {
+        return Ok(None);
+    }
+    map_internal(db::lookup::find_id_by_db_id(db, db_id))
+}
+
+fn build_playback_record(
+    db: &impl db::DbAccess,
+    playback_session_id: DbId,
+    track_db_id: DbId,
+    user_db_id: DbId,
+    playback: PlaybackSession,
+) -> ServiceResult<Option<PlaybackRecord>> {
+    let Some(track_public_id) = resolve_kind_validated_public_id(db, "tracks", track_db_id)? else {
+        return Ok(None);
+    };
+    let Some(user_public_id) = resolve_kind_validated_public_id(db, "users", user_db_id)? else {
+        return Ok(None);
+    };
+    let library_public_id = resolve_library_public_id_for_track(db, track_db_id)?;
+    let playback_session_public_id = playback.id.clone();
+    Ok(Some(PlaybackRecord {
+        playback_session_id,
+        playback_session_public_id,
+        track_db_id,
+        track_public_id,
+        user_db_id,
+        user_public_id,
+        library_public_id,
+        playback,
+    }))
+}
+
+fn build_evicted_playback_record(
+    db: &impl db::DbAccess,
+    playback_session_id: DbId,
+    track_db_id: DbId,
+    user_db_id: DbId,
+    playback: PlaybackSession,
+) -> ServiceResult<Option<EvictedPlaybackRecord>> {
+    let Some(track_public_id) = resolve_kind_validated_public_id(db, "tracks", track_db_id)? else {
+        return Ok(None);
+    };
+    let Some(user_public_id) = resolve_kind_validated_public_id(db, "users", user_db_id)? else {
+        return Ok(None);
+    };
+    let library_public_id = resolve_library_public_id_for_track(db, track_db_id)?;
+    let playback_session_public_id = playback.id.clone();
+    Ok(Some(EvictedPlaybackRecord {
+        playback_session_id,
+        playback_session_public_id,
+        track_db_id,
+        track_public_id,
+        user_db_id,
+        user_public_id,
+        library_public_id,
+        playback,
+    }))
+}
+
+fn require_playback_record(
+    db: &impl db::DbAccess,
+    playback_session_id: DbId,
+    track_db_id: DbId,
+    user_db_id: DbId,
+    playback: PlaybackSession,
+) -> ServiceResult<PlaybackRecord> {
+    build_playback_record(db, playback_session_id, track_db_id, user_db_id, playback)?.ok_or_else(
+        || {
+            PlaybackServiceError::internal(anyhow::anyhow!(
+                "missing public id for playback {} (track {}, user {})",
+                playback_session_id.0,
+                track_db_id.0,
+                user_db_id.0,
+            ))
+        },
+    )
+}
+
 fn should_create_unbound_session_playback(
     active_event: ActiveEvent,
     state: PlaybackState,
@@ -74,24 +176,33 @@ fn should_apply_previous_playback_event(active_event: ActiveEvent, state: Playba
     active_event == ActiveEvent::Started || state.is_terminal()
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct SessionBindingState {
     current_playback_session_id: Option<DbId>,
+    current_playback_session_public_id: Option<String>,
     previous_playback_session_id: Option<DbId>,
+    previous_playback_session_public_id: Option<String>,
     previous_expires_at_ms: Option<u64>,
 }
 
 fn clear_current_session_playback(state: &mut SessionBindingState) {
     state.current_playback_session_id = None;
+    state.current_playback_session_public_id = None;
 }
 
 fn clear_previous_session_playback(state: &mut SessionBindingState) {
     state.previous_playback_session_id = None;
+    state.previous_playback_session_public_id = None;
     state.previous_expires_at_ms = None;
 }
 
-fn set_current_session_playback(state: &mut SessionBindingState, playback_session_id: DbId) {
+fn set_current_session_playback(
+    state: &mut SessionBindingState,
+    playback_session_id: DbId,
+    playback_session_public_id: String,
+) {
     state.current_playback_session_id = Some(playback_session_id);
+    state.current_playback_session_public_id = Some(playback_session_public_id);
 }
 
 fn move_current_to_previous_session_playback(state: &mut SessionBindingState, now_ms: u64) {
@@ -101,6 +212,7 @@ fn move_current_to_previous_session_playback(state: &mut SessionBindingState, no
     };
 
     state.previous_playback_session_id = Some(current_playback_session_id);
+    state.previous_playback_session_public_id = state.current_playback_session_public_id.clone();
     state.previous_expires_at_ms = Some(now_ms.saturating_add(PREVIOUS_PLAYBACK_GRACE_MS));
 }
 
@@ -122,7 +234,9 @@ fn persist_playback_session_state(
 
     let mut updated = session.clone();
     updated.current_playback_session_id = state.current_playback_session_id;
+    updated.current_playback_session_public_id = state.current_playback_session_public_id.clone();
     updated.previous_playback_session_id = state.previous_playback_session_id;
+    updated.previous_playback_session_public_id = state.previous_playback_session_public_id.clone();
     updated.previous_expires_at_ms = state.previous_expires_at_ms;
     updated.command_dispatched_at_ms = None;
     sessions::update_playback_session(scope, &updated);
@@ -144,12 +258,13 @@ fn update_session_bound_playback(
     bound.playback.db_id = Some(bound.playback_session_id);
     map_internal(db::playback_sessions::update(db, &bound.playback))?;
 
-    Ok(PlaybackRecord {
-        playback_session_id: bound.playback_session_id,
-        track_db_id: bound.track_db_id,
+    require_playback_record(
+        db,
+        bound.playback_session_id,
+        bound.track_db_id,
         user_db_id,
-        playback: bound.playback,
-    })
+        bound.playback,
+    )
 }
 
 fn map_internal<T>(result: anyhow::Result<T>) -> ServiceResult<T> {
@@ -194,6 +309,7 @@ fn maybe_record_listen(
     let listen = db::Listen {
         db_id: None,
         id: nanoid!(),
+        track_public_id: playback_record.track_public_id.clone(),
         position_ms: playback_record.playback.position_ms,
         duration_ms: playback_record.playback.duration_ms,
         activity_ms,
@@ -312,20 +428,32 @@ pub(crate) fn cleanup_evicted_playbacks(
     ))?;
     clear_session_bindings_for_playbacks(&evicted_playbacks);
 
-    Ok(evicted_playbacks
-        .into_iter()
-        .filter_map(|evicted| {
-            evicted
-                .playback
-                .db_id
-                .map(|playback_session_id| EvictedPlaybackRecord {
-                    playback_session_id,
-                    track_db_id: evicted.track_db_id,
-                    user_db_id: evicted.user_db_id,
-                    playback: evicted.playback,
-                })
-        })
-        .collect())
+    let mut records = Vec::new();
+    for evicted in evicted_playbacks {
+        let Some(playback_session_id) = evicted.playback.db_id else {
+            continue;
+        };
+        let track_db_id = evicted.track_db_id;
+        let user_db_id = evicted.user_db_id;
+        let Some(record) = build_evicted_playback_record(
+            db,
+            playback_session_id,
+            track_db_id,
+            user_db_id,
+            evicted.playback,
+        )?
+        else {
+            tracing::debug!(
+                playback_session_id = playback_session_id.0,
+                track_db_id = track_db_id.0,
+                user_db_id = user_db_id.0,
+                "skipping evicted playback with no resolvable public ids",
+            );
+            continue;
+        };
+        records.push(record);
+    }
+    Ok(records)
 }
 
 pub(super) fn collect_playback_records(db: &DbAny) -> ServiceResult<Vec<PlaybackRecord>> {
@@ -344,12 +472,18 @@ pub(super) fn collect_playback_records(db: &DbAny) -> ServiceResult<Vec<Playback
         let user_db_id = map_internal(db::playback_sessions::get_user_id(db, playback_session_id))?
             .unwrap_or(DbId(0));
 
-        records.push(PlaybackRecord {
-            playback_session_id,
-            track_db_id,
-            user_db_id,
-            playback,
-        });
+        let Some(record) =
+            build_playback_record(db, playback_session_id, track_db_id, user_db_id, playback)?
+        else {
+            tracing::debug!(
+                playback_session_id = playback_session_id.0,
+                track_db_id = track_db_id.0,
+                user_db_id = user_db_id.0,
+                "skipping playback with no resolvable public ids",
+            );
+            continue;
+        };
+        records.push(record);
     }
 
     Ok(records)
@@ -531,15 +665,16 @@ pub(crate) fn start_playback(
         user_db_id,
     ))?;
 
-    Ok(PlaybackRecord {
+    require_playback_record(
+        db,
         playback_session_id,
         track_db_id,
         user_db_id,
-        playback: PlaybackSession {
+        PlaybackSession {
             db_id: Some(playback_session_id),
             ..playback
         },
-    })
+    )
 }
 
 pub(crate) fn report_playback(
@@ -582,7 +717,7 @@ pub(crate) fn report_playback(
     playback.db_id = Some(playback_session_id);
     map_internal(db::playback_sessions::update(db, &playback))?;
     if playback.state.is_terminal() {
-        sessions::clear_session_bindings_for_playback(playback_session_id);
+        sessions::clear_session_bindings_for_playback(playback_session_id, &playback.id);
     }
 
     let track_db_id = map_internal(db::playback_sessions::get_track_id(db, playback_session_id))?
@@ -594,12 +729,7 @@ pub(crate) fn report_playback(
     })?;
     let user_db_id = playback_user_db_id.unwrap_or(DbId(0));
 
-    Ok(PlaybackRecord {
-        playback_session_id,
-        track_db_id,
-        user_db_id,
-        playback,
-    })
+    require_playback_record(db, playback_session_id, track_db_id, user_db_id, playback)
 }
 
 pub(crate) fn report_playback_session(
@@ -657,9 +787,15 @@ pub(crate) fn report_playback_session(
         current_playback_session_id: current_bound_playback
             .as_ref()
             .map(|bound| bound.playback_session_id),
+        current_playback_session_public_id: current_bound_playback
+            .as_ref()
+            .map(|bound| bound.playback.id.clone()),
         previous_playback_session_id: previous_bound_playback
             .as_ref()
             .map(|bound| bound.playback_session_id),
+        previous_playback_session_public_id: previous_bound_playback
+            .as_ref()
+            .map(|bound| bound.playback.id.clone()),
         previous_expires_at_ms: session
             .as_ref()
             .and_then(|session| session.previous_expires_at_ms),
@@ -760,7 +896,11 @@ pub(crate) fn report_playback_session(
                 now_ms,
             )?;
 
-            set_current_session_playback(&mut session_state, updated.playback_session_id);
+            set_current_session_playback(
+                &mut session_state,
+                updated.playback_session_id,
+                updated.playback_session_public_id.clone(),
+            );
             if updated.playback.state.is_terminal() {
                 clear_current_session_playback(&mut session_state);
             }
@@ -771,7 +911,7 @@ pub(crate) fn report_playback_session(
                 let mut promoted_to_current = false;
                 let previous_binding = previous_bound_playback
                     .as_ref()
-                    .map(|bound| bound.playback_session_id);
+                    .map(|bound| (bound.playback_session_id, bound.playback.id.clone()));
 
                 if active_event == ActiveEvent::Started && !state.is_terminal() {
                     if session.is_none() {
@@ -783,10 +923,15 @@ pub(crate) fn report_playback_session(
                         clear_previous_session_playback(&mut session_state);
                     }
 
-                    if let Some(previous_playback_session_id) = previous_binding {
+                    if let Some((
+                        previous_playback_session_id,
+                        previous_playback_session_public_id,
+                    )) = previous_binding
+                    {
                         set_current_session_playback(
                             &mut session_state,
                             previous_playback_session_id,
+                            previous_playback_session_public_id,
                         );
                         promoted_to_current = true;
                     }
@@ -811,7 +956,11 @@ pub(crate) fn report_playback_session(
                 )?;
 
                 if promoted_to_current {
-                    set_current_session_playback(&mut session_state, updated.playback_session_id);
+                    set_current_session_playback(
+                        &mut session_state,
+                        updated.playback_session_id,
+                        updated.playback_session_public_id.clone(),
+                    );
                     if updated.playback.state.is_terminal() {
                         clear_current_session_playback(&mut session_state);
                     }
@@ -853,7 +1002,11 @@ pub(crate) fn report_playback_session(
                 if current_bound_playback.is_some() {
                     move_current_to_previous_session_playback(&mut session_state, now_ms);
                 }
-                set_current_session_playback(&mut session_state, created.playback_session_id);
+                set_current_session_playback(
+                    &mut session_state,
+                    created.playback_session_id,
+                    created.playback_session_public_id.clone(),
+                );
 
                 playback = Some(created);
             }

@@ -150,16 +150,24 @@ pub(crate) struct SessionPlaybackReportRequest<'a> {
 #[derive(Clone, Debug)]
 pub(crate) struct PlaybackRecord {
     pub(crate) playback_session_id: DbId,
+    pub(crate) playback_session_public_id: String,
     pub(crate) track_db_id: DbId,
+    pub(crate) track_public_id: String,
     pub(crate) user_db_id: DbId,
+    pub(crate) user_public_id: String,
+    pub(crate) library_public_id: Option<String>,
     pub(crate) playback: PlaybackSession,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct EvictedPlaybackRecord {
     pub(crate) playback_session_id: DbId,
+    pub(crate) playback_session_public_id: String,
     pub(crate) track_db_id: DbId,
+    pub(crate) track_public_id: String,
     pub(crate) user_db_id: DbId,
+    pub(crate) user_public_id: String,
+    pub(crate) library_public_id: Option<String>,
     pub(crate) playback: PlaybackSession,
 }
 
@@ -181,8 +189,12 @@ impl From<EvictedPlaybackRecord> for PlaybackRecord {
     fn from(value: EvictedPlaybackRecord) -> Self {
         Self {
             playback_session_id: value.playback_session_id,
+            playback_session_public_id: value.playback_session_public_id,
             track_db_id: value.track_db_id,
+            track_public_id: value.track_public_id,
             user_db_id: value.user_db_id,
+            user_public_id: value.user_public_id,
+            library_public_id: value.library_public_id,
             playback: value.playback,
         }
     }
@@ -1430,7 +1442,10 @@ mod tests {
         )?
         .playback
         .expect("restart should produce a record");
-        assert_ne!(restarted_a.playback_session_id, started_a.playback_session_id);
+        assert_ne!(
+            restarted_a.playback_session_id,
+            started_a.playback_session_id
+        );
 
         report_test_playback_session_with_cleanup(
             &mut db,

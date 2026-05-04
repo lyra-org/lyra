@@ -108,9 +108,10 @@ pub(crate) async fn teardown_plugin_callbacks(plugin_id: &PluginId) {
 pub(crate) struct PlaybackUpdatePayload {
     pub event: String,
     pub state: PlaybackState,
-    pub playback_session_id: i64,
-    pub track_id: i64,
-    pub user_id: i64,
+    pub playback_session_public_id: String,
+    pub track_public_id: String,
+    pub user_public_id: String,
+    pub library_public_id: Option<String>,
     pub position_ms: u64,
     pub duration_ms: Option<u64>,
     pub activity_ms: u64,
@@ -126,9 +127,10 @@ pub(crate) fn playback_to_payload(
     PlaybackUpdatePayload {
         event,
         state: playback.playback.state,
-        playback_session_id: playback.playback_session_id.0,
-        track_id: playback.track_db_id.0,
-        user_id: playback.user_db_id.0,
+        playback_session_public_id: playback.playback_session_public_id.clone(),
+        track_public_id: playback.track_public_id.clone(),
+        user_public_id: playback.user_public_id.clone(),
+        library_public_id: playback.library_public_id.clone(),
         position_ms: playback.playback.position_ms,
         duration_ms: playback.playback.duration_ms,
         activity_ms,
@@ -171,7 +173,7 @@ pub(crate) fn dispatch_update(payload: PlaybackUpdatePayload) {
                 Ok(value) => value,
                 Err(error) => {
                     tracing::warn!(
-                        playback_session_id = payload.playback_session_id,
+                        playback_session_public_id = %payload.playback_session_public_id,
                         event = %payload.event,
                         error = %error,
                         "failed to convert playback update payload to lua value"
@@ -181,7 +183,7 @@ pub(crate) fn dispatch_update(payload: PlaybackUpdatePayload) {
             };
             if let Err(error) = handler.call_async::<_, ()>(lua_payload).await {
                 tracing::warn!(
-                    playback_session_id = payload.playback_session_id,
+                    playback_session_public_id = %payload.playback_session_public_id,
                     event = %payload.event,
                     plugin_id = %handler.plugin_id(),
                     error = %error,

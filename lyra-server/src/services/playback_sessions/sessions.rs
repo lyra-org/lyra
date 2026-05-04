@@ -26,7 +26,9 @@ use crate::db::{
 #[derive(Clone, Debug)]
 pub(crate) struct PlaybackSessionScope {
     pub(crate) current_playback_session_id: Option<DbId>,
+    pub(crate) current_playback_session_public_id: Option<String>,
     pub(crate) previous_playback_session_id: Option<DbId>,
+    pub(crate) previous_playback_session_public_id: Option<String>,
     pub(crate) previous_expires_at_ms: Option<u64>,
     pub(crate) updated_at_ms: u64,
     /// Set on command dispatch, cleared on any scope upsert (including
@@ -86,7 +88,9 @@ pub(crate) fn upsert_playback_session(
         })
         .or_insert_with(|| PlaybackSessionScope {
             current_playback_session_id: None,
+            current_playback_session_public_id: None,
             previous_playback_session_id: None,
+            previous_playback_session_public_id: None,
             previous_expires_at_ms: None,
             updated_at_ms: now_ms,
             command_dispatched_at_ms: None,
@@ -113,13 +117,19 @@ pub(crate) struct BoundPlayback {
     pub(crate) playback: PlaybackSession,
 }
 
-fn resolve_playback_by_id(
+fn resolve_playback_by_id_and_public_id(
     db: &DbAny,
     playback_session_id: DbId,
+    public_id: Option<&str>,
 ) -> anyhow::Result<Option<BoundPlayback>> {
     let Some(playback) = db::playback_sessions::get_by_id(db, playback_session_id)? else {
         return Ok(None);
     };
+    if let Some(public_id) = public_id
+        && playback.id != public_id
+    {
+        return Ok(None);
+    }
     let Some(track_db_id) = db::playback_sessions::get_track_id(db, playback_session_id)? else {
         return Ok(None);
     };
@@ -138,7 +148,11 @@ pub(crate) fn resolve_current_playback(
     let Some(playback_session_id) = session.current_playback_session_id else {
         return Ok(None);
     };
-    resolve_playback_by_id(db, playback_session_id)
+    resolve_playback_by_id_and_public_id(
+        db,
+        playback_session_id,
+        session.current_playback_session_public_id.as_deref(),
+    )
 }
 
 pub(crate) fn resolve_previous_playback(
@@ -148,7 +162,11 @@ pub(crate) fn resolve_previous_playback(
     let Some(playback_session_id) = session.previous_playback_session_id else {
         return Ok(None);
     };
-    resolve_playback_by_id(db, playback_session_id)
+    resolve_playback_by_id_and_public_id(
+        db,
+        playback_session_id,
+        session.previous_playback_session_public_id.as_deref(),
+    )
 }
 
 pub(crate) fn clear_playback_session_scope(scope: &PlaybackScopeKey<'_>) {
@@ -159,7 +177,10 @@ pub(crate) fn clear_playback_session_scope(scope: &PlaybackScopeKey<'_>) {
     scopes.remove(&alias);
 }
 
-pub(crate) fn clear_session_bindings_for_playback(playback_session_id: DbId) -> usize {
+pub(crate) fn clear_session_bindings_for_playback(
+    playback_session_id: DbId,
+    playback_session_public_id: &str,
+) -> usize {
     let mut scopes = PLAYBACK_SESSION_SCOPES
         .write()
         .expect("playback session scopes RwLock poisoned");
@@ -169,12 +190,20 @@ pub(crate) fn clear_session_bindings_for_playback(playback_session_id: DbId) -> 
     for (alias, scope) in scopes.iter_mut() {
         let mut binding_changed = false;
 
-        if scope.current_playback_session_id == Some(playback_session_id) {
+        if scope.current_playback_session_id == Some(playback_session_id)
+            && scope.current_playback_session_public_id.as_deref()
+                == Some(playback_session_public_id)
+        {
             scope.current_playback_session_id = None;
+            scope.current_playback_session_public_id = None;
             binding_changed = true;
         }
-        if scope.previous_playback_session_id == Some(playback_session_id) {
+        if scope.previous_playback_session_id == Some(playback_session_id)
+            && scope.previous_playback_session_public_id.as_deref()
+                == Some(playback_session_public_id)
+        {
             scope.previous_playback_session_id = None;
+            scope.previous_playback_session_public_id = None;
             scope.previous_expires_at_ms = None;
             binding_changed = true;
         }
@@ -203,7 +232,7 @@ pub(crate) fn clear_session_bindings_for_playbacks(playbacks: &[EvictedPlayback]
         let Some(playback_session_id) = evicted.playback.db_id else {
             continue;
         };
-        removed += clear_session_bindings_for_playback(playback_session_id);
+        removed += clear_session_bindings_for_playback(playback_session_id, &evicted.playback.id);
     }
     removed
 }

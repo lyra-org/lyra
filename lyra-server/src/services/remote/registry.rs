@@ -29,10 +29,12 @@ pub(crate) type ConnectionId = u64;
 
 const COMMAND_CHANNEL_CAPACITY: usize = 16;
 
+/// `user_db_id` is metadata only; authorize/evict/count on `user_public_id`.
 pub(crate) struct ConnectionHandle {
     pub(crate) connection_id: ConnectionId,
     pub(crate) token: String,
     pub(crate) user_db_id: DbId,
+    pub(crate) user_public_id: String,
     pub(crate) session_key: String,
     pub(crate) cancel: Arc<Notify>,
     pub(crate) command_tx: mpsc::Sender<OutgoingMessage>,
@@ -57,19 +59,23 @@ impl ConnectionRegistry {
         }
     }
 
-    fn count_user_connections(&self, user_db_id: DbId) -> usize {
+    fn count_user_connections(&self, user_public_id: &str) -> usize {
         self.connections
             .values()
-            .filter(|h| h.user_db_id == user_db_id)
+            .filter(|h| h.user_public_id == user_public_id)
             .count()
     }
 
     /// The evicted connection's `unregister` call will block on the registry write
     /// lock until the caller's `register` (which holds the lock for both `evict_duplicate`
     /// and `insert`) releases it. This ordering is intentional and load-bearing.
-    fn evict_duplicate(&mut self, user_db_id: DbId, session_key: &str) -> Option<ConnectionHandle> {
+    fn evict_duplicate(
+        &mut self,
+        user_public_id: &str,
+        session_key: &str,
+    ) -> Option<ConnectionHandle> {
         let dup_id = self.connections.iter().find_map(|(&id, h)| {
-            (h.user_db_id == user_db_id && h.session_key == session_key).then_some(id)
+            (h.user_public_id == user_public_id && h.session_key == session_key).then_some(id)
         });
         if let Some(id) = dup_id {
             let handle = self.connections.remove(&id)?;
@@ -84,6 +90,7 @@ impl ConnectionRegistry {
     fn insert(
         &mut self,
         user_db_id: DbId,
+        user_public_id: String,
         session_key: String,
         cancel: Arc<Notify>,
         command_tx: mpsc::Sender<OutgoingMessage>,
@@ -93,7 +100,7 @@ impl ConnectionRegistry {
             .checked_add(1)
             .ok_or(RegistryError::IdExhausted)?;
 
-        if self.count_user_connections(user_db_id) >= MAX_CONNECTIONS_PER_USER {
+        if self.count_user_connections(&user_public_id) >= MAX_CONNECTIONS_PER_USER {
             return Err(RegistryError::TooManyConnections);
         }
 
@@ -107,6 +114,7 @@ impl ConnectionRegistry {
                 connection_id,
                 token: token.clone(),
                 user_db_id,
+                user_public_id,
                 session_key,
                 cancel,
                 command_tx,
@@ -148,6 +156,7 @@ pub(crate) struct RegisterResult {
 
 pub(crate) async fn register(
     user_db_id: DbId,
+    user_public_id: String,
     session_key: String,
     cancel: Arc<Notify>,
 ) -> Result<RegisterResult, RegistryError> {
@@ -161,16 +170,17 @@ pub(crate) async fn register(
     let has_duplicate = registry
         .connections
         .values()
-        .any(|h| h.user_db_id == user_db_id && h.session_key == session_key);
+        .any(|h| h.user_public_id == user_public_id && h.session_key == session_key);
     let effective_count =
-        registry.count_user_connections(user_db_id) - if has_duplicate { 1 } else { 0 };
+        registry.count_user_connections(&user_public_id) - if has_duplicate { 1 } else { 0 };
     if effective_count >= MAX_CONNECTIONS_PER_USER {
         return Err(RegistryError::TooManyConnections);
     }
 
-    let evicted = registry.evict_duplicate(user_db_id, &session_key);
+    let evicted = registry.evict_duplicate(&user_public_id, &session_key);
     let (command_tx, command_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
-    let connection_id = registry.insert(user_db_id, session_key, cancel, command_tx)?;
+    let connection_id =
+        registry.insert(user_db_id, user_public_id, session_key, cancel, command_tx)?;
     Ok(RegisterResult {
         connection_id,
         evicted,
@@ -250,6 +260,7 @@ fn snapshot_from_handle(handle: &ConnectionHandle) -> ConnectionSnapshot {
         connection_id: handle.connection_id,
         token: handle.token.clone(),
         user_db_id: handle.user_db_id,
+        user_public_id: handle.user_public_id.clone(),
         session_key: handle.session_key.clone(),
         supported_commands: handle.supported_commands.iter().cloned().collect(),
     }
@@ -260,6 +271,7 @@ pub(crate) struct ConnectionSnapshot {
     pub(crate) connection_id: ConnectionId,
     pub(crate) token: String,
     pub(crate) user_db_id: DbId,
+    pub(crate) user_public_id: String,
     pub(crate) session_key: String,
     pub(crate) supported_commands: Vec<RemoteAction>,
 }
@@ -285,10 +297,22 @@ mod tests {
     fn insert_assigns_sequential_ids() {
         let mut reg = test_registry();
         let id1 = reg
-            .insert(DbId(1), "a".into(), test_cancel(), test_tx())
+            .insert(
+                DbId(1),
+                "user-1".into(),
+                "a".into(),
+                test_cancel(),
+                test_tx(),
+            )
             .unwrap();
         let id2 = reg
-            .insert(DbId(1), "b".into(), test_cancel(), test_tx())
+            .insert(
+                DbId(1),
+                "user-1".into(),
+                "b".into(),
+                test_cancel(),
+                test_tx(),
+            )
             .unwrap();
         assert_eq!(id1, 1);
         assert_eq!(id2, 2);
@@ -304,11 +328,23 @@ mod tests {
     fn insert_rejects_when_user_at_cap() {
         let mut reg = test_registry();
         for i in 0..MAX_CONNECTIONS_PER_USER {
-            reg.insert(DbId(1), format!("key-{i}"), test_cancel(), test_tx())
-                .unwrap();
+            reg.insert(
+                DbId(1),
+                "user-1".into(),
+                format!("key-{i}"),
+                test_cancel(),
+                test_tx(),
+            )
+            .unwrap();
         }
         let err = reg
-            .insert(DbId(1), "overflow".into(), test_cancel(), test_tx())
+            .insert(
+                DbId(1),
+                "user-1".into(),
+                "overflow".into(),
+                test_cancel(),
+                test_tx(),
+            )
             .unwrap_err();
         assert!(matches!(err, RegistryError::TooManyConnections));
     }
@@ -316,36 +352,96 @@ mod tests {
     #[test]
     fn insert_allows_different_users_independently() {
         let mut reg = test_registry();
-        reg.insert(DbId(1), "a".into(), test_cancel(), test_tx())
+        reg.insert(
+            DbId(1),
+            "user-1".into(),
+            "a".into(),
+            test_cancel(),
+            test_tx(),
+        )
+        .unwrap();
+        reg.insert(
+            DbId(2),
+            "user-2".into(),
+            "a".into(),
+            test_cancel(),
+            test_tx(),
+        )
+        .unwrap();
+        assert_eq!(reg.count_user_connections("user-1"), 1);
+        assert_eq!(reg.count_user_connections("user-2"), 1);
+    }
+
+    #[test]
+    fn count_user_connections_keys_on_public_id_not_db_id() {
+        let mut reg = test_registry();
+        reg.insert(
+            DbId(42),
+            "alice".into(),
+            "a".into(),
+            test_cancel(),
+            test_tx(),
+        )
+        .unwrap();
+        reg.insert(DbId(42), "bob".into(), "a".into(), test_cancel(), test_tx())
             .unwrap();
-        reg.insert(DbId(2), "a".into(), test_cancel(), test_tx())
-            .unwrap();
-        assert_eq!(reg.count_user_connections(DbId(1)), 1);
-        assert_eq!(reg.count_user_connections(DbId(2)), 1);
+        assert_eq!(reg.count_user_connections("alice"), 1);
+        assert_eq!(reg.count_user_connections("bob"), 1);
     }
 
     #[test]
     fn evict_duplicate_removes_matching_connection_and_token() {
         let mut reg = test_registry();
         let id = reg
-            .insert(DbId(1), "key".into(), test_cancel(), test_tx())
+            .insert(
+                DbId(1),
+                "user-1".into(),
+                "key".into(),
+                test_cancel(),
+                test_tx(),
+            )
             .unwrap();
         let token = reg.connections[&id].token.clone();
         assert!(reg.tokens.contains_key(&token));
-        let evicted = reg.evict_duplicate(DbId(1), "key");
+        let evicted = reg.evict_duplicate("user-1", "key");
         assert!(evicted.is_some());
-        assert_eq!(reg.count_user_connections(DbId(1)), 0);
+        assert_eq!(reg.count_user_connections("user-1"), 0);
         assert!(!reg.tokens.contains_key(&token));
     }
 
     #[test]
     fn evict_duplicate_returns_none_when_no_match() {
         let mut reg = test_registry();
-        reg.insert(DbId(1), "key".into(), test_cancel(), test_tx())
-            .unwrap();
-        let evicted = reg.evict_duplicate(DbId(1), "other-key");
+        reg.insert(
+            DbId(1),
+            "user-1".into(),
+            "key".into(),
+            test_cancel(),
+            test_tx(),
+        )
+        .unwrap();
+        let evicted = reg.evict_duplicate("user-1", "other-key");
         assert!(evicted.is_none());
-        assert_eq!(reg.count_user_connections(DbId(1)), 1);
+        assert_eq!(reg.count_user_connections("user-1"), 1);
+    }
+
+    #[test]
+    fn evict_duplicate_does_not_match_recycled_db_id_with_different_public_id() {
+        let mut reg = test_registry();
+        reg.insert(
+            DbId(42),
+            "alice".into(),
+            "key".into(),
+            test_cancel(),
+            test_tx(),
+        )
+        .unwrap();
+        let evicted = reg.evict_duplicate("bob", "key");
+        assert!(
+            evicted.is_none(),
+            "must not evict alice's connection on bob's register",
+        );
+        assert_eq!(reg.count_user_connections("alice"), 1);
     }
 
     #[test]
@@ -353,10 +449,10 @@ mod tests {
         let mut reg = test_registry();
         let cancel = test_cancel();
         let cancel_clone = cancel.clone();
-        reg.insert(DbId(1), "key".into(), cancel, test_tx())
+        reg.insert(DbId(1), "user-1".into(), "key".into(), cancel, test_tx())
             .unwrap();
 
-        reg.evict_duplicate(DbId(1), "key");
+        reg.evict_duplicate("user-1", "key");
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_time()
@@ -376,7 +472,13 @@ mod tests {
     fn remove_returns_handle_and_cleans_token() {
         let mut reg = test_registry();
         let id = reg
-            .insert(DbId(1), "key".into(), test_cancel(), test_tx())
+            .insert(
+                DbId(1),
+                "user-1".into(),
+                "key".into(),
+                test_cancel(),
+                test_tx(),
+            )
             .unwrap();
         let token = reg.connections[&id].token.clone();
         assert!(reg.tokens.contains_key(&token));
@@ -392,7 +494,13 @@ mod tests {
         let mut reg = test_registry();
         reg.next_id = u64::MAX;
         let err = reg
-            .insert(DbId(1), "key".into(), test_cancel(), test_tx())
+            .insert(
+                DbId(1),
+                "user-1".into(),
+                "key".into(),
+                test_cancel(),
+                test_tx(),
+            )
             .unwrap_err();
         assert!(matches!(err, RegistryError::IdExhausted));
     }
