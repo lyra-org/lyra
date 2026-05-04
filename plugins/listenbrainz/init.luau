@@ -6,6 +6,7 @@
 
 local entities = require("@lyra/entities")
 local http = require("@harmony/http")
+local ids = require("@lyra/ids")
 local json = require("@harmony/json")
 local metadata = require("@lyra/metadata")
 local playbacks = require("@lyra/playback_sessions")
@@ -55,8 +56,8 @@ type TrackMetadata = {
 
 http.set_rate_limit({ domain = "api.listenbrainz.org" })
 
-local started_at_sec_by_playback_session_id: { [number]: number } = {}
-local single_submitted_by_playback_session_id: { [number]: boolean } = {}
+local started_at_sec_by_playback_session_id: { [string]: number } = {}
+local single_submitted_by_playback_session_id: { [string]: boolean } = {}
 
 local function unix_seconds_from_ms(ms: number?): number
 	return math.floor((ms or 0) / 1000)
@@ -99,9 +100,9 @@ local function query_artist_projection(entity_id: number, include: string | { st
 	return projection
 end
 
-local function query_track_projection(track_id: number): (TrackProjection?, TrackProjectionIncludes?)
+local function query_track_projection(track_public_id: string): (TrackProjection?, TrackProjectionIncludes?)
 	local request: EntityQueryRequest = {
-		id = track_id,
+		id = track_public_id,
 		include = { "artists", "releases", "external_ids" },
 	}
 	local ok, projection = pcall(entities.query_track, request)
@@ -218,7 +219,7 @@ local function build_additional_info(
 end
 
 local function build_track_metadata(update: PlaybackUpdatePayload): TrackMetadata?
-	local track, includes = query_track_projection(update.track_id)
+	local track, includes = query_track_projection(update.track_public_id)
 	local artists_list = if includes then includes.artists else nil
 	local releases_list = if includes then includes.releases else nil
 	local external_ids = if includes then includes.external_ids else nil
@@ -272,7 +273,9 @@ end
 local function submit_playing_now(token: string, update: PlaybackUpdatePayload): boolean
 	local track_metadata = build_track_metadata(update)
 	if not track_metadata then
-		warn(`skipping ListenBrainz playing_now for track_id={update.track_id}: missing artist_name or track_name`)
+		warn(
+			`skipping ListenBrainz playing_now for track_public_id={update.track_public_id}: missing artist_name or track_name`
+		)
 		return false
 	end
 
@@ -289,11 +292,13 @@ end
 local function submit_single_listen(token: string, update: PlaybackUpdatePayload): boolean
 	local track_metadata = build_track_metadata(update)
 	if not track_metadata then
-		warn(`skipping ListenBrainz single for track_id={update.track_id}: missing artist_name or track_name`)
+		warn(
+			`skipping ListenBrainz single for track_public_id={update.track_public_id}: missing artist_name or track_name`
+		)
 		return false
 	end
 
-	local listened_at = started_at_sec_by_playback_session_id[update.playback_session_id]
+	local listened_at = started_at_sec_by_playback_session_id[update.playback_session_public_id]
 	if not listened_at then
 		listened_at = unix_seconds_from_ms(update.updated_at_ms)
 	end
@@ -310,40 +315,45 @@ local function submit_single_listen(token: string, update: PlaybackUpdatePayload
 end
 
 playbacks.on_update(function(update)
-	local settings = user_config:get(update.user_id)
+	local user_db_id = ids.get_db_id(update.user_public_id)
+	if user_db_id == nil then
+		return
+	end
+	local settings = user_config:get(user_db_id)
 	local token = settings.token :: string?
 	if not token or token == "" then
 		return
 	end
 
+	local session_key = update.playback_session_public_id
 	if update.event == "started" then
-		started_at_sec_by_playback_session_id[update.playback_session_id] = unix_seconds_from_ms(update.updated_at_ms)
-		single_submitted_by_playback_session_id[update.playback_session_id] = nil
+		started_at_sec_by_playback_session_id[session_key] = unix_seconds_from_ms(update.updated_at_ms)
+		single_submitted_by_playback_session_id[session_key] = nil
 		submit_playing_now(token, update)
 		return
 	end
 
 	if update.event == "evicted" then
-		started_at_sec_by_playback_session_id[update.playback_session_id] = nil
-		single_submitted_by_playback_session_id[update.playback_session_id] = nil
+		started_at_sec_by_playback_session_id[session_key] = nil
+		single_submitted_by_playback_session_id[session_key] = nil
 		return
 	end
 
 	if update.event == "stopped" or update.event == "completed" then
-		if single_submitted_by_playback_session_id[update.playback_session_id] then
+		if single_submitted_by_playback_session_id[session_key] then
 			return
 		end
 
 		local qualifies_single_listen = update.qualifies_single_listen == true
 		local is_completed = update.event == "completed"
 		if not is_completed and not qualifies_single_listen then
-			started_at_sec_by_playback_session_id[update.playback_session_id] = nil
+			started_at_sec_by_playback_session_id[session_key] = nil
 			return
 		end
 
 		if submit_single_listen(token, update) then
-			single_submitted_by_playback_session_id[update.playback_session_id] = true
-			started_at_sec_by_playback_session_id[update.playback_session_id] = nil
+			single_submitted_by_playback_session_id[session_key] = true
+			started_at_sec_by_playback_session_id[session_key] = nil
 		end
 	end
 end)
