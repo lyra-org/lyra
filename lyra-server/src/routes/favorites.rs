@@ -37,13 +37,10 @@ use std::collections::HashMap;
 
 use crate::{
     STATE,
-    db::{
-        self,
-        favorites::{
-            Cursor,
-            FavoriteKind,
-            LIST_HARD_LIMIT,
-        },
+    db::favorites::{
+        Cursor,
+        FavoriteKind,
+        LIST_HARD_LIMIT,
     },
     routes::AppError,
     services::{
@@ -122,6 +119,18 @@ struct FavoriteItem {
     entity: String,
     first_favorited_at_ms: i64,
     last_refreshed_at_ms: i64,
+}
+
+fn favorite_item_from_edge(edge: crate::db::favorites::FavoriteEdge) -> Option<FavoriteItem> {
+    if edge.target_public_id.is_empty() {
+        return None;
+    }
+    Some(FavoriteItem {
+        target_id: edge.target_public_id,
+        entity: edge.kind.as_str().to_string(),
+        first_favorited_at_ms: edge.first_favorited_at_ms,
+        last_refreshed_at_ms: edge.last_refreshed_at_ms,
+    })
 }
 
 async fn put_favorite(
@@ -215,22 +224,11 @@ async fn list_favorites(
     let db = STATE.db.read().await;
     let page = favorite_service::list(&db, principal.user_db_id, kind, limit, cursor)?;
 
-    let items = page
+    let items: Vec<FavoriteItem> = page
         .edges
         .into_iter()
-        .map(|edge| {
-            let target_public_id = db::lookup::find_id_by_db_id(&*db, edge.target_db_id)?
-                .ok_or_else(|| {
-                    anyhow::anyhow!("favorite target missing public id: {}", edge.target_db_id.0)
-                })?;
-            Ok::<_, AppError>(FavoriteItem {
-                target_id: target_public_id,
-                entity: edge.kind.as_str().to_string(),
-                first_favorited_at_ms: edge.first_favorited_at_ms,
-                last_refreshed_at_ms: edge.last_refreshed_at_ms,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+        .filter_map(favorite_item_from_edge)
+        .collect();
 
     Ok(Json(ListResponse {
         items,
@@ -316,8 +314,8 @@ fn check_favorites_docs(op: TransformOperation) -> TransformOperation {
 fn list_favorites_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List favorites").description(
         "Returns favorites for one entity kind, paginated by `first_favorited_at_ms DESC` \
-         with an opaque cursor. `next_cursor` is the only termination signal; visibility \
-         filters can drop rows from any page, so `items.len() < limit` is not reliable.",
+         with an opaque cursor. `limit` is best-effort: visibility filters and elided \
+         snapshots can return `items.len() < limit`. Drive iteration off `next_cursor`.",
     )
 }
 
@@ -370,6 +368,34 @@ mod tests {
         assert!(!looks_like_public_id("has spaces"));
         assert!(!looks_like_public_id("has/slashes"));
         assert!(!looks_like_public_id(&"x".repeat(100)));
+    }
+
+    #[test]
+    fn favorite_item_from_edge_drops_pre_snapshot_edges() {
+        let edge = crate::db::favorites::FavoriteEdge {
+            target_db_id: agdb::DbId(7),
+            target_public_id: String::new(),
+            kind: FavoriteKind::Track,
+            first_favorited_at_ms: 1,
+            last_refreshed_at_ms: 1,
+        };
+        assert!(favorite_item_from_edge(edge).is_none());
+    }
+
+    #[test]
+    fn favorite_item_from_edge_returns_snapshot_when_set() {
+        let edge = crate::db::favorites::FavoriteEdge {
+            target_db_id: agdb::DbId(7),
+            target_public_id: "tr-snapshot".to_string(),
+            kind: FavoriteKind::Track,
+            first_favorited_at_ms: 1,
+            last_refreshed_at_ms: 2,
+        };
+        let item = favorite_item_from_edge(edge).expect("snapshot edge renders");
+        assert_eq!(item.target_id, "tr-snapshot");
+        assert_eq!(item.entity, "track");
+        assert_eq!(item.first_favorited_at_ms, 1);
+        assert_eq!(item.last_refreshed_at_ms, 2);
     }
 
     #[test]

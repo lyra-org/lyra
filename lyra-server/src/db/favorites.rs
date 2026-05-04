@@ -25,6 +25,7 @@ pub(crate) const LIST_HARD_LIMIT: u64 = 500;
 const KIND_KEY: &str = "favorite_kind";
 const FIRST_FAVORITED_KEY: &str = "first_favorited_at_ms";
 const LAST_REFRESHED_KEY: &str = "last_refreshed_at_ms";
+const TARGET_PUBLIC_ID_KEY: &str = "target_public_id";
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum FavoriteKind {
@@ -78,6 +79,8 @@ impl TryFrom<&str> for FavoriteKind {
 #[derive(Clone, Debug)]
 pub(crate) struct FavoriteEdge {
     pub(crate) target_db_id: DbId,
+    #[allow(dead_code)]
+    pub(crate) target_public_id: String,
     pub(crate) kind: FavoriteKind,
     pub(crate) first_favorited_at_ms: i64,
     pub(crate) last_refreshed_at_ms: i64,
@@ -136,13 +139,21 @@ pub(crate) fn add(
     db: &mut impl DbAccess,
     user_db_id: DbId,
     target_db_id: DbId,
+    target_public_id: &str,
     kind: FavoriteKind,
     now_ms: i64,
 ) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !target_public_id.is_empty(),
+        "favorites::add invariant: target_public_id must not be empty",
+    );
     if let Some(edge_id) = find_favorite_edge(db, user_db_id, target_db_id)? {
         db.exec_mut(
             QueryBuilder::insert()
-                .values_uniform([(LAST_REFRESHED_KEY, now_ms).into()])
+                .values_uniform([
+                    (LAST_REFRESHED_KEY, now_ms).into(),
+                    (TARGET_PUBLIC_ID_KEY, target_public_id).into(),
+                ])
                 .ids(edge_id)
                 .query(),
         )?;
@@ -162,6 +173,7 @@ pub(crate) fn add(
         QueryBuilder::insert()
             .values_uniform([
                 (KIND_KEY, kind.as_str()).into(),
+                (TARGET_PUBLIC_ID_KEY, target_public_id).into(),
                 (FIRST_FAVORITED_KEY, now_ms).into(),
                 (LAST_REFRESHED_KEY, now_ms).into(),
             ])
@@ -190,6 +202,63 @@ pub(crate) fn has(
     target_db_id: DbId,
 ) -> anyhow::Result<bool> {
     Ok(find_favorite_edge(db, user_db_id, target_db_id)?.is_some())
+}
+
+pub(crate) fn edge_snapshot(
+    db: &impl DbAccess,
+    user_db_id: DbId,
+    target_db_id: DbId,
+) -> anyhow::Result<Option<String>> {
+    for element in read_outbound_favorite_edges(db, user_db_id)? {
+        if element.to != Some(target_db_id) {
+            continue;
+        }
+        let mut snapshot = String::new();
+        for kv in &element.values {
+            if let DbValue::String(key) = &kv.key
+                && key == TARGET_PUBLIC_ID_KEY
+                && let DbValue::String(value) = &kv.value
+            {
+                snapshot = value.clone();
+            }
+        }
+        return Ok(Some(snapshot));
+    }
+    Ok(None)
+}
+
+pub(crate) fn edge_snapshots(
+    db: &impl DbAccess,
+    user_db_id: DbId,
+    target_db_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, String>> {
+    if target_db_ids.len() > HAS_MANY_CAP {
+        anyhow::bail!(
+            "edge_snapshots cap exceeded: {} > {HAS_MANY_CAP}",
+            target_db_ids.len(),
+        );
+    }
+    let wanted: HashSet<DbId> = target_db_ids.iter().copied().collect();
+    let mut snapshots: HashMap<DbId, String> = HashMap::with_capacity(target_db_ids.len());
+    for element in read_outbound_favorite_edges(db, user_db_id)? {
+        let Some(target_db_id) = element.to else {
+            continue;
+        };
+        if !wanted.contains(&target_db_id) {
+            continue;
+        }
+        let mut snapshot = String::new();
+        for kv in &element.values {
+            if let DbValue::String(key) = &kv.key
+                && key == TARGET_PUBLIC_ID_KEY
+                && let DbValue::String(value) = &kv.value
+            {
+                snapshot = value.clone();
+            }
+        }
+        snapshots.insert(target_db_id, snapshot);
+    }
+    Ok(snapshots)
 }
 
 /// Batch check. Errs above [`HAS_MANY_CAP`].
@@ -405,6 +474,7 @@ fn parse_favorite_edge(element: DbElement) -> Option<FavoriteEdge> {
     let mut kind: Option<FavoriteKind> = None;
     let mut first_favorited_at_ms: Option<i64> = None;
     let mut last_refreshed_at_ms: Option<i64> = None;
+    let mut target_public_id = String::new();
 
     for kv in &element.values {
         let DbValue::String(key) = &kv.key else {
@@ -416,6 +486,11 @@ fn parse_favorite_edge(element: DbElement) -> Option<FavoriteEdge> {
                     kind = FavoriteKind::try_from(s.as_str()).ok();
                 }
             }
+            TARGET_PUBLIC_ID_KEY => {
+                if let DbValue::String(s) = &kv.value {
+                    target_public_id = s.clone();
+                }
+            }
             FIRST_FAVORITED_KEY => first_favorited_at_ms = kv_to_i64(&kv.value),
             LAST_REFRESHED_KEY => last_refreshed_at_ms = kv_to_i64(&kv.value),
             _ => {}
@@ -424,6 +499,7 @@ fn parse_favorite_edge(element: DbElement) -> Option<FavoriteEdge> {
 
     Some(FavoriteEdge {
         target_db_id,
+        target_public_id,
         kind: kind?,
         first_favorited_at_ms: first_favorited_at_ms?,
         last_refreshed_at_ms: last_refreshed_at_ms?,
@@ -529,7 +605,14 @@ mod tests {
         let user = create_test_user(&mut db)?;
         let track = create_test_track(&mut db)?;
 
-        add(&mut db, user, track, FavoriteKind::Track, 1000)?;
+        add(
+            &mut db,
+            user,
+            track,
+            "test-pub-id",
+            FavoriteKind::Track,
+            1000,
+        )?;
 
         assert!(has(&db, user, track)?);
         let edges = read_outbound_favorite_edges(&db, user)?;
@@ -538,6 +621,7 @@ mod tests {
         assert_eq!(parsed.kind, FavoriteKind::Track);
         assert_eq!(parsed.first_favorited_at_ms, 1000);
         assert_eq!(parsed.last_refreshed_at_ms, 1000);
+        assert_eq!(parsed.target_public_id, "test-pub-id");
 
         Ok(())
     }
@@ -548,8 +632,22 @@ mod tests {
         let user = create_test_user(&mut db)?;
         let track = create_test_track(&mut db)?;
 
-        add(&mut db, user, track, FavoriteKind::Track, 1000)?;
-        add(&mut db, user, track, FavoriteKind::Track, 5000)?;
+        add(
+            &mut db,
+            user,
+            track,
+            "test-pub-id",
+            FavoriteKind::Track,
+            1000,
+        )?;
+        add(
+            &mut db,
+            user,
+            track,
+            "test-pub-id",
+            FavoriteKind::Track,
+            5000,
+        )?;
 
         let edges = read_outbound_favorite_edges(&db, user)?;
         assert_eq!(edges.len(), 1, "re-add must not create a duplicate edge");
@@ -566,7 +664,14 @@ mod tests {
         let user = create_test_user(&mut db)?;
         let track = create_test_track(&mut db)?;
 
-        add(&mut db, user, track, FavoriteKind::Track, 100)?;
+        add(
+            &mut db,
+            user,
+            track,
+            "test-pub-id",
+            FavoriteKind::Track,
+            100,
+        )?;
         assert!(remove(&mut db, user, track)?);
         assert!(!remove(&mut db, user, track)?);
         assert!(!has(&db, user, track)?);
@@ -581,7 +686,14 @@ mod tests {
         let user_b = create_test_user(&mut db)?;
         let track = create_test_track(&mut db)?;
 
-        add(&mut db, user_a, track, FavoriteKind::Track, 1000)?;
+        add(
+            &mut db,
+            user_a,
+            track,
+            "test-pub-id",
+            FavoriteKind::Track,
+            1000,
+        )?;
 
         assert!(has(&db, user_a, track)?);
         assert!(
@@ -636,9 +748,30 @@ mod tests {
         let track_b = create_test_track(&mut db)?;
         let track_c = create_test_track(&mut db)?;
 
-        add(&mut db, user, track_a, FavoriteKind::Track, 1000)?;
-        add(&mut db, user, track_b, FavoriteKind::Track, 2000)?;
-        add(&mut db, user, track_c, FavoriteKind::Track, 3000)?;
+        add(
+            &mut db,
+            user,
+            track_a,
+            "test-pub-id",
+            FavoriteKind::Track,
+            1000,
+        )?;
+        add(
+            &mut db,
+            user,
+            track_b,
+            "test-pub-id",
+            FavoriteKind::Track,
+            2000,
+        )?;
+        add(
+            &mut db,
+            user,
+            track_c,
+            "test-pub-id",
+            FavoriteKind::Track,
+            3000,
+        )?;
 
         let page1 = list(&db, user, FavoriteKind::Track, 2, None)?;
         assert_eq!(page1.edges.len(), 2);
@@ -660,7 +793,14 @@ mod tests {
         let user = create_test_user(&mut db)?;
         let track = create_test_track(&mut db)?;
 
-        add(&mut db, user, track, FavoriteKind::Track, 100)?;
+        add(
+            &mut db,
+            user,
+            track,
+            "test-pub-id",
+            FavoriteKind::Track,
+            100,
+        )?;
 
         let page = list(&db, user, FavoriteKind::Track, 10, None)?;
         assert_eq!(page.edges.len(), 1);
@@ -679,8 +819,22 @@ mod tests {
         let track_a = create_test_track(&mut db)?;
         let track_b = create_test_track(&mut db)?;
 
-        add(&mut db, user, track_a, FavoriteKind::Track, 1)?;
-        add(&mut db, user, track_b, FavoriteKind::Track, 2)?;
+        add(
+            &mut db,
+            user,
+            track_a,
+            "test-pub-id",
+            FavoriteKind::Track,
+            1,
+        )?;
+        add(
+            &mut db,
+            user,
+            track_b,
+            "test-pub-id",
+            FavoriteKind::Track,
+            2,
+        )?;
 
         remove_outbound_for_user(&mut db, user)?;
 
@@ -697,8 +851,22 @@ mod tests {
         let user_b = create_test_user(&mut db)?;
         let track = create_test_track(&mut db)?;
 
-        add(&mut db, user_a, track, FavoriteKind::Track, 1)?;
-        add(&mut db, user_b, track, FavoriteKind::Track, 2)?;
+        add(
+            &mut db,
+            user_a,
+            track,
+            "test-pub-id",
+            FavoriteKind::Track,
+            1,
+        )?;
+        add(
+            &mut db,
+            user_b,
+            track,
+            "test-pub-id",
+            FavoriteKind::Track,
+            2,
+        )?;
 
         remove_inbound_for_target(&mut db, track)?;
 
@@ -715,7 +883,7 @@ mod tests {
 
         for _ in 0..3 {
             let track = create_test_track(&mut db)?;
-            add(&mut db, user, track, FavoriteKind::Track, 0)?;
+            add(&mut db, user, track, "test-pub-id", FavoriteKind::Track, 0)?;
         }
 
         let err =
@@ -738,8 +906,22 @@ mod tests {
         let user_b = crate::db::users::create(&mut db, &crate::db::users::test_user("bob")?)?;
         let track = create_test_track(&mut db)?;
 
-        add(&mut db, user_a, track, FavoriteKind::Track, 1)?;
-        add(&mut db, user_b, track, FavoriteKind::Track, 2)?;
+        add(
+            &mut db,
+            user_a,
+            track,
+            "test-pub-id",
+            FavoriteKind::Track,
+            1,
+        )?;
+        add(
+            &mut db,
+            user_b,
+            track,
+            "test-pub-id",
+            FavoriteKind::Track,
+            2,
+        )?;
 
         crate::db::users::delete_user(&mut db, user_a)?;
 
@@ -765,8 +947,22 @@ mod tests {
         let track_a = create_test_track(&mut db)?;
         let track_b = create_test_track(&mut db)?;
 
-        add(&mut db, user, track_a, FavoriteKind::Track, 1)?;
-        add(&mut db, user, track_b, FavoriteKind::Track, 2)?;
+        add(
+            &mut db,
+            user,
+            track_a,
+            "test-pub-id",
+            FavoriteKind::Track,
+            1,
+        )?;
+        add(
+            &mut db,
+            user,
+            track_b,
+            "test-pub-id",
+            FavoriteKind::Track,
+            2,
+        )?;
 
         crate::db::metadata::cascade_remove_entities(&mut db, &[track_a])?;
 
@@ -799,7 +995,14 @@ mod tests {
         };
         let playlist_db_id = crate::db::playlists::create(&mut db, &playlist, user)?;
 
-        add(&mut db, user, playlist_db_id, FavoriteKind::Playlist, 10)?;
+        add(
+            &mut db,
+            user,
+            playlist_db_id,
+            "test-pub-id",
+            FavoriteKind::Playlist,
+            10,
+        )?;
         assert!(has(&db, user, playlist_db_id)?);
 
         crate::db::playlists::delete(&mut db, playlist_db_id)?;
@@ -860,7 +1063,15 @@ mod benches {
         let mut tracks = Vec::with_capacity(n);
         for i in 0..n {
             let t = insert_track(&mut db);
-            add(&mut db, user, t, FavoriteKind::Track, i as i64).unwrap();
+            add(
+                &mut db,
+                user,
+                t,
+                &nanoid::nanoid!(),
+                FavoriteKind::Track,
+                i as i64,
+            )
+            .unwrap();
             tracks.push(t);
         }
         (db, user, tracks)
@@ -898,7 +1109,15 @@ mod benches {
         let track = insert_track(&mut db);
         for i in 0..100 {
             let user = insert_user(&mut db);
-            add(&mut db, user, track, FavoriteKind::Track, i as i64).unwrap();
+            add(
+                &mut db,
+                user,
+                track,
+                &nanoid::nanoid!(),
+                FavoriteKind::Track,
+                i as i64,
+            )
+            .unwrap();
         }
         b.iter(|| read_inbound_favorite_edges(&db, track).unwrap());
     }
@@ -909,7 +1128,15 @@ mod benches {
         let track = insert_track(&mut db);
         for i in 0..1_000 {
             let user = insert_user(&mut db);
-            add(&mut db, user, track, FavoriteKind::Track, i as i64).unwrap();
+            add(
+                &mut db,
+                user,
+                track,
+                &nanoid::nanoid!(),
+                FavoriteKind::Track,
+                i as i64,
+            )
+            .unwrap();
         }
         b.iter(|| read_inbound_favorite_edges(&db, track).unwrap());
     }

@@ -52,7 +52,7 @@ pub(crate) fn add(
         else {
             return Ok(MutationOutcome::NotTargetable);
         };
-        db::favorites::add(t, user_db_id, target_db_id, kind, now_ms)?;
+        db::favorites::add(t, user_db_id, target_db_id, public_target_id, kind, now_ms)?;
         Ok(MutationOutcome::Applied(kind))
     })
 }
@@ -73,15 +73,16 @@ pub(crate) fn remove(
     })
 }
 
-/// Opaque check — `false` for missing, non-whitelisted, or non-visible targets.
 pub(crate) fn has(db: &DbAny, user_db_id: DbId, public_target_id: &str) -> anyhow::Result<bool> {
     let Some((target_db_id, _kind)) = resolve_targetable(db, user_db_id, public_target_id)? else {
         return Ok(false);
     };
-    db::favorites::has(db, user_db_id, target_db_id)
+    let Some(snapshot) = db::favorites::edge_snapshot(db, user_db_id, target_db_id)? else {
+        return Ok(false);
+    };
+    Ok(snapshot == public_target_id)
 }
 
-/// Batch check. Missing / non-visible targets map to `false`. Errs above [`HAS_MANY_CAP`].
 pub(crate) fn has_many(
     db: &DbAny,
     user_db_id: DbId,
@@ -109,9 +110,11 @@ pub(crate) fn has_many(
 
     if !resolved.is_empty() {
         let db_ids: Vec<DbId> = resolved.iter().map(|(_, id)| *id).collect();
-        let favored = db::favorites::has_many(db, user_db_id, &db_ids)?;
+        let snapshots = db::favorites::edge_snapshots(db, user_db_id, &db_ids)?;
         for (public_id, db_id) in resolved {
-            let is_fav = favored.get(&db_id).copied().unwrap_or(false);
+            let is_fav = snapshots
+                .get(&db_id)
+                .is_some_and(|snapshot| snapshot == &public_id);
             response.insert(public_id, is_fav);
         }
     }
@@ -226,7 +229,13 @@ pub(crate) fn add_by_db_id(
         else {
             return Ok(MutationOutcome::NotTargetable);
         };
-        db::favorites::add(t, user_db_id, target_db_id, kind, now_ms)?;
+        let target_public_id = db::lookup::find_id_by_db_id(t, target_db_id)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "favorite target {} has no public id; cannot snapshot",
+                target_db_id.0,
+            )
+        })?;
+        db::favorites::add(t, user_db_id, target_db_id, &target_public_id, kind, now_ms)?;
         Ok(MutationOutcome::Applied(kind))
     })
 }
