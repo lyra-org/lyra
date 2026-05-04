@@ -80,9 +80,27 @@ type AuthResult<T> = std::result::Result<T, AuthError>;
 #[derive(Clone, Debug)]
 pub(crate) struct Principal {
     pub(crate) user_db_id: DbId,
+    pub(crate) user_public_id: String,
     pub(crate) username: String,
     pub(crate) permissions: Vec<Permission>,
     pub(crate) role_name: Option<String>,
+}
+
+impl Principal {
+    pub(crate) fn revalidate(&self, db: &agdb::DbAny) -> bool {
+        match db::users::get_by_public_id(db, &self.user_public_id) {
+            Ok(Some(user)) => user.db_id == Some(self.user_db_id),
+            Ok(None) => false,
+            Err(e) => {
+                tracing::warn!(
+                    user_public_id = %self.user_public_id,
+                    error = %e,
+                    "principal revalidate query failed"
+                );
+                false
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -212,6 +230,7 @@ async fn resolve_auth_from_session_token(token: &str) -> AuthResult<Option<Resol
     Ok(Some(ResolvedAuth {
         principal: Principal {
             user_db_id,
+            user_public_id: user.id,
             username: user.username,
             permissions,
             role_name,
@@ -238,6 +257,7 @@ async fn resolve_auth_from_api_key(key: &str) -> AuthResult<Option<ResolvedAuth>
     Ok(Some(ResolvedAuth {
         principal: Principal {
             user_db_id: api_key.user_db_id,
+            user_public_id: user.id,
             username: user.username,
             permissions,
             role_name,
@@ -313,6 +333,7 @@ async fn resolve_default_principal() -> AuthResult<Principal> {
 
     Ok(Principal {
         user_db_id,
+        user_public_id: user.id,
         username: user.username,
         permissions,
         role_name,
@@ -332,6 +353,7 @@ pub(crate) async fn logout_with_token(token: Option<&str>) -> AuthResult<bool> {
 
 async fn create_login_result(
     user_db_id: DbId,
+    user_public_id: String,
     username: String,
     permissions: Vec<Permission>,
     role_name: Option<String>,
@@ -343,6 +365,7 @@ async fn create_login_result(
     Ok(LoginResult {
         principal: Principal {
             user_db_id,
+            user_public_id,
             username,
             permissions,
             role_name,
@@ -384,12 +407,19 @@ pub(crate) async fn login_with_password(
         let user_db_id = user
             .db_id
             .ok_or_else(|| anyhow::anyhow!("default user has no db_id"))?;
+        let user_public_id = user.id.clone();
         let (permissions, role_name) = resolve_role_info(&db, user_db_id);
         drop(db);
 
-        return create_login_result(user_db_id, default_username, permissions, role_name)
-            .await
-            .map(Some);
+        return create_login_result(
+            user_db_id,
+            user_public_id,
+            default_username,
+            permissions,
+            role_name,
+        )
+        .await
+        .map(Some);
     }
 
     let db = STATE.db.read().await;
@@ -420,7 +450,7 @@ pub(crate) async fn login_with_password(
     let (permissions, role_name) = resolve_role_info(&db, user_db_id);
     drop(db);
 
-    create_login_result(user_db_id, user.username, permissions, role_name)
+    create_login_result(user_db_id, user.id, user.username, permissions, role_name)
         .await
         .map(Some)
 }
@@ -438,6 +468,13 @@ pub(crate) async fn require_auth(headers: &HeaderMap) -> Result<ResolvedAuth, Au
     let Some(auth) = resolve_auth_from_bearer(bearer.as_deref()).await? else {
         return Err(AuthError::InvalidBearerCredential);
     };
+
+    {
+        let db = STATE.db.read().await;
+        if !auth.principal.revalidate(&db) {
+            return Err(AuthError::InvalidBearerCredential);
+        }
+    }
 
     Ok(auth)
 }
@@ -722,6 +759,74 @@ mod tests {
         STATE.config.replace(std::sync::Arc::new(config));
 
         assert!(resolve_auth_from_bearer(Some(bearer)).await?.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn principal_revalidate_rejects_recycled_user_db_id() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        initialize_auth_test_runtime().await?;
+
+        let user_db_id = {
+            let mut db = STATE.db.write().await;
+            db::users::create(&mut db, &db::users::test_user("recycled")?)?
+        };
+        let user_public_id = {
+            let db = STATE.db.read().await;
+            db::users::get_by_id(&db, user_db_id)?
+                .ok_or_else(|| anyhow::anyhow!("user must exist"))?
+                .id
+        };
+
+        let stale_principal = Principal {
+            user_db_id,
+            user_public_id: user_public_id.clone(),
+            username: "recycled".to_string(),
+            permissions: vec![],
+            role_name: None,
+        };
+
+        {
+            let db = STATE.db.read().await;
+            assert!(stale_principal.revalidate(&db));
+        }
+
+        {
+            let mut db = STATE.db.write().await;
+            db::users::delete_user(&mut db, user_db_id)?;
+        }
+
+        {
+            let db = STATE.db.read().await;
+            assert!(
+                !stale_principal.revalidate(&db),
+                "deleted-user public id must no longer resolve"
+            );
+        }
+
+        let new_user_db_id = {
+            let mut db = STATE.db.write().await;
+            db::users::create(&mut db, &db::users::test_user("recycled-replacement")?)?
+        };
+
+        {
+            let db = STATE.db.read().await;
+            assert!(
+                !stale_principal.revalidate(&db),
+                "stale principal must not bind to a freshly-inserted user even if agdb reused the slot"
+            );
+            let new_user = db::users::get_by_id(&db, new_user_db_id)?
+                .ok_or_else(|| anyhow::anyhow!("new user must exist"))?;
+            let fresh_principal = Principal {
+                user_db_id: new_user_db_id,
+                user_public_id: new_user.id,
+                username: new_user.username,
+                permissions: vec![],
+                role_name: None,
+            };
+            assert!(fresh_principal.revalidate(&db));
+        }
 
         Ok(())
     }
