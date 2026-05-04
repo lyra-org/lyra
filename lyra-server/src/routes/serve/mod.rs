@@ -57,6 +57,8 @@ use crate::{
 #[derive(Debug)]
 pub struct ValidatedTrackSource {
     pub source_id: DbId,
+    pub source_public_id: String,
+    pub track_public_id: String,
     pub input_path: String,
     pub entry_format: Option<AudioFormat>,
     pub source_codec: Option<AudioCodec>,
@@ -137,8 +139,18 @@ pub async fn validate_and_get_track_source(
         )));
     }
 
+    let source_public_id =
+        db::lookup::find_id_by_db_id(db, source.source_id)?.ok_or_else(|| {
+            AppError::not_found(format!(
+                "Playable source has no public id: {}",
+                source.source_id.0
+            ))
+        })?;
+
     Ok(ValidatedTrackSource {
         source_id: source.source_id,
+        source_public_id,
+        track_public_id: track.id.clone(),
         input_path: source.input_path,
         entry_format: source.entry_format,
         source_codec: source
@@ -970,6 +982,8 @@ mod tests {
     fn apply_request_start_offset_reduces_duration_for_full_track_sources() {
         let source = ValidatedTrackSource {
             source_id: agdb::DbId(2),
+            source_public_id: "source-pub-2".to_string(),
+            track_public_id: "track-pub-test".to_string(),
             input_path: "track.flac".to_string(),
             entry_format: Some(AudioFormat::Flac),
             source_codec: Some(AudioCodec::Flac),
@@ -992,6 +1006,8 @@ mod tests {
     fn apply_request_start_offset_stacks_on_existing_source_range() {
         let source = ValidatedTrackSource {
             source_id: agdb::DbId(2),
+            source_public_id: "source-pub-2".to_string(),
+            track_public_id: "track-pub-test".to_string(),
             input_path: "track.flac".to_string(),
             entry_format: Some(AudioFormat::Flac),
             source_codec: Some(AudioCodec::Flac),
@@ -1014,6 +1030,8 @@ mod tests {
     fn apply_request_start_offset_rejects_offsets_past_available_duration() {
         let source = ValidatedTrackSource {
             source_id: agdb::DbId(2),
+            source_public_id: "source-pub-2".to_string(),
+            track_public_id: "track-pub-test".to_string(),
             input_path: "track.flac".to_string(),
             entry_format: Some(AudioFormat::Flac),
             source_codec: Some(AudioCodec::Flac),

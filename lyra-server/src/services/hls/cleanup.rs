@@ -461,22 +461,22 @@ mod tests {
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
 
         let oldest_key = HlsJobKey::new(
-            DbId(1),
-            DbId(1001),
+            "track-pub-1".to_string(),
+            "source-pub-1001".to_string(),
             None,
             None,
             HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
         );
         let middle_key = HlsJobKey::new(
-            DbId(2),
-            DbId(1002),
+            "track-pub-2".to_string(),
+            "source-pub-1002".to_string(),
             None,
             None,
             HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
         );
         let newest_key = HlsJobKey::new(
-            DbId(3),
-            DbId(1003),
+            "track-pub-3".to_string(),
+            "source-pub-1003".to_string(),
             None,
             None,
             HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
@@ -518,7 +518,7 @@ mod tests {
         let _guard = HLS_TEST_MUTEX.lock().await;
         reset_hls_state_for_test().await;
 
-        let track_db_id = DbId(333);
+        let track_public_id = "track-pub-333".to_string();
         let session_id = "stale-session".to_string();
         let test_dir = unique_test_dir("lyra-hls-cleanup-stale-session-test");
         tokio::fs::create_dir_all(&test_dir)
@@ -527,8 +527,8 @@ mod tests {
 
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
         let job_key = HlsJobKey::new(
-            track_db_id,
-            DbId(3331),
+            track_public_id.clone(),
+            "source-pub-3331".to_string(),
             None,
             None,
             HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
@@ -545,7 +545,7 @@ mod tests {
                 session_id.clone(),
                 super::super::state::HlsSession {
                     user_db_id: DbId(7),
-                    track_db_id,
+                    user_public_id: "user-pub-7".to_string(),
                     playlist_segment_count: 1,
                     job_key: job_key.clone(),
                     last_access: Instant::now() - HLS_SESSION_TTL - Duration::from_secs(1),
@@ -598,15 +598,15 @@ mod tests {
 
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
         let older_key = HlsJobKey::new(
-            DbId(901),
-            DbId(9011),
+            "track-pub-901".to_string(),
+            "source-pub-9011".to_string(),
             None,
             None,
             HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
         );
         let newer_key = HlsJobKey::new(
-            DbId(902),
-            DbId(9021),
+            "track-pub-902".to_string(),
+            "source-pub-9021".to_string(),
             None,
             None,
             HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),

@@ -88,8 +88,10 @@ pub(crate) async fn acquire_hls_transcode_permit() -> Result<Option<OwnedSemapho
 
 #[derive(Clone)]
 pub(crate) struct HlsSession {
+    /// Cleanup metadata only. **Do not authorize on this field.**
+    #[allow(dead_code)]
     pub(crate) user_db_id: DbId,
-    pub(crate) track_db_id: DbId,
+    pub(crate) user_public_id: String,
     pub(crate) playlist_segment_count: u64,
     pub(crate) job_key: HlsJobKey,
     pub(crate) last_access: Instant,
@@ -97,8 +99,8 @@ pub(crate) struct HlsSession {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct HlsJobKey {
-    track_db_id: DbId,
-    source_db_id: DbId,
+    track_public_id: String,
+    source_public_id: String,
     start_ms: Option<u64>,
     end_ms: Option<u64>,
     output: HlsOutputConfig,
@@ -123,19 +125,28 @@ pub(crate) fn generate_hls_session_id() -> String {
 
 impl HlsJobKey {
     pub(crate) fn new(
-        track_db_id: DbId,
-        source_db_id: DbId,
+        track_public_id: String,
+        source_public_id: String,
         start_ms: Option<u64>,
         end_ms: Option<u64>,
         output: HlsOutputConfig,
     ) -> Self {
         Self {
-            track_db_id,
-            source_db_id,
+            track_public_id,
+            source_public_id,
             start_ms,
             end_ms,
             output,
         }
+    }
+
+    pub(crate) fn track_public_id(&self) -> &str {
+        &self.track_public_id
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn source_public_id(&self) -> &str {
+        &self.source_public_id
     }
 }
 
@@ -179,7 +190,7 @@ async fn create_hls_job(input_path: &str, job_key: &HlsJobKey) -> Result<HlsJob,
     let job_id = generate_hls_session_id();
     let job_dir = std::env::temp_dir().join(format!(
         "{HLS_JOB_TEMP_DIR_PREFIX}{}-{}-{job_id}",
-        job_key.track_db_id.0, job_key.source_db_id.0
+        job_key.track_public_id, job_key.source_public_id
     ));
     let playlist_path = job_dir.join("index.m3u8");
     let segment_pattern = job_dir.join(format!(
@@ -278,7 +289,7 @@ pub(crate) async fn get_or_create_hls_job(
 pub(crate) async fn attach_session_to_job(
     session_id: &str,
     user_db_id: DbId,
-    track_db_id: DbId,
+    user_public_id: String,
     playlist_segment_count: u64,
     job_key: HlsJobKey,
 ) -> Result<PathBuf, HlsError> {
@@ -295,7 +306,7 @@ pub(crate) async fn attach_session_to_job(
         session_id.to_string(),
         HlsSession {
             user_db_id,
-            track_db_id,
+            user_public_id,
             playlist_segment_count,
             job_key,
             last_access: Instant::now(),
@@ -330,10 +341,10 @@ pub(crate) async fn detach_hls_session_with_timestamp(
 
 pub(crate) fn authorize_hls_segment_session(
     session: &HlsSession,
-    principal_user_id: Option<DbId>,
+    principal_user_public_id: Option<&str>,
 ) -> Result<(), HlsError> {
-    if let Some(principal_user_id) = principal_user_id
-        && session.user_db_id != principal_user_id
+    if let Some(principal_user_public_id) = principal_user_public_id
+        && session.user_public_id != principal_user_public_id
     {
         return Err(HlsError::SessionForbidden);
     }
@@ -411,8 +422,8 @@ mod tests {
             HlsCodecProfile::from_requested(Some(AudioCodec::Alac)).expect("alac profile");
 
         let aac_key = HlsJobKey::new(
-            DbId(7),
-            DbId(701),
+            "track-pub-7".to_string(),
+            "source-pub-701".to_string(),
             None,
             None,
             HlsOutputConfig::new(
@@ -424,8 +435,8 @@ mod tests {
             ),
         );
         let alac_key = HlsJobKey::new(
-            DbId(7),
-            DbId(701),
+            "track-pub-7".to_string(),
+            "source-pub-701".to_string(),
             None,
             None,
             HlsOutputConfig::new(alac_profile, None, None, None, false),
@@ -446,11 +457,11 @@ mod tests {
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
         let session = HlsSession {
             user_db_id: DbId(10),
-            track_db_id: DbId(77),
+            user_public_id: "user-pub-10".to_string(),
             playlist_segment_count: 1,
             job_key: HlsJobKey::new(
-                DbId(77),
-                DbId(7701),
+                "track-pub-77".to_string(),
+                "source-pub-7701".to_string(),
                 None,
                 None,
                 HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
@@ -458,10 +469,10 @@ mod tests {
             last_access: Instant::now(),
         };
 
-        assert!(authorize_hls_segment_session(&session, Some(DbId(10))).is_ok());
+        assert!(authorize_hls_segment_session(&session, Some("user-pub-10")).is_ok());
         assert!(authorize_hls_segment_session(&session, None).is_ok());
 
-        let owner_err = authorize_hls_segment_session(&session, Some(DbId(11)))
+        let owner_err = authorize_hls_segment_session(&session, Some("user-pub-11"))
             .expect_err("owner mismatch should be forbidden");
         assert!(matches!(owner_err, HlsError::SessionForbidden));
     }
@@ -471,7 +482,6 @@ mod tests {
         let _guard = HLS_TEST_MUTEX.lock().await;
         reset_hls_state_for_test().await;
 
-        let track_db_id = DbId(601);
         let test_dir = unique_test_dir("lyra-hls-shared-job-test");
         tokio::fs::create_dir_all(&test_dir)
             .await
@@ -479,8 +489,8 @@ mod tests {
 
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
         let job_key = HlsJobKey::new(
-            track_db_id,
-            DbId(6011),
+            "track-pub-601".to_string(),
+            "source-pub-6011".to_string(),
             None,
             None,
             HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
@@ -496,10 +506,10 @@ mod tests {
         let key_a = job_key.clone();
         let key_b = job_key.clone();
         let attach_a = tokio::spawn(async move {
-            attach_session_to_job("session-a", DbId(1), track_db_id, 1, key_a).await
+            attach_session_to_job("session-a", DbId(1), "user-pub-1".to_string(), 1, key_a).await
         });
         let attach_b = tokio::spawn(async move {
-            attach_session_to_job("session-b", DbId(2), track_db_id, 1, key_b).await
+            attach_session_to_job("session-b", DbId(2), "user-pub-2".to_string(), 1, key_b).await
         });
 
         let attach_a_result = attach_a.await.expect("session-a task should finish");

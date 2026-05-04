@@ -440,8 +440,8 @@ pub(crate) async fn serve_hls_playlist_for_track(
         output_prefer_vbr,
     );
     let job_key = HlsJobKey::new(
-        track_db_id,
-        source.source_id,
+        source.track_public_id.clone(),
+        source.source_public_id.clone(),
         source.start_ms,
         source.end_ms,
         output,
@@ -452,7 +452,7 @@ pub(crate) async fn serve_hls_playlist_for_track(
     attach_session_to_job(
         &session_id,
         principal.user_db_id,
-        track_db_id,
+        principal.user_public_id.clone(),
         playlist_segment_count,
         job_key,
     )
@@ -501,20 +501,17 @@ async fn get_hls_segment(
         Some(require_download_access(&headers).await?)
     };
 
-    let (track_db_id, job_key, playlist_segment_count) = {
+    let (job_key, playlist_segment_count) = {
         let mut sessions = HLS_SESSIONS.write().await;
         let session = sessions
             .get_mut(&session_id)
             .ok_or_else(|| AppError::not_found("HLS session not found"))?;
 
-        authorize_hls_segment_session(session, principal.map(|p| p.user_db_id))?;
+        let principal_user_public_id = principal.as_ref().map(|p| p.user_public_id.as_str());
+        authorize_hls_segment_session(session, principal_user_public_id)?;
 
         session.last_access = Instant::now();
-        (
-            session.track_db_id,
-            session.job_key.clone(),
-            session.playlist_segment_count,
-        )
+        (session.job_key.clone(), session.playlist_segment_count)
     };
 
     let segment_dir = {
@@ -537,7 +534,7 @@ async fn get_hls_segment(
             .unwrap_or(false);
 
         tracing::warn!(
-            track_db_id = track_db_id.0,
+            track_public_id = %job_key.track_public_id(),
             %session_id,
             segment,
             segment_wait_ms,
@@ -547,7 +544,7 @@ async fn get_hls_segment(
         );
         if final_advertised_segment_missing {
             tracing::warn!(
-                track_db_id = track_db_id.0,
+                track_public_id = %job_key.track_public_id(),
                 %session_id,
                 segment,
                 playlist_segment_count,
@@ -564,7 +561,7 @@ async fn get_hls_segment(
 
     if segment_wait_ms > HLS_FILE_POLL_INTERVAL.as_millis() as u64 {
         tracing::debug!(
-            track_db_id = track_db_id.0,
+            track_public_id = %job_key.track_public_id(),
             %session_id,
             segment,
             segment_wait_ms,
@@ -724,7 +721,7 @@ mod tests {
         let _guard = HLS_TEST_MUTEX.lock().await;
         reset_hls_state_for_test().await;
 
-        let track_db_id = DbId(812);
+        let track_public_id = "track-pub-812".to_string();
         let session_id = "signed-session".to_string();
         let segment_name = "segment-00001.ts";
         let test_dir = unique_test_dir("lyra-hls-signed-segment-test");
@@ -737,8 +734,8 @@ mod tests {
 
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
         let job_key = HlsJobKey::new(
-            track_db_id,
-            DbId(9991),
+            track_public_id.clone(),
+            "source-pub-9991".to_string(),
             None,
             None,
             HlsOutputConfig::new(
@@ -761,7 +758,7 @@ mod tests {
                 session_id.clone(),
                 HlsSession {
                     user_db_id: DbId(99),
-                    track_db_id,
+                    user_public_id: "user-pub-99".to_string(),
                     playlist_segment_count: 1,
                     job_key,
                     last_access: Instant::now(),
