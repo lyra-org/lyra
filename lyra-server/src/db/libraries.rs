@@ -224,6 +224,25 @@ pub(crate) fn get_by_id(
     super::graph::fetch_typed_by_id(db, library_db_id, "Library")
 }
 
+/// Both branches run `find_node_id_by_id` + `collection_contains_id` so
+/// missing and non-library inputs are timing-indistinguishable.
+#[allow(dead_code)]
+pub(crate) fn find_accessible_node_id_by_id(
+    db: &impl super::DbAccess,
+    _principal: &crate::services::auth::Principal,
+    public_id: &str,
+) -> anyhow::Result<Option<DbId>> {
+    let resolved = super::lookup::find_node_id_by_id(db, public_id)?;
+    let in_libraries = match resolved {
+        Some(id) => super::lookup::collection_contains_id(db, "libraries", id)?,
+        None => {
+            let _ = super::lookup::collection_contains_id(db, "libraries", DbId(0));
+            false
+        }
+    };
+    Ok(resolved.filter(|_| in_libraries))
+}
+
 pub(crate) fn get_by_alias(db: &impl super::DbAccess, alias: &str) -> anyhow::Result<Vec<Library>> {
     let libraries: Vec<Library> = db
         .exec(
@@ -691,6 +710,58 @@ mod tests {
         let key = normalize_library_name_key("CAFE\u{0301}\u{200B}")?;
         let found = find_by_name_key(&db, &key)?;
         assert!(found.is_some());
+        Ok(())
+    }
+
+    fn placeholder_principal() -> crate::services::auth::Principal {
+        crate::services::auth::Principal {
+            user_db_id: DbId(0),
+            user_public_id: "test-principal".to_string(),
+            username: "test".to_string(),
+            permissions: vec![],
+            role_name: None,
+        }
+    }
+
+    #[test]
+    fn find_accessible_node_id_by_id_resolves_existing_library() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        crate::db::indexes::ensure_index(&mut db, "id")?;
+        let lib = db.transaction_mut(|t| -> anyhow::Result<Library> {
+            Ok(create(t, insert_request("Music", "exists"))?)
+        })?;
+        let principal = placeholder_principal();
+
+        let resolved = find_accessible_node_id_by_id(&db, &principal, &lib.id)?;
+        assert_eq!(resolved, lib.db_id);
+        Ok(())
+    }
+
+    #[test]
+    fn find_accessible_node_id_by_id_rejects_non_library_node() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        crate::db::indexes::ensure_index(&mut db, "id")?;
+        let foreign_public_id = nanoid!();
+        db.exec_mut(
+            agdb::QueryBuilder::insert()
+                .nodes()
+                .values([[("id", foreign_public_id.as_str()).into()]])
+                .query(),
+        )?;
+        let principal = placeholder_principal();
+
+        let resolved = find_accessible_node_id_by_id(&db, &principal, &foreign_public_id)?;
+        assert!(resolved.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn find_accessible_node_id_by_id_returns_none_for_missing_public_id() -> anyhow::Result<()> {
+        let db = new_test_db()?;
+        let principal = placeholder_principal();
+
+        let resolved = find_accessible_node_id_by_id(&db, &principal, "no-such-library-public-id")?;
+        assert!(resolved.is_none());
         Ok(())
     }
 }
