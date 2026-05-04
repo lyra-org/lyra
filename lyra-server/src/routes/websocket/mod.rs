@@ -64,24 +64,32 @@ async fn ws_upgrade(
 
     let token = query.token.clone();
     let user_db_id = principal.user_db_id;
+    let user_public_id = principal.user_public_id;
 
     Ok(ws
         .max_message_size(MAX_MESSAGE_SIZE)
         .on_upgrade(move |socket| async move {
             let cancel = Arc::new(Notify::new());
-            let result =
-                match registry::register(user_db_id, session_key.clone(), cancel.clone()).await {
-                    Ok(result) => result,
-                    Err(err) => {
-                        tracing::warn!(
-                            user_db_id = user_db_id.0,
-                            session_key = %session_key,
-                            error = %err,
-                            "websocket registration rejected"
-                        );
-                        return;
-                    }
-                };
+            let result = match registry::register(
+                user_db_id,
+                user_public_id.clone(),
+                session_key.clone(),
+                cancel.clone(),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(err) => {
+                    tracing::warn!(
+                        user_db_id = user_db_id.0,
+                        user_public_id = %user_public_id,
+                        session_key = %session_key,
+                        error = %err,
+                        "websocket registration rejected"
+                    );
+                    return;
+                }
+            };
 
             if let Some(evicted) = &result.evicted {
                 tracing::info!(
@@ -94,6 +102,7 @@ async fn ws_upgrade(
             tracing::info!(
                 connection_id = result.connection_id,
                 user_db_id = user_db_id.0,
+                user_public_id = %user_public_id,
                 session_key = %session_key,
                 "websocket connected"
             );
@@ -101,7 +110,7 @@ async fn ws_upgrade(
             connection::run(
                 socket,
                 result.connection_id,
-                user_db_id,
+                user_public_id,
                 cancel,
                 token,
                 result.command_rx,

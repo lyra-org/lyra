@@ -16,6 +16,7 @@ use serde::{
 
 use crate::{
     STATE,
+    db,
     plugins::{
         LUA_SERIALIZE_OPTIONS,
         from_lua_json_value,
@@ -54,7 +55,7 @@ pub(super) struct SendCommandRequest {
 #[harmony_macros::interface]
 #[derive(Serialize)]
 pub(super) struct PlaybackInfo {
-    track_id: i64,
+    track_public_id: String,
     position_ms: u64,
     duration_ms: Option<u64>,
     state: String,
@@ -77,19 +78,28 @@ fn action_to_string(action: &RemoteAction) -> String {
         .unwrap_or_default()
 }
 
+fn resolve_user_public_id(db: &impl db::DbAccess, user_db_id: agdb::DbId) -> Result<String> {
+    let user = db::users::get_by_id(db, user_db_id).map_err(mlua::Error::external)?;
+    user.map(|user| user.id)
+        .ok_or_else(|| mlua::Error::runtime("not authorized to control target"))
+}
+
 pub(super) async fn list_connections(lua: Lua, user_id: i64) -> Result<Value> {
     let user_db_id = require_positive_id(user_id, "user_id")?;
     let connections = registry::list_connections().await;
     let now_ms = playbacks::now_ms().map_err(mlua::Error::external)?;
 
-    let playbacks_list = {
+    let (user_public_id, playbacks_list) = {
         let db = STATE.db.read().await;
-        playbacks::list_playbacks(&db, user_db_id).map_err(mlua::Error::external)?
+        let user_public_id = resolve_user_public_id(&db, user_db_id)?;
+        let playbacks_list =
+            playbacks::list_playbacks(&db, user_db_id).map_err(mlua::Error::external)?;
+        (user_public_id, playbacks_list)
     };
 
     let mut result = Vec::new();
     for conn in &connections {
-        if conn.user_db_id != user_db_id {
+        if conn.user_public_id != user_public_id {
             continue;
         }
 
@@ -105,7 +115,7 @@ pub(super) async fn list_connections(lua: Lua, user_id: i64) -> Result<Value> {
                 .iter()
                 .find(|p| p.playback_session_id == session_id)?;
             Some(PlaybackInfo {
-                track_id: record.track_db_id.0,
+                track_public_id: record.track_public_id.clone(),
                 position_ms: record.playback.position_ms,
                 duration_ms: record.playback.duration_ms,
                 state: action_state_string(record.playback.state),
@@ -154,7 +164,11 @@ pub(super) async fn send_command(_lua: Lua, request_table: Table) -> Result<()> 
         .await
         .ok_or_else(|| mlua::Error::runtime("connection not found"))?;
 
-    if target.user_db_id != user_db_id {
+    let request_user_public_id = {
+        let db = STATE.db.read().await;
+        resolve_user_public_id(&db, user_db_id)?
+    };
+    if request_user_public_id != target.user_public_id {
         return Err(mlua::Error::runtime("not authorized to control target"));
     }
 

@@ -354,9 +354,10 @@ mod tests {
         let expected = PlaybackUpdatePayload {
             event: "progress".to_string(),
             state: crate::db::PlaybackState::Playing,
-            playback_session_id: 42,
-            track_id: 7,
-            user_id: 1,
+            playback_session_public_id: "ps-pub-42".to_string(),
+            track_public_id: "tr-pub-7".to_string(),
+            user_public_id: "us-pub-1".to_string(),
+            library_public_id: Some("lib-pub-1".to_string()),
             position_ms: 12_345,
             duration_ms: Some(67_890),
             activity_ms: 2_000,
@@ -369,9 +370,13 @@ mod tests {
         let received = timeout(Duration::from_secs(1), rx).await??;
         assert_eq!(received.event, expected.event);
         assert_eq!(received.state, expected.state);
-        assert_eq!(received.playback_session_id, expected.playback_session_id);
-        assert_eq!(received.track_id, expected.track_id);
-        assert_eq!(received.user_id, expected.user_id);
+        assert_eq!(
+            received.playback_session_public_id,
+            expected.playback_session_public_id
+        );
+        assert_eq!(received.track_public_id, expected.track_public_id);
+        assert_eq!(received.user_public_id, expected.user_public_id);
+        assert_eq!(received.library_public_id, expected.library_public_id);
         assert_eq!(received.position_ms, expected.position_ms);
         assert_eq!(received.duration_ms, expected.duration_ms);
         assert_eq!(received.activity_ms, expected.activity_ms);

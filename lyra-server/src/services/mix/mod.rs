@@ -659,7 +659,6 @@ fn builtin_from_recent_listens(
 }
 
 fn recent_listen_track_ids(db: &DbAny, user_db_id: DbId) -> anyhow::Result<Vec<DbId>> {
-    // Get listen nodes pointing at this user
     let mut listens: Vec<db::listens::Listen> = db
         .exec(
             QueryBuilder::select()
@@ -673,35 +672,24 @@ fn recent_listen_track_ids(db: &DbAny, user_db_id: DbId) -> anyhow::Result<Vec<D
         )?
         .try_into()?;
 
-    // Sort by recency, take the most recent N
     listens.sort_unstable_by(|a, b| b.listened_at_ms.cmp(&a.listened_at_ms));
     listens.truncate(RECENT_LISTEN_COUNT);
 
-    // For each listen, find the track it points to
+    // Resolve through the snapshot, not the listen→track edge.
     let mut track_ids = Vec::new();
     let mut seen = HashSet::new();
     for listen in &listens {
-        let Some(listen_db_id) = listen.db_id else {
+        if listen.track_public_id.is_empty() {
+            continue;
+        }
+        let Some(track_db_id) = db::lookup::find_node_id_by_id(db, &listen.track_public_id)? else {
             continue;
         };
-        let neighbors: Vec<db::Track> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<db::Track>()
-                    .search()
-                    .from(listen_db_id)
-                    .where_()
-                    .neighbor()
-                    .end_where()
-                    .query(),
-            )?
-            .try_into()?;
-        for track in neighbors {
-            if let Some(track_db_id) = track.db_id.clone().map(DbId::from) {
-                if seen.insert(track_db_id) {
-                    track_ids.push(track_db_id);
-                }
-            }
+        if !db::lookup::collection_contains_id(db, "tracks", track_db_id)? {
+            continue;
+        }
+        if seen.insert(track_db_id) {
+            track_ids.push(track_db_id);
         }
     }
 
@@ -1152,9 +1140,12 @@ mod tests {
     }
 
     fn record_listen(db: &mut DbAny, track_db_id: DbId, user_db_id: DbId) -> anyhow::Result<()> {
+        let track_public_id = db::lookup::find_id_by_db_id(db, track_db_id)?
+            .ok_or_else(|| anyhow::anyhow!("missing track public id for {track_db_id:?}"))?;
         let listen = listens::Listen {
             db_id: None,
             id: nanoid::nanoid!(),
+            track_public_id,
             position_ms: 0,
             duration_ms: Some(180_000),
             activity_ms: 180_000,
@@ -1175,6 +1166,96 @@ mod tests {
             created_at_ms: 1_000_000,
         };
         listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
+    }
+
+    fn record_listen_with_stale_snapshot(
+        db: &mut DbAny,
+        track_db_id: DbId,
+        user_db_id: DbId,
+    ) -> anyhow::Result<()> {
+        let listen = listens::Listen {
+            db_id: None,
+            id: nanoid::nanoid!(),
+            track_public_id: "tr-recycled-original".to_string(),
+            position_ms: 0,
+            duration_ms: Some(180_000),
+            activity_ms: 180_000,
+            state: PlaybackState::Completed,
+            listened_at_ms: 1_000_000,
+            created_at_ms: 1_000_000,
+        };
+        let session = PlaybackSession {
+            db_id: None,
+            id: nanoid::nanoid!(),
+            position_ms: 0,
+            duration_ms: Some(180_000),
+            activity_ms: Some(180_000),
+            last_position_ms: None,
+            state: PlaybackState::Completed,
+            listen_recorded: Some(true),
+            updated_at_ms: 1_000_000,
+            created_at_ms: 1_000_000,
+        };
+        listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
+    }
+
+    #[test]
+    fn recent_listen_track_ids_skips_stale_snapshot_listens() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_id = insert_user(&mut db)?;
+        let track = insert_track(&mut db, "Recycled Track")?;
+
+        record_listen_with_stale_snapshot(&mut db, track, user_id)?;
+
+        let recents = recent_listen_track_ids(&db, user_id)?;
+        assert!(
+            recents.is_empty(),
+            "stale-snapshot listens must not surface in mix seeds: {recents:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn recent_listen_track_ids_skips_kind_rebound_snapshot() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_id = insert_user(&mut db)?;
+        let track = insert_track(&mut db, "Listened Track")?;
+        let release = insert_release(&mut db, "Recycled Into Release")?;
+
+        let release_public_id = db::lookup::find_id_by_db_id(&db, release)?
+            .ok_or_else(|| anyhow::anyhow!("release missing public id"))?;
+
+        let listen = listens::Listen {
+            db_id: None,
+            id: nanoid::nanoid!(),
+            track_public_id: release_public_id,
+            position_ms: 0,
+            duration_ms: Some(180_000),
+            activity_ms: 180_000,
+            state: PlaybackState::Completed,
+            listened_at_ms: 1_000_000,
+            created_at_ms: 1_000_000,
+        };
+        let session = PlaybackSession {
+            db_id: None,
+            id: nanoid::nanoid!(),
+            position_ms: 0,
+            duration_ms: Some(180_000),
+            activity_ms: Some(180_000),
+            last_position_ms: None,
+            state: PlaybackState::Completed,
+            listen_recorded: Some(true),
+            updated_at_ms: 1_000_000,
+            created_at_ms: 1_000_000,
+        };
+        listens::create_and_mark_recorded(&mut db, &listen, track, user_id, &session)?;
+
+        let recents = recent_listen_track_ids(&db, user_id)?;
+        assert!(
+            recents.is_empty(),
+            "kind-rebound listens must not surface in mix seeds: {recents:?}"
+        );
+        Ok(())
     }
 
     #[test]

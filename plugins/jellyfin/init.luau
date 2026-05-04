@@ -6,6 +6,7 @@
 
 local api = require("@lyra/api")
 local auth = require("@lyra/auth")
+local ids = require("@lyra/ids")
 local libraries = require("@lyra/libraries")
 local lyrics = require("@lyra/lyrics")
 local playback_sessions = require("@lyra/playback_sessions")
@@ -2136,9 +2137,10 @@ local function dispatch_to_ws(principal: session.Principal, session_id: string?,
 end
 
 local function build_now_playing(playback: playback_sessions.PlaybackInfo): (JsonObject, JsonObject)
+	local track_db_id = ids.get_db_id(playback.track_public_id)
 	local now_playing: JsonObject = {
-		Id = base.encode_jellyfin_item_id(playback.track_id),
-		Name = resolve_track_name(playback.track_id),
+		Id = base.encode_jellyfin_item_id(playback.track_public_id),
+		Name = if track_db_id then resolve_track_name(track_db_id) else "",
 		Type = "Audio",
 	}
 	if playback.duration_ms then

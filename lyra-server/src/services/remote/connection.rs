@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 
-use agdb::DbId;
 use axum::extract::ws::{
     Message,
     WebSocket,
@@ -147,7 +146,7 @@ async fn handle_remote_control(cmd: ClientCommand, connection_id: ConnectionId) 
         return ResponseMessage::error(id, "target connection not found");
     };
 
-    if source.user_db_id != target_snap.user_db_id {
+    if source.user_public_id != target_snap.user_public_id {
         return ResponseMessage::error(id, "not authorized to control target");
     }
 
@@ -203,9 +202,15 @@ enum AuthStatus {
 
 const MAX_CONSECUTIVE_AUTH_ERRORS: u32 = 5;
 
-async fn check_auth(token: &Option<String>) -> AuthStatus {
+async fn check_auth(token: &Option<String>, expected_user_public_id: &str) -> AuthStatus {
     match auth::resolve_auth_from_bearer(token.as_deref()).await {
-        Ok(Some(_)) => AuthStatus::Valid,
+        Ok(Some(auth)) => {
+            if auth.principal.user_public_id == expected_user_public_id {
+                AuthStatus::Valid
+            } else {
+                AuthStatus::Revoked
+            }
+        }
         Ok(None) => AuthStatus::Revoked,
         Err(AuthError::SessionExpired) => AuthStatus::Revoked,
         Err(_) => AuthStatus::Error,
@@ -215,7 +220,7 @@ async fn check_auth(token: &Option<String>) -> AuthStatus {
 pub(crate) async fn run(
     mut socket: WebSocket,
     connection_id: ConnectionId,
-    user_db_id: DbId,
+    user_public_id: String,
     cancel: Arc<Notify>,
     token: Option<String>,
     mut command_rx: mpsc::Receiver<OutgoingMessage>,
@@ -283,7 +288,7 @@ pub(crate) async fn run(
             result = event_rx.recv() => {
                 match result {
                     Ok(payload) => {
-                        if payload.user_id == user_db_id.0 {
+                        if payload.user_public_id == user_public_id {
                             if let Some(msg) = playback_event_to_message(payload) {
                                 if !send(&mut socket, msg).await {
                                     break;
@@ -316,7 +321,7 @@ pub(crate) async fn run(
             }
 
             _ = auth_interval.tick() => {
-                match check_auth(&token).await {
+                match check_auth(&token, &user_public_id).await {
                     AuthStatus::Valid => {
                         consecutive_auth_errors = 0;
                     }
