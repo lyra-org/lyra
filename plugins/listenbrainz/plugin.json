@@ -9,6 +9,7 @@
     "harmony.http",
     "harmony.json",
     "lyra.entities",
+    "lyra.ids",
     "lyra.playback_sessions",
     "lyra.plugins",
     "lyra.metadata"
