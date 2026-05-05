@@ -45,7 +45,8 @@ use crate::{
         LibraryRefreshOptions,
         auth::{
             require_authenticated,
-            require_manage_libraries,
+            require_can_create_library,
+            require_manage_libraries_on,
         },
         get_library_sync_state,
         refresh_library_metadata,
@@ -138,7 +139,7 @@ async fn refresh_library(
     Path(library_id): Path<String>,
     Query(query): Query<LibraryRefreshQuery>,
 ) -> Result<Json<LibraryRefreshResponse>, AppError> {
-    let _principal = require_manage_libraries(&headers).await?;
+    let _principal = require_manage_libraries_on(&headers, &library_id).await?;
 
     let library_db_id = {
         let db = STATE.db.read().await;
@@ -164,7 +165,7 @@ async fn create_library(
     headers: HeaderMap,
     Json(library): Json<LibraryRequest>,
 ) -> Result<StatusCode, AppError> {
-    let principal = require_manage_libraries(&headers).await?;
+    let principal = require_can_create_library(&headers).await?;
 
     let directory_input = library.directory.trim();
     if directory_input.is_empty() {
@@ -254,7 +255,7 @@ async fn update_library(
     Path(id): Path<String>,
     Json(update): Json<LibraryUpdateRequest>,
 ) -> Result<Json<LibraryResponse>, AppError> {
-    let _principal = require_manage_libraries(&headers).await?;
+    let _principal = require_manage_libraries_on(&headers, &id).await?;
 
     if update.name.is_none() && update.language.is_none() && update.country.is_none() {
         return Err(AppError::bad_request("no library fields provided"));
@@ -418,7 +419,7 @@ async fn get_library_sync_status(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<crate::services::LibrarySyncState>, AppError> {
-    let _principal = require_manage_libraries(&headers).await?;
+    let _principal = require_manage_libraries_on(&headers, &id).await?;
 
     let library_db_id = {
         let db = STATE.db.read().await;
@@ -437,7 +438,7 @@ async fn start_library_sync_for_library(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<LibrarySyncStartResponse>, AppError> {
-    let _principal = require_manage_libraries(&headers).await?;
+    let _principal = require_manage_libraries_on(&headers, &id).await?;
     let library = {
         let db = STATE.db.read().await;
         let library_db_id = db::lookup::find_node_id_by_id(&*db, &id)?

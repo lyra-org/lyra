@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
+    collections::HashSet,
     fmt::Write,
     sync::LazyLock,
 };
@@ -71,6 +72,8 @@ pub(crate) enum AuthError {
     SessionExpired,
     #[error("forbidden: {0}")]
     Forbidden(String),
+    #[error("not found: {0}")]
+    NotFound(String),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -84,6 +87,7 @@ pub(crate) struct Principal {
     pub(crate) username: String,
     pub(crate) permissions: Vec<Permission>,
     pub(crate) role_name: Option<String>,
+    pub(crate) accessible_library_ids: HashSet<String>,
 }
 
 impl Principal {
@@ -156,13 +160,42 @@ macro_rules! define_permission_guard {
 }
 
 define_permission_guard!(require_download, Permission::Download);
-define_permission_guard!(require_manage_libraries, Permission::ManageLibraries);
 define_permission_guard!(require_manage_metadata, Permission::ManageMetadata);
 define_permission_guard!(require_manage_plugins, Permission::ManagePlugins);
 define_permission_guard!(require_manage_providers, Permission::ManageProviders);
 define_permission_guard!(require_manage_roles, Permission::ManageRoles);
 define_permission_guard!(require_manage_users, Permission::ManageUsers);
 define_permission_guard!(require_sync_metadata, Permission::SyncMetadata);
+
+pub(crate) async fn require_can_create_library(headers: &HeaderMap) -> AuthResult<Principal> {
+    require_permission_principal(headers, Permission::ManageLibraries).await
+}
+
+pub(crate) async fn require_manage_libraries_on(
+    headers: &HeaderMap,
+    library_public_id: &str,
+) -> AuthResult<Principal> {
+    let principal = require_permission_principal(headers, Permission::ManageLibraries).await?;
+
+    if principal.permissions.contains(&Permission::Admin) {
+        if principal.accessible_library_ids.contains(library_public_id) {
+            return Ok(principal);
+        }
+        return Err(AuthError::NotFound(format!(
+            "library not found: {library_public_id}"
+        )));
+    }
+
+    let db = STATE.db.read().await;
+    if db::libraries::find_accessible_node_id_by_id(&*db, &principal, library_public_id)?.is_some()
+    {
+        Ok(principal)
+    } else {
+        Err(AuthError::NotFound(format!(
+            "library not found: {library_public_id}"
+        )))
+    }
+}
 
 pub(crate) struct LoginResult {
     pub(crate) principal: Principal,
@@ -199,6 +232,65 @@ fn resolve_role_info(db: &agdb::DbAny, user_db_id: DbId) -> (Vec<Permission>, Op
     }
 }
 
+fn resolve_accessible_library_ids(
+    db: &agdb::DbAny,
+    user_db_id: DbId,
+    permissions: &[Permission],
+) -> HashSet<String> {
+    let resolved = if permissions.contains(&Permission::Admin) {
+        db::libraries::get(db)
+            .map(|libraries| libraries.into_iter().map(|library| library.id).collect())
+    } else {
+        db::libraries::accessible_library_ids(db, user_db_id)
+    };
+
+    match resolved {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::warn!(
+                user_db_id = user_db_id.0,
+                error = %e,
+                "failed to resolve library access for user, defaulting to no libraries"
+            );
+            HashSet::new()
+        }
+    }
+}
+
+fn resolve_principal(
+    db: &agdb::DbAny,
+    user_db_id: DbId,
+    user_public_id: String,
+    username: String,
+) -> Principal {
+    let (permissions, role_name) = resolve_role_info(db, user_db_id);
+    let accessible_library_ids = resolve_accessible_library_ids(db, user_db_id, &permissions);
+
+    Principal {
+        user_db_id,
+        user_public_id,
+        username,
+        permissions,
+        role_name,
+        accessible_library_ids,
+    }
+}
+
+fn warn_auth_disabled_bearer_collapse(
+    credential_kind: &'static str,
+    bearer_principal: &Principal,
+    default_principal: &Principal,
+) {
+    tracing::warn!(
+        credential_kind,
+        bearer_user_public_id = %bearer_principal.user_public_id,
+        bearer_username = %bearer_principal.username,
+        default_user_public_id = %default_principal.user_public_id,
+        default_username = %default_principal.username,
+        "authentication is disabled; non-default bearer credential collapsed to default user"
+    );
+}
+
 async fn resolve_auth_from_session_token(token: &str) -> AuthResult<Option<ResolvedAuth>> {
     let token = token.trim();
     if token.is_empty() {
@@ -225,16 +317,10 @@ async fn resolve_auth_from_session_token(token: &str) -> AuthResult<Option<Resol
         return Err(AuthError::SessionExpired);
     }
 
-    let (permissions, role_name) = resolve_role_info(&db, user_db_id);
+    let principal = resolve_principal(&db, user_db_id, user.id, user.username);
 
     Ok(Some(ResolvedAuth {
-        principal: Principal {
-            user_db_id,
-            user_public_id: user.id,
-            username: user.username,
-            permissions,
-            role_name,
-        },
+        principal,
         credential: AuthCredential::Session { session_id },
     }))
 }
@@ -252,16 +338,10 @@ async fn resolve_auth_from_api_key(key: &str) -> AuthResult<Option<ResolvedAuth>
         return Ok(None);
     };
 
-    let (permissions, role_name) = resolve_role_info(&db, api_key.user_db_id);
+    let principal = resolve_principal(&db, api_key.user_db_id, user.id, user.username);
 
     Ok(Some(ResolvedAuth {
-        principal: Principal {
-            user_db_id: api_key.user_db_id,
-            user_public_id: user.id,
-            username: user.username,
-            permissions,
-            role_name,
-        },
+        principal,
         credential: AuthCredential::ApiKey {
             api_key_id: api_key.api_key_id,
             name: api_key.name,
@@ -283,16 +363,26 @@ pub(crate) async fn resolve_auth_from_bearer(
             }));
         };
 
-        if let Some(session_auth) = resolve_auth_from_session_token(bearer).await.ok().flatten()
-            && session_auth.principal.user_db_id == default_principal.user_db_id
-        {
-            return Ok(Some(session_auth));
+        if let Some(session_auth) = resolve_auth_from_session_token(bearer).await.ok().flatten() {
+            if session_auth.principal.user_db_id == default_principal.user_db_id {
+                return Ok(Some(session_auth));
+            }
+            warn_auth_disabled_bearer_collapse(
+                "session",
+                &session_auth.principal,
+                &default_principal,
+            );
         }
 
-        if let Some(api_key_auth) = resolve_auth_from_api_key(bearer).await.ok().flatten()
-            && api_key_auth.principal.user_db_id == default_principal.user_db_id
-        {
-            return Ok(Some(api_key_auth));
+        if let Some(api_key_auth) = resolve_auth_from_api_key(bearer).await.ok().flatten() {
+            if api_key_auth.principal.user_db_id == default_principal.user_db_id {
+                return Ok(Some(api_key_auth));
+            }
+            warn_auth_disabled_bearer_collapse(
+                "api_key",
+                &api_key_auth.principal,
+                &default_principal,
+            );
         }
 
         return Ok(Some(ResolvedAuth {
@@ -329,15 +419,7 @@ async fn resolve_default_principal() -> AuthResult<Principal> {
         )
     })?;
 
-    let (permissions, role_name) = resolve_role_info(&db, user_db_id);
-
-    Ok(Principal {
-        user_db_id,
-        user_public_id: user.id,
-        username: user.username,
-        permissions,
-        role_name,
-    })
+    Ok(resolve_principal(&db, user_db_id, user.id, user.username))
 }
 
 pub(crate) async fn logout_with_token(token: Option<&str>) -> AuthResult<bool> {
@@ -351,25 +433,13 @@ pub(crate) async fn logout_with_token(token: Option<&str>) -> AuthResult<bool> {
         .map_err(|e| AuthError::Internal(e.into()))
 }
 
-async fn create_login_result(
-    user_db_id: DbId,
-    user_public_id: String,
-    username: String,
-    permissions: Vec<Permission>,
-    role_name: Option<String>,
-) -> AuthResult<LoginResult> {
-    let session = sessions::create_session_for_user(user_db_id)
+async fn create_login_result(principal: Principal) -> AuthResult<LoginResult> {
+    let session = sessions::create_session_for_user(principal.user_db_id)
         .await
         .map_err(|e| AuthError::Internal(e.into()))?;
 
     Ok(LoginResult {
-        principal: Principal {
-            user_db_id,
-            user_public_id,
-            username,
-            permissions,
-            role_name,
-        },
+        principal,
         token: session.token,
     })
 }
@@ -407,19 +477,10 @@ pub(crate) async fn login_with_password(
         let user_db_id = user
             .db_id
             .ok_or_else(|| anyhow::anyhow!("default user has no db_id"))?;
-        let user_public_id = user.id.clone();
-        let (permissions, role_name) = resolve_role_info(&db, user_db_id);
+        let principal = resolve_principal(&db, user_db_id, user.id, user.username);
         drop(db);
 
-        return create_login_result(
-            user_db_id,
-            user_public_id,
-            default_username,
-            permissions,
-            role_name,
-        )
-        .await
-        .map(Some);
+        return create_login_result(principal).await.map(Some);
     }
 
     let db = STATE.db.read().await;
@@ -447,12 +508,10 @@ pub(crate) async fn login_with_password(
     let user_db_id = user
         .db_id
         .ok_or_else(|| anyhow::anyhow!("user has no db_id"))?;
-    let (permissions, role_name) = resolve_role_info(&db, user_db_id);
+    let principal = resolve_principal(&db, user_db_id, user.id, user.username);
     drop(db);
 
-    create_login_result(user_db_id, user.id, user.username, permissions, role_name)
-        .await
-        .map(Some)
+    create_login_result(principal).await.map(Some)
 }
 
 pub(crate) async fn require_principal(headers: &HeaderMap) -> Result<Principal, AuthError> {
@@ -484,6 +543,8 @@ pub(crate) async fn resolve_optional_auth(headers: &HeaderMap) -> AuthResult<Opt
     resolve_auth_from_bearer(bearer.as_deref()).await
 }
 
+/// The default user is intentionally promoted to admin on every boot. When
+/// authentication is disabled, every request resolves to this principal.
 pub(crate) async fn ensure_default_user(config: &Config) -> anyhow::Result<()> {
     {
         let mut db_write = STATE.db.write().await;
@@ -513,6 +574,33 @@ mod tests {
             country: None,
         })
         .await
+    }
+
+    fn bearer_headers(token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {token}")
+                .parse()
+                .expect("valid auth header"),
+        );
+        headers
+    }
+
+    fn library_insert(name: &str, suffix: &str) -> db::libraries::LibraryInsert {
+        let path = std::path::PathBuf::from(format!(
+            "/tmp/lyra-auth-test-{}-{suffix}",
+            nanoid::nanoid!()
+        ));
+        let path_key = db::libraries::path_key_for(&path);
+        db::libraries::LibraryInsert {
+            id: nanoid::nanoid!(),
+            name: name.to_string(),
+            path,
+            path_key,
+            language: None,
+            country: None,
+        }
     }
 
     #[test]
@@ -764,6 +852,144 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn auth_disabled_collapses_non_default_bearer_to_default_user() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        initialize_auth_test_runtime().await?;
+
+        let mut config = STATE.config.get().as_ref().clone();
+        config.auth.enabled = false;
+        STATE.config.replace(std::sync::Arc::new(config));
+        ensure_default_user(&STATE.config.get()).await?;
+
+        let other_user_db_id = {
+            let mut db = STATE.db.write().await;
+            db::users::create(&mut db, &db::users::test_user("other-user")?)?
+        };
+        let other_session = sessions::create_session_for_user(other_user_db_id).await?;
+
+        let auth = resolve_auth_from_bearer(Some(&other_session.token))
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("default auth should resolve"))?;
+
+        assert_eq!(auth.credential, AuthCredential::Default);
+        assert_eq!(
+            auth.principal.username,
+            STATE.config.get().auth.default_username.to_lowercase()
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolved_principal_includes_explicit_library_access() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        initialize_auth_test_runtime().await?;
+
+        let user_db_id = {
+            let mut db = STATE.db.write().await;
+            db::users::create(&mut db, &db::users::test_user("listener")?)?
+        };
+        let library = {
+            let mut db = STATE.db.write().await;
+            db.transaction_mut(|t| -> anyhow::Result<db::Library> {
+                Ok(db::libraries::create_with_creator(
+                    t,
+                    library_insert("Music", "explicit"),
+                    user_db_id,
+                )?)
+            })?
+        };
+
+        let session = sessions::create_session_for_user(user_db_id).await?;
+        let auth = resolve_auth_from_bearer(Some(&session.token))
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("session should resolve"))?;
+
+        assert!(auth.principal.accessible_library_ids.contains(&library.id));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolved_admin_principal_includes_all_library_ids() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        initialize_auth_test_runtime().await?;
+
+        let (user_db_id, library_id) = {
+            let mut db = STATE.db.write().await;
+            db::roles::ensure_builtin_roles(&mut db)?;
+            let user_db_id = db::users::create(&mut db, &db::users::test_user("admin-user")?)?;
+            db::roles::ensure_user_has_role(&mut db, user_db_id, db::roles::BUILTIN_ADMIN_ROLE)?;
+            let library = db.transaction_mut(|t| -> anyhow::Result<db::Library> {
+                Ok(db::libraries::create_system(
+                    t,
+                    library_insert("System Music", "admin"),
+                )?)
+            })?;
+            (user_db_id, library.id)
+        };
+
+        let session = sessions::create_session_for_user(user_db_id).await?;
+        let auth = resolve_auth_from_bearer(Some(&session.token))
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("admin session should resolve"))?;
+
+        assert!(auth.principal.permissions.contains(&Permission::Admin));
+        assert!(auth.principal.accessible_library_ids.contains(&library_id));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn require_manage_libraries_on_requires_library_access() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        initialize_auth_test_runtime().await?;
+
+        let (user_db_id, library_db_id, library_id) = {
+            let mut db = STATE.db.write().await;
+            let user_db_id = db::users::create(&mut db, &db::users::test_user("library-manager")?)?;
+            let role = db::roles::Role {
+                db_id: None,
+                id: nanoid::nanoid!(),
+                name: "library-manager".to_string(),
+                permissions: vec![Permission::ManageLibraries],
+            };
+            let role_db_id = db::roles::create(&mut db, &role)?;
+            db::roles::assign_role_to_user(&mut db, user_db_id, role_db_id)?;
+            let library = db.transaction_mut(|t| -> anyhow::Result<db::Library> {
+                Ok(db::libraries::create_system(
+                    t,
+                    library_insert("Hidden Music", "guard"),
+                )?)
+            })?;
+            let library_db_id = library.db_id.expect("library db_id after insert");
+            (user_db_id, library_db_id, library.id)
+        };
+
+        let session = sessions::create_session_for_user(user_db_id).await?;
+        let headers = bearer_headers(&session.token);
+        let err = require_manage_libraries_on(&headers, &library_id)
+            .await
+            .expect_err("manager without library access must not pass scoped guard");
+        assert!(matches!(err, AuthError::NotFound(_)), "got {err:?}");
+
+        {
+            let mut db = STATE.db.write().await;
+            db.transaction_mut(|t| -> anyhow::Result<()> {
+                db::libraries::grant_access(
+                    t,
+                    user_db_id,
+                    library_db_id,
+                    db::libraries::AccessKind::ReadWrite,
+                )?;
+                Ok(())
+            })?;
+        }
+
+        let principal = require_manage_libraries_on(&headers, &library_id).await?;
+        assert_eq!(principal.user_db_id, user_db_id);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn principal_revalidate_rejects_recycled_user_db_id() -> anyhow::Result<()> {
         let _guard = crate::testing::runtime_test_lock().await;
         initialize_auth_test_runtime().await?;
@@ -785,6 +1011,7 @@ mod tests {
             username: "recycled".to_string(),
             permissions: vec![],
             role_name: None,
+            accessible_library_ids: HashSet::new(),
         };
 
         {
@@ -824,6 +1051,7 @@ mod tests {
                 username: new_user.username,
                 permissions: vec![],
                 role_name: None,
+                accessible_library_ids: HashSet::new(),
             };
             assert!(fresh_principal.revalidate(&db));
         }
