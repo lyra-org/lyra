@@ -638,7 +638,9 @@ pub(crate) fn users_with_access(
     let edges = read_inbound_access_edges(db, library_db_id)?;
     let mut users: Vec<super::users::User> = Vec::with_capacity(edges.len());
     for edge in edges {
-        let Some(user_db_id) = edge.from else { continue };
+        let Some(user_db_id) = edge.from else {
+            continue;
+        };
         // Skip orphan edges (user-node missing); real errors still propagate.
         if let Some(user) = super::users::get_by_id(db, user_db_id)? {
             users.push(user);
@@ -887,6 +889,7 @@ mod tests {
             username: format!("user-{}", user_db_id.0),
             permissions: vec![],
             role_name: None,
+            accessible_library_ids: HashSet::new(),
         }
     }
 
@@ -894,18 +897,12 @@ mod tests {
     fn create_rejects_duplicate_name_case_insensitive() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         db.transaction_mut(|t| -> anyhow::Result<()> {
-            create_system(
-                t,
-                insert_request("Music", "a"),
-            )?;
+            create_system(t, insert_request("Music", "a"))?;
             Ok(())
         })?;
 
         let outcome = db.transaction_mut(|t| -> anyhow::Result<_> {
-            Ok(create_system(
-                t,
-                insert_request("MUSIC", "b"),
-            ))
+            Ok(create_system(t, insert_request("MUSIC", "b")))
         })?;
         assert!(matches!(outcome, Err(LibraryCreateError::NameInUse(_))));
         Ok(())
@@ -917,19 +914,13 @@ mod tests {
         // Randomized base so canonicalize doesn't resolve a stray pre-existing dir.
         let base = format!("/tmp/lyra-test-dup-{}/library", nanoid!());
         db.transaction_mut(|t| -> anyhow::Result<()> {
-            create_system(
-                t,
-                insert_request_at("First", &base),
-            )?;
+            create_system(t, insert_request_at("First", &base))?;
             Ok(())
         })?;
 
         let dup_input = format!("{base}/../library/./");
         let outcome = db.transaction_mut(|t| -> anyhow::Result<_> {
-            Ok(create_system(
-                t,
-                insert_request_at("Second", &dup_input),
-            ))
+            Ok(create_system(t, insert_request_at("Second", &dup_input)))
         })?;
         assert!(matches!(outcome, Err(LibraryCreateError::PathInUse(_))));
         Ok(())
@@ -939,17 +930,11 @@ mod tests {
     fn update_rejects_rename_to_existing_library() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         db.transaction_mut(|t| -> anyhow::Result<()> {
-            create_system(
-                t,
-                insert_request("Music", "rename-a"),
-            )?;
+            create_system(t, insert_request("Music", "rename-a"))?;
             Ok(())
         })?;
         let other = db.transaction_mut(|t| -> anyhow::Result<Library> {
-            Ok(create_system(
-                t,
-                insert_request("Sound", "rename-b"),
-            )?)
+            Ok(create_system(t, insert_request("Sound", "rename-b"))?)
         })?;
 
         let renamed = Library {
@@ -966,10 +951,7 @@ mod tests {
     fn update_allows_self_rename_noop() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let lib = db.transaction_mut(|t| -> anyhow::Result<Library> {
-            Ok(create_system(
-                t,
-                insert_request("Music", "self"),
-            )?)
+            Ok(create_system(t, insert_request("Music", "self"))?)
         })?;
 
         let outcome =
@@ -982,10 +964,7 @@ mod tests {
     fn find_by_name_key_uses_stored_key() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         db.transaction_mut(|t| -> anyhow::Result<()> {
-            create_system(
-                t,
-                insert_request("café", "find-by-name"),
-            )?;
+            create_system(t, insert_request("café", "find-by-name"))?;
             Ok(())
         })?;
 
@@ -1022,10 +1001,7 @@ mod tests {
     fn create_system_inserts_no_access_edge() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let lib = db.transaction_mut(|t| -> anyhow::Result<Library> {
-            Ok(create_system(
-                t,
-                insert_request("Music", "system"),
-            )?)
+            Ok(create_system(t, insert_request("Music", "system"))?)
         })?;
         let library_db_id = lib.db_id.expect("library db_id present");
 
@@ -1149,7 +1125,6 @@ mod tests {
         assert!(resolved.is_none());
         Ok(())
     }
-
 }
 
 #[cfg(test)]
@@ -1173,17 +1148,16 @@ mod benches {
 
     fn parity_setup() -> ParitySetup {
         let mut db = new_test_db().unwrap();
-        let user_db_id = super::super::users::create(
-            &mut db,
-            &super::super::users::test_user("alice").unwrap(),
-        )
-        .unwrap();
+        let user_db_id =
+            super::super::users::create(&mut db, &super::super::users::test_user("alice").unwrap())
+                .unwrap();
         let user = super::super::users::get_by_id(&db, user_db_id)
             .unwrap()
             .expect("user exists");
         for i in 0..2 {
             db.transaction_mut(|t| -> anyhow::Result<()> {
-                let path = std::path::PathBuf::from(format!("/tmp/lyra-bench-own-{i}-{}", nanoid!()));
+                let path =
+                    std::path::PathBuf::from(format!("/tmp/lyra-bench-own-{i}-{}", nanoid!()));
                 let path_key = path_key_for(&path);
                 create_with_creator(
                     t,
@@ -1201,15 +1175,12 @@ mod benches {
             })
             .unwrap();
         }
-        let other_user = super::super::users::create(
-            &mut db,
-            &super::super::users::test_user("other").unwrap(),
-        )
-        .unwrap();
+        let other_user =
+            super::super::users::create(&mut db, &super::super::users::test_user("other").unwrap())
+                .unwrap();
         let inaccessible = db
             .transaction_mut(|t| -> anyhow::Result<Library> {
-                let path =
-                    std::path::PathBuf::from(format!("/tmp/lyra-bench-inacc-{}", nanoid!()));
+                let path = std::path::PathBuf::from(format!("/tmp/lyra-bench-inacc-{}", nanoid!()));
                 let path_key = path_key_for(&path);
                 Ok(create_with_creator(
                     t,
@@ -1239,6 +1210,7 @@ mod benches {
             username: format!("user-{}", user_db_id.0),
             permissions: vec![],
             role_name: None,
+            accessible_library_ids: HashSet::new(),
         };
         ParitySetup {
             db,

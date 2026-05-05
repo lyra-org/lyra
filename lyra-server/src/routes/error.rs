@@ -138,6 +138,7 @@ impl From<AuthError> for AppError {
             AuthError::InvalidBearerCredential => Self::unauthorized("invalid bearer credential"),
             AuthError::SessionExpired => Self::unauthorized("session expired"),
             AuthError::Forbidden(msg) => Self::forbidden(msg),
+            AuthError::NotFound(msg) => Self::not_found(msg),
             AuthError::Internal(err) => err.into(),
         }
     }
