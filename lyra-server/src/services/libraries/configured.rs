@@ -20,8 +20,7 @@ use super::{
     sync_library,
 };
 
-/// Override `library.name` in config.json if another library already uses
-/// this default — names must be unique.
+/// Override via `library.name` in config.json on collision.
 const DEFAULT_CONFIGURED_LIBRARY_NAME: &str = "Music";
 
 pub(crate) async fn prepare_configured_library(
@@ -44,9 +43,7 @@ async fn resolve_configured_library(config: &Config) -> anyhow::Result<Option<Li
         return Ok(None);
     };
 
-    // Store the user's raw path so symlink retargeting still works; canonical
-    // form is the comparison key only. `canonicalize` is a syscall — keep it
-    // off the write lock.
+    // Raw path preserved for symlink retargeting; canonicalize off the lock.
     let stored_path = path.clone();
     let path_key = {
         let candidate = stored_path.clone();
@@ -63,8 +60,7 @@ async fn resolve_configured_library(config: &Config) -> anyhow::Result<Option<Li
     let language = library_config.language.clone();
     let country = library_config.country.clone();
 
-    // Lookup-or-create in one txn so a crash between the node and edge
-    // inserts can't orphan a Library invisible to subsequent `find`s.
+    // One txn so a crash between node and edge can't orphan a Library.
     let db = STATE.db.get();
     let mut db_write = db.write().await;
     let lookup_path = stored_path.clone();
@@ -74,7 +70,8 @@ async fn resolve_configured_library(config: &Config) -> anyhow::Result<Option<Li
             if let Some(existing) = db::libraries::find_by_path_key(t, &lookup_key)? {
                 return Ok(existing);
             }
-            db::libraries::create(
+            // No creator — admin-bypass-only until granted.
+            db::libraries::create_system(
                 t,
                 db::libraries::LibraryInsert {
                     id: nanoid!(),
@@ -94,8 +91,7 @@ async fn resolve_configured_library(config: &Config) -> anyhow::Result<Option<Li
              config.json to a unique value"
         )),
         Err(db::libraries::LibraryCreateError::PathInUse(conflicting_path)) => {
-            // Unreachable unless `find_by_path_key` and `create` disagree on
-            // normalization — log the inputs so the divergence is debuggable.
+            // Unreachable unless `find_by_path_key`/`create` normalization diverges.
             tracing::error!(
                 conflicting = %conflicting_path.display(),
                 configured = %stored_path.display(),
