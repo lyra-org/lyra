@@ -1,0 +1,29 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Ado - アタシは問題作 (2023-02-20) [WEB FLAC]/1.01. アタシは問題作.flac"
+album = "アタシは問題作"
+album_artists = ["Ado"]
+artists = ["Ado"]
+title = "アタシは問題作"
+copyright = "A Virgin Music release; ℗ 2023 UNIVERSAL MUSIC LLC"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 194515
+
+[expect.release]
+ids = { release_group_id = "cb11e47f-6496-411c-849d-48b8dbf0bbdc", release_id = "eac0fedf-5944-4b6b-9a23-5ea771937f2e" }
+fields = { release_title = "アタシは問題作", release_date = "2023-02-20" }
+
+[expect.artists."e134b52f-2e9e-4734-9bc3-bea9648d1fa1"]
+fields = { artist_name = "Ado", sort_name = "Ado" }
+
+[expect.tracks."2c8c6e3c-44f9-46d5-b81d-927d8d259444"]
+fields = { disc = 1, track = 1, track_title = "アタシは問題作" }
