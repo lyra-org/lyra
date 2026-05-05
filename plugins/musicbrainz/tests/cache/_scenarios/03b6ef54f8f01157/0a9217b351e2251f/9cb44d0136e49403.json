@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/artist?query=GEMN",
+  "status_code": 200,
+  "body": "{\"created\":\"2026-03-10T02:42:50.480Z\",\"count\":2,\"offset\":0,\"artists\":[{\"id\":\"b87e5312-c743-4d1c-a59d-a14274f20206\",\"type\":\"Group\",\"type-id\":\"e431f5f6-b5d2-343d-8b36-72607fffb74b\",\"score\":100,\"name\":\"GEMN\",\"sort-name\":\"GEMN\",\"country\":\"JP\",\"area\":{\"id\":\"2db42837-c832-3c27-b4a3-08198f75693c\",\"type\":\"Country\",\"type-id\":\"06dd0ae4-8c74-30bb-b43d-95dcedf961de\",\"name\":\"Japan\",\"sort-name\":\"Japan\",\"life-span\":{\"ended\":null}},\"life-span\":{\"begin\":\"2024\",\"ended\":null}},{\"id\":\"5e1a10ef-a182-48d8-b2b4-1c616cc62cd4\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"score\":53,\"gender-id\":\"93452b5a-a947-30c8-934f-6a4056b151c2\",\"name\":\"Christiane Gemnich\",\"sort-name\":\"Gemnich, Christiane\",\"gender\":\"female\",\"life-span\":{\"ended\":null}}]}"
+}
