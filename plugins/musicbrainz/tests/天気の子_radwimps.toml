@@ -1,0 +1,381 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/31. 愛にできることはまだあるかい.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "愛にできることはまだあるかい"
+disc = 1
+disc_total = 1
+track = 31
+track_total = 31
+duration_ms = 414466
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/30. 大丈夫 (Movie edit).flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "大丈夫 (Movie edit)"
+disc = 1
+disc_total = 1
+track = 30
+track_total = 31
+duration_ms = 258373
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/29. ふたたびの、雨.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "ふたたびの、雨"
+disc = 1
+disc_total = 1
+track = 29
+track_total = 31
+duration_ms = 44586
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/28. グランドエスケープ (Movie edit) feat.三浦透子.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "グランドエスケープ (Movie edit) feat.三浦透子"
+disc = 1
+disc_total = 1
+track = 28
+track_total = 31
+duration_ms = 188066
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/27. 愛にできることはまだあるかい (Movie edit).flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "愛にできることはまだあるかい (Movie edit)"
+disc = 1
+disc_total = 1
+track = 27
+track_total = 31
+duration_ms = 150653
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/26. 陽菜と、走る帆高.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "陽菜と、走る帆高"
+disc = 1
+disc_total = 1
+track = 26
+track_total = 31
+duration_ms = 143893
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/25. バイクチェイス.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "バイクチェイス"
+disc = 1
+disc_total = 1
+track = 25
+track_total = 31
+duration_ms = 59173
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/24. 帆高、逃走～子供達の画策.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "帆高、逃走～子供達の画策"
+disc = 1
+disc_total = 1
+track = 24
+track_total = 31
+duration_ms = 181600
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/23. 晴天と喪失.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "晴天と喪失"
+disc = 1
+disc_total = 1
+track = 23
+track_total = 31
+duration_ms = 165293
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/22. 永遠の雲の上.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "永遠の雲の上"
+disc = 1
+disc_total = 1
+track = 22
+track_total = 31
+duration_ms = 52026
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/21. 消えゆく陽菜.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "消えゆく陽菜"
+disc = 1
+disc_total = 1
+track = 21
+track_total = 31
+duration_ms = 68053
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/20. 家族の時間.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "家族の時間"
+disc = 1
+disc_total = 1
+track = 20
+track_total = 31
+duration_ms = 153333
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/19. 天気の力.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "天気の力"
+disc = 1
+disc_total = 1
+track = 19
+track_total = 31
+duration_ms = 82680
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/18. 真夏の雪.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "真夏の雪"
+disc = 1
+disc_total = 1
+track = 18
+track_total = 31
+duration_ms = 78906
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/17. 首都危機.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "首都危機"
+disc = 1
+disc_total = 1
+track = 17
+track_total = 31
+duration_ms = 97040
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/16. 二つの告白.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "二つの告白"
+disc = 1
+disc_total = 1
+track = 16
+track_total = 31
+duration_ms = 96666
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/15. 芝公園.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "芝公園"
+disc = 1
+disc_total = 1
+track = 15
+track_total = 31
+duration_ms = 191986
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/14. 気象神社.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "気象神社"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 31
+duration_ms = 160800
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/13. 花火大会.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "花火大会"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 31
+duration_ms = 184960
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/12. 祝祭 (Movie edit) feat.三浦透子.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "祝祭 (Movie edit) feat.三浦透子"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 31
+duration_ms = 156160
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/11. 初の晴れ女バイト.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "初の晴れ女バイト"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 31
+duration_ms = 79786
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/10. 御宅訪問.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "御宅訪問"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 31
+duration_ms = 222720
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/09. 空の海.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "空の海"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 31
+duration_ms = 59666
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/08. 晴れゆく空.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "晴れゆく空"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 31
+duration_ms = 133573
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/07. 陽菜、救出.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "陽菜、救出"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 31
+duration_ms = 107826
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/06. 風たちの声 (Movie edit).flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "風たちの声 (Movie edit)"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 31
+duration_ms = 157080
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/05. K&A 入社式.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "K&A 入社式"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 31
+duration_ms = 63480
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/04. 占秘館へようこそ.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "占秘館へようこそ"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 31
+duration_ms = 53746
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/03. K&A 初訪問.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "K&A 初訪問"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 31
+duration_ms = 109586
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/02. 優しさの味.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "優しさの味"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 31
+duration_ms = 48866
+
+[[raw_tags]]
+file_path = "RADWIMPS - 天気の子/01. 『天気の子』のテーマ.flac"
+album = "天気の子"
+album_artists = ["RADWIMPS"]
+artists = ["RADWIMPS"]
+title = "『天気の子』のテーマ"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 31
+duration_ms = 41733
+
+[expect.release]
+ids = { release_id = ["491089ae-550e-4c90-b9aa-e09b97221d0e", "ac1d83be-00f3-46e4-b4c8-c8bd1ffaca0e", "765c7375-9c5d-4e07-a258-fe420a1d644c"] }
