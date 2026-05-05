@@ -1,0 +1,31 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2024.08.30] なとり & imase - メロドラマ [WEB-FLAC]/01. メロドラマ.flac"
+album = "メロドラマ"
+album_artists = ["なとり"]
+artists = ["なとり, imase"]
+title = "メロドラマ"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 227575
+
+[expect.release]
+ids = { release_group_id = "ddbe08f0-c366-4ed3-9391-76eac68141be", release_id = "35c98480-7f17-4cfe-a7c8-7cf70fa5e1e5" }
+fields = { release_title = "メロドラマ", genres = ["j-pop", "pop", "singer-songwriter"], release_date = "2024-08-30" }
+
+[expect.artists."bc83173f-c86f-4343-b3e7-aad839a47a54"]
+fields = { artist_name = "imase", sort_name = "imase" }
+
+[expect.artists."cad9e169-893d-4432-a23f-3aa16beb9f0e"]
+fields = { artist_name = "なとり", sort_name = "natori" }
+
+[expect.tracks."afad56a5-1c7d-4e85-9e54-469a46ac7f2e"]
+fields = { disc = 1, track = 1, track_title = "メロドラマ" }
