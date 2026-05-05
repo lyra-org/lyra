@@ -406,15 +406,34 @@ pub(crate) struct LibraryInsert {
     pub(crate) country: Option<String>,
 }
 
-/// Caller must wrap in `transaction_mut` so the uniqueness check, the element
-/// insert, and the `from("libraries")` edge insert share one lock — otherwise
-/// concurrent callers race past the check, and a crash between the element
-/// and edge inserts orphans a node that's invisible to `get`. **No
-/// filesystem syscalls inside.** `request.path_key` must already be canonical.
-pub(crate) fn create(
+/// Auto-grants the creator atomically with the node insert. No syscalls inside;
+/// `request.path_key` must already be canonical.
+pub(crate) fn create_with_creator(
+    db: &mut impl super::DbAccess,
+    request: LibraryInsert,
+    creator_user_db_id: DbId,
+) -> Result<Library, LibraryCreateError> {
+    let (created, library_db_id) = create_inner(db, request)?;
+    grant_access(db, creator_user_db_id, library_db_id, AccessKind::ReadWrite)?;
+    Ok(created)
+}
+
+/// No creator edge — admin-bypass-only until granted. Request handlers
+/// must use [`create_with_creator`].
+pub(crate) fn create_system(
     db: &mut impl super::DbAccess,
     request: LibraryInsert,
 ) -> Result<Library, LibraryCreateError> {
+    let (created, _library_db_id) = create_inner(db, request)?;
+    Ok(created)
+}
+
+/// Uniqueness + node insert + `from("libraries")` edge. Access edge is the
+/// caller's job.
+fn create_inner(
+    db: &mut impl super::DbAccess,
+    request: LibraryInsert,
+) -> Result<(Library, DbId), LibraryCreateError> {
     let (name, name_key) = normalize_library_name(&request.name)?;
 
     if find_by_name_key(db, &name_key)?.is_some() {
@@ -449,7 +468,7 @@ pub(crate) fn create(
             .query(),
     )?;
 
-    Ok(created)
+    Ok((created, library_db_id))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -526,7 +545,6 @@ pub(crate) enum AccessKind {
 }
 
 impl AccessKind {
-    #[allow(dead_code)] // entry point for the access-list route
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::ReadWrite => "read_write",
@@ -543,7 +561,6 @@ impl AccessKind {
 }
 
 /// Idempotent — existing edge has its `access_kind` overwritten.
-#[allow(dead_code)] // wired into create_with_creator + the access-grant route
 pub(crate) fn grant_access(
     db: &mut impl super::DbAccess,
     user_db_id: DbId,
@@ -741,7 +758,12 @@ fn element_is_access(element: &DbElement) -> bool {
 mod tests {
     use super::*;
     use crate::db::test_db::new_test_db;
+    use agdb::DbAny;
     use nanoid::nanoid;
+
+    fn create_test_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId> {
+        super::super::users::create(db, &super::super::users::test_user(username)?)
+    }
 
     // Path is randomized so canonicalize() always falls through to the lexical
     // path — that's what these tests exercise.
@@ -860,12 +882,12 @@ mod tests {
     fn create_rejects_duplicate_name_case_insensitive() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         db.transaction_mut(|t| -> anyhow::Result<()> {
-            create(t, insert_request("Music", "a"))?;
+            create_system(t, insert_request("Music", "a"))?;
             Ok(())
         })?;
 
         let outcome = db.transaction_mut(|t| -> anyhow::Result<_> {
-            Ok(create(t, insert_request("MUSIC", "b")))
+            Ok(create_system(t, insert_request("MUSIC", "b")))
         })?;
         assert!(matches!(outcome, Err(LibraryCreateError::NameInUse(_))));
         Ok(())
@@ -879,13 +901,13 @@ mod tests {
         // be against a different key.
         let base = format!("/tmp/lyra-test-dup-{}/library", nanoid!());
         db.transaction_mut(|t| -> anyhow::Result<()> {
-            create(t, insert_request_at("First", &base))?;
+            create_system(t, insert_request_at("First", &base))?;
             Ok(())
         })?;
 
         let dup_input = format!("{base}/../library/./");
         let outcome = db.transaction_mut(|t| -> anyhow::Result<_> {
-            Ok(create(t, insert_request_at("Second", &dup_input)))
+            Ok(create_system(t, insert_request_at("Second", &dup_input)))
         })?;
         assert!(matches!(outcome, Err(LibraryCreateError::PathInUse(_))));
         Ok(())
@@ -895,11 +917,11 @@ mod tests {
     fn update_rejects_rename_to_existing_library() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         db.transaction_mut(|t| -> anyhow::Result<()> {
-            create(t, insert_request("Music", "rename-a"))?;
+            create_system(t, insert_request("Music", "rename-a"))?;
             Ok(())
         })?;
         let other = db.transaction_mut(|t| -> anyhow::Result<Library> {
-            Ok(create(t, insert_request("Sound", "rename-b"))?)
+            Ok(create_system(t, insert_request("Sound", "rename-b"))?)
         })?;
 
         let renamed = Library {
@@ -916,7 +938,7 @@ mod tests {
     fn update_allows_self_rename_noop() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let lib = db.transaction_mut(|t| -> anyhow::Result<Library> {
-            Ok(create(t, insert_request("Music", "self"))?)
+            Ok(create_system(t, insert_request("Music", "self"))?)
         })?;
 
         let outcome =
@@ -929,7 +951,7 @@ mod tests {
     fn find_by_name_key_uses_stored_key() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         db.transaction_mut(|t| -> anyhow::Result<()> {
-            create(t, insert_request("café", "find-by-name"))?;
+            create_system(t, insert_request("café", "find-by-name"))?;
             Ok(())
         })?;
 
@@ -940,20 +962,52 @@ mod tests {
     }
 
     #[test]
+    fn create_with_creator_inserts_access_edge() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = create_test_user(&mut db, "creator")?;
+        let lib = db.transaction_mut(|t| -> anyhow::Result<Library> {
+            Ok(create_with_creator(
+                t,
+                insert_request("Music", "creator"),
+                user_db_id,
+            )?)
+        })?;
+
+        let library_db_id = lib.db_id.expect("library db_id present after create");
+        let user_view = accessible_library_ids(&db, user_db_id)?;
+        assert!(user_view.contains(&lib.id));
+
+        let listed = users_with_access(&db, library_db_id)?;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].username, "creator");
+
+        Ok(())
+    }
+
+    #[test]
+    fn create_system_inserts_no_access_edge() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let lib = db.transaction_mut(|t| -> anyhow::Result<Library> {
+            Ok(create_system(t, insert_request("Music", "system"))?)
+        })?;
+        let library_db_id = lib.db_id.expect("library db_id present");
+
+        assert!(users_with_access(&db, library_db_id)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn revoke_access_is_idempotent() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let user_db_id = super::super::users::create(
-            &mut db,
-            &super::super::users::test_user("alice")?,
-        )?;
+        let user_db_id = create_test_user(&mut db, "alice")?;
         let lib = db.transaction_mut(|t| -> anyhow::Result<Library> {
-            Ok(create(t, insert_request("Music", "rev"))?)
+            Ok(create_with_creator(
+                t,
+                insert_request("Music", "rev"),
+                user_db_id,
+            )?)
         })?;
         let library_db_id = lib.db_id.expect("library db_id");
-
-        db.transaction_mut(|t| -> anyhow::Result<()> {
-            grant_access(t, user_db_id, library_db_id, AccessKind::ReadWrite)
-        })?;
 
         let removed = db.transaction_mut(|t| -> anyhow::Result<bool> {
             revoke_access(t, user_db_id, library_db_id)
@@ -982,7 +1036,7 @@ mod tests {
         let mut db = new_test_db()?;
         crate::db::indexes::ensure_index(&mut db, "id")?;
         let lib = db.transaction_mut(|t| -> anyhow::Result<Library> {
-            Ok(create(t, insert_request("Music", "exists"))?)
+            Ok(create_system(t, insert_request("Music", "exists"))?)
         })?;
         let principal = placeholder_principal();
 

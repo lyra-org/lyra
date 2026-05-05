@@ -196,7 +196,7 @@ pub async fn prepare_fixture(
     let path_key = db::libraries::path_key_for(&directory);
     let created_library = db.transaction_mut(
         |t| -> Result<db::Library, db::libraries::LibraryCreateError> {
-            db::libraries::create(
+            db::libraries::create_system(
                 t,
                 db::libraries::LibraryInsert {
                     id: nanoid!(),

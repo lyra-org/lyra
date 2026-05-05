@@ -164,7 +164,7 @@ async fn create_library(
     headers: HeaderMap,
     Json(library): Json<LibraryRequest>,
 ) -> Result<StatusCode, AppError> {
-    let _principal = require_manage_libraries(&headers).await?;
+    let principal = require_manage_libraries(&headers).await?;
 
     let directory_input = library.directory.trim();
     if directory_input.is_empty() {
@@ -172,9 +172,7 @@ async fn create_library(
     }
 
     let directory = PathBuf::from(directory_input);
-    // `is_dir`/`canonicalize` are syscalls; offload to keep a stale mount from
-    // stalling the worker, and to keep them off the write lock. `directory`
-    // stays as user input so the library follows symlink retargeting.
+    // Sync syscalls offloaded; raw `directory` preserved for symlink retargeting.
     let path_key = {
         let candidate = directory.clone();
         tokio::task::spawn_blocking(move || -> Result<String, AppError> {
@@ -206,7 +204,7 @@ async fn create_library(
         let mut db_write = STATE.db.write().await;
         let outcome =
             db_write.transaction_mut(|t| -> Result<Library, db::libraries::LibraryCreateError> {
-                db::libraries::create(
+                db::libraries::create_with_creator(
                     t,
                     db::libraries::LibraryInsert {
                         id: nanoid!(),
@@ -216,6 +214,7 @@ async fn create_library(
                         language,
                         country,
                     },
+                    principal.user_db_id,
                 )
             });
         match outcome {
@@ -305,8 +304,8 @@ async fn update_library(
         }
     }
 
-    // `name_key` is rederived inside `update`; we pass the prior key (not
-    // empty) so any read before overwrite still sees a valid value.
+    // `name_key` is rederived inside `update`; pass the prior key (not empty)
+    // so reads before overwrite still see a valid value.
     let updated = Library {
         db_id: Some(library_db_id),
         id: library.id,
