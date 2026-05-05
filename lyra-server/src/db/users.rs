@@ -52,7 +52,7 @@ pub(crate) struct Session {
     pub(crate) expires_at: i64,
 }
 
-/// Looks up a user by username. The lookup is case-insensitive (normalized to lowercase).
+/// Case-insensitive (lowercased) username lookup.
 pub(crate) fn get_by_username(db: &DbAny, username: &str) -> anyhow::Result<Option<User>> {
     let mut users: Vec<User> = db
         .exec(
@@ -316,6 +316,7 @@ pub(crate) fn delete_user(db: &mut impl super::DbAccess, user_db_id: DbId) -> an
     super::settings::remove_all_user_plugin_settings_for_user(db, user_db_id)?;
     super::favorites::remove_outbound_for_user(db, user_db_id)?;
     super::tags::remove_outbound_for_user(db, user_db_id)?;
+    super::libraries::remove_access_edges_for_user(db, user_db_id)?;
     db.exec_mut(QueryBuilder::remove().ids(user_db_id).query())?;
     Ok(())
 }
