@@ -3,15 +3,20 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::path::{
-    Component,
-    Path,
-    PathBuf,
+use std::{
+    collections::HashSet,
+    path::{
+        Component,
+        Path,
+        PathBuf,
+    },
 };
 
 use agdb::{
+    CountComparison,
     DbElement,
     DbId,
+    DbValue,
     QueryBuilder,
 };
 use anyhow::anyhow;
@@ -511,6 +516,227 @@ pub(crate) fn update(
     Ok(stored)
 }
 
+// Library access edges
+
+const ACCESS_KIND_KEY: &str = "library_access_kind";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AccessKind {
+    ReadWrite,
+}
+
+impl AccessKind {
+    #[allow(dead_code)] // entry point for the access-list route
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadWrite => "read_write",
+        }
+    }
+
+    #[allow(dead_code)] // entry point for the access-list route
+    pub(crate) fn from_db_value(value: &DbValue) -> Option<Self> {
+        match value {
+            DbValue::String(s) if s == "read_write" => Some(Self::ReadWrite),
+            _ => None,
+        }
+    }
+}
+
+/// Idempotent — existing edge has its `access_kind` overwritten.
+#[allow(dead_code)] // wired into create_with_creator + the access-grant route
+pub(crate) fn grant_access(
+    db: &mut impl super::DbAccess,
+    user_db_id: DbId,
+    library_db_id: DbId,
+    kind: AccessKind,
+) -> anyhow::Result<()> {
+    if let Some(edge_id) = find_access_edge(db, user_db_id, library_db_id)? {
+        db.exec_mut(
+            QueryBuilder::insert()
+                .values_uniform([(ACCESS_KIND_KEY, kind.as_str()).into()])
+                .ids(edge_id)
+                .query(),
+        )?;
+        return Ok(());
+    }
+
+    let edge_id = db
+        .exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(user_db_id)
+                .to(library_db_id)
+                .query(),
+        )?
+        .ids()
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow!("library access edge insert missing id"))?;
+    db.exec_mut(
+        QueryBuilder::insert()
+            .values_uniform([(ACCESS_KIND_KEY, kind.as_str()).into()])
+            .ids(edge_id)
+            .query(),
+    )?;
+    Ok(())
+}
+
+/// Idempotent — `true` iff an edge was removed.
+#[allow(dead_code)] // entry point for the access-revoke route
+pub(crate) fn revoke_access(
+    db: &mut impl super::DbAccess,
+    user_db_id: DbId,
+    library_db_id: DbId,
+) -> anyhow::Result<bool> {
+    let Some(edge_id) = find_access_edge(db, user_db_id, library_db_id)? else {
+        return Ok(false);
+    };
+    db.exec_mut(QueryBuilder::remove().ids(edge_id).query())?;
+    Ok(true)
+}
+
+/// `&mut` receiver enforces transactional context — read snapshots can't call.
+#[allow(dead_code)] // entry point for transactional grant/revoke authorization
+pub(crate) fn user_has_access_in_txn(
+    txn: &mut impl super::DbAccess,
+    user_db_id: DbId,
+    library_db_id: DbId,
+) -> anyhow::Result<bool> {
+    Ok(find_access_edge(txn, user_db_id, library_db_id)?.is_some())
+}
+
+/// Sorted by `to_ascii_lowercase(username)` to match `db::users::get`.
+#[allow(dead_code)] // entry point for GET /libraries/{id}/access
+pub(crate) fn users_with_access(
+    db: &impl super::DbAccess,
+    library_db_id: DbId,
+) -> anyhow::Result<Vec<super::users::User>> {
+    let edges = read_inbound_access_edges(db, library_db_id)?;
+    let mut users: Vec<super::users::User> = Vec::with_capacity(edges.len());
+    for edge in edges {
+        let Some(user_db_id) = edge.from else { continue };
+        // Skip orphan edges (user-node missing); real errors still propagate.
+        if let Some(user) = super::users::get_by_id(db, user_db_id)? {
+            users.push(user);
+        }
+    }
+    users.sort_by_key(|user| user.username.to_ascii_lowercase());
+    Ok(users)
+}
+
+/// Explicit-access only — no admin bypass here.
+#[allow(dead_code)] // backs `Principal.accessible_library_ids`
+pub(crate) fn accessible_library_ids(
+    db: &impl super::DbAccess,
+    user_db_id: DbId,
+) -> anyhow::Result<HashSet<String>> {
+    let edges = read_outbound_access_edges(db, user_db_id)?;
+    let mut ids = HashSet::with_capacity(edges.len());
+    for edge in edges {
+        let Some(library_db_id) = edge.to else {
+            continue;
+        };
+        if let Some(library) = get_by_id(db, library_db_id)? {
+            ids.insert(library.id);
+        }
+    }
+    Ok(ids)
+}
+
+/// Cascade hook for `db::users::delete_user`.
+#[allow(dead_code)] // wired into delete_user cascade in a follow-up
+pub(crate) fn remove_access_edges_for_user(
+    db: &mut impl super::DbAccess,
+    user_db_id: DbId,
+) -> anyhow::Result<()> {
+    let edge_ids: Vec<DbId> = read_outbound_access_edges(db, user_db_id)?
+        .into_iter()
+        .map(|edge| edge.id)
+        .collect();
+    if !edge_ids.is_empty() {
+        db.exec_mut(QueryBuilder::remove().ids(edge_ids).query())?;
+    }
+    Ok(())
+}
+
+/// Cascade hook for library deletion. Caller removes the library node afterward.
+#[allow(dead_code)]
+pub(crate) fn remove_access_edges_for_library(
+    db: &mut impl super::DbAccess,
+    library_db_id: DbId,
+) -> anyhow::Result<()> {
+    let edge_ids: Vec<DbId> = read_inbound_access_edges(db, library_db_id)?
+        .into_iter()
+        .map(|edge| edge.id)
+        .collect();
+    if !edge_ids.is_empty() {
+        db.exec_mut(QueryBuilder::remove().ids(edge_ids).query())?;
+    }
+    Ok(())
+}
+
+fn find_access_edge(
+    db: &impl super::DbAccess,
+    user_db_id: DbId,
+    library_db_id: DbId,
+) -> anyhow::Result<Option<DbId>> {
+    for element in read_outbound_access_edges(db, user_db_id)? {
+        if element.to == Some(library_db_id) {
+            return Ok(Some(element.id));
+        }
+    }
+    Ok(None)
+}
+
+fn read_outbound_access_edges(
+    db: &impl super::DbAccess,
+    user_db_id: DbId,
+) -> anyhow::Result<Vec<DbElement>> {
+    let result = db.exec(
+        QueryBuilder::select()
+            .search()
+            .from(user_db_id)
+            .where_()
+            .edge()
+            .and()
+            .distance(CountComparison::Equal(1))
+            .end_where()
+            .query(),
+    )?;
+    Ok(result
+        .elements
+        .into_iter()
+        .filter(|element| element.from == Some(user_db_id) && element_is_access(element))
+        .collect())
+}
+
+fn read_inbound_access_edges(
+    db: &impl super::DbAccess,
+    library_db_id: DbId,
+) -> anyhow::Result<Vec<DbElement>> {
+    let result = db.exec(
+        QueryBuilder::select()
+            .search()
+            .to(library_db_id)
+            .where_()
+            .edge()
+            .end_where()
+            .query(),
+    )?;
+    Ok(result
+        .elements
+        .into_iter()
+        .filter(|element| element.to == Some(library_db_id) && element_is_access(element))
+        .collect())
+}
+
+fn element_is_access(element: &DbElement) -> bool {
+    element
+        .values
+        .iter()
+        .any(|kv| matches!(&kv.key, DbValue::String(k) if k == ACCESS_KIND_KEY))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -710,6 +936,34 @@ mod tests {
         let key = normalize_library_name_key("CAFE\u{0301}\u{200B}")?;
         let found = find_by_name_key(&db, &key)?;
         assert!(found.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn revoke_access_is_idempotent() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = super::super::users::create(
+            &mut db,
+            &super::super::users::test_user("alice")?,
+        )?;
+        let lib = db.transaction_mut(|t| -> anyhow::Result<Library> {
+            Ok(create(t, insert_request("Music", "rev"))?)
+        })?;
+        let library_db_id = lib.db_id.expect("library db_id");
+
+        db.transaction_mut(|t| -> anyhow::Result<()> {
+            grant_access(t, user_db_id, library_db_id, AccessKind::ReadWrite)
+        })?;
+
+        let removed = db.transaction_mut(|t| -> anyhow::Result<bool> {
+            revoke_access(t, user_db_id, library_db_id)
+        })?;
+        assert!(removed);
+
+        let removed_again = db.transaction_mut(|t| -> anyhow::Result<bool> {
+            revoke_access(t, user_db_id, library_db_id)
+        })?;
+        assert!(!removed_again);
         Ok(())
     }
 
