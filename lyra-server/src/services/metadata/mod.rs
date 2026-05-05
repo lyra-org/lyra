@@ -32,10 +32,7 @@ use lofty::{
 };
 use lyra_metadata::normalize_unicode_nfc;
 
-use crate::{
-    STATE,
-    db::Entry,
-};
+use crate::db::Entry;
 use cue::{
     build_audio_lookup,
     build_embedded_source_key,
@@ -146,21 +143,23 @@ fn skip_reason_tag(reason: &SkipReason) -> &'static str {
     }
 }
 
-/// Read-fast config loader: the common case (config already seeded)
-/// takes only a read lock, avoiding unnecessary write-lock contention
-/// on hot paths. Falls through to `ensure` on the first-boot path.
-async fn load_mapping_config() -> anyhow::Result<MetadataMappingConfig> {
+pub(crate) async fn load_mapping_config(
+    db: &crate::db::DbAsync,
+) -> anyhow::Result<MetadataMappingConfig> {
     {
-        let db = STATE.db.read().await;
-        if let Some(cfg) = crate::db::metadata::mapping_config::get(&db)? {
+        let db_read = db.read().await;
+        if let Some(cfg) = crate::db::metadata::mapping_config::get(&db_read)? {
             return Ok(cfg);
         }
     }
-    let mut db = STATE.db.write().await;
-    crate::db::metadata::mapping_config::ensure(&mut db)
+    let mut db_write = db.write().await;
+    crate::db::metadata::mapping_config::ensure(&mut db_write)
 }
 
-pub(crate) async fn parse_metadata(entries: Vec<Entry>) -> anyhow::Result<ParseMetadataOutput> {
+pub(crate) async fn parse_metadata(
+    mapping_config: &MetadataMappingConfig,
+    entries: Vec<Entry>,
+) -> anyhow::Result<ParseMetadataOutput> {
     let mut audio_entries = Vec::new();
     let mut cue_entries = Vec::new();
 
@@ -224,7 +223,6 @@ pub(crate) async fn parse_metadata(entries: Vec<Entry>) -> anyhow::Result<ParseM
 
     let mut entry_ids_by_path: HashMap<String, VecDeque<DbId>> = HashMap::new();
     let mut raw_tags = Vec::new();
-    let mapping_config = load_mapping_config().await?;
 
     for entry in audio_entries {
         let Some(entry_db_id) = entry.db_id else {
