@@ -27,6 +27,7 @@ use crate::{
                 group_entries,
                 source_directory_for_group_entries,
             },
+            load_mapping_config,
             log_skip_summary,
             lyrics::providers::{
                 MAX_CONCURRENT_DISPATCHES,
@@ -76,6 +77,8 @@ pub(crate) async fn add_metadata(
         group_entries(&db_read, library_db_id, entries)?
     };
 
+    let mapping_config = load_mapping_config(db).await?;
+
     let mut parsed_groups = Vec::new();
     for (coalesce_group_key, entries) in groups.into_iter().enumerate() {
         let source_dir =
@@ -95,7 +98,7 @@ pub(crate) async fn add_metadata(
                 Some((entry_db_id, parent))
             })
             .collect();
-        let parse_output = parse_metadata(entries).await?;
+        let parse_output = parse_metadata(&mapping_config, entries).await?;
         if !parse_output.skipped.is_empty() {
             log_skip_summary(&parse_output.skipped);
         }

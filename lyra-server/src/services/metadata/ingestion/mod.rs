@@ -167,6 +167,7 @@ pub(crate) fn apply_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::metadata::mapping_config;
     use crate::db::test_db::{
         self,
         TestDb,
@@ -219,6 +220,7 @@ mod tests {
             "genres",
             "labels",
             "release_labels",
+            "server",
         ])?
         .into_inner())
     }
@@ -477,6 +479,7 @@ mod tests {
             .db_id
             .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
         let groups = group_entries(db, library_db_id, entries)?;
+        let mapping_config = mapping_config::ensure(db)?;
         let mut parsed_groups = Vec::new();
 
         for (coalesce_group_key, entries) in groups.into_iter().enumerate() {
@@ -498,7 +501,7 @@ mod tests {
                     Some((entry_db_id, parent))
                 })
                 .collect();
-            let parse_output = parse_metadata(entries).await?;
+            let parse_output = parse_metadata(&mapping_config, entries).await?;
             if !parse_output.skipped.is_empty() {
                 crate::services::metadata::log_skip_summary(&parse_output.skipped);
             }
