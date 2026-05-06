@@ -3,12 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::{
-    HashMap,
-    HashSet,
-};
-use std::sync::Arc;
-
 use agdb::{
     DbAny,
     DbId,
@@ -22,15 +16,22 @@ use mlua::{
     Table,
     Value,
 };
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 
 use crate::{
     STATE,
-    db::ResolveId,
-    db::{
+    plugins::db::ResolveId,
+    plugins::db::{
         self,
         Cover,
     },
-    plugins::parse_ids,
+    plugins::{
+        caller::RequestCaller,
+        parse_ids,
+    },
 };
 
 #[harmony_macros::interface]
@@ -189,7 +190,7 @@ impl CoversModule {
     #[harmony(returns(Option<CoverInfo>))]
     pub(crate) async fn get(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         id: ResolveId,
     ) -> Result<Value> {
         let (resolved_cover, stale_owners) = {
@@ -198,6 +199,11 @@ impl CoversModule {
             let Some(QueryId::Id(item_id)) = query_id else {
                 return Ok(Value::Nil);
             };
+            if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, item_id)
+                .into_lua_err()?
+            {
+                return Ok(Value::Nil);
+            }
             let mut stale_owners = Vec::new();
             let result = resolve_persisted_cover(&db, item_id, &mut stale_owners).into_lua_err()?;
             (result, stale_owners)
@@ -218,15 +224,23 @@ impl CoversModule {
     #[harmony(args(ids: Vec<u64>), returns(std::collections::BTreeMap<u64, Option<CoverInfo>>))]
     pub(crate) async fn get_many(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         ids: Table,
     ) -> Result<Table> {
         let item_ids = parse_ids(ids)?;
         let (resolved, stale_owners) = {
             let db = STATE.db.read().await;
             let mut stale_owners = Vec::new();
+            let mut accessible_ids = Vec::new();
+            for item_id in &item_ids {
+                if crate::routes::entity_accessible_to_principal(&db, &caller.principal, *item_id)
+                    .into_lua_err()?
+                {
+                    accessible_ids.push(*item_id);
+                }
+            }
             let result =
-                resolve_persisted_covers(&db, &item_ids, &mut stale_owners).into_lua_err()?;
+                resolve_persisted_covers(&db, &accessible_ids, &mut stale_owners).into_lua_err()?;
             (result, stale_owners)
         };
 
@@ -258,7 +272,7 @@ crate::plugins::plugin_surface_exports!(
 mod tests {
     use super::cover_to_lua;
     use crate::{
-        db::Cover,
+        plugins::db::Cover,
         plugins::parse_ids,
     };
     use agdb::DbId;

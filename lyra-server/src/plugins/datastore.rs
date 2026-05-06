@@ -17,7 +17,7 @@ use mlua::{
 
 use crate::{
     STATE,
-    db::{
+    plugins::db::{
         self,
         DataStore,
     },

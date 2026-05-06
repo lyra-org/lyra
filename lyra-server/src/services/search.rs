@@ -3,8 +3,11 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::collections::HashSet;
+
 use agdb::{
     DbAny,
+    DbId,
     QueryId,
 };
 
@@ -87,6 +90,106 @@ pub(crate) fn search(db: &DbAny, options: &SearchOptions) -> anyhow::Result<Sear
         title: release.release_title,
     })
     .collect();
+
+    Ok(SearchResults {
+        tracks,
+        artists,
+        releases,
+    })
+}
+
+pub(crate) fn search_accessible(
+    db: &DbAny,
+    principal: &crate::services::auth::Principal,
+    options: &SearchOptions,
+) -> anyhow::Result<SearchResults> {
+    if principal.permissions.contains(&db::Permission::Admin) {
+        return search(db, options);
+    }
+
+    let mut library_db_ids = Vec::new();
+    for library_id in &principal.accessible_library_ids {
+        let Some(library_db_id) = db::lookup::find_node_id_by_id(db, library_id)? else {
+            continue;
+        };
+        if db::libraries::get_by_id(db, library_db_id)?.is_some() {
+            library_db_ids.push(library_db_id);
+        }
+    }
+
+    let list_options = ListOptions {
+        sort: Vec::new(),
+        offset: None,
+        limit: Some(options.limit),
+        search_term: Some(options.query.clone()),
+    };
+
+    let mut tracks = Vec::new();
+    let mut artists = Vec::new();
+    let mut releases = Vec::new();
+    let mut seen_tracks = HashSet::<DbId>::new();
+    let mut seen_artists = HashSet::<DbId>::new();
+    let mut seen_releases = HashSet::<DbId>::new();
+
+    for library_db_id in library_db_ids {
+        for track in db::tracks::get_by_library(db, library_db_id)? {
+            if track
+                .db_id
+                .clone()
+                .map(DbId::from)
+                .is_some_and(|id| seen_tracks.insert(id))
+            {
+                tracks.push(track);
+            }
+        }
+        for artist in db::artists::get_by_library(db, library_db_id)? {
+            if artist
+                .db_id
+                .clone()
+                .map(DbId::from)
+                .is_some_and(|id| seen_artists.insert(id))
+            {
+                artists.push(artist);
+            }
+        }
+        for release in db::releases::get_direct(db, library_db_id)? {
+            if release
+                .db_id
+                .clone()
+                .map(DbId::from)
+                .is_some_and(|id| seen_releases.insert(id))
+            {
+                releases.push(release);
+            }
+        }
+    }
+
+    let tracks = db::tracks::query_items(tracks, &list_options)
+        .entries
+        .into_iter()
+        .map(|track| TitleHit {
+            id: track.id,
+            title: track.track_title,
+        })
+        .collect();
+
+    let artists = db::artists::query_items(artists, &list_options)
+        .entries
+        .into_iter()
+        .map(|artist| ArtistHit {
+            id: artist.id,
+            name: artist.artist_name,
+        })
+        .collect();
+
+    let releases = db::releases::query_items(releases, &list_options)
+        .entries
+        .into_iter()
+        .map(|release| TitleHit {
+            id: release.id,
+            title: release.release_title,
+        })
+        .collect();
 
     Ok(SearchResults {
         tracks,

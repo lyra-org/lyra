@@ -43,31 +43,49 @@ fn hls_signed_url_ttl_seconds() -> u64 {
         .unwrap_or(HLS_SIGNED_URL_TTL_SECONDS_DEFAULT)
 }
 
-// Signed tokens are scoped to (session_id, expiry). Tokens are NOT
-// segment-scoped; any segment within the session can be fetched with the same
-// token until it expires.
-fn hls_segment_signature_payload(session_id: &str, exp: u64) -> String {
-    format!("{session_id}:{exp}")
+// Tokens are session-scoped rather than segment-scoped; any segment within the
+// session can be fetched with the same token until it expires.
+fn hls_segment_signature_payload(
+    session_id: &str,
+    user_public_id: &str,
+    library_public_id: &str,
+    exp: u64,
+) -> String {
+    format!("{session_id}:{user_public_id}:{library_public_id}:{exp}")
 }
 
-pub(crate) fn hls_sign_segment_token(session_id: &str, exp: u64) -> String {
-    let payload = hls_segment_signature_payload(session_id, exp);
+pub(crate) fn hls_sign_segment_token(
+    session_id: &str,
+    user_public_id: &str,
+    library_public_id: &str,
+    exp: u64,
+) -> String {
+    let payload = hls_segment_signature_payload(session_id, user_public_id, library_public_id, exp);
     let signature = blake3::keyed_hash(&*HLS_SEGMENT_SIGNING_KEY, payload.as_bytes());
     general_purpose::URL_SAFE_NO_PAD.encode(signature.as_bytes())
 }
 
-pub(crate) fn hls_signed_segment_query(session_id: &str) -> String {
+pub(crate) fn hls_signed_segment_query(
+    session_id: &str,
+    user_public_id: &str,
+    library_public_id: &str,
+) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
     let exp = now.saturating_add(hls_signed_url_ttl_seconds());
-    let sig = hls_sign_segment_token(session_id, exp);
+    let sig = hls_sign_segment_token(session_id, user_public_id, library_public_id, exp);
 
     format!("?exp={exp}&sig={sig}")
 }
 
-pub(crate) fn validate_signed_segment_query(session_id: &str, query: &HlsSegmentQuery) -> bool {
+pub(crate) fn validate_signed_segment_query(
+    session_id: &str,
+    user_public_id: &str,
+    library_public_id: &str,
+    query: &HlsSegmentQuery,
+) -> bool {
     let exp = match query.exp {
         Some(exp) => exp,
         None => return false,
@@ -95,7 +113,7 @@ pub(crate) fn validate_signed_segment_query(session_id: &str, query: &HlsSegment
     };
     let received_hash = blake3::Hash::from_bytes(sig_arr);
 
-    let payload = hls_segment_signature_payload(session_id, exp);
+    let payload = hls_segment_signature_payload(session_id, user_public_id, library_public_id, exp);
     let expected_hash = blake3::keyed_hash(&*HLS_SEGMENT_SIGNING_KEY, payload.as_bytes());
 
     // blake3::Hash::eq uses constant_time_eq internally
@@ -117,27 +135,29 @@ mod tests {
             .expect("valid timestamp")
             .as_secs()
             + 30;
-        let sig = hls_sign_segment_token("sess", exp);
+        let sig = hls_sign_segment_token("sess", "user", "lib", exp);
 
         let query = HlsSegmentQuery {
             exp: Some(exp),
             sig: Some(sig),
         };
 
-        assert!(validate_signed_segment_query("sess", &query));
+        assert!(validate_signed_segment_query("sess", "user", "lib", &query));
     }
 
     #[test]
     fn signed_segment_query_validation_rejects_expired_token() {
         let exp = 1;
-        let sig = hls_sign_segment_token("sess", exp);
+        let sig = hls_sign_segment_token("sess", "user", "lib", exp);
 
         let query = HlsSegmentQuery {
             exp: Some(exp),
             sig: Some(sig),
         };
 
-        assert!(!validate_signed_segment_query("sess", &query));
+        assert!(!validate_signed_segment_query(
+            "sess", "user", "lib", &query
+        ));
     }
 
     #[test]
@@ -147,13 +167,37 @@ mod tests {
             .expect("valid timestamp")
             .as_secs()
             + 30;
-        let sig = hls_sign_segment_token("session-a", exp);
+        let sig = hls_sign_segment_token("session-a", "user", "lib", exp);
 
         let query = HlsSegmentQuery {
             exp: Some(exp),
             sig: Some(sig),
         };
 
-        assert!(!validate_signed_segment_query("session-b", &query));
+        assert!(!validate_signed_segment_query(
+            "session-b",
+            "user",
+            "lib",
+            &query
+        ));
+    }
+
+    #[test]
+    fn signed_segment_query_validation_rejects_cross_library_replay() {
+        let exp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("valid timestamp")
+            .as_secs()
+            + 30;
+        let sig = hls_sign_segment_token("sess", "user", "lib-a", exp);
+
+        let query = HlsSegmentQuery {
+            exp: Some(exp),
+            sig: Some(sig),
+        };
+
+        assert!(!validate_signed_segment_query(
+            "sess", "user", "lib-b", &query
+        ));
     }
 }

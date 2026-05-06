@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::extract::ws::{
@@ -194,6 +195,27 @@ fn playback_event_to_message(payload: PlaybackUpdatePayload) -> Option<OutgoingM
     }))
 }
 
+fn playback_event_visible_to_connection(
+    payload: &PlaybackUpdatePayload,
+    user_public_id: &str,
+    accessible_library_ids: &HashSet<String>,
+) -> bool {
+    payload.user_public_id == user_public_id
+        && payload
+            .library_public_id
+            .as_ref()
+            .is_some_and(|library_id| accessible_library_ids.contains(library_id))
+}
+
+fn mark_sync_required_pending(sync_required_pending: &mut bool) -> bool {
+    if *sync_required_pending {
+        false
+    } else {
+        *sync_required_pending = true;
+        true
+    }
+}
+
 enum AuthStatus {
     Valid,
     Revoked,
@@ -221,6 +243,7 @@ pub(crate) async fn run(
     mut socket: WebSocket,
     connection_id: ConnectionId,
     user_public_id: String,
+    accessible_library_ids: HashSet<String>,
     cancel: Arc<Notify>,
     token: Option<String>,
     mut command_rx: mpsc::Receiver<OutgoingMessage>,
@@ -231,6 +254,7 @@ pub(crate) async fn run(
     let mut awaiting_pong = false;
     let mut pong_deadline: Option<Instant> = None;
     let mut consecutive_auth_errors: u32 = 0;
+    let mut sync_required_pending = false;
 
     loop {
         let sleep = async {
@@ -288,11 +312,16 @@ pub(crate) async fn run(
             result = event_rx.recv() => {
                 match result {
                     Ok(payload) => {
-                        if payload.user_public_id == user_public_id {
+                        if playback_event_visible_to_connection(
+                            &payload,
+                            &user_public_id,
+                            &accessible_library_ids,
+                        ) {
                             if let Some(msg) = playback_event_to_message(payload) {
                                 if !send(&mut socket, msg).await {
                                     break;
                                 }
+                                sync_required_pending = false;
                             }
                         }
                     }
@@ -300,6 +329,9 @@ pub(crate) async fn run(
                     // resync state via REST instead.
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
                         tracing::debug!(connection_id, skipped, "broadcast lagged");
+                        if !mark_sync_required_pending(&mut sync_required_pending) {
+                            continue;
+                        }
                         let msg = OutgoingMessage::Event(EventMessage {
                             event: "sync_required".to_string(),
                             data: serde_json::Value::Null,
@@ -372,5 +404,64 @@ pub(crate) async fn run(
             session_key = %handle.session_key,
             "websocket disconnected"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::PlaybackState;
+
+    fn payload(user_public_id: &str, library_public_id: Option<&str>) -> PlaybackUpdatePayload {
+        PlaybackUpdatePayload {
+            event: "updated".to_string(),
+            state: PlaybackState::Playing,
+            playback_session_public_id: "session".to_string(),
+            track_public_id: "track".to_string(),
+            user_public_id: user_public_id.to_string(),
+            library_public_id: library_public_id.map(str::to_string),
+            position_ms: 0,
+            duration_ms: Some(1_000),
+            activity_ms: 0,
+            qualifies_single_listen: false,
+            updated_at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn playback_event_visibility_uses_connection_access_snapshot() {
+        let accessible = HashSet::from(["library-a".to_string()]);
+
+        assert!(playback_event_visible_to_connection(
+            &payload("user-a", Some("library-a")),
+            "user-a",
+            &accessible,
+        ));
+        assert!(!playback_event_visible_to_connection(
+            &payload("user-b", Some("library-a")),
+            "user-a",
+            &accessible,
+        ));
+        assert!(!playback_event_visible_to_connection(
+            &payload("user-a", Some("library-b")),
+            "user-a",
+            &accessible,
+        ));
+        assert!(!playback_event_visible_to_connection(
+            &payload("user-a", None),
+            "user-a",
+            &accessible,
+        ));
+    }
+
+    #[test]
+    fn sync_required_lag_signal_is_coalesced_until_reset() {
+        let mut pending = false;
+
+        assert!(mark_sync_required_pending(&mut pending));
+        assert!(!mark_sync_required_pending(&mut pending));
+
+        pending = false;
+        assert!(mark_sync_required_pending(&mut pending));
     }
 }

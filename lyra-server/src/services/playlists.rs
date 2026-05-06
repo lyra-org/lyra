@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::collections::HashMap;
+
 use agdb::{
     DbAny,
     DbId,
@@ -132,9 +134,9 @@ pub(crate) fn get_tracks(
 pub(crate) fn get_tracks_many(
     db: &DbAny,
     playlist_db_ids: &[DbId],
-) -> anyhow::Result<std::collections::HashMap<DbId, Vec<PlaylistTrackLink>>> {
+) -> anyhow::Result<HashMap<DbId, Vec<PlaylistTrackLink>>> {
     let raw = db::playlists::get_tracks_many(db, playlist_db_ids)?;
-    let mut result = std::collections::HashMap::new();
+    let mut result = HashMap::new();
     for (playlist_id, playlist_tracks) in raw {
         let edge_ids: Vec<DbId> = playlist_tracks.iter().map(|t| t.edge_id).collect();
         let track_ids = db::playlists::resolve_edge_targets(db, &edge_ids)?;
@@ -248,6 +250,14 @@ pub(crate) fn add_tracks(
 pub(crate) fn remove_track(db: &mut DbAny, entry_db_id: QueryId) -> anyhow::Result<()> {
     let entry_db_id = resolve_id(db, entry_db_id)?;
     db::playlists::remove_track(db, entry_db_id)
+}
+
+pub(crate) fn get_playlist_for_entry(
+    db: &DbAny,
+    entry_db_id: DbId,
+) -> anyhow::Result<Option<DbId>> {
+    let result = db.exec(QueryBuilder::select().ids(entry_db_id).query())?;
+    Ok(result.elements.first().and_then(|element| element.from))
 }
 
 pub(crate) fn remove_tracks(

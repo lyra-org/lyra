@@ -3,7 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use harmony_core::LuaAsyncExt;
@@ -16,8 +15,9 @@ use mlua::{
 
 use crate::{
     STATE,
-    db,
-    db::NodeId,
+    plugins::caller::RequestCaller,
+    plugins::db,
+    plugins::db::NodeId,
 };
 
 const DECODE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -36,11 +36,17 @@ impl ChromaprintModule {
     #[harmony(returns(std::collections::BTreeMap<String, String>))]
     pub(crate) async fn compute(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         entry_id: NodeId,
     ) -> Result<Table> {
         let db = STATE.db.read().await;
-        let entry = db::entries::get_by_id(&db, entry_id.into())
+        let entry_db_id = entry_id.into();
+        if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, entry_db_id)
+            .into_lua_err()?
+        {
+            return Err(mlua::Error::runtime("entry not found"));
+        }
+        let entry = db::entries::get_by_id(&db, entry_db_id)
             .into_lua_err()?
             .ok_or_else(|| mlua::Error::runtime("entry not found"))?;
 

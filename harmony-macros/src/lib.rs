@@ -441,6 +441,7 @@ pub fn implementation(attr: TokenStream, item: TokenStream) -> TokenStream {
             Err(error) => return error.into_compile_error().into(),
         };
         if options.skip {
+            strip_module_context_attributes(&mut fn_item.sig.inputs);
             continue;
         }
 
@@ -688,6 +689,7 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
             Err(error) => return error.into_compile_error().into(),
         };
         if options.skip {
+            strip_module_context_attributes(&mut fn_item.sig.inputs);
             continue;
         }
 
@@ -741,6 +743,11 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
         };
         let function_description = option_str_tokens(doc_info.description.as_deref());
         let function_name = &fn_item.sig.ident;
+        let caller_context_type = match module_context_argument_type(&fn_item.sig.inputs) {
+            Ok(caller_context_type) => caller_context_type,
+            Err(error) => return error.into_compile_error().into(),
+        };
+        let context_call_args = module_context_call_arguments(&fn_item.sig.inputs);
         let registration = module_registration_tokens(
             function_name,
             &path_segments,
@@ -750,7 +757,10 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
             &param_names,
             &param_types,
             module_options.plugin_scoped,
+            caller_context_type,
+            &context_call_args,
         );
+        strip_module_context_attributes(&mut fn_item.sig.inputs);
 
         function_descriptors.push(quote! {
             ::harmony_luau::ModuleFunctionDescriptor {
@@ -1259,7 +1269,69 @@ fn module_registration_tokens(
     param_names: &[&Ident],
     param_types: &[&Type],
     plugin_scoped: bool,
+    caller_context_type: Option<&Type>,
+    context_call_args: &[proc_macro2::TokenStream],
 ) -> proc_macro2::TokenStream {
+    if let Some(caller_ty) = caller_context_type {
+        if !plugin_scoped {
+            return quote! {
+                compile_error!("harmony context parameters require plugin_scoped");
+            };
+        }
+        let prelude = quote! {
+            |lua| {
+                let __harmony_plugin_id = ::harmony_core::resolve_caller(lua);
+                <#caller_ty as ::harmony_core::ModuleContext>::from_lua_plugin_id(lua, __harmony_plugin_id)
+            }
+        };
+
+        let async_invocation = if has_lua_context {
+            if returns_result {
+                quote! { Self::#fn_name(#(#context_call_args,)*).await }
+            } else {
+                quote! { Ok(Self::#fn_name(#(#context_call_args,)*).await) }
+            }
+        } else if returns_result {
+            quote! { Self::#fn_name(#(#context_call_args,)*).await }
+        } else {
+            quote! { Ok(Self::#fn_name(#(#context_call_args,)*).await) }
+        };
+
+        let sync_invocation = if has_lua_context {
+            if returns_result {
+                quote! { Self::#fn_name(#(#context_call_args,)*) }
+            } else {
+                quote! { Ok(Self::#fn_name(#(#context_call_args,)*)) }
+            }
+        } else if returns_result {
+            quote! { Self::#fn_name(#(#context_call_args,)*) }
+        } else {
+            quote! { Ok(Self::#fn_name(#(#context_call_args,)*)) }
+        };
+
+        let function_tokens = if is_async {
+            quote! {
+                lua.create_async_function_with_prelude(
+                    #prelude,
+                    |lua, __harmony_caller_result, (#(#param_names,)*): (#(#param_types,)*)| async move {
+                        let __harmony_caller = __harmony_caller_result?;
+                        #async_invocation
+                    },
+                )?
+            }
+        } else {
+            quote! {
+                lua.create_function(|lua, (#(#param_names,)*): (#(#param_types,)*)| {
+                    let __harmony_caller_result = #prelude(lua);
+                    let __harmony_caller = __harmony_caller_result?;
+                    #sync_invocation
+                })?
+            }
+        };
+
+        return module_leaf_assignment_tokens(fn_name, path_segments, function_tokens);
+    }
+
     let function_tokens = if has_lua_context {
         if is_async {
             if plugin_scoped {
@@ -1327,6 +1399,14 @@ fn module_registration_tokens(
         }
     };
 
+    module_leaf_assignment_tokens(fn_name, path_segments, function_tokens)
+}
+
+fn module_leaf_assignment_tokens(
+    fn_name: &Ident,
+    path_segments: &[String],
+    function_tokens: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
     let leaf = lit_str(
         path_segments.last().expect("module path has a leaf"),
         fn_name.span(),
@@ -1375,6 +1455,7 @@ fn collect_parameters(inputs: &Punctuated<FnArg, Token![,]>) -> Vec<(&Ident, &Ty
             FnArg::Typed(pat_type) => {
                 if is_lua_context_type(pat_type.ty.as_ref())
                     || is_plugin_id_context_type(pat_type.ty.as_ref())
+                    || is_module_context_parameter(pat_type)
                 {
                     return None;
                 }
@@ -1391,6 +1472,90 @@ fn collect_parameters(inputs: &Punctuated<FnArg, Token![,]>) -> Vec<(&Ident, &Ty
             FnArg::Receiver(_) => None,
         })
         .collect()
+}
+
+fn module_context_argument_type(
+    inputs: &Punctuated<FnArg, Token![,]>,
+) -> syn::Result<Option<&Type>> {
+    let mut context_type = None;
+    let mut has_plugin_id_context = false;
+
+    for argument in inputs {
+        let FnArg::Typed(pat_type) = argument else {
+            continue;
+        };
+
+        if is_plugin_id_context_type(pat_type.ty.as_ref()) {
+            has_plugin_id_context = true;
+        }
+
+        if context_type.is_some() && has_plugin_id_context {
+            return Err(syn::Error::new(
+                pat_type.span(),
+                "harmony context parameters cannot be combined with raw plugin id parameters",
+            ));
+        }
+
+        if is_module_context_parameter(pat_type) {
+            if has_plugin_id_context {
+                return Err(syn::Error::new(
+                    pat_type.span(),
+                    "harmony context parameters cannot be combined with raw plugin id parameters",
+                ));
+            }
+            if context_type.is_some() {
+                return Err(syn::Error::new(
+                    pat_type.span(),
+                    "module functions can declare at most one harmony context parameter",
+                ));
+            }
+            context_type = Some(pat_type.ty.as_ref());
+        }
+    }
+
+    Ok(context_type)
+}
+
+fn module_context_call_arguments(
+    inputs: &Punctuated<FnArg, Token![,]>,
+) -> Vec<proc_macro2::TokenStream> {
+    inputs
+        .iter()
+        .filter_map(|argument| match argument {
+            FnArg::Typed(pat_type) if is_lua_context_type(pat_type.ty.as_ref()) => {
+                Some(quote! { lua })
+            }
+            FnArg::Typed(pat_type) if is_module_context_parameter(pat_type) => {
+                Some(quote! { __harmony_caller })
+            }
+            FnArg::Typed(pat_type) => match &*pat_type.pat {
+                Pat::Ident(pattern) => {
+                    let ident = &pattern.ident;
+                    Some(quote! { #ident })
+                }
+                _ => None,
+            },
+            FnArg::Receiver(_) => None,
+        })
+        .collect()
+}
+
+fn is_module_context_parameter(parameter: &syn::PatType) -> bool {
+    parameter
+        .attrs
+        .iter()
+        .any(|attr| attr.path().is_ident("harmony_context"))
+}
+
+fn strip_module_context_attributes(inputs: &mut Punctuated<FnArg, Token![,]>) {
+    for argument in inputs {
+        let FnArg::Typed(parameter) = argument else {
+            continue;
+        };
+        parameter
+            .attrs
+            .retain(|attr| !attr.path().is_ident("harmony_context"));
+    }
 }
 
 fn is_plugin_id_context_type(ty: &Type) -> bool {

@@ -53,7 +53,7 @@ use mlua::{
 };
 use nanoid::nanoid;
 
-use crate::db::{
+use crate::plugins::db::{
     self,
     ProviderConfig,
 };
@@ -66,8 +66,8 @@ use serde::Serialize;
 
 use crate::{
     STATE,
-    db::NodeId,
     plugins::LUA_SERIALIZE_OPTIONS,
+    plugins::db::NodeId,
     services::metadata::lyrics::providers as lyrics_dispatcher,
     services::options::{
         OptionDeclaration,
@@ -1215,7 +1215,7 @@ mod tests {
         Ordering,
     };
 
-    use crate::db::{
+    use crate::plugins::db::{
         self,
         IdSource,
         Release,
@@ -1346,6 +1346,31 @@ mod tests {
         Ok(parsed)
     }
 
+    fn metadata_layer_count_for_entity(db: &agdb::DbAny, node_id: DbId) -> anyhow::Result<usize> {
+        let result = db.exec(
+            QueryBuilder::select()
+                .search()
+                .from(node_id)
+                .where_()
+                .neighbor()
+                .end_where()
+                .query(),
+        )?;
+        let key = agdb::DbValue::from("db_element_id");
+        let value = agdb::DbValue::from("MetadataLayer");
+        Ok(result
+            .elements
+            .into_iter()
+            .filter(|element| {
+                element.id.0 > 0
+                    && element
+                        .values
+                        .iter()
+                        .any(|kv| kv.key == key && kv.value == value)
+            })
+            .count())
+    }
+
     #[tokio::test]
     async fn provider_layer_save_updates_track_and_external_id() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
@@ -1377,8 +1402,7 @@ mod tests {
         save_fn.call_async::<()>(()).await?;
 
         let db = STATE.db.read().await;
-        let layers = db::metadata::layers::get_for_entity(&db, track_db_id)?;
-        assert_eq!(layers.len(), 1);
+        assert_eq!(metadata_layer_count_for_entity(&db, track_db_id)?, 1);
         let track = db::tracks::get_by_id(&db, track_db_id)?
             .ok_or_else(|| anyhow!("track not found after layer save"))?;
         assert_eq!(track.track_title, track_title.to_string());
@@ -2474,7 +2498,6 @@ mod tests {
 
     mod lyrics_provider_tests {
         use super::*;
-        use crate::db::test_db;
         use crate::services::metadata::lyrics::providers::{
             LYRICS_PROVIDER_REGISTRY,
             dispatch_for_track,
@@ -2497,19 +2520,50 @@ mod tests {
             Ok(())
         }
 
+        fn insert_artist(db_write: &mut agdb::DbAny, name: &str) -> anyhow::Result<DbId> {
+            let artist = db::Artist {
+                db_id: None,
+                id: nanoid!(),
+                artist_name: name.to_string(),
+                scan_name: name.to_lowercase(),
+                sort_name: None,
+                artist_type: None,
+                description: None,
+                verified: false,
+                locked: None,
+                created_at: None,
+            };
+            let artist_id = db_write
+                .exec_mut(QueryBuilder::insert().element(&artist).query())?
+                .ids()[0];
+            db_write.exec_mut(
+                QueryBuilder::insert()
+                    .edges()
+                    .from("artists")
+                    .to(artist_id)
+                    .query(),
+            )?;
+            Ok(artist_id)
+        }
+
+        fn connect(db_write: &mut agdb::DbAny, from: DbId, to: DbId) -> anyhow::Result<()> {
+            db_write.exec_mut(QueryBuilder::insert().edges().from(from).to(to).query())?;
+            Ok(())
+        }
+
         async fn install_track(
             title: &str,
             artist: &str,
             duration_ms: u64,
         ) -> anyhow::Result<DbId> {
             let mut db = STATE.db.write().await;
-            let track_id = test_db::insert_track(&mut *db, title)?;
+            let track_id = insert_track(&mut db, title, false)?;
             let mut track = db::tracks::get_by_id(&*db, track_id)?
                 .ok_or_else(|| anyhow!("just-inserted track missing"))?;
             track.duration_ms = Some(duration_ms);
             db.exec_mut(QueryBuilder::insert().element(&track).query())?;
-            let artist_id = test_db::insert_artist(&mut *db, artist)?;
-            test_db::connect(&mut *db, track_id, artist_id)?;
+            let artist_id = insert_artist(&mut db, artist)?;
+            connect(&mut db, track_id, artist_id)?;
             Ok(track_id)
         }
 

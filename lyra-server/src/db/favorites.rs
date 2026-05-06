@@ -79,7 +79,6 @@ impl TryFrom<&str> for FavoriteKind {
 #[derive(Clone, Debug)]
 pub(crate) struct FavoriteEdge {
     pub(crate) target_db_id: DbId,
-    #[allow(dead_code)]
     pub(crate) target_public_id: String,
     pub(crate) kind: FavoriteKind,
     pub(crate) first_favorited_at_ms: i64,
@@ -196,14 +195,6 @@ pub(crate) fn remove(
     Ok(true)
 }
 
-pub(crate) fn has(
-    db: &impl DbAccess,
-    user_db_id: DbId,
-    target_db_id: DbId,
-) -> anyhow::Result<bool> {
-    Ok(find_favorite_edge(db, user_db_id, target_db_id)?.is_some())
-}
-
 pub(crate) fn edge_snapshot(
     db: &impl DbAccess,
     user_db_id: DbId,
@@ -259,31 +250,6 @@ pub(crate) fn edge_snapshots(
         snapshots.insert(target_db_id, snapshot);
     }
     Ok(snapshots)
-}
-
-/// Batch check. Errs above [`HAS_MANY_CAP`].
-pub(crate) fn has_many(
-    db: &impl DbAccess,
-    user_db_id: DbId,
-    target_db_ids: &[DbId],
-) -> anyhow::Result<HashMap<DbId, bool>> {
-    if target_db_ids.len() > HAS_MANY_CAP {
-        anyhow::bail!(
-            "has_many cap exceeded: {} > {HAS_MANY_CAP}",
-            target_db_ids.len(),
-        );
-    }
-
-    let favorited: HashSet<DbId> = read_outbound_favorite_edges(db, user_db_id)?
-        .into_iter()
-        .filter_map(|element| element.to)
-        .collect();
-
-    Ok(target_db_ids
-        .iter()
-        .copied()
-        .map(|id| (id, favorited.contains(&id)))
-        .collect())
 }
 
 /// Paginated favorite edges for a user, by `first_favorited_at_ms DESC, target_db_id ASC`.
@@ -519,6 +485,34 @@ mod tests {
     use super::*;
     use crate::db::test_db::new_test_db;
     use agdb::DbAny;
+
+    fn has(db: &impl DbAccess, user_db_id: DbId, target_db_id: DbId) -> anyhow::Result<bool> {
+        Ok(find_favorite_edge(db, user_db_id, target_db_id)?.is_some())
+    }
+
+    fn has_many(
+        db: &impl DbAccess,
+        user_db_id: DbId,
+        target_db_ids: &[DbId],
+    ) -> anyhow::Result<HashMap<DbId, bool>> {
+        if target_db_ids.len() > HAS_MANY_CAP {
+            anyhow::bail!(
+                "has_many cap exceeded: {} > {HAS_MANY_CAP}",
+                target_db_ids.len(),
+            );
+        }
+
+        let favorited: HashSet<DbId> = read_outbound_favorite_edges(db, user_db_id)?
+            .into_iter()
+            .filter_map(|element| element.to)
+            .collect();
+
+        Ok(target_db_ids
+            .iter()
+            .copied()
+            .map(|id| (id, favorited.contains(&id)))
+            .collect())
+    }
 
     fn create_test_user(db: &mut DbAny) -> anyhow::Result<DbId> {
         let user_db_id = db
@@ -1020,124 +1014,122 @@ mod tests {
 
         Ok(())
     }
-}
+    mod benches {
+        extern crate test;
 
-#[cfg(test)]
-mod benches {
-    extern crate test;
+        use test::Bencher;
 
-    use test::Bencher;
+        use super::*;
+        use crate::db::test_db::new_test_db;
+        use agdb::DbAny;
 
-    use super::*;
-    use crate::db::test_db::new_test_db;
-    use agdb::DbAny;
-
-    fn insert_user(db: &mut DbAny) -> DbId {
-        let id = db
-            .exec_mut(
-                QueryBuilder::insert()
-                    .nodes()
-                    .values([[("username", "bench").into()]])
-                    .query(),
-            )
-            .unwrap()
-            .ids()[0];
-        db.exec_mut(QueryBuilder::insert().edges().from("users").to(id).query())
-            .unwrap();
-        id
-    }
-
-    fn insert_track(db: &mut DbAny) -> DbId {
-        let id = db
-            .exec_mut(QueryBuilder::insert().nodes().count(1).query())
-            .unwrap()
-            .ids()[0];
-        db.exec_mut(QueryBuilder::insert().edges().from("tracks").to(id).query())
-            .unwrap();
-        id
-    }
-
-    fn seed_user_favorites(n: usize) -> (DbAny, DbId, Vec<DbId>) {
-        let mut db = new_test_db().unwrap();
-        let user = insert_user(&mut db);
-        let mut tracks = Vec::with_capacity(n);
-        for i in 0..n {
-            let t = insert_track(&mut db);
-            add(
-                &mut db,
-                user,
-                t,
-                &nanoid::nanoid!(),
-                FavoriteKind::Track,
-                i as i64,
-            )
-            .unwrap();
-            tracks.push(t);
+        fn insert_user(db: &mut DbAny) -> DbId {
+            let id = db
+                .exec_mut(
+                    QueryBuilder::insert()
+                        .nodes()
+                        .values([[("username", "bench").into()]])
+                        .query(),
+                )
+                .unwrap()
+                .ids()[0];
+            db.exec_mut(QueryBuilder::insert().edges().from("users").to(id).query())
+                .unwrap();
+            id
         }
-        (db, user, tracks)
-    }
 
-    #[bench]
-    fn has_many_user_with_100_favorites(b: &mut Bencher) {
-        let (db, user, tracks) = seed_user_favorites(100);
-        let probe: Vec<DbId> = tracks.iter().take(10).copied().collect();
-        b.iter(|| has_many(&db, user, &probe).unwrap());
-    }
+        fn insert_track(db: &mut DbAny) -> DbId {
+            let id = db
+                .exec_mut(QueryBuilder::insert().nodes().count(1).query())
+                .unwrap()
+                .ids()[0];
+            db.exec_mut(QueryBuilder::insert().edges().from("tracks").to(id).query())
+                .unwrap();
+            id
+        }
 
-    #[bench]
-    fn has_many_user_with_1000_favorites(b: &mut Bencher) {
-        let (db, user, tracks) = seed_user_favorites(1_000);
-        let probe: Vec<DbId> = tracks.iter().take(10).copied().collect();
-        b.iter(|| has_many(&db, user, &probe).unwrap());
-    }
-
-    #[bench]
-    fn list_ids_user_with_100_favorites(b: &mut Bencher) {
-        let (db, user, _) = seed_user_favorites(100);
-        b.iter(|| list_ids(&db, user, FavoriteKind::Track).unwrap());
-    }
-
-    #[bench]
-    fn list_ids_user_with_1000_favorites(b: &mut Bencher) {
-        let (db, user, _) = seed_user_favorites(1_000);
-        b.iter(|| list_ids(&db, user, FavoriteKind::Track).unwrap());
-    }
-
-    #[bench]
-    fn read_inbound_edges_100_users(b: &mut Bencher) {
-        let mut db = new_test_db().unwrap();
-        let track = insert_track(&mut db);
-        for i in 0..100 {
+        fn seed_user_favorites(n: usize) -> (DbAny, DbId, Vec<DbId>) {
+            let mut db = new_test_db().unwrap();
             let user = insert_user(&mut db);
-            add(
-                &mut db,
-                user,
-                track,
-                &nanoid::nanoid!(),
-                FavoriteKind::Track,
-                i as i64,
-            )
-            .unwrap();
+            let mut tracks = Vec::with_capacity(n);
+            for i in 0..n {
+                let t = insert_track(&mut db);
+                add(
+                    &mut db,
+                    user,
+                    t,
+                    &nanoid::nanoid!(),
+                    FavoriteKind::Track,
+                    i as i64,
+                )
+                .unwrap();
+                tracks.push(t);
+            }
+            (db, user, tracks)
         }
-        b.iter(|| read_inbound_favorite_edges(&db, track).unwrap());
-    }
 
-    #[bench]
-    fn read_inbound_edges_1000_users(b: &mut Bencher) {
-        let mut db = new_test_db().unwrap();
-        let track = insert_track(&mut db);
-        for i in 0..1_000 {
-            let user = insert_user(&mut db);
-            add(
-                &mut db,
-                user,
-                track,
-                &nanoid::nanoid!(),
-                FavoriteKind::Track,
-                i as i64,
-            )
-            .unwrap();
+        #[bench]
+        fn has_many_user_with_100_favorites(b: &mut Bencher) {
+            let (db, user, tracks) = seed_user_favorites(100);
+            let probe: Vec<DbId> = tracks.iter().take(10).copied().collect();
+            b.iter(|| has_many(&db, user, &probe).unwrap());
         }
-        b.iter(|| read_inbound_favorite_edges(&db, track).unwrap());
+
+        #[bench]
+        fn has_many_user_with_1000_favorites(b: &mut Bencher) {
+            let (db, user, tracks) = seed_user_favorites(1_000);
+            let probe: Vec<DbId> = tracks.iter().take(10).copied().collect();
+            b.iter(|| has_many(&db, user, &probe).unwrap());
+        }
+
+        #[bench]
+        fn list_ids_user_with_100_favorites(b: &mut Bencher) {
+            let (db, user, _) = seed_user_favorites(100);
+            b.iter(|| list_ids(&db, user, FavoriteKind::Track).unwrap());
+        }
+
+        #[bench]
+        fn list_ids_user_with_1000_favorites(b: &mut Bencher) {
+            let (db, user, _) = seed_user_favorites(1_000);
+            b.iter(|| list_ids(&db, user, FavoriteKind::Track).unwrap());
+        }
+
+        #[bench]
+        fn read_inbound_edges_100_users(b: &mut Bencher) {
+            let mut db = new_test_db().unwrap();
+            let track = insert_track(&mut db);
+            for i in 0..100 {
+                let user = insert_user(&mut db);
+                add(
+                    &mut db,
+                    user,
+                    track,
+                    &nanoid::nanoid!(),
+                    FavoriteKind::Track,
+                    i as i64,
+                )
+                .unwrap();
+            }
+            b.iter(|| read_inbound_favorite_edges(&db, track).unwrap());
+        }
+
+        #[bench]
+        fn read_inbound_edges_1000_users(b: &mut Bencher) {
+            let mut db = new_test_db().unwrap();
+            let track = insert_track(&mut db);
+            for i in 0..1_000 {
+                let user = insert_user(&mut db);
+                add(
+                    &mut db,
+                    user,
+                    track,
+                    &nanoid::nanoid!(),
+                    FavoriteKind::Track,
+                    i as i64,
+                )
+                .unwrap();
+            }
+            b.iter(|| read_inbound_favorite_edges(&db, track).unwrap());
+        }
     }
 }

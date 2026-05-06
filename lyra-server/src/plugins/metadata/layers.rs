@@ -16,7 +16,7 @@ use mlua::{
 };
 
 use crate::STATE;
-use crate::db::NodeId;
+use crate::plugins::db::NodeId;
 use crate::services::metadata::layers::save_provider_layer;
 
 use agdb::DbId;

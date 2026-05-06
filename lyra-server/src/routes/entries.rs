@@ -25,11 +25,14 @@ use crate::{
         self,
         Permission,
     },
-    routes::AppError,
-    routes::deserialize_inc,
     routes::responses::{
         EntryResponse,
         ReleaseResponse,
+    },
+    routes::{
+        self,
+        AppError,
+        deserialize_inc,
     },
     services::{
         auth::require_authenticated,
@@ -95,10 +98,17 @@ async fn get_entries(
     let include = parse_inc(query.inc)?;
     let db = &*STATE.db.read().await;
     let details = list_details(db, include)?;
-    let response: Vec<EntryResponse> = details
-        .into_iter()
-        .map(|d| detail_to_entry_response(db, d, include_full_path))
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut response = Vec::with_capacity(details.len());
+    for detail in details {
+        let entry_db_id = detail
+            .entry
+            .db_id
+            .ok_or_else(|| anyhow::anyhow!("entry missing db_id"))?;
+        if !routes::entity_accessible_to_principal(db, &principal, entry_db_id)? {
+            continue;
+        }
+        response.push(detail_to_entry_response(db, detail, include_full_path)?);
+    }
     Ok(Json(response))
 }
 
@@ -113,6 +123,13 @@ async fn get_entry(
     let include = parse_inc(query.inc)?;
     let db = &*STATE.db.read().await;
     let detail = get_details(db, &id, include)?;
+    let entry_db_id = detail
+        .entry
+        .db_id
+        .ok_or_else(|| anyhow::anyhow!("entry missing db_id"))?;
+    routes::require_entity_accessible(db, &principal, entry_db_id, || {
+        AppError::not_found(format!("Entry not found: {id}"))
+    })?;
     Ok(Json(detail_to_entry_response(
         db,
         detail,

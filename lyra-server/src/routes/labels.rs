@@ -26,6 +26,7 @@ use crate::{
         labels,
     },
     routes::{
+        self,
         AppError,
         deserialize_inc,
         parse_inc_values,
@@ -71,19 +72,33 @@ fn parse_label_inc(inc: Option<Vec<String>>) -> Result<LabelInc, AppError> {
 }
 
 async fn list_labels(headers: HeaderMap) -> Result<Json<Vec<LabelResponse>>, AppError> {
-    let _principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(&headers).await?;
 
     let db = &*STATE.db.read().await;
     let all = labels::get_all(db)?;
 
-    let responses: Vec<LabelResponse> = all
-        .into_iter()
-        .map(|label| LabelResponse {
+    let mut responses = Vec::with_capacity(all.len());
+    for label in all {
+        let Some(label_db_id) = label.db_id.clone().map(agdb::DbId::from) else {
+            continue;
+        };
+        let release_pairs = labels::get_releases_with_catalog(db, label_db_id)?;
+        let mut has_accessible_release = false;
+        for (release_db_id, _) in &release_pairs {
+            if routes::entity_accessible_to_principal(db, &principal, *release_db_id)? {
+                has_accessible_release = true;
+                break;
+            }
+        }
+        if !has_accessible_release {
+            continue;
+        }
+        responses.push(LabelResponse {
             id: label.id,
             name: label.name,
             releases: None,
-        })
-        .collect();
+        });
+    }
 
     Ok(Json(responses))
 }
@@ -93,7 +108,7 @@ async fn get_label(
     Path(id): Path<String>,
     axum::extract::Query(query): axum::extract::Query<LabelQuery>,
 ) -> Result<Json<LabelResponse>, AppError> {
-    let _principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(&headers).await?;
     let inc = parse_label_inc(query.inc)?;
 
     let db = &*STATE.db.read().await;
@@ -101,12 +116,21 @@ async fn get_label(
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
     let label = labels::get_by_id(db, label_db_id)?
         .ok_or_else(|| AppError::not_found(format!("Label not found: {id}")))?;
+    let pairs = labels::get_releases_with_catalog(db, label_db_id)?;
+    let mut accessible_pairs = Vec::new();
+    for (release_db_id, catalog_number) in pairs {
+        if routes::entity_accessible_to_principal(db, &principal, release_db_id)? {
+            accessible_pairs.push((release_db_id, catalog_number));
+        }
+    }
+    if accessible_pairs.is_empty() {
+        return Err(AppError::not_found(format!("Label not found: {id}")));
+    }
 
     let releases = if inc.releases {
-        let pairs = labels::get_releases_with_catalog(db, label_db_id)?;
-        let release_db_ids: Vec<_> = pairs.iter().map(|(id, _)| *id).collect();
+        let release_db_ids: Vec<_> = accessible_pairs.iter().map(|(id, _)| *id).collect();
         let release_ids_by_id = db::lookup::find_ids_by_db_ids(db, &release_db_ids)?;
-        let summaries: Vec<LabelReleaseSummary> = pairs
+        let summaries: Vec<LabelReleaseSummary> = accessible_pairs
             .into_iter()
             .filter_map(|(release_db_id, catalog_number)| {
                 release_ids_by_id

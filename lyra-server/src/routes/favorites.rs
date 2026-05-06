@@ -145,7 +145,7 @@ async fn put_favorite(
     }
 
     let mut db = STATE.db.write().await;
-    match favorite_service::add(&mut db, principal.user_db_id, &target_id)? {
+    match favorite_service::add_for_principal(&mut db, &principal, &target_id)? {
         favorite_service::MutationOutcome::Applied(_) => Ok(StatusCode::NO_CONTENT),
         favorite_service::MutationOutcome::NotTargetable => Err(AppError::not_found(format!(
             "favorite target not found: {target_id}"
@@ -186,7 +186,7 @@ async fn get_favorite_state(
     }
 
     let db = STATE.db.read().await;
-    let favorited = favorite_service::has(&db, principal.user_db_id, &target_id)?;
+    let favorited = favorite_service::has_for_principal(&db, &principal, &target_id)?;
     Ok(Json(FavoriteStateResponse { favorited }))
 }
 
@@ -204,7 +204,7 @@ async fn check_favorites(
     }
 
     let db = STATE.db.read().await;
-    let favorited = favorite_service::has_many(&db, principal.user_db_id, &request.target_ids)?;
+    let favorited = favorite_service::has_many_for_principal(&db, &principal, &request.target_ids)?;
     Ok(Json(CheckResponse { favorited }))
 }
 

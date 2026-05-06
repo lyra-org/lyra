@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
-
 use harmony_core::LuaAsyncExt;
 use mlua::{
     ExternalResult,
@@ -15,11 +13,12 @@ use mlua::{
 
 use crate::{
     STATE,
-    db::Release,
-    db::ReleaseType,
-    db::ResolveId,
+    plugins::db::Release,
+    plugins::db::ReleaseType,
+    plugins::db::ResolveId,
     plugins::{
         PluginSortOrder,
+        caller::RequestCaller,
         paged_result_to_table,
         parse_ids,
         parse_list_options,
@@ -58,7 +57,7 @@ struct ReleasesModule;
 impl ReleasesModule {
     /// Lists releases related to the given scope, or all releases by default.
     pub(crate) async fn list(
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         scope: Option<ResolveId>,
     ) -> Result<Vec<Release>> {
         let db = STATE.db.read().await;
@@ -66,7 +65,8 @@ impl ReleasesModule {
             Some(id) => id.to_query_id(&db).into_lua_err()?,
             None => None,
         };
-        let releases = release_service::get(&db, query_id).into_lua_err()?;
+        let mut releases = release_service::get(&db, query_id).into_lua_err()?;
+        retain_accessible_releases(&db, &caller.principal, &mut releases).into_lua_err()?;
 
         Ok(releases)
     }
@@ -75,7 +75,7 @@ impl ReleasesModule {
     #[harmony(args(opts: ReleaseQueryOptions), returns(ReleaseQueryResult))]
     pub(crate) async fn query(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         opts: Table,
     ) -> Result<Table> {
         let scope: Option<ResolveId> = opts.get("scope")?;
@@ -98,26 +98,48 @@ impl ReleasesModule {
         } else {
             release_service::query(&db, scope, &list_options).into_lua_err()?
         };
-        paged_result_to_table(&lua, result)
+        let mut entries = result.entries;
+        retain_accessible_releases(&db, &caller.principal, &mut entries).into_lua_err()?;
+        paged_result_to_table(
+            &lua,
+            crate::plugins::db::PagedResult {
+                total_count: entries.len() as u64,
+                offset: result.offset,
+                entries,
+            },
+        )
     }
 
     pub(crate) async fn get_by_artist(
-        _plugin_id: Option<Arc<str>>,
-        artist_id: crate::db::NodeId,
+        #[harmony_context] caller: RequestCaller,
+        artist_id: crate::plugins::db::NodeId,
     ) -> Result<Vec<Release>> {
         let db = STATE.db.read().await;
         let artist_db_id = agdb::DbId::from(artist_id);
-        let releases = crate::db::releases::get_by_artist(&db, artist_db_id).into_lua_err()?;
+        if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, artist_db_id)
+            .into_lua_err()?
+        {
+            return Ok(Vec::new());
+        }
+        let mut releases =
+            crate::plugins::db::releases::get_by_artist(&db, artist_db_id).into_lua_err()?;
+        retain_accessible_releases(&db, &caller.principal, &mut releases).into_lua_err()?;
         Ok(releases)
     }
 
     pub(crate) async fn get_appearances(
-        _plugin_id: Option<Arc<str>>,
-        artist_id: crate::db::NodeId,
+        #[harmony_context] caller: RequestCaller,
+        artist_id: crate::plugins::db::NodeId,
     ) -> Result<Vec<Release>> {
         let db = STATE.db.read().await;
         let artist_db_id = agdb::DbId::from(artist_id);
-        let releases = release_service::get_appearances(&db, artist_db_id).into_lua_err()?;
+        if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, artist_db_id)
+            .into_lua_err()?
+        {
+            return Ok(Vec::new());
+        }
+        let mut releases = release_service::get_appearances(&db, artist_db_id).into_lua_err()?;
+        retain_accessible_releases(&db, &caller.principal, &mut releases).into_lua_err()?;
         Ok(releases)
     }
 
@@ -125,7 +147,7 @@ impl ReleasesModule {
     #[harmony(args(ids: Vec<u64>), returns(std::collections::BTreeMap<u64, Vec<Release>>))]
     pub(crate) async fn list_many(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         ids: Table,
     ) -> Result<Table> {
         let ids = parse_ids(ids)?;
@@ -133,11 +155,30 @@ impl ReleasesModule {
         let related = release_service::get_many_by_track(&db, &ids).into_lua_err()?;
         let table = lua.create_table()?;
         for id in ids {
-            let releases = related.get(&id).cloned().unwrap_or_default();
+            let mut releases = related.get(&id).cloned().unwrap_or_default();
+            retain_accessible_releases(&db, &caller.principal, &mut releases).into_lua_err()?;
             table.set(id.0, releases)?;
         }
         Ok(table)
     }
+}
+
+fn retain_accessible_releases(
+    db: &agdb::DbAny,
+    principal: &crate::services::auth::Principal,
+    releases: &mut Vec<Release>,
+) -> anyhow::Result<()> {
+    let mut retained = Vec::with_capacity(releases.len());
+    for release in releases.drain(..) {
+        let Some(release_db_id) = release.db_id.clone().map(agdb::DbId::from) else {
+            continue;
+        };
+        if crate::routes::entity_accessible_to_principal(db, principal, release_db_id)? {
+            retained.push(release);
+        }
+    }
+    *releases = retained;
+    Ok(())
 }
 
 crate::plugins::plugin_surface_exports!(

@@ -624,6 +624,18 @@ mod tests {
                 role_name
             };
             db::roles::ensure_user_has_role(&mut db, user_db_id, &role_name)?;
+            let library_ids = db::libraries::get(&*db)?
+                .into_iter()
+                .filter_map(|library| library.db_id)
+                .collect::<Vec<_>>();
+            for library_db_id in library_ids {
+                db::libraries::grant_access(
+                    &mut db,
+                    user_db_id,
+                    library_db_id,
+                    db::libraries::AccessKind::ReadWrite,
+                )?;
+            }
             user_db_id
         };
 

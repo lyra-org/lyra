@@ -23,7 +23,10 @@ use std::collections::HashSet;
 use crate::{
     STATE,
     db,
-    routes::AppError,
+    routes::{
+        self,
+        AppError,
+    },
     services::{
         auth::require_principal,
         playback_sessions as playback_service,
@@ -68,8 +71,11 @@ async fn get_listen_count(
     let db = STATE.db.read().await;
     let track_db_id = db::lookup::find_node_id_by_id(&*db, &query.track_id)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {}", query.track_id)))?;
+    routes::require_entity_accessible(&*db, &principal, track_db_id, || {
+        AppError::not_found(format!("Track not found: {}", query.track_id))
+    })?;
 
-    let count_track_ids = if merge_unique_external_ids {
+    let mut count_track_ids = if merge_unique_external_ids {
         playback_service::resolve_merged_track_ids_for_play_count(
             &db,
             track_db_id,
@@ -78,8 +84,14 @@ async fn get_listen_count(
     } else {
         vec![track_db_id]
     };
+    let mut accessible_track_ids = Vec::with_capacity(count_track_ids.len());
+    for id in count_track_ids.drain(..) {
+        if routes::entity_accessible_to_principal(&*db, &principal, id)? {
+            accessible_track_ids.push(id);
+        }
+    }
 
-    let counts = db::listens::get_counts(&db, &count_track_ids, Some(principal.user_db_id))?;
+    let counts = db::listens::get_counts(&db, &accessible_track_ids, Some(principal.user_db_id))?;
     let listen_count: u64 = counts.values().copied().sum();
 
     let user_id = db::lookup::find_id_by_db_id(&*db, principal.user_db_id)?

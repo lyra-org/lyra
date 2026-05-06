@@ -58,8 +58,11 @@ pub(crate) mod releases;
 pub(crate) mod remote;
 pub(crate) mod search;
 pub(crate) mod startup;
+mod system;
 pub(crate) mod tags;
 pub(crate) mod tracks;
+
+pub(crate) use system::SystemContext;
 
 pub(crate) use libraries::{
     LibrarySyncState,

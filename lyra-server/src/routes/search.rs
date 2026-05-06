@@ -64,7 +64,7 @@ async fn search(
     headers: HeaderMap,
     Query(params): Query<SearchQuery>,
 ) -> Result<Json<SearchResponse>, AppError> {
-    let _principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(&headers).await?;
 
     let trimmed = params.query.trim();
     if trimmed.is_empty() {
@@ -80,9 +80,11 @@ async fn search(
 
     // CPU-bound: each entity's `query` walks the full root collection in memory.
     let guard = STATE.db.read().await;
-    let results = tokio::task::spawn_blocking(move || search_service::search(&guard, &options))
-        .await
-        .map_err(|err| AppError::from(anyhow::anyhow!("search task failed: {err}")))??;
+    let results = tokio::task::spawn_blocking(move || {
+        search_service::search_accessible(&guard, &principal, &options)
+    })
+    .await
+    .map_err(|err| AppError::from(anyhow::anyhow!("search task failed: {err}")))??;
 
     Ok(Json(SearchResponse {
         tracks: results

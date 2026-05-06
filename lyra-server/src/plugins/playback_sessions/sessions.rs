@@ -11,10 +11,11 @@ use mlua::{
 
 use crate::{
     STATE,
+    plugins::caller::RequestCaller,
     services::playback_sessions::{
         self as playbacks,
-        dispatch_evicted_updates,
-        dispatch_playback_update,
+        dispatch_evicted_updates_for_caller,
+        dispatch_playback_update_for_caller,
     },
 };
 
@@ -31,11 +32,19 @@ use crate::plugins::{
     require_positive_id,
 };
 
-pub(crate) async fn report_session(lua: Lua, request_table: Table) -> Result<Option<i64>> {
+pub(crate) async fn report_session(
+    lua: Lua,
+    caller: &RequestCaller,
+    request_table: Table,
+) -> Result<Option<i64>> {
     let request: PlaybackSessionReportRequest =
         from_lua_json_value(&lua, mlua::Value::Table(request_table))?;
-    let plugin_id = require_non_empty_string(request.plugin_id, "plugin_id")?;
+    let _ = require_non_empty_string(request.plugin_id, "plugin_id")?;
+    let plugin_id = caller.plugin_id.to_string();
     let user_db_id = require_positive_id(request.user_id, "user_id")?;
+    if user_db_id != caller.principal.user_db_id {
+        return Err(mlua::Error::runtime("user not found"));
+    }
     let session_key = require_non_empty_string(request.session_key, "session_key")?;
     let track_db_id = require_positive_id(request.track_id, "track_id")?;
     let event = request.event;
@@ -45,6 +54,11 @@ pub(crate) async fn report_session(lua: Lua, request_table: Table) -> Result<Opt
     let mutation = playback_mutation(request.position_ms, request.duration_ms, request.state);
 
     let mut db = STATE.db.write().await;
+    if !crate::routes::entity_accessible_to_principal(&*db, &caller.principal, track_db_id)
+        .map_err(mlua::Error::external)?
+    {
+        return Err(mlua::Error::runtime("track not found"));
+    }
     let update = playbacks::report_playback_session_with_cleanup(
         &mut db,
         playbacks::SessionPlaybackReportRequest {
@@ -59,7 +73,8 @@ pub(crate) async fn report_session(lua: Lua, request_table: Table) -> Result<Opt
         },
     )
     .map_err(playback_service_error_to_lua)?;
-    dispatch_evicted_updates(update.evicted_playbacks);
+    let dispatch_caller = format!("plugin:{}", caller.plugin_id);
+    dispatch_evicted_updates_for_caller(dispatch_caller.clone(), update.evicted_playbacks);
 
     let playbacks::OptionalPlaybackUpdateResult {
         playback, event, ..
@@ -73,15 +88,19 @@ pub(crate) async fn report_session(lua: Lua, request_table: Table) -> Result<Opt
     let event_label = event
         .map(|value| value.to_string())
         .unwrap_or_else(|| active_event.to_string());
-    dispatch_playback_update(&playback, event_label);
+    dispatch_playback_update_for_caller(dispatch_caller, &playback, event_label);
     Ok(Some(playback.playback_session_id.0))
 }
 
-pub(crate) fn clear_session(lua: &Lua, request_table: Table) -> Result<()> {
+pub(crate) fn clear_session(lua: &Lua, caller: &RequestCaller, request_table: Table) -> Result<()> {
     let request: PlaybackSessionClearRequest =
         from_lua_json_value(lua, mlua::Value::Table(request_table))?;
-    let plugin_id = require_non_empty_string(request.plugin_id, "plugin_id")?;
+    let _ = require_non_empty_string(request.plugin_id, "plugin_id")?;
+    let plugin_id = caller.plugin_id.to_string();
     let user_db_id = require_positive_id(request.user_id, "user_id")?;
+    if user_db_id != caller.principal.user_db_id {
+        return Ok(());
+    }
     let session_key = require_non_empty_string(request.session_key, "session_key")?;
 
     playbacks::clear_playback_session(&plugin_id, user_db_id, &session_key);

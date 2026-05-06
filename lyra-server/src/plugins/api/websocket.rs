@@ -50,9 +50,11 @@ use tokio::sync::{
 };
 use tokio::time::Instant;
 
+use crate::plugins::caller;
 use crate::services::auth::{
     self,
     AuthError,
+    Principal,
 };
 use crate::services::remote::constants::{
     AUTH_CHECK_INTERVAL,
@@ -248,7 +250,7 @@ pub(super) async fn dispatch_websocket_route(
             .into_response();
     }
 
-    let ctx = match build_context(
+    let built = match build_context(
         &lua,
         &route,
         &Method::GET,
@@ -273,7 +275,7 @@ pub(super) async fn dispatch_websocket_route(
     };
 
     let auth_required = matches!(route.auth_mode, RouteAuthMode::Required);
-    if auth_required && matches!(ctx.get::<Value>("auth"), Ok(Value::Nil) | Err(_)) {
+    if auth_required && matches!(built.table.get::<Value>("auth"), Ok(Value::Nil) | Err(_)) {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
 
@@ -291,7 +293,17 @@ pub(super) async fn dispatch_websocket_route(
 
     ws.max_message_size(MAX_MESSAGE_SIZE)
         .on_upgrade(move |socket| async move {
-            run_plugin_websocket(lua, socket, handler, ctx, plugin_id, path, reauth_token).await;
+            run_plugin_websocket(
+                lua,
+                socket,
+                handler,
+                built.table,
+                built.principal,
+                plugin_id,
+                path,
+                reauth_token,
+            )
+            .await;
         })
 }
 
@@ -315,6 +327,7 @@ async fn run_plugin_websocket(
     socket: WebSocket,
     handler: PluginFunctionHandle,
     ctx: Table,
+    principal: Option<Principal>,
     plugin_id: PluginId,
     path: Arc<str>,
     reauth_token: Option<String>,
@@ -369,11 +382,15 @@ async fn run_plugin_websocket(
     // The deadline arms only after the driver exits: the handler then has
     // `HANDLER_SHUTDOWN_DEADLINE` to observe the close signal and return on
     // its own before we force-close the thread.
-    let mut handler_fut = std::pin::pin!(run_thread::<Value>(
-        &lua,
-        thread.clone(),
-        (reader, sender, ctx)
-    ));
+    let handler_run = async {
+        let call = run_thread::<Value>(&lua, thread.clone(), (reader, sender, ctx));
+        if let Some(principal) = principal {
+            caller::scope_request(principal, call).await
+        } else {
+            call.await
+        }
+    };
+    let mut handler_fut = std::pin::pin!(handler_run);
     let mut driver_done = false;
     let mut deadline: Option<Instant> = None;
 

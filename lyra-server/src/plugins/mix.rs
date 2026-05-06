@@ -32,7 +32,7 @@ use mlua::{
 use nanoid::nanoid;
 
 use crate::STATE;
-use crate::db::{
+use crate::plugins::db::{
     self,
     mixers::MixerConfig,
 };
@@ -498,7 +498,7 @@ impl MixModule {
             !(method.kind == harmony_luau::MethodKind::Static && method.name == "new")
         });
         // Re-declare Track for `{ Track }` returns; generated modules are scoped independently.
-        let track = <crate::db::Track as DescribeUserData>::class_descriptor();
+        let track = <crate::plugins::db::Track as DescribeUserData>::class_descriptor();
         vec![mixer, track]
     }
 

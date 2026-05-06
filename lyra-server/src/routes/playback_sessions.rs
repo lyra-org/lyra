@@ -32,7 +32,10 @@ use crate::{
         self,
         PlaybackState,
     },
-    routes::AppError,
+    routes::{
+        self,
+        AppError,
+    },
     services::{
         auth::{
             AuthCredential,
@@ -207,6 +210,9 @@ async fn get_playbacks(
     let only_active = query.active.unwrap_or(false);
 
     for playback in playbacks::list_playbacks(&db, principal.user_db_id)? {
+        if !routes::entity_accessible_to_principal(&*db, &principal, playback.track_db_id)? {
+            continue;
+        }
         if only_active
             && !playback_is_recently_active(
                 current_ms,
@@ -242,6 +248,9 @@ async fn start_playback(
     let mut db = STATE.db.write().await;
     let track_db_id = db::lookup::find_node_id_by_id(&*db, &request.track_id)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {}", request.track_id)))?;
+    routes::require_entity_accessible(&*db, principal, track_db_id, || {
+        AppError::not_found(format!("Track not found: {}", request.track_id))
+    })?;
 
     let (playback, event, evicted_playbacks) = if let Some(session_key) =
         rest_playback_session_key(&auth.credential)
@@ -304,6 +313,11 @@ async fn report_playback_progress(
     let mut db = STATE.db.write().await;
     let session_db_id = db::lookup::find_node_id_by_id(&*db, &playback_session_id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {playback_session_id}")))?;
+    let track_db_id = db::playback_sessions::get_track_id(&*db, session_db_id)?
+        .ok_or_else(|| AppError::not_found(format!("not found: {playback_session_id}")))?;
+    routes::require_entity_accessible(&*db, &principal, track_db_id, || {
+        AppError::not_found(format!("not found: {playback_session_id}"))
+    })?;
     let update = playbacks::report_playback_with_cleanup(
         &mut db,
         playbacks::ReportPlaybackRequest {
@@ -363,6 +377,9 @@ async fn get_active_sessions(
 
     let mut response = Vec::new();
     for playback in playbacks::list_playbacks(&db, principal.user_db_id)? {
+        if !routes::entity_accessible_to_principal(&*db, &principal, playback.track_db_id)? {
+            continue;
+        }
         if !playback_is_recently_active(
             current_ms,
             playback.playback.updated_at_ms,

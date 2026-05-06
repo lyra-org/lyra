@@ -871,7 +871,7 @@ mod tests {
     use super::*;
     use crate::{
         STATE,
-        db::{
+        plugins::db::{
             self,
             Permission,
             User,

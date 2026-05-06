@@ -16,7 +16,7 @@ use serde::{
 
 use crate::{
     STATE,
-    db,
+    plugins::db,
     plugins::{
         LUA_SERIALIZE_OPTIONS,
         from_lua_json_value,
@@ -24,6 +24,7 @@ use crate::{
         require_positive_id,
     },
     services::{
+        auth::Principal,
         playback_sessions::{
             self as playbacks,
             PlaybackScopeKey,
@@ -84,8 +85,15 @@ fn resolve_user_public_id(db: &impl db::DbAccess, user_db_id: agdb::DbId) -> Res
         .ok_or_else(|| mlua::Error::runtime("not authorized to control target"))
 }
 
-pub(super) async fn list_connections(lua: Lua, user_id: i64) -> Result<Value> {
+pub(super) async fn list_connections(
+    lua: Lua,
+    principal: &Principal,
+    user_id: i64,
+) -> Result<Value> {
     let user_db_id = require_positive_id(user_id, "user_id")?;
+    if user_db_id != principal.user_db_id {
+        return lua.to_value_with(&Vec::<ConnectionInfo>::new(), LUA_SERIALIZE_OPTIONS);
+    }
     let connections = registry::list_connections().await;
     let now_ms = playbacks::now_ms().map_err(mlua::Error::external)?;
 
@@ -114,12 +122,20 @@ pub(super) async fn list_connections(lua: Lua, user_id: i64) -> Result<Value> {
             let record = playbacks_list
                 .iter()
                 .find(|p| p.playback_session_id == session_id)?;
-            Some(PlaybackInfo {
-                track_public_id: record.track_public_id.clone(),
-                position_ms: record.playback.position_ms,
-                duration_ms: record.playback.duration_ms,
-                state: action_state_string(record.playback.state),
-            })
+            if record
+                .library_public_id
+                .as_ref()
+                .is_some_and(|library_id| principal.accessible_library_ids.contains(library_id))
+            {
+                Some(PlaybackInfo {
+                    track_public_id: record.track_public_id.clone(),
+                    position_ms: record.playback.position_ms,
+                    duration_ms: record.playback.duration_ms,
+                    state: action_state_string(record.playback.state),
+                })
+            } else {
+                None
+            }
         });
 
         let degraded = playbacks::is_remote_control_degraded(&scope_key, now_ms);
@@ -142,17 +158,24 @@ pub(super) async fn list_connections(lua: Lua, user_id: i64) -> Result<Value> {
     lua.to_value_with(&result, LUA_SERIALIZE_OPTIONS)
 }
 
-fn action_state_string(state: crate::db::PlaybackState) -> String {
+fn action_state_string(state: crate::plugins::db::PlaybackState) -> String {
     serde_json::to_value(state)
         .ok()
         .and_then(|v| v.as_str().map(String::from))
         .unwrap_or_default()
 }
 
-pub(super) async fn send_command(_lua: Lua, request_table: Table) -> Result<()> {
+pub(super) async fn send_command(
+    _lua: Lua,
+    principal: &Principal,
+    request_table: Table,
+) -> Result<()> {
     let request: SendCommandRequest =
         from_lua_json_value(&_lua, mlua::Value::Table(request_table))?;
     let user_db_id = require_positive_id(request.user_id, "user_id")?;
+    if user_db_id != principal.user_db_id {
+        return Err(mlua::Error::runtime("not authorized to control target"));
+    }
     let target_token = require_non_empty_string(request.target_token, "target_token")?;
     let action_str = require_non_empty_string(request.action, "action")?;
 

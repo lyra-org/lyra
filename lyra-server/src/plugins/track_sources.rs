@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
-
 use agdb::DbId;
 use harmony_core::LuaAsyncExt;
 use mlua::{
@@ -17,8 +15,11 @@ use mlua::{
 
 use crate::{
     STATE,
-    db,
-    plugins::parse_ids,
+    plugins::db,
+    plugins::{
+        caller::RequestCaller,
+        parse_ids,
+    },
 };
 
 fn resolve_container(entry: &db::Entry) -> Option<String> {
@@ -60,7 +61,7 @@ struct TrackSourcesModule;
 impl TrackSourcesModule {
     /// Returns the primary source key for a track.
     pub(crate) async fn get_primary_source_key(
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         track_id: i64,
     ) -> Result<Option<String>> {
         if track_id <= 0 {
@@ -68,6 +69,11 @@ impl TrackSourcesModule {
         }
 
         let db = STATE.db.read().await;
+        if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, DbId(track_id))
+            .into_lua_err()?
+        {
+            return Ok(None);
+        }
         let Some(source) =
             db::track_sources::get_primary_by_track(&db, DbId(track_id)).into_lua_err()?
         else {
@@ -79,7 +85,7 @@ impl TrackSourcesModule {
 
     /// Returns the primary container for a track.
     pub(crate) async fn get_primary_container(
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         track_id: i64,
     ) -> Result<Option<String>> {
         if track_id <= 0 {
@@ -87,6 +93,11 @@ impl TrackSourcesModule {
         }
 
         let db = STATE.db.read().await;
+        if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, DbId(track_id))
+            .into_lua_err()?
+        {
+            return Ok(None);
+        }
         let container = resolve_primary_container(&db, DbId(track_id)).into_lua_err()?;
         Ok(container)
     }
@@ -95,7 +106,7 @@ impl TrackSourcesModule {
     #[harmony(args(track_ids: Vec<u64>), returns(std::collections::BTreeMap<u64, Option<String>>))]
     pub(crate) async fn get_primary_containers(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         track_ids: Table,
     ) -> Result<Table> {
         let track_ids = parse_ids(track_ids)?;
@@ -103,6 +114,12 @@ impl TrackSourcesModule {
 
         let table = lua.create_table()?;
         for track_id in track_ids {
+            if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, track_id)
+                .into_lua_err()?
+            {
+                table.set(track_id.0, Value::Nil)?;
+                continue;
+            }
             let container = resolve_primary_container(&db, track_id).into_lua_err()?;
             if let Some(container) = container {
                 table.set(track_id.0, container)?;
@@ -127,8 +144,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::resolve_container;
-    use crate::db::Entry;
-    use crate::db::entries::EntryKind;
+    use crate::plugins::db::Entry;
+    use crate::plugins::db::entries::EntryKind;
 
     #[test]
     fn resolve_container_normalizes_extensions() {

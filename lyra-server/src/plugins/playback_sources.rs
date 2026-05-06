@@ -3,9 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashSet;
-use std::sync::Arc;
-
 use agdb::DbId;
 use harmony_core::LuaAsyncExt;
 use mlua::{
@@ -15,12 +12,15 @@ use mlua::{
     Table,
     Value,
 };
+use std::collections::HashSet;
 
 use crate::{
     STATE,
-    db::{
+    plugins::caller::RequestCaller,
+    plugins::db::{
         self,
         NodeId,
+        Permission,
         ResolveId,
     },
     services::playback_sources as playback_source_service,
@@ -30,7 +30,7 @@ use crate::{
 struct EntryInfo {
     db_id: Option<NodeId>,
     id: String,
-    full_path: String,
+    full_path: Option<String>,
     kind: String,
     name: String,
     hash: Option<String>,
@@ -57,6 +57,7 @@ fn source_to_table(
     lua: &Lua,
     source: playback_source_service::PlaybackSource,
     include_entry: bool,
+    include_full_path: bool,
 ) -> Result<Table> {
     let playback_source_service::PlaybackSource {
         track_db_id,
@@ -81,7 +82,7 @@ fn source_to_table(
     source_table.set("is_virtual", start_ms.is_some() || end_ms.is_some())?;
     if include_entry {
         if let Some(entry) = entry {
-            source_table.set("entry", entry_to_table(lua, entry)?)?;
+            source_table.set("entry", entry_to_table(lua, entry, include_full_path)?)?;
         } else {
             source_table.set("entry", Value::Nil)?;
         }
@@ -104,13 +105,15 @@ impl PlaybackSourcesModule {
     #[harmony(args(id: Option<ResolveId>, include_entry: Option<bool>), returns(Vec<PlaybackSourceInfo>))]
     pub(crate) async fn get(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         id: Option<ResolveId>,
         include_entry: Option<bool>,
     ) -> Result<Table> {
         let resolve_id = id.unwrap_or_else(|| ResolveId::alias("tracks"));
         let include_entry = include_entry.unwrap_or(false);
         let db = STATE.db.read().await;
+        let include_full_path =
+            db::roles::has_permission(&caller.principal.permissions, Permission::ManageLibraries);
         let query_id = resolve_id
             .to_query_id(&db)
             .into_lua_err()?
@@ -123,12 +126,17 @@ impl PlaybackSourcesModule {
             let Some(track_id) = track.db_id.map(DbId::from) else {
                 continue;
             };
+            if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, track_id)
+                .into_lua_err()?
+            {
+                continue;
+            }
             let Some(source) =
                 playback_source_service::resolve(&db, track_id, include_entry).into_lua_err()?
             else {
                 continue;
             };
-            let source_table = source_to_table(&lua, source, include_entry)?;
+            let source_table = source_to_table(&lua, source, include_entry, include_full_path)?;
 
             rows.set(index, source_table)?;
             index += 1;
@@ -141,7 +149,7 @@ impl PlaybackSourcesModule {
     #[harmony(args(track_ids: Vec<u64>, include_entry: Option<bool>), returns(std::collections::BTreeMap<u64, Option<PlaybackSourceInfo>>))]
     pub(crate) async fn get_many(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         track_ids: Table,
         include_entry: Option<bool>,
     ) -> Result<Table> {
@@ -160,15 +168,23 @@ impl PlaybackSourcesModule {
         }
 
         let db = STATE.db.read().await;
+        let include_full_path =
+            db::roles::has_permission(&caller.principal.permissions, Permission::ManageLibraries);
         let rows = lua.create_table()?;
         for track_id in unique_track_ids {
+            if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, track_id)
+                .into_lua_err()?
+            {
+                rows.set(track_id.0, Value::Nil)?;
+                continue;
+            }
             let Some(source) =
                 playback_source_service::resolve(&db, track_id, include_entry).into_lua_err()?
             else {
                 rows.set(track_id.0, Value::Nil)?;
                 continue;
             };
-            let source_table = source_to_table(&lua, source, include_entry)?;
+            let source_table = source_to_table(&lua, source, include_entry, include_full_path)?;
             rows.set(track_id.0, source_table)?;
         }
 

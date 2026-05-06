@@ -3,20 +3,21 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashSet;
-use std::sync::Arc;
-
 use crate::{
     STATE,
-    db::ResolveId,
-    db::{
+    plugins::caller::RequestCaller,
+    plugins::db::{
+        self,
         Artist,
         ArtistType,
         CreditType,
+        Permission,
         Release,
         ReleaseType,
+        ResolveId,
         Track,
     },
+    services::auth::Principal,
     services::entities::{
         ArtistCreditSource,
         ArtistProjectionIncludes,
@@ -39,7 +40,10 @@ use crate::{
         project_entity,
     },
 };
-use agdb::DbId;
+use agdb::{
+    DbId,
+    QueryId,
+};
 use harmony_core::LuaAsyncExt;
 use harmony_luau::{
     DescribeTypeAlias,
@@ -56,6 +60,7 @@ use mlua::{
     Table,
     Value,
 };
+use std::collections::HashSet;
 
 #[harmony_macros::interface]
 struct EntityQueryRequest {
@@ -213,12 +218,56 @@ fn parse_query_many_request(
     Ok((ids, includes, library_db_id))
 }
 
-async fn query_projection_info(lua: &Lua, request_table: &Table) -> Result<EntityProjectionInfo> {
+fn filter_includes_for_principal(
+    includes: Vec<EntityInclude>,
+    principal: &Principal,
+) -> Vec<EntityInclude> {
+    if db::roles::has_permission(&principal.permissions, Permission::ManageLibraries) {
+        return includes;
+    }
+    includes
+        .into_iter()
+        .filter(|include| *include != EntityInclude::Entries)
+        .collect()
+}
+
+fn ensure_projection_scope_accessible(
+    db: &impl db::DbAccess,
+    principal: &Principal,
+    query_id: QueryId,
+    library_id: Option<DbId>,
+) -> Result<Option<QueryId>> {
+    if let Some(library_id) = library_id {
+        if db::libraries::accessible_by_id(db, principal, library_id)
+            .into_lua_err()?
+            .is_none()
+        {
+            return Ok(None);
+        }
+    }
+    if let QueryId::Id(entity_db_id) = query_id {
+        if !crate::routes::entity_accessible_to_principal(db, principal, entity_db_id)
+            .into_lua_err()?
+        {
+            return Ok(None);
+        }
+    }
+    Ok(Some(query_id))
+}
+
+async fn query_projection_info(
+    lua: &Lua,
+    request_table: &Table,
+    principal: &Principal,
+) -> Result<EntityProjectionInfo> {
     let (resolve_id, includes, library_id) = parse_query_request(lua, request_table)?;
+    let includes = filter_includes_for_principal(includes, principal);
     let db = STATE.db.read().await;
     let query_id = resolve_id
         .to_query_id(&db)
         .into_lua_err()?
+        .ok_or_else(|| mlua::Error::runtime("could not resolve id"))?;
+    let query_id = ensure_projection_scope_accessible(&*db, principal, query_id, library_id)?
         .ok_or_else(|| mlua::Error::runtime("could not resolve id"))?;
     project_entity(&db, query_id, &includes, library_id).into_lua_err()
 }
@@ -303,10 +352,10 @@ impl EntitiesModule {
     #[harmony(args(request: EntityQueryRequest), returns(EntityProjectionInfo))]
     pub(crate) async fn query(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         request_table: Table,
     ) -> Result<Value> {
-        let projection = query_projection_info(&lua, &request_table).await?;
+        let projection = query_projection_info(&lua, &request_table, &caller.principal).await?;
         projection.into_lua(&lua)
     }
 
@@ -314,11 +363,12 @@ impl EntitiesModule {
     #[harmony(args(request: EntityQueryRequest), returns(ReleaseProjectionInfo))]
     pub(crate) async fn query_release(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         request_table: Table,
     ) -> Result<Value> {
-        let projection =
-            expect_release_projection(query_projection_info(&lua, &request_table).await?)?;
+        let projection = expect_release_projection(
+            query_projection_info(&lua, &request_table, &caller.principal).await?,
+        )?;
         projection.into_lua(&lua)
     }
 
@@ -326,11 +376,12 @@ impl EntitiesModule {
     #[harmony(args(request: EntityQueryRequest), returns(TrackProjectionInfo))]
     pub(crate) async fn query_track(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         request_table: Table,
     ) -> Result<Value> {
-        let projection =
-            expect_track_projection(query_projection_info(&lua, &request_table).await?)?;
+        let projection = expect_track_projection(
+            query_projection_info(&lua, &request_table, &caller.principal).await?,
+        )?;
         projection.into_lua(&lua)
     }
 
@@ -338,24 +389,32 @@ impl EntitiesModule {
     #[harmony(args(request: EntityQueryRequest), returns(ArtistProjectionInfo))]
     pub(crate) async fn query_artist(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         request_table: Table,
     ) -> Result<Value> {
-        let projection =
-            expect_artist_projection(query_projection_info(&lua, &request_table).await?)?;
+        let projection = expect_artist_projection(
+            query_projection_info(&lua, &request_table, &caller.principal).await?,
+        )?;
         projection.into_lua(&lua)
     }
 
     /// Returns the element type string for a given id (e.g. "Library", "Release", "Artist", "Track").
     #[harmony(returns(Option<String>))]
     pub(crate) async fn get_type(
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         id: ResolveId,
     ) -> Result<Option<String>> {
         let db = STATE.db.read().await;
         let db_id = id.to_db_id(&db).into_lua_err()?;
         match db_id {
-            Some(id) => crate::db::entities::get_element_type(&db, id).into_lua_err(),
+            Some(id) => {
+                if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, id)
+                    .into_lua_err()?
+                {
+                    return Ok(None);
+                }
+                crate::plugins::db::entities::get_element_type(&db, id).into_lua_err()
+            }
             None => Ok(None),
         }
     }
@@ -364,20 +423,33 @@ impl EntitiesModule {
     #[harmony(args(request: EntityQueryManyRequest), returns(std::collections::BTreeMap<String, EntityProjectionInfo>))]
     pub(crate) async fn query_many(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         request_table: Table,
     ) -> Result<Table> {
         let (ids, includes, library_id) = parse_query_many_request(&lua, &request_table)?;
+        let includes = filter_includes_for_principal(includes, &caller.principal);
         let db = STATE.db.read().await;
 
         let mut keys = Vec::with_capacity(ids.len());
         let mut query_ids = Vec::with_capacity(ids.len());
+        if let Some(library_id) = library_id
+            && db::libraries::accessible_by_id(&*db, &caller.principal, library_id)
+                .into_lua_err()?
+                .is_none()
+        {
+            return lua.create_table();
+        }
         for (key, resolve_id) in ids {
-            keys.push(key);
             let qid = resolve_id
                 .to_query_id(&db)
                 .into_lua_err()?
                 .ok_or_else(|| mlua::Error::runtime("could not resolve id"))?;
+            let Some(qid) =
+                ensure_projection_scope_accessible(&*db, &caller.principal, qid, library_id)?
+            else {
+                continue;
+            };
+            keys.push(key);
             query_ids.push(qid);
         }
 

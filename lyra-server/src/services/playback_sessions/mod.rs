@@ -42,17 +42,15 @@ pub(crate) use self::workflow::{
     resolve_merged_track_ids_for_play_count,
     start_playback_with_cleanup,
 };
-use crate::db::{
-    PlaybackSession,
-    PlaybackState,
-};
-#[cfg(test)]
-pub(crate) use updates::dispatch_update;
+pub(crate) use crate::db::PlaybackSession;
+use crate::db::PlaybackState;
 pub(crate) use updates::{
     PLAYBACK_CALLBACK_REGISTRY,
     PlaybackUpdatePayload,
     dispatch_evicted_updates,
+    dispatch_evicted_updates_for_caller,
     dispatch_playback_update,
+    dispatch_playback_update_for_caller,
     reset_callback_registry_for_test,
     subscribe_playback_events,
     teardown_plugin_callbacks,

@@ -50,7 +50,10 @@ use crate::{
         TrackResponse,
     },
     services::{
-        auth::require_authenticated,
+        auth::{
+            Principal,
+            require_authenticated,
+        },
         metadata::lyrics as lyrics_service,
         tracks as track_service,
     },
@@ -113,6 +116,7 @@ fn track_detail_to_response(
 }
 
 pub(crate) async fn list_track_responses(
+    principal: &Principal,
     inc: Option<Vec<String>>,
     query: Option<String>,
 ) -> Result<Vec<TrackResponse>, AppError> {
@@ -126,14 +130,21 @@ pub(crate) async fn list_track_responses(
     };
     let details = track_service::list_details(db, includes, &options)?;
 
-    details
-        .into_iter()
-        .map(|d| track_detail_to_response(db, d))
-        .collect::<anyhow::Result<Vec<_>>>()
-        .map_err(AppError::from)
+    let mut response = Vec::with_capacity(details.len());
+    for detail in details {
+        let Some(track_db_id) = detail.track.db_id.clone().map(agdb::DbId::from) else {
+            continue;
+        };
+        if !super::entity_accessible_to_principal(db, principal, track_db_id)? {
+            continue;
+        }
+        response.push(track_detail_to_response(db, detail)?);
+    }
+    Ok(response)
 }
 
 pub(crate) async fn get_track_response(
+    principal: &Principal,
     id: String,
     inc: Option<Vec<String>>,
 ) -> Result<TrackResponse, AppError> {
@@ -141,6 +152,9 @@ pub(crate) async fn get_track_response(
     let includes = parse_inc(inc)?;
     let track_db_id = db::lookup::find_node_id_by_id(db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
+    super::require_entity_accessible(db, principal, track_db_id, || {
+        AppError::not_found(format!("Track not found: {id}"))
+    })?;
     let detail = track_service::get_details(db, track_db_id, includes)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {}", id)))?;
 
@@ -151,9 +165,9 @@ async fn get_tracks(
     headers: HeaderMap,
     Query(list_query): Query<TrackListQuery>,
 ) -> Result<Json<Vec<TrackResponse>>, AppError> {
-    let _principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(&headers).await?;
     Ok(Json(
-        list_track_responses(list_query.inc, list_query.query).await?,
+        list_track_responses(&principal, list_query.inc, list_query.query).await?,
     ))
 }
 
@@ -162,8 +176,8 @@ async fn get_track(
     Path(id): Path<String>,
     Query(query): Query<TrackQuery>,
 ) -> Result<Json<TrackResponse>, AppError> {
-    let _principal = require_authenticated(&headers).await?;
-    Ok(Json(get_track_response(id, query.inc).await?))
+    let principal = require_authenticated(&headers).await?;
+    Ok(Json(get_track_response(&principal, id, query.inc).await?))
 }
 
 fn list_tracks_docs(op: TransformOperation) -> TransformOperation {
@@ -201,7 +215,7 @@ async fn get_track_lyrics(
     Path(id): Path<String>,
     Query(query): Query<LyricsQuery>,
 ) -> Result<Response, AppError> {
-    let _principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(&headers).await?;
     let db = &*STATE.db.read().await;
 
     // Same 404 body whether the track or the lyrics are missing — hides which
@@ -209,6 +223,7 @@ async fn get_track_lyrics(
     let not_found = || AppError::not_found(format!("No lyrics for track: {id}"));
 
     let track_db_id = db::lookup::find_node_id_by_id(db, &id)?.ok_or_else(not_found)?;
+    super::require_entity_accessible(db, &principal, track_db_id, not_found)?;
     let track = db::tracks::get_by_id(db, track_db_id)?.ok_or_else(not_found)?;
 
     let format = query
@@ -263,7 +278,7 @@ async fn put_track_lyrics(
     Query(query): Query<LyricsWriteQuery>,
     body: Bytes,
 ) -> Result<Json<LyricsResponse>, AppError> {
-    let _principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(&headers).await?;
     let now = lyrics_service::now_ms().map_err(lyrics_upload_error_to_app_error)?;
     let content_type = request_content_type(&headers)?;
     if !matches!(
@@ -278,6 +293,11 @@ async fn put_track_lyrics(
         .map_err(lyrics_upload_error_to_app_error)?;
 
     let mut db = STATE.db.write().await;
+    let track_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
+        .ok_or_else(|| AppError::not_found(format!("Track not found: {id}")))?;
+    super::require_entity_accessible(&*db, &principal, track_db_id, || {
+        AppError::not_found(format!("Track not found: {id}"))
+    })?;
     let detail = lyrics_service::upsert_user_lyrics(&mut db, &id, input)
         .map_err(lyrics_upload_error_to_app_error)?;
 
@@ -288,8 +308,13 @@ async fn delete_track_lyrics(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let _principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(&headers).await?;
     let mut db = STATE.db.write().await;
+    let track_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
+        .ok_or_else(|| AppError::not_found(format!("Track not found: {id}")))?;
+    super::require_entity_accessible(&*db, &principal, track_db_id, || {
+        AppError::not_found(format!("Track not found: {id}"))
+    })?;
     lyrics_service::delete_user_lyrics_for_track(&mut db, &id)
         .map_err(lyrics_upload_error_to_app_error)?;
     Ok(StatusCode::NO_CONTENT)
@@ -299,12 +324,16 @@ async fn refresh_track_lyrics(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let _principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(&headers).await?;
 
     let track_db_id = {
         let db = &*STATE.db.read().await;
-        db::lookup::find_node_id_by_id(db, &id)?
-            .ok_or_else(|| AppError::not_found(format!("No track: {id}")))?
+        let track_db_id = db::lookup::find_node_id_by_id(db, &id)?
+            .ok_or_else(|| AppError::not_found(format!("No track: {id}")))?;
+        super::require_entity_accessible(db, &principal, track_db_id, || {
+            AppError::not_found(format!("No track: {id}"))
+        })?;
+        track_db_id
     };
 
     lyrics_service::providers::dispatch_for_track(track_db_id, true).await?;

@@ -14,7 +14,7 @@ use agdb::{
 
 use self::layers::MetadataLayer;
 use super::DbAccess;
-use super::external_ids::ExternalId;
+use super::providers::external_ids::ExternalId;
 
 pub(crate) fn collect_external_id_ids(
     db: &impl DbAccess,

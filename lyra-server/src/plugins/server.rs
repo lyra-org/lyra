@@ -20,8 +20,8 @@ use serde::Serialize;
 
 use crate::{
     STATE,
-    db,
     plugins::LUA_SERIALIZE_OPTIONS,
+    plugins::db,
 };
 
 static HOSTNAME: LazyLock<String> =

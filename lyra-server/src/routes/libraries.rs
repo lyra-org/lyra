@@ -122,6 +122,40 @@ struct LibraryRefreshResponse {
     entity_type: String,
 }
 
+#[derive(Clone, Copy, Deserialize, Serialize, JsonSchema)]
+enum LibraryAccessKind {
+    ReadWrite,
+}
+
+impl Default for LibraryAccessKind {
+    fn default() -> Self {
+        Self::ReadWrite
+    }
+}
+
+impl From<LibraryAccessKind> for db::libraries::AccessKind {
+    fn from(kind: LibraryAccessKind) -> Self {
+        match kind {
+            LibraryAccessKind::ReadWrite => Self::ReadWrite,
+        }
+    }
+}
+
+#[derive(Serialize, JsonSchema)]
+struct LibraryAccessResponse {
+    id: String,
+    username: String,
+    role: Option<String>,
+    kind: LibraryAccessKind,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct LibraryGrantAccessRequest {
+    user_id: String,
+    #[serde(default)]
+    kind: LibraryAccessKind,
+}
+
 #[derive(Deserialize, JsonSchema)]
 struct LibraryRefreshQuery {
     #[serde(default)]
@@ -132,6 +166,37 @@ struct LibraryRefreshQuery {
     #[serde(default)]
     #[schemars(description = "Bypass cached provider cover resolution and refresh it.")]
     force_refresh: bool,
+}
+
+fn library_not_found(id: &str) -> AppError {
+    AppError::not_found(format!("library not found: {id}"))
+}
+
+fn resolve_accessible_library_db_id(
+    db: &impl db::DbAccess,
+    principal: &crate::services::auth::Principal,
+    id: &str,
+) -> Result<agdb::DbId, AppError> {
+    if principal.permissions.contains(&Permission::Admin) {
+        if !principal.accessible_library_ids.contains(id) {
+            return Err(library_not_found(id));
+        }
+        let Some(library_db_id) = db::lookup::find_node_id_by_id(db, id)? else {
+            return Err(library_not_found(id));
+        };
+        db::libraries::get_by_id(db, library_db_id)?.ok_or_else(|| library_not_found(id))?;
+        return Ok(library_db_id);
+    }
+
+    db::libraries::find_accessible_node_id_by_id(db, principal, id)?
+        .ok_or_else(|| library_not_found(id))
+}
+
+fn public_user_role(db: &impl db::DbAccess, user_db_id: agdb::DbId) -> Option<String> {
+    db::roles::get_role_for_user(db, user_db_id)
+        .ok()
+        .flatten()
+        .map(|role| role.name)
 }
 
 async fn refresh_library(
@@ -358,6 +423,7 @@ async fn list_libraries(headers: HeaderMap) -> Result<Json<Vec<LibraryResponse>>
     let libraries = db::libraries::get(&db)?;
     let response: Vec<LibraryResponse> = libraries
         .into_iter()
+        .filter(|library| principal.accessible_library_ids.contains(&library.id))
         .map(|library| LibraryResponse::from_library(library, include_directory))
         .collect();
     Ok(Json(response))
@@ -365,7 +431,7 @@ async fn list_libraries(headers: HeaderMap) -> Result<Json<Vec<LibraryResponse>>
 
 fn list_libraries_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List libraries").description(
-        "Returns all libraries. `directory` is included only for authenticated users with ManageLibraries permission.",
+        "Returns libraries visible to the authenticated user. `directory` is included only for users with ManageLibraries permission.",
     )
 }
 
@@ -379,10 +445,7 @@ async fn get_library_releases(
         db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
 
     let db = &*STATE.db.read().await;
-    let library_db_id = db::lookup::find_node_id_by_id(db, &id)?
-        .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-    db::libraries::get_by_id(db, library_db_id)?
-        .ok_or_else(|| AppError::not_found(format!("Library not found: {}", id)))?;
+    let library_db_id = resolve_accessible_library_db_id(db, &principal, &id)?;
 
     let (includes, include_covers, include_genres) = parse_release_includes(query.inc)?;
     let details = releases::list_details_for_scope(db, library_db_id, includes)?;
@@ -474,8 +537,129 @@ fn start_library_sync_docs(op: TransformOperation) -> TransformOperation {
         .description("Starts a background library sync. Returns 409 if one is already running.")
 }
 
+async fn list_library_access(
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<LibraryAccessResponse>>, AppError> {
+    let _principal = require_manage_libraries_on(&headers, &id).await?;
+    let db = STATE.db.read().await;
+    let library_db_id =
+        db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
+    db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
+
+    let users = db::libraries::users_with_access(&db, library_db_id)?;
+    let response = users
+        .into_iter()
+        .map(|user| {
+            let role = user.db_id.and_then(|db_id| public_user_role(&db, db_id));
+            LibraryAccessResponse {
+                id: user.id,
+                username: user.username,
+                role,
+                kind: LibraryAccessKind::ReadWrite,
+            }
+        })
+        .collect();
+    Ok(Json(response))
+}
+
+async fn grant_library_access(
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(request): Json<LibraryGrantAccessRequest>,
+) -> Result<StatusCode, AppError> {
+    let principal = require_manage_libraries_on(&headers, &id).await?;
+    let mut db = STATE.db.write().await;
+    let library_db_id =
+        db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
+    db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
+
+    let target_user = db::users::get_by_public_id(&db, &request.user_id)?
+        .or_else(|| {
+            db::users::get_by_username(&db, &request.user_id)
+                .ok()
+                .flatten()
+        })
+        .ok_or_else(|| AppError::not_found(format!("user not found: {}", request.user_id)))?;
+    let target_user_db_id = target_user
+        .db_id
+        .ok_or_else(|| AppError::not_found(format!("user has no db_id: {}", request.user_id)))?;
+
+    let authorized = principal.permissions.contains(&Permission::Admin);
+    let granted = db.transaction_mut(|t| -> anyhow::Result<bool> {
+        if !authorized
+            && !db::libraries::user_has_access_in_txn(t, principal.user_db_id, library_db_id)?
+        {
+            return Ok(false);
+        }
+        db::libraries::grant_access(t, target_user_db_id, library_db_id, request.kind.into())?;
+        Ok(true)
+    })?;
+    if !granted {
+        return Err(library_not_found(&id));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn revoke_library_access(
+    headers: HeaderMap,
+    Path((id, user_id)): Path<(String, String)>,
+) -> Result<StatusCode, AppError> {
+    let principal = require_manage_libraries_on(&headers, &id).await?;
+    let mut db = STATE.db.write().await;
+    let library_db_id =
+        db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
+    db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
+
+    let target_user = db::users::get_by_public_id(&db, &user_id)?
+        .or_else(|| db::users::get_by_username(&db, &user_id).ok().flatten())
+        .ok_or_else(|| AppError::not_found(format!("user not found: {user_id}")))?;
+    let target_user_db_id = target_user
+        .db_id
+        .ok_or_else(|| AppError::not_found(format!("user has no db_id: {user_id}")))?;
+
+    if target_user_db_id == principal.user_db_id {
+        tracing::warn!(
+            user_public_id = %principal.user_public_id,
+            library_public_id = %id,
+            "user revoked their own library access"
+        );
+    }
+
+    let authorized = principal.permissions.contains(&Permission::Admin);
+    let revoked = db.transaction_mut(|t| -> anyhow::Result<bool> {
+        if !authorized
+            && !db::libraries::user_has_access_in_txn(t, principal.user_db_id, library_db_id)?
+        {
+            return Ok(false);
+        }
+        db::libraries::revoke_access(t, target_user_db_id, library_db_id)?;
+        Ok(true)
+    })?;
+    if !revoked {
+        return Err(library_not_found(&id));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn list_library_access_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("List library access")
+        .description("Returns explicit user grants for a library. Admin bypass is not listed.")
+}
+
+fn grant_library_access_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Grant library access")
+        .description("Grants a user access to a library.")
+}
+
+fn revoke_library_access_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Revoke library access")
+        .description("Revokes a user's explicit library access grant.")
+}
+
 pub fn library_routes() -> ApiRouter {
     use aide::axum::routing::{
+        delete_with,
         get_with,
         patch_with,
     };
@@ -500,4 +684,166 @@ pub fn library_routes() -> ApiRouter {
             get_with(get_library_sync_status, get_library_sync_status_docs)
                 .post_with(start_library_sync_for_library, start_library_sync_docs),
         )
+        .api_route(
+            "/{id}/access",
+            get_with(list_library_access, list_library_access_docs)
+                .post_with(grant_library_access, grant_library_access_docs),
+        )
+        .api_route(
+            "/{id}/access/{user_id}",
+            delete_with(revoke_library_access, revoke_library_access_docs),
+        )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        db,
+        services::auth::sessions,
+    };
+
+    fn bearer_headers(token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "Authorization",
+            format!("Bearer {token}").parse().expect("valid header"),
+        );
+        headers
+    }
+
+    fn library_insert(name: &str, suffix: &str) -> db::libraries::LibraryInsert {
+        let path = std::path::PathBuf::from(format!("/tmp/lyra-route-library-{suffix}"));
+        let path_key = db::libraries::path_key_for(&path);
+        db::libraries::LibraryInsert {
+            id: nanoid!(),
+            name: name.to_string(),
+            path,
+            path_key,
+            language: None,
+            country: None,
+        }
+    }
+
+    fn create_user_with_permissions(
+        db: &mut agdb::DbAny,
+        username: &str,
+        permissions: Vec<Permission>,
+    ) -> anyhow::Result<agdb::DbId> {
+        let user_db_id = db::users::create(db, &db::users::test_user(username)?)?;
+        let role = db::roles::Role {
+            db_id: None,
+            id: nanoid!(),
+            name: format!("{username}-role"),
+            permissions,
+        };
+        let role_db_id = db::roles::create(db, &role)?;
+        db::roles::assign_role_to_user(db, user_db_id, role_db_id)?;
+        Ok(user_db_id)
+    }
+
+    async fn setup_route_test() -> anyhow::Result<()> {
+        crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
+            directory: std::path::PathBuf::from("."),
+            language: None,
+            country: None,
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn list_libraries_returns_only_accessible_libraries() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let (user_db_id, visible_id, hidden_id) = {
+            let mut db = STATE.db.write().await;
+            let user_db_id = db::users::create(&mut db, &db::users::test_user("listener")?)?;
+            let visible = db.transaction_mut(|t| -> anyhow::Result<db::Library> {
+                Ok(db::libraries::create_with_creator(
+                    t,
+                    library_insert("Visible", "visible"),
+                    user_db_id,
+                )?)
+            })?;
+            let hidden = db.transaction_mut(|t| -> anyhow::Result<db::Library> {
+                Ok(db::libraries::create_system(
+                    t,
+                    library_insert("Hidden", "hidden"),
+                )?)
+            })?;
+            (user_db_id, visible.id, hidden.id)
+        };
+        let session = sessions::create_session_for_user(user_db_id).await?;
+
+        let Json(libraries) = list_libraries(bearer_headers(&session.token))
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        assert_eq!(libraries.len(), 1);
+        assert_eq!(libraries[0].id, visible_id);
+        assert_ne!(libraries[0].id, hidden_id);
+        assert!(libraries[0].directory.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn library_access_endpoints_grant_list_and_revoke() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let (manager_db_id, target_id, library_id) = {
+            let mut db = STATE.db.write().await;
+            let manager_db_id = create_user_with_permissions(
+                &mut db,
+                "manager",
+                vec![Permission::ManageLibraries],
+            )?;
+            let target_db_id = db::users::create(&mut db, &db::users::test_user("target")?)?;
+            let target_id = db::users::get_by_id(&db, target_db_id)?
+                .expect("target user")
+                .id;
+            let library = db.transaction_mut(|t| -> anyhow::Result<db::Library> {
+                Ok(db::libraries::create_with_creator(
+                    t,
+                    library_insert("Managed", "managed"),
+                    manager_db_id,
+                )?)
+            })?;
+            (manager_db_id, target_id, library.id)
+        };
+        let session = sessions::create_session_for_user(manager_db_id).await?;
+        let headers = bearer_headers(&session.token);
+
+        let granted = grant_library_access(
+            headers.clone(),
+            Path(library_id.clone()),
+            Json(LibraryGrantAccessRequest {
+                user_id: target_id.clone(),
+                kind: LibraryAccessKind::ReadWrite,
+            }),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert_eq!(granted, StatusCode::NO_CONTENT);
+
+        let Json(access) = list_library_access(headers.clone(), Path(library_id.clone()))
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert!(access.iter().any(|grant| grant.id == target_id));
+
+        let revoked = revoke_library_access(
+            headers.clone(),
+            Path((library_id.clone(), target_id.clone())),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert_eq!(revoked, StatusCode::NO_CONTENT);
+
+        let revoked_again = revoke_library_access(headers, Path((library_id, target_id)))
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert_eq!(revoked_again, StatusCode::NO_CONTENT);
+        Ok(())
+    }
 }

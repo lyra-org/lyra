@@ -27,7 +27,7 @@ use mlua::{
 };
 use serde::de::DeserializeOwned;
 
-use crate::db::{
+use crate::plugins::db::{
     ListOptions,
     PagedResult,
     SortDirection,
@@ -38,9 +38,11 @@ pub(crate) mod api;
 pub(crate) mod artists;
 pub(crate) mod auth;
 pub(crate) mod bootstrap;
+pub(crate) mod caller;
 pub(crate) mod chromaprint;
 pub(crate) mod covers;
 pub(crate) mod datastore;
+pub(crate) mod db;
 pub(crate) mod docs;
 pub(crate) mod entities;
 pub(crate) mod entries;
@@ -272,14 +274,22 @@ pub(crate) fn parse_list_options(table: &mlua::Table) -> mlua::Result<ListOption
     })
 }
 
-pub(crate) fn entry_to_table(lua: &Lua, entry: crate::db::Entry) -> mlua::Result<Table> {
+pub(crate) fn entry_to_table(
+    lua: &Lua,
+    entry: crate::plugins::db::Entry,
+    include_full_path: bool,
+) -> mlua::Result<Table> {
     let table = lua.create_table()?;
     if let Some(db_id) = entry.db_id {
         table.set("db_id", db_id.0)?;
     } else {
         table.set("db_id", Value::Nil)?;
     }
-    table.set("full_path", entry.full_path.to_string_lossy().to_string())?;
+    if include_full_path {
+        table.set("full_path", entry.full_path.to_string_lossy().to_string())?;
+    } else {
+        table.set("full_path", Value::Nil)?;
+    }
     table.set("kind", entry.kind.to_string())?;
     table.set("name", entry.name)?;
     if let Some(hash) = entry.hash {
@@ -331,6 +341,11 @@ pub(crate) fn parse_ids(ids: Table) -> mlua::Result<Vec<agdb::DbId>> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{
+        Path,
+        PathBuf,
+    };
+
     use super::{
         PluginSortOrder,
         SortDirection,
@@ -375,5 +390,117 @@ mod tests {
 
         let ids = parse_ids(table).unwrap();
         assert_eq!(ids, vec![agdb::DbId(4), agdb::DbId(7)]);
+    }
+
+    #[test]
+    fn plugin_sources_do_not_import_raw_db_directly() {
+        fn visit(path: &Path, files: &mut Vec<PathBuf>) {
+            if path.is_dir() {
+                for entry in std::fs::read_dir(path).expect("read plugin source directory") {
+                    visit(&entry.expect("read plugin source entry").path(), files);
+                }
+                return;
+            }
+
+            if path.extension().is_some_and(|ext| ext == "rs") {
+                files.push(path.to_path_buf());
+            }
+        }
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/plugins");
+        let allowed = root.join("db.rs");
+        let mut files = Vec::new();
+        visit(&root, &mut files);
+
+        for path in files {
+            if path == allowed {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("read plugin source");
+            let compact = source
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect::<String>();
+            let direct_path = ["crate", "db"].join("::");
+            let grouped_start = ["usecrate::{", "db"].join("");
+            let grouped_module = format!(",{}::{{", "db");
+            assert!(
+                !source.contains(&direct_path)
+                    && !compact.contains(&grouped_start)
+                    && !compact.contains(&grouped_module),
+                "{} imports raw db directly; use crate::plugins::db",
+                path.strip_prefix(&root).unwrap_or(&path).display()
+            );
+        }
+    }
+
+    #[test]
+    fn plugin_modules_do_not_use_context_labels() {
+        fn visit(path: &Path, files: &mut Vec<PathBuf>) {
+            if path.is_dir() {
+                for entry in std::fs::read_dir(path).expect("read plugin source directory") {
+                    visit(&entry.expect("read plugin source entry").path(), files);
+                }
+                return;
+            }
+
+            if path.extension().is_some_and(|ext| ext == "rs") {
+                files.push(path.to_path_buf());
+            }
+        }
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/plugins");
+        let mut files = Vec::new();
+        visit(&root, &mut files);
+
+        for path in files {
+            let source = std::fs::read_to_string(&path).expect("read plugin source");
+            assert!(
+                !source.contains("context = \""),
+                "{} uses module context labels; use explicit #[harmony_context] parameters",
+                path.strip_prefix(&root).unwrap_or(&path).display()
+            );
+        }
+    }
+
+    #[test]
+    fn request_module_callers_are_explicit_context_parameters() {
+        fn visit(path: &Path, files: &mut Vec<PathBuf>) {
+            if path.is_dir() {
+                for entry in std::fs::read_dir(path).expect("read plugin source directory") {
+                    visit(&entry.expect("read plugin source entry").path(), files);
+                }
+                return;
+            }
+
+            if path.extension().is_some_and(|ext| ext == "rs") {
+                files.push(path.to_path_buf());
+            }
+        }
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/plugins");
+        let test_root = root.join("mod.rs");
+        let mut files = Vec::new();
+        visit(&root, &mut files);
+
+        for path in files {
+            if path == test_root {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("read plugin source");
+            if !source.contains("#[harmony_macros::module(") || !source.contains("RequestCaller") {
+                continue;
+            }
+            assert!(
+                !source.contains("Option<Arc<str>>") && !source.contains("request_caller("),
+                "{} uses request caller state but still accepts raw plugin ids",
+                path.strip_prefix(&root).unwrap_or(&path).display()
+            );
+            assert!(
+                source.contains("#[harmony_context]"),
+                "{} uses RequestCaller without marking it as a Harmony context parameter",
+                path.strip_prefix(&root).unwrap_or(&path).display()
+            );
+        }
     }
 }

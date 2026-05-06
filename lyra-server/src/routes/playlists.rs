@@ -42,15 +42,21 @@ use crate::{
         self,
         Playlist,
     },
-    routes::AppError,
-    routes::deserialize_inc,
     routes::responses::{
         ArtistResponse,
         ReleaseResponse,
         TrackResponse,
     },
+    routes::{
+        self,
+        AppError,
+        deserialize_inc,
+    },
     services::{
-        auth::require_principal,
+        auth::{
+            Principal,
+            require_principal,
+        },
         entities::resolve_track_artists,
         playlists,
     },
@@ -197,7 +203,7 @@ async fn require_playlist_owner(
     Ok(principal)
 }
 
-fn build_track_response(
+fn build_track_response_unchecked(
     db: &agdb::DbAny,
     track: db::Track,
     track_db_id: DbId,
@@ -232,8 +238,34 @@ fn build_track_response(
     })
 }
 
+fn build_track_response(
+    db: &agdb::DbAny,
+    principal: &Principal,
+    track: db::Track,
+    track_db_id: DbId,
+    entry_id: String,
+    position: u64,
+    inc: PlaylistInc,
+) -> anyhow::Result<PlaylistTrackResponse> {
+    if !routes::entity_accessible_to_principal(db, principal, track_db_id)? {
+        return Ok(PlaylistTrackResponse {
+            entry_id,
+            track: TrackResponse::unavailable(track.id),
+            artists: inc
+                .artists
+                .then(|| vec![ArtistResponse::unavailable(String::new())]),
+            release: inc
+                .releases
+                .then(|| ReleaseResponse::unavailable(String::new())),
+            position,
+        });
+    }
+    build_track_response_unchecked(db, track, track_db_id, entry_id, position, inc)
+}
+
 fn build_tracks(
     db: &agdb::DbAny,
+    principal: &Principal,
     playlist_db_id: DbId,
     inc: PlaylistInc,
 ) -> anyhow::Result<Vec<PlaylistTrackResponse>> {
@@ -245,6 +277,7 @@ fn build_tracks(
         };
         items.push(build_track_response(
             db,
+            principal,
             track,
             playlist_track.track_db_id,
             playlist_track.entry_id,
@@ -313,7 +346,7 @@ async fn get_playlists(
             .ok_or_else(|| anyhow::anyhow!("playlist missing db_id"))?
             .into();
         let tracks = if inc.tracks {
-            Some(build_tracks(db, playlist_db_id, inc)?)
+            Some(build_tracks(db, &principal, playlist_db_id, inc)?)
         } else {
             None
         };
@@ -340,14 +373,12 @@ async fn get_playlist(
 
     // Check access: owner or public
     let owner_db_id = playlists::get_owner(db, QueryId::Id(playlist_db_id))?;
-    let is_owner = owner_db_id == Some(principal.user_db_id);
-    let is_public = playlist.is_public.unwrap_or(false);
-    if !is_owner && !is_public {
+    if !routes::playlist_accessible_to_principal(db, &principal, playlist_db_id)? {
         return Err(AppError::not_found(format!("Playlist not found: {}", id)));
     }
 
     let tracks = if inc.tracks {
-        Some(build_tracks(db, playlist_db_id, inc)?)
+        Some(build_tracks(db, &principal, playlist_db_id, inc)?)
     } else {
         None
     };
@@ -423,30 +454,36 @@ async fn add_playlist_tracks(
         db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?
     };
-    let _principal = require_playlist_owner(&headers, playlist_db_id).await?;
+    let principal = require_playlist_owner(&headers, playlist_db_id).await?;
 
     if request.track_ids.is_empty() {
         return Err(AppError::bad_request("track_ids cannot be empty"));
     }
 
-    let mut db = STATE.db.write().await;
-    let results = playlists::add_tracks(
-        &mut db,
-        QueryId::Id(playlist_db_id),
-        &request
-            .track_ids
-            .into_iter()
-            .map(QueryId::Alias)
-            .collect::<Vec<_>>(),
-    )
-    .map_err(|err| {
-        let message = err.to_string();
-        if message.starts_with("track not found") {
-            AppError::not_found(message)
-        } else {
-            AppError::from(err)
+    let track_query_ids = {
+        let db = STATE.db.read().await;
+        let mut ids = Vec::with_capacity(request.track_ids.len());
+        for track_id in request.track_ids {
+            let track_db_id = db::lookup::find_node_id_by_id(&*db, &track_id)?
+                .ok_or_else(|| AppError::not_found(format!("track not found: {track_id}")))?;
+            routes::require_entity_accessible(&*db, &principal, track_db_id, || {
+                AppError::not_found(format!("track not found: {track_id}"))
+            })?;
+            ids.push(QueryId::Id(track_db_id));
         }
-    })?;
+        ids
+    };
+
+    let mut db = STATE.db.write().await;
+    let results = playlists::add_tracks(&mut db, QueryId::Id(playlist_db_id), &track_query_ids)
+        .map_err(|err| {
+            let message = err.to_string();
+            if message.starts_with("track not found") {
+                AppError::not_found(message)
+            } else {
+                AppError::from(err)
+            }
+        })?;
 
     let no_inc = PlaylistInc {
         tracks: true,
@@ -459,6 +496,7 @@ async fn add_playlist_tracks(
             .ok_or_else(|| AppError::not_found("playlist track target missing"))?;
         added.push(build_track_response(
             &db,
+            &principal,
             track,
             playlist_track.track_db_id,
             playlist_track.entry_id,
@@ -513,13 +551,20 @@ async fn remove_playlist_entries(
                 playlist_track.track_db_id.0
             ))
         })?;
-        removed.push(PlaylistTrackResponse {
-            entry_id: playlist_track.entry_id,
-            track: track.into(),
-            artists: None,
-            release: None,
-            position: playlist_track.position,
-        });
+        let no_inc = PlaylistInc {
+            tracks: true,
+            artists: false,
+            releases: false,
+        };
+        removed.push(build_track_response(
+            &db,
+            &_principal,
+            track,
+            playlist_track.track_db_id,
+            playlist_track.entry_id,
+            playlist_track.position,
+            no_inc,
+        )?);
     }
 
     Ok(Json(removed))
@@ -573,7 +618,7 @@ async fn move_playlist_track(
         artists: false,
         releases: false,
     };
-    let items = build_tracks(&db, playlist_db_id, no_inc)?;
+    let items = build_tracks(&db, &_principal, playlist_db_id, no_inc)?;
     Ok(Json(items))
 }
 
@@ -714,7 +759,7 @@ mod tests {
         let track = db::tracks::get_by_id(&db, track_db_id)?
             .ok_or_else(|| anyhow!("track missing after insert"))?;
 
-        let response = build_track_response(
+        let response = build_track_response_unchecked(
             &db,
             track,
             track_db_id,

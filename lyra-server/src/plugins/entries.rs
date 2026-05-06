@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
-
 use agdb::QueryId;
 use harmony_core::LuaAsyncExt;
 use mlua::{
@@ -16,10 +14,12 @@ use mlua::{
 
 use crate::{
     STATE,
-    db::NodeId,
-    db::ResolveId,
-    db::{
+    plugins::caller::RequestCaller,
+    plugins::db::{
         self,
+        NodeId,
+        Permission,
+        ResolveId,
     },
 };
 
@@ -27,7 +27,7 @@ use crate::{
 struct EntryInfo {
     db_id: Option<NodeId>,
     id: String,
-    full_path: String,
+    full_path: Option<String>,
     kind: String,
     name: String,
     hash: Option<String>,
@@ -51,10 +51,12 @@ impl EntriesModule {
     #[harmony(returns(Vec<EntryInfo>))]
     pub(crate) async fn get(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         id: Option<ResolveId>,
     ) -> Result<Table> {
         let db = STATE.db.read().await;
+        let include_full_path =
+            db::roles::has_permission(&caller.principal.permissions, Permission::ManageLibraries);
 
         let entries = match id {
             None => db::entries::get(&db, "libraries").into_lua_err()?,
@@ -69,6 +71,15 @@ impl EntriesModule {
                             .into_lua_err()?
                             .is_some()
                         {
+                            if !crate::routes::entity_accessible_to_principal(
+                                &db,
+                                &caller.principal,
+                                node_id,
+                            )
+                            .into_lua_err()?
+                            {
+                                return lua.create_table();
+                            }
                             db::entries::get_by_track(&db, node_id).into_lua_err()?
                         } else {
                             db::entries::get(&db, QueryId::Id(node_id)).into_lua_err()?
@@ -80,8 +91,18 @@ impl EntriesModule {
         };
 
         let rows = lua.create_table()?;
-        for (index, entry) in entries.into_iter().enumerate() {
-            rows.set(index + 1, entry_to_table(&lua, entry)?)?;
+        let mut index = 1usize;
+        for entry in entries {
+            let Some(entry_db_id) = entry.db_id else {
+                continue;
+            };
+            if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, entry_db_id)
+                .into_lua_err()?
+            {
+                continue;
+            }
+            rows.set(index, entry_to_table(&lua, entry, include_full_path)?)?;
+            index += 1;
         }
 
         Ok(rows)

@@ -21,8 +21,11 @@ use serde::Deserialize;
 use crate::{
     STATE,
     db,
-    routes::AppError,
-    routes::responses::TrackResponse,
+    routes::{
+        self,
+        AppError,
+        responses::TrackResponse,
+    },
     services::{
         auth::require_principal,
         mix,
@@ -94,17 +97,17 @@ async fn get_mix(
 
     // Service enforces existence + type; `verify_id_stable` catches DbId reuse.
     let result = if let Some(ref id) = query.seed_track {
-        let db_id = resolve_seed_id(id, "track").await?;
+        let db_id = resolve_accessible_seed_id(id, "track", &principal).await?;
         let mix_result = mix::from_track(db_id, &options).await?;
         verify_id_stable(id, db_id, "track").await?;
         mix_result.ok_or_else(|| AppError::not_found(format!("track not found: {id}")))?
     } else if let Some(ref id) = query.seed_release {
-        let db_id = resolve_seed_id(id, "release").await?;
+        let db_id = resolve_accessible_seed_id(id, "release", &principal).await?;
         let mix_result = mix::from_release(db_id, &options).await?;
         verify_id_stable(id, db_id, "release").await?;
         mix_result.ok_or_else(|| AppError::not_found(format!("release not found: {id}")))?
     } else if let Some(ref id) = query.seed_artist {
-        let db_id = resolve_seed_id(id, "artist").await?;
+        let db_id = resolve_accessible_seed_id(id, "artist", &principal).await?;
         let mix_result = mix::from_artist(db_id, &options).await?;
         verify_id_stable(id, db_id, "artist").await?;
         mix_result.ok_or_else(|| AppError::not_found(format!("artist not found: {id}")))?
@@ -115,6 +118,12 @@ async fn get_mix(
         mix_result.ok_or_else(|| AppError::not_found(format!("genre not found: {id}")))?
     } else if let Some(ref id) = query.seed_playlist {
         let db_id = resolve_seed_id(id, "playlist").await?;
+        {
+            let db = STATE.db.read().await;
+            if !routes::playlist_accessible_to_principal(&*db, &principal, db_id)? {
+                return Err(AppError::not_found(format!("playlist not found: {id}")));
+            }
+        }
         let mix_result = mix::from_playlist(db_id, &options).await?;
         verify_id_stable(id, db_id, "playlist").await?;
         mix_result.ok_or_else(|| AppError::not_found(format!("playlist not found: {id}")))?
@@ -127,6 +136,7 @@ async fn get_mix(
         unreachable!()
     };
 
+    let result = filter_accessible_tracks(&principal, result).await?;
     let responses: Vec<TrackResponse> = result.into_iter().map(TrackResponse::from).collect();
     Ok(Json(responses))
 }
@@ -136,6 +146,37 @@ async fn resolve_seed_id(id: &str, label: &str) -> Result<agdb::DbId, AppError> 
     let db = &*STATE.db.read().await;
     db::lookup::find_node_id_by_id(db, id)?
         .ok_or_else(|| AppError::not_found(format!("{label} not found: {id}")))
+}
+
+async fn resolve_accessible_seed_id(
+    id: &str,
+    label: &str,
+    principal: &crate::services::auth::Principal,
+) -> Result<agdb::DbId, AppError> {
+    let db = &*STATE.db.read().await;
+    let db_id = db::lookup::find_node_id_by_id(db, id)?
+        .ok_or_else(|| AppError::not_found(format!("{label} not found: {id}")))?;
+    routes::require_entity_accessible(db, principal, db_id, || {
+        AppError::not_found(format!("{label} not found: {id}"))
+    })?;
+    Ok(db_id)
+}
+
+async fn filter_accessible_tracks(
+    principal: &crate::services::auth::Principal,
+    tracks: Vec<db::Track>,
+) -> anyhow::Result<Vec<db::Track>> {
+    let db = &*STATE.db.read().await;
+    let mut filtered = Vec::with_capacity(tracks.len());
+    for track in tracks {
+        let Some(track_db_id) = track.db_id.clone().map(agdb::DbId::from) else {
+            continue;
+        };
+        if routes::entity_accessible_to_principal(db, principal, track_db_id)? {
+            filtered.push(track);
+        }
+    }
+    Ok(filtered)
 }
 
 /// Asserts the id still maps to `expected_db_id` — agdb reuses DbIds, so

@@ -92,6 +92,7 @@ pub(crate) struct HlsSession {
     #[allow(dead_code)]
     pub(crate) user_db_id: DbId,
     pub(crate) user_public_id: String,
+    pub(crate) library_public_id: String,
     pub(crate) playlist_segment_count: u64,
     pub(crate) job_key: HlsJobKey,
     pub(crate) last_access: Instant,
@@ -290,6 +291,7 @@ pub(crate) async fn attach_session_to_job(
     session_id: &str,
     user_db_id: DbId,
     user_public_id: String,
+    library_public_id: String,
     playlist_segment_count: u64,
     job_key: HlsJobKey,
 ) -> Result<PathBuf, HlsError> {
@@ -307,6 +309,7 @@ pub(crate) async fn attach_session_to_job(
         HlsSession {
             user_db_id,
             user_public_id,
+            library_public_id,
             playlist_segment_count,
             job_key,
             last_access: Instant::now(),
@@ -458,6 +461,7 @@ mod tests {
         let session = HlsSession {
             user_db_id: DbId(10),
             user_public_id: "user-pub-10".to_string(),
+            library_public_id: "lib-pub-10".to_string(),
             playlist_segment_count: 1,
             job_key: HlsJobKey::new(
                 "track-pub-77".to_string(),
@@ -506,10 +510,26 @@ mod tests {
         let key_a = job_key.clone();
         let key_b = job_key.clone();
         let attach_a = tokio::spawn(async move {
-            attach_session_to_job("session-a", DbId(1), "user-pub-1".to_string(), 1, key_a).await
+            attach_session_to_job(
+                "session-a",
+                DbId(1),
+                "user-pub-1".to_string(),
+                "lib-pub-1".to_string(),
+                1,
+                key_a,
+            )
+            .await
         });
         let attach_b = tokio::spawn(async move {
-            attach_session_to_job("session-b", DbId(2), "user-pub-2".to_string(), 1, key_b).await
+            attach_session_to_job(
+                "session-b",
+                DbId(2),
+                "user-pub-2".to_string(),
+                "lib-pub-1".to_string(),
+                1,
+                key_b,
+            )
+            .await
         });
 
         let attach_a_result = attach_a.await.expect("session-a task should finish");

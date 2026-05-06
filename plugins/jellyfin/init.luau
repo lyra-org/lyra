@@ -1266,7 +1266,7 @@ api.get(P .. "/Library/VirtualFolders", function(ctx: ApiContext)
 		if hex_id then
 			local folder: JsonValue = {
 				Name = lib.name,
-				Locations = { lib.directory },
+				Locations = {},
 				CollectionType = "music",
 				ItemId = hex_id,
 				RefreshStatus = "",

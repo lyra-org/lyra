@@ -19,7 +19,7 @@ use serde::Serialize;
 
 use crate::{
     STATE,
-    db::{
+    plugins::db::{
         self,
         NodeId,
     },
@@ -29,7 +29,7 @@ use crate::{
 
 /// `lyra/tags` plugin bindings. Plugins are fully trusted — callers must scope to the request
 /// principal; the host does not verify `user_id`. Tag names are normalized via
-/// [`crate::db::tags::normalize_tag_name`]; return values use the canonical form.
+/// [`crate::plugins::db::tags::normalize_tag_name`]; return values use the canonical form.
 struct TagsModule;
 
 #[derive(Debug, Serialize)]
