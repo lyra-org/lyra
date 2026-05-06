@@ -20,7 +20,7 @@ harmony-macros = { path = "../harmony-macros" }
 harmony-task = { path = "../harmony-task" }
 harmony-net = { path = "../harmony-net" }
 mlua = { workspace = true, features = ["send", "serialize"] }
-agdb = { version = "0.12", features = ["serde"] }
+agdb = { git = "https://github.com/agnesoft/agdb.git", features = ["serde"] }
 anyhow = { workspace = true }
 argon2 = { version = "0.5", features = ["std", "password-hash"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio", "macros", "tracing", "ws"] }

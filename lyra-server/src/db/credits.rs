@@ -82,7 +82,10 @@ impl CreditType {
             "engineer" => Ok(Self::Engineer),
             "mixer" => Ok(Self::Mixer),
             "remixer" => Ok(Self::Remixer),
-            _ => Err(DbError::from(format!("invalid CreditType value '{value}'"))),
+            _ => Err(DbError::serialization(
+                agdb::DbErrorType::TypeError,
+                format!("invalid CreditType value '{value}'"),
+            )),
         }
     }
 }

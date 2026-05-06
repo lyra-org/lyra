@@ -101,9 +101,10 @@ impl ReleaseType {
             "broadcast" => Ok(Self::Broadcast),
             "other" => Ok(Self::Other),
             "unknown" => Ok(Self::Unknown),
-            _ => Err(DbError::from(format!(
-                "invalid ReleaseType value '{value}'"
-            ))),
+            _ => Err(DbError::serialization(
+                agdb::DbErrorType::TypeError,
+                format!("invalid ReleaseType value '{value}'"),
+            )),
         }
     }
 }

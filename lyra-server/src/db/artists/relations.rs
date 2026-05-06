@@ -62,9 +62,10 @@ impl ArtistRelationType {
         match value {
             "voice_actor" => Ok(Self::VoiceActor),
             "member_of" => Ok(Self::MemberOf),
-            _ => Err(DbError::from(format!(
-                "invalid ArtistRelationType value '{value}'"
-            ))),
+            _ => Err(DbError::serialization(
+                agdb::DbErrorType::TypeError,
+                format!("invalid ArtistRelationType value '{value}'"),
+            )),
         }
     }
 }

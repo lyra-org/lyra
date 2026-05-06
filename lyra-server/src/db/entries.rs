@@ -43,7 +43,10 @@ impl EntryKind {
         match value {
             "file" => Ok(Self::File),
             "dir" => Ok(Self::Dir),
-            _ => Err(DbError::from(format!("invalid EntryKind value '{value}'"))),
+            _ => Err(DbError::serialization(
+                agdb::DbErrorType::TypeError,
+                format!("invalid EntryKind value '{value}'"),
+            )),
         }
     }
 }
