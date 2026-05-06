@@ -9,7 +9,10 @@ use std::{
 };
 
 use agdb::DbId;
-use anyhow::Result;
+use anyhow::{
+    Context,
+    Result,
+};
 use axum::{
     Router,
     extract::DefaultBodyLimit,
@@ -37,7 +40,14 @@ use crate::{
     services::hls::init as hls_init,
 };
 
-pub(crate) async fn run_server(capture_path: Option<String>) -> Result<()> {
+pub(crate) async fn bind_configured_listener(port: u16) -> Result<TcpListener> {
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("configured port {port} is already in use or unavailable"))
+}
+
+pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListener) -> Result<()> {
     let _tracing_guard = init_tracing();
 
     let capture_mode = capture_path.is_some();
@@ -102,7 +112,7 @@ pub(crate) async fn run_server(capture_path: Option<String>) -> Result<()> {
         services::providers::run_provider_sync_loop(interval_secs, shutdown_bg).await;
     });
 
-    serve(app, config.as_ref()).await?;
+    serve(app, config.as_ref(), listener).await?;
 
     tracing::info!("server stopped, running shutdown cleanup");
     if let Some(ref maintenance_shutdown) = maintenance_shutdown {
@@ -158,10 +168,7 @@ async fn optimize_storage_on_shutdown(db: &crate::db::DbAsync) {
 // Sharply below axum's 2MB default to bound CPU/RAM amplification on auth'd POSTs.
 const REQUEST_BODY_LIMIT_BYTES: usize = 256 * 1024;
 
-async fn serve(app: Router, config: &crate::config::Config) -> Result<()> {
-    let port = config.port;
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    let listener = TcpListener::bind(addr).await?;
+async fn serve(app: Router, config: &crate::config::Config, listener: TcpListener) -> Result<()> {
     tracing::debug!("listening on {}", listener.local_addr()?);
     let app = app.layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES));
     let app = services::cors::apply(app, config);
@@ -190,4 +197,20 @@ async fn shutdown_signal() {
     ctrl_c.await.ok();
 
     tracing::info!("shutdown signal received, draining connections");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bind_configured_listener;
+
+    #[tokio::test]
+    async fn bind_configured_listener_rejects_occupied_port() -> anyhow::Result<()> {
+        let first = bind_configured_listener(0).await?;
+        let port = first.local_addr()?.port();
+
+        let second = bind_configured_listener(port).await;
+
+        assert!(second.is_err());
+        Ok(())
+    }
 }

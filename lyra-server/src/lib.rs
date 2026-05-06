@@ -9,7 +9,7 @@
 use std::sync::{
     Arc,
     LazyLock,
-    Mutex as StdMutex,
+    OnceLock,
     RwLock as StdRwLock,
 };
 
@@ -43,7 +43,6 @@ use config::{
 pub(crate) use db::Library;
 use db::{
     DbAsync,
-    DbProcessLock,
     create,
 };
 use plugins::lifecycle::PluginRegistries;
@@ -69,22 +68,17 @@ impl<T: Clone> SwapHandle<T> {
     }
 }
 
-/// DB slot and process-lock guard in independent fields so `reset_with` can
-/// drop the lock atomically with the slot replacement — bundling them under
-/// one `Arc` would let a stray DB clone keep the lock alive. `reset_with` is
-/// **not** safe concurrently; serialize externally (today `RUNTIME_TEST_LOCK`).
+/// DB slot. `reset_with` is **not** safe concurrently; serialize externally
+/// (today `RUNTIME_TEST_LOCK`).
 #[derive(Clone)]
 pub(crate) struct DbHandle {
     db: SwapHandle<DbAsync>,
-    /// Mutex (not RwLock): every access take/replaces the inner `Option`.
-    lock: Arc<StdMutex<Option<DbProcessLock>>>,
 }
 
 impl DbHandle {
     fn new(created: db::Created) -> Self {
         Self {
             db: SwapHandle::new(created.db),
-            lock: Arc::new(StdMutex::new(created.lock)),
         }
     }
 
@@ -92,54 +86,13 @@ impl DbHandle {
         self.db.get()
     }
 
-    /// Drop-then-acquire reload: release the current lock before the factory
-    /// acquires a new one (same-process double `flock` deadlocks). On factory
-    /// error, rollback per the gate documented on [`Self::release_for_reload`].
     fn reset_with<F>(&self, factory: F) -> Result<()>
     where
         F: FnOnce() -> Result<db::Created>,
     {
-        let release = self.release_for_reload()?;
-
-        match factory() {
-            Ok(created) => {
-                self.db.replace(created.db);
-                *self.lock.lock().expect("db lock poisoned") = created.lock;
-                drop(release.old_db);
-                Ok(())
-            }
-            Err(err) => {
-                if release.old_lock_was_never_real {
-                    // Rollback assumes the caller hasn't advanced other state
-                    // before observing this Err. `AppState::reset` propagates
-                    // with `?` first; a future inversion needs this re-narrowed.
-                    self.db.replace(release.old_db);
-                } else {
-                    drop(release.old_db);
-                    tracing::error!(
-                        error = %err,
-                        "db reset_with: factory failed for path-backed db; old lock has been released, in-memory placeholder remains. Restart server to recover."
-                    );
-                }
-                Err(err)
-            }
-        }
-    }
-
-    /// Take+swap+drop, returning what the caller needs to commit or roll back.
-    /// Encapsulates the lock-fd-closes-first ordering so it can't be reordered
-    /// by a downstream edit.
-    fn release_for_reload(&self) -> Result<ReloadRelease> {
-        let old_db = self.db.get();
-        let old_lock = self.lock.lock().expect("db lock poisoned").take();
-        let old_lock_was_never_real = old_lock.is_none();
-        let placeholder = db::bootstrap::placeholder()?;
-        self.db.replace(placeholder);
-        drop(old_lock);
-        Ok(ReloadRelease {
-            old_db,
-            old_lock_was_never_real,
-        })
+        let created = factory()?;
+        self.db.replace(created.db);
+        Ok(())
     }
 
     pub(crate) async fn read(&self) -> OwnedRwLockReadGuard<DbAny> {
@@ -149,13 +102,6 @@ impl DbHandle {
     pub(crate) async fn write(&self) -> OwnedRwLockWriteGuard<DbAny> {
         self.get().write_owned().await
     }
-}
-
-/// What `release_for_reload` produces: the previous DB (for rollback or drop)
-/// and a flag describing whether the previous slot ever held a real fd-lock.
-struct ReloadRelease {
-    old_db: DbAsync,
-    old_lock_was_never_real: bool,
 }
 
 pub(crate) type LuaHandle = SwapHandle<Arc<Lua>>;
@@ -210,16 +156,20 @@ impl AppState {
 }
 
 fn default_app_state() -> AppState {
-    let config = match load_config() {
-        Ok(config) => config,
-        Err(_) if cfg!(test) => Config::default(),
-        Err(err) => panic!("failed to load config: {err}"),
+    let config = match INITIAL_CONFIG.get().cloned() {
+        Some(config) => config,
+        None => match load_config() {
+            Ok(config) => config,
+            Err(_) if cfg!(test) => Config::default(),
+            Err(err) => panic!("failed to load config: {err}"),
+        },
     };
     build_app_state(config).unwrap_or_else(|err| {
         panic!("failed to initialize application state: {err}");
     })
 }
 
+static INITIAL_CONFIG: OnceLock<Config> = OnceLock::new();
 pub(crate) static STATE: LazyLock<AppState> = LazyLock::new(default_app_state);
 
 pub fn outbound_user_agent() -> String {
@@ -233,16 +183,20 @@ pub fn outbound_user_agent() -> String {
 }
 
 pub async fn run_server(capture_path: Option<String>) -> Result<()> {
-    services::startup::run_server(capture_path).await
+    let config = load_config()?;
+    let port = config.port;
+    let listener = services::startup::bind_configured_listener(port).await?;
+    let _ = INITIAL_CONFIG.set(config);
+    services::startup::run_server(capture_path, listener).await
 }
 
 pub fn run_docs_command(args: &[String]) -> Result<()> {
     plugins::docs::run_command(args)
 }
 
-/// Force-compact the DB from the CLI. Fail-fast on the cross-process lock,
-/// open in `DbFile` regardless of `config.kind` (mmap may refuse on a ballooned
-/// DB), skip schema init.
+/// Force-compact the DB from the CLI. Reserves the configured port first, opens
+/// in `DbFile` regardless of `config.kind` (mmap may refuse on a ballooned DB),
+/// and skips schema init.
 pub async fn run_db_optimize() -> Result<()> {
     let config = load_config()?;
     if matches!(config.db.kind, config::DbKind::Memory) {
@@ -251,12 +205,8 @@ pub async fn run_db_optimize() -> Result<()> {
         );
     }
 
+    let _port_reservation = services::startup::bind_configured_listener(config.port).await?;
     let db_path = config.db.path.clone();
-
-    // Lock spans open + metadata + optimize. Full name (not `_lock`) so a
-    // future `_` rename can't silently turn "hold for scope" into "drop now."
-    let _lock_guard =
-        db::process_lock::acquire(&config.db, db::process_lock::LockMode::NonBlocking)?;
 
     // After the open: WAL recovery may have grown the file before optimize runs.
     let mut db = db::bootstrap::open(config::DbKind::File, db_path.to_string_lossy().as_ref())?;

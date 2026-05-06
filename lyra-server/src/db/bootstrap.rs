@@ -16,21 +16,15 @@ use super::{
     DbAsync,
     compact,
     indexes,
-    process_lock::{
-        self,
-        DbProcessLock,
-        LockMode,
-    },
 };
 use crate::config::{
     DbConfig,
     DbKind,
 };
 
-/// Result of `create`: opened DB plus the lock guard for its on-disk file.
+/// Result of `create`: opened DB ready for application use.
 pub(crate) struct Created {
     pub(crate) db: DbAsync,
-    pub(crate) lock: Option<DbProcessLock>,
 }
 
 pub(crate) const ROOT_COLLECTION_ALIASES: &[&str] = &[
@@ -146,9 +140,8 @@ pub(crate) fn initialize(db: &mut DbAny) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Server-side path: lock + pre-open compaction (mmap) + open + schema init.
+/// Server-side path: pre-open compaction (mmap) + open + schema init.
 pub(crate) fn create(config: &DbConfig) -> anyhow::Result<Created> {
-    let lock = process_lock::acquire(config, LockMode::Blocking)?;
     compact::pre_open(config)?;
 
     let db_path = config.path.to_string_lossy();
@@ -168,7 +161,6 @@ pub(crate) fn create(config: &DbConfig) -> anyhow::Result<Created> {
     initialize(&mut db)?;
     Ok(Created {
         db: Arc::new(RwLock::new(db)),
-        lock,
     })
 }
 
@@ -178,14 +170,4 @@ fn kind_label(kind: DbKind) -> &'static str {
         DbKind::File => "file",
         DbKind::Mmap => "mmap",
     }
-}
-
-/// In-memory placeholder for `DbHandle::reset_with`. `temp_dir()`-anchored
-/// because `DbMemory::new()` loads from file if one exists; `nanoid` for
-/// per-call uniqueness even if external serialization breaks down.
-pub(crate) fn placeholder() -> anyhow::Result<DbAsync> {
-    let placeholder_path =
-        std::env::temp_dir().join(format!("lyra-db-placeholder-{}", nanoid::nanoid!()));
-    let db = open(DbKind::Memory, placeholder_path.to_string_lossy().as_ref())?;
-    Ok(Arc::new(RwLock::new(db)))
 }
