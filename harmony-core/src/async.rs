@@ -3,7 +3,11 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::future::Future;
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+};
 
 use mlua::{
     FromLuaMulti,
@@ -16,16 +20,51 @@ use mlua::{
     UserDataRef,
 };
 use mlua_scheduler::{
-    LuaSchedulerAsync,
     MaybeSync,
     XRc,
     taskmgr::{
+        MaybeSendSyncFut,
         NoopHooks,
         SchedulerImpl,
     },
 };
 
 pub type LuaScheduler = mlua_scheduler::schedulers::rodan::CoreScheduler;
+pub type LuaAsyncFuture =
+    Pin<Box<dyn MaybeSendSyncFut<Output = mlua::Result<mlua::MultiValue>> + 'static>>;
+
+pub trait AsyncContextPropagator: MaybeSend + MaybeSync + 'static {
+    fn wrap_lua_future(&self, lua: &Lua, future: LuaAsyncFuture) -> LuaAsyncFuture;
+}
+
+struct AsyncContextPropagatorSlot(Arc<dyn AsyncContextPropagator>);
+
+pub fn set_async_context_propagator(lua: &Lua, propagator: Arc<dyn AsyncContextPropagator>) {
+    lua.set_app_data(AsyncContextPropagatorSlot(propagator));
+}
+
+fn propagate_async_context(lua: &Lua, future: LuaAsyncFuture) -> LuaAsyncFuture {
+    let propagator = lua
+        .app_data_ref::<AsyncContextPropagatorSlot>()
+        .map(|slot| Arc::clone(&slot.0));
+
+    match propagator {
+        Some(propagator) => propagator.wrap_lua_future(lua, future),
+        None => future,
+    }
+}
+
+fn schedule_lua_future(
+    lua: &Lua,
+    future: impl Future<Output = mlua::Result<mlua::MultiValue>> + MaybeSend + MaybeSync + 'static,
+) -> mlua::Result<()> {
+    let scheduler = scheduler(lua)?;
+    scheduler.schedule_async_dyn(
+        lua.current_thread(),
+        propagate_async_context(lua, Box::pin(future)),
+    );
+    Ok(())
+}
 
 pub fn ensure_scheduler(lua: &Lua) -> anyhow::Result<()> {
     if lua.app_data_ref::<LuaScheduler>().is_some() {
@@ -139,7 +178,29 @@ impl LuaAsyncExt for Lua {
         FR: Future<Output = mlua::Result<R>> + mlua::MaybeSend + MaybeSync + 'static,
     {
         ensure_scheduler(self).map_err(mlua::Error::external)?;
-        self.create_scheduler_async_function(func)
+        self.create_function(move |lua, args: A| {
+            let function_ref = func.clone();
+            let weak_lua = lua.weak();
+            let fut = async move {
+                let Some(lua) = weak_lua.try_upgrade() else {
+                    return Err(mlua::Error::runtime("lua instance is no longer valid"));
+                };
+
+                match function_ref(lua, args).await {
+                    Ok(result) => {
+                        let Some(lua) = weak_lua.try_upgrade() else {
+                            return Err(mlua::Error::runtime("lua instance is no longer valid"));
+                        };
+                        result.into_lua_multi(&lua)
+                    }
+                    Err(error) => Err(error),
+                }
+            };
+
+            schedule_lua_future(&lua, fut)?;
+            lua.yield_with(())?;
+            Ok(())
+        })
     }
 
     fn create_async_function_with_prelude<P, PFn, A, F, R, FR>(
@@ -174,8 +235,7 @@ impl LuaAsyncExt for Lua {
                     Err(error) => Err(error),
                 }
             };
-            let scheduler = scheduler(&lua)?;
-            scheduler.schedule_async_dyn(lua.current_thread(), Box::pin(fut));
+            schedule_lua_future(&lua, fut)?;
             lua.yield_with(())?;
             Ok(())
         })
@@ -259,8 +319,7 @@ where
                 }
             };
 
-            let scheduler = scheduler(&lua)?;
-            scheduler.schedule_async_dyn(lua.current_thread(), Box::pin(fut));
+            schedule_lua_future(&lua, fut)?;
             lua.yield_with(())?;
             Ok(())
         });
@@ -301,8 +360,7 @@ where
                     }
                 };
 
-                let scheduler = scheduler(&lua)?;
-                scheduler.schedule_async_dyn(lua.current_thread(), Box::pin(fut));
+                schedule_lua_future(&lua, fut)?;
                 lua.yield_with(())?;
                 Ok(())
             },
@@ -340,8 +398,7 @@ where
                     Err(error) => Err(error),
                 }
             };
-            let scheduler = scheduler(&lua)?;
-            scheduler.schedule_async_dyn(lua.current_thread(), Box::pin(fut));
+            schedule_lua_future(&lua, fut)?;
             lua.yield_with(())?;
             Ok(())
         });
@@ -386,8 +443,7 @@ where
                         Err(error) => Err(error),
                     }
                 };
-                let scheduler = scheduler(&lua)?;
-                scheduler.schedule_async_dyn(lua.current_thread(), Box::pin(fut));
+                schedule_lua_future(&lua, fut)?;
                 lua.yield_with(())?;
                 Ok(())
             },

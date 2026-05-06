@@ -29,13 +29,16 @@ mod plugin;
 mod require;
 
 pub use r#async::{
+    AsyncContextPropagator,
     LuaAsyncExt,
+    LuaAsyncFuture,
     LuaFunctionAsyncExt,
     LuaUserDataAsyncExt,
     cancel_thread,
     ensure_scheduler,
     run_function_async,
     run_thread,
+    set_async_context_propagator,
 };
 pub use luaurc::LuaurcConfig;
 pub use plugin::{
