@@ -3,9 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-
 use agdb::DbId;
 use harmony_core::LuaAsyncExt;
 use mlua::{
@@ -13,12 +10,20 @@ use mlua::{
     Result,
     Table,
 };
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 
 use crate::{
     STATE,
-    db,
-    plugins::parse_ids,
+    plugins::db,
+    plugins::{
+        caller::RequestCaller,
+        parse_ids,
+    },
     services::{
+        auth::Principal,
         playback_sessions,
         providers::PROVIDER_REGISTRY,
     },
@@ -31,16 +36,27 @@ struct ResolvedStats {
 
 async fn resolve_stats(
     track_ids: &[DbId],
+    principal: &Principal,
     user_db_id: Option<DbId>,
     merge_unique_external_ids: bool,
 ) -> Result<ResolvedStats> {
     let db = STATE.db.read().await;
 
     if !merge_unique_external_ids {
-        let stats =
-            db::listens::get_stats(&db, track_ids, user_db_id).map_err(mlua::Error::external)?;
         let mut counts = HashMap::new();
         let mut last_played = HashMap::new();
+        let mut accessible_track_ids = Vec::new();
+        for track_id in track_ids {
+            counts.insert(*track_id, 0);
+            if crate::routes::entity_accessible_to_principal(&db, principal, *track_id)
+                .map_err(mlua::Error::external)?
+            {
+                accessible_track_ids.push(*track_id);
+            }
+        }
+
+        let stats = db::listens::get_stats(&db, &accessible_track_ids, user_db_id)
+            .map_err(mlua::Error::external)?;
         for s in stats {
             counts.insert(s.db_id, s.count);
             if let Some(lp) = s.last_played {
@@ -59,19 +75,32 @@ async fn resolve_stats(
     };
 
     let mut requested_merged_ids: Vec<(DbId, Vec<DbId>)> = Vec::new();
-    let mut merged_unique_ids = std::collections::HashSet::new();
+    let mut merged_unique_ids = HashSet::new();
+    let mut counts = HashMap::new();
 
     for track_id in track_ids {
+        counts.insert(*track_id, 0);
+        if !crate::routes::entity_accessible_to_principal(&db, principal, *track_id)
+            .map_err(mlua::Error::external)?
+        {
+            continue;
+        }
         let merged_ids = playback_sessions::resolve_merged_track_ids_for_play_count(
             &db,
             *track_id,
             &unique_track_id_pairs,
         )
         .map_err(mlua::Error::external)?;
-        for merged_id in &merged_ids {
-            merged_unique_ids.insert(*merged_id);
+        let mut accessible_merged_ids = Vec::new();
+        for merged_id in merged_ids {
+            if crate::routes::entity_accessible_to_principal(&db, principal, merged_id)
+                .map_err(mlua::Error::external)?
+            {
+                merged_unique_ids.insert(merged_id);
+                accessible_merged_ids.push(merged_id);
+            }
         }
-        requested_merged_ids.push((*track_id, merged_ids));
+        requested_merged_ids.push((*track_id, accessible_merged_ids));
     }
 
     let merged_track_ids = merged_unique_ids.into_iter().collect::<Vec<_>>();
@@ -80,7 +109,6 @@ async fn resolve_stats(
     let merged_by_id: HashMap<DbId, &db::listens::ListenStats> =
         merged_stats.iter().map(|s| (s.db_id, s)).collect();
 
-    let mut counts = HashMap::new();
     let mut last_played = HashMap::new();
     for (requested_id, merged_ids) in requested_merged_ids {
         let mut total_count = 0u64;
@@ -126,7 +154,7 @@ struct ListensModule;
 impl ListensModule {
     /// Returns the listen count for a track.
     pub(crate) async fn get_count(
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         track_id: i64,
         user_id: Option<i64>,
         merge_unique_external_ids: Option<bool>,
@@ -138,7 +166,7 @@ impl ListensModule {
         let user_db_id = user_id.map(DbId);
         let merge = merge_unique_external_ids.unwrap_or(false);
         let track_db_id = DbId(track_id);
-        let stats = resolve_stats(&[track_db_id], user_db_id, merge).await?;
+        let stats = resolve_stats(&[track_db_id], &caller.principal, user_db_id, merge).await?;
         Ok(*stats.counts.get(&track_db_id).unwrap_or(&0))
     }
 
@@ -146,7 +174,7 @@ impl ListensModule {
     #[harmony(args(track_ids: Vec<u64>, user_id: Option<i64>, merge_unique_external_ids: Option<bool>), returns(std::collections::BTreeMap<u64, u64>))]
     pub(crate) async fn get_counts(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         track_ids: Table,
         user_id: Option<i64>,
         merge_unique_external_ids: Option<bool>,
@@ -154,7 +182,7 @@ impl ListensModule {
         let track_ids = parse_ids(track_ids)?;
         let user_db_id = user_id.map(DbId);
         let merge = merge_unique_external_ids.unwrap_or(false);
-        let stats = resolve_stats(&track_ids, user_db_id, merge).await?;
+        let stats = resolve_stats(&track_ids, &caller.principal, user_db_id, merge).await?;
         dbid_map_to_table(&lua, &stats.counts)
     }
 
@@ -162,7 +190,7 @@ impl ListensModule {
     #[harmony(args(track_ids: Vec<u64>, user_id: Option<i64>, merge_unique_external_ids: Option<bool>), returns(std::collections::BTreeMap<String, std::collections::BTreeMap<u64, u64>>))]
     pub(crate) async fn get_stats(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         track_ids: Table,
         user_id: Option<i64>,
         merge_unique_external_ids: Option<bool>,
@@ -170,7 +198,7 @@ impl ListensModule {
         let track_ids = parse_ids(track_ids)?;
         let user_db_id = user_id.map(DbId);
         let merge = merge_unique_external_ids.unwrap_or(false);
-        let stats = resolve_stats(&track_ids, user_db_id, merge).await?;
+        let stats = resolve_stats(&track_ids, &caller.principal, user_db_id, merge).await?;
         let counts = dbid_map_to_table(&lua, &stats.counts)?;
         let last_played = dbid_map_to_table(&lua, &stats.last_played)?;
         let result = lua.create_table()?;

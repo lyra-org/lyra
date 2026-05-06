@@ -835,8 +835,12 @@ pub(crate) fn query(
 ) -> anyhow::Result<PagedResult<Release>> {
     let releases = get_direct_filtered(db, from, filters)?;
 
+    Ok(query_items(releases, options))
+}
+
+pub(crate) fn query_items(releases: Vec<Release>, options: &ListOptions) -> PagedResult<Release> {
     if options.search_term.is_none() && options.sort.is_empty() {
-        return Ok(paginate_releases(releases, options));
+        return paginate_releases(releases, options);
     }
 
     let mut entries: Vec<ReleaseSortEntry> =
@@ -851,7 +855,7 @@ pub(crate) fn query(
         );
     }
 
-    Ok(sort_and_paginate_releases(entries, options))
+    sort_and_paginate_releases(entries, options)
 }
 
 pub(crate) fn query_by_artists(

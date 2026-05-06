@@ -65,6 +65,7 @@ async fn ws_upgrade(
     let token = query.token.clone();
     let user_db_id = principal.user_db_id;
     let user_public_id = principal.user_public_id;
+    let accessible_library_ids = principal.accessible_library_ids;
 
     Ok(ws
         .max_message_size(MAX_MESSAGE_SIZE)
@@ -111,6 +112,7 @@ async fn ws_upgrade(
                 socket,
                 result.connection_id,
                 user_public_id,
+                accessible_library_ids,
                 cancel,
                 token,
                 result.command_rx,

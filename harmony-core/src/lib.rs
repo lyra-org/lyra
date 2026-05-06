@@ -93,6 +93,10 @@ pub trait CallerResolver: Send + Sync + 'static {
     fn resolve(&self, lua: &Lua) -> Option<Arc<str>>;
 }
 
+pub trait ModuleContext: Sized {
+    fn from_lua_plugin_id(lua: &Lua, plugin_id: Option<Arc<str>>) -> mlua::Result<Self>;
+}
+
 struct CallerResolverSlot(Arc<dyn CallerResolver>);
 struct CallerResolverWarned;
 

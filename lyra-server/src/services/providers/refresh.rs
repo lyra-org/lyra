@@ -21,6 +21,7 @@ use crate::{
         ProviderConfig,
     },
     plugins::LUA_SERIALIZE_OPTIONS,
+    plugins::caller,
     services::EntityType,
     services::providers::{
         LIBRARY_REFRESH_LOCKS,
@@ -206,10 +207,12 @@ async fn refresh_entity_metadata_inner(
                     .map_err(anyhow::Error::from)?;
             }
         }
-        handler
-            .call_async::<_, ()>(call_ctx)
-            .await
-            .map_err(anyhow::Error::from)?;
+        caller::scope_system(
+            crate::services::libraries::system_context(),
+            handler.call_async::<_, ()>(call_ctx),
+        )
+        .await
+        .map_err(anyhow::Error::from)?;
         providers_called.push(provider_id);
     }
 
@@ -507,7 +510,12 @@ async fn refresh_library_metadata_inner(
                 .map_err(anyhow::Error::from)?;
 
             if let Some(filter) = filter {
-                match filter.call_async::<_, bool>(lua_ctx.clone()).await {
+                match caller::scope_system(
+                    crate::services::libraries::system_context(),
+                    filter.call_async::<_, bool>(lua_ctx.clone()),
+                )
+                .await
+                {
                     Ok(false) => continue,
                     Ok(true) => {}
                     Err(err) => {
@@ -522,7 +530,12 @@ async fn refresh_library_metadata_inner(
                 }
             }
 
-            match handler.call_async::<_, ()>(lua_ctx).await {
+            match caller::scope_system(
+                crate::services::libraries::system_context(),
+                handler.call_async::<_, ()>(lua_ctx),
+            )
+            .await
+            {
                 Ok(()) => {
                     refreshed_releases.insert(node_id);
                     dirty_releases.insert(node_id);

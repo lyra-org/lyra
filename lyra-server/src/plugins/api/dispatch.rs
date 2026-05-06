@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use crate::plugins::lifecycle::PluginId;
+use crate::plugins::{
+    caller,
+    lifecycle::PluginId,
+};
 use std::collections::{
     HashMap,
     HashSet,
@@ -390,7 +393,7 @@ async fn dispatch_registered_route(
         return (StatusCode::SERVICE_UNAVAILABLE, "plugin unavailable").into_response();
     };
 
-    let ctx = match build_context(
+    let built = match build_context(
         &lua,
         &route,
         &method,
@@ -416,12 +419,17 @@ async fn dispatch_registered_route(
     };
 
     if matches!(route.auth_mode, RouteAuthMode::Required)
-        && matches!(ctx.get::<Value>("auth"), Ok(Value::Nil))
+        && matches!(built.table.get::<Value>("auth"), Ok(Value::Nil))
     {
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
 
-    let result = route.handler.call_async::<_, Value>(ctx).await;
+    let call = route.handler.call_async::<_, Value>(built.table);
+    let result = if let Some(principal) = built.principal {
+        caller::scope_request(principal, call).await
+    } else {
+        call.await
+    };
     let response = match result {
         Ok(value) => lua_response_to_axum(&lua, value, &headers).await,
         Err(err) => {

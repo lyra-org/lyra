@@ -19,3 +19,4 @@ pub(crate) use orchestrator::{
     wait_for_running_library_syncs,
 };
 pub(crate) use sync::sync_library;
+pub(crate) use sync::system_context;

@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
-
 use harmony_core::LuaAsyncExt;
 use mlua::{
     ExternalResult,
@@ -15,13 +13,14 @@ use mlua::{
 
 use crate::{
     STATE,
-    db::{
+    plugins::db::{
         self,
         ResolveId,
         Track,
     },
     plugins::{
         PluginSortOrder,
+        caller::RequestCaller,
         paged_result_to_table,
         parse_ids,
         parse_list_options,
@@ -60,7 +59,7 @@ struct TracksModule;
 impl TracksModule {
     /// Lists tracks related to the given scope, or all tracks by default.
     pub(crate) async fn list(
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         scope: Option<ResolveId>,
     ) -> Result<Vec<Track>> {
         let resolve_id = scope.unwrap_or_else(|| ResolveId::alias("tracks"));
@@ -69,7 +68,8 @@ impl TracksModule {
             .to_query_id(&db)
             .into_lua_err()?
             .ok_or_else(|| mlua::Error::runtime("could not resolve scope"))?;
-        let tracks = db::tracks::get(&*db, query_id).into_lua_err()?;
+        let mut tracks = db::tracks::get(&*db, query_id).into_lua_err()?;
+        retain_accessible_tracks(&db, &caller.principal, &mut tracks).into_lua_err()?;
 
         Ok(tracks)
     }
@@ -78,7 +78,7 @@ impl TracksModule {
     #[harmony(args(opts: TrackQueryOptions), returns(TrackQueryResult))]
     pub(crate) async fn query(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         opts: Table,
     ) -> Result<Table> {
         let scope: Option<ResolveId> = opts.get("scope")?;
@@ -129,14 +129,23 @@ impl TracksModule {
                 .ok_or_else(|| mlua::Error::runtime("could not resolve scope"))?;
             db::tracks::query(&db, query_id, &list_options).into_lua_err()?
         };
-        paged_result_to_table(&lua, result)
+        let mut entries = result.entries;
+        retain_accessible_tracks(&db, &caller.principal, &mut entries).into_lua_err()?;
+        paged_result_to_table(
+            &lua,
+            db::PagedResult {
+                total_count: entries.len() as u64,
+                offset: result.offset,
+                entries,
+            },
+        )
     }
 
     /// Fetches tracks by their own db_ids, returning a map of id → Track.
     #[harmony(args(ids: Vec<u64>), returns(std::collections::BTreeMap<u64, Option<Track>>))]
     pub(crate) async fn get_by_ids(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         ids: Table,
     ) -> Result<Table> {
         let ids = parse_ids(ids)?;
@@ -145,6 +154,11 @@ impl TracksModule {
         let table = lua.create_table()?;
         for id in ids {
             if let Some(track) = tracks.get(&id) {
+                if !crate::routes::entity_accessible_to_principal(&*db, &caller.principal, id)
+                    .into_lua_err()?
+                {
+                    continue;
+                }
                 table.set(id.0, track.clone())?;
             }
         }
@@ -153,11 +167,18 @@ impl TracksModule {
 
     /// Lists all tracks belonging to a library.
     pub(crate) async fn list_by_library(
-        _plugin_id: Option<Arc<str>>,
-        library_id: crate::db::NodeId,
+        #[harmony_context] caller: RequestCaller,
+        library_id: crate::plugins::db::NodeId,
     ) -> Result<Vec<Track>> {
         let db = STATE.db.read().await;
-        let tracks = db::tracks::get_by_library(&db, library_id.into()).into_lua_err()?;
+        let library_db_id = agdb::DbId::from(library_id);
+        if db::libraries::accessible_by_id(&db, &caller.principal, library_db_id)
+            .into_lua_err()?
+            .is_none()
+        {
+            return Ok(Vec::new());
+        }
+        let tracks = db::tracks::get_by_library(&db, library_db_id).into_lua_err()?;
         Ok(tracks)
     }
 
@@ -165,7 +186,7 @@ impl TracksModule {
     #[harmony(args(ids: Vec<u64>), returns(std::collections::BTreeMap<u64, Vec<Track>>))]
     pub(crate) async fn list_many(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         ids: Table,
     ) -> Result<Table> {
         let ids = parse_ids(ids)?;
@@ -173,11 +194,30 @@ impl TracksModule {
         let related = db::tracks::get_direct_many(&db, &ids).into_lua_err()?;
         let table = lua.create_table()?;
         for id in ids {
-            let tracks = related.get(&id).cloned().unwrap_or_default();
+            let mut tracks = related.get(&id).cloned().unwrap_or_default();
+            retain_accessible_tracks(&db, &caller.principal, &mut tracks).into_lua_err()?;
             table.set(id.0, tracks)?;
         }
         Ok(table)
     }
+}
+
+fn retain_accessible_tracks(
+    db: &agdb::DbAny,
+    principal: &crate::services::auth::Principal,
+    tracks: &mut Vec<Track>,
+) -> anyhow::Result<()> {
+    let mut retained = Vec::with_capacity(tracks.len());
+    for track in tracks.drain(..) {
+        let Some(track_db_id) = track.db_id.clone().map(agdb::DbId::from) else {
+            continue;
+        };
+        if crate::routes::entity_accessible_to_principal(db, principal, track_db_id)? {
+            retained.push(track);
+        }
+    }
+    *tracks = retained;
+    Ok(())
 }
 
 crate::plugins::plugin_surface_exports!(

@@ -454,7 +454,7 @@ mod tests {
     use super::*;
     use crate::db::{
         self,
-        providers::external_ids::IdSource,
+        IdSource,
         test_db,
     };
 

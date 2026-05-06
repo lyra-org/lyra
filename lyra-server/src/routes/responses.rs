@@ -118,6 +118,22 @@ impl From<db::Release> for ReleaseResponse {
     }
 }
 
+impl ReleaseResponse {
+    pub(crate) fn unavailable(id: String) -> Self {
+        Self {
+            id,
+            title: "unavailable".to_string(),
+            sort_title: None,
+            release_date: None,
+            genres: None,
+            artists: None,
+            tracks: None,
+            entries: None,
+            cover: None,
+        }
+    }
+}
+
 #[derive(Serialize, JsonSchema)]
 pub struct ReleaseCoverResponse {
     pub mime_type: String,
@@ -162,6 +178,24 @@ impl From<db::Track> for TrackResponse {
             track: track.track,
             track_total: track.track_total,
             duration_ms: track.duration_ms,
+            releases: None,
+            artists: None,
+        }
+    }
+}
+
+impl TrackResponse {
+    pub(crate) fn unavailable(id: String) -> Self {
+        Self {
+            id,
+            title: "unavailable".to_string(),
+            sort_title: None,
+            year: None,
+            disc: None,
+            disc_total: None,
+            track: None,
+            track_total: None,
+            duration_ms: None,
             releases: None,
             artists: None,
         }
@@ -262,6 +296,22 @@ impl From<ResolvedCreditedArtist> for ArtistResponse {
             source: credited_artist.source.into(),
         });
         response
+    }
+}
+
+impl ArtistResponse {
+    pub(crate) fn unavailable(id: String) -> Self {
+        Self {
+            id,
+            name: "unavailable".to_string(),
+            sort_name: None,
+            description: None,
+            verified: false,
+            credit: None,
+            releases: None,
+            tracks: None,
+            relations: None,
+        }
     }
 }
 

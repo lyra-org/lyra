@@ -298,6 +298,9 @@ async fn get_releases(
 
     let mut response: Vec<ReleaseResponse> = Vec::with_capacity(details.len());
     for detail in details {
+        if !super::entity_accessible_to_principal(db, &principal, detail.release_db_id)? {
+            continue;
+        }
         response.push(detail_to_release_response(
             db,
             detail,
@@ -323,6 +326,9 @@ async fn get_release(
     let (includes, include_covers, include_genres) = parse_release_includes(query.inc)?;
     let release_db_id = db::lookup::find_node_id_by_id(db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
+    super::require_entity_accessible(db, &principal, release_db_id, || {
+        AppError::not_found(format!("Release not found: {id}"))
+    })?;
     let detail = releases::get_details(db, release_db_id, includes)?
         .ok_or_else(|| AppError::not_found(format!("Release not found: {}", id)))?;
 
@@ -340,7 +346,7 @@ async fn get_release_cover(
     Path(id): Path<String>,
     Query(query): Query<route_covers::CoverQuery>,
 ) -> Result<axum::http::Response<axum::body::Body>, AppError> {
-    let _principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(&headers).await?;
 
     let transform_options = route_covers::parse_cover_transform_options(&query)?;
     let covers_root = covers::configured_covers_root();
@@ -348,6 +354,9 @@ async fn get_release_cover(
         let db = STATE.db.read().await;
         let release_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
+        super::require_entity_accessible(&*db, &principal, release_db_id, || {
+            AppError::not_found(format!("Release not found: {id}"))
+        })?;
         let library_root = db::libraries::get_by_release(&db, release_db_id)?
             .into_iter()
             .next()
@@ -413,12 +422,15 @@ async fn search_release_covers(
     Path(id): Path<String>,
     Json(query): Json<route_covers::CoverSearchQuery>,
 ) -> Result<Json<ReleaseCoverSearchResponse>, AppError> {
-    let _principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(&headers).await?;
 
     let release_db_id = {
         let db = STATE.db.read().await;
         let release_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
+        super::require_entity_accessible(&*db, &principal, release_db_id, || {
+            AppError::not_found(format!("Release not found: {id}"))
+        })?;
         if db::releases::get_by_id(&db, release_db_id)?.is_none() {
             return Err(AppError::not_found(format!("Release not found: {}", id)));
         }

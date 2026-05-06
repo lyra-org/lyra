@@ -46,7 +46,10 @@ use crate::{
     },
     services::{
         artists as artist_service,
-        auth::require_authenticated,
+        auth::{
+            Principal,
+            require_authenticated,
+        },
         covers,
     },
 };
@@ -146,6 +149,7 @@ fn artist_detail_to_response(
 }
 
 pub(crate) async fn list_artist_responses(
+    principal: &Principal,
     inc: Option<Vec<String>>,
     query: Option<String>,
 ) -> Result<Vec<ArtistResponse>, AppError> {
@@ -159,14 +163,21 @@ pub(crate) async fn list_artist_responses(
     };
     let details = artist_service::list_details(db, includes, &options)?;
 
-    details
-        .into_iter()
-        .map(|d| artist_detail_to_response(db, d))
-        .collect::<anyhow::Result<Vec<_>>>()
-        .map_err(AppError::from)
+    let mut response = Vec::with_capacity(details.len());
+    for detail in details {
+        let Some(artist_db_id) = detail.artist.db_id.clone().map(agdb::DbId::from) else {
+            continue;
+        };
+        if !super::entity_accessible_to_principal(db, principal, artist_db_id)? {
+            continue;
+        }
+        response.push(artist_detail_to_response(db, detail)?);
+    }
+    Ok(response)
 }
 
 pub(crate) async fn get_artist_response(
+    principal: &Principal,
     id: String,
     inc: Option<Vec<String>>,
 ) -> Result<ArtistResponse, AppError> {
@@ -174,6 +185,9 @@ pub(crate) async fn get_artist_response(
     let includes = parse_inc(inc)?;
     let artist_db_id = db::lookup::find_node_id_by_id(db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
+    super::require_entity_accessible(db, principal, artist_db_id, || {
+        AppError::not_found(format!("Artist not found: {id}"))
+    })?;
     let detail = artist_service::get_details(db, artist_db_id, includes)?
         .ok_or_else(|| AppError::not_found(format!("Artist not found: {}", id)))?;
 
@@ -184,9 +198,9 @@ async fn get_artists(
     headers: HeaderMap,
     Query(list_query): Query<ArtistListQuery>,
 ) -> Result<Json<Vec<ArtistResponse>>, AppError> {
-    let _principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(&headers).await?;
     Ok(Json(
-        list_artist_responses(list_query.inc, list_query.query).await?,
+        list_artist_responses(&principal, list_query.inc, list_query.query).await?,
     ))
 }
 
@@ -195,8 +209,8 @@ async fn get_artist(
     Path(id): Path<String>,
     Query(query): Query<ArtistQuery>,
 ) -> Result<Json<ArtistResponse>, AppError> {
-    let _principal = require_authenticated(&headers).await?;
-    Ok(Json(get_artist_response(id, query.inc).await?))
+    let principal = require_authenticated(&headers).await?;
+    Ok(Json(get_artist_response(&principal, id, query.inc).await?))
 }
 
 async fn get_artist_cover(
@@ -204,7 +218,7 @@ async fn get_artist_cover(
     Path(id): Path<String>,
     Query(query): Query<route_covers::CoverQuery>,
 ) -> Result<axum::http::Response<axum::body::Body>, AppError> {
-    let _principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(&headers).await?;
 
     let transform_options = route_covers::parse_cover_transform_options(&query)?;
     let covers_root = covers::configured_covers_root();
@@ -212,6 +226,9 @@ async fn get_artist_cover(
         let db = STATE.db.read().await;
         let artist_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
+        super::require_entity_accessible(&*db, &principal, artist_db_id, || {
+            AppError::not_found(format!("Artist not found: {id}"))
+        })?;
         if db::artists::get_by_id(&db, artist_db_id)?.is_none() {
             return Err(AppError::not_found(format!("Artist not found: {}", id)));
         }
@@ -277,12 +294,15 @@ async fn search_artist_covers(
     Path(id): Path<String>,
     Json(query): Json<route_covers::CoverSearchQuery>,
 ) -> Result<Json<ArtistCoverSearchResponse>, AppError> {
-    let _principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(&headers).await?;
 
     let artist_db_id = {
         let db = STATE.db.read().await;
         let artist_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
+        super::require_entity_accessible(&*db, &principal, artist_db_id, || {
+            AppError::not_found(format!("Artist not found: {id}"))
+        })?;
         if db::artists::get_by_id(&db, artist_db_id)?.is_none() {
             return Err(AppError::not_found(format!("Artist not found: {}", id)));
         }
@@ -306,7 +326,7 @@ async fn update_artist(
     Path(id): Path<String>,
     Json(update): Json<ArtistUpdateRequest>,
 ) -> Result<Json<ArtistResponse>, AppError> {
-    let _principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(&headers).await?;
 
     if update.name.is_none() && update.sort_name.is_none() && update.description.is_none() {
         return Err(AppError::bad_request("no artist fields provided"));
@@ -321,6 +341,9 @@ async fn update_artist(
     let mut db = STATE.db.write().await;
     let artist_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
+    super::require_entity_accessible(&*db, &principal, artist_db_id, || {
+        AppError::not_found(format!("Artist not found: {id}"))
+    })?;
     if let Some(name) = update_name.as_ref()
         && name.trim().is_empty()
     {
@@ -462,7 +485,10 @@ mod tests {
     async fn create_authenticated_headers(username: &str) -> anyhow::Result<HeaderMap> {
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::users::test_user(username)?)?
+            db::roles::ensure_builtin_roles(&mut db)?;
+            let user_db_id = db::users::create(&mut db, &db::users::test_user(username)?)?;
+            db::roles::ensure_user_has_role(&mut db, user_db_id, db::roles::BUILTIN_ADMIN_ROLE)?;
+            user_db_id
         };
 
         let session = sessions::create_session_for_user(user_db_id).await?;

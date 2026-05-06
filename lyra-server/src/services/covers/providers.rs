@@ -30,9 +30,9 @@ use crate::{
     db::{
         self,
         Artist,
+        Library,
         Release,
         Track,
-        libraries::Library,
     },
     services::providers::{
         PROVIDER_REGISTRY,

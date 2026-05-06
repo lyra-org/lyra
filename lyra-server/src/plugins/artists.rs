@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
-
 use harmony_core::LuaAsyncExt;
 use mlua::{
     ExternalResult,
@@ -15,7 +13,7 @@ use mlua::{
 
 use crate::{
     STATE,
-    db::{
+    plugins::db::{
         self,
         Artist,
         ArtistRelationType,
@@ -25,6 +23,7 @@ use crate::{
     },
     plugins::{
         PluginSortOrder,
+        caller::RequestCaller,
         paged_result_to_table,
         parse_ids,
         parse_list_options,
@@ -120,7 +119,7 @@ struct ArtistsModule;
 impl ArtistsModule {
     /// Lists artists related to the given scope, or all artists by default.
     pub(crate) async fn list(
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         scope: Option<ResolveId>,
     ) -> Result<Vec<Artist>> {
         let resolve_id = scope.unwrap_or_else(|| ResolveId::alias("artists"));
@@ -129,7 +128,8 @@ impl ArtistsModule {
             .to_query_id(&db)
             .into_lua_err()?
             .ok_or_else(|| mlua::Error::runtime("could not resolve scope"))?;
-        let artists_list = db::artists::get(&*db, query_id).into_lua_err()?;
+        let mut artists_list = db::artists::get(&*db, query_id).into_lua_err()?;
+        retain_accessible_artists(&db, &caller.principal, &mut artists_list).into_lua_err()?;
 
         Ok(artists_list)
     }
@@ -138,7 +138,7 @@ impl ArtistsModule {
     #[harmony(args(opts: ArtistQueryOptions), returns(ArtistQueryResult))]
     pub(crate) async fn query(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         opts: Table,
     ) -> Result<Table> {
         let scope: Option<ResolveId> = opts.get("scope")?;
@@ -153,14 +153,23 @@ impl ArtistsModule {
             .ok_or_else(|| mlua::Error::runtime("could not resolve scope"))?;
         let result =
             db::artists::query(&db, query_id, &list_options, artist_type).into_lua_err()?;
-        paged_result_to_table(&lua, result)
+        let mut entries = result.entries;
+        retain_accessible_artists(&db, &caller.principal, &mut entries).into_lua_err()?;
+        paged_result_to_table(
+            &lua,
+            db::PagedResult {
+                total_count: entries.len() as u64,
+                offset: result.offset,
+                entries,
+            },
+        )
     }
 
     /// Queries deduplicated credited artists with optional artist-type and credit-type filters.
     #[harmony(args(opts: CreditedArtistQueryOptions), returns(ArtistQueryResult))]
     pub(crate) async fn query_credited(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         opts: Table,
     ) -> Result<Table> {
         let scope: Option<ResolveId> = opts.get("scope")?;
@@ -174,16 +183,32 @@ impl ArtistsModule {
         let db = STATE.db.read().await;
         let result = artist_services::query_credited(&db, scope.as_ref(), &filters, &list_options)
             .into_lua_err()?;
-        paged_result_to_table(&lua, result)
+        let mut entries = result.entries;
+        retain_accessible_artists(&db, &caller.principal, &mut entries).into_lua_err()?;
+        paged_result_to_table(
+            &lua,
+            db::PagedResult {
+                total_count: entries.len() as u64,
+                offset: result.offset,
+                entries,
+            },
+        )
     }
 
     /// Lists all artists belonging to a library (via its releases).
     pub(crate) async fn list_by_library(
-        _plugin_id: Option<Arc<str>>,
-        library_id: crate::db::NodeId,
+        #[harmony_context] caller: RequestCaller,
+        library_id: crate::plugins::db::NodeId,
     ) -> Result<Vec<Artist>> {
         let db = STATE.db.read().await;
-        let artists_list = db::artists::get_by_library(&db, library_id.into()).into_lua_err()?;
+        let library_db_id = agdb::DbId::from(library_id);
+        if db::libraries::accessible_by_id(&db, &caller.principal, library_db_id)
+            .into_lua_err()?
+            .is_none()
+        {
+            return Ok(Vec::new());
+        }
+        let artists_list = db::artists::get_by_library(&db, library_db_id).into_lua_err()?;
         Ok(artists_list)
     }
 
@@ -191,7 +216,7 @@ impl ArtistsModule {
     #[harmony(args(ids: Vec<u64>), returns(std::collections::BTreeMap<u64, Vec<Artist>>))]
     pub(crate) async fn list_many(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         ids: Table,
     ) -> Result<Table> {
         let ids = parse_ids(ids)?;
@@ -199,7 +224,8 @@ impl ArtistsModule {
         let related = db::artists::get_many_by_owner(&db, &ids).into_lua_err()?;
         let table = lua.create_table()?;
         for id in ids {
-            let artists_list = related.get(&id).cloned().unwrap_or_default();
+            let mut artists_list = related.get(&id).cloned().unwrap_or_default();
+            retain_accessible_artists(&db, &caller.principal, &mut artists_list).into_lua_err()?;
             table.set(id.0, artists_list)?;
         }
         Ok(table)
@@ -209,7 +235,7 @@ impl ArtistsModule {
     #[harmony(args(ids: Vec<u64>), returns(std::collections::BTreeMap<u64, Vec<ArtistRelationInfo>>))]
     pub(crate) async fn list_relations_many(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         ids: Table,
     ) -> Result<Table> {
         let ids = parse_ids(ids)?;
@@ -217,17 +243,56 @@ impl ArtistsModule {
         let relations = artist_services::get_relations_many(&db, &ids).into_lua_err()?;
         let table = lua.create_table()?;
         for id in ids {
+            if !crate::routes::entity_accessible_to_principal(&*db, &caller.principal, id)
+                .into_lua_err()?
+            {
+                table.set(id.0, Vec::<ArtistRelationInfo>::new())?;
+                continue;
+            }
             let relation_infos = relations
                 .get(&id)
                 .cloned()
                 .unwrap_or_default()
                 .into_iter()
+                .filter(|relation| {
+                    relation
+                        .artist
+                        .db_id
+                        .clone()
+                        .map(agdb::DbId::from)
+                        .is_some_and(|artist_id| {
+                            crate::routes::entity_accessible_to_principal(
+                                &*db,
+                                &caller.principal,
+                                artist_id,
+                            )
+                            .unwrap_or(false)
+                        })
+                })
                 .map(to_artist_relation_info)
                 .collect::<Vec<_>>();
             table.set(id.0, relation_infos)?;
         }
         Ok(table)
     }
+}
+
+fn retain_accessible_artists(
+    db: &agdb::DbAny,
+    principal: &crate::services::auth::Principal,
+    artists: &mut Vec<Artist>,
+) -> anyhow::Result<()> {
+    let mut retained = Vec::with_capacity(artists.len());
+    for artist in artists.drain(..) {
+        let Some(artist_db_id) = artist.db_id.clone().map(agdb::DbId::from) else {
+            continue;
+        };
+        if crate::routes::entity_accessible_to_principal(db, principal, artist_db_id)? {
+            retained.push(artist);
+        }
+    }
+    *artists = retained;
+    Ok(())
 }
 
 pub(crate) fn get_module() -> harmony_core::Module {

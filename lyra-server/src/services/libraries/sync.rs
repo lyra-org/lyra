@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 use super::scanning::prepare_entries;
+pub(crate) use crate::services::system::library_sync_context as system_context;
 use crate::{
     Library,
     db::{

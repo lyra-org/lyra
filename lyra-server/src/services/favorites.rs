@@ -25,6 +25,7 @@ use crate::db::{
         LIST_HARD_LIMIT,
     },
 };
+use crate::services::auth::Principal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MutationOutcome {
@@ -41,18 +42,26 @@ pub(crate) struct ListPage {
 }
 
 /// Add or refresh a favorite. Atomic over resolve + whitelist + visibility + write.
-pub(crate) fn add(
+pub(crate) fn add_for_principal(
     db: &mut DbAny,
-    user_db_id: DbId,
+    principal: &Principal,
     public_target_id: &str,
 ) -> anyhow::Result<MutationOutcome> {
     let now_ms = now_ms()?;
     db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
-        let Some((target_db_id, kind)) = resolve_targetable(t, user_db_id, public_target_id)?
+        let Some((target_db_id, kind)) =
+            resolve_targetable_for_principal(t, principal, public_target_id)?
         else {
             return Ok(MutationOutcome::NotTargetable);
         };
-        db::favorites::add(t, user_db_id, target_db_id, public_target_id, kind, now_ms)?;
+        db::favorites::add(
+            t,
+            principal.user_db_id,
+            target_db_id,
+            public_target_id,
+            kind,
+            now_ms,
+        )?;
         Ok(MutationOutcome::Applied(kind))
     })
 }
@@ -73,19 +82,26 @@ pub(crate) fn remove(
     })
 }
 
-pub(crate) fn has(db: &DbAny, user_db_id: DbId, public_target_id: &str) -> anyhow::Result<bool> {
-    let Some((target_db_id, _kind)) = resolve_targetable(db, user_db_id, public_target_id)? else {
+pub(crate) fn has_for_principal(
+    db: &DbAny,
+    principal: &Principal,
+    public_target_id: &str,
+) -> anyhow::Result<bool> {
+    let Some((target_db_id, _kind)) =
+        resolve_targetable_for_principal(db, principal, public_target_id)?
+    else {
         return Ok(false);
     };
-    let Some(snapshot) = db::favorites::edge_snapshot(db, user_db_id, target_db_id)? else {
+    let Some(snapshot) = db::favorites::edge_snapshot(db, principal.user_db_id, target_db_id)?
+    else {
         return Ok(false);
     };
     Ok(snapshot == public_target_id)
 }
 
-pub(crate) fn has_many(
+pub(crate) fn has_many_for_principal(
     db: &DbAny,
-    user_db_id: DbId,
+    principal: &Principal,
     public_target_ids: &[String],
 ) -> anyhow::Result<HashMap<String, bool>> {
     if public_target_ids.len() > HAS_MANY_CAP {
@@ -98,7 +114,7 @@ pub(crate) fn has_many(
     let mut resolved: Vec<(String, DbId)> = Vec::with_capacity(public_target_ids.len());
     let mut response: HashMap<String, bool> = HashMap::with_capacity(public_target_ids.len());
     for public_id in public_target_ids {
-        match resolve_targetable(db, user_db_id, public_id)? {
+        match resolve_targetable_for_principal(db, principal, public_id)? {
             Some((target_db_id, _)) => {
                 resolved.push((public_id.clone(), target_db_id));
             }
@@ -110,7 +126,7 @@ pub(crate) fn has_many(
 
     if !resolved.is_empty() {
         let db_ids: Vec<DbId> = resolved.iter().map(|(_, id)| *id).collect();
-        let snapshots = db::favorites::edge_snapshots(db, user_db_id, &db_ids)?;
+        let snapshots = db::favorites::edge_snapshots(db, principal.user_db_id, &db_ids)?;
         for (public_id, db_id) in resolved {
             let is_fav = snapshots
                 .get(&db_id)
@@ -172,29 +188,37 @@ pub(crate) fn list_ids(
     }
 }
 
-fn resolve_targetable(
+fn resolve_targetable_for_principal(
     db: &impl db::DbAccess,
-    user_db_id: DbId,
+    principal: &Principal,
     public_target_id: &str,
 ) -> anyhow::Result<Option<(DbId, FavoriteKind)>> {
     let Some(target_db_id) = db::lookup::find_node_id_by_id(db, public_target_id)? else {
         return Ok(None);
     };
-    resolve_targetable_by_db_id(db, user_db_id, target_db_id)
-}
-
-fn resolve_targetable_by_db_id(
-    db: &impl db::DbAccess,
-    user_db_id: DbId,
-    target_db_id: DbId,
-) -> anyhow::Result<Option<(DbId, FavoriteKind)>> {
     let Some((target_db_id, kind)) = resolve_whitelisted_by_db_id(db, target_db_id)? else {
         return Ok(None);
     };
-    if kind == FavoriteKind::Playlist && !playlist_is_visible(db, user_db_id, target_db_id)? {
+    if !target_visible_to_principal(db, principal, target_db_id, kind)? {
         return Ok(None);
     }
     Ok(Some((target_db_id, kind)))
+}
+
+fn target_visible_to_principal(
+    db: &impl db::DbAccess,
+    principal: &Principal,
+    target_db_id: DbId,
+    kind: FavoriteKind,
+) -> anyhow::Result<bool> {
+    match kind {
+        FavoriteKind::Playlist => playlist_is_visible(db, principal.user_db_id, target_db_id),
+        FavoriteKind::Track | FavoriteKind::Release | FavoriteKind::Artist => {
+            Ok(db::libraries::get_for_entity(db, target_db_id)?
+                .into_iter()
+                .any(|library| principal.accessible_library_ids.contains(&library.id)))
+        }
+    }
 }
 
 /// No visibility gate.
@@ -218,28 +242,6 @@ fn resolve_whitelisted_by_db_id(
     Ok(Some((target_db_id, kind)))
 }
 
-pub(crate) fn add_by_db_id(
-    db: &mut DbAny,
-    user_db_id: DbId,
-    target_db_id: DbId,
-) -> anyhow::Result<MutationOutcome> {
-    let now_ms = now_ms()?;
-    db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
-        let Some((target_db_id, kind)) = resolve_targetable_by_db_id(t, user_db_id, target_db_id)?
-        else {
-            return Ok(MutationOutcome::NotTargetable);
-        };
-        let target_public_id = db::lookup::find_id_by_db_id(t, target_db_id)?.ok_or_else(|| {
-            anyhow::anyhow!(
-                "favorite target {} has no public id; cannot snapshot",
-                target_db_id.0,
-            )
-        })?;
-        db::favorites::add(t, user_db_id, target_db_id, &target_public_id, kind, now_ms)?;
-        Ok(MutationOutcome::Applied(kind))
-    })
-}
-
 pub(crate) fn remove_by_db_id(
     db: &mut DbAny,
     user_db_id: DbId,
@@ -252,50 +254,6 @@ pub(crate) fn remove_by_db_id(
         db::favorites::remove(t, user_db_id, target_db_id)?;
         Ok(MutationOutcome::Applied(kind))
     })
-}
-
-pub(crate) fn has_by_db_id(
-    db: &DbAny,
-    user_db_id: DbId,
-    target_db_id: DbId,
-) -> anyhow::Result<bool> {
-    let Some((target_db_id, _)) = resolve_targetable_by_db_id(db, user_db_id, target_db_id)? else {
-        return Ok(false);
-    };
-    db::favorites::has(db, user_db_id, target_db_id)
-}
-
-pub(crate) fn has_many_by_db_id(
-    db: &DbAny,
-    user_db_id: DbId,
-    target_db_ids: &[DbId],
-) -> anyhow::Result<HashMap<DbId, bool>> {
-    if target_db_ids.len() > HAS_MANY_CAP {
-        bail!(
-            "has_many cap exceeded: {} > {HAS_MANY_CAP}",
-            target_db_ids.len(),
-        );
-    }
-
-    let mut resolved: Vec<DbId> = Vec::with_capacity(target_db_ids.len());
-    let mut response: HashMap<DbId, bool> = HashMap::with_capacity(target_db_ids.len());
-    for &id in target_db_ids {
-        match resolve_targetable_by_db_id(db, user_db_id, id)? {
-            Some((valid_db_id, _)) => {
-                resolved.push(valid_db_id);
-            }
-            None => {
-                response.insert(id, false);
-            }
-        }
-    }
-    if !resolved.is_empty() {
-        let favored = db::favorites::has_many(db, user_db_id, &resolved)?;
-        for id in resolved {
-            response.insert(id, favored.get(&id).copied().unwrap_or(false));
-        }
-    }
-    Ok(response)
 }
 
 fn playlist_is_visible(
@@ -331,6 +289,97 @@ mod tests {
         QueryBuilder,
     };
     use nanoid::nanoid;
+
+    fn add(
+        db: &mut DbAny,
+        user_db_id: DbId,
+        public_target_id: &str,
+    ) -> anyhow::Result<MutationOutcome> {
+        let now_ms = now_ms()?;
+        db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
+            let Some((target_db_id, kind)) = resolve_targetable(t, user_db_id, public_target_id)?
+            else {
+                return Ok(MutationOutcome::NotTargetable);
+            };
+            db::favorites::add(t, user_db_id, target_db_id, public_target_id, kind, now_ms)?;
+            Ok(MutationOutcome::Applied(kind))
+        })
+    }
+
+    fn has(db: &DbAny, user_db_id: DbId, public_target_id: &str) -> anyhow::Result<bool> {
+        let Some((target_db_id, _kind)) = resolve_targetable(db, user_db_id, public_target_id)?
+        else {
+            return Ok(false);
+        };
+        let Some(snapshot) = db::favorites::edge_snapshot(db, user_db_id, target_db_id)? else {
+            return Ok(false);
+        };
+        Ok(snapshot == public_target_id)
+    }
+
+    fn has_many(
+        db: &DbAny,
+        user_db_id: DbId,
+        public_target_ids: &[String],
+    ) -> anyhow::Result<HashMap<String, bool>> {
+        if public_target_ids.len() > HAS_MANY_CAP {
+            bail!(
+                "has_many cap exceeded: {} > {HAS_MANY_CAP}",
+                public_target_ids.len(),
+            );
+        }
+
+        let mut resolved: Vec<(String, DbId)> = Vec::with_capacity(public_target_ids.len());
+        let mut response: HashMap<String, bool> = HashMap::with_capacity(public_target_ids.len());
+        for public_id in public_target_ids {
+            match resolve_targetable(db, user_db_id, public_id)? {
+                Some((target_db_id, _)) => {
+                    resolved.push((public_id.clone(), target_db_id));
+                }
+                None => {
+                    response.insert(public_id.clone(), false);
+                }
+            }
+        }
+
+        if !resolved.is_empty() {
+            let db_ids: Vec<DbId> = resolved.iter().map(|(_, id)| *id).collect();
+            let snapshots = db::favorites::edge_snapshots(db, user_db_id, &db_ids)?;
+            for (public_id, db_id) in resolved {
+                let is_fav = snapshots
+                    .get(&db_id)
+                    .is_some_and(|snapshot| snapshot == &public_id);
+                response.insert(public_id, is_fav);
+            }
+        }
+
+        Ok(response)
+    }
+
+    fn resolve_targetable(
+        db: &impl db::DbAccess,
+        user_db_id: DbId,
+        public_target_id: &str,
+    ) -> anyhow::Result<Option<(DbId, FavoriteKind)>> {
+        let Some(target_db_id) = db::lookup::find_node_id_by_id(db, public_target_id)? else {
+            return Ok(None);
+        };
+        resolve_targetable_by_db_id(db, user_db_id, target_db_id)
+    }
+
+    fn resolve_targetable_by_db_id(
+        db: &impl db::DbAccess,
+        user_db_id: DbId,
+        target_db_id: DbId,
+    ) -> anyhow::Result<Option<(DbId, FavoriteKind)>> {
+        let Some((target_db_id, kind)) = resolve_whitelisted_by_db_id(db, target_db_id)? else {
+            return Ok(None);
+        };
+        if kind == FavoriteKind::Playlist && !playlist_is_visible(db, user_db_id, target_db_id)? {
+            return Ok(None);
+        }
+        Ok(Some((target_db_id, kind)))
+    }
 
     fn create_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId> {
         users::create(db, &users::test_user(username)?)

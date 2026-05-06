@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
-
 use harmony_core::LuaAsyncExt;
 use mlua::{
     ExternalResult,
@@ -17,8 +15,11 @@ use serde::Serialize;
 
 use crate::{
     STATE,
-    db,
-    plugins::LUA_SERIALIZE_OPTIONS,
+    plugins::{
+        LUA_SERIALIZE_OPTIONS,
+        caller::RequestCaller,
+        db,
+    },
 };
 
 #[harmony_macros::interface]
@@ -54,7 +55,11 @@ struct UsersModule;
 impl UsersModule {
     /// Lists public users.
     #[harmony(args(), returns(Vec<PublicUser>))]
-    pub(crate) async fn list(lua: Lua, _plugin_id: Option<Arc<str>>, _args: ()) -> Result<Value> {
+    pub(crate) async fn list(
+        lua: Lua,
+        #[harmony_context] _caller: RequestCaller,
+        _args: (),
+    ) -> Result<Value> {
         let db = STATE.db.read().await;
         let users = db::users::get(&db).into_lua_err()?;
         let users: Vec<PublicUser> = users

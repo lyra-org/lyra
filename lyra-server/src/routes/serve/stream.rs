@@ -48,7 +48,10 @@ use tokio::sync::{
 };
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::routes::AppError;
+use crate::routes::{
+    self,
+    AppError,
+};
 
 use super::{
     apply_request_start_offset,
@@ -129,7 +132,13 @@ pub(crate) async fn stream_track_response(
     prefer_vbr: Option<bool>,
     start_offset_ms: Option<u64>,
 ) -> Result<Response<Body>, AppError> {
-    let _principal = require_download_access(headers).await?;
+    let principal = require_download_access(headers).await?;
+    {
+        let db = crate::STATE.db.read().await;
+        routes::require_entity_accessible(&*db, &principal, track_db_id, || {
+            AppError::not_found(format!("Track not found: {}", track_db_id.0))
+        })?;
+    }
     let validated = validate_request(format, codec)?;
     let source = apply_request_start_offset(
         validate_and_get_track_source(track_db_id).await?,

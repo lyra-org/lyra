@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
-
 use harmony_core::{
     LuaAsyncExt,
     Module,
@@ -20,7 +18,10 @@ use serde::Serialize;
 
 use crate::{
     STATE,
-    plugins::LUA_SERIALIZE_OPTIONS,
+    plugins::{
+        LUA_SERIALIZE_OPTIONS,
+        caller::RequestCaller,
+    },
     services::auth::{
         AuthCredential as ServiceAuthCredential,
         Principal as ServicePrincipal,
@@ -147,7 +148,7 @@ impl AuthModule {
     /// Resolves a bearer credential to the authenticated principal and credential metadata.
     #[harmony(returns(Option<ResolvedAuth>))]
     pub(crate) async fn resolve_auth(
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] _caller: RequestCaller,
         bearer: Option<String>,
     ) -> Result<Value> {
         let bearer = normalize_token(bearer);
@@ -164,7 +165,7 @@ impl AuthModule {
 
     /// Revokes the session identified by the provided token.
     pub(crate) async fn logout_session(
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] _caller: RequestCaller,
         token: Option<String>,
     ) -> Result<bool> {
         let token = normalize_token(token);
@@ -174,7 +175,7 @@ impl AuthModule {
     /// Attempts to log in and returns a principal plus session token.
     #[harmony(returns(Option<LoginResult>))]
     pub(crate) async fn login(
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] _caller: RequestCaller,
         username: String,
         password: Option<String>,
     ) -> Result<Value> {

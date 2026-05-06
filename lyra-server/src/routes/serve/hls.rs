@@ -36,7 +36,10 @@ use tokio::time::sleep;
 use crate::{
     STATE,
     db,
-    routes::AppError,
+    routes::{
+        self,
+        AppError,
+    },
     services::hls::{
         codec::{
             HLS_SEGMENT_TIME_SECONDS,
@@ -53,6 +56,7 @@ use crate::{
             HLS_JOBS,
             HLS_SESSIONS,
             HlsJobKey,
+            HlsSession,
             attach_session_to_job,
             authorize_hls_segment_session,
             generate_hls_session_id,
@@ -280,12 +284,14 @@ fn resolve_hls_audio_bitrate_kbps(
 
 fn build_hls_media_playlist(
     session_id: &str,
+    user_public_id: &str,
+    library_public_id: &str,
     duration_ms: u64,
     profile: HlsCodecProfile,
 ) -> String {
     let segment_ms = u64::from(HLS_SEGMENT_TIME_SECONDS) * 1000;
     let segment_count = hls_segment_count(duration_ms);
-    let signed_query = hls_signed_segment_query(session_id);
+    let signed_query = hls_signed_segment_query(session_id, user_public_id, library_public_id);
     let mut playlist = String::with_capacity(256 + (segment_count as usize * 128));
 
     let _ = writeln!(playlist, "#EXTM3U");
@@ -357,6 +363,17 @@ pub(crate) async fn serve_hls_playlist_for_track(
 ) -> Result<Response<Body>, AppError> {
     let request_started = Instant::now();
     let principal = require_download_access(headers).await?;
+    let library_public_id = {
+        let db = STATE.db.read().await;
+        routes::require_entity_accessible(&*db, &principal, track_db_id, || {
+            AppError::not_found(format!("Track not found: {}", track_db_id.0))
+        })?;
+        db::libraries::get_for_entity(&*db, track_db_id)?
+            .into_iter()
+            .find(|library| principal.accessible_library_ids.contains(&library.id))
+            .map(|library| library.id)
+            .ok_or_else(|| AppError::not_found(format!("Track not found: {}", track_db_id.0)))?
+    };
 
     let source = apply_request_start_offset(
         validate_and_get_track_source(track_db_id).await?,
@@ -453,11 +470,18 @@ pub(crate) async fn serve_hls_playlist_for_track(
         &session_id,
         principal.user_db_id,
         principal.user_public_id.clone(),
+        library_public_id.clone(),
         playlist_segment_count,
         job_key,
     )
     .await?;
-    let playlist = build_hls_media_playlist(&session_id, duration_ms, profile);
+    let playlist = build_hls_media_playlist(
+        &session_id,
+        &principal.user_public_id,
+        &library_public_id,
+        duration_ms,
+        profile,
+    );
 
     let response = Response::builder()
         .header(header::CONTENT_TYPE, "application/x-mpegurl")
@@ -494,11 +518,30 @@ async fn get_hls_segment(
     Query(query): Query<HlsSegmentQuery>,
 ) -> Result<Response<Body>, AppError> {
     let segment = sanitize_segment_name(&segment)?;
-    let signed_request_is_valid = validate_signed_segment_query(&session_id, &query);
+    let session_snapshot = {
+        let sessions = HLS_SESSIONS.read().await;
+        sessions
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| AppError::not_found("HLS session not found"))?
+    };
+    let signed_request_is_valid = validate_signed_segment_query(
+        &session_id,
+        &session_snapshot.user_public_id,
+        &session_snapshot.library_public_id,
+        &query,
+    );
     let principal = if signed_request_is_valid {
+        if !hls_session_user_still_authorized(&session_snapshot).await? {
+            return Err(AppError::not_found("HLS session not found"));
+        }
         None
     } else {
-        Some(require_download_access(&headers).await?)
+        let principal = require_download_access(&headers).await?;
+        if !hls_principal_can_use_session(&principal, &session_snapshot) {
+            return Err(AppError::not_found("HLS session not found"));
+        }
+        Some(principal)
     };
 
     let (job_key, playlist_segment_count) = {
@@ -509,6 +552,13 @@ async fn get_hls_segment(
 
         let principal_user_public_id = principal.as_ref().map(|p| p.user_public_id.as_str());
         authorize_hls_segment_session(session, principal_user_public_id)?;
+        if !principal
+            .as_ref()
+            .map(|p| hls_principal_can_use_session(p, session))
+            .unwrap_or(true)
+        {
+            return Err(AppError::not_found("HLS session not found"));
+        }
 
         session.last_access = Instant::now();
         (session.job_key.clone(), session.playlist_segment_count)
@@ -577,6 +627,34 @@ async fn get_hls_segment(
     .await
 }
 
+fn hls_principal_can_use_session(
+    principal: &crate::services::auth::Principal,
+    session: &HlsSession,
+) -> bool {
+    principal.user_public_id == session.user_public_id
+        && principal
+            .accessible_library_ids
+            .contains(&session.library_public_id)
+}
+
+async fn hls_session_user_still_authorized(session: &HlsSession) -> Result<bool, AppError> {
+    let db = STATE.db.read().await;
+    let Some(user) = db::users::get_by_public_id(&*db, &session.user_public_id)? else {
+        return Ok(false);
+    };
+    let Some(user_db_id) = user.db_id.map(DbId::from) else {
+        return Ok(false);
+    };
+    let role = db::roles::get_role_for_user(&*db, user_db_id)?;
+    if role.is_some_and(|role| role.permissions.contains(&db::Permission::Admin)) {
+        return Ok(db::libraries::get(&*db)?
+            .into_iter()
+            .any(|library| library.id == session.library_public_id));
+    }
+    Ok(db::libraries::accessible_library_ids(&*db, user_db_id)?
+        .contains(&session.library_public_id))
+}
+
 fn hls_playlist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create HLS playlist")
         .description(
@@ -627,6 +705,7 @@ mod tests {
         },
     };
     use lyra_ffmpeg::AudioCodec;
+    use nanoid::nanoid;
     use std::time::{
         Duration,
         Instant,
@@ -695,7 +774,7 @@ mod tests {
     #[test]
     fn build_hls_media_playlist_uses_vod_markers_and_signed_segment_urls() {
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
-        let playlist = build_hls_media_playlist("sess", 21_452, profile);
+        let playlist = build_hls_media_playlist("sess", "user-pub", "lib-pub", 21_452, profile);
 
         assert!(playlist.contains("#EXT-X-VERSION:6"));
         assert!(playlist.contains("#EXT-X-PLAYLIST-TYPE:VOD"));
@@ -709,7 +788,7 @@ mod tests {
     fn build_hls_media_playlist_uses_init_map_for_fmp4_profiles() {
         let profile =
             HlsCodecProfile::from_requested(Some(AudioCodec::Alac)).expect("alac profile");
-        let playlist = build_hls_media_playlist("sess", 21_452, profile);
+        let playlist = build_hls_media_playlist("sess", "user-pub", "lib-pub", 21_452, profile);
 
         assert!(playlist.contains("#EXT-X-VERSION:7"));
         assert!(playlist.contains("#EXT-X-MAP:URI=\"/api/stream/hls/sess/init.mp4?exp="));
@@ -731,6 +810,51 @@ mod tests {
         tokio::fs::write(test_dir.join(segment_name), b"signed-bytes")
             .await
             .expect("segment created");
+
+        {
+            let mut db = STATE.db.write().await;
+            db::roles::ensure_builtin_roles(&mut db).expect("roles");
+            let user_db_id =
+                match db::users::get_by_public_id(&*db, "user-pub-99").expect("user lookup") {
+                    Some(user) => user.db_id.expect("test user missing db_id").into(),
+                    None => db::users::create(
+                        &mut db,
+                        &db::users::User {
+                            db_id: None,
+                            id: "user-pub-99".to_string(),
+                            username: format!("hls-user-{}", nanoid!()),
+                            password: "unused".to_string(),
+                        },
+                    )
+                    .expect("user create"),
+                };
+            db::roles::ensure_user_has_role(&mut db, user_db_id, db::roles::BUILTIN_ADMIN_ROLE)
+                .expect("admin role");
+            if db::lookup::find_node_id_by_id(&*db, "lib-pub-99")
+                .expect("library lookup")
+                .is_none()
+            {
+                let path = test_dir.join("library-root");
+                std::fs::create_dir_all(&path).expect("library root");
+                let path_key = db::libraries::path_key_for(&path);
+                db.transaction_mut(
+                    |t| -> std::result::Result<db::Library, db::libraries::LibraryCreateError> {
+                        db::libraries::create_system(
+                            t,
+                            db::libraries::LibraryInsert {
+                                id: "lib-pub-99".to_string(),
+                                name: format!("HLS Test {}", nanoid!()),
+                                path,
+                                path_key,
+                                language: None,
+                                country: None,
+                            },
+                        )
+                    },
+                )
+                .expect("library create");
+            }
+        }
 
         let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
         let job_key = HlsJobKey::new(
@@ -759,6 +883,7 @@ mod tests {
                 HlsSession {
                     user_db_id: DbId(99),
                     user_public_id: "user-pub-99".to_string(),
+                    library_public_id: "lib-pub-99".to_string(),
                     playlist_segment_count: 1,
                     job_key,
                     last_access: Instant::now(),
@@ -771,7 +896,7 @@ mod tests {
             .expect("valid timestamp")
             .as_secs()
             + 30;
-        let sig = hls_sign_segment_token(&session_id, exp);
+        let sig = hls_sign_segment_token(&session_id, "user-pub-99", "lib-pub-99", exp);
         let response = match get_hls_segment(
             HeaderMap::new(),
             Path((session_id.clone(), segment_name.to_string())),
@@ -793,5 +918,121 @@ mod tests {
         assert_eq!(&body[..], b"signed-bytes");
 
         reset_hls_state_for_test().await;
+    }
+
+    #[tokio::test]
+    async fn hls_signed_session_rechecks_current_library_access() -> anyhow::Result<()> {
+        let _guard = HLS_TEST_MUTEX.lock().await;
+
+        let user_a_public_id = format!("hls-user-a-{}", nanoid!());
+        let user_b_public_id = format!("hls-user-b-{}", nanoid!());
+        let library_public_id = format!("hls-lib-{}", nanoid!());
+        let library_path = std::env::temp_dir().join(&library_public_id);
+        std::fs::create_dir_all(&library_path)?;
+
+        let (user_a_db_id, user_b_db_id) = {
+            let mut db = STATE.db.write().await;
+            db::roles::ensure_builtin_roles(&mut db)?;
+            let user_a_db_id = db::users::create(
+                &mut db,
+                &db::users::User {
+                    db_id: None,
+                    id: user_a_public_id.clone(),
+                    username: format!("hls-a-{}", nanoid!()),
+                    password: "unused".to_string(),
+                },
+            )?;
+            let user_b_db_id = db::users::create(
+                &mut db,
+                &db::users::User {
+                    db_id: None,
+                    id: user_b_public_id.clone(),
+                    username: format!("hls-b-{}", nanoid!()),
+                    password: "unused".to_string(),
+                },
+            )?;
+            db::roles::ensure_user_has_role(&mut db, user_a_db_id, db::roles::BUILTIN_USER_ROLE)?;
+            db::roles::ensure_user_has_role(&mut db, user_b_db_id, db::roles::BUILTIN_USER_ROLE)?;
+
+            db.transaction_mut(|t| -> anyhow::Result<()> {
+                let library = db::libraries::create_with_creator(
+                    t,
+                    db::libraries::LibraryInsert {
+                        id: library_public_id.clone(),
+                        name: format!("HLS Access {}", nanoid!()),
+                        path: library_path.clone(),
+                        path_key: db::libraries::path_key_for(&library_path),
+                        language: None,
+                        country: None,
+                    },
+                    user_a_db_id,
+                )?;
+                let library_db_id = library.db_id.expect("library db_id after create");
+                db::libraries::grant_access(
+                    t,
+                    user_b_db_id,
+                    library_db_id,
+                    db::libraries::AccessKind::ReadWrite,
+                )?;
+                Ok(())
+            })?;
+
+            (user_a_db_id, user_b_db_id)
+        };
+
+        let session_a = HlsSession {
+            user_db_id: user_a_db_id,
+            user_public_id: user_a_public_id.clone(),
+            library_public_id: library_public_id.clone(),
+            playlist_segment_count: 1,
+            job_key: HlsJobKey::new(
+                "track-a".to_string(),
+                "source-a".to_string(),
+                None,
+                None,
+                HlsOutputConfig::new(
+                    HlsCodecProfile::from_requested(Some(AudioCodec::Aac))?,
+                    Some(crate::services::hls::codec::HLS_AUDIO_BITRATE_KBPS),
+                    None,
+                    None,
+                    false,
+                ),
+            ),
+            last_access: Instant::now(),
+        };
+        assert!(
+            hls_session_user_still_authorized(&session_a)
+                .await
+                .map_err(|err| anyhow::anyhow!("{err:?}"))?
+        );
+
+        {
+            let mut db = STATE.db.write().await;
+            let library_db_id = db::lookup::find_node_id_by_id(&*db, &library_public_id)?
+                .expect("library still exists");
+            db.transaction_mut(|t| db::libraries::revoke_access(t, user_a_db_id, library_db_id))?;
+        }
+
+        assert!(
+            !hls_session_user_still_authorized(&session_a)
+                .await
+                .map_err(|err| anyhow::anyhow!("{err:?}"))?
+        );
+
+        let session_b = HlsSession {
+            user_db_id: user_b_db_id,
+            user_public_id: user_b_public_id,
+            library_public_id,
+            last_access: Instant::now(),
+            ..session_a
+        };
+        assert!(
+            hls_session_user_still_authorized(&session_b)
+                .await
+                .map_err(|err| anyhow::anyhow!("{err:?}"))?
+        );
+
+        let _ = std::fs::remove_dir_all(&library_path);
+        Ok(())
     }
 }

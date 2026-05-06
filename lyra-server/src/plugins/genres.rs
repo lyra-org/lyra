@@ -21,14 +21,20 @@ use serde::{
 
 use crate::{
     STATE,
-    db::{
+    plugins::caller::{
+        request_caller,
+        system_caller,
+    },
+    plugins::db::{
         self,
         NodeId,
+        Permission,
         genres::{
             ResolveExternalId,
             ResolveGenre,
         },
     },
+    services::auth::Principal,
 };
 
 #[derive(Debug, Deserialize)]
@@ -60,6 +66,63 @@ struct GenreInfo {
     db_id: Option<NodeId>,
     id: String,
     name: String,
+}
+
+enum CallerAccess {
+    Request(Principal),
+    System,
+}
+
+fn caller_access(plugin_id: Option<Arc<str>>) -> Result<CallerAccess> {
+    match request_caller(plugin_id.clone()) {
+        Ok(caller) => Ok(CallerAccess::Request(caller.principal)),
+        Err(_) => {
+            system_caller(plugin_id)?;
+            Ok(CallerAccess::System)
+        }
+    }
+}
+
+fn request_can_manage_libraries(principal: &Principal) -> bool {
+    db::roles::has_permission(&principal.permissions, Permission::ManageLibraries)
+}
+
+fn can_read_entity(
+    db: &impl db::DbAccess,
+    access: &CallerAccess,
+    entity_db_id: agdb::DbId,
+) -> Result<bool> {
+    match access {
+        CallerAccess::System => Ok(true),
+        CallerAccess::Request(principal) => {
+            crate::routes::entity_accessible_to_principal(db, principal, entity_db_id)
+                .into_lua_err()
+        }
+    }
+}
+
+fn can_mutate_release(
+    db: &impl db::DbAccess,
+    access: &CallerAccess,
+    release_db_id: agdb::DbId,
+) -> Result<bool> {
+    match access {
+        CallerAccess::System => Ok(true),
+        CallerAccess::Request(principal) => {
+            if !request_can_manage_libraries(principal) {
+                return Ok(false);
+            }
+            crate::routes::entity_accessible_to_principal(db, principal, release_db_id)
+                .into_lua_err()
+        }
+    }
+}
+
+fn can_mutate_global(access: &CallerAccess) -> bool {
+    match access {
+        CallerAccess::System => true,
+        CallerAccess::Request(principal) => request_can_manage_libraries(principal),
+    }
 }
 
 // Shared by `add` and `resolve`.
@@ -108,14 +171,18 @@ impl GenresModule {
     #[harmony(args(release_id: NodeId, request: GenreAddRequest))]
     pub(crate) async fn add(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        plugin_id: Option<Arc<str>>,
         release_id: Value,
         request: Value,
     ) -> Result<NodeId> {
+        let access = caller_access(plugin_id)?;
         let release_id: agdb::DbId = lua.from_value::<NodeId>(release_id)?.into();
         let request: GenreAddRequest = crate::plugins::from_lua_json_value(&lua, request)?;
 
         let mut db = STATE.db.write().await;
+        if !can_mutate_release(&*db, &access, release_id)? {
+            return Ok(agdb::DbId(0).into());
+        }
 
         let is_locked = db::releases::get_by_id(&db, release_id)
             .into_lua_err()?
@@ -136,9 +203,13 @@ impl GenresModule {
     #[harmony(args(request: GenreAddRequest))]
     pub(crate) async fn resolve(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        plugin_id: Option<Arc<str>>,
         request: Value,
     ) -> Result<NodeId> {
+        let access = caller_access(plugin_id)?;
+        if !can_mutate_global(&access) {
+            return Ok(agdb::DbId(0).into());
+        }
         let request: GenreAddRequest = crate::plugins::from_lua_json_value(&lua, request)?;
 
         let mut db = STATE.db.write().await;
@@ -152,10 +223,14 @@ impl GenresModule {
     #[harmony(args(child_id: NodeId, parent_id: NodeId))]
     pub(crate) async fn add_parent(
         _lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        plugin_id: Option<Arc<str>>,
         child_id: NodeId,
         parent_id: NodeId,
     ) -> Result<()> {
+        let access = caller_access(plugin_id)?;
+        if !can_mutate_global(&access) {
+            return Ok(());
+        }
         let mut db = STATE.db.write().await;
         db::genres::link_to_parent(&mut db, child_id.into(), parent_id.into()).into_lua_err()?;
         Ok(())
@@ -251,20 +326,28 @@ impl GenresModule {
     #[harmony(returns(Vec<u64>))]
     pub(crate) async fn get_releases(
         _lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        plugin_id: Option<Arc<str>>,
         genre_id: NodeId,
     ) -> Result<Vec<NodeId>> {
+        let access = caller_access(plugin_id)?;
         let db = STATE.db.read().await;
         let release_ids = db::genres::get_releases(&*db, genre_id.into()).into_lua_err()?;
-        Ok(release_ids.into_iter().map(NodeId::from).collect())
+        let mut visible = Vec::new();
+        for release_id in release_ids {
+            if can_read_entity(&*db, &access, release_id)? {
+                visible.push(release_id.into());
+            }
+        }
+        Ok(visible)
     }
 
     #[harmony(args(genre_ids: Vec<u64>), returns(std::collections::BTreeMap<u64, Vec<u64>>))]
     pub(crate) async fn get_releases_many(
         _lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        plugin_id: Option<Arc<str>>,
         genre_ids: Table,
     ) -> Result<Table> {
+        let access = caller_access(plugin_id)?;
         let ids = crate::plugins::parse_ids(genre_ids)?;
         let db = STATE.db.read().await;
         let result = db::genres::get_releases_many(&*db, &ids).into_lua_err()?;
@@ -272,8 +355,12 @@ impl GenresModule {
         let table = lua.create_table()?;
         for id in ids {
             let release_ids = result.get(&id).cloned().unwrap_or_default();
-            let release_id_values: Vec<NodeId> =
-                release_ids.into_iter().map(NodeId::from).collect();
+            let mut release_id_values: Vec<NodeId> = Vec::new();
+            for release_id in release_ids {
+                if can_read_entity(&*db, &access, release_id)? {
+                    release_id_values.push(release_id.into());
+                }
+            }
             table.set(
                 id.0,
                 lua.to_value_with(&release_id_values, crate::plugins::LUA_SERIALIZE_OPTIONS)?,
@@ -285,11 +372,19 @@ impl GenresModule {
     #[harmony(returns(Vec<GenreInfo>))]
     pub(crate) async fn get_for_release(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        plugin_id: Option<Arc<str>>,
         release_id: NodeId,
     ) -> Result<Value> {
+        let access = caller_access(plugin_id)?;
         let db = STATE.db.read().await;
-        let genres = db::genres::get_for_release(&*db, release_id.into()).into_lua_err()?;
+        let release_id: agdb::DbId = release_id.into();
+        if !can_read_entity(&*db, &access, release_id)? {
+            return lua.to_value_with(
+                &Vec::<GenreInfo>::new(),
+                crate::plugins::LUA_SERIALIZE_OPTIONS,
+            );
+        }
+        let genres = db::genres::get_for_release(&*db, release_id).into_lua_err()?;
         let infos: Vec<GenreInfo> = genres
             .into_iter()
             .map(|g| GenreInfo {
@@ -304,14 +399,25 @@ impl GenresModule {
     #[harmony(args(release_ids: Vec<u64>), returns(std::collections::BTreeMap<u64, Vec<GenreInfo>>))]
     pub(crate) async fn get_for_releases_many(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        plugin_id: Option<Arc<str>>,
         release_ids: Table,
     ) -> Result<Table> {
+        let access = caller_access(plugin_id)?;
         let ids = crate::plugins::parse_ids(release_ids)?;
         let db = STATE.db.read().await;
         let result = db::genres::get_for_releases_many(&*db, &ids).into_lua_err()?;
         let table = lua.create_table()?;
         for id in ids {
+            if !can_read_entity(&*db, &access, id)? {
+                table.set(
+                    id.0,
+                    lua.to_value_with(
+                        &Vec::<GenreInfo>::new(),
+                        crate::plugins::LUA_SERIALIZE_OPTIONS,
+                    )?,
+                )?;
+                continue;
+            }
             let genres = result.get(&id).cloned().unwrap_or_default();
             let infos: Vec<GenreInfo> = genres
                 .into_iter()

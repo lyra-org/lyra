@@ -590,8 +590,12 @@ pub(crate) fn query(
 ) -> anyhow::Result<PagedResult<Track>> {
     let tracks = get(db, from)?;
 
+    Ok(query_items(tracks, options))
+}
+
+pub(crate) fn query_items(tracks: Vec<Track>, options: &ListOptions) -> PagedResult<Track> {
     if options.search_term.is_none() && options.sort.is_empty() {
-        return Ok(paginate_tracks(tracks, options));
+        return paginate_tracks(tracks, options);
     }
 
     let mut entries: Vec<TrackSortEntry> = tracks.into_iter().map(TrackSortEntry::new).collect();
@@ -605,7 +609,7 @@ pub(crate) fn query(
         );
     }
 
-    Ok(sort_and_paginate_tracks(entries, options))
+    sort_and_paginate_tracks(entries, options)
 }
 
 pub(crate) fn query_by_artists(

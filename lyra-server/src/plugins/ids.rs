@@ -19,7 +19,7 @@ use agdb::DbId;
 
 use crate::{
     STATE,
-    db,
+    plugins::db,
     plugins::parse_ids,
 };
 

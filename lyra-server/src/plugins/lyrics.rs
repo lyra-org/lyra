@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
-
 use agdb::DbId;
 use harmony_core::LuaAsyncExt;
 use mlua::{
@@ -22,7 +20,7 @@ use serde::{
 
 use crate::{
     STATE,
-    db::{
+    plugins::db::{
         self,
         IdSource,
         NodeId,
@@ -35,6 +33,7 @@ use crate::{
     },
     plugins::{
         LUA_SERIALIZE_OPTIONS,
+        caller::RequestCaller,
         from_lua_json_value,
         parse_ids,
     },
@@ -252,7 +251,7 @@ impl LyricsModule {
     #[harmony(args(track_id: u64, language: Option<String>, require_synced: Option<bool>), returns(Option<LyricsInfo>))]
     pub(crate) async fn get(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         track_id: NodeId,
         language: Option<String>,
         require_synced: Option<bool>,
@@ -263,6 +262,11 @@ impl LyricsModule {
         }
 
         let db = STATE.db.read().await;
+        if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, track_db_id)
+            .into_lua_err()?
+        {
+            return Ok(Value::Nil);
+        }
         let detail = lyrics_service::get_preferred_detail(
             &*db,
             track_db_id,
@@ -284,7 +288,7 @@ impl LyricsModule {
     #[harmony(args(text: String, language: Option<String>), returns(PluginLyricsInput))]
     pub(crate) async fn parse_lrc(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] _caller: RequestCaller,
         text: String,
         language: Option<String>,
     ) -> Result<Value> {
@@ -303,20 +307,24 @@ impl LyricsModule {
     #[harmony(args(track_id: u64, lyrics: PluginLyricsInput), returns(u64))]
     pub(crate) async fn upsert(
         lua: Lua,
-        plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         track_id: NodeId,
         lyrics: Table,
     ) -> Result<NodeId> {
-        let plugin_id = plugin_id
-            .ok_or_else(|| mlua::Error::runtime("lyrics.upsert requires plugin scope"))?
-            .to_string();
+        let plugin_id = caller.plugin_id.to_string();
         let now = lyrics_service::now_ms().into_lua_err()?;
         let lyrics: PluginLyricsInput = from_lua_json_value(&lua, Value::Table(lyrics))?;
         let input = lyrics.into_lyrics_input(now)?;
 
         let mut db = STATE.db.write().await;
+        let track_db_id = DbId::from(track_id);
+        if !crate::routes::entity_accessible_to_principal(&*db, &caller.principal, track_db_id)
+            .into_lua_err()?
+        {
+            return Err(mlua::Error::runtime("track not found"));
+        }
         let lyrics_db_id =
-            lyrics_service::upsert_plugin_lyrics(&mut db, DbId::from(track_id), input, plugin_id)
+            lyrics_service::upsert_plugin_lyrics(&mut db, track_db_id, input, plugin_id)
                 .into_lua_err()?;
         Ok(lyrics_db_id.into())
     }
@@ -325,7 +333,7 @@ impl LyricsModule {
     #[harmony(args(track_id: u64, upload: UserLyricsUploadInput), returns(LyricsInfo))]
     pub(crate) async fn upsert_user_override(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         track_id: NodeId,
         upload: Table,
     ) -> Result<Value> {
@@ -343,6 +351,11 @@ impl LyricsModule {
                 .into_lua_err()?;
 
         let mut db = STATE.db.write().await;
+        if !crate::routes::entity_accessible_to_principal(&*db, &caller.principal, track_db_id)
+            .into_lua_err()?
+        {
+            return Err(mlua::Error::runtime("track not found"));
+        }
         let detail = lyrics_service::upsert_user_lyrics_by_db_id(&mut db, track_db_id, input)
             .into_lua_err()?;
         lyrics_detail_to_value(&lua, detail)
@@ -350,31 +363,50 @@ impl LyricsModule {
 
     /// Deletes the user-authored lyrics override for a track. Provider lyrics are left intact.
     pub(crate) async fn delete_user_override_for_track(
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         track_id: NodeId,
     ) -> Result<bool> {
         let mut db = STATE.db.write().await;
-        lyrics_service::delete_user_lyrics_for_track_by_db_id(&mut db, track_id.into())
-            .into_lua_err()
+        let track_db_id = DbId::from(track_id);
+        if !crate::routes::entity_accessible_to_principal(&*db, &caller.principal, track_db_id)
+            .into_lua_err()?
+        {
+            return Ok(false);
+        }
+        lyrics_service::delete_user_lyrics_for_track_by_db_id(&mut db, track_db_id).into_lua_err()
     }
 
     /// Deletes every lyrics row for a track. Intended for trusted cleanup workflows.
     pub(crate) async fn delete_for_track(
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         track_id: NodeId,
     ) -> Result<()> {
         let mut db = STATE.db.write().await;
-        lyrics_service::delete_all_lyrics_for_track(&mut db, track_id.into()).into_lua_err()
+        let track_db_id = DbId::from(track_id);
+        if !crate::routes::entity_accessible_to_principal(&*db, &caller.principal, track_db_id)
+            .into_lua_err()?
+        {
+            return Ok(());
+        }
+        lyrics_service::delete_all_lyrics_for_track(&mut db, track_db_id).into_lua_err()
     }
 
     /// Returns true when the track has preferred lyrics available.
-    pub(crate) async fn has(_plugin_id: Option<Arc<str>>, track_id: NodeId) -> Result<bool> {
+    pub(crate) async fn has(
+        #[harmony_context] caller: RequestCaller,
+        track_id: NodeId,
+    ) -> Result<bool> {
         let track_db_id = DbId::from(track_id);
         if track_db_id.0 <= 0 {
             return Ok(false);
         }
 
         let db = STATE.db.read().await;
+        if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, track_db_id)
+            .into_lua_err()?
+        {
+            return Ok(false);
+        }
         let detail =
             lyrics_service::get_preferred_detail(&*db, track_db_id, None, false).into_lua_err()?;
         Ok(detail.is_some())
@@ -384,7 +416,7 @@ impl LyricsModule {
     #[harmony(args(track_ids: Vec<u64>), returns(std::collections::BTreeMap<u64, bool>))]
     pub(crate) async fn has_many(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        #[harmony_context] caller: RequestCaller,
         track_ids: Table,
     ) -> Result<Table> {
         let track_ids = parse_ids(track_ids)?;
@@ -393,6 +425,12 @@ impl LyricsModule {
 
         let table = lua.create_table()?;
         for track_id in track_ids {
+            if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, track_id)
+                .into_lua_err()?
+            {
+                table.set(track_id.0, false)?;
+                continue;
+            }
             let has_lyrics = match db::tracks::get_by_id(&*db, track_id).into_lua_err()? {
                 Some(track) => {
                     let candidates = db::lyrics::get_for_track(&*db, track_id).into_lua_err()?;

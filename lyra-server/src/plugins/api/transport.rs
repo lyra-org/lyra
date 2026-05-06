@@ -57,7 +57,10 @@ use crate::{
         serve_hls_playlist_for_track,
         stream_track_response,
     },
-    services::auth::resolve_optional_auth,
+    services::auth::{
+        Principal,
+        resolve_optional_auth,
+    },
 };
 
 use super::image::{
@@ -80,6 +83,11 @@ fn join_preferred_codecs(preferred_codecs: Option<Vec<String>>) -> Option<String
     })
 }
 
+pub(super) struct BuiltRequestContext {
+    pub(super) table: Table,
+    pub(super) principal: Option<Principal>,
+}
+
 pub(super) async fn build_context(
     lua: &Lua,
     route: &RegisteredRoute,
@@ -89,13 +97,15 @@ pub(super) async fn build_context(
     query: &HashMap<String, Vec<String>>,
     params: Option<&HashMap<String, String>>,
     body: &Bytes,
-) -> Result<Table> {
+) -> Result<BuiltRequestContext> {
     let ctx = lua.create_table()?;
     ctx.set("plugin_id", route.plugin_id.as_ref())?;
+    let mut principal = None;
     if let Some(auth) = resolve_optional_auth(headers)
         .await
         .map_err(|err| anyhow::Error::new(err))?
     {
+        principal = Some(auth.principal.clone());
         ctx.set("auth", plugin_auth_to_value(lua, to_plugin_auth(auth))?)?;
     } else {
         ctx.set("auth", Value::Nil)?;
@@ -141,7 +151,10 @@ pub(super) async fn build_context(
     }
     ctx.set("params", params_table)?;
 
-    Ok(ctx)
+    Ok(BuiltRequestContext {
+        table: ctx,
+        principal,
+    })
 }
 
 fn parse_json_body(lua: &Lua, headers: &HeaderMap, body: &Bytes) -> Result<Option<Value>> {

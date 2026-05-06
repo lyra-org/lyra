@@ -83,7 +83,7 @@ fn merge_release_into(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Resu
 
     // Migrate Credit nodes from loser to winner.
     // First, collect artist IDs already credited on the winner to avoid duplicates.
-    let winner_artists: std::collections::HashSet<agdb::DbId> = db::artists::get(db, winner)?
+    let winner_artists: HashSet<DbId> = db::artists::get(db, winner)?
         .into_iter()
         .filter_map(|p| p.db_id.map(Into::into))
         .collect();

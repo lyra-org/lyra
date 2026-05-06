@@ -23,8 +23,9 @@ use serde::Deserialize;
 
 use crate::{
     STATE,
-    db::PlaybackState,
+    plugins::db::PlaybackState,
     plugins::{
+        caller::request_caller,
         from_lua_json_value,
         lifecycle::{
             PluginFunctionHandle,
@@ -38,8 +39,8 @@ use crate::{
         PlaybackEvent,
         PlaybackServiceError,
         PlaybackUpdatePayload,
-        dispatch_evicted_updates,
-        dispatch_playback_update,
+        dispatch_evicted_updates_for_caller,
+        dispatch_playback_update_for_caller,
     },
 };
 
@@ -192,9 +193,10 @@ impl PlaybackSessionsModule {
     #[harmony(args(request: PlaybackReportRequest))]
     pub(crate) async fn report(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        plugin_id: Option<Arc<str>>,
         request_table: Table,
     ) -> Result<()> {
+        let caller = request_caller(plugin_id)?;
         let request: PlaybackReportRequest =
             from_lua_json_value(&lua, mlua::Value::Table(request_table))?;
         let playback_session_id =
@@ -204,11 +206,20 @@ impl PlaybackSessionsModule {
         let current_ms = playbacks::now_ms().map_err(playback_service_error_to_lua)?;
 
         let mut db = STATE.db.write().await;
+        let track_db_id =
+            crate::plugins::db::playback_sessions::get_track_id(&*db, playback_session_id)
+                .map_err(mlua::Error::external)?
+                .ok_or_else(|| mlua::Error::runtime("playback session not found"))?;
+        if !crate::routes::entity_accessible_to_principal(&*db, &caller.principal, track_db_id)
+            .map_err(mlua::Error::external)?
+        {
+            return Err(mlua::Error::runtime("playback session not found"));
+        }
         let update = playbacks::report_playback_with_cleanup(
             &mut db,
             playbacks::ReportPlaybackRequest {
                 playback_session_id,
-                user_db_id: None,
+                user_db_id: Some(caller.principal.user_db_id),
                 mutation,
                 now_ms: current_ms,
                 activity_policy: playbacks::ActivityPolicy::PlayingOnly,
@@ -216,10 +227,11 @@ impl PlaybackSessionsModule {
             },
         )
         .map_err(playback_service_error_to_lua)?;
-        dispatch_evicted_updates(update.evicted_playbacks);
+        let dispatch_caller = format!("plugin:{}", caller.plugin_id);
+        dispatch_evicted_updates_for_caller(dispatch_caller.clone(), update.evicted_playbacks);
 
         drop(db);
-        dispatch_playback_update(&update.playback, update.event);
+        dispatch_playback_update_for_caller(dispatch_caller, &update.playback, update.event);
         Ok(())
     }
 
@@ -227,17 +239,26 @@ impl PlaybackSessionsModule {
     #[harmony(args(request: PlaybackStartRequest))]
     pub(crate) async fn start(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        plugin_id: Option<Arc<str>>,
         request_table: Table,
     ) -> Result<i64> {
+        let caller = request_caller(plugin_id)?;
         let request: PlaybackStartRequest =
             from_lua_json_value(&lua, mlua::Value::Table(request_table))?;
         let track_db_id = require_positive_id(request.track_id, "track_id")?;
         let user_db_id = require_positive_id(request.user_id, "user_id")?;
+        if user_db_id != caller.principal.user_db_id {
+            return Err(mlua::Error::runtime("user not found"));
+        }
         let mutation = playback_mutation(request.position_ms, request.duration_ms, request.state);
         let current_ms = playbacks::now_ms().map_err(playback_service_error_to_lua)?;
 
         let mut db = STATE.db.write().await;
+        if !crate::routes::entity_accessible_to_principal(&*db, &caller.principal, track_db_id)
+            .map_err(mlua::Error::external)?
+        {
+            return Err(mlua::Error::runtime("track not found"));
+        }
         let update = playbacks::start_playback_with_cleanup(
             &mut db,
             playbacks::StartPlaybackRequest {
@@ -249,11 +270,12 @@ impl PlaybackSessionsModule {
             },
         )
         .map_err(playback_service_error_to_lua)?;
-        dispatch_evicted_updates(update.evicted_playbacks);
+        let dispatch_caller = format!("plugin:{}", caller.plugin_id);
+        dispatch_evicted_updates_for_caller(dispatch_caller.clone(), update.evicted_playbacks);
         drop(db);
 
         let playback_session_id = update.playback.playback_session_id.0;
-        dispatch_playback_update(&update.playback, update.event);
+        dispatch_playback_update_for_caller(dispatch_caller, &update.playback, update.event);
         Ok(playback_session_id)
     }
 
@@ -261,36 +283,44 @@ impl PlaybackSessionsModule {
     #[harmony(args(request: PlaybackSessionReportRequest), returns(Option<i64>))]
     pub(crate) async fn report_session(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        plugin_id: Option<Arc<str>>,
         request_table: Table,
     ) -> Result<Option<i64>> {
-        sessions::report_session(lua, request_table).await
+        let caller = request_caller(plugin_id)?;
+        sessions::report_session(lua, &caller, request_table).await
     }
 
     /// Clears a plugin-scoped playback session.
     #[harmony(args(request: PlaybackSessionClearRequest))]
-    pub(crate) fn clear_session(lua: &Lua, request_table: Table) -> Result<()> {
-        sessions::clear_session(lua, request_table)
+    pub(crate) async fn clear_session(
+        lua: Lua,
+        plugin_id: Option<Arc<str>>,
+        request_table: Table,
+    ) -> Result<()> {
+        let caller = request_caller(plugin_id)?;
+        sessions::clear_session(&lua, &caller, request_table)
     }
 
     /// Lists active connections for the given user with their playback state.
     #[harmony(args(user_id: i64), returns(Vec<remote::ConnectionInfo>))]
     pub(crate) async fn list_connections(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        plugin_id: Option<Arc<str>>,
         user_id: i64,
     ) -> Result<mlua::Value> {
-        remote::list_connections(lua, user_id).await
+        let caller = request_caller(plugin_id)?;
+        remote::list_connections(lua, &caller.principal, user_id).await
     }
 
     /// Sends a remote control command to a connection.
     #[harmony(args(request: remote::SendCommandRequest))]
     pub(crate) async fn send_command(
         lua: Lua,
-        _plugin_id: Option<Arc<str>>,
+        plugin_id: Option<Arc<str>>,
         request_table: Table,
     ) -> Result<()> {
-        remote::send_command(lua, request_table).await
+        let caller = request_caller(plugin_id)?;
+        remote::send_command(lua, &caller.principal, request_table).await
     }
 }
 
@@ -316,7 +346,6 @@ mod tests {
 
     use super::*;
     use crate::STATE;
-    use crate::services::playback_sessions::dispatch_update;
 
     #[tokio::test]
     async fn dispatch_update_invokes_registered_handler() -> anyhow::Result<()> {
@@ -353,7 +382,7 @@ mod tests {
 
         let expected = PlaybackUpdatePayload {
             event: "progress".to_string(),
-            state: crate::db::PlaybackState::Playing,
+            state: crate::plugins::db::PlaybackState::Playing,
             playback_session_public_id: "ps-pub-42".to_string(),
             track_public_id: "tr-pub-7".to_string(),
             user_public_id: "us-pub-1".to_string(),
@@ -365,7 +394,32 @@ mod tests {
             updated_at_ms: 1_700_000_000_000,
         };
 
-        dispatch_update(expected.clone());
+        let playback = playbacks::PlaybackRecord {
+            playback_session_id: agdb::DbId(42),
+            playback_session_public_id: expected.playback_session_public_id.clone(),
+            track_db_id: agdb::DbId(7),
+            track_public_id: expected.track_public_id.clone(),
+            user_db_id: agdb::DbId(1),
+            user_public_id: expected.user_public_id.clone(),
+            library_public_id: expected.library_public_id.clone(),
+            playback: playbacks::PlaybackSession {
+                db_id: Some(agdb::DbId(42)),
+                id: expected.playback_session_public_id.clone(),
+                position_ms: expected.position_ms,
+                duration_ms: expected.duration_ms,
+                activity_ms: Some(expected.activity_ms),
+                last_position_ms: None,
+                state: expected.state,
+                listen_recorded: None,
+                updated_at_ms: expected.updated_at_ms,
+                created_at_ms: expected.updated_at_ms,
+            },
+        };
+        dispatch_playback_update_for_caller(
+            "plugin-playback-session-dispatch-test",
+            &playback,
+            expected.event.clone(),
+        );
 
         let received = timeout(Duration::from_secs(1), rx).await??;
         assert_eq!(received.event, expected.event);
