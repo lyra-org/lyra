@@ -55,7 +55,10 @@ impl IdSource {
         match value {
             "plugin" => Ok(Self::Plugin),
             "user" => Ok(Self::User),
-            _ => Err(DbError::from(format!("invalid IdSource value '{value}'"))),
+            _ => Err(DbError::serialization(
+                agdb::DbErrorType::TypeError,
+                format!("invalid IdSource value '{value}'"),
+            )),
         }
     }
 }

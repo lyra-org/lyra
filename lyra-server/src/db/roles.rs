@@ -62,7 +62,10 @@ impl Permission {
             "manage_providers" => Ok(Self::ManageProviders),
             "manage_metadata" => Ok(Self::ManageMetadata),
             "download" => Ok(Self::Download),
-            _ => Err(DbError::from(format!("invalid Permission value '{value}'"))),
+            _ => Err(DbError::serialization(
+                agdb::DbErrorType::TypeError,
+                format!("invalid Permission value '{value}'"),
+            )),
         }
     }
 }

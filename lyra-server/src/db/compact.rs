@@ -251,8 +251,12 @@ mod tests {
 
     #[test]
     fn run_optimize_propagates_returned_err() {
-        let outcome =
-            run_optimize_swallowing_panics(|| Err(agdb::DbError::from("simulated db error")));
+        let outcome = run_optimize_swallowing_panics(|| {
+            Err(agdb::DbError::db(
+                agdb::DbErrorType::TypeError,
+                "simulated db error",
+            ))
+        });
         assert!(matches!(outcome, OptimizeOutcome::Err(_)));
     }
 

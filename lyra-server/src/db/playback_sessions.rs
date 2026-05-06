@@ -65,9 +65,10 @@ impl PlaybackState {
             "stopped" => Ok(Self::Stopped),
             "buffering" => Ok(Self::Buffering),
             "completed" => Ok(Self::Completed),
-            _ => Err(DbError::from(format!(
-                "invalid PlaybackState value '{value}'"
-            ))),
+            _ => Err(DbError::serialization(
+                agdb::DbErrorType::TypeError,
+                format!("invalid PlaybackState value '{value}'"),
+            )),
         }
     }
 }

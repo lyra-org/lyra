@@ -71,7 +71,10 @@ impl ArtistType {
             "character" => Ok(Self::Character),
             "orchestra" => Ok(Self::Orchestra),
             "choir" => Ok(Self::Choir),
-            _ => Err(DbError::from(format!("invalid ArtistType value '{value}'"))),
+            _ => Err(DbError::serialization(
+                agdb::DbErrorType::TypeError,
+                format!("invalid ArtistType value '{value}'"),
+            )),
         }
     }
 }
