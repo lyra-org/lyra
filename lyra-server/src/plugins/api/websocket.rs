@@ -385,7 +385,7 @@ async fn run_plugin_websocket(
     let handler_run = async {
         let call = run_thread::<Value>(&lua, thread.clone(), (reader, sender, ctx));
         if let Some(principal) = principal {
-            caller::scope_request(principal, call).await
+            caller::scope_request_thread(&lua, &thread, principal, call).await
         } else {
             call.await
         }

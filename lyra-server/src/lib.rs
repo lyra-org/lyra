@@ -177,6 +177,7 @@ fn new_lua() -> Result<Arc<Lua>> {
     let package_table = lua.create_table()?;
     lua.globals().set("package", package_table)?;
     harmony_core::set_caller_resolver(&lua, crate::plugins::globals::caller_resolver());
+    crate::plugins::caller::install_context_propagator(&lua);
     Ok(lua.into())
 }
 

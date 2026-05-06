@@ -152,8 +152,12 @@ impl PluginFunctionHandle {
         A: IntoLuaMulti,
         R: mlua::FromLuaMulti,
     {
-        use harmony_core::LuaFunctionAsyncExt;
-        self.func.call_async(args).await
+        let Some(lua) = self.try_upgrade_lua() else {
+            return Err(mlua::Error::runtime("lua instance is no longer valid"));
+        };
+        let thread = lua.create_thread(self.func.clone())?;
+        let call = harmony_core::run_thread::<R>(&lua, thread.clone(), args);
+        crate::plugins::caller::scope_current_thread_context(&lua, &thread, call).await
     }
 }
 
