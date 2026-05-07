@@ -6,7 +6,6 @@
 pub(crate) mod api_keys;
 pub(crate) mod artists;
 pub(crate) mod bootstrap;
-pub(crate) mod compact;
 pub(crate) mod covers;
 pub(crate) mod credits;
 pub(crate) mod cue;
@@ -28,6 +27,7 @@ pub(crate) mod mixers;
 pub(crate) mod playback_sessions;
 pub(crate) mod playlists;
 pub(crate) mod plugin;
+pub(crate) mod process_lock;
 pub(crate) mod providers;
 pub(crate) mod releases;
 pub(crate) mod roles;

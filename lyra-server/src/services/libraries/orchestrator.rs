@@ -207,11 +207,6 @@ async fn run_library_sync(db: DbAsync, library: Library, library_db_id: DbId, ru
 
     match result {
         Ok(()) => {
-            let mut db_write = db.write().await;
-            if let Err(err) = db_write.optimize_storage() {
-                tracing::warn!(error = %err, "failed to optimize storage after sync");
-            }
-            drop(db_write);
             mark_succeeded(library_db_id, run_id).await;
         }
         Err(err) => {
