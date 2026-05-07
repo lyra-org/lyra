@@ -367,7 +367,7 @@ async fn run_plugin_websocket(
     let thread = match lua.create_thread(handler.inner_function().clone()) {
         Ok(t) => t,
         Err(err) => {
-            tracing::error!(
+            tracing::warn!(
                 plugin_id = %plugin_id,
                 path = %path,
                 error = %err,
@@ -427,7 +427,7 @@ async fn run_plugin_websocket(
             );
         }
         HandlerOutcome::Completed(Err(err)) => {
-            tracing::error!(
+            tracing::warn!(
                 plugin_id = %plugin_id,
                 path = %path,
                 error = %err,

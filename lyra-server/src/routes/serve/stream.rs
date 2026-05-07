@@ -292,7 +292,7 @@ pub(crate) async fn stream_track_response(
                 {
                     tracing::debug!("stream ended (client disconnected)");
                 } else {
-                    tracing::error!("ffmpeg error: {}", e);
+                    tracing::warn!("ffmpeg error: {}", e);
                 }
             }
             Ok(()) => tracing::debug!("stream completed successfully"),

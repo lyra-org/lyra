@@ -44,7 +44,7 @@ async fn run(db: DbAsync, shutdown: &Notify) {
         tokio::select! {
             _ = sleep(SWEEP_INTERVAL) => {}
             _ = shutdown.notified() => {
-                tracing::debug!("maintenance sweeper shutting down");
+                tracing::info!("maintenance sweeper shutting down");
                 return;
             }
         }

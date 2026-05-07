@@ -433,7 +433,7 @@ async fn dispatch_registered_route(
     let response = match result {
         Ok(value) => lua_response_to_axum(&lua, value, &headers).await,
         Err(err) => {
-            tracing::error!(
+            tracing::warn!(
                 plugin_id = %route.plugin_id,
                 method = %route.key.method,
                 path = %route.key.path,
@@ -447,7 +447,7 @@ async fn dispatch_registered_route(
     match response {
         Ok(response) => strip_body_for_head(&method, response),
         Err(err) => {
-            tracing::error!(
+            tracing::warn!(
                 plugin_id = %route.plugin_id,
                 method = %route.key.method,
                 path = %route.key.path,
