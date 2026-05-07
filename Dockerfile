@@ -107,14 +107,16 @@ WORKDIR /lyra
 COPY --from=builder /build/target/release/lyra /usr/local/bin/lyra
 COPY --from=builder /build/plugins/ /lyra/plugins/
 
-RUN chown -R lyra:lyra /lyra
+RUN mkdir -p /lyra/data /lyra/static \
+    && chown -R lyra:lyra /lyra
 
 USER lyra
 
 ENV LYRA_CONFIG_PATH=/lyra/config.json \
-    LYRA_PLUGINS_DIR=/lyra/plugins
+    LYRA_PLUGINS_DIR=/lyra/plugins \
+    LYRA_STATIC_DIR=/lyra/static
 
-VOLUME ["/lyra/plugins"]
+VOLUME ["/lyra/data", "/lyra/plugins", "/lyra/static"]
 
 EXPOSE 4746
 
