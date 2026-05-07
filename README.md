@@ -8,7 +8,56 @@ Lyra is a music server with a Luau plugin system and an emphasis on metadata cor
 
 ## Installation
 
-The recommended installation method is to use Cargo:
+The recommended installation method is Docker Compose. Create a directory for Lyra, add a `config.json`, put any web UI/static assets in `./static`, and start the container with a compose file like this:
+
+```yaml
+services:
+  lyra:
+    image: registry.lyra.pub/lyra/lyra:latest
+    restart: unless-stopped
+    ports:
+      - "4746:4746"
+    # These match the image defaults. Uncomment and adjust them only if you
+    # mount config, plugins, or static assets somewhere else.
+    # environment:
+    #   LYRA_CONFIG_PATH: /lyra/config.json
+    #   LYRA_PLUGINS_DIR: /lyra/plugins
+    #   LYRA_STATIC_DIR: /lyra/static
+    volumes:
+      - ./config.json:/lyra/config.json:ro
+      - ./static:/lyra/static:ro
+      - lyra-data:/lyra/data
+      - /path/to/music:/music:ro
+
+volumes:
+  lyra-data:
+```
+
+Then start Lyra:
+
+```bash
+docker compose up -d
+```
+
+Use container paths in `config.json`. A minimal persistent setup looks like this:
+
+```json
+{
+  "library": {
+    "path": "/music"
+  },
+  "covers_path": "/lyra/data/covers",
+  "db": {
+    "kind": "mmap",
+    "path": "/lyra/data/lyra.db"
+  }
+}
+```
+
+`LYRA_STATIC_DIR` controls the directory used for static assets inside the container. The image defaults it to `/lyra/static`; change both the environment value and volume target if you want to mount the assets somewhere else.
+
+Cargo installation is still useful for local development:
+
 ```bash
 cargo +nightly install --locked --git https://git.lyra.pub/lyra/lyra lyra-server
 ```
@@ -22,9 +71,9 @@ It is highly recommended that you also grab the plugins in `plugins`, especially
 
 ## Configuration
 
-The runtime configuration is loaded from `config.json`. You can drop it in the same directory as `plugins`.
+The runtime configuration is loaded from `config.json`. In Docker, the default path is `/lyra/config.json`; for local Cargo installs, you can drop it in the same directory as `plugins`.
 
-We recommend that you set the `”kind”` in `”db”` to `”mmap"` or `”file”` for persistence.
+We recommend that you set the `"kind"` in `"db"` to `"mmap"` or `"file"` for persistence.
 
 ### Schema
 
