@@ -57,14 +57,14 @@ use dispatch::{
     installed_static_dir,
 };
 
-pub(crate) async fn install(app: Router, reservations: HashSet<RouteKey>) -> Router {
-    let static_dir = find_static_dir();
+pub(crate) async fn install(app: Router, reservations: HashSet<RouteKey>) -> Result<Router> {
+    let static_dir = find_static_dir()?;
     if let Some(ref dir) = static_dir {
         tracing::info!(static_dir = %dir.display(), "serving static directory");
     }
     initialize_registry(reservations).await;
     initialize_router(static_dir).await;
-    app.fallback(fallback)
+    Ok(app.fallback(fallback))
 }
 
 pub(crate) async fn finalize() -> Result<()> {
