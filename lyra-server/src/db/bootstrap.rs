@@ -163,10 +163,30 @@ pub(crate) fn create(config: &DbConfig) -> anyhow::Result<Created> {
     }
     let mut db = open(config.kind, db_path.as_ref())?;
     initialize(&mut db)?;
+    optimize_storage(&mut db, config);
     Ok(Created {
         db: Arc::new(RwLock::new(db)),
         lock,
     })
+}
+
+fn optimize_storage(db: &mut DbAny, config: &DbConfig) {
+    if matches!(config.kind, DbKind::Memory) {
+        return;
+    }
+
+    tracing::debug!(
+        path = %config.path.display(),
+        kind = kind_label(config.kind),
+        "optimizing db storage"
+    );
+    if let Err(err) = db.optimize_storage() {
+        tracing::warn!(
+            error = %err,
+            path = %config.path.display(),
+            "failed to optimize db storage"
+        );
+    }
 }
 
 fn kind_label(kind: DbKind) -> &'static str {
