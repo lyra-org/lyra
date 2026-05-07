@@ -230,7 +230,7 @@ async fn forbid_api_key_credential(headers: &HeaderMap) -> Result<ResolvedAuth, 
 async fn create_user(
     headers: HeaderMap,
     Json(user): Json<UserRequest>,
-) -> Result<StatusCode, AppError> {
+) -> Result<(StatusCode, Json<PublicUser>), AppError> {
     let normalized_username = validate_username(&user.username)?;
     if normalized_username == STATE.config.get().auth.default_username.to_lowercase() {
         return Err(AppError::bad_request(format!(
@@ -269,19 +269,23 @@ async fn create_user(
         )));
     }
 
-    let user_db_id = db::users::create(
-        db.deref_mut(),
-        &User {
-            db_id: None,
-            id: nanoid!(),
-            username: normalized_username,
-            password: password_hash,
-        },
-    )?;
+    let user = User {
+        db_id: None,
+        id: nanoid!(),
+        username: normalized_username,
+        password: password_hash,
+    };
+    let response = PublicUser {
+        id: user.id.clone(),
+        username: user.username.clone(),
+        role: Some(role_name.to_string()),
+    };
+
+    let user_db_id = db::users::create(db.deref_mut(), &user)?;
 
     db::roles::ensure_user_has_role(&mut db, user_db_id, role_name)?;
 
-    Ok(StatusCode::CREATED)
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 async fn list_users(headers: HeaderMap) -> Result<Json<Vec<PublicUser>>, AppError> {
@@ -578,7 +582,7 @@ fn create_user_docs(op: TransformOperation) -> TransformOperation {
              During initial setup (no admin exists), the first user is created as admin without \
              authentication.",
         )
-        .response::<201, ()>()
+        .response::<201, Json<PublicUser>>()
 }
 
 fn list_users_docs(op: TransformOperation) -> TransformOperation {

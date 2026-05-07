@@ -204,7 +204,7 @@ async fn list_roles(headers: HeaderMap) -> Result<Json<Vec<RoleResponse>>, AppEr
 async fn create_role(
     headers: HeaderMap,
     Json(body): Json<RoleRequest>,
-) -> Result<Json<RoleResponse>, AppError> {
+) -> Result<(StatusCode, Json<RoleResponse>), AppError> {
     let principal = require_manage_roles(&headers).await?;
     let name = validate_role_name(&body.name)?;
     let permissions = normalize_permissions(body.permissions);
@@ -228,7 +228,7 @@ async fn create_role(
     let created = db::roles::get_by_id(db.deref(), role_db_id)?
         .ok_or_else(|| AppError::not_found("created role not found"))?;
 
-    Ok(Json(role_to_response(created)))
+    Ok((StatusCode::CREATED, Json(role_to_response(created))))
 }
 
 async fn update_role_definition(
@@ -315,6 +315,7 @@ fn create_role_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create role").description(
         "Creates a custom role. Built-in role names are reserved. Creating admin-capable roles requires Admin permission.",
     )
+    .response::<201, Json<RoleResponse>>()
 }
 
 fn update_role_definition_docs(op: TransformOperation) -> TransformOperation {
@@ -437,7 +438,7 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
         let headers = create_headers_with_role("admin-user", "admin", vec![]).await?;
 
-        let Json(created) = create_role(
+        let (status, Json(created)) = create_role(
             headers.clone(),
             Json(RoleRequest {
                 name: "editor".to_string(),
@@ -446,6 +447,7 @@ mod tests {
         )
         .await
         .expect("admin should be able to create custom role");
+        assert_eq!(status, StatusCode::CREATED);
         assert_eq!(created.name, "editor");
         assert_eq!(
             created.permissions,
