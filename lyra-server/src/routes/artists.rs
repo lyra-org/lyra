@@ -56,14 +56,18 @@ use crate::{
 
 #[derive(Deserialize, JsonSchema)]
 struct ArtistQuery {
-    #[schemars(description = "Comma-separated or repeated values: releases, tracks, relations.")]
+    #[schemars(
+        description = "Comma-separated or repeated values: releases, tracks, relations, covers."
+    )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     inc: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, JsonSchema)]
 struct ArtistListQuery {
-    #[schemars(description = "Comma-separated or repeated values: releases, tracks, relations.")]
+    #[schemars(
+        description = "Comma-separated or repeated values: releases, tracks, relations, covers."
+    )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     inc: Option<Vec<String>>,
     #[schemars(description = "Optional fuzzy text query matched against artist names.")]
@@ -87,18 +91,28 @@ pub struct ArtistCoverSearchResponse {
     pub results: Vec<route_covers::ProviderCoverSearchResponse>,
 }
 
-fn parse_inc(inc: Option<Vec<String>>) -> Result<artist_service::ArtistIncludes, AppError> {
-    let values = super::parse_inc_values(inc, &["releases", "tracks", "relations"])?;
-    let mut result = artist_service::ArtistIncludes {
-        releases: false,
-        tracks: false,
-        relations: false,
+#[derive(Clone, Copy)]
+struct ArtistRouteIncludes {
+    service: artist_service::ArtistIncludes,
+    covers: bool,
+}
+
+fn parse_inc(inc: Option<Vec<String>>) -> Result<ArtistRouteIncludes, AppError> {
+    let values = super::parse_inc_values(inc, &["releases", "tracks", "relations", "covers"])?;
+    let mut result = ArtistRouteIncludes {
+        service: artist_service::ArtistIncludes {
+            releases: false,
+            tracks: false,
+            relations: false,
+        },
+        covers: false,
     };
     for value in values {
         match value.as_str() {
-            "releases" => result.releases = true,
-            "tracks" => result.tracks = true,
-            "relations" => result.relations = true,
+            "releases" => result.service.releases = true,
+            "tracks" => result.service.tracks = true,
+            "relations" => result.service.relations = true,
+            "covers" => result.covers = true,
             _ => {}
         }
     }
@@ -106,9 +120,16 @@ fn parse_inc(inc: Option<Vec<String>>) -> Result<artist_service::ArtistIncludes,
 }
 
 fn artist_detail_to_response(
-    _db: &impl db::DbAccess,
+    db: &impl db::DbAccess,
     detail: artist_service::ArtistDetails,
+    include_covers: bool,
 ) -> anyhow::Result<ArtistResponse> {
+    let artist_db_id = detail.artist.db_id.clone().map(agdb::DbId::from);
+    let cover = match artist_db_id {
+        Some(artist_db_id) => route_covers::build_cover_response(db, artist_db_id, include_covers)?,
+        None if include_covers => Some(None),
+        None => None,
+    };
     let releases = detail
         .releases
         .map(|v| v.into_iter().map(ReleaseResponse::from).collect());
@@ -145,6 +166,7 @@ fn artist_detail_to_response(
             .tracks
             .map(|v| v.into_iter().map(Into::into).collect()),
         relations,
+        cover,
     })
 }
 
@@ -161,7 +183,7 @@ pub(crate) async fn list_artist_responses(
         limit: None,
         search_term: super::parse_text_query(query),
     };
-    let details = artist_service::list_details(db, includes, &options)?;
+    let details = artist_service::list_details(db, includes.service, &options)?;
 
     let mut response = Vec::with_capacity(details.len());
     for detail in details {
@@ -171,7 +193,7 @@ pub(crate) async fn list_artist_responses(
         if !super::entity_accessible_to_principal(db, principal, artist_db_id)? {
             continue;
         }
-        response.push(artist_detail_to_response(db, detail)?);
+        response.push(artist_detail_to_response(db, detail, includes.covers)?);
     }
     Ok(response)
 }
@@ -188,10 +210,10 @@ pub(crate) async fn get_artist_response(
     super::require_entity_accessible(db, principal, artist_db_id, || {
         AppError::not_found(format!("Artist not found: {id}"))
     })?;
-    let detail = artist_service::get_details(db, artist_db_id, includes)?
+    let detail = artist_service::get_details(db, artist_db_id, includes.service)?
         .ok_or_else(|| AppError::not_found(format!("Artist not found: {}", id)))?;
 
-    Ok(artist_detail_to_response(db, detail)?)
+    Ok(artist_detail_to_response(db, detail, includes.covers)?)
 }
 
 async fn get_artists(
@@ -211,82 +233,6 @@ async fn get_artist(
 ) -> Result<Json<ArtistResponse>, AppError> {
     let principal = require_authenticated(&headers).await?;
     Ok(Json(get_artist_response(&principal, id, query.inc).await?))
-}
-
-async fn get_artist_cover(
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Query(query): Query<route_covers::CoverQuery>,
-) -> Result<axum::http::Response<axum::body::Body>, AppError> {
-    let principal = require_authenticated(&headers).await?;
-
-    let transform_options = route_covers::parse_cover_transform_options(&query)?;
-    let covers_root = covers::configured_covers_root();
-    let (artist_db_id, mut cover, needs_metadata_upsert) = {
-        let db = STATE.db.read().await;
-        let artist_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
-            .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-        super::require_entity_accessible(&*db, &principal, artist_db_id, || {
-            AppError::not_found(format!("Artist not found: {id}"))
-        })?;
-        if db::artists::get_by_id(&db, artist_db_id)?.is_none() {
-            return Err(AppError::not_found(format!("Artist not found: {}", id)));
-        }
-
-        let cover_paths = covers::CoverPaths {
-            library_root: None,
-            covers_root: covers_root.as_deref(),
-        };
-
-        let resolved = covers::resolve_cover_for_artist_id(&db, artist_db_id, cover_paths)?;
-        let Some(cover) = resolved else {
-            return Err(AppError::not_found(format!(
-                "Cover not found for artist: {}",
-                id
-            )));
-        };
-
-        let db_cover = db::covers::get(&db, artist_db_id)?;
-        let resolved_path = cover.to_string_lossy().into_owned();
-        let needs_upsert = db_cover.is_none_or(|stored| stored.path != resolved_path);
-
-        (artist_db_id, cover, needs_upsert)
-    };
-
-    if needs_metadata_upsert {
-        let cover_paths = covers::CoverPaths {
-            library_root: None,
-            covers_root: covers_root.as_deref(),
-        };
-        match {
-            let db = STATE.db.read().await;
-            covers::resolve_cover_for_artist_id(&db, artist_db_id, cover_paths)
-        } {
-            Ok(Some(latest_cover)) => {
-                cover = latest_cover;
-            }
-            Ok(None) => {}
-            Err(err) => {
-                tracing::warn!(
-                    artist_id = artist_db_id.0,
-                    error = %err,
-                    "failed to re-resolve artist cover before metadata upsert"
-                );
-            }
-        }
-        if let Err(err) =
-            covers::upsert_artist_cover_metadata(&STATE.db.get(), artist_db_id, &cover).await
-        {
-            tracing::warn!(
-                artist_id = artist_db_id.0,
-                cover_path = %cover.display(),
-                error = %err,
-                "failed to persist cover metadata while serving artist cover"
-            );
-        }
-    }
-
-    route_covers::serve_cover_response(&cover, transform_options, &headers).await
 }
 
 async fn search_artist_covers(
@@ -381,24 +327,19 @@ async fn update_artist(
         releases: None,
         tracks: None,
         relations: None,
+        cover: None,
     }))
 }
 
 fn list_artists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List artists").description(
-        "Returns artists. Supported query parameters: `inc`, `query`. `query` is a fuzzy text match against artist names. Use `inc` to include releases, tracks, and/or relations. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
+        "Returns artists. Supported query parameters: `inc`, `query`. `query` is a fuzzy text match against artist names. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, cover metadata includes a public image URL. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
     )
 }
 
 fn get_artist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get artist by ID").description(
-        "Returns a single artist. 404 if not found. Use `inc` to include releases, tracks, and/or relations. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
-    )
-}
-
-fn get_artist_cover_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Get artist cover").description(
-        "Returns the artist cover image for an artist. Supports optional transform parameters: `format`, `quality`, `max_width`, and `max_height`.",
+        "Returns a single artist. 404 if not found. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, cover metadata includes a public image URL. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
     )
 }
 
@@ -419,10 +360,6 @@ pub fn artist_routes() -> ApiRouter {
     ApiRouter::new()
         .api_route("/", get_with(get_artists, list_artists_docs))
         .api_route("/{id}", get_with(get_artist, get_artist_docs))
-        .api_route(
-            "/{id}/cover",
-            get_with(get_artist_cover, get_artist_cover_docs),
-        )
         .api_route(
             "/{id}/covers/search",
             post_with(search_artist_covers, search_artist_covers_docs),
@@ -500,6 +437,19 @@ mod tests {
                 .expect("valid auth header"),
         );
         Ok(headers)
+    }
+
+    #[test]
+    fn parse_inc_accepts_covers() {
+        let parsed = match parse_inc(Some(vec!["releases,covers".to_string()])) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("covers inc should parse"),
+        };
+
+        assert!(parsed.service.releases);
+        assert!(!parsed.service.tracks);
+        assert!(!parsed.service.relations);
+        assert!(parsed.covers);
     }
 
     #[tokio::test]

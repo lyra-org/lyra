@@ -3,8 +3,19 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use aide::{
+    axum::{
+        ApiRouter,
+        routing::get_with,
+    },
+    transform::TransformOperation,
+};
 use axum::{
     body::Body,
+    extract::{
+        Path,
+        Query,
+    },
     http::{
         HeaderMap,
         Response,
@@ -16,15 +27,23 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use std::path::Path;
+use std::path::{
+    Path as FsPath,
+    PathBuf,
+};
 
 use crate::{
+    STATE,
+    db,
     routes::{
         AppError,
-        serve::file_response,
+        responses::CoverResponse,
+        serve::file_response_with_cache_control,
     },
     services::covers,
 };
+
+const PUBLIC_COVER_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
 
 #[derive(Serialize, JsonSchema)]
 #[non_exhaustive]
@@ -107,6 +126,35 @@ pub(crate) fn parse_cover_transform_options(
     Ok(Some(options))
 }
 
+pub(crate) fn public_cover_url(id: &str, hash: &str) -> String {
+    format!("/api/covers/{id}?v={hash}")
+}
+
+pub(crate) fn cover_to_response(cover: db::Cover) -> CoverResponse {
+    let url = public_cover_url(&cover.id, &cover.hash);
+    CoverResponse {
+        id: cover.id,
+        url,
+        mime_type: cover.mime_type,
+        hash: cover.hash,
+        blurhash: cover.blurhash,
+    }
+}
+
+pub(crate) fn build_cover_response(
+    db: &impl db::DbAccess,
+    owner_db_id: agdb::DbId,
+    include_covers: bool,
+) -> anyhow::Result<Option<Option<CoverResponse>>> {
+    if !include_covers {
+        return Ok(None);
+    }
+
+    Ok(Some(
+        db::covers::get(db, owner_db_id)?.map(cover_to_response),
+    ))
+}
+
 pub(crate) fn map_provider_cover_search_results(
     found: Vec<covers::ProviderCoverSearchResult>,
 ) -> Vec<ProviderCoverSearchResponse> {
@@ -128,8 +176,8 @@ pub(crate) fn map_provider_cover_search_results(
         .collect()
 }
 
-pub(crate) async fn serve_cover_response(
-    path: &Path,
+async fn serve_public_cover_response(
+    path: &FsPath,
     transform_options: Option<covers::CoverTransformOptions>,
     request_headers: &HeaderMap,
 ) -> Result<Response<Body>, AppError> {
@@ -144,13 +192,69 @@ pub(crate) async fn serve_cover_response(
         return Response::builder()
             .header(header::CONTENT_TYPE, transformed.mime_type)
             .header(header::CONTENT_LENGTH, transformed.bytes.len().to_string())
-            .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
-            .header(header::PRAGMA, "no-cache")
-            .header(header::EXPIRES, "0")
+            .header(header::CACHE_CONTROL, PUBLIC_COVER_CACHE_CONTROL)
             .body(Body::from(transformed.bytes))
             .map_err(AppError::from);
     }
 
     let content_type = covers::cover_mime_from_path(path);
-    file_response(path, content_type, request_headers).await
+    file_response_with_cache_control(
+        path,
+        content_type,
+        request_headers,
+        PUBLIC_COVER_CACHE_CONTROL,
+    )
+    .await
+}
+
+async fn get_public_cover(
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(query): Query<CoverQuery>,
+) -> Result<Response<Body>, AppError> {
+    let transform_options = parse_cover_transform_options(&query)?;
+    let cover = {
+        let db = STATE.db.read().await;
+        db::covers::get_by_public_id(&*db, &id)?
+            .ok_or_else(|| AppError::not_found(format!("Cover not found: {id}")))?
+    };
+    let path = PathBuf::from(&cover.path);
+    if !path.is_file() {
+        return Err(AppError::not_found(format!("Cover not found: {id}")));
+    }
+
+    serve_public_cover_response(&path, transform_options, &headers).await
+}
+
+fn get_public_cover_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Get cover image").description(
+        "Returns a public cover image by cover ID. Cover metadata returns URLs with a `v` query parameter derived from the cover hash for cache versioning; clients should treat the full URL as opaque. Supports optional transform parameters: `format`, `quality`, `max_width`, and `max_height`.",
+    )
+}
+
+pub fn cover_routes() -> ApiRouter {
+    ApiRouter::new().api_route("/{id}", get_with(get_public_cover, get_public_cover_docs))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cover_to_response_sets_public_url() {
+        let response = cover_to_response(db::Cover {
+            db_id: None,
+            id: "cover-1".to_string(),
+            path: "/music/cover.jpg".to_string(),
+            mime_type: "image/jpeg".to_string(),
+            hash: "a".repeat(64),
+            blurhash: None,
+        });
+
+        assert_eq!(response.id, "cover-1");
+        assert_eq!(
+            response.url,
+            format!("/api/covers/cover-1?v={}", "a".repeat(64))
+        );
+    }
 }

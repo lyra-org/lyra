@@ -43,6 +43,7 @@ use crate::{
 
 pub(crate) use app::build_core_api;
 pub use artists::artist_routes;
+pub use covers::cover_routes;
 pub use entries::entry_routes;
 pub(crate) use error::AppError;
 pub use favorites::favorite_routes;

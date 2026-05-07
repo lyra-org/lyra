@@ -47,7 +47,6 @@ use crate::{
         deserialize_inc,
         responses::{
             EntryResponse,
-            ReleaseCoverResponse,
             ReleaseResponse,
             TrackResponse,
         },
@@ -207,24 +206,6 @@ fn parse_genre_filter(genre: Option<Vec<String>>) -> Vec<String> {
     values
 }
 
-pub(crate) fn build_cover_response(
-    db: &DbAny,
-    release_db_id: DbId,
-    include_covers: bool,
-) -> anyhow::Result<Option<Option<ReleaseCoverResponse>>> {
-    if !include_covers {
-        return Ok(None);
-    }
-
-    let cover = db::covers::get(db, release_db_id)?.map(|cover| ReleaseCoverResponse {
-        mime_type: cover.mime_type,
-        hash: cover.hash,
-        blurhash: cover.blurhash,
-    });
-
-    Ok(Some(cover))
-}
-
 pub(crate) fn detail_to_release_response(
     db: &DbAny,
     detail: releases::ReleaseDetails,
@@ -239,7 +220,7 @@ pub(crate) fn detail_to_release_response(
             .collect::<Vec<EntryResponse>>()
     });
 
-    let cover = build_cover_response(db, detail.release_db_id, include_covers)?;
+    let cover = route_covers::build_cover_response(db, detail.release_db_id, include_covers)?;
     let genres = if include_genres {
         db::genres::get_names_for_release(db, detail.release_db_id)?
     } else {
@@ -341,82 +322,6 @@ async fn get_release(
     )?))
 }
 
-async fn get_release_cover(
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Query(query): Query<route_covers::CoverQuery>,
-) -> Result<axum::http::Response<axum::body::Body>, AppError> {
-    let principal = require_authenticated(&headers).await?;
-
-    let transform_options = route_covers::parse_cover_transform_options(&query)?;
-    let covers_root = covers::configured_covers_root();
-    let (release_db_id, library_root, mut cover, needs_metadata_upsert) = {
-        let db = STATE.db.read().await;
-        let release_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
-            .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-        super::require_entity_accessible(&*db, &principal, release_db_id, || {
-            AppError::not_found(format!("Release not found: {id}"))
-        })?;
-        let library_root = db::libraries::get_by_release(&db, release_db_id)?
-            .into_iter()
-            .next()
-            .map(|library| library.path);
-        let cover_paths = covers::CoverPaths {
-            library_root: library_root.as_deref(),
-            covers_root: covers_root.as_deref(),
-        };
-
-        let resolved = covers::resolve_cover_for_release_id(&db, release_db_id, cover_paths)?;
-        let Some(cover) = resolved else {
-            return Err(AppError::not_found(format!(
-                "Cover not found for release: {}",
-                id
-            )));
-        };
-
-        let db_cover = db::covers::get(&db, release_db_id)?;
-        let resolved_path = cover.to_string_lossy().into_owned();
-        let needs_upsert = db_cover.is_none_or(|stored| stored.path != resolved_path);
-
-        (release_db_id, library_root, cover, needs_upsert)
-    };
-
-    if needs_metadata_upsert {
-        let cover_paths = covers::CoverPaths {
-            library_root: library_root.as_deref(),
-            covers_root: covers_root.as_deref(),
-        };
-        match {
-            let db = STATE.db.read().await;
-            covers::resolve_cover_for_release_id(&db, release_db_id, cover_paths)
-        } {
-            Ok(Some(latest_cover)) => {
-                cover = latest_cover;
-            }
-            Ok(None) => {}
-            Err(err) => {
-                tracing::warn!(
-                    release_id = release_db_id.0,
-                    error = %err,
-                    "failed to re-resolve release cover before metadata upsert"
-                );
-            }
-        }
-        if let Err(err) =
-            covers::upsert_release_cover_metadata(&STATE.db.get(), release_db_id, &cover).await
-        {
-            tracing::warn!(
-                release_id = release_db_id.0,
-                cover_path = %cover.display(),
-                error = %err,
-                "failed to persist cover metadata while serving release cover"
-            );
-        }
-    }
-
-    route_covers::serve_cover_response(&cover, transform_options, &headers).await
-}
-
 async fn search_release_covers(
     headers: HeaderMap,
     Path(id): Path<String>,
@@ -454,19 +359,13 @@ async fn search_release_covers(
 
 fn list_releases_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List releases").description(
-        "Returns releases. Supported query parameters: `inc`, `query`, `year`, `genre`, `sort_by`, `sort_order`. Supported `inc` values: `artists`, `tracks`, `track_artists`, `entries`, `covers`, `genres`. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits (for example, artist and producer). Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
+        "Returns releases. Supported query parameters: `inc`, `query`, `year`, `genre`, `sort_by`, `sort_order`. Supported `inc` values: `artists`, `tracks`, `track_artists`, `entries`, `covers`, `genres`. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits (for example, artist and producer). Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
     )
 }
 
 fn get_release_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get release by ID").description(
-        "Returns a single release. 404 if not found. Use `inc` to include artists, tracks, track_artists, entries, covers, and/or genres. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
-    )
-}
-
-fn get_release_cover_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Get release cover").description(
-        "Returns the release cover image for a release. Supports optional transform parameters: `format`, `quality`, `max_width`, and `max_height`.",
+        "Returns a single release. 404 if not found. Use `inc` to include artists, tracks, track_artists, entries, covers, and/or genres. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
     )
 }
 
@@ -482,10 +381,6 @@ pub fn release_routes() -> ApiRouter {
     ApiRouter::new()
         .api_route("/", get_with(get_releases, list_releases_docs))
         .api_route("/{id}", get_with(get_release, get_release_docs))
-        .api_route(
-            "/{id}/cover",
-            get_with(get_release_cover, get_release_cover_docs),
-        )
         .api_route(
             "/{id}/covers/search",
             post_with(search_release_covers, search_release_covers_docs),
@@ -777,7 +672,9 @@ mod tests {
             entries: None,
             release_date: None,
             genres: None,
-            cover: Some(Some(ReleaseCoverResponse {
+            cover: Some(Some(crate::routes::responses::CoverResponse {
+                id: "cover-1".to_string(),
+                url: format!("/api/covers/cover-1?v={}", "b".repeat(64)),
                 mime_type: "image/jpeg".to_string(),
                 hash: "b".repeat(64),
                 blurhash: Some("LKO2?U%2Tw=w]~RBVZRi};RPxuwH".to_string()),
@@ -789,6 +686,14 @@ mod tests {
             .get("cover")
             .and_then(serde_json::Value::as_object)
             .ok_or_else(|| anyhow::anyhow!("missing cover object"))?;
+        assert_eq!(cover.get("id"), Some(&serde_json::json!("cover-1")));
+        assert_eq!(
+            cover.get("url"),
+            Some(&serde_json::json!(format!(
+                "/api/covers/cover-1?v={}",
+                "b".repeat(64)
+            )))
+        );
         assert_eq!(
             cover.get("mime_type"),
             Some(&serde_json::json!("image/jpeg"))
@@ -801,7 +706,7 @@ mod tests {
     fn build_cover_response_omits_when_not_requested() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_db_id = insert_release_node(&mut db)?;
-        let cover = build_cover_response(&db, release_db_id, false)?;
+        let cover = route_covers::build_cover_response(&db, release_db_id, false)?;
         assert!(cover.is_none());
         Ok(())
     }
@@ -810,7 +715,7 @@ mod tests {
     fn build_cover_response_returns_null_when_missing() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_db_id = insert_release_node(&mut db)?;
-        let cover = build_cover_response(&db, release_db_id, true)?;
+        let cover = route_covers::build_cover_response(&db, release_db_id, true)?;
         assert!(matches!(cover, Some(None)));
         Ok(())
     }
@@ -821,10 +726,14 @@ mod tests {
         let release_db_id = insert_release_node(&mut db)?;
         insert_cover_for_release(&mut db, release_db_id)?;
 
-        let cover = build_cover_response(&db, release_db_id, true)?
+        let cover = route_covers::build_cover_response(&db, release_db_id, true)?
             .flatten()
             .ok_or_else(|| anyhow::anyhow!("expected cover metadata"))?;
 
+        assert_eq!(
+            cover.url,
+            format!("/api/covers/{}?v={}", cover.id, cover.hash)
+        );
         assert_eq!(cover.mime_type, "image/jpeg");
         assert_eq!(cover.hash, "a".repeat(64));
         Ok(())

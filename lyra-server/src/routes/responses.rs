@@ -99,7 +99,7 @@ pub struct ReleaseResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub genres: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cover: Option<Option<ReleaseCoverResponse>>,
+    pub cover: Option<Option<CoverResponse>>,
 }
 
 impl From<db::Release> for ReleaseResponse {
@@ -135,8 +135,15 @@ impl ReleaseResponse {
 }
 
 #[derive(Serialize, JsonSchema)]
-pub struct ReleaseCoverResponse {
+pub struct CoverResponse {
+    #[schemars(description = "Opaque cover image ID.")]
+    pub id: String,
+    #[schemars(
+        description = "Public image URL for browser/native image loading. Treat this as an opaque URL; it includes a cache-version query parameter derived from the cover hash."
+    )]
+    pub url: String,
     pub mime_type: String,
+    #[schemars(description = "Content hash used to version the public image URL.")]
     pub hash: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blurhash: Option<String>,
@@ -219,6 +226,8 @@ pub struct ArtistResponse {
     pub tracks: Option<Vec<TrackResponse>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relations: Option<Vec<ArtistRelationResponse>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover: Option<Option<CoverResponse>>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -283,6 +292,7 @@ impl From<db::Artist> for ArtistResponse {
             releases: None,
             tracks: None,
             relations: None,
+            cover: None,
         }
     }
 }
@@ -311,6 +321,7 @@ impl ArtistResponse {
             releases: None,
             tracks: None,
             relations: None,
+            cover: None,
         }
     }
 }

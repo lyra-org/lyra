@@ -39,6 +39,7 @@ pub(crate) fn build_core_api() -> Result<CoreApi> {
         .nest("/api/me", super::me_routes())
         .nest("/api/roles", super::role_routes())
         .nest("/api/libraries", super::library_routes())
+        .nest("/api/covers", super::cover_routes())
         .nest("/api/releases", super::release_routes())
         .nest("/api/artists", super::artist_routes())
         .nest("/api/entries", super::entry_routes())
@@ -114,7 +115,7 @@ fn configure_rest_openapi(api: &mut OpenApi) {
     api.info.version = env!("CARGO_PKG_VERSION").to_string();
     api.info.description = Some(
         "REST endpoints use bearer authentication with either a session token or an API key, \
-         except for explicitly public setup/login endpoints."
+         except for explicitly public setup, login, and cover image endpoints."
             .to_string(),
     );
 
@@ -188,6 +189,6 @@ fn configure_rest_openapi(api: &mut OpenApi) {
 fn is_public_rest_operation(method: &str, path: &str) -> bool {
     matches!(
         (method, path),
-        ("GET", "/api/server/public") | ("POST", "/api/users/login")
+        ("GET", "/api/server/public") | ("POST", "/api/users/login") | ("GET", "/api/covers/{id}")
     )
 }
