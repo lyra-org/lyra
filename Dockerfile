@@ -113,6 +113,7 @@ RUN mkdir -p /lyra/data /lyra/static \
 USER lyra
 
 ENV LYRA_CONFIG_PATH=/lyra/config.json \
+    LYRA_DB_DIR=/lyra/data \
     LYRA_PLUGINS_DIR=/lyra/plugins \
     LYRA_STATIC_DIR=/lyra/static
 
