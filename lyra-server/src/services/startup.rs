@@ -130,7 +130,7 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
                 format!(
-                    "{}=trace,tower_http=debug,harmony_core=info",
+                    "{}=info,tower_http=debug,harmony_core=info",
                     env!("CARGO_CRATE_NAME")
                 )
                 .into()
@@ -155,7 +155,7 @@ async fn run_capture_mode(
 const REQUEST_BODY_LIMIT_BYTES: usize = 256 * 1024;
 
 async fn serve(app: Router, config: &crate::config::Config, listener: TcpListener) -> Result<()> {
-    tracing::debug!("listening on {}", listener.local_addr()?);
+    tracing::info!("listening on {}", listener.local_addr()?);
     let app = app.layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES));
     let app = services::cors::apply(app, config);
     let app = app.layer(TraceLayer::new_for_http());

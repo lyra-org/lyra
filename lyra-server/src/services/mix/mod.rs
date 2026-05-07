@@ -358,7 +358,7 @@ async fn run_handler_with_timeout(
     let thread = match lua.create_thread(handler.inner_function().clone()) {
         Ok(t) => t,
         Err(err) => {
-            tracing::error!(
+            tracing::warn!(
                 mixer = %mixer_id,
                 error = %err,
                 "failed to create mixer handler thread, trying next"
@@ -376,12 +376,12 @@ async fn run_handler_with_timeout(
                 Ok(HandlerOutcome::FellThrough)
             }
             Err(err) => {
-                tracing::error!(mixer = %mixer_id, error = %err, "mixer result parse error, trying next");
+                tracing::warn!(mixer = %mixer_id, error = %err, "mixer result parse error, trying next");
                 Ok(HandlerOutcome::FellThrough)
             }
         },
         Ok(Err(err)) => {
-            tracing::error!(mixer = %mixer_id, error = %err, "mixer handler crashed, trying next");
+            tracing::warn!(mixer = %mixer_id, error = %err, "mixer handler crashed, trying next");
             Ok(HandlerOutcome::FellThrough)
         }
         Err(_) => {
@@ -393,7 +393,7 @@ async fn run_handler_with_timeout(
                     "failed to close timed-out mix handler thread"
                 );
             }
-            tracing::error!(
+            tracing::warn!(
                 mixer = %mixer_id,
                 timeout_ms = timeout.as_millis() as u64,
                 "mixer handler timed out; thread cancelled, trying next"

@@ -153,7 +153,7 @@ pub(crate) fn create(config: &DbConfig) -> anyhow::Result<Created> {
         tracing::info!(
             path = %config.path.display(),
             kind = kind_label(config.kind),
-            "opening db (may apply WAL recovery)"
+            "opening db"
         );
     } else {
         tracing::debug!(
