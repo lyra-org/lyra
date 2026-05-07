@@ -39,6 +39,24 @@ pub(crate) fn get(db: &impl DbAccess, release_db_id: DbId) -> anyhow::Result<Opt
     Ok(covers.pop())
 }
 
+pub(crate) fn get_by_public_id(db: &impl DbAccess, id: &str) -> anyhow::Result<Option<Cover>> {
+    let mut covers: Vec<Cover> = db
+        .exec(
+            QueryBuilder::select()
+                .elements::<Cover>()
+                .search()
+                .from("covers")
+                .where_()
+                .key("id")
+                .value(id)
+                .end_where()
+                .query(),
+        )?
+        .try_into()?;
+
+    Ok(covers.pop())
+}
+
 pub(crate) fn get_many(
     db: &impl super::DbAccess,
     owner_db_ids: &[DbId],
@@ -211,6 +229,28 @@ mod tests {
         assert!(direct_edge_exists(&db, release_db_id, cover_id)?);
         assert!(direct_edge_exists(&db, covers_id, cover_id)?);
 
+        Ok(())
+    }
+
+    #[test]
+    fn get_by_public_id_returns_cover_from_collection() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_db_id = insert_release(&mut db)?;
+        let cover = Cover {
+            db_id: None,
+            id: "cover-public".to_string(),
+            path: "/music/test/cover.jpg".to_string(),
+            mime_type: "image/jpeg".to_string(),
+            hash: "a".repeat(64),
+            blurhash: None,
+        };
+        upsert(&mut db, release_db_id, cover)?;
+
+        let cover = get_by_public_id(&db, "cover-public")?
+            .ok_or_else(|| anyhow!("cover should be found by public id"))?;
+
+        assert_eq!(cover.id, "cover-public");
+        assert_eq!(cover.mime_type, "image/jpeg");
         Ok(())
     }
 

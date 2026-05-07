@@ -474,6 +474,7 @@ async fn file_response_internal(
     content_type: &str,
     headers: &HeaderMap,
     cleanup_path: Option<PathBuf>,
+    cache_control: &str,
 ) -> Result<Response<Body>, AppError> {
     let ranged = build_ranged_file_body(
         path,
@@ -496,9 +497,13 @@ async fn file_response_internal(
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CONTENT_LENGTH, ranged.content_length)
         .header(header::ACCEPT_RANGES, "bytes")
-        .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
-        .header(header::PRAGMA, "no-cache")
-        .header(header::EXPIRES, "0");
+        .header(header::CACHE_CONTROL, cache_control);
+
+    if cache_control == "no-cache, no-store, must-revalidate" {
+        response = response
+            .header(header::PRAGMA, "no-cache")
+            .header(header::EXPIRES, "0");
+    }
 
     if let Some(content_range) = ranged.content_range {
         response = response.header(header::CONTENT_RANGE, content_range);
@@ -512,7 +517,23 @@ pub async fn file_response(
     content_type: &str,
     headers: &HeaderMap,
 ) -> Result<Response<Body>, AppError> {
-    file_response_internal(path, content_type, headers, None).await
+    file_response_internal(
+        path,
+        content_type,
+        headers,
+        None,
+        "no-cache, no-store, must-revalidate",
+    )
+    .await
+}
+
+pub(crate) async fn file_response_with_cache_control(
+    path: &FsPath,
+    content_type: &str,
+    headers: &HeaderMap,
+    cache_control: &str,
+) -> Result<Response<Body>, AppError> {
+    file_response_internal(path, content_type, headers, None, cache_control).await
 }
 
 pub async fn temp_file_response(
@@ -520,7 +541,14 @@ pub async fn temp_file_response(
     content_type: &str,
     headers: &HeaderMap,
 ) -> Result<Response<Body>, AppError> {
-    file_response_internal(path, content_type, headers, Some(path.to_path_buf())).await
+    file_response_internal(
+        path,
+        content_type,
+        headers,
+        Some(path.to_path_buf()),
+        "no-cache, no-store, must-revalidate",
+    )
+    .await
 }
 
 pub fn stream_routes() -> ApiRouter {
