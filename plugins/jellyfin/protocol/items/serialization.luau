@@ -17,7 +17,9 @@ type JsonValue = api.JsonValue
 type JsonObject = { [string]: JsonValue }
 type UserData = item_types.UserData
 type ArtistProjectionItem = item_types.ArtistProjectionItem
+type ExternalUrlInfo = item_types.ExternalUrlInfo
 type ImageBlurHashes = item_types.ImageBlurHashes
+type MediaUrlInfo = item_types.MediaUrlInfo
 type PersonItem = item_types.PersonItem
 export type ItemInfo = item_types.SerializableItemInfo
 
@@ -109,6 +111,45 @@ local function person_items_to_json(items: { PersonItem }?): { JsonValue }?
 	local output: { JsonValue } = {}
 	for _, item: PersonItem in items do
 		table.insert(output, person_item_to_json(item))
+	end
+	return output
+end
+
+local function external_url_to_json(item: ExternalUrlInfo): JsonObject
+	return {
+		Name = item.Name,
+		Url = item.Url,
+	}
+end
+
+local function external_urls_to_json(items: { ExternalUrlInfo }?): { JsonValue }?
+	if items == nil then
+		return nil
+	end
+	local output: { JsonValue } = {}
+	for _, item: ExternalUrlInfo in items do
+		table.insert(output, external_url_to_json(item))
+	end
+	return output
+end
+
+local function media_url_to_json(item: MediaUrlInfo): JsonObject
+	local output: JsonObject = {
+		Url = item.Url,
+	}
+	if item.Name ~= nil then
+		output.Name = item.Name
+	end
+	return output
+end
+
+local function media_urls_to_json(items: { MediaUrlInfo }?): { JsonValue }?
+	if items == nil then
+		return nil
+	end
+	local output: { JsonValue } = {}
+	for _, item: MediaUrlInfo in items do
+		table.insert(output, media_url_to_json(item))
 	end
 	return output
 end
@@ -269,6 +310,60 @@ function module.item_to_json(item: ItemInfo): JsonObject
 	end
 	if item.ProviderIds ~= nil then
 		output.ProviderIds = string_map_to_json(item.ProviderIds)
+	end
+	if item.Overview ~= nil then
+		output.Overview = item.Overview
+	end
+	if item.DisplayPreferencesId ~= nil then
+		output.DisplayPreferencesId = item.DisplayPreferencesId
+	end
+	if item.Path ~= nil then
+		output.Path = item.Path
+	end
+	local backdrop_tags = string_array_to_json(item.BackdropImageTags)
+	if backdrop_tags ~= nil then
+		output.BackdropImageTags = backdrop_tags
+	end
+	if item.CanDelete ~= nil then
+		output.CanDelete = item.CanDelete
+	end
+	if item.CanDownload ~= nil then
+		output.CanDownload = item.CanDownload
+	end
+	if item.EnableMediaSourceDisplay ~= nil then
+		output.EnableMediaSourceDisplay = item.EnableMediaSourceDisplay
+	end
+	if item.LocalTrailerCount ~= nil then
+		output.LocalTrailerCount = item.LocalTrailerCount
+	end
+	if item.LockData ~= nil then
+		output.LockData = item.LockData
+	end
+	local locked_fields = string_array_to_json(item.LockedFields)
+	if locked_fields ~= nil then
+		output.LockedFields = locked_fields
+	end
+	if item.PlayAccess ~= nil then
+		output.PlayAccess = item.PlayAccess
+	end
+	if item.SpecialFeatureCount ~= nil then
+		output.SpecialFeatureCount = item.SpecialFeatureCount
+	end
+	local taglines = string_array_to_json(item.Taglines)
+	if taglines ~= nil then
+		output.Taglines = taglines
+	end
+	local studios = artist_projection_items_to_json(item.Studios)
+	if studios ~= nil then
+		output.Studios = studios
+	end
+	local external_urls = external_urls_to_json(item.ExternalUrls)
+	if external_urls ~= nil then
+		output.ExternalUrls = external_urls
+	end
+	local remote_trailers = media_urls_to_json(item.RemoteTrailers)
+	if remote_trailers ~= nil then
+		output.RemoteTrailers = remote_trailers
 	end
 	return output
 end
