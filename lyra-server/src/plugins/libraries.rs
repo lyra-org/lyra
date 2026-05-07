@@ -32,7 +32,7 @@ struct Library {
     db_id: Option<NodeId>,
     id: String,
     name: String,
-    directory: Option<String>,
+    path: Option<String>,
     language: Option<String>,
     country: Option<String>,
 }

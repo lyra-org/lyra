@@ -123,7 +123,7 @@ type LibraryInfo = {
 	db_id: number?,
 	id: string,
 	name: string,
-	directory: string,
+	path: string?,
 	language: string?,
 	country: string?,
 }
@@ -1851,6 +1851,7 @@ function helpers.to_library_view_item(lib: LibraryInfo?): ItemInfo?
 		UserData = module.get_user_data({ key = `CollectionFolder-{hex_id}`, item_hex_id = hex_id }),
 		LocationType = "FileSystem",
 		MediaType = "Unknown",
+		Path = lib.path,
 	} :: ItemInfo
 end
 
