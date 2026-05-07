@@ -14,8 +14,12 @@ use tokio::sync::RwLock;
 
 use super::{
     DbAsync,
-    compact,
     indexes,
+    process_lock::{
+        self,
+        DbProcessLock,
+        LockMode,
+    },
 };
 use crate::config::{
     DbConfig,
@@ -25,6 +29,7 @@ use crate::config::{
 /// Result of `create`: opened DB ready for application use.
 pub(crate) struct Created {
     pub(crate) db: DbAsync,
+    pub(crate) lock: Option<DbProcessLock>,
 }
 
 pub(crate) const ROOT_COLLECTION_ALIASES: &[&str] = &[
@@ -140,10 +145,9 @@ pub(crate) fn initialize(db: &mut DbAny) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Server-side path: pre-open compaction (mmap) + open + schema init.
+/// Server-side path: open + schema init.
 pub(crate) fn create(config: &DbConfig) -> anyhow::Result<Created> {
-    compact::pre_open(config)?;
-
+    let lock = process_lock::acquire(config, LockMode::Blocking)?;
     let db_path = config.path.to_string_lossy();
     if !matches!(config.kind, DbKind::Memory) {
         tracing::info!(
@@ -161,6 +165,7 @@ pub(crate) fn create(config: &DbConfig) -> anyhow::Result<Created> {
     initialize(&mut db)?;
     Ok(Created {
         db: Arc::new(RwLock::new(db)),
+        lock,
     })
 }
 

@@ -30,7 +30,6 @@ use tracing_subscriber::{
 
 use crate::{
     STATE,
-    config::DbKind,
     plugins::{
         api as plugin_api,
         bootstrap as plugin_bootstrap,
@@ -59,11 +58,7 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
     let maintenance_shutdown = if capture_mode {
         None
     } else {
-        let storage_path = match config.db.kind {
-            DbKind::Memory => None,
-            _ => Some(config.db.path.clone()),
-        };
-        Some(services::maintenance::spawn(db.clone(), storage_path))
+        Some(services::maintenance::spawn(db.clone()))
     };
     services::auth::ensure_default_user(&config).await?;
     {
@@ -123,7 +118,6 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
 
     plugin_bootstrap::teardown_loaded_plugins().await;
     services::wait_for_running_library_syncs().await;
-    optimize_storage_on_shutdown(&db).await;
 
     Ok(())
 }
@@ -153,16 +147,8 @@ async fn run_capture_mode(
     library_db_id: DbId,
     output_path: &str,
 ) -> Result<()> {
-    // Pre-open compaction has already run; otherwise mmap OOMs on a fragmented DB.
     plugin_bootstrap::exec_for_capture(harmony).await?;
     services::providers::run_capture(library_db_id, output_path).await
-}
-
-async fn optimize_storage_on_shutdown(db: &crate::db::DbAsync) {
-    let mut db_write = db.write().await;
-    if let Err(err) = db_write.optimize_storage() {
-        tracing::warn!(error = %err, "failed to optimize storage on shutdown");
-    }
 }
 
 // Sharply below axum's 2MB default to bound CPU/RAM amplification on auth'd POSTs.

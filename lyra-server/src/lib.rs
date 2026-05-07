@@ -9,6 +9,7 @@
 use std::sync::{
     Arc,
     LazyLock,
+    Mutex as StdMutex,
     OnceLock,
     RwLock as StdRwLock,
 };
@@ -73,12 +74,14 @@ impl<T: Clone> SwapHandle<T> {
 #[derive(Clone)]
 pub(crate) struct DbHandle {
     db: SwapHandle<DbAsync>,
+    lock: Arc<StdMutex<Option<db::process_lock::DbProcessLock>>>,
 }
 
 impl DbHandle {
     fn new(created: db::Created) -> Self {
         Self {
             db: SwapHandle::new(created.db),
+            lock: Arc::new(StdMutex::new(created.lock)),
         }
     }
 
@@ -90,8 +93,12 @@ impl DbHandle {
     where
         F: FnOnce() -> Result<db::Created>,
     {
+        let old_lock = self.lock.lock().expect("db lock poisoned").take();
+        drop(old_lock);
+
         let created = factory()?;
         self.db.replace(created.db);
+        *self.lock.lock().expect("db lock poisoned") = created.lock;
         Ok(())
     }
 
@@ -142,8 +149,8 @@ pub(crate) fn build_app_state(config: Config) -> Result<AppState> {
 
 impl AppState {
     pub(crate) fn reset(&self, config: Config) -> Result<()> {
-        // `?` here is load-bearing: `reset_with`'s rollback assumes no other
-        // state has been advanced. Reorder and narrow the gate in tandem.
+        // Keep `?` before the remaining replacements so a DB reset failure
+        // cannot leave Lua/config/plugin state pointed at the wrong database.
         self.db.reset_with(|| create(&config.db))?;
         let lua = new_lua()?;
         self.lua.replace(lua);
@@ -195,8 +202,7 @@ pub fn run_docs_command(args: &[String]) -> Result<()> {
 }
 
 /// Force-compact the DB from the CLI. Reserves the configured port first, opens
-/// in `DbFile` regardless of `config.kind` (mmap may refuse on a ballooned DB),
-/// and skips schema init.
+/// in `DbFile` regardless of `config.kind`, and skips schema init.
 pub async fn run_db_optimize() -> Result<()> {
     let config = load_config()?;
     if matches!(config.db.kind, config::DbKind::Memory) {
@@ -205,13 +211,13 @@ pub async fn run_db_optimize() -> Result<()> {
         );
     }
 
-    let _port_reservation = services::startup::bind_configured_listener(config.port).await?;
+    let _lock_guard =
+        db::process_lock::acquire(&config.db, db::process_lock::LockMode::NonBlocking)?;
     let db_path = config.db.path.clone();
 
     // After the open: WAL recovery may have grown the file before optimize runs.
     let mut db = db::bootstrap::open(config::DbKind::File, db_path.to_string_lossy().as_ref())?;
     let before_logical = db.size();
-    // Anomalous after a successful open; bail rather than weaken the guard with zero.
     let before_file = std::fs::metadata(&db_path)
         .with_context(|| {
             format!(
@@ -220,12 +226,6 @@ pub async fn run_db_optimize() -> Result<()> {
             )
         })?
         .len();
-
-    // Same disk-full guard as the pre-open path.
-    let parent = db_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-    db::compact::ensure_space_for_optimize(parent, before_file, before_logical)?;
 
     db.optimize_storage()
         .map_err(|err| anyhow::anyhow!("optimize_storage failed: {err}"))?;
