@@ -183,7 +183,7 @@ local function build_jellyfin_user_configuration(): JsonObject
 		DisplayMissingEpisodes = false,
 		GroupedFolders = {},
 		SubtitleMode = "Default",
-		DisplayCollectionsView = true,
+		DisplayCollectionsView = false,
 		EnableLocalPassword = false,
 		OrderedViews = {},
 		LatestItemsExcludes = {},

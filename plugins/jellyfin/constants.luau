@@ -17,6 +17,8 @@ local module = {
 	JELLYFIN_PLUGIN_ID = "jellyfin",
 	ITEM_ID_HEX_LENGTH = 32,
 	ITEM_ID_HEX_PATTERN = "^[0-9a-f]+$",
+	EMPTY_ITEM_ID = string.rep("0", 32),
+	ROOT_ITEM_ID = "",
 	DEFAULT_ITEMS_FIELDS = {
 		"ChildCount",
 		"DateCreated",
@@ -34,6 +36,39 @@ local module = {
 	DISCOVERY_PORT = 7359,
 	ACCEPT_LEGACY_AUTH_HEADERS = true,
 }
+
+local EMPTY_ITEM_ID = module.EMPTY_ITEM_ID
+
+function module.normalize_item_id(value: string?): string?
+	if type(value) ~= "string" then
+		return nil
+	end
+
+	local normalized = string.gsub(string.lower(value), "-", "")
+	if #normalized ~= module.ITEM_ID_HEX_LENGTH then
+		return nil
+	end
+	if not string.match(normalized, module.ITEM_ID_HEX_PATTERN) then
+		return nil
+	end
+	return normalized
+end
+
+function module.configure_root_item_id(value: string)
+	local normalized = module.normalize_item_id(value)
+	if normalized == nil then
+		error("invalid Jellyfin root item id")
+	end
+	if normalized == EMPTY_ITEM_ID then
+		error("Jellyfin root item id cannot be the empty GUID")
+	end
+	module.ROOT_ITEM_ID = normalized
+end
+
+function module.is_root_item_id(value: string?): boolean
+	local normalized = module.normalize_item_id(value)
+	return normalized == module.ROOT_ITEM_ID or normalized == EMPTY_ITEM_ID
+end
 
 function module.declare_settings(builder: SettingsBuilder)
 	builder:group("routes", "Routes")

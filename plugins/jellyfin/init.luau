@@ -6,6 +6,7 @@
 
 local api = require("@lyra/api")
 local auth = require("@lyra/auth")
+local datastore = require("@lyra/datastore")
 local ids = require("@lyra/ids")
 local libraries = require("@lyra/libraries")
 local lyrics = require("@lyra/lyrics")
@@ -25,6 +26,43 @@ local server_info = server.info()
 constants.configure_settings(config)
 constants.configure_server_id(server_info.id)
 constants.configure_auth_enabled(auth.capabilities().enabled)
+
+local ROOT_ID_STORE_NAME = "jellyfin:identity"
+local ROOT_ITEM_ID_KEY = "root_item_id"
+
+local function generate_root_item_id(): string
+	local ok, random_hex = pcall(crypt.random, 16)
+	if ok and type(random_hex) == "string" then
+		local normalized = constants.normalize_item_id(random_hex)
+		if normalized and not constants.is_root_item_id(normalized) then
+			return normalized
+		end
+	end
+
+	local fallback = crypt.hash("xxh3_128", `{server_info.id}:{os.time()}`)
+	local normalized_fallback = constants.normalize_item_id(fallback)
+	if normalized_fallback and normalized_fallback ~= constants.EMPTY_ITEM_ID then
+		return normalized_fallback
+	end
+	error("failed to generate Jellyfin root item id")
+end
+
+local function resolve_root_item_id(): string
+	local identity_store = datastore.get_or_create(ROOT_ID_STORE_NAME)
+	local stored = identity_store:get(ROOT_ITEM_ID_KEY)
+	if type(stored) == "string" then
+		local normalized = constants.normalize_item_id(stored)
+		if normalized and normalized ~= constants.EMPTY_ITEM_ID then
+			return normalized
+		end
+	end
+
+	local generated = generate_root_item_id()
+	identity_store:set(ROOT_ITEM_ID_KEY, generated)
+	return generated
+end
+
+constants.configure_root_item_id(resolve_root_item_id())
 
 local base = require("@self/protocol/items/common")
 local catalog = require("@self/protocol/items/catalog")
@@ -955,7 +993,6 @@ local function public_system_info<T>(extra: T): T & PublicSystemInfo
 	return info
 end
 
-local ROOT_ITEM_ID = string.rep("0", constants.ITEM_ID_HEX_LENGTH)
 local AUTH_PROVIDER_ID = "Lyra"
 
 local function find_public_user_by_id(user_id: number): PublicUser?
@@ -976,7 +1013,7 @@ end
 local function root_folder_json(user_id: number): JsonObject
 	local views = catalog.to_music_view_items()
 	return {
-		Id = ROOT_ITEM_ID,
+		Id = constants.ROOT_ITEM_ID,
 		Name = "Root",
 		Type = "Folder",
 		IsFolder = true,
@@ -986,7 +1023,7 @@ local function root_folder_json(user_id: number): JsonObject
 		MediaType = "Unknown",
 		UserData = base.user_data_to_json(base.get_user_data({
 			key = "Root",
-			item_hex_id = ROOT_ITEM_ID,
+			item_hex_id = constants.ROOT_ITEM_ID,
 			user_id = user_id,
 			include_favorite = false,
 			include_play_count = false,
@@ -1386,7 +1423,11 @@ local function respond_with_items_listing(ctx: ApiContext, principal: session.Pr
 	local options = catalog.with_user_query_options(catalog.coerce_items_query(query), principal.user_id)
 
 	-- Jellyfin returns the user root's direct children (library views) when ParentId/Ids are absent and Recursive isn't true.
-	if options.parent_id == nil and #options.ids == 0 and options.recursive == false then
+	if
+		(options.parent_id == nil or constants.is_root_item_id(options.parent_id))
+		and #options.ids == 0
+		and options.recursive == false
+	then
 		local views = catalog.to_music_view_items()
 		views = catalog.apply_search_filter(views, options.search_term)
 		catalog.apply_sort(views, options)
@@ -1575,7 +1616,7 @@ api.get(P .. "/Items/{id}", function(ctx: ApiContext)
 	if not raw_id then
 		return base.bad_request("missing item id")
 	end
-	if raw_id == ROOT_ITEM_ID then
+	if constants.is_root_item_id(raw_id) then
 		return api.response.json(200, root_folder_json(principal.user_id))
 	end
 
