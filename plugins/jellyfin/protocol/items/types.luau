@@ -33,6 +33,16 @@ export type ArtistProjectionItem = {
 	Name: string,
 }
 
+export type ExternalUrlInfo = {
+	Name: string,
+	Url: string,
+}
+
+export type MediaUrlInfo = {
+	Url: string,
+	Name: string?,
+}
+
 export type ImageBlurHashes = {
 	Primary: { [string]: string },
 }
@@ -94,6 +104,21 @@ export type SerializableItemInfo = {
 	Tags: { string }?,
 	ProviderIds: { [string]: string }?,
 	Overview: string?,
+	DisplayPreferencesId: string?,
+	Path: string?,
+	BackdropImageTags: { string }?,
+	CanDelete: boolean?,
+	CanDownload: boolean?,
+	EnableMediaSourceDisplay: boolean?,
+	LocalTrailerCount: number?,
+	LockData: boolean?,
+	LockedFields: { string }?,
+	PlayAccess: string?,
+	SpecialFeatureCount: number?,
+	Taglines: { string }?,
+	Studios: { ArtistProjectionItem }?,
+	ExternalUrls: { ExternalUrlInfo }?,
+	RemoteTrailers: { MediaUrlInfo }?,
 }
 
 export type ItemKind = "release" | "artist" | "track" | "playlist"
