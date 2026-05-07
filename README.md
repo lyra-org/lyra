@@ -18,9 +18,10 @@ services:
     ports:
       - "4746:4746"
     # These match the image defaults. Uncomment and adjust them only if you
-    # mount config, plugins, or static assets somewhere else.
+    # mount config, the database, plugins, or static assets somewhere else.
     # environment:
     #   LYRA_CONFIG_PATH: /lyra/config.json
+    #   LYRA_DB_DIR: /lyra/data
     #   LYRA_PLUGINS_DIR: /lyra/plugins
     #   LYRA_STATIC_DIR: /lyra/static
     volumes:
@@ -48,11 +49,12 @@ Use container paths in `config.json`. A minimal persistent setup looks like this
   },
   "covers_path": "/lyra/data/covers",
   "db": {
-    "kind": "mmap",
-    "path": "/lyra/data/lyra.db"
+    "kind": "mmap"
   }
 }
 ```
+
+`LYRA_DB_DIR` controls the directory used for relative `db.path` values inside the container. The image defaults it to `/lyra/data`, so omitting `db.path` stores the persistent database at `/lyra/data/lyra.db`; change both the environment value and volume target if you want to mount the database somewhere else. Absolute `db.path` values are used as written.
 
 `LYRA_STATIC_DIR` controls the directory used for static assets inside the container. The image defaults it to `/lyra/static`; change both the environment value and volume target if you want to mount the assets somewhere else.
 
@@ -93,7 +95,7 @@ type Config = {
 
   db?: {
     kind?: "memory" | "file" | "mmap"; // default "memory"
-    path?: string; // default "lyra.db"
+    path?: string; // default "lyra.db"; relative paths use LYRA_DB_DIR when set
   };
 
   auth?: {
