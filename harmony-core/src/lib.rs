@@ -290,7 +290,7 @@ impl Harmony {
             .load_plugin_entrypoint(&plugin)
             .with_context(|| format!("load plugin '{}' entrypoint", plugin.manifest.id))?;
         r#async::run_function_async::<()>(self.lua.as_ref(), &function, ()).await?;
-        tracing::info!("plugin '{}' executed", plugin.manifest.id);
+        tracing::debug!("plugin '{}' executed", plugin.manifest.id);
         Ok(())
     }
 
@@ -310,8 +310,8 @@ impl Harmony {
                 .with_context(|| format!("load plugin '{}' entrypoint", plugin.manifest.id))?;
 
             match r#async::run_function_async::<()>(self.lua.as_ref(), &function, ()).await {
-                Ok(_) => tracing::info!("plugin '{}' executed", plugin.manifest.id),
-                Err(e) => tracing::error!("plugin '{}' error: {}", plugin.manifest.id, e),
+                Ok(_) => tracing::debug!("plugin '{}' executed", plugin.manifest.id),
+                Err(e) => tracing::warn!("plugin '{}' error: {}", plugin.manifest.id, e),
             }
         }
 
