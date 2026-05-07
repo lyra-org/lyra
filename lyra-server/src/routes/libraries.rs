@@ -229,7 +229,7 @@ async fn refresh_library(
 async fn create_library(
     headers: HeaderMap,
     Json(library): Json<LibraryRequest>,
-) -> Result<StatusCode, AppError> {
+) -> Result<(StatusCode, Json<LibraryResponse>), AppError> {
     let principal = require_can_create_library(&headers).await?;
 
     let directory_input = library.directory.trim();
@@ -301,10 +301,11 @@ async fn create_library(
     let library_db_id = library
         .db_id
         .ok_or_else(|| anyhow!("library insert missing id"))?;
+    let response = LibraryResponse::from_library(library.clone(), true);
     match start_library_sync(STATE.db.get(), library).await? {
         crate::services::StartLibrarySyncResult::Started { run_id } => {
             tracing::info!(library_id = library_db_id.0, run_id, "started library sync");
-            Ok(StatusCode::ACCEPTED)
+            Ok((StatusCode::CREATED, Json(response)))
         }
         crate::services::StartLibrarySyncResult::AlreadyRunning { run_id } => {
             Err(AppError::conflict(format!(
@@ -403,9 +404,9 @@ async fn update_library(
 fn create_library_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create library")
         .description(
-            "Creates a new library entry and starts background ingestion. Returns 202 when accepted.",
+            "Creates a new library entry and starts background ingestion. Returns 201 when created.",
         )
-        .response::<202, ()>()
+        .response::<201, Json<LibraryResponse>>()
 }
 
 fn update_library_docs(op: TransformOperation) -> TransformOperation {
