@@ -84,7 +84,7 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
     let core_api = routes::build_core_api()?;
     crate::plugins::runtime::initialize_registry().await;
 
-    let app = plugin_api::install(core_api.router, core_api.reservations).await;
+    let app = plugin_api::install(core_api.router, core_api.reservations).await?;
     let app = app.layer(axum::middleware::from_fn(
         services::metadata::mapping_admin::reingest_request_gate,
     ));

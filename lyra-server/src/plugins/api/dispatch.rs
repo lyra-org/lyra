@@ -12,6 +12,7 @@ use std::collections::{
     HashSet,
 };
 use std::env;
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -87,6 +88,8 @@ static INSTALLED_ROUTERS: LazyLock<Arc<RwLock<InstalledRouters>>> =
 static INSTALLED_STATIC_DIR: LazyLock<Arc<RwLock<Option<PathBuf>>>> =
     LazyLock::new(|| Arc::new(RwLock::new(None)));
 
+const LYRA_STATIC_DIR_ENV: &str = "LYRA_STATIC_DIR";
+
 #[derive(Clone)]
 struct InstalledRouters {
     main: Router,
@@ -135,7 +138,11 @@ pub(crate) async fn installed_static_dir() -> Option<PathBuf> {
     INSTALLED_STATIC_DIR.read().await.clone()
 }
 
-pub(crate) fn find_static_dir() -> Option<PathBuf> {
+pub(crate) fn find_static_dir() -> Result<Option<PathBuf>> {
+    if let Some(path) = configured_static_dir(env::var_os(LYRA_STATIC_DIR_ENV))? {
+        return Ok(Some(path));
+    }
+
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let manifest_parent = manifest_dir
         .parent()
@@ -155,7 +162,27 @@ pub(crate) fn find_static_dir() -> Option<PathBuf> {
         Some(manifest_dir.join("static")),
     ];
 
-    candidates.into_iter().flatten().find(|path| path.is_dir())
+    Ok(candidates.into_iter().flatten().find(|path| path.is_dir()))
+}
+
+fn configured_static_dir(raw: Option<OsString>) -> Result<Option<PathBuf>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+
+    let path = PathBuf::from(raw);
+    if path.as_os_str().is_empty() {
+        return Ok(None);
+    }
+
+    if !path.is_dir() {
+        bail!(
+            "{LYRA_STATIC_DIR_ENV} points to '{}' but it is not a directory",
+            path.display()
+        );
+    }
+
+    Ok(Some(path))
 }
 
 pub(crate) async fn install_router(router: Router, ci_router: CaseInsensitiveRouter) {
@@ -471,6 +498,44 @@ fn strip_body_for_head(method: &Method, response: Response) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn unique_temp_path(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("lyra-{label}-{}-{nanos}", std::process::id()))
+    }
+
+    #[test]
+    fn configured_static_dir_uses_existing_directory() -> anyhow::Result<()> {
+        let path = unique_temp_path("static-dir");
+        std::fs::create_dir(&path)?;
+
+        let resolved = configured_static_dir(Some(path.clone().into_os_string()))?;
+
+        assert_eq!(resolved, Some(path.clone()));
+        std::fs::remove_dir(&path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn configured_static_dir_ignores_empty_values() -> anyhow::Result<()> {
+        let resolved = configured_static_dir(Some(std::ffi::OsString::new()))?;
+
+        assert_eq!(resolved, None);
+        Ok(())
+    }
+
+    #[test]
+    fn configured_static_dir_rejects_non_directories() {
+        let path = unique_temp_path("missing-static-dir");
+
+        let error = configured_static_dir(Some(path.into_os_string()))
+            .expect_err("missing static directory should be rejected");
+
+        assert!(error.to_string().contains(LYRA_STATIC_DIR_ENV));
+    }
 
     #[test]
     fn has_ascii_upper_detects_any_uppercase_byte() {
