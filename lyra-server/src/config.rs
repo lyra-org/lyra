@@ -11,6 +11,7 @@ use anyhow::{
 use serde::Deserialize;
 use std::{
     env,
+    ffi::OsString,
     path::PathBuf,
 };
 
@@ -53,6 +54,8 @@ fn config_candidate_paths() -> Vec<PathBuf> {
 }
 
 pub(crate) const DEFAULT_PORT: u16 = 4746;
+const LYRA_DB_DIR_ENV: &str = "LYRA_DB_DIR";
+const DEFAULT_DB_FILE_NAME: &str = "lyra.db";
 
 #[derive(Clone, Deserialize)]
 #[serde(default)]
@@ -190,7 +193,7 @@ impl Default for AuthConfig {
 }
 
 fn default_db_path() -> PathBuf {
-    PathBuf::from("lyra.db")
+    PathBuf::from(DEFAULT_DB_FILE_NAME)
 }
 
 fn default_allow_default_login_when_disabled() -> bool {
@@ -203,6 +206,42 @@ fn default_default_username() -> String {
 
 fn default_session_ttl_seconds() -> u64 {
     2_592_000 // 30 days
+}
+
+fn normalize_db_path(config: &mut Config) -> Result<()> {
+    normalize_db_path_with_dir(config, env::var_os(LYRA_DB_DIR_ENV))
+}
+
+fn normalize_db_path_with_dir(config: &mut Config, raw: Option<OsString>) -> Result<()> {
+    let Some(db_dir) = configured_db_dir(raw)? else {
+        return Ok(());
+    };
+
+    if config.db.path.is_relative() {
+        config.db.path = db_dir.join(&config.db.path);
+    }
+
+    Ok(())
+}
+
+fn configured_db_dir(raw: Option<OsString>) -> Result<Option<PathBuf>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+
+    let path = PathBuf::from(raw);
+    if path.as_os_str().is_empty() {
+        return Ok(None);
+    }
+
+    if !path.is_dir() {
+        return Err(anyhow!(
+            "{LYRA_DB_DIR_ENV} points to '{}' but it is not a directory",
+            path.display()
+        ));
+    }
+
+    Ok(Some(path))
 }
 
 pub(crate) fn load_config() -> Result<Config> {
@@ -223,6 +262,7 @@ pub(crate) fn load_config() -> Result<Config> {
     let mut config: Config = serde_json::from_str(&contents)
         .with_context(|| format!("failed to parse config file at {}", path.display()))?;
 
+    normalize_db_path(&mut config)?;
     normalize_config_library_locale_inputs(&mut config)?;
     normalize_published_url(&mut config)?;
     normalize_cors_allowed_origins(&mut config)?;
@@ -332,12 +372,16 @@ mod tests {
         CorsConfig,
         DEFAULT_PORT,
         DbConfig,
+        DbKind,
         HlsConfig,
         LibraryConfig,
         SyncConfig,
+        configured_db_dir,
         normalize_config_library_locale_inputs,
         normalize_cors_allowed_origins,
+        normalize_db_path_with_dir,
     };
+    use std::path::PathBuf;
 
     fn base_config_with_library(library: Option<LibraryConfig>) -> Config {
         Config {
@@ -351,6 +395,62 @@ mod tests {
             sync: SyncConfig::default(),
             hls: HlsConfig::default(),
         }
+    }
+
+    fn unique_temp_path(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("lyra-{label}-{}-{nanos}", std::process::id()))
+    }
+
+    #[test]
+    fn db_dir_env_resolves_relative_db_paths() -> anyhow::Result<()> {
+        let db_dir = unique_temp_path("db-dir");
+        std::fs::create_dir(&db_dir)?;
+        let mut config = Config::default();
+        config.db.kind = DbKind::Mmap;
+        config.db.path = PathBuf::from("custom.db");
+
+        normalize_db_path_with_dir(&mut config, Some(db_dir.clone().into_os_string()))?;
+
+        assert_eq!(config.db.path, db_dir.join("custom.db"));
+        std::fs::remove_dir(&db_dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn db_dir_env_preserves_absolute_db_paths() -> anyhow::Result<()> {
+        let db_dir = unique_temp_path("db-dir");
+        std::fs::create_dir(&db_dir)?;
+        let mut config = Config::default();
+        config.db.kind = DbKind::Mmap;
+        config.db.path = PathBuf::from("/var/lib/lyra/custom.db");
+
+        normalize_db_path_with_dir(&mut config, Some(db_dir.clone().into_os_string()))?;
+
+        assert_eq!(config.db.path, PathBuf::from("/var/lib/lyra/custom.db"));
+        std::fs::remove_dir(&db_dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn db_dir_env_ignores_empty_values() -> anyhow::Result<()> {
+        let resolved = configured_db_dir(Some(std::ffi::OsString::new()))?;
+
+        assert_eq!(resolved, None);
+        Ok(())
+    }
+
+    #[test]
+    fn db_dir_env_rejects_non_directories() {
+        let path = unique_temp_path("missing-db-dir");
+
+        let error = configured_db_dir(Some(path.into_os_string()))
+            .expect_err("missing db directory should be rejected");
+
+        assert!(error.to_string().contains("LYRA_DB_DIR"));
     }
 
     #[test]
