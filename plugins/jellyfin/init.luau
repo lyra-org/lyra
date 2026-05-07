@@ -1264,9 +1264,10 @@ api.get(P .. "/Library/VirtualFolders", function(ctx: ApiContext)
 	for _, lib in libs do
 		local hex_id = base.nanoid_to_hex(lib.id)
 		if hex_id then
+			local locations = if lib.path then { lib.path } else {}
 			local folder: JsonValue = {
 				Name = lib.name,
-				Locations = {},
+				Locations = locations,
 				CollectionType = "music",
 				ItemId = hex_id,
 				RefreshStatus = "",

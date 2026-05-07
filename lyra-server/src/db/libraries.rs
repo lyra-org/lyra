@@ -85,7 +85,7 @@ pub(crate) struct LibraryFull {
     pub(crate) name: String,
     pub(crate) language: Option<String>,
     pub(crate) country: Option<String>,
-    pub(crate) directory: PathBuf,
+    pub(crate) path: PathBuf,
 }
 
 impl From<Library> for LibraryFull {
@@ -95,7 +95,7 @@ impl From<Library> for LibraryFull {
             name: library.name,
             language: library.language,
             country: library.country,
-            directory: library.path,
+            path: library.path,
         }
     }
 }
@@ -105,7 +105,7 @@ impl mlua::IntoLua for LibraryFull {
         let table = lua.create_table()?;
         table.set("id", self.id)?;
         table.set("name", self.name)?;
-        table.set("directory", self.directory.to_string_lossy().to_string())?;
+        table.set("path", self.path.to_string_lossy().to_string())?;
         if let Some(language) = self.language {
             table.set("language", language)?;
         }
@@ -1172,7 +1172,7 @@ mod tests {
 
         assert_eq!(libraries.len(), 1);
         assert_eq!(libraries[0].id, created.id);
-        assert_eq!(libraries[0].directory, created.path);
+        assert_eq!(libraries[0].path, created.path);
         Ok(())
     }
 
