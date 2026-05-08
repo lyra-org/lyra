@@ -46,6 +46,12 @@ pub(crate) struct TrackIngest {
     pub(crate) track_db_id: Option<DbId>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct ReleaseIngestResult {
+    pub(crate) release_db_id: DbId,
+    pub(crate) track_db_ids: Vec<DbId>,
+}
+
 fn select_release_id(db: &impl DbAccess, track_ids: &[DbId]) -> anyhow::Result<Option<DbId>> {
     let mut counts: HashMap<DbId, usize> = HashMap::new();
     for track_db_id in track_ids {
@@ -119,7 +125,7 @@ pub(crate) fn persist_release(
     library_db_id: DbId,
     release_title: &str,
     release_tracks: Vec<TrackIngest>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ReleaseIngestResult> {
     db.transaction_mut(|t| persist_release_inner(t, library_db_id, release_title, release_tracks))
 }
 
@@ -128,7 +134,7 @@ fn persist_release_inner(
     library_db_id: DbId,
     release_title: &str,
     release_tracks: Vec<TrackIngest>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ReleaseIngestResult> {
     ensure_index(db, "scan_name")?;
 
     let mut artist_cache: HashMap<String, DbId> = HashMap::new();
@@ -282,6 +288,8 @@ fn persist_release_inner(
         .iter()
         .filter_map(|track| track.meta.disc)
         .max();
+
+    let mut persisted_track_ids = Vec::new();
 
     for track in release_tracks {
         let is_existing_track = track.track_db_id.is_some();
@@ -496,7 +504,13 @@ fn persist_release_inner(
 
         remove_edges_between(db, release_db_id, track_db_id)?;
         ensure_owned_edge(db, release_db_id, track_db_id)?;
+        if !persisted_track_ids.contains(&track_db_id) {
+            persisted_track_ids.push(track_db_id);
+        }
     }
 
-    Ok(())
+    Ok(ReleaseIngestResult {
+        release_db_id,
+        track_db_ids: persisted_track_ids,
+    })
 }

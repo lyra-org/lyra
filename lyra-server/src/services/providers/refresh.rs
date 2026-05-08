@@ -26,6 +26,8 @@ use crate::{
     services::providers::{
         LIBRARY_REFRESH_LOCKS,
         PROVIDER_REGISTRY,
+        ProviderCallStage,
+        with_provider_call,
     },
     services::{
         CoverPaths,
@@ -100,10 +102,15 @@ async fn sync_library_cover_scope(
 
 pub(super) async fn enabled_providers() -> anyhow::Result<Vec<ProviderConfig>> {
     let db = STATE.db.read().await;
-    let providers = db::providers::get(&db)?
+    let mut providers = db::providers::get(&db)?
         .into_iter()
         .filter(|provider| provider.enabled)
         .collect::<Vec<_>>();
+    providers.sort_by(|a, b| {
+        b.priority
+            .cmp(&a.priority)
+            .then(a.provider_id.cmp(&b.provider_id))
+    });
     Ok(providers)
 }
 
@@ -207,10 +214,13 @@ async fn refresh_entity_metadata_inner(
                     .map_err(anyhow::Error::from)?;
             }
         }
-        caller::scope_system(
-            crate::services::libraries::system_context(),
-            handler.call_async::<_, ()>(call_ctx),
-        )
+        with_provider_call(&provider_id, ProviderCallStage::MetadataRefresh, || async {
+            caller::scope_system(
+                crate::services::libraries::system_context(),
+                handler.call_async::<_, ()>(call_ctx),
+            )
+            .await
+        })
         .await
         .map_err(anyhow::Error::from)?;
         providers_called.push(provider_id);
@@ -420,6 +430,187 @@ pub(crate) async fn refresh_library_metadata(
     refresh_library_metadata_inner(library_db_id, options).await
 }
 
+pub(crate) async fn refresh_release_metadata_for_scan(
+    library_db_id: DbId,
+    release_id: DbId,
+    options: &LibraryRefreshOptions<'_>,
+) -> Result<usize, ProviderServiceError> {
+    refresh_release_metadata_inner(library_db_id, release_id, options).await
+}
+
+async fn refresh_release_metadata_inner(
+    library_db_id: DbId,
+    release_id: DbId,
+    options: &LibraryRefreshOptions<'_>,
+) -> Result<usize, ProviderServiceError> {
+    {
+        let db = STATE.db.read().await;
+        db::libraries::get_by_id(&db, library_db_id)?
+            .ok_or(ProviderServiceError::LibraryNotFound(library_db_id.0))?;
+        if db::releases::get_by_id(&db, release_id)?.is_none() {
+            return Err(ProviderServiceError::EntityNotFound(release_id.0));
+        }
+    }
+
+    let providers = enabled_providers().await?;
+    let provider_handlers: Vec<(
+        String,
+        crate::plugins::lifecycle::PluginFunctionHandle,
+        Option<crate::plugins::lifecycle::PluginFunctionHandle>,
+    )> = {
+        let registry = PROVIDER_REGISTRY.read().await;
+        providers
+            .iter()
+            .filter(|p| options.provider_id.is_none_or(|id| p.provider_id == id))
+            .filter_map(|provider| {
+                let handler = registry
+                    .get_refresh_handler(&provider.provider_id, EntityType::Release)?
+                    .clone();
+                let filter = if options.apply_sync_filters {
+                    registry
+                        .get_sync_filter(&provider.provider_id, EntityType::Release)
+                        .cloned()
+                } else {
+                    None
+                };
+                Some((provider.provider_id.clone(), handler, filter))
+            })
+            .collect()
+    };
+    let (unique_release_id_pairs, unique_track_id_pairs) = {
+        let registry = PROVIDER_REGISTRY.read().await;
+        (
+            registry.unique_id_pairs(EntityType::Release),
+            registry.unique_track_id_pairs(),
+        )
+    };
+
+    let mut providers_called = Vec::new();
+    let mut context: Option<serde_json::Value> = None;
+    let mut dirty = true;
+
+    for (provider_id, handler, filter) in &provider_handlers {
+        let Some(lua) = handler.try_upgrade_lua() else {
+            tracing::warn!(
+                provider_id,
+                release_db_id = release_id.0,
+                "provider refresh handler's lua instance is no longer valid, skipping"
+            );
+            continue;
+        };
+
+        if dirty || context.is_none() {
+            let rebuilt = {
+                let db = STATE.db.read().await;
+                match build_release_context(&db, release_id, Some(library_db_id)) {
+                    Ok(ctx) => Some(ctx),
+                    Err(err) => {
+                        if providers_called.is_empty() {
+                            return Err(ProviderServiceError::Internal(err));
+                        }
+                        tracing::debug!(
+                            library_db_id = library_db_id.0,
+                            release_db_id = release_id.0,
+                            error = %err,
+                            "release disappeared during scan provider refresh"
+                        );
+                        None
+                    }
+                }
+            };
+            let Some(rebuilt) = rebuilt else {
+                break;
+            };
+            context = Some(rebuilt);
+            dirty = false;
+        }
+
+        let Some(context) = context.as_ref() else {
+            continue;
+        };
+        let lua_ctx = lua
+            .to_value_with(context, LUA_SERIALIZE_OPTIONS)
+            .map_err(anyhow::Error::from)?;
+
+        match with_provider_call(&provider_id, ProviderCallStage::MetadataRefresh, || async {
+            if let Some(filter) = filter {
+                match caller::scope_system(
+                    crate::services::libraries::system_context(),
+                    filter.call_async::<_, bool>(lua_ctx.clone()),
+                )
+                .await
+                {
+                    Ok(false) => return Ok(false),
+                    Ok(true) => {}
+                    Err(err) => {
+                        tracing::warn!(
+                            provider_id,
+                            release_db_id = release_id.0,
+                            error = %err,
+                            "sync filter failed, skipping release for provider"
+                        );
+                        return Ok(false);
+                    }
+                }
+            }
+
+            caller::scope_system(
+                crate::services::libraries::system_context(),
+                handler.call_async::<_, ()>(lua_ctx),
+            )
+            .await
+            .map(|()| true)
+        })
+        .await
+        {
+            Ok(false) => continue,
+            Ok(true) => {
+                providers_called.push(provider_id.clone());
+                dirty = true;
+            }
+            Err(err) => {
+                tracing::warn!(
+                    provider_id,
+                    release_db_id = release_id.0,
+                    error = %err,
+                    "provider refresh handler failed during scan release refresh"
+                );
+                continue;
+            }
+        }
+
+        let mut db_write = STATE.db.write().await;
+        if let Err(err) = deduplicate_artists_by_external_id(&mut db_write) {
+            tracing::warn!(
+                provider_id,
+                release_db_id = release_id.0,
+                error = %err,
+                "artist deduplication failed during scan release refresh"
+            );
+        }
+        if !unique_release_id_pairs.is_empty() {
+            let scope = HashSet::from([provider_id.clone()]);
+            if let Err(err) = deduplicate_releases_by_external_id(
+                &mut db_write,
+                library_db_id,
+                &unique_release_id_pairs,
+                &unique_track_id_pairs,
+                Some(&scope),
+            ) {
+                tracing::warn!(
+                    library_db_id = library_db_id.0,
+                    release_db_id = release_id.0,
+                    provider_id,
+                    error = %err,
+                    "release deduplication by external id failed during scan release refresh"
+                );
+            }
+        }
+    }
+
+    Ok(usize::from(!providers_called.is_empty()))
+}
+
 async fn refresh_library_metadata_inner(
     library_db_id: DbId,
     options: &LibraryRefreshOptions<'_>,
@@ -509,34 +700,39 @@ async fn refresh_library_metadata_inner(
                 .to_value_with(context, LUA_SERIALIZE_OPTIONS)
                 .map_err(anyhow::Error::from)?;
 
-            if let Some(filter) = filter {
-                match caller::scope_system(
-                    crate::services::libraries::system_context(),
-                    filter.call_async::<_, bool>(lua_ctx.clone()),
-                )
-                .await
-                {
-                    Ok(false) => continue,
-                    Ok(true) => {}
-                    Err(err) => {
-                        tracing::warn!(
-                            provider_id,
-                            release_db_id = node_id.0,
-                            error = %err,
-                            "sync filter failed, skipping release for provider"
-                        );
-                        continue;
+            match with_provider_call(provider_id, ProviderCallStage::MetadataRefresh, || async {
+                if let Some(filter) = filter {
+                    match caller::scope_system(
+                        crate::services::libraries::system_context(),
+                        filter.call_async::<_, bool>(lua_ctx.clone()),
+                    )
+                    .await
+                    {
+                        Ok(false) => return Ok(false),
+                        Ok(true) => {}
+                        Err(err) => {
+                            tracing::warn!(
+                                provider_id,
+                                release_db_id = node_id.0,
+                                error = %err,
+                                "sync filter failed, skipping release for provider"
+                            );
+                            return Ok(false);
+                        }
                     }
                 }
-            }
 
-            match caller::scope_system(
-                crate::services::libraries::system_context(),
-                handler.call_async::<_, ()>(lua_ctx),
-            )
+                caller::scope_system(
+                    crate::services::libraries::system_context(),
+                    handler.call_async::<_, ()>(lua_ctx),
+                )
+                .await
+                .map(|()| true)
+            })
             .await
             {
-                Ok(()) => {
+                Ok(false) => continue,
+                Ok(true) => {
                     refreshed_releases.insert(node_id);
                     dirty_releases.insert(node_id);
                     pass_touched.insert(node_id);

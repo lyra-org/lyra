@@ -48,7 +48,7 @@ use crate::{
             require_can_create_library,
             require_manage_libraries_on,
         },
-        get_library_sync_state,
+        get_library_sync_status as get_library_sync_status_snapshot,
         refresh_library_metadata,
         releases,
         start_library_sync,
@@ -482,7 +482,7 @@ fn refresh_library_docs(op: TransformOperation) -> TransformOperation {
 async fn get_library_sync_status(
     headers: HeaderMap,
     Path(id): Path<String>,
-) -> Result<Json<crate::services::LibrarySyncState>, AppError> {
+) -> Result<Json<crate::services::LibrarySyncStatus>, AppError> {
     let _principal = require_manage_libraries_on(&headers, &id).await?;
 
     let library_db_id = {
@@ -494,7 +494,7 @@ async fn get_library_sync_status(
         library_db_id
     };
 
-    let status = get_library_sync_state(library_db_id).await;
+    let status = get_library_sync_status_snapshot(library_db_id).await;
     Ok(Json(status))
 }
 
@@ -529,7 +529,7 @@ async fn start_library_sync_for_library(
 
 fn get_library_sync_status_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get library sync status").description(
-        "Returns the in-memory sync state for a library. Requires ManageLibraries permission.",
+        "Returns a compact sync status for a library, including run state, progress counters, and currently active work. Requires ManageLibraries permission.",
     )
 }
 

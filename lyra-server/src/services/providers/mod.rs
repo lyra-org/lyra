@@ -28,16 +28,19 @@ pub(crate) use refresh::{
     LibraryRefreshOptions,
     refresh_entity_metadata,
     refresh_library_metadata,
+    refresh_release_metadata_for_scan,
 };
 pub(crate) use registry::{
     LIBRARY_REFRESH_LOCKS,
     PROVIDER_REGISTRY,
+    ProviderCallStage,
     ProviderCoverRequireSpec,
     ProviderCoverSpec,
     ProviderIdSpec,
     SYNC_LOCKS,
     reset_provider_registry_for_test,
     teardown_plugin_providers,
+    with_provider_call,
 };
 pub(crate) use sync::{
     run_provider_sync,

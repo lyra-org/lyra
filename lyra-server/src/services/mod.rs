@@ -65,9 +65,9 @@ pub(crate) mod tracks;
 pub(crate) use system::SystemContext;
 
 pub(crate) use libraries::{
-    LibrarySyncState,
+    LibrarySyncStatus,
     StartLibrarySyncResult,
-    get_library_sync_state,
+    get_library_sync_status,
     start_library_sync,
     wait_for_running_library_syncs,
 };

@@ -8,11 +8,15 @@ use std::{
         HashMap,
         HashSet,
     },
+    future::Future,
     sync::{
         Arc,
         LazyLock,
     },
-    time::Duration,
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
 use anyhow::{
@@ -39,6 +43,58 @@ pub(crate) static SYNC_LOCKS: LazyLock<Arc<tokio::sync::Mutex<HashSet<String>>>>
 
 pub(crate) static LIBRARY_REFRESH_LOCKS: LazyLock<Arc<tokio::sync::Mutex<HashSet<agdb::DbId>>>> =
     LazyLock::new(|| Arc::new(tokio::sync::Mutex::new(HashSet::new())));
+
+static PROVIDER_CALL_LOCKS: LazyLock<
+    Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+> = LazyLock::new(|| Arc::new(tokio::sync::Mutex::new(HashMap::new())));
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProviderCallStage {
+    MetadataRefresh,
+    CoverSearch,
+    Lyrics,
+}
+
+impl ProviderCallStage {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::MetadataRefresh => "metadata_refresh",
+            Self::CoverSearch => "cover_search",
+            Self::Lyrics => "lyrics",
+        }
+    }
+}
+
+pub(crate) async fn with_provider_call<T, F, Fut>(
+    provider_id: &str,
+    stage: ProviderCallStage,
+    call: F,
+) -> T
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = T>,
+{
+    let lock = {
+        let mut locks = PROVIDER_CALL_LOCKS.lock().await;
+        locks
+            .entry(provider_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    };
+
+    let wait_started = Instant::now();
+    let _guard = lock.lock().await;
+    let waited = wait_started.elapsed();
+    tracing::debug!(
+        provider_id,
+        stage = stage.as_str(),
+        waited_ms = waited.as_millis() as u64,
+        waited = waited > Duration::ZERO,
+        "provider call lock acquired"
+    );
+
+    call().await
+}
 
 /// Registered metadata providers, bucketed by the plugin that declared them.
 /// `plugin_by_provider` is the derived O(1) dispatch index rebuilt after
@@ -283,6 +339,86 @@ impl ProviderRegistry {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{
+            AtomicUsize,
+            Ordering,
+        },
+    };
+
+    use tokio::{
+        sync::Barrier,
+        time::{
+            Duration,
+            sleep,
+            timeout,
+        },
+    };
+
+    use super::{
+        ProviderCallStage,
+        with_provider_call,
+    };
+
+    #[tokio::test]
+    async fn provider_calls_are_serialized_per_provider() {
+        let provider_id = format!("test-provider-{}", nanoid::nanoid!());
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+
+        let make_call = |active: Arc<AtomicUsize>, max_active: Arc<AtomicUsize>| {
+            let provider_id = provider_id.clone();
+            async move {
+                with_provider_call(&provider_id, ProviderCallStage::MetadataRefresh, || async {
+                    let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_active.fetch_max(current, Ordering::SeqCst);
+                    sleep(Duration::from_millis(5)).await;
+                    active.fetch_sub(1, Ordering::SeqCst);
+                })
+                .await;
+            }
+        };
+
+        tokio::join!(
+            make_call(active.clone(), max_active.clone()),
+            make_call(active.clone(), max_active.clone()),
+            make_call(active.clone(), max_active.clone())
+        );
+
+        assert_eq!(max_active.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn provider_calls_for_different_providers_can_overlap() {
+        let provider_a = format!("test-provider-a-{}", nanoid::nanoid!());
+        let provider_b = format!("test-provider-b-{}", nanoid::nanoid!());
+        let barrier = Arc::new(Barrier::new(2));
+
+        let make_call = |provider_id: String| {
+            let barrier = barrier.clone();
+            async move {
+                with_provider_call(&provider_id, ProviderCallStage::MetadataRefresh, || async {
+                    barrier.wait().await;
+                })
+                .await;
+            }
+        };
+
+        let joined = timeout(Duration::from_secs(1), async {
+            tokio::join!(make_call(provider_a), make_call(provider_b));
+        })
+        .await;
+
+        assert!(
+            joined.is_ok(),
+            "different providers should not share a lock"
+        );
+    }
+}
+
 impl PluginScopedInner for ProviderRegistry {
     fn clear_bucket(&mut self, plugin_id: &PluginId) {
         self.providers.remove(plugin_id);
@@ -314,6 +450,7 @@ pub(crate) async fn reset_provider_registry_for_test() {
     PROVIDER_REGISTRY.write().await.clear();
     SYNC_LOCKS.lock().await.clear();
     LIBRARY_REFRESH_LOCKS.lock().await.clear();
+    PROVIDER_CALL_LOCKS.lock().await.clear();
 }
 
 pub(crate) async fn teardown_plugin_providers(plugin_id: &PluginId) {
@@ -344,6 +481,12 @@ pub(crate) async fn teardown_plugin_providers(plugin_id: &PluginId) {
         let mut locks = SYNC_LOCKS.lock().await;
         for id in &owned_provider_ids {
             locks.remove(id);
+        }
+        drop(locks);
+
+        let mut call_locks = PROVIDER_CALL_LOCKS.lock().await;
+        for id in &owned_provider_ids {
+            call_locks.remove(id);
         }
     }
 
