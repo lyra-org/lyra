@@ -10,9 +10,9 @@ mod sync;
 
 pub(crate) use configured::prepare_configured_library;
 pub(crate) use orchestrator::{
-    LibrarySyncState,
+    LibrarySyncStatus,
     StartLibrarySyncResult,
-    get_library_sync_state,
+    get_library_sync_status,
     reset_sync_states_for_test,
     running_library_sync_count,
     start_library_sync,

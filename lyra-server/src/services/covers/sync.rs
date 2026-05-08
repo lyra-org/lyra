@@ -1040,41 +1040,6 @@ pub(crate) async fn sync_and_persist_covers_for_library(
     sync_cover_metadata_for_scope(scope, db, &resolved).await
 }
 
-pub(crate) async fn eager_sync_cover_metadata(
-    db: &crate::db::DbAsync,
-    library_db_id: DbId,
-    library_dir: &Path,
-) {
-    let covers_root = super::resolve::configured_covers_root();
-    let cover_paths = super::CoverPaths {
-        library_root: Some(library_dir),
-        covers_root: covers_root.as_deref(),
-    };
-    let resolved = {
-        let db_read = db.read().await;
-        match resolve_release_covers(&db_read, library_db_id, cover_paths) {
-            Ok(r) => r,
-            Err(err) => {
-                tracing::warn!(
-                    library_db_id = library_db_id.0,
-                    error = %err,
-                    "eager cover resolution failed during library sync"
-                );
-                return;
-            }
-        }
-    };
-    if !resolved.is_empty() {
-        if let Err(err) = sync_release_cover_metadata_from_resolved(db, &resolved).await {
-            tracing::warn!(
-                library_db_id = library_db_id.0,
-                error = %err,
-                "eager cover metadata sync failed during library sync"
-            );
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{

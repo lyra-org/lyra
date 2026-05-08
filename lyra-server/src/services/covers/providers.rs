@@ -36,7 +36,9 @@ use crate::{
     },
     services::providers::{
         PROVIDER_REGISTRY,
+        ProviderCallStage,
         ProviderCoverRequireSpec,
+        with_provider_call,
     },
 };
 
@@ -699,17 +701,19 @@ async fn resolve_provider_cover_search_result_uncached(
         } else {
             cover_spec.timeout
         };
-        let call = cover_spec.handler.call_async::<_, LuaValue>(lua_ctx);
-        let result: LuaValue = match tokio::time::timeout(timeout, call).await {
-            Ok(Ok(value)) => value,
-            Ok(Err(err)) => return Err(err.into()),
-            Err(_elapsed) => {
-                return Err(anyhow!(
-                    "cover handler for provider '{provider_id}' timed out after {}ms",
-                    timeout.as_millis()
-                ));
-            }
-        };
+        let result: LuaValue =
+            with_provider_call(provider_id, ProviderCallStage::CoverSearch, || async {
+                let call = cover_spec.handler.call_async::<_, LuaValue>(lua_ctx);
+                match tokio::time::timeout(timeout, call).await {
+                    Ok(Ok(value)) => Ok(value),
+                    Ok(Err(err)) => Err(err.into()),
+                    Err(_elapsed) => Err(anyhow!(
+                        "cover handler for provider '{provider_id}' timed out after {}ms",
+                        timeout.as_millis()
+                    )),
+                }
+            })
+            .await?;
         let value = serde_json::to_value(&result)?;
         if value.is_null() {
             continue;

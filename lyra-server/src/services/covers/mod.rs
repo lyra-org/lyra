@@ -87,7 +87,6 @@ pub(crate) use resolve::{
 };
 pub(crate) use sync::{
     CoverScope,
-    eager_sync_cover_metadata,
     sync_and_persist_covers_for_library,
     sync_artist_cover,
     sync_release_cover_for_tracks,

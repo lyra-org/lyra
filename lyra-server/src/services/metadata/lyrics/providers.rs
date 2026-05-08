@@ -46,6 +46,10 @@ use crate::{
         selection,
         upload,
     },
+    services::providers::{
+        ProviderCallStage,
+        with_provider_call,
+    },
 };
 
 pub(crate) const DEFAULT_HANDLER_TIMEOUT: Duration = Duration::from_secs(15);
@@ -299,7 +303,10 @@ async fn dispatch_one(
     };
     let context_owned = context.clone();
     let handler_fn = handler.handler.clone();
-    let call_result = tokio::time::timeout(timeout, handler_fn(context_owned)).await;
+    let call_result = with_provider_call(provider_id, ProviderCallStage::Lyrics, || async {
+        tokio::time::timeout(timeout, handler_fn(context_owned)).await
+    })
+    .await;
 
     let outcome = match call_result {
         Ok(Ok(outcome)) => outcome,

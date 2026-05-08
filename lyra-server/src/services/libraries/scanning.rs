@@ -5,6 +5,7 @@
 
 use std::{
     collections::{
+        BTreeMap,
         HashMap,
         HashSet,
     },
@@ -36,6 +37,18 @@ use crate::{
         is_supported_extension,
     },
 };
+
+#[derive(Debug)]
+pub(crate) struct EntryScanPlan {
+    pub(crate) groups: Vec<ScannedEntryGroup>,
+    pub(crate) observed_paths: HashSet<PathBuf>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ScannedEntryGroup {
+    pub(crate) source_dir: PathBuf,
+    pub(crate) entries: Vec<Entry>,
+}
 
 pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<Vec<Entry>> {
     let mut entries = Vec::new();
@@ -149,6 +162,79 @@ pub(crate) fn scan_fs(root: &Path) -> anyhow::Result<Vec<Entry>> {
         .collect())
 }
 
+fn group_entries_by_source_dir(library_root: &Path, entries: Vec<Entry>) -> Vec<ScannedEntryGroup> {
+    let mut dirs_by_path = BTreeMap::new();
+    let mut files_by_source_dir: BTreeMap<PathBuf, Vec<Entry>> = BTreeMap::new();
+
+    for entry in entries {
+        match entry.kind {
+            EntryKind::Dir => {
+                dirs_by_path.insert(entry.full_path.clone(), entry);
+            }
+            EntryKind::File => {
+                let parent = entry
+                    .full_path
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| library_root.to_path_buf());
+                let source_dir = if parent != library_root
+                    && parent
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(folder_name_looks_like_disc)
+                {
+                    parent.parent().map(Path::to_path_buf).unwrap_or(parent)
+                } else {
+                    parent
+                };
+                files_by_source_dir
+                    .entry(source_dir)
+                    .or_default()
+                    .push(entry);
+            }
+        }
+    }
+
+    files_by_source_dir
+        .into_iter()
+        .map(|(source_dir, mut files)| {
+            let mut entries = Vec::new();
+            let mut ancestors = Vec::new();
+            let mut current = Some(source_dir.as_path());
+            while let Some(path) = current {
+                if let Some(dir) = dirs_by_path.get(path) {
+                    ancestors.push(dir.clone());
+                }
+                if path == library_root {
+                    break;
+                }
+                current = path.parent();
+            }
+            ancestors.reverse();
+            entries.extend(ancestors);
+            entries.append(&mut files);
+            ScannedEntryGroup {
+                source_dir,
+                entries,
+            }
+        })
+        .collect()
+}
+
+fn folder_name_looks_like_disc(name: &str) -> bool {
+    let normalized = name
+        .to_ascii_lowercase()
+        .replace(['_', '-', '.'], " ")
+        .trim()
+        .to_string();
+    let compact = normalized.replace(' ', "");
+    compact
+        .strip_prefix("disc")
+        .or_else(|| compact.strip_prefix("disk"))
+        .or_else(|| compact.strip_prefix("cd"))
+        .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
+}
+
 pub(crate) fn diff_and_needs_hash(
     scanned: Vec<Entry>,
     existing: Vec<Entry>,
@@ -178,6 +264,24 @@ pub(crate) fn diff_and_needs_hash(
     }
 
     (enriched, to_hash)
+}
+
+pub(crate) fn hash_entry_group(mut entries: Vec<Entry>) -> Vec<Entry> {
+    let to_hash = entries
+        .iter()
+        .filter(|entry| entry.kind == EntryKind::File && entry.hash.is_none())
+        .map(|entry| entry.full_path.clone())
+        .collect();
+    let hash_map = compute_hashes(to_hash);
+    for entry in &mut entries {
+        if entry.kind == EntryKind::File
+            && entry.hash.is_none()
+            && let Some(hash) = hash_map.get(entry.full_path.to_string_lossy().as_ref())
+        {
+            entry.hash = Some(hash.clone());
+        }
+    }
+    entries
 }
 
 pub(crate) fn compute_hashes(to_hash: Vec<PathBuf>) -> HashMap<String, String> {
@@ -212,6 +316,24 @@ pub(crate) fn compute_hashes(to_hash: Vec<PathBuf>) -> HashMap<String, String> {
     pairs.into_iter().collect()
 }
 
+pub(crate) fn prepare_entry_scan_plan(
+    library: &Library,
+    existing: Vec<Entry>,
+) -> anyhow::Result<EntryScanPlan> {
+    let scanned = scan_fs(&library.path)?;
+    let (enriched, _) = diff_and_needs_hash(scanned, existing);
+    let observed_paths = enriched
+        .iter()
+        .map(|entry| entry.full_path.clone())
+        .collect::<HashSet<_>>();
+    let groups = group_entries_by_source_dir(&library.path, enriched);
+    Ok(EntryScanPlan {
+        groups,
+        observed_paths,
+    })
+}
+
+#[cfg(test)]
 pub(crate) fn prepare_entries(
     library: &Library,
     existing: Vec<Entry>,

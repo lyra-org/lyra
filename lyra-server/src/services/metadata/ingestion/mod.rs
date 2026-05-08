@@ -24,6 +24,7 @@ use agdb::{
 
 use self::{
     releases::{
+        ReleaseIngestResult,
         TrackIngest,
         persist_release,
     },
@@ -37,6 +38,33 @@ pub(crate) struct ParsedMetadataGroup {
     pub(crate) coalesce_group_key: usize,
     pub(crate) source_dir: PathBuf,
     pub(crate) metadata: Vec<TrackMetadata>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct MetadataApplyResult {
+    pub(crate) releases: Vec<DbId>,
+    pub(crate) tracks: Vec<DbId>,
+}
+
+impl MetadataApplyResult {
+    fn push_release(&mut self, release_id: DbId) {
+        if !self.releases.contains(&release_id) {
+            self.releases.push(release_id);
+        }
+    }
+
+    fn push_track(&mut self, track_id: DbId) {
+        if !self.tracks.contains(&track_id) {
+            self.tracks.push(track_id);
+        }
+    }
+
+    fn extend_release(&mut self, result: ReleaseIngestResult) {
+        self.push_release(result.release_db_id);
+        for track_id in result.track_db_ids {
+            self.push_track(track_id);
+        }
+    }
 }
 
 pub(crate) fn source_directory_for_group_entries(entries: &[Entry]) -> Option<PathBuf> {
@@ -115,15 +143,16 @@ pub(crate) fn apply_metadata(
     db: &mut DbAny,
     library_db_id: DbId,
     metadata: Vec<TrackMetadata>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<MetadataApplyResult> {
     if metadata.is_empty() {
-        return Ok(());
+        return Ok(MetadataApplyResult::default());
     }
 
     let existing_tracks = build_existing_track_map(db, &metadata)?;
 
     let mut current_release = None;
     let mut release_tracks: Vec<TrackIngest> = Vec::new();
+    let mut result = MetadataApplyResult::default();
 
     for track in metadata {
         let release = lyra_metadata::normalize_unicode_nfc(track.album.as_deref().unwrap_or(""));
@@ -135,12 +164,13 @@ pub(crate) fn apply_metadata(
 
         if current_release.as_ref() != Some(&release) {
             if !release_tracks.is_empty() {
-                persist_release(
+                let release_result = persist_release(
                     db,
                     library_db_id,
                     current_release.as_deref().unwrap(),
                     mem::take(&mut release_tracks),
                 )?;
+                result.extend_release(release_result);
             }
 
             current_release = Some(release);
@@ -153,15 +183,16 @@ pub(crate) fn apply_metadata(
     }
 
     if !release_tracks.is_empty() {
-        persist_release(
+        let release_result = persist_release(
             db,
             library_db_id,
             current_release.as_deref().unwrap(),
             release_tracks,
         )?;
+        result.extend_release(release_result);
     }
 
-    Ok(())
+    Ok(result)
 }
 
 #[cfg(test)]
