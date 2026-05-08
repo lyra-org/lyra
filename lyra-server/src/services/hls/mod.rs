@@ -6,7 +6,6 @@
 pub(crate) mod cleanup;
 pub(crate) mod codec;
 pub(crate) mod init;
-pub(crate) mod signing;
 pub(crate) mod state;
 
 #[derive(Debug, thiserror::Error)]
@@ -17,8 +16,6 @@ pub(crate) enum HlsError {
     TranscodeCapacityUnavailable,
     #[error("HLS transcode job not found")]
     JobNotFound,
-    #[error("HLS session does not belong to current user")]
-    SessionForbidden,
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }

@@ -136,7 +136,6 @@ pub(crate) struct SyncConfig {
 #[derive(Clone, Default, Deserialize)]
 pub(crate) struct HlsConfig {
     pub(crate) temp_disk_budget_bytes: Option<u64>,
-    pub(crate) signed_url_ttl_seconds: Option<u64>,
     pub(crate) cleanup_startup_purge: Option<bool>,
     pub(crate) max_concurrent_transcodes: Option<u32>,
 }

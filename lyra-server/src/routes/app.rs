@@ -115,7 +115,7 @@ fn configure_rest_openapi(api: &mut OpenApi) {
     api.info.version = env!("CARGO_PKG_VERSION").to_string();
     api.info.description = Some(
         "REST endpoints use bearer authentication with either a session token or an API key, \
-         except for explicitly public setup, login, and cover image endpoints."
+         except for explicitly public setup, login, cover image, and streaming endpoints."
             .to_string(),
     );
 
@@ -189,6 +189,11 @@ fn configure_rest_openapi(api: &mut OpenApi) {
 fn is_public_rest_operation(method: &str, path: &str) -> bool {
     matches!(
         (method, path),
-        ("GET", "/api/server/public") | ("POST", "/api/users/login") | ("GET", "/api/covers/{id}")
+        ("GET", "/api/server/public")
+            | ("POST", "/api/users/login")
+            | ("GET", "/api/covers/{id}")
+            | ("GET", "/api/stream/{track_id}")
+            | ("GET", "/api/stream/{track_id}/hls.m3u8")
+            | ("GET", "/api/stream/hls/{session_id}/{segment}")
     )
 }

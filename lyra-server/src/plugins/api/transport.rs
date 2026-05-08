@@ -276,7 +276,6 @@ pub(super) async fn lua_response_to_axum(
             let options = parse_hls_serve_options(table.get::<Option<Table>>("options")?)?;
             return Ok(
                 match serve_hls_playlist_for_track(
-                    request_headers,
                     agdb::DbId(track_id),
                     join_preferred_codecs(options.preferred_codecs),
                     options.bitrate_bps,

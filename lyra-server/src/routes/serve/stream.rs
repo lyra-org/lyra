@@ -48,17 +48,13 @@ use tokio::sync::{
 };
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::routes::{
-    self,
-    AppError,
-};
+use crate::routes::AppError;
 
 use super::{
     apply_request_start_offset,
     apply_transcode_policy,
     configure_output,
     file_response,
-    require_download_access,
     resolve_codec,
     resolve_output_format,
     validate_and_get_track_source,
@@ -132,13 +128,6 @@ pub(crate) async fn stream_track_response(
     prefer_vbr: Option<bool>,
     start_offset_ms: Option<u64>,
 ) -> Result<Response<Body>, AppError> {
-    let principal = require_download_access(headers).await?;
-    {
-        let db = crate::STATE.db.read().await;
-        routes::require_entity_accessible(&*db, &principal, track_db_id, || {
-            AppError::not_found(format!("Track not found: {}", track_db_id.0))
-        })?;
-    }
     let validated = validate_request(format, codec)?;
     let source = apply_request_start_offset(
         validate_and_get_track_source(track_db_id).await?,
@@ -334,7 +323,7 @@ pub(crate) async fn stream_track_response(
 fn stream_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Stream audio")
         .description(
-            "Streams audio data for the track ID, including cue-derived virtual segments, optionally transcoded to the requested format or codec. Supports streamable formats: mp3, flac, wav, ogg, aac, opus, and aiff. Direct-copy stream responses support byte ranges; transcoded stream responses are chunked. HLS playback is available via `/api/stream/{track_id}/hls.m3u8`.",
+            "Publicly streams audio data for the track ID, including cue-derived virtual segments, optionally transcoded to the requested format or codec. Supports streamable formats: mp3, flac, wav, ogg, aac, opus, and aiff. Direct-copy stream responses support byte ranges; transcoded stream responses are chunked. HLS playback is available via `/api/stream/{track_id}/hls.m3u8`.",
         )
 }
 
