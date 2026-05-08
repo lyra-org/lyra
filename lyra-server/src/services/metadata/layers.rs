@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashMap;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 use std::time::{
     SystemTime,
     UNIX_EPOCH,
@@ -19,6 +22,7 @@ use crate::db::{
     self,
     IdSource,
     MetadataLayer,
+    ProviderCustomFields,
 };
 
 fn is_entity_locked(db: &DbAny, node_id: DbId) -> anyhow::Result<bool> {
@@ -63,12 +67,76 @@ pub(crate) fn list_entity_external_ids(
     Ok(ids)
 }
 
+pub(crate) fn list_entity_custom_fields(
+    db: &DbAny,
+    node_id: DbId,
+) -> anyhow::Result<Vec<ProviderCustomFields>> {
+    ensure_entity_exists(db, node_id)?;
+
+    let mut rows = db::metadata::custom_fields::get_for_entity(db, node_id)?;
+    rows.sort_by(|a, b| {
+        a.provider_id
+            .cmp(&b.provider_id)
+            .then_with(|| a.version.cmp(&b.version))
+    });
+
+    Ok(rows)
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn save_provider_custom_fields(
+    db: &mut DbAny,
+    node_id: DbId,
+    provider_id: &str,
+    custom_fields: &HashMap<u64, HashMap<String, serde_json::Value>>,
+    remove_versions: &HashSet<u64>,
+) -> anyhow::Result<()> {
+    let mut sorted_remove_versions: Vec<u64> = remove_versions.iter().copied().collect();
+    sorted_remove_versions.sort_unstable();
+    for version in sorted_remove_versions {
+        db::metadata::custom_fields::remove(db, node_id, provider_id, version)?;
+    }
+
+    if custom_fields.is_empty() {
+        return Ok(());
+    }
+
+    let now = now_secs();
+    let mut sorted_versions: Vec<u64> = custom_fields.keys().copied().collect();
+    sorted_versions.sort_unstable();
+    for version in sorted_versions {
+        let Some(fields) = custom_fields.get(&version) else {
+            continue;
+        };
+        let fields_json = serde_json::to_string(fields)?;
+        let row = ProviderCustomFields {
+            db_id: None,
+            id: nanoid!(),
+            provider_id: provider_id.to_string(),
+            version,
+            fields: fields_json,
+            updated_at: now,
+        };
+        db::metadata::custom_fields::upsert(db, node_id, &row)?;
+    }
+
+    Ok(())
+}
+
 pub(crate) fn save_provider_layer(
     db: &mut DbAny,
     node_id: DbId,
     provider_id: &str,
     fields: &HashMap<String, serde_json::Value>,
     external_ids: &HashMap<String, String>,
+    custom_fields: &HashMap<u64, HashMap<String, serde_json::Value>>,
+    remove_custom_field_versions: &HashSet<u64>,
 ) -> anyhow::Result<()> {
     ensure_entity_exists(db, node_id)?;
 
@@ -83,23 +151,26 @@ pub(crate) fn save_provider_layer(
             .is_none_or(|existing| existing.fields != fields_json);
 
         if layer_changed {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-
             let layer = MetadataLayer {
                 db_id: None,
                 id: nanoid!(),
                 provider_id: provider_id.to_string(),
                 fields: fields_json,
-                updated_at: now,
+                updated_at: now_secs(),
             };
 
             db::metadata::layers::upsert(db, node_id, &layer)?;
             super::merging::apply_merged_metadata_to_entity(db, node_id)?;
         }
     }
+
+    save_provider_custom_fields(
+        db,
+        node_id,
+        provider_id,
+        custom_fields,
+        remove_custom_field_versions,
+    )?;
 
     if external_ids.is_empty() {
         return Ok(());

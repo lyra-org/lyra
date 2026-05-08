@@ -178,6 +178,8 @@ fn merge_release_into(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Resu
         crate::services::metadata::merging::apply_merged_metadata_to_entity(db, winner)?;
     }
 
+    db::metadata::custom_fields::copy_between_entities(db, loser, winner)?;
+
     if db::covers::get(db, winner)?.is_none()
         && let Some(cover) = db::covers::get(db, loser)?
         && let Some(cover_id) = cover.db_id

@@ -446,6 +446,8 @@ fn migrate_metadata(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Result
         )?;
     }
 
+    db::metadata::custom_fields::copy_between_entities(db, loser, winner)?;
+
     Ok(())
 }
 
