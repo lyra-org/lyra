@@ -2676,7 +2676,7 @@ mod tests {
 
         {
             let db = STATE.db.read().await;
-            let rows = crate::db::metadata::custom_fields::get_for_entity(&db, track_db_id)?;
+            let rows = list_entity_custom_fields(&db, track_db_id)?;
             assert_eq!(rows.len(), 1);
             assert_eq!(rows[0].provider_id.as_str(), provider_id.as_str());
             assert_eq!(rows[0].version, 2);
