@@ -684,6 +684,13 @@ pub fn me_routes() -> ApiRouter {
             "/api-keys/{api_key_id}",
             delete_with(delete_api_key, delete_api_key_docs),
         )
+        .api_route(
+            "/listens",
+            get_with(
+                super::listens::get_me_listens,
+                super::listens::get_me_listens_docs,
+            ),
+        )
         .nest("/plugins", super::plugins::me_plugin_settings_routes())
 }
 
