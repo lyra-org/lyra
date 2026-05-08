@@ -59,6 +59,7 @@ use crate::plugins::db::{
 };
 use crate::services::EntityType;
 use crate::services::metadata::layers::{
+    list_entity_custom_fields,
     list_entity_external_ids,
     save_provider_layer,
 };
@@ -160,6 +161,63 @@ impl DescribeTypeAlias for ExternalIdsByProvider {
     }
 }
 
+struct ProviderCustomFieldMap;
+
+impl LuauTypeInfo for ProviderCustomFieldMap {
+    fn luau_type() -> LuauType {
+        LuauType::literal("ProviderCustomFieldMap")
+    }
+}
+
+impl DescribeTypeAlias for ProviderCustomFieldMap {
+    fn type_alias_descriptor() -> TypeAliasDescriptor {
+        TypeAliasDescriptor::new(
+            "ProviderCustomFieldMap",
+            LuauType::map(String::luau_type(), harmony_luau::JsonValue::luau_type()),
+            Some("String-keyed custom fields for a provider schema version."),
+        )
+    }
+}
+
+struct ProviderCustomFieldsByVersion;
+
+impl LuauTypeInfo for ProviderCustomFieldsByVersion {
+    fn luau_type() -> LuauType {
+        LuauType::literal("ProviderCustomFieldsByVersion")
+    }
+}
+
+impl DescribeTypeAlias for ProviderCustomFieldsByVersion {
+    fn type_alias_descriptor() -> TypeAliasDescriptor {
+        TypeAliasDescriptor::new(
+            "ProviderCustomFieldsByVersion",
+            LuauType::map(String::luau_type(), ProviderCustomFieldMap::luau_type()),
+            Some("Version-keyed custom fields for a single provider."),
+        )
+    }
+}
+
+struct CustomFieldsByProvider;
+
+impl LuauTypeInfo for CustomFieldsByProvider {
+    fn luau_type() -> LuauType {
+        LuauType::literal("CustomFieldsByProvider")
+    }
+}
+
+impl DescribeTypeAlias for CustomFieldsByProvider {
+    fn type_alias_descriptor() -> TypeAliasDescriptor {
+        TypeAliasDescriptor::new(
+            "CustomFieldsByProvider",
+            LuauType::map(
+                String::luau_type(),
+                ProviderCustomFieldsByVersion::luau_type(),
+            ),
+            Some("Provider-keyed, versioned custom field maps."),
+        )
+    }
+}
+
 #[harmony_macros::interface]
 struct ReleaseRefreshLookupHints {
     artist_name: Option<String>,
@@ -172,12 +230,14 @@ struct ReleaseRefreshArtist {
     db_id: Option<u64>,
     artist_name: String,
     sort_name: Option<String>,
+    custom_fields: Option<CustomFieldsByProvider>,
 }
 
 #[harmony_macros::interface]
 struct ReleaseRefreshTrackArtist {
     db_id: Option<u64>,
     artist_name: String,
+    custom_fields: Option<CustomFieldsByProvider>,
 }
 
 #[harmony_macros::interface]
@@ -189,6 +249,7 @@ struct ReleaseRefreshTrack {
     track_total: Option<u32>,
     duration_ms: Option<u64>,
     external_ids: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    custom_fields: Option<CustomFieldsByProvider>,
     artists: Vec<ReleaseRefreshTrackArtist>,
 }
 
@@ -218,6 +279,7 @@ struct ReleaseRefreshContext {
     lookup_hints: Option<ReleaseRefreshLookupHints>,
     external_ids:
         Option<std::collections::HashMap<String, std::collections::HashMap<String, String>>>,
+    custom_fields: Option<CustomFieldsByProvider>,
     artists: Option<Vec<ReleaseRefreshArtist>>,
     tracks: Option<Vec<ReleaseRefreshTrack>>,
     library_id: Option<u64>,
@@ -648,6 +710,8 @@ impl Provider {
             entity_id: node_id,
             fields: HashMap::new(),
             external_ids: HashMap::new(),
+            custom_fields: HashMap::new(),
+            remove_custom_field_versions: Default::default(),
         })
     }
 
@@ -834,12 +898,16 @@ impl Provider {
 
         let mut external_ids = HashMap::new();
         external_ids.insert(id_type, id_value);
+        let custom_fields = HashMap::new();
+        let remove_custom_field_versions = std::collections::HashSet::new();
         save_provider_layer(
             &mut db_write,
             artist_db_id,
             &self.id,
             &fields,
             &external_ids,
+            &custom_fields,
+            &remove_custom_field_versions,
         )
         .into_lua_err()?;
 
@@ -1073,6 +1141,18 @@ impl DescribeModule for MetadataModule {
                 returns: vec![LuauType::optional(ProviderExternalIdMap::luau_type())],
                 yields: false,
             },
+            ModuleFunctionDescriptor {
+                path: vec!["custom_fields", "list"],
+                description: Some("Lists provider custom fields for an entity, keyed by provider and version."),
+                params: vec![ParameterDescriptor {
+                    name: "id",
+                    ty: <NodeId as LuauTypeInfo>::luau_type(),
+                    description: None,
+                    variadic: false,
+                }],
+                returns: vec![CustomFieldsByProvider::luau_type()],
+                yields: true,
+            },
         ]);
         descriptor
     }
@@ -1084,6 +1164,9 @@ impl MetadataModule {
             LuaCallback::type_alias_descriptor(),
             ProviderExternalIdMap::type_alias_descriptor(),
             ExternalIdsByProvider::type_alias_descriptor(),
+            ProviderCustomFieldMap::type_alias_descriptor(),
+            ProviderCustomFieldsByVersion::type_alias_descriptor(),
+            CustomFieldsByProvider::type_alias_descriptor(),
             covers::ProviderCoverHandler::type_alias_descriptor(),
             lyrics::ProviderLyricsHandler::type_alias_descriptor(),
             harmony_luau::JsonValue::type_alias_descriptor(),
@@ -1165,12 +1248,51 @@ fn ids_for_provider(
     lua.to_value_with(&ids, LUA_SERIALIZE_OPTIONS)
 }
 
+async fn custom_fields_list(lua: Lua, node_id: NodeId) -> Result<Value> {
+    let node_db_id: DbId = node_id.into();
+
+    let rows = {
+        let db_read = STATE.db.read().await;
+        list_entity_custom_fields(&db_read, node_db_id).into_lua_err()?
+    };
+
+    let mut providers = serde_json::Map::new();
+    for row in rows {
+        let fields =
+            match serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&row.fields) {
+                Ok(fields) => fields,
+                Err(err) => {
+                    tracing::warn!(
+                        provider_id = %row.provider_id,
+                        version = row.version,
+                        error = %err,
+                        "failed to parse provider custom fields for Lua list"
+                    );
+                    continue;
+                }
+            };
+
+        let provider_entry = providers
+            .entry(row.provider_id)
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        if let serde_json::Value::Object(versions) = provider_entry {
+            versions.insert(
+                format!("v{}", row.version),
+                serde_json::Value::Object(fields),
+            );
+        }
+    }
+
+    lua.to_value_with(&serde_json::Value::Object(providers), LUA_SERIALIZE_OPTIONS)
+}
+
 pub(crate) fn get_module() -> Module {
     Module {
         path: "lyra/metadata".into(),
         setup: Arc::new(|lua: &Lua| -> anyhow::Result<mlua::Table> {
             let table = lua.create_table()?;
             let ids_table = lua.create_table()?;
+            let custom_fields_table = lua.create_table()?;
 
             table.set("Provider", lua.create_proxy::<Provider>()?)?;
             table.set("EntityType", lua.create_proxy::<EntityType>()?)?;
@@ -1183,6 +1305,8 @@ pub(crate) fn get_module() -> Module {
             ids_table.set("list", lua.create_async_function(ids_list)?)?;
             ids_table.set("for_provider", lua.create_function(ids_for_provider)?)?;
             table.set("ids", ids_table)?;
+            custom_fields_table.set("list", lua.create_async_function(custom_fields_list)?)?;
+            table.set("custom_fields", custom_fields_table)?;
 
             Ok(table)
         }),
@@ -2492,6 +2616,87 @@ mod tests {
                 ),
             ]
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn provider_custom_fields_migrate_from_refresh_context() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let provider_id = next_provider_id("custom-fields-migrate");
+        let lua_provider_id = provider_id.clone();
+        let lua_provider_id_for_list = provider_id.clone();
+        let track_db_id = {
+            let mut db = STATE.db.write().await;
+            insert_track(&mut db, "Custom Field Track", false)?
+        };
+        let track_id = track_db_id.0;
+
+        setup_metadata_module(STATE.lua.get().as_ref())?;
+
+        let register_fn = STATE
+            .lua
+            .get()
+            .load(chunk! {
+                local provider = metadata.Provider.new($lua_provider_id)
+
+                local layer = provider:layer($track_id)
+                layer:set_custom_fields("v1", {
+                    legacy_status = "matched",
+                    score = 91,
+                })
+                layer:save()
+
+                provider:refresh(metadata.EntityType.Track, function(ctx)
+                    local by_provider = ctx.custom_fields
+                    local mine = if by_provider ~= nil then by_provider[$lua_provider_id] else nil
+                    local v1 = if mine ~= nil then mine.v1 else nil
+                    if v1 == nil then
+                        return
+                    end
+
+                    local migrated = provider:layer(ctx.db_id)
+                    migrated:set_custom_fields("v2", {
+                        status = v1.legacy_status,
+                        confidence = v1.score,
+                    })
+                    migrated:clear_custom_fields("v1")
+                    migrated:save()
+                end)
+            })
+            .set_name(&harmony_core::format_plugin_chunk_name("test", "init"))
+            .into_function()?;
+        register_fn.call_async::<()>(()).await?;
+
+        crate::services::providers::refresh_entity_metadata(
+            track_db_id,
+            crate::services::providers::EntityRefreshMode::MetadataOnly,
+        )
+        .await?;
+
+        {
+            let db = STATE.db.read().await;
+            let rows = crate::db::metadata::custom_fields::get_for_entity(&db, track_db_id)?;
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].provider_id.as_str(), provider_id.as_str());
+            assert_eq!(rows[0].version, 2);
+
+            let fields: serde_json::Value = serde_json::from_str(&rows[0].fields)?;
+            assert_eq!(fields["status"], "matched");
+            assert_eq!(fields["confidence"], 91);
+        }
+
+        let list_fn = STATE
+            .lua
+            .get()
+            .load(chunk! {
+                local fields = metadata.custom_fields.list($track_id)
+                return fields[$lua_provider_id_for_list].v2.status
+            })
+            .set_name(&harmony_core::format_plugin_chunk_name("test", "init"))
+            .into_function()?;
+        let status = list_fn.call_async::<String>(()).await?;
+        assert_eq!(status, "matched");
 
         Ok(())
     }

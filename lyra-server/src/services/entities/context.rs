@@ -14,6 +14,7 @@ use serde_json::{
     Map,
     Value,
 };
+use std::collections::HashMap;
 
 use crate::db;
 
@@ -73,6 +74,85 @@ fn merge_includes<T: Serialize>(
     Ok(())
 }
 
+fn custom_fields_value_for_entity(db: &DbAny, entity_id: DbId) -> anyhow::Result<Option<Value>> {
+    let rows = db::metadata::custom_fields::get_for_entity(db, entity_id)?;
+    if rows.is_empty() {
+        return Ok(None);
+    }
+
+    let mut providers = Map::new();
+    for row in rows {
+        let fields = match serde_json::from_str::<Map<String, Value>>(&row.fields) {
+            Ok(fields) => fields,
+            Err(err) => {
+                tracing::warn!(
+                    provider_id = %row.provider_id,
+                    version = row.version,
+                    error = %err,
+                    "failed to parse provider custom fields as JSON object, skipping row"
+                );
+                continue;
+            }
+        };
+        let provider_entry = providers
+            .entry(row.provider_id)
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Value::Object(versions) = provider_entry {
+            versions.insert(format!("v{}", row.version), Value::Object(fields));
+        }
+    }
+
+    if providers.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(Value::Object(providers)))
+    }
+}
+
+fn attach_custom_fields_to_context(db: &DbAny, context: &mut Value) -> anyhow::Result<()> {
+    fn attach(
+        db: &DbAny,
+        value: &mut Value,
+        cache: &mut HashMap<i64, Option<Value>>,
+    ) -> anyhow::Result<()> {
+        match value {
+            Value::Object(object) => {
+                for (key, child) in object.iter_mut() {
+                    if key != "custom_fields" {
+                        attach(db, child, cache)?;
+                    }
+                }
+
+                if let Some(entity_id) = object.get("db_id").and_then(|v| v.as_i64())
+                    && entity_id > 0
+                {
+                    let custom_fields = if let Some(cached) = cache.get(&entity_id) {
+                        cached.clone()
+                    } else {
+                        let loaded = custom_fields_value_for_entity(db, DbId(entity_id))?;
+                        cache.insert(entity_id, loaded.clone());
+                        loaded
+                    };
+                    if let Some(custom_fields) = custom_fields {
+                        object.insert("custom_fields".to_string(), custom_fields);
+                    }
+                }
+            }
+            Value::Array(items) => {
+                for child in items {
+                    attach(db, child, cache)?;
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    let mut cache = HashMap::new();
+    attach(db, context, &mut cache)
+}
+
 fn flatten_projection_for_provider_context(
     projection: EntityProjectionInfo,
 ) -> anyhow::Result<Value> {
@@ -126,6 +206,7 @@ pub(crate) fn build_release_context(
     if let (Value::Object(map), Some(lib_id)) = (&mut context, library_id) {
         map.insert("library_id".to_string(), serde_json::json!(lib_id.0));
     }
+    attach_custom_fields_to_context(db, &mut context)?;
     Ok(context)
 }
 
@@ -140,7 +221,9 @@ fn build_track_context(db: &DbAny, entity_id: DbId) -> anyhow::Result<Value> {
         ],
         None,
     )?;
-    flatten_projection_for_provider_context(projection)
+    let mut context = flatten_projection_for_provider_context(projection)?;
+    attach_custom_fields_to_context(db, &mut context)?;
+    Ok(context)
 }
 
 fn build_artist_context(db: &DbAny, entity_id: DbId) -> anyhow::Result<Value> {
@@ -150,7 +233,9 @@ fn build_artist_context(db: &DbAny, entity_id: DbId) -> anyhow::Result<Value> {
         &[EntityInclude::ExternalIds],
         None,
     )?;
-    flatten_projection_for_provider_context(projection)
+    let mut context = flatten_projection_for_provider_context(projection)?;
+    attach_custom_fields_to_context(db, &mut context)?;
+    Ok(context)
 }
 
 pub(crate) fn build_entity_provider_context(

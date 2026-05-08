@@ -56,6 +56,7 @@ struct CapturedRelease {
 struct CapturedEntity {
     ids: HashMap<String, String>,
     fields: HashMap<String, serde_json::Value>,
+    custom_fields: HashMap<String, HashMap<String, serde_json::Value>>,
 }
 
 async fn load_mapping_config() -> anyhow::Result<MetadataMappingConfig> {
@@ -305,6 +306,7 @@ fn capture_entity_results(
 ) -> anyhow::Result<Option<CapturedEntity>> {
     let layers = db::metadata::layers::get_for_entity(db, node_id)?;
     let ext_ids = db::external_ids::get_for_entity(db, node_id)?;
+    let custom_field_rows = db::metadata::custom_fields::get_for_entity(db, node_id)?;
 
     let mut fields = HashMap::new();
     for layer in &layers {
@@ -324,10 +326,34 @@ fn capture_entity_results(
         }
     }
 
-    if fields.is_empty() && ids.is_empty() {
+    let mut custom_fields = HashMap::new();
+    for row in &custom_field_rows {
+        if row.provider_id != provider_id {
+            continue;
+        }
+        match serde_json::from_str::<HashMap<String, serde_json::Value>>(&row.fields) {
+            Ok(fields) => {
+                custom_fields.insert(format!("v{}", row.version), fields);
+            }
+            Err(err) => {
+                tracing::warn!(
+                    provider_id,
+                    version = row.version,
+                    error = %err,
+                    "failed to parse provider custom fields during capture"
+                );
+            }
+        }
+    }
+
+    if fields.is_empty() && ids.is_empty() && custom_fields.is_empty() {
         Ok(None)
     } else {
-        Ok(Some(CapturedEntity { ids, fields }))
+        Ok(Some(CapturedEntity {
+            ids,
+            fields,
+            custom_fields,
+        }))
     }
 }
 

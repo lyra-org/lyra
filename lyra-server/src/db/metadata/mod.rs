@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+pub(crate) mod custom_fields;
 pub(crate) mod layers;
 pub(crate) mod mapping_config;
 
@@ -12,6 +13,7 @@ use agdb::{
     QueryBuilder,
 };
 
+use self::custom_fields::ProviderCustomFields;
 use self::layers::MetadataLayer;
 use super::DbAccess;
 use super::providers::external_ids::ExternalId;
@@ -62,6 +64,29 @@ pub(crate) fn collect_layer_ids(
         .collect())
 }
 
+pub(crate) fn collect_custom_field_ids(
+    db: &impl DbAccess,
+    track_db_id: DbId,
+) -> anyhow::Result<Vec<DbId>> {
+    let rows: Vec<ProviderCustomFields> = db
+        .exec(
+            QueryBuilder::select()
+                .elements::<ProviderCustomFields>()
+                .search()
+                .from(track_db_id)
+                .where_()
+                .neighbor()
+                .end_where()
+                .query(),
+        )?
+        .try_into()?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| row.db_id.map(Into::into))
+        .collect())
+}
+
 /// Cascade-remove entity nodes, their inbound favorite + tag edges, and orphan tags.
 /// Callers already inside a `transaction_mut` must use [`cascade_remove_entities_in_txn`]
 /// — agdb transactions are not reentrant.
@@ -93,6 +118,9 @@ fn cascade_remove_entities_pre_favorites(
     for &id in node_ids {
         for layer_id in collect_layer_ids(db, id)? {
             db.exec_mut(QueryBuilder::remove().ids(layer_id).query())?;
+        }
+        for custom_field_id in collect_custom_field_ids(db, id)? {
+            db.exec_mut(QueryBuilder::remove().ids(custom_field_id).query())?;
         }
         for ext_id in collect_external_id_ids(db, id)? {
             db.exec_mut(QueryBuilder::remove().ids(ext_id).query())?;
