@@ -447,7 +447,6 @@ mod tests {
         test_helpers::*,
     };
     use super::*;
-    use agdb::DbId;
     use lyra_ffmpeg::AudioCodec;
     use std::time::{
         Duration,
@@ -544,9 +543,6 @@ mod tests {
             sessions.insert(
                 session_id.clone(),
                 super::super::state::HlsSession {
-                    user_db_id: DbId(7),
-                    user_public_id: "user-pub-7".to_string(),
-                    library_public_id: "lib-pub-7".to_string(),
                     playlist_segment_count: 1,
                     job_key: job_key.clone(),
                     last_access: Instant::now() - HLS_SESSION_TTL - Duration::from_secs(1),

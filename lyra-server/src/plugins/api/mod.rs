@@ -2033,16 +2033,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stream_track_responses_require_download_permission() -> anyhow::Result<()> {
+    async fn stream_track_responses_do_not_require_download_permission() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_auth_test_runtime().await?;
 
         let lua = Lua::new();
         let table = response::response_stream_track(&lua, (1, None))?;
-        let headers = create_user_with_permissions("listener", vec![]).await?;
 
-        let response = lua_response_to_axum(&lua, Value::Table(table), &headers).await?;
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let response = lua_response_to_axum(&lua, Value::Table(table), &HeaderMap::new()).await?;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
@@ -2068,16 +2067,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hls_playlist_responses_require_download_permission() -> anyhow::Result<()> {
+    async fn hls_playlist_responses_do_not_require_download_permission() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_auth_test_runtime().await?;
 
         let lua = Lua::new();
         let table = response::response_hls_playlist(&lua, (1, None))?;
-        let headers = create_user_with_permissions("listener", vec![]).await?;
 
-        let response = lua_response_to_axum(&lua, Value::Table(table), &headers).await?;
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let response = lua_response_to_axum(&lua, Value::Table(table), &HeaderMap::new()).await?;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())

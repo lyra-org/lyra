@@ -1126,7 +1126,7 @@ mod tests {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
-        let headers = create_user_with_permissions("streamer", vec![Permission::Download]).await?;
+        let headers = HeaderMap::new();
 
         let response = super::stream::stream_track_response(
             &headers,
@@ -1161,7 +1161,7 @@ mod tests {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
-        let headers = create_user_with_permissions("streamer", vec![Permission::Download]).await?;
+        let headers = HeaderMap::new();
 
         let response = super::stream::stream_track_response(
             &headers,
@@ -1204,7 +1204,7 @@ mod tests {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
-        let headers = create_user_with_permissions("streamer", vec![Permission::Download]).await?;
+        let headers = HeaderMap::new();
 
         let response = super::stream::stream_track_response(
             &headers,
@@ -1246,7 +1246,7 @@ mod tests {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
-        let headers = create_user_with_permissions("streamer", vec![Permission::Download]).await?;
+        let headers = HeaderMap::new();
 
         let response = super::stream::stream_track_response(
             &headers,
@@ -1281,7 +1281,7 @@ mod tests {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
-        let headers = create_user_with_permissions("streamer", vec![Permission::Download]).await?;
+        let headers = HeaderMap::new();
 
         let result = super::stream::stream_track_response(
             &headers,

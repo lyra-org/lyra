@@ -111,7 +111,6 @@ type Config = {
 
   hls?: {
     temp_disk_budget_bytes?: number | null; // unset or <= 0 means no budget
-    signed_url_ttl_seconds?: number | null; // unset or <= 0 uses 90 seconds
     cleanup_startup_purge?: boolean | null; // unset uses true
     max_concurrent_transcodes?: number | null; // unset or 0 means unlimited
   };

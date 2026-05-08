@@ -3,7 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::DbId;
 use argon2::password_hash::rand_core::{
     OsRng,
     RngCore,
@@ -88,11 +87,6 @@ pub(crate) async fn acquire_hls_transcode_permit() -> Result<Option<OwnedSemapho
 
 #[derive(Clone)]
 pub(crate) struct HlsSession {
-    /// Cleanup metadata only. **Do not authorize on this field.**
-    #[allow(dead_code)]
-    pub(crate) user_db_id: DbId,
-    pub(crate) user_public_id: String,
-    pub(crate) library_public_id: String,
     pub(crate) playlist_segment_count: u64,
     pub(crate) job_key: HlsJobKey,
     pub(crate) last_access: Instant,
@@ -289,9 +283,6 @@ pub(crate) async fn get_or_create_hls_job(
 
 pub(crate) async fn attach_session_to_job(
     session_id: &str,
-    user_db_id: DbId,
-    user_public_id: String,
-    library_public_id: String,
     playlist_segment_count: u64,
     job_key: HlsJobKey,
 ) -> Result<PathBuf, HlsError> {
@@ -307,9 +298,6 @@ pub(crate) async fn attach_session_to_job(
     sessions.insert(
         session_id.to_string(),
         HlsSession {
-            user_db_id,
-            user_public_id,
-            library_public_id,
             playlist_segment_count,
             job_key,
             last_access: Instant::now(),
@@ -340,19 +328,6 @@ pub(crate) async fn detach_hls_session_with_timestamp(
     }
 
     Some(detached)
-}
-
-pub(crate) fn authorize_hls_segment_session(
-    session: &HlsSession,
-    principal_user_public_id: Option<&str>,
-) -> Result<(), HlsError> {
-    if let Some(principal_user_public_id) = principal_user_public_id
-        && session.user_public_id != principal_user_public_id
-    {
-        return Err(HlsError::SessionForbidden);
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -414,7 +389,6 @@ mod tests {
     };
     use super::test_helpers::*;
     use super::*;
-    use agdb::DbId;
     use lyra_ffmpeg::AudioCodec;
 
     #[test]
@@ -455,32 +429,6 @@ mod tests {
         assert_ne!(aac_key, alac_key);
     }
 
-    #[test]
-    fn authorize_hls_segment_session_enforces_track_and_owner() {
-        let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
-        let session = HlsSession {
-            user_db_id: DbId(10),
-            user_public_id: "user-pub-10".to_string(),
-            library_public_id: "lib-pub-10".to_string(),
-            playlist_segment_count: 1,
-            job_key: HlsJobKey::new(
-                "track-pub-77".to_string(),
-                "source-pub-7701".to_string(),
-                None,
-                None,
-                HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
-            ),
-            last_access: Instant::now(),
-        };
-
-        assert!(authorize_hls_segment_session(&session, Some("user-pub-10")).is_ok());
-        assert!(authorize_hls_segment_session(&session, None).is_ok());
-
-        let owner_err = authorize_hls_segment_session(&session, Some("user-pub-11"))
-            .expect_err("owner mismatch should be forbidden");
-        assert!(matches!(owner_err, HlsError::SessionForbidden));
-    }
-
     #[tokio::test]
     async fn attach_session_to_job_keeps_single_shared_job_for_concurrent_sessions() {
         let _guard = HLS_TEST_MUTEX.lock().await;
@@ -509,28 +457,10 @@ mod tests {
 
         let key_a = job_key.clone();
         let key_b = job_key.clone();
-        let attach_a = tokio::spawn(async move {
-            attach_session_to_job(
-                "session-a",
-                DbId(1),
-                "user-pub-1".to_string(),
-                "lib-pub-1".to_string(),
-                1,
-                key_a,
-            )
-            .await
-        });
-        let attach_b = tokio::spawn(async move {
-            attach_session_to_job(
-                "session-b",
-                DbId(2),
-                "user-pub-2".to_string(),
-                "lib-pub-1".to_string(),
-                1,
-                key_b,
-            )
-            .await
-        });
+        let attach_a =
+            tokio::spawn(async move { attach_session_to_job("session-a", 1, key_a).await });
+        let attach_b =
+            tokio::spawn(async move { attach_session_to_job("session-b", 1, key_b).await });
 
         let attach_a_result = attach_a.await.expect("session-a task should finish");
         let attach_b_result = attach_b.await.expect("session-b task should finish");
