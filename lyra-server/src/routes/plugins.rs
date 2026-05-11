@@ -5,6 +5,10 @@
 
 use std::collections::HashMap;
 
+use agdb::{
+    DbAny,
+    DbId,
+};
 use aide::axum::{
     ApiRouter,
     routing::{
@@ -41,6 +45,7 @@ use crate::{
             FieldDefinition,
             FieldGroupDefinition,
             FieldProps,
+            Registry,
             Schema,
             SettingsScope,
         },
@@ -150,6 +155,30 @@ struct GroupResponse {
 struct PluginSettingsResponse {
     plugin_id: String,
     groups: Vec<GroupResponse>,
+}
+
+#[derive(Serialize, JsonSchema)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum PluginSettingsEntry {
+    Ready {
+        plugin_id: String,
+        groups: Vec<GroupResponse>,
+    },
+    Initializing {
+        plugin_id: String,
+    },
+    NotDeclared {
+        plugin_id: String,
+    },
+    Invalid {
+        plugin_id: String,
+        message: String,
+    },
+}
+
+#[derive(Serialize, JsonSchema)]
+struct PluginSettingsListResponse {
+    entries: Vec<PluginSettingsEntry>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -313,10 +342,108 @@ async fn load_settings_response(
     Ok(Json(PluginSettingsResponse { plugin_id, groups }))
 }
 
+fn build_entry(
+    registry: &Registry,
+    db: &DbAny,
+    plugin_id: &str,
+    scope: SettingsScope,
+    user_db_id: Option<DbId>,
+) -> PluginSettingsEntry {
+    let typed = match PluginId::new(plugin_id.to_string()) {
+        Ok(id) => id,
+        Err(_) => {
+            return PluginSettingsEntry::NotDeclared {
+                plugin_id: plugin_id.to_string(),
+            };
+        }
+    };
+
+    let schema = match registry.get_schema(plugin_id, scope) {
+        Some(schema) => schema,
+        None if !registry.is_frozen_for_plugin(&typed) => {
+            return PluginSettingsEntry::Initializing {
+                plugin_id: plugin_id.to_string(),
+            };
+        }
+        None => {
+            return PluginSettingsEntry::NotDeclared {
+                plugin_id: plugin_id.to_string(),
+            };
+        }
+    };
+
+    let stored = match user_db_id {
+        Some(user_db_id) => {
+            settings::load_validated_user_stored_values(db, user_db_id, plugin_id, schema)
+        }
+        None => settings::load_validated_stored_values(db, plugin_id, schema),
+    };
+    let stored = match stored {
+        Ok(values) => values,
+        Err(error) => {
+            return PluginSettingsEntry::Invalid {
+                plugin_id: plugin_id.to_string(),
+                message: format!("{error:#}"),
+            };
+        }
+    };
+
+    match schema
+        .groups
+        .iter()
+        .map(|group| group_to_response(group, &stored))
+        .collect::<anyhow::Result<Vec<_>>>()
+    {
+        Ok(groups) => PluginSettingsEntry::Ready {
+            plugin_id: plugin_id.to_string(),
+            groups,
+        },
+        Err(error) => PluginSettingsEntry::Invalid {
+            plugin_id: plugin_id.to_string(),
+            message: format!("{error:#}"),
+        },
+    }
+}
+
 async fn list_plugins(headers: HeaderMap) -> Result<Json<Vec<PluginManifestResponse>>, AppError> {
     let _principal = require_manage_plugins(&headers).await?;
     let manifests = STATE.plugin_manifests.get();
     Ok(Json(manifest_responses(manifests.as_ref())))
+}
+
+async fn collect_settings_entries(
+    scope: SettingsScope,
+    user_db_id: Option<DbId>,
+) -> PluginSettingsListResponse {
+    let manifests = STATE.plugin_manifests.get();
+    let registry = runtime::REGISTRY.read().await;
+    let db = STATE.db.read().await;
+
+    let entries = manifests
+        .as_ref()
+        .iter()
+        .map(|manifest| build_entry(&registry, &db, &manifest.id, scope, user_db_id))
+        .collect();
+
+    PluginSettingsListResponse { entries }
+}
+
+async fn list_all_settings(
+    headers: HeaderMap,
+) -> Result<Json<PluginSettingsListResponse>, AppError> {
+    let _principal = require_manage_plugins(&headers).await?;
+    Ok(Json(
+        collect_settings_entries(SettingsScope::Global, None).await,
+    ))
+}
+
+async fn list_all_user_settings(
+    headers: HeaderMap,
+) -> Result<Json<PluginSettingsListResponse>, AppError> {
+    let principal = require_authenticated(&headers).await?;
+    Ok(Json(
+        collect_settings_entries(SettingsScope::User, Some(principal.user_db_id)).await,
+    ))
 }
 
 async fn restart_plugin(
@@ -447,6 +574,18 @@ fn list_plugins_docs(op: TransformOperation) -> TransformOperation {
         .description("Returns the loaded plugin manifests discovered at startup.")
 }
 
+fn list_all_settings_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("List all plugin settings").description(
+        "Returns the global settings schema and current values for every loaded plugin in a single response. Each entry carries a `status` field: `ready`, `initializing` (registry not yet frozen), `not_declared` (plugin did not declare this scope), or `invalid` (stored state is stale or malformed).",
+    )
+}
+
+fn list_all_user_settings_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("List all user plugin settings").description(
+        "Returns the user-scoped settings schema and the authenticated user's current values for every loaded plugin in a single response. Per-entry `status` mirrors the admin list endpoint.",
+    )
+}
+
 fn restart_plugin_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Restart plugin").description(
         "Tears down the plugin's current runtime registrations, re-runs its entrypoint, and activates its routes.",
@@ -483,6 +622,10 @@ pub fn plugin_routes() -> ApiRouter {
     ApiRouter::new()
         .api_route("/", get_with(list_plugins, list_plugins_docs))
         .api_route(
+            "/settings",
+            get_with(list_all_settings, list_all_settings_docs),
+        )
+        .api_route(
             "/{plugin_id}/restart",
             post_with(restart_plugin, restart_plugin_docs),
         )
@@ -502,6 +645,10 @@ pub fn plugin_routes() -> ApiRouter {
 
 pub(super) fn me_plugin_settings_routes() -> ApiRouter {
     ApiRouter::new()
+        .api_route(
+            "/settings",
+            get_with(list_all_user_settings, list_all_user_settings_docs),
+        )
         .api_route(
             "/{plugin_id}/settings",
             get_with(get_user_settings, get_user_settings_docs),
@@ -771,5 +918,105 @@ mod tests {
             .into_response();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    fn empty_schema() -> Schema {
+        Schema { groups: Vec::new() }
+    }
+
+    fn token_schema() -> Schema {
+        Schema {
+            groups: vec![FieldGroupDefinition {
+                id: "credentials".to_string(),
+                label: "Credentials".to_string(),
+                fields: vec![FieldDefinition::String {
+                    key: "token".to_string(),
+                    props: props(false),
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn build_entry_returns_initializing_for_unknown_plugin_while_registry_is_open() {
+        let db = db::test_db::new_test_db().expect("test db");
+        let registry = Registry::new();
+
+        let entry = build_entry(&registry, &db, "demo", SettingsScope::Global, None);
+
+        match entry {
+            PluginSettingsEntry::Initializing { plugin_id } => assert_eq!(plugin_id, "demo"),
+            _ => panic!("expected Initializing"),
+        }
+    }
+
+    #[test]
+    fn build_entry_returns_not_declared_for_unknown_plugin_when_registry_is_frozen() {
+        let db = db::test_db::new_test_db().expect("test db");
+        let mut registry = Registry::new();
+        registry.freeze();
+
+        let entry = build_entry(&registry, &db, "demo", SettingsScope::Global, None);
+
+        match entry {
+            PluginSettingsEntry::NotDeclared { plugin_id } => assert_eq!(plugin_id, "demo"),
+            _ => panic!("expected NotDeclared"),
+        }
+    }
+
+    #[test]
+    fn build_entry_returns_ready_when_schema_is_registered() -> anyhow::Result<()> {
+        let db = db::test_db::new_test_db()?;
+        let mut registry = Registry::new();
+        registry.register_schema(
+            PluginId::new("demo")?,
+            SettingsScope::Global,
+            empty_schema(),
+        )?;
+
+        let entry = build_entry(&registry, &db, "demo", SettingsScope::Global, None);
+
+        match entry {
+            PluginSettingsEntry::Ready { plugin_id, groups } => {
+                assert_eq!(plugin_id, "demo");
+                assert!(groups.is_empty());
+            }
+            _ => panic!("expected Ready"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn build_entry_returns_invalid_for_stale_stored_keys() -> anyhow::Result<()> {
+        let mut db = db::test_db::new_test_db()?;
+        let plugin =
+            db.transaction_mut(|t| db::settings::get_or_create_plugin_settings_with(t, "demo"))?;
+        let plugin_db_id: agdb::DbId = plugin.db_id.expect("db_id").into();
+        db.transaction_mut(|t| {
+            db::settings::upsert_setting_with(
+                t,
+                plugin_db_id,
+                "legacy".to_string(),
+                "\"abc\"".to_string(),
+            )
+        })?;
+
+        let mut registry = Registry::new();
+        registry.register_schema(
+            PluginId::new("demo")?,
+            SettingsScope::Global,
+            token_schema(),
+        )?;
+
+        let entry = build_entry(&registry, &db, "demo", SettingsScope::Global, None);
+
+        match entry {
+            PluginSettingsEntry::Invalid { plugin_id, message } => {
+                assert_eq!(plugin_id, "demo");
+                assert!(message.contains("no longer declared"), "got: {message}");
+            }
+            _ => panic!("expected Invalid"),
+        }
+        Ok(())
     }
 }
