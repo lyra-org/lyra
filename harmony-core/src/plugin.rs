@@ -23,6 +23,8 @@ pub(crate) const PLUGIN_SCHEMA_VERSION: u32 = 1;
 pub(crate) const PLUGIN_CONFIG_MAX_BYTES: u64 = 64 * 1024;
 pub(crate) const PLUGIN_CONFIG_MAX_SCOPES: usize = 32;
 pub(crate) const PLUGIN_CONFIG_MAX_SCOPE_LEN: usize = 128;
+pub(crate) const PLUGIN_CONFIG_MAX_DEPENDENCIES: usize = 32;
+pub(crate) const PLUGIN_CONFIG_MAX_DEPENDENCY_ALTERNATIVES: usize = 16;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PluginManifest {
@@ -36,6 +38,38 @@ pub struct PluginManifest {
     /// the plugin `require`s must have its scope id listed here.
     /// Required on `schema_version: 1`.
     pub scopes: Vec<String>,
+    #[serde(default)]
+    pub dependencies: Vec<DependencyEntry>,
+}
+
+/// Bare-string variant is shorthand for a single-alternative required
+/// dependency; the group form expresses alternatives and/or `required: false`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum DependencyEntry {
+    Id(String),
+    Group(DependencyGroup),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DependencyGroup {
+    pub any_of: Vec<String>,
+    /// When `false`, missing alternatives don't block load — but any
+    /// installed alternative still constrains load order.
+    #[serde(default = "default_required")]
+    pub required: bool,
+}
+
+fn default_required() -> bool {
+    true
+}
+
+/// Validated, uniform form of a `DependencyEntry` built at load time.
+#[derive(Debug, Clone)]
+pub struct NormalizedDependency {
+    pub alternatives: Vec<String>,
+    pub required: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +80,7 @@ pub struct LoadedPlugin {
     /// Deduplicated, validated copy of `manifest.scopes` kept as `Arc<str>`
     /// so the runtime gate can share allocations across lookups.
     pub declared_scopes: HashSet<Arc<str>>,
+    pub dependencies: Vec<NormalizedDependency>,
 }
 
 #[derive(Debug)]
@@ -90,6 +125,34 @@ pub enum PluginLoadError {
     UnknownScope {
         plugin_id: String,
         scope: String,
+    },
+    TooManyDependencies {
+        plugin_id: String,
+        count: usize,
+        max: usize,
+    },
+    TooManyDependencyAlternatives {
+        plugin_id: String,
+        group_index: usize,
+        count: usize,
+        max: usize,
+    },
+    EmptyDependencyGroup {
+        plugin_id: String,
+        group_index: usize,
+    },
+    InvalidDependencyId {
+        plugin_id: String,
+        dep_id: String,
+        reason: String,
+    },
+    SelfDependency {
+        plugin_id: String,
+    },
+    DuplicateDependencyAlternative {
+        plugin_id: String,
+        group_index: usize,
+        alternative: String,
     },
 }
 
@@ -167,6 +230,54 @@ impl fmt::Display for PluginLoadError {
                 "plugin '{}' declares unknown scope '{}'",
                 plugin_id, scope
             ),
+            PluginLoadError::TooManyDependencies {
+                plugin_id,
+                count,
+                max,
+            } => write!(
+                f,
+                "plugin '{}' declares {} dependency entries, exceeds cap of {}",
+                plugin_id, count, max
+            ),
+            PluginLoadError::TooManyDependencyAlternatives {
+                plugin_id,
+                group_index,
+                count,
+                max,
+            } => write!(
+                f,
+                "plugin '{}' dependency entry #{} declares {} alternatives, exceeds cap of {}",
+                plugin_id, group_index, count, max
+            ),
+            PluginLoadError::EmptyDependencyGroup {
+                plugin_id,
+                group_index,
+            } => write!(
+                f,
+                "plugin '{}' dependency entry #{} has an empty any_of list",
+                plugin_id, group_index
+            ),
+            PluginLoadError::InvalidDependencyId {
+                plugin_id,
+                dep_id,
+                reason,
+            } => write!(
+                f,
+                "plugin '{}' declares invalid dependency id '{}': {}",
+                plugin_id, dep_id, reason
+            ),
+            PluginLoadError::SelfDependency { plugin_id } => {
+                write!(f, "plugin '{}' lists itself as a dependency", plugin_id)
+            }
+            PluginLoadError::DuplicateDependencyAlternative {
+                plugin_id,
+                group_index,
+                alternative,
+            } => write!(
+                f,
+                "plugin '{}' dependency entry #{} lists '{}' more than once",
+                plugin_id, group_index, alternative
+            ),
         }
     }
 }
@@ -183,6 +294,74 @@ fn truncate_for_error(s: &str) -> String {
             &s[..s.char_indices().nth(LIMIT).map(|(i, _)| i).unwrap_or(LIMIT)]
         )
     }
+}
+
+// Cross-plugin resolution (required deps satisfied, no cycles) lives
+// in `resolve_dependencies` after all manifests are loaded.
+fn normalize_dependencies(
+    manifest_id: &str,
+    raw: &[DependencyEntry],
+) -> Result<Vec<NormalizedDependency>, PluginLoadError> {
+    if raw.len() > PLUGIN_CONFIG_MAX_DEPENDENCIES {
+        return Err(PluginLoadError::TooManyDependencies {
+            plugin_id: manifest_id.to_string(),
+            count: raw.len(),
+            max: PLUGIN_CONFIG_MAX_DEPENDENCIES,
+        });
+    }
+
+    let mut result = Vec::with_capacity(raw.len());
+    for (index, entry) in raw.iter().enumerate() {
+        let (alternatives, required) = match entry {
+            DependencyEntry::Id(id) => (vec![id.clone()], true),
+            DependencyEntry::Group(group) => (group.any_of.clone(), group.required),
+        };
+
+        if alternatives.is_empty() {
+            return Err(PluginLoadError::EmptyDependencyGroup {
+                plugin_id: manifest_id.to_string(),
+                group_index: index,
+            });
+        }
+
+        if alternatives.len() > PLUGIN_CONFIG_MAX_DEPENDENCY_ALTERNATIVES {
+            return Err(PluginLoadError::TooManyDependencyAlternatives {
+                plugin_id: manifest_id.to_string(),
+                group_index: index,
+                count: alternatives.len(),
+                max: PLUGIN_CONFIG_MAX_DEPENDENCY_ALTERNATIVES,
+            });
+        }
+
+        let mut seen: HashSet<&str> = HashSet::with_capacity(alternatives.len());
+        for dep_id in &alternatives {
+            if let Err(reason) = validate_plugin_id(dep_id) {
+                return Err(PluginLoadError::InvalidDependencyId {
+                    plugin_id: manifest_id.to_string(),
+                    dep_id: dep_id.clone(),
+                    reason,
+                });
+            }
+            if dep_id == manifest_id {
+                return Err(PluginLoadError::SelfDependency {
+                    plugin_id: manifest_id.to_string(),
+                });
+            }
+            if !seen.insert(dep_id.as_str()) {
+                return Err(PluginLoadError::DuplicateDependencyAlternative {
+                    plugin_id: manifest_id.to_string(),
+                    group_index: index,
+                    alternative: dep_id.clone(),
+                });
+            }
+        }
+
+        result.push(NormalizedDependency {
+            alternatives,
+            required,
+        });
+    }
+    Ok(result)
 }
 
 fn validate_plugin_id(id: &str) -> Result<(), String> {
@@ -401,11 +580,14 @@ impl PluginManager {
             declared_scopes.insert(interned.clone());
         }
 
+        let dependencies = normalize_dependencies(&manifest.id, &manifest.dependencies)?;
+
         Ok(LoadedPlugin {
             manifest,
             directory: dir.to_path_buf(),
             entrypoint_path,
             declared_scopes,
+            dependencies,
         })
     }
 
@@ -426,7 +608,13 @@ impl PluginManager {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_plugin_id;
+    use super::{
+        DependencyEntry,
+        DependencyGroup,
+        PluginLoadError,
+        normalize_dependencies,
+        validate_plugin_id,
+    };
 
     #[test]
     fn accepts_well_formed_ids() {
@@ -453,4 +641,106 @@ mod tests {
             assert!(validate_plugin_id(id).is_err(), "accepted {id:?}");
         }
     }
+
+    #[test]
+    fn parses_string_shorthand_as_required_single_alternative() {
+        let json = r#"["musicbrainz", "lrclib"]"#;
+        let entries: Vec<DependencyEntry> = serde_json::from_str(json).unwrap();
+        let normalized = normalize_dependencies("dependent", &entries).unwrap();
+        assert_eq!(normalized.len(), 2);
+        assert_eq!(normalized[0].alternatives, vec!["musicbrainz"]);
+        assert!(normalized[0].required);
+        assert_eq!(normalized[1].alternatives, vec!["lrclib"]);
+        assert!(normalized[1].required);
+    }
+
+    #[test]
+    fn parses_group_with_required_default_true() {
+        let json = r#"[{"any_of": ["musicbrainz", "discogs"]}]"#;
+        let entries: Vec<DependencyEntry> = serde_json::from_str(json).unwrap();
+        let normalized = normalize_dependencies("dependent", &entries).unwrap();
+        assert_eq!(normalized.len(), 1);
+        assert_eq!(normalized[0].alternatives, vec!["musicbrainz", "discogs"]);
+        assert!(normalized[0].required);
+    }
+
+    #[test]
+    fn parses_group_with_required_false() {
+        let json = r#"[{"any_of": ["theaudiodb"], "required": false}]"#;
+        let entries: Vec<DependencyEntry> = serde_json::from_str(json).unwrap();
+        let normalized = normalize_dependencies("dependent", &entries).unwrap();
+        assert_eq!(normalized.len(), 1);
+        assert_eq!(normalized[0].alternatives, vec!["theaudiodb"]);
+        assert!(!normalized[0].required);
+    }
+
+    #[test]
+    fn rejects_unknown_group_keys() {
+        let json = r#"[{"any_off": ["musicbrainz"]}]"#;
+        let parsed: Result<Vec<DependencyEntry>, _> = serde_json::from_str(json);
+        assert!(parsed.is_err(), "expected error for unknown key");
+    }
+
+    #[test]
+    fn rejects_empty_any_of() {
+        let entries = vec![DependencyEntry::Group(DependencyGroup {
+            any_of: vec![],
+            required: true,
+        })];
+        let err = normalize_dependencies("dependent", &entries).unwrap_err();
+        assert!(matches!(err, PluginLoadError::EmptyDependencyGroup { .. }));
+    }
+
+    #[test]
+    fn rejects_self_dependency() {
+        let entries = vec![DependencyEntry::Id("dependent".to_string())];
+        let err = normalize_dependencies("dependent", &entries).unwrap_err();
+        assert!(matches!(err, PluginLoadError::SelfDependency { .. }));
+    }
+
+    #[test]
+    fn rejects_duplicate_alternative_within_group() {
+        let entries = vec![DependencyEntry::Group(DependencyGroup {
+            any_of: vec!["musicbrainz".to_string(), "musicbrainz".to_string()],
+            required: true,
+        })];
+        let err = normalize_dependencies("dependent", &entries).unwrap_err();
+        assert!(matches!(
+            err,
+            PluginLoadError::DuplicateDependencyAlternative { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_dependency_id() {
+        let entries = vec![DependencyEntry::Id("not/valid".to_string())];
+        let err = normalize_dependencies("dependent", &entries).unwrap_err();
+        assert!(matches!(err, PluginLoadError::InvalidDependencyId { .. }));
+    }
+
+    #[test]
+    fn rejects_too_many_dependency_entries() {
+        let entries: Vec<DependencyEntry> = (0..super::PLUGIN_CONFIG_MAX_DEPENDENCIES + 1)
+            .map(|i| DependencyEntry::Id(format!("dep{i}")))
+            .collect();
+        let err = normalize_dependencies("dependent", &entries).unwrap_err();
+        assert!(matches!(err, PluginLoadError::TooManyDependencies { .. }));
+    }
+
+    #[test]
+    fn rejects_too_many_dependency_alternatives() {
+        let alts: Vec<String> = (0..super::PLUGIN_CONFIG_MAX_DEPENDENCY_ALTERNATIVES + 1)
+            .map(|i| format!("alt{i}"))
+            .collect();
+        let entries = vec![DependencyEntry::Group(DependencyGroup {
+            any_of: alts,
+            required: true,
+        })];
+        let err = normalize_dependencies("dependent", &entries).unwrap_err();
+        assert!(matches!(
+            err,
+            PluginLoadError::TooManyDependencyAlternatives { .. }
+        ));
+    }
+
 }
