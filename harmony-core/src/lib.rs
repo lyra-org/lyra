@@ -295,13 +295,12 @@ impl Harmony {
     }
 
     pub async fn exec_all(&self) -> Result<()> {
-        // Execute all plugin entrypoints
         let plugins = {
             let plugin_manager = self
                 .plugin_manager
                 .read()
                 .expect("plugin manager lock poisoned while listing plugins");
-            plugin_manager.list_plugins().cloned().collect::<Vec<_>>()
+            plugin_manager.topological_order()
         };
         for plugin in plugins {
             self.invalidate_plugin_require_cache(&plugin);

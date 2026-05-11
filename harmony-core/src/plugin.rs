@@ -5,6 +5,7 @@
 
 use serde::Deserialize;
 use std::collections::{
+    BTreeSet,
     HashMap,
     HashSet,
 };
@@ -154,6 +155,13 @@ pub enum PluginLoadError {
         group_index: usize,
         alternative: String,
     },
+    UnsatisfiedRequiredDependency {
+        plugin_id: String,
+        alternatives: Vec<String>,
+    },
+    DependencyCycle {
+        plugins: Vec<String>,
+    },
 }
 
 impl fmt::Display for PluginLoadError {
@@ -277,6 +285,20 @@ impl fmt::Display for PluginLoadError {
                 f,
                 "plugin '{}' dependency entry #{} lists '{}' more than once",
                 plugin_id, group_index, alternative
+            ),
+            PluginLoadError::UnsatisfiedRequiredDependency {
+                plugin_id,
+                alternatives,
+            } => write!(
+                f,
+                "plugin '{}' requires any of {:?} but none are installed",
+                plugin_id, alternatives
+            ),
+            PluginLoadError::DependencyCycle { plugins } => write!(
+                f,
+                "dependency cycle detected; the following plugins are in or downstream of a \
+                 cycle and were skipped: {:?}",
+                plugins
             ),
         }
     }
@@ -438,7 +460,133 @@ impl PluginManager {
             }
         }
 
+        errors.extend(self.resolve_dependencies());
+
         Ok(errors)
+    }
+
+    /// Validate cross-plugin invariants and prune offenders so the
+    /// runtime never sees a half-resolved set.
+    fn resolve_dependencies(&mut self) -> Vec<PluginLoadError> {
+        let mut errors = Vec::new();
+
+        // Cascading prunes: dropping A can unsatisfy B's required dep
+        // on A.
+        loop {
+            let mut to_remove: Vec<(String, Vec<String>)> = Vec::new();
+            let mut ids: Vec<&String> = self.plugins.keys().collect();
+            ids.sort();
+            for id in ids {
+                let plugin = &self.plugins[id];
+                for dep in &plugin.dependencies {
+                    if !dep.required {
+                        continue;
+                    }
+                    let satisfied = dep
+                        .alternatives
+                        .iter()
+                        .any(|alt| self.plugins.contains_key(alt));
+                    if !satisfied {
+                        to_remove.push((plugin.manifest.id.clone(), dep.alternatives.clone()));
+                        break;
+                    }
+                }
+            }
+
+            if to_remove.is_empty() {
+                break;
+            }
+
+            for (id, alternatives) in to_remove {
+                if let Some(removed) = self.plugins.remove(&id) {
+                    self.by_root.remove(&removed.directory);
+                    errors.push(PluginLoadError::UnsatisfiedRequiredDependency {
+                        plugin_id: id,
+                        alternatives,
+                    });
+                }
+            }
+        }
+
+        let (_, cycle_members) = self.kahn_visit();
+        if !cycle_members.is_empty() {
+            for plugin_id in &cycle_members {
+                if let Some(removed) = self.plugins.remove(plugin_id) {
+                    self.by_root.remove(&removed.directory);
+                }
+            }
+            errors.push(PluginLoadError::DependencyCycle {
+                plugins: cycle_members,
+            });
+        }
+
+        errors
+    }
+
+    // Kahn's algorithm. `unscheduled` is non-empty iff the graph has a
+    // cycle, and lists ids in or downstream of one.
+    fn kahn_visit(&self) -> (Vec<String>, Vec<String>) {
+        let (mut in_degree, adjacency) = self.build_dependency_graph();
+
+        let mut ready: BTreeSet<String> = in_degree
+            .iter()
+            .filter_map(|(id, deg)| if *deg == 0 { Some(id.clone()) } else { None })
+            .collect();
+
+        let mut scheduled: Vec<String> = Vec::with_capacity(self.plugins.len());
+        while let Some(id) = ready.iter().next().cloned() {
+            ready.remove(&id);
+            scheduled.push(id.clone());
+            if let Some(successors) = adjacency.get(&id) {
+                for successor in successors {
+                    if let Some(deg) = in_degree.get_mut(successor) {
+                        *deg -= 1;
+                        if *deg == 0 {
+                            ready.insert(successor.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut unscheduled: Vec<String> = in_degree
+            .into_iter()
+            .filter_map(|(id, deg)| if deg > 0 { Some(id) } else { None })
+            .collect();
+        unscheduled.sort();
+        (scheduled, unscheduled)
+    }
+
+    // Edges fan out to every installed alternative — required or not,
+    // once a dep is present the dependent runs after it.
+    fn build_dependency_graph(&self) -> (HashMap<String, usize>, HashMap<String, Vec<String>>) {
+        let mut in_degree: HashMap<String, usize> =
+            self.plugins.keys().map(|id| (id.clone(), 0)).collect();
+        let mut adjacency: HashMap<String, Vec<String>> = HashMap::new();
+
+        for plugin in self.plugins.values() {
+            let dependent = &plugin.manifest.id;
+            let mut already_edged: HashSet<&str> = HashSet::new();
+            for dep in &plugin.dependencies {
+                for alt in &dep.alternatives {
+                    if !self.plugins.contains_key(alt) {
+                        continue;
+                    }
+                    if !already_edged.insert(alt.as_str()) {
+                        continue;
+                    }
+                    adjacency
+                        .entry(alt.clone())
+                        .or_default()
+                        .push(dependent.clone());
+                    if let Some(deg) = in_degree.get_mut(dependent) {
+                        *deg += 1;
+                    }
+                }
+            }
+        }
+
+        (in_degree, adjacency)
     }
 
     pub fn reload_plugin(
@@ -455,14 +603,54 @@ impl PluginManager {
 
         let plugin_dir = self.plugins_dir.join(plugin_id);
         let plugin = self.load_plugin(&plugin_dir, valid_scope_ids)?;
-        if let Some(previous) = self
+
+        // Check deps before mutating — a failing reload must leave the
+        // previous version intact.
+        for dep in &plugin.dependencies {
+            if !dep.required {
+                continue;
+            }
+            let satisfied = dep
+                .alternatives
+                .iter()
+                .any(|alt| self.plugins.contains_key(alt));
+            if !satisfied {
+                return Err(PluginLoadError::UnsatisfiedRequiredDependency {
+                    plugin_id: plugin.manifest.id.clone(),
+                    alternatives: dep.alternatives.clone(),
+                });
+            }
+        }
+
+        let previous = self
             .plugins
-            .insert(plugin.manifest.id.clone(), plugin.clone())
-        {
-            self.by_root.remove(&previous.directory);
+            .insert(plugin.manifest.id.clone(), plugin.clone());
+        if let Some(prev) = &previous {
+            self.by_root.remove(&prev.directory);
         }
         self.by_root
             .insert(plugin.directory.clone(), plugin.manifest.id.clone());
+
+        // The new manifest could introduce a cycle — probe the updated
+        // graph and roll back if so.
+        let (_, cycle_members) = self.kahn_visit();
+        if !cycle_members.is_empty() {
+            self.by_root.remove(&plugin.directory);
+            match previous {
+                Some(prev) => {
+                    self.by_root
+                        .insert(prev.directory.clone(), prev.manifest.id.clone());
+                    self.plugins.insert(prev.manifest.id.clone(), prev);
+                }
+                None => {
+                    self.plugins.remove(&plugin.manifest.id);
+                }
+            }
+            return Err(PluginLoadError::DependencyCycle {
+                plugins: cycle_members,
+            });
+        }
+
         tracing::info!(
             "reloaded plugin '{}' v{} from {}",
             plugin.manifest.name,
@@ -604,6 +792,26 @@ impl PluginManager {
     pub fn list_plugins(&self) -> impl Iterator<Item = &LoadedPlugin> {
         self.plugins.values()
     }
+
+    /// Plugins in execution order. Ties break by id so the order is
+    /// stable (the underlying `HashMap` is not). Discovery and reload
+    /// reject cycles, which is what the `debug_assert!` relies on.
+    pub fn topological_order(&self) -> Vec<LoadedPlugin> {
+        let (scheduled, unscheduled) = self.kahn_visit();
+        debug_assert!(
+            unscheduled.is_empty(),
+            "topological_order missed plugins — cycle invariant broken: {unscheduled:?}"
+        );
+        scheduled
+            .into_iter()
+            .map(|id| {
+                self.plugins
+                    .get(&id)
+                    .cloned()
+                    .expect("kahn_visit produced id not present in self.plugins")
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -611,10 +819,16 @@ mod tests {
     use super::{
         DependencyEntry,
         DependencyGroup,
+        LoadedPlugin,
+        NormalizedDependency,
         PluginLoadError,
+        PluginManager,
+        PluginManifest,
         normalize_dependencies,
         validate_plugin_id,
     };
+    use std::collections::HashSet;
+    use std::path::PathBuf;
 
     #[test]
     fn accepts_well_formed_ids() {
@@ -743,4 +957,161 @@ mod tests {
         ));
     }
 
+    fn loaded_plugin(id: &str, deps: Vec<NormalizedDependency>) -> LoadedPlugin {
+        LoadedPlugin {
+            manifest: PluginManifest {
+                schema_version: super::PLUGIN_SCHEMA_VERSION,
+                id: id.to_string(),
+                name: id.to_string(),
+                version: "0.0.0".to_string(),
+                description: String::new(),
+                entrypoint: "init.luau".to_string(),
+                scopes: Vec::new(),
+                dependencies: Vec::new(),
+            },
+            directory: PathBuf::from(format!("plugins/{id}")),
+            entrypoint_path: PathBuf::from(format!("plugins/{id}/init.luau")),
+            declared_scopes: HashSet::new(),
+            dependencies: deps,
+        }
+    }
+
+    fn manager_with(plugins: Vec<LoadedPlugin>) -> PluginManager {
+        let mut mgr = PluginManager::new(PathBuf::from("plugins"));
+        for plugin in plugins {
+            mgr.by_root
+                .insert(plugin.directory.clone(), plugin.manifest.id.clone());
+            mgr.plugins.insert(plugin.manifest.id.clone(), plugin);
+        }
+        mgr
+    }
+
+    fn required(alts: &[&str]) -> NormalizedDependency {
+        NormalizedDependency {
+            alternatives: alts.iter().map(|s| s.to_string()).collect(),
+            required: true,
+        }
+    }
+
+    fn optional(alts: &[&str]) -> NormalizedDependency {
+        NormalizedDependency {
+            alternatives: alts.iter().map(|s| s.to_string()).collect(),
+            required: false,
+        }
+    }
+
+    #[test]
+    fn topological_order_orders_after_every_installed_alternative() {
+        let mgr = manager_with(vec![
+            loaded_plugin("consumer", vec![required(&["a", "b"])]),
+            loaded_plugin("a", vec![]),
+            loaded_plugin("b", vec![]),
+        ]);
+        let order: Vec<String> = mgr
+            .topological_order()
+            .into_iter()
+            .map(|p| p.manifest.id)
+            .collect();
+        let consumer_pos = order.iter().position(|id| id == "consumer").unwrap();
+        let a_pos = order.iter().position(|id| id == "a").unwrap();
+        let b_pos = order.iter().position(|id| id == "b").unwrap();
+        assert!(a_pos < consumer_pos);
+        assert!(b_pos < consumer_pos);
+    }
+
+    #[test]
+    fn topological_order_is_stable_via_id_sort() {
+        let mgr = manager_with(vec![
+            loaded_plugin("zeta", vec![]),
+            loaded_plugin("alpha", vec![]),
+            loaded_plugin("mu", vec![]),
+        ]);
+        let order: Vec<String> = mgr
+            .topological_order()
+            .into_iter()
+            .map(|p| p.manifest.id)
+            .collect();
+        assert_eq!(order, vec!["alpha", "mu", "zeta"]);
+    }
+
+    #[test]
+    fn topological_order_respects_optional_edges_when_provider_installed() {
+        let mgr = manager_with(vec![
+            loaded_plugin("consumer", vec![optional(&["provider"])]),
+            loaded_plugin("provider", vec![]),
+        ]);
+        let order: Vec<String> = mgr
+            .topological_order()
+            .into_iter()
+            .map(|p| p.manifest.id)
+            .collect();
+        assert_eq!(order, vec!["provider", "consumer"]);
+    }
+
+    #[test]
+    fn resolve_prunes_plugins_with_missing_required_dep() {
+        let mut mgr = manager_with(vec![loaded_plugin(
+            "consumer",
+            vec![required(&["missing"])],
+        )]);
+        let errors = mgr.resolve_dependencies();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            PluginLoadError::UnsatisfiedRequiredDependency { .. }
+        ));
+        assert!(mgr.get_plugin("consumer").is_none());
+    }
+
+    #[test]
+    fn resolve_keeps_plugins_with_satisfied_or_group() {
+        let mut mgr = manager_with(vec![
+            loaded_plugin("consumer", vec![required(&["missing", "provider"])]),
+            loaded_plugin("provider", vec![]),
+        ]);
+        let errors = mgr.resolve_dependencies();
+        assert!(errors.is_empty());
+        assert!(mgr.get_plugin("consumer").is_some());
+    }
+
+    #[test]
+    fn resolve_keeps_plugins_with_missing_optional_dep() {
+        let mut mgr = manager_with(vec![loaded_plugin(
+            "consumer",
+            vec![optional(&["missing"])],
+        )]);
+        let errors = mgr.resolve_dependencies();
+        assert!(errors.is_empty());
+        assert!(mgr.get_plugin("consumer").is_some());
+    }
+
+    #[test]
+    fn resolve_cascades_pruning_through_chain() {
+        // c → b → a; a missing → b dropped → c dropped.
+        let mut mgr = manager_with(vec![
+            loaded_plugin("c", vec![required(&["b"])]),
+            loaded_plugin("b", vec![required(&["a"])]),
+        ]);
+        let errors = mgr.resolve_dependencies();
+        assert_eq!(errors.len(), 2);
+        assert!(mgr.get_plugin("b").is_none());
+        assert!(mgr.get_plugin("c").is_none());
+    }
+
+    #[test]
+    fn resolve_detects_and_prunes_cycle() {
+        let mut mgr = manager_with(vec![
+            loaded_plugin("a", vec![required(&["b"])]),
+            loaded_plugin("b", vec![required(&["a"])]),
+        ]);
+        let errors = mgr.resolve_dependencies();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, PluginLoadError::DependencyCycle { .. })),
+            "expected DependencyCycle error, got {errors:?}",
+        );
+        assert!(mgr.get_plugin("a").is_none());
+        assert!(mgr.get_plugin("b").is_none());
+    }
 }
