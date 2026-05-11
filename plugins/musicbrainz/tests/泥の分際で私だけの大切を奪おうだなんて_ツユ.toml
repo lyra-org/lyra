@@ -1,0 +1,27 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ツユ - 泥の分際で私だけの大切を奪おうだなんて (2020-08-24) [WEB FLAC]/1.01. 泥の分際で私だけの大切を奪おうだなんて.flac"
+album = "泥の分際で私だけの大切を奪おうだなんて"
+album_artists = ["ツユ"]
+artists = ["ツユ"]
+title = "泥の分際で私だけの大切を奪おうだなんて"
+disc = 1
+track = 1
+track_total = 1
+duration_ms = 192266
+
+[expect.release]
+ids = { release_group_id = "7feef392-bc82-4c64-bc59-c902ed1c874d", release_id = "295d89ba-9311-4219-a982-8c05636759d2" }
+fields = { release_title = "泥の分際で私だけの大切を奪おうだなんて", release_date = "2020-08-24" }
+
+[expect.artists."2b0a8be6-bfb8-4f62-b21d-f47a3104157e"]
+fields = { artist_name = "ツユ", sort_name = "TUYU" }
+
+[expect.tracks."a5bb73ce-6043-4f3e-888e-ccf2a0a32df8"]
+fields = { disc = 1, track = 1, track_title = "泥の分際で私だけの大切を奪おうだなんて" }
