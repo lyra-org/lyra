@@ -286,12 +286,8 @@ impl LyricsModule {
     /// [`upsert`], which rejects empty ids loudly. `language` defaults to
     /// `"und"` when omitted or blank.
     #[harmony(args(text: String, language: Option<String>), returns(PluginLyricsInput))]
-    pub(crate) async fn parse_lrc(
-        lua: Lua,
-        #[harmony_context] _caller: RequestCaller,
-        text: String,
-        language: Option<String>,
-    ) -> Result<Value> {
+    pub(crate) fn parse_lrc(lua: &Lua, args: (String, Option<String>)) -> Result<Value> {
+        let (text, language) = args;
         let language = language
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
