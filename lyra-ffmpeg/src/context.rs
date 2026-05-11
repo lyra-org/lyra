@@ -160,8 +160,23 @@ impl FfmpegHandle {
     }
 
     pub fn wait(mut self) -> Result<()> {
+        self.join_and_take_result()
+    }
+
+    fn wait_for_completion(&self, timeout: Duration) -> bool {
+        {
+            let (lock, cvar) = &*self.done;
+            let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+            let (_guard, wait_result) = cvar
+                .wait_timeout_while(guard, timeout, |done| !*done)
+                .unwrap_or_else(|e| e.into_inner());
+            !wait_result.timed_out()
+        }
+    }
+
+    fn join_and_take_result(&mut self) -> Result<()> {
         if let Some(thread) = self.thread.take() {
-            let _ = thread.join().map_err(|_| Error::ThreadJoin)?;
+            thread.join().map_err(|_| Error::ThreadJoin)?;
         }
         self.result
             .lock()
@@ -170,18 +185,22 @@ impl FfmpegHandle {
             .unwrap_or(Ok(()))
     }
 
-    pub fn wait_timeout(&mut self, timeout: Duration) -> Result<()> {
-        let timed_out = {
-            let (lock, cvar) = &*self.done;
-            let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
-            let (_guard, wait_result) = cvar
-                .wait_timeout_while(guard, timeout, |done| !*done)
-                .unwrap_or_else(|e| e.into_inner());
-            wait_result.timed_out()
-        };
-        // guard is dropped here — worker thread can complete
+    pub fn wait_completion_timeout(&mut self, timeout: Duration) -> Option<Result<()>> {
+        self.wait_for_completion(timeout)
+            .then(|| self.join_and_take_result())
+    }
 
-        if timed_out {
+    pub fn abort_with_timeout(mut self, timeout: Duration) -> Result<()> {
+        self.abort_flag.store(true, Ordering::SeqCst);
+        let Some(result) = self.wait_completion_timeout(timeout) else {
+            let _ = self.thread.take();
+            return Err(Error::Timeout);
+        };
+        result
+    }
+
+    pub fn wait_timeout(&mut self, timeout: Duration) -> Result<()> {
+        if !self.wait_for_completion(timeout) {
             self.abort_flag.store(true, Ordering::SeqCst);
             if let Some(thread) = self.thread.take() {
                 let _ = thread.join();
@@ -189,14 +208,7 @@ impl FfmpegHandle {
             return Err(Error::Timeout);
         }
 
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-        self.result
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-            .unwrap_or(Ok(()))
+        self.join_and_take_result()
     }
 }
 
@@ -206,6 +218,40 @@ impl Drop for FfmpegHandle {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unfinished_test_handle() -> (FfmpegHandle, Arc<AtomicBool>) {
+        let abort_flag = Arc::new(AtomicBool::new(false));
+        let result = Arc::new(Mutex::new(None));
+        let done = Arc::new((Mutex::new(false), Condvar::new()));
+        let thread = std::thread::spawn(|| std::thread::sleep(Duration::from_millis(50)));
+
+        (
+            FfmpegHandle {
+                thread: Some(thread),
+                abort_flag: abort_flag.clone(),
+                result,
+                done,
+            },
+            abort_flag,
+        )
+    }
+
+    #[test]
+    fn abort_with_timeout_marks_abort_on_timeout() {
+        let (handle, abort_flag) = unfinished_test_handle();
+
+        let error = handle
+            .abort_with_timeout(Duration::from_millis(1))
+            .expect_err("unfinished worker should time out");
+
+        assert!(matches!(error, Error::Timeout));
+        assert!(abort_flag.load(Ordering::SeqCst));
     }
 }
 

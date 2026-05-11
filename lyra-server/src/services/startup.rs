@@ -4,8 +4,10 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
+    future::IntoFuture,
     net::SocketAddr,
     sync::Arc,
+    time::Duration,
 };
 
 use agdb::DbId;
@@ -21,7 +23,9 @@ use harmony_core::Harmony;
 use tokio::{
     net::TcpListener,
     sync::Notify,
+    time::timeout,
 };
+use tokio_util::sync::CancellationToken;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{
     layer::SubscriberExt,
@@ -39,6 +43,8 @@ use crate::{
     services::hls::init as hls_init,
 };
 
+const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub(crate) async fn bind_configured_listener(port: u16) -> Result<TcpListener> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     TcpListener::bind(addr)
@@ -50,6 +56,7 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
     let _tracing_guard = init_tracing();
 
     let capture_mode = capture_path.is_some();
+    let shutdown_token = services::shutdown::reset();
     let config = STATE.config.get();
     harmony_http::set_default_user_agent(crate::outbound_user_agent());
     hls_init::initialize_for_config(&config).await;
@@ -107,15 +114,17 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
         services::providers::run_provider_sync_loop(interval_secs, shutdown_bg).await;
     });
 
-    serve(app, config.as_ref(), listener).await?;
+    serve(app, config.as_ref(), listener, shutdown_token).await?;
 
     tracing::info!("server stopped, running shutdown cleanup");
+    services::shutdown::cancel();
     if let Some(ref maintenance_shutdown) = maintenance_shutdown {
         maintenance_shutdown.notify_one();
     }
     shutdown.notify_one();
     let _ = bg_handle.await;
 
+    services::hls::state::teardown_all_hls_jobs().await;
     plugin_bootstrap::teardown_loaded_plugins().await;
     services::wait_for_running_library_syncs().await;
 
@@ -154,14 +163,46 @@ async fn run_capture_mode(
 // Sharply below axum's 2MB default to bound CPU/RAM amplification on auth'd POSTs.
 const REQUEST_BODY_LIMIT_BYTES: usize = 256 * 1024;
 
-async fn serve(app: Router, config: &crate::config::Config, listener: TcpListener) -> Result<()> {
+async fn serve(
+    app: Router,
+    config: &crate::config::Config,
+    listener: TcpListener,
+    shutdown_token: CancellationToken,
+) -> Result<()> {
     tracing::info!("listening on {}", listener.local_addr()?);
     let app = app.layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES));
     let app = services::cors::apply(app, config);
     let app = app.layer(TraceLayer::new_for_http());
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    let signal_token = shutdown_token.clone();
+    let signal_handle = tokio::spawn(async move {
+        shutdown_signal().await;
+        signal_token.cancel();
+    });
+
+    let server = axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_token.clone().cancelled_owned())
+        .into_future();
+    tokio::pin!(server);
+
+    tokio::select! {
+        result = &mut server => {
+            signal_handle.abort();
+            result?;
+            return Ok(());
+        }
+        _ = shutdown_token.cancelled() => {}
+    }
+
+    match timeout(GRACEFUL_SHUTDOWN_TIMEOUT, &mut server).await {
+        Ok(result) => result?,
+        Err(_) => {
+            tracing::warn!(
+                timeout_ms = GRACEFUL_SHUTDOWN_TIMEOUT.as_millis() as u64,
+                "server graceful drain deadline elapsed; forcing shutdown"
+            );
+        }
+    }
+    signal_handle.abort();
 
     Ok(())
 }
