@@ -50,6 +50,10 @@ pub(crate) struct Session {
     pub(crate) token_hash: String,
     #[serde(skip)]
     pub(crate) expires_at: i64,
+    pub(crate) created_at: i64,
+    pub(crate) last_seen_at: i64,
+    pub(crate) user_agent: Option<String>,
+    pub(crate) client_name: Option<String>,
 }
 
 /// Case-insensitive (lowercased) username lookup.
@@ -245,6 +249,20 @@ pub(crate) fn revoke_session_by_id(db: &mut DbAny, session_id: DbId) -> anyhow::
     Ok(true)
 }
 
+pub(crate) fn update_session_last_seen(
+    db: &mut impl super::DbAccess,
+    session_id: DbId,
+    last_seen_at: i64,
+) -> anyhow::Result<()> {
+    db.exec_mut(
+        QueryBuilder::insert()
+            .values_uniform([("last_seen_at", last_seen_at).into()])
+            .ids(session_id)
+            .query(),
+    )?;
+    Ok(())
+}
+
 pub(crate) fn revoke_session_by_token_hash(
     db: &mut DbAny,
     token_hash: &str,
@@ -347,11 +365,16 @@ pub(crate) fn test_user(username: &str) -> anyhow::Result<User> {
 
 #[cfg(test)]
 pub(crate) fn test_session(token_hash: &str) -> Session {
+    let now = now_secs();
     Session {
         db_id: None,
         id: nanoid!(),
         token_hash: token_hash.to_string(),
         expires_at: 0,
+        created_at: now,
+        last_seen_at: now,
+        user_agent: None,
+        client_name: None,
     }
 }
 
@@ -420,6 +443,22 @@ mod tests {
         assert!(removed);
         assert!(find_by_session_token_hash(&db, &session_ref)?.is_none());
 
+        Ok(())
+    }
+
+    #[test]
+    fn update_session_last_seen_sets_timestamp() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = create(&mut db, &test_user("alice")?)?;
+
+        let session_ref = "token-hash-touch".to_string();
+        let session_id = login(&mut db, user_db_id, &test_session(&session_ref))?;
+
+        update_session_last_seen(&mut db, session_id, 1_234_567)?;
+
+        let session = find_session_by_id(&db, session_id)?
+            .ok_or_else(|| anyhow!("session must exist after touch"))?;
+        assert_eq!(session.last_seen_at, 1_234_567);
         Ok(())
     }
 

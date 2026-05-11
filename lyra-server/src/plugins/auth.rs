@@ -29,6 +29,7 @@ use crate::{
         login_with_password,
         logout_with_token,
         resolve_auth_from_bearer,
+        sessions::SessionMetadata,
     },
 };
 
@@ -178,6 +179,8 @@ impl AuthModule {
         #[harmony_context] _caller: RequestCaller,
         username: String,
         password: Option<String>,
+        user_agent: Option<String>,
+        client_name: Option<String>,
     ) -> Result<Value> {
         let username = username.trim().to_string();
         if username.is_empty() {
@@ -185,7 +188,11 @@ impl AuthModule {
         }
 
         let password = password.unwrap_or_default();
-        let login_result = login_with_password(&username, &password)
+        let metadata = SessionMetadata {
+            user_agent,
+            client_name,
+        };
+        let login_result = login_with_password(&username, &password, metadata)
             .await
             .into_lua_err()?;
 
