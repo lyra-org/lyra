@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%BC%E3%81%A3%E3%81%A1%E3%81%BC%E3%82%8D%E3%81%BE%E3%82%8B",
+  "status_code": 200,
+  "body": "{\"created\":\"2026-03-10T02:40:22.340Z\",\"count\":1,\"offset\":0,\"artists\":[{\"id\":\"ca4adf5e-55c6-4b1b-a545-f97efe337a5a\",\"type\":\"Character\",\"type-id\":\"5c1375b0-f18d-3db7-a164-a49d7a63773f\",\"score\":100,\"gender-id\":\"36d3d30a-839d-3eda-8cb3-29be4384e4a9\",\"name\":\"ぼっちぼろまる\",\"sort-name\":\"BotchiBoromaru\",\"gender\":\"male\",\"country\":\"JP\",\"area\":{\"id\":\"2db42837-c832-3c27-b4a3-08198f75693c\",\"type\":\"Country\",\"type-id\":\"06dd0ae4-8c74-30bb-b43d-95dcedf961de\",\"name\":\"Japan\",\"sort-name\":\"Japan\",\"life-span\":{\"ended\":null}},\"disambiguation\":\"バーチャルYouTuber\",\"ipis\":[\"01027887730\"],\"life-span\":{\"ended\":null},\"aliases\":[{\"sort-name\":\"BotchiBoromaru\",\"type-id\":\"894afba6-2816-3c24-8072-eadb66bd04bc\",\"name\":\"BotchiBoromaru\",\"locale\":\"en\",\"type\":\"Artist name\",\"primary\":true,\"begin-date\":null,\"end-date\":null}],\"tags\":[{\"count\":2,\"name\":\"virtual youtuber\"},{\"count\":1,\"name\":\"vtuber\"}]}]}"
+}
