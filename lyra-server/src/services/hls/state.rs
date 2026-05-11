@@ -1,0 +1,533 @@
+// This Source Code Form is subject to the terms of the Lyra Public License,
+// v1.0. If a copy of the Lyra Public License was not distributed with this file,
+// You can obtain one here:
+// www.meshiplaw.com/lyra.
+
+use argon2::password_hash::rand_core::{
+    OsRng,
+    RngCore,
+};
+use base64::{
+    Engine,
+    alphabet,
+    engine::{
+        GeneralPurpose,
+        general_purpose,
+    },
+};
+use lyra_ffmpeg::{
+    FfmpegContext,
+    FfmpegHandle,
+};
+use std::{
+    collections::{
+        HashMap,
+        HashSet,
+    },
+    io::ErrorKind,
+    path::{
+        Path as FsPath,
+        PathBuf,
+    },
+    sync::{
+        Arc,
+        LazyLock,
+    },
+    time::{
+        Duration,
+        Instant,
+    },
+};
+use tokio::sync::{
+    Mutex,
+    Notify,
+    OwnedSemaphorePermit,
+    RwLock,
+    Semaphore,
+};
+
+use crate::config::Config;
+
+use super::HlsError;
+use super::codec::{
+    HlsOutputConfig,
+    build_hls_output,
+};
+
+pub(crate) const HLS_JOB_TEMP_DIR_PREFIX: &str = "lyra-hls-job-";
+const HLS_TRANSCODE_ABORT_TIMEOUT: Duration = Duration::from_secs(2);
+
+pub(crate) static HLS_SESSIONS: LazyLock<Arc<RwLock<HashMap<String, HlsSession>>>> =
+    LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+pub(crate) static HLS_JOBS: LazyLock<Arc<RwLock<HashMap<HlsJobKey, HlsJob>>>> =
+    LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+pub(crate) static HLS_JOB_CREATING: LazyLock<Arc<Mutex<HashMap<HlsJobKey, Arc<Notify>>>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
+static TRANSCODE_SEMAPHORE: LazyLock<RwLock<Option<Arc<Semaphore>>>> =
+    LazyLock::new(|| RwLock::new(None));
+
+pub(crate) async fn refresh_hls_transcode_semaphore(config: &Config) {
+    let mut guard = TRANSCODE_SEMAPHORE.write().await;
+    *guard = config
+        .hls
+        .max_concurrent_transcodes
+        .filter(|n| *n > 0)
+        .map(|n| Arc::new(Semaphore::new(n as usize)));
+}
+
+pub(crate) async fn acquire_hls_transcode_permit() -> Result<Option<OwnedSemaphorePermit>, HlsError>
+{
+    let guard = TRANSCODE_SEMAPHORE.read().await;
+    if let Some(semaphore) = guard.as_ref() {
+        let permit = Arc::clone(semaphore)
+            .acquire_owned()
+            .await
+            .map_err(|_| HlsError::TranscodeCapacityUnavailable)?;
+        Ok(Some(permit))
+    } else {
+        Ok(None)
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct HlsSession {
+    pub(crate) playlist_segment_count: u64,
+    pub(crate) job_key: HlsJobKey,
+    pub(crate) last_access: Instant,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct HlsJobKey {
+    track_public_id: String,
+    source_public_id: String,
+    start_ms: Option<u64>,
+    end_ms: Option<u64>,
+    output: HlsOutputConfig,
+}
+
+pub(crate) struct HlsJob {
+    pub(crate) dir_path: PathBuf,
+    pub(crate) playlist_path: PathBuf,
+    pub(crate) transcode_handle: Arc<Mutex<Option<FfmpegHandle>>>,
+    pub(crate) session_ids: HashSet<String>,
+    pub(crate) idle_since: Option<Instant>,
+    _transcode_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+}
+
+pub(crate) fn generate_hls_session_id() -> String {
+    let mut bytes = [0u8; 16];
+    OsRng.fill_bytes(&mut bytes);
+
+    let base = GeneralPurpose::new(&alphabet::URL_SAFE, general_purpose::NO_PAD);
+    base.encode(bytes)
+}
+
+impl HlsJobKey {
+    pub(crate) fn new(
+        track_public_id: String,
+        source_public_id: String,
+        start_ms: Option<u64>,
+        end_ms: Option<u64>,
+        output: HlsOutputConfig,
+    ) -> Self {
+        Self {
+            track_public_id,
+            source_public_id,
+            start_ms,
+            end_ms,
+            output,
+        }
+    }
+
+    pub(crate) fn track_public_id(&self) -> &str {
+        &self.track_public_id
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn source_public_id(&self) -> &str {
+        &self.source_public_id
+    }
+}
+
+pub(crate) async fn cleanup_hls_dir(dir_path: &FsPath) {
+    if let Err(err) = tokio::fs::remove_dir_all(dir_path).await
+        && err.kind() != ErrorKind::NotFound
+    {
+        tracing::warn!(
+            path = %dir_path.display(),
+            error = %err,
+            "failed to clean up HLS temp directory"
+        );
+    }
+}
+
+pub(crate) async fn stop_hls_transcode(transcode_handle: Arc<Mutex<Option<FfmpegHandle>>>) {
+    let handle = {
+        let mut guard = transcode_handle.lock().await;
+        guard.take()
+    };
+
+    if let Some(handle) = handle {
+        match tokio::task::spawn_blocking(move || {
+            handle.abort_with_timeout(HLS_TRANSCODE_ABORT_TIMEOUT)
+        })
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                tracing::warn!(
+                    error = %err,
+                    timeout_ms = HLS_TRANSCODE_ABORT_TIMEOUT.as_millis() as u64,
+                    "HLS transcode did not stop cleanly"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "failed to join HLS transcode stop task"
+                );
+            }
+        }
+    }
+}
+
+pub(crate) async fn teardown_hls_job(job: HlsJob) {
+    stop_hls_transcode(job.transcode_handle).await;
+    cleanup_hls_dir(&job.dir_path).await;
+}
+
+pub(crate) async fn teardown_all_hls_jobs() {
+    let jobs = {
+        let mut jobs = HLS_JOBS.write().await;
+        jobs.drain().map(|(_, job)| job).collect::<Vec<_>>()
+    };
+    HLS_SESSIONS.write().await.clear();
+    let creating_notifies = {
+        let mut creating = HLS_JOB_CREATING.lock().await;
+        creating
+            .drain()
+            .map(|(_, notify)| notify)
+            .collect::<Vec<_>>()
+    };
+    for notify in creating_notifies {
+        notify.notify_waiters();
+    }
+
+    for job in jobs {
+        teardown_hls_job(job).await;
+    }
+}
+
+pub(crate) async fn hls_registry_counts() -> (usize, usize) {
+    let job_count = HLS_JOBS.read().await.len();
+    let session_count = HLS_SESSIONS.read().await.len();
+    (job_count, session_count)
+}
+
+async fn create_hls_job(input_path: &str, job_key: &HlsJobKey) -> Result<HlsJob, HlsError> {
+    let transcode_permit = acquire_hls_transcode_permit().await?;
+
+    let job_id = generate_hls_session_id();
+    let job_dir = std::env::temp_dir().join(format!(
+        "{HLS_JOB_TEMP_DIR_PREFIX}{}-{}-{job_id}",
+        job_key.track_public_id, job_key.source_public_id
+    ));
+    let playlist_path = job_dir.join("index.m3u8");
+    let segment_pattern = job_dir.join(format!(
+        "segment-%05d.{}",
+        job_key.output.profile.segment_extension
+    ));
+
+    tokio::fs::create_dir_all(&job_dir)
+        .await
+        .map_err(anyhow::Error::from)?;
+
+    let output = build_hls_output(&playlist_path, &segment_pattern, job_key.output);
+    let context = FfmpegContext::builder()
+        .input(input_path)
+        .start_ms(job_key.start_ms)
+        .end_ms(job_key.end_ms)
+        .output(output)
+        .build()
+        .map_err(anyhow::Error::from)?;
+
+    let transcode_handle = match context.start() {
+        Ok(handle) => handle,
+        Err(err) => {
+            cleanup_hls_dir(&job_dir).await;
+            return Err(anyhow::Error::from(err).into());
+        }
+    };
+
+    Ok(HlsJob {
+        dir_path: job_dir,
+        playlist_path,
+        transcode_handle: Arc::new(Mutex::new(Some(transcode_handle))),
+        session_ids: HashSet::new(),
+        idle_since: Some(Instant::now()),
+        _transcode_permit: transcode_permit,
+    })
+}
+
+async fn finish_hls_job_creation(job_key: &HlsJobKey) {
+    let notify = {
+        let mut creating = HLS_JOB_CREATING.lock().await;
+        creating.remove(job_key)
+    };
+    if let Some(notify) = notify {
+        notify.notify_waiters();
+    }
+}
+
+pub(crate) async fn get_or_create_hls_job(
+    job_key: &HlsJobKey,
+    input_path: &str,
+) -> Result<bool, HlsError> {
+    loop {
+        if HLS_JOBS.read().await.contains_key(job_key) {
+            return Ok(true);
+        }
+
+        let (notify, is_creator) = {
+            let mut creating = HLS_JOB_CREATING.lock().await;
+            if let Some(notify) = creating.get(job_key) {
+                (Arc::clone(notify), false)
+            } else {
+                let notify = Arc::new(Notify::new());
+                creating.insert(job_key.clone(), Arc::clone(&notify));
+                (notify, true)
+            }
+        };
+
+        if !is_creator {
+            notify.notified().await;
+            continue;
+        }
+
+        let create_result = create_hls_job(input_path, job_key).await;
+        let replaced_job = match create_result {
+            Ok(job) => {
+                let mut jobs = HLS_JOBS.write().await;
+                jobs.insert(job_key.clone(), job)
+            }
+            Err(err) => {
+                finish_hls_job_creation(job_key).await;
+                return Err(err);
+            }
+        };
+
+        finish_hls_job_creation(job_key).await;
+
+        if let Some(replaced_job) = replaced_job {
+            teardown_hls_job(replaced_job).await;
+        }
+
+        return Ok(false);
+    }
+}
+
+pub(crate) async fn attach_session_to_job(
+    session_id: &str,
+    playlist_segment_count: u64,
+    job_key: HlsJobKey,
+) -> Result<PathBuf, HlsError> {
+    let playlist_path = {
+        let mut jobs = HLS_JOBS.write().await;
+        let job = jobs.get_mut(&job_key).ok_or(HlsError::JobNotFound)?;
+        job.session_ids.insert(session_id.to_string());
+        job.idle_since = None;
+        job.playlist_path.clone()
+    };
+
+    let mut sessions = HLS_SESSIONS.write().await;
+    sessions.insert(
+        session_id.to_string(),
+        HlsSession {
+            playlist_segment_count,
+            job_key,
+            last_access: Instant::now(),
+        },
+    );
+
+    Ok(playlist_path)
+}
+
+pub(crate) fn mark_job_session_detached(job: &mut HlsJob, session_id: &str, now: Instant) {
+    if job.session_ids.remove(session_id) && job.session_ids.is_empty() {
+        job.idle_since.get_or_insert(now);
+    }
+}
+
+pub(crate) async fn detach_hls_session_with_timestamp(
+    session_id: &str,
+    now: Instant,
+) -> Option<HlsSession> {
+    let detached = {
+        let mut sessions = HLS_SESSIONS.write().await;
+        sessions.remove(session_id)
+    }?;
+
+    let mut jobs = HLS_JOBS.write().await;
+    if let Some(job) = jobs.get_mut(&detached.job_key) {
+        mark_job_session_detached(job, session_id, now);
+    }
+
+    Some(detached)
+}
+
+#[cfg(test)]
+pub(crate) mod test_helpers {
+    use super::*;
+    use std::{
+        path::PathBuf,
+        time::{
+            SystemTime,
+            UNIX_EPOCH,
+        },
+    };
+    use tokio::sync::Mutex as TokioMutex;
+
+    pub(crate) static HLS_TEST_MUTEX: LazyLock<TokioMutex<()>> =
+        LazyLock::new(|| TokioMutex::new(()));
+
+    pub(crate) fn unique_test_dir(prefix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "{prefix}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("valid timestamp")
+                .as_nanos()
+        ))
+    }
+
+    pub(crate) async fn reset_hls_state_for_test() {
+        teardown_all_hls_jobs().await;
+    }
+
+    pub(crate) fn build_test_job(dir_path: PathBuf, playlist_path: PathBuf) -> HlsJob {
+        HlsJob {
+            dir_path,
+            playlist_path,
+            transcode_handle: Arc::new(Mutex::new(None)),
+            session_ids: HashSet::new(),
+            idle_since: None,
+            _transcode_permit: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::codec::HLS_AUDIO_BITRATE_KBPS;
+    use super::super::codec::{
+        HlsCodecProfile,
+        HlsOutputConfig,
+    };
+    use super::test_helpers::*;
+    use super::*;
+    use lyra_ffmpeg::AudioCodec;
+
+    #[test]
+    fn hls_job_key_tracks_profile_parameters() {
+        let aac_profile =
+            HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
+        let alac_profile =
+            HlsCodecProfile::from_requested(Some(AudioCodec::Alac)).expect("alac profile");
+
+        let aac_key = HlsJobKey::new(
+            "track-pub-7".to_string(),
+            "source-pub-701".to_string(),
+            None,
+            None,
+            HlsOutputConfig::new(
+                aac_profile,
+                Some(HLS_AUDIO_BITRATE_KBPS),
+                Some(44_100),
+                Some(2),
+                false,
+            ),
+        );
+        let alac_key = HlsJobKey::new(
+            "track-pub-7".to_string(),
+            "source-pub-701".to_string(),
+            None,
+            None,
+            HlsOutputConfig::new(alac_profile, None, None, None, false),
+        );
+
+        assert_eq!(
+            aac_key.output.audio_bitrate_kbps,
+            Some(HLS_AUDIO_BITRATE_KBPS)
+        );
+        assert_eq!(aac_key.output.sample_rate_hz, Some(44_100));
+        assert_eq!(aac_key.output.channels, Some(2));
+        assert_eq!(alac_key.output.audio_bitrate_kbps, None);
+        assert_ne!(aac_key, alac_key);
+    }
+
+    #[tokio::test]
+    async fn attach_session_to_job_keeps_single_shared_job_for_concurrent_sessions() {
+        let _guard = HLS_TEST_MUTEX.lock().await;
+        reset_hls_state_for_test().await;
+
+        let test_dir = unique_test_dir("lyra-hls-shared-job-test");
+        tokio::fs::create_dir_all(&test_dir)
+            .await
+            .expect("test dir created");
+
+        let profile = HlsCodecProfile::from_requested(Some(AudioCodec::Aac)).expect("aac profile");
+        let job_key = HlsJobKey::new(
+            "track-pub-601".to_string(),
+            "source-pub-6011".to_string(),
+            None,
+            None,
+            HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
+        );
+        {
+            let mut jobs = HLS_JOBS.write().await;
+            jobs.insert(
+                job_key.clone(),
+                build_test_job(test_dir.clone(), test_dir.join("index.m3u8")),
+            );
+        }
+
+        let key_a = job_key.clone();
+        let key_b = job_key.clone();
+        let attach_a =
+            tokio::spawn(async move { attach_session_to_job("session-a", 1, key_a).await });
+        let attach_b =
+            tokio::spawn(async move { attach_session_to_job("session-b", 1, key_b).await });
+
+        let attach_a_result = attach_a.await.expect("session-a task should finish");
+        let attach_b_result = attach_b.await.expect("session-b task should finish");
+        assert!(
+            attach_a_result.is_ok(),
+            "session-a should attach to shared job"
+        );
+        assert!(
+            attach_b_result.is_ok(),
+            "session-b should attach to shared job"
+        );
+
+        let jobs = HLS_JOBS.read().await;
+        assert_eq!(jobs.len(), 1, "job registry should still contain one job");
+        let shared_job = jobs.get(&job_key).expect("shared job should exist");
+        assert_eq!(shared_job.session_ids.len(), 2);
+        assert!(shared_job.session_ids.contains("session-a"));
+        assert!(shared_job.session_ids.contains("session-b"));
+        drop(jobs);
+
+        let sessions = HLS_SESSIONS.read().await;
+        assert_eq!(sessions.len(), 2, "two sessions should be tracked");
+        assert_eq!(
+            sessions
+                .get("session-a")
+                .expect("session-a should exist")
+                .job_key,
+            job_key
+        );
+        drop(sessions);
+
+        reset_hls_state_for_test().await;
+    }
+}
