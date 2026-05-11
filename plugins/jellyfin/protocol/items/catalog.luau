@@ -160,6 +160,7 @@ export type ItemsQueryOptions = {
 	include_media_info: boolean,
 	include_people: boolean,
 	include_overview: boolean,
+	include_parent_id: boolean,
 	group_items: boolean,
 	user_id: number?,
 	_favorite_id_lookup: FavoriteLookup?,
@@ -192,6 +193,7 @@ type ItemContext = {
 	include_images: boolean,
 	include_people: boolean,
 	include_overview: boolean,
+	include_parent_id: boolean,
 	related_artists_by_owner_id: ArtistRelationMap,
 	artist_relations_by_artist_id: ArtistRelationInfoMap,
 	credited_artists_by_owner_id: CreditRelationMap,
@@ -516,6 +518,7 @@ function helpers.clone_items_query_options(options: ItemsQueryOptions): ItemsQue
 		include_media_info = options.include_media_info,
 		include_people = options.include_people,
 		include_overview = options.include_overview,
+		include_parent_id = options.include_parent_id,
 		group_items = options.group_items,
 		user_id = options.user_id,
 		_favorite_id_lookup = options._favorite_id_lookup,
@@ -1745,7 +1748,7 @@ function helpers.to_artist_item(
 		Name = module.trim(artist.artist_name) or "Unknown Artist",
 		Type = "MusicArtist",
 		IsFolder = in_library,
-		ParentId = parent_id,
+		ParentId = if context == nil or context.include_parent_id == true then parent_id else nil,
 		SortName = sort_name,
 		RunTimeTicks = runtime_ticks,
 		DateCreated = helpers.unix_to_iso8601(artist.created_at),
@@ -3329,6 +3332,15 @@ function helpers.query_requests_overview(fields: { string }): boolean
 	return false
 end
 
+function helpers.query_requests_parent_id(fields: { string }): boolean
+	for _, field in fields do
+		if helpers.lower_or_empty(field) == "parentid" then
+			return true
+		end
+	end
+	return false
+end
+
 function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 	local options: ItemsQueryOptions = {
 		include_item_types = {},
@@ -3362,6 +3374,7 @@ function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 		include_media_info = false,
 		include_people = false,
 		include_overview = false,
+		include_parent_id = false,
 		group_items = true,
 		user_id = nil,
 		_favorite_id_lookup = nil,
@@ -3419,6 +3432,7 @@ function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 	options.include_media_info = helpers.query_requests_media_fields(options.fields)
 	options.include_people = helpers.query_requests_people(options.fields)
 	options.include_overview = helpers.query_requests_overview(options.fields)
+	options.include_parent_id = helpers.query_requests_parent_id(options.fields)
 	options.group_items = helpers.parse_query_bool(query, { "GroupItems", "groupItems" }, true) ~= false
 	return options
 end
@@ -3534,6 +3548,7 @@ function helpers.new_realization_context(options: ItemsQueryOptions): ItemContex
 		include_images = options.enable_images ~= false,
 		include_people = options.include_people == true,
 		include_overview = options.include_overview == true,
+		include_parent_id = options.include_parent_id == true,
 		related_artists_by_owner_id = {},
 		artist_relations_by_artist_id = {},
 		credited_artists_by_owner_id = {},
@@ -5775,6 +5790,7 @@ function module.find_item_by_id(item_id: number?, user_id: number?): ItemInfo?
 		include_media_info = true,
 		include_people = true,
 		include_overview = true,
+		include_parent_id = true,
 		search_term = nil,
 		artist_ids = {},
 		person_ids = {},
