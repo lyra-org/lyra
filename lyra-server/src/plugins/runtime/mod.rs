@@ -52,6 +52,7 @@ pub(crate) use self::settings::{
     FieldGroupDefinition,
     FieldProps,
     REGISTRY,
+    Registry,
     Schema,
     SettingsScope,
     freeze_registry,
