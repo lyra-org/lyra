@@ -36,6 +36,7 @@ use axum::extract::{
 use axum::http::{
     HeaderMap,
     StatusCode,
+    header::USER_AGENT,
 };
 use nanoid::nanoid;
 use schemars::JsonSchema;
@@ -66,6 +67,10 @@ use crate::{
         require_manage_users,
         require_permission,
         require_principal,
+        sessions::{
+            MAX_CLIENT_NAME_LEN,
+            SessionMetadata,
+        },
     },
 };
 
@@ -97,6 +102,19 @@ struct UserRequest {
     username: String,
     #[schemars(description = "ASCII password, minimum 8 characters.")]
     password: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct LoginRequest {
+    #[schemars(description = "ASCII username, minimum 3 characters.")]
+    username: String,
+    #[schemars(description = "ASCII password, minimum 8 characters.")]
+    password: String,
+    #[schemars(
+        description = "Optional human-readable client label stored with the session (e.g. \"Lyra Desktop 1.2\")."
+    )]
+    #[serde(default)]
+    client_name: Option<String>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -521,7 +539,10 @@ async fn get_me(
     }))
 }
 
-async fn login_user(Json(user): Json<UserRequest>) -> Result<Json<LoginResponse>, AppError> {
+async fn login_user(
+    headers: HeaderMap,
+    Json(body): Json<LoginRequest>,
+) -> Result<Json<LoginResponse>, AppError> {
     let config = STATE.config.get();
     if !config.auth.enabled {
         let default_username = config.auth.default_username.to_lowercase();
@@ -530,14 +551,31 @@ async fn login_user(Json(user): Json<UserRequest>) -> Result<Json<LoginResponse>
                 "password login is disabled because authentication is disabled",
             ));
         }
-        if user.username.trim().to_lowercase() != default_username {
+        if body.username.trim().to_lowercase() != default_username {
             return Err(AppError::forbidden(
                 "password login for non-default users is disabled because authentication is disabled",
             ));
         }
     }
 
-    let Some(login_result) = login_with_password(&user.username, &user.password).await? else {
+    if let Some(client_name) = body.client_name.as_deref() {
+        if client_name.chars().count() > MAX_CLIENT_NAME_LEN {
+            return Err(AppError::bad_request(format!(
+                "client_name cannot exceed {MAX_CLIENT_NAME_LEN} characters"
+            )));
+        }
+    }
+
+    let metadata = SessionMetadata {
+        user_agent: headers
+            .get(USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string),
+        client_name: body.client_name,
+    };
+
+    let Some(login_result) = login_with_password(&body.username, &body.password, metadata).await?
+    else {
         return Err(AppError::unauthorized("invalid username or password"));
     };
 
@@ -772,7 +810,7 @@ mod tests {
     }
 
     async fn create_headers_for_user(user_db_id: agdb::DbId) -> anyhow::Result<HeaderMap> {
-        let session = sessions::create_session_for_user(user_db_id).await?;
+        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
         Ok(bearer_headers(&session.token))
     }
 
@@ -820,10 +858,14 @@ mod tests {
         config.auth.enabled = false;
         STATE.config.replace(std::sync::Arc::new(config));
 
-        let err = match login_user(Json(UserRequest {
-            username: "listener".to_string(),
-            password: "password123".to_string(),
-        }))
+        let err = match login_user(
+            HeaderMap::new(),
+            Json(LoginRequest {
+                username: "listener".to_string(),
+                password: "password123".to_string(),
+                client_name: None,
+            }),
+        )
         .await
         {
             Ok(_) => panic!("non-default login should explain disabled auth"),
@@ -1168,6 +1210,58 @@ mod tests {
             Some(vec![Permission::ManageMetadata, Permission::Download])
         );
 
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn login_user_persists_user_agent_and_client_name_on_session() -> anyhow::Result<()> {
+        use crate::services::auth::hash_secret;
+
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+
+        let password = "session-meta-pass";
+        let user_db_id = {
+            let mut db = STATE.db.write().await;
+            db::roles::ensure_builtin_roles(&mut db)?;
+            let user = User {
+                db_id: None,
+                id: nanoid!(),
+                username: "session-meta".to_string(),
+                password: hash_password(password)
+                    .map_err(|err| anyhow::anyhow!("hash_password failed: {err:?}"))?,
+            };
+            let user_db_id = db::users::create(&mut db, &user)?;
+            db::roles::ensure_user_has_role(&mut db, user_db_id, db::roles::BUILTIN_USER_ROLE)?;
+            user_db_id
+        };
+
+        let mut headers = HeaderMap::new();
+        headers.insert(USER_AGENT, "lyra-test/1.0 (integration)".parse()?);
+
+        let Json(login) = login_user(
+            headers,
+            Json(LoginRequest {
+                username: "session-meta".to_string(),
+                password: password.to_string(),
+                client_name: Some("  Lyra Desktop  ".to_string()),
+            }),
+        )
+        .await
+        .expect("valid credentials should log in");
+
+        let db = STATE.db.read().await;
+        let (_, session, _) =
+            db::users::find_by_session_token_hash(&db, &hash_secret(&login.token))?
+                .ok_or_else(|| anyhow::anyhow!("session must exist after login"))?;
+
+        assert_eq!(session.user_agent.as_deref(), Some("lyra-test/1.0 (integration)"));
+        assert_eq!(session.client_name.as_deref(), Some("Lyra Desktop"));
+        assert!(session.created_at > 0);
+        assert_eq!(session.last_seen_at, session.created_at);
+
+        drop(db);
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
     }

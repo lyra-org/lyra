@@ -318,6 +318,9 @@ async fn resolve_auth_from_session_token(token: &str) -> AuthResult<Option<Resol
     }
 
     let principal = resolve_principal(&db, user_db_id, user.id, user.username);
+    drop(db);
+
+    sessions::touch_last_seen(session_id).await;
 
     Ok(Some(ResolvedAuth {
         principal,
@@ -433,8 +436,11 @@ pub(crate) async fn logout_with_token(token: Option<&str>) -> AuthResult<bool> {
         .map_err(|e| AuthError::Internal(e.into()))
 }
 
-async fn create_login_result(principal: Principal) -> AuthResult<LoginResult> {
-    let session = sessions::create_session_for_user(principal.user_db_id)
+async fn create_login_result(
+    principal: Principal,
+    metadata: sessions::SessionMetadata,
+) -> AuthResult<LoginResult> {
+    let session = sessions::create_session_for_user(principal.user_db_id, metadata)
         .await
         .map_err(|e| AuthError::Internal(e.into()))?;
 
@@ -447,6 +453,7 @@ async fn create_login_result(principal: Principal) -> AuthResult<LoginResult> {
 pub(crate) async fn login_with_password(
     username: &str,
     password: &str,
+    metadata: sessions::SessionMetadata,
 ) -> AuthResult<Option<LoginResult>> {
     let username = username.trim();
     if username.is_empty() {
@@ -480,7 +487,7 @@ pub(crate) async fn login_with_password(
         let principal = resolve_principal(&db, user_db_id, user.id, user.username);
         drop(db);
 
-        return create_login_result(principal).await.map(Some);
+        return create_login_result(principal, metadata).await.map(Some);
     }
 
     let db = STATE.db.read().await;
@@ -511,7 +518,7 @@ pub(crate) async fn login_with_password(
     let principal = resolve_principal(&db, user_db_id, user.id, user.username);
     drop(db);
 
-    create_login_result(principal).await.map(Some)
+    create_login_result(principal, metadata).await.map(Some)
 }
 
 pub(crate) async fn require_principal(headers: &HeaderMap) -> Result<Principal, AuthError> {
@@ -710,7 +717,7 @@ mod tests {
             let mut db = STATE.db.write().await;
             db::users::create(&mut db, &db::users::test_user("expiring")?)?
         };
-        let session = sessions::create_session_for_user(user_db_id).await?;
+        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
         let session_db_id = {
             let db = STATE.db.read().await;
             db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?
@@ -758,7 +765,7 @@ mod tests {
             let mut db = STATE.db.write().await;
             db::users::create(&mut db, &db::users::test_user("no-ttl")?)?
         };
-        let session = sessions::create_session_for_user(user_db_id).await?;
+        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
 
         let mut config = STATE.config.get().as_ref().clone();
         config.auth.session_ttl_seconds = 1;
@@ -786,7 +793,8 @@ mod tests {
             (session_user_db_id, api_key_user_db_id)
         };
 
-        let session = sessions::create_session_for_user(session_user_db_id).await?;
+        let session =
+            sessions::create_session_for_user(session_user_db_id, Default::default()).await?;
         let session_db_id = {
             let db = STATE.db.read().await;
             db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?
@@ -865,7 +873,8 @@ mod tests {
             let mut db = STATE.db.write().await;
             db::users::create(&mut db, &db::users::test_user("other-user")?)?
         };
-        let other_session = sessions::create_session_for_user(other_user_db_id).await?;
+        let other_session =
+            sessions::create_session_for_user(other_user_db_id, Default::default()).await?;
 
         let auth = resolve_auth_from_bearer(Some(&other_session.token))
             .await?
@@ -900,7 +909,7 @@ mod tests {
             })?
         };
 
-        let session = sessions::create_session_for_user(user_db_id).await?;
+        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
         let auth = resolve_auth_from_bearer(Some(&session.token))
             .await?
             .ok_or_else(|| anyhow::anyhow!("session should resolve"))?;
@@ -928,7 +937,7 @@ mod tests {
             (user_db_id, library.id)
         };
 
-        let session = sessions::create_session_for_user(user_db_id).await?;
+        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
         let auth = resolve_auth_from_bearer(Some(&session.token))
             .await?
             .ok_or_else(|| anyhow::anyhow!("admin session should resolve"))?;
@@ -964,7 +973,7 @@ mod tests {
             (user_db_id, library_db_id, library.id)
         };
 
-        let session = sessions::create_session_for_user(user_db_id).await?;
+        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
         let headers = bearer_headers(&session.token);
         let err = require_manage_libraries_on(&headers, &library_id)
             .await

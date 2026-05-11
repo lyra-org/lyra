@@ -775,7 +775,7 @@ mod tests {
             })?;
             (user_db_id, visible.id, hidden.id)
         };
-        let session = sessions::create_session_for_user(user_db_id).await?;
+        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
 
         let Json(libraries) = list_libraries(bearer_headers(&session.token))
             .await
@@ -813,7 +813,7 @@ mod tests {
             })?;
             (manager_db_id, target_id, library.id)
         };
-        let session = sessions::create_session_for_user(manager_db_id).await?;
+        let session = sessions::create_session_for_user(manager_db_id, Default::default()).await?;
         let headers = bearer_headers(&session.token);
 
         let granted = grant_library_access(
