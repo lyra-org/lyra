@@ -35,6 +35,7 @@ use crate::{
         self,
         ListOptions,
         Permission,
+        SortDirection,
         SortKey,
         SortSpec,
         SortSpecParseError,
@@ -47,6 +48,7 @@ use crate::{
         deserialize_inc,
         responses::{
             EntryResponse,
+            PageResponse,
             ReleaseResponse,
             TrackResponse,
         },
@@ -86,6 +88,8 @@ pub(crate) struct ReleaseListQuery {
     pub(crate) sort_by: Option<Vec<String>>,
     #[schemars(description = "Sort order for all sort keys: ascending or descending.")]
     pub(crate) sort_order: Option<String>,
+    #[serde(flatten)]
+    pub(crate) page: super::PageQuery,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -190,6 +194,13 @@ fn parse_sort_specs(
     )
 }
 
+fn default_release_sort() -> Vec<SortSpec> {
+    vec![SortSpec {
+        key: SortKey::SortName,
+        direction: SortDirection::Ascending,
+    }]
+}
+
 fn parse_genre_filter(genre: Option<Vec<String>>) -> Vec<String> {
     let mut values = Vec::new();
     if let Some(entries) = genre {
@@ -258,31 +269,81 @@ pub(crate) fn detail_to_release_response(
 async fn get_releases(
     headers: HeaderMap,
     Query(list_query): Query<ReleaseListQuery>,
-) -> Result<Json<Vec<ReleaseResponse>>, AppError> {
+) -> Result<Json<PageResponse<ReleaseResponse>>, AppError> {
+    let ReleaseListQuery {
+        inc,
+        query,
+        year,
+        genre,
+        sort_by,
+        sort_order,
+        page,
+    } = list_query;
+    let page_options = page.resolve()?;
     let principal = require_authenticated(&headers).await?;
     let include_entry_paths =
         db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
 
     let db = &*STATE.db.read().await;
-    let (includes, include_covers, include_genres) = parse_release_includes(list_query.inc)?;
-    let list_options = ListOptions {
-        sort: parse_sort_specs(list_query.sort_by, list_query.sort_order)?,
+    let (includes, include_covers, include_genres) = parse_release_includes(inc)?;
+    let search_term = super::parse_text_query(query);
+    let mut sort = parse_sort_specs(sort_by, sort_order)?;
+    if sort.is_empty() {
+        sort = default_release_sort();
+    }
+    let options = ListOptions {
+        sort,
         offset: None,
         limit: None,
-        search_term: super::parse_text_query(list_query.query),
+        search_term,
     };
-    let filters = releases::ReleaseListFilters {
-        year: list_query.year,
-        genres: parse_genre_filter(list_query.genre),
+    let genre_filter = parse_genre_filter(genre);
+    let query_filters = db::releases::ReleaseQueryFilters {
+        year,
+        ids: if genre_filter.is_empty() {
+            None
+        } else {
+            Some(db::genres::release_ids_matching_genres(db, &genre_filter)?)
+        },
     };
-    let details = releases::list_details_with_options(db, includes, list_options, filters)?;
 
-    let mut response: Vec<ReleaseResponse> = Vec::with_capacity(details.len());
-    for detail in details {
-        if !super::entity_accessible_to_principal(db, &principal, detail.release_db_id)? {
+    let releases = db::releases::query(
+        db,
+        "releases",
+        &ListOptions {
+            sort: Vec::new(),
+            offset: None,
+            limit: None,
+            search_term: None,
+        },
+        &query_filters,
+    )?
+    .entries;
+    let mut accessible_releases = Vec::with_capacity(releases.len());
+    for release in releases {
+        let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
+            continue;
+        };
+        if !super::entity_accessible_to_principal(db, &principal, release_db_id)? {
             continue;
         }
-        response.push(detail_to_release_response(
+        accessible_releases.push(release);
+    }
+
+    let page = db::releases::query_items(
+        accessible_releases,
+        &ListOptions {
+            offset: Some(page_options.offset),
+            limit: Some(page_options.limit),
+            ..options
+        },
+    );
+    let next_cursor = super::next_page_cursor(page.offset, page.entries.len(), page.total_count);
+    let details = releases::list_details_for_releases(db, includes, page.entries)?;
+
+    let mut items: Vec<ReleaseResponse> = Vec::with_capacity(details.len());
+    for detail in details {
+        items.push(detail_to_release_response(
             db,
             detail,
             include_covers,
@@ -291,7 +352,7 @@ async fn get_releases(
         )?);
     }
 
-    Ok(Json(response))
+    Ok(Json(PageResponse { items, next_cursor }))
 }
 
 async fn get_release(
@@ -359,7 +420,7 @@ async fn search_release_covers(
 
 fn list_releases_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List releases").description(
-        "Returns releases. Supported query parameters: `inc`, `query`, `year`, `genre`, `sort_by`, `sort_order`. Supported `inc` values: `artists`, `tracks`, `track_artists`, `entries`, `covers`, `genres`. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits (for example, artist and producer). Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
+        "Returns releases as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `year`, `genre`, `sort_by`, `sort_order`, `limit`, `cursor`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `inc` values: `artists`, `tracks`, `track_artists`, `entries`, `covers`, `genres`. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits (for example, artist and producer). Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
     )
 }
 

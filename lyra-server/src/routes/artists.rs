@@ -31,6 +31,9 @@ use crate::{
     db::{
         self,
         ListOptions,
+        SortDirection,
+        SortKey,
+        SortSpec,
     },
     routes::AppError,
     routes::{
@@ -39,6 +42,7 @@ use crate::{
         responses::{
             ArtistRelationResponse,
             ArtistResponse,
+            PageResponse,
             RelatedArtistResponse,
             RelationDirectionResponse,
             ReleaseResponse,
@@ -72,6 +76,8 @@ struct ArtistListQuery {
     inc: Option<Vec<String>>,
     #[schemars(description = "Optional fuzzy text query matched against artist names.")]
     query: Option<String>,
+    #[serde(flatten)]
+    page: super::PageQuery,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -117,6 +123,13 @@ fn parse_inc(inc: Option<Vec<String>>) -> Result<ArtistRouteIncludes, AppError> 
         }
     }
     Ok(result)
+}
+
+fn default_artist_sort() -> Vec<SortSpec> {
+    vec![SortSpec {
+        key: SortKey::SortName,
+        direction: SortDirection::Ascending,
+    }]
 }
 
 fn artist_detail_to_response(
@@ -174,28 +187,46 @@ pub(crate) async fn list_artist_responses(
     principal: &Principal,
     inc: Option<Vec<String>>,
     query: Option<String>,
-) -> Result<Vec<ArtistResponse>, AppError> {
+    page_options: super::PageOptions,
+) -> Result<PageResponse<ArtistResponse>, AppError> {
     let db = &*STATE.db.read().await;
     let includes = parse_inc(inc)?;
+    let search_term = super::parse_text_query(query);
     let options = ListOptions {
-        sort: Vec::new(),
+        sort: default_artist_sort(),
         offset: None,
         limit: None,
-        search_term: super::parse_text_query(query),
+        search_term,
     };
-    let details = artist_service::list_details(db, includes.service, &options)?;
 
-    let mut response = Vec::with_capacity(details.len());
-    for detail in details {
-        let Some(artist_db_id) = detail.artist.db_id.clone().map(agdb::DbId::from) else {
+    let artists = db::artists::get(db, "artists")?;
+    let mut accessible_artists = Vec::with_capacity(artists.len());
+    for artist in artists {
+        let Some(artist_db_id) = artist.db_id.clone().map(agdb::DbId::from) else {
             continue;
         };
         if !super::entity_accessible_to_principal(db, principal, artist_db_id)? {
             continue;
         }
-        response.push(artist_detail_to_response(db, detail, includes.covers)?);
+        accessible_artists.push(artist);
     }
-    Ok(response)
+
+    let page = db::artists::query_items(
+        accessible_artists,
+        &ListOptions {
+            offset: Some(page_options.offset),
+            limit: Some(page_options.limit),
+            ..options
+        },
+    );
+    let next_cursor = super::next_page_cursor(page.offset, page.entries.len(), page.total_count);
+    let details = artist_service::list_details_for_artists(db, includes.service, page.entries)?;
+
+    let mut items = Vec::with_capacity(details.len());
+    for detail in details {
+        items.push(artist_detail_to_response(db, detail, includes.covers)?);
+    }
+    Ok(PageResponse { items, next_cursor })
 }
 
 pub(crate) async fn get_artist_response(
@@ -219,10 +250,12 @@ pub(crate) async fn get_artist_response(
 async fn get_artists(
     headers: HeaderMap,
     Query(list_query): Query<ArtistListQuery>,
-) -> Result<Json<Vec<ArtistResponse>>, AppError> {
+) -> Result<Json<PageResponse<ArtistResponse>>, AppError> {
+    let ArtistListQuery { inc, query, page } = list_query;
+    let page = page.resolve()?;
     let principal = require_authenticated(&headers).await?;
     Ok(Json(
-        list_artist_responses(&principal, list_query.inc, list_query.query).await?,
+        list_artist_responses(&principal, inc, query, page).await?,
     ))
 }
 
@@ -333,7 +366,7 @@ async fn update_artist(
 
 fn list_artists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List artists").description(
-        "Returns artists. Supported query parameters: `inc`, `query`. `query` is a fuzzy text match against artist names. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, cover metadata includes a public image URL. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
+        "Returns artists as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `limit`, `cursor`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against artist names. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, cover metadata includes a public image URL. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
     )
 }
 

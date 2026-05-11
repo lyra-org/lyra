@@ -14,7 +14,6 @@ use super::entities::{
 };
 use crate::db::{
     self,
-    ListOptions,
     Release,
     Track,
 };
@@ -31,13 +30,11 @@ pub(crate) struct TrackDetails {
     pub(crate) artists: Option<Vec<ResolvedCreditedArtist>>,
 }
 
-pub(crate) fn list_details(
+pub(crate) fn list_details_for_tracks(
     db: &DbAny,
     includes: TrackIncludes,
-    options: &ListOptions,
+    tracks: Vec<Track>,
 ) -> anyhow::Result<Vec<TrackDetails>> {
-    let tracks = db::tracks::query(db, "tracks", options)?.entries;
-
     let track_ids: Vec<DbId> = tracks
         .iter()
         .filter_map(|track| track.db_id.clone().map(DbId::from))
@@ -113,6 +110,7 @@ pub(crate) fn get_details(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::ListOptions;
     use crate::db::test_db::{
         connect,
         connect_artist,
@@ -130,6 +128,15 @@ mod tests {
             limit: None,
             search_term: None,
         }
+    }
+
+    fn list_details(
+        db: &DbAny,
+        includes: TrackIncludes,
+        options: &ListOptions,
+    ) -> anyhow::Result<Vec<TrackDetails>> {
+        let tracks = db::tracks::query(db, "tracks", options)?.entries;
+        list_details_for_tracks(db, includes, tracks)
     }
 
     #[test]

@@ -16,6 +16,13 @@ use crate::{
 };
 
 #[derive(Serialize, JsonSchema)]
+pub(crate) struct PageResponse<T> {
+    pub items: Vec<T>,
+    #[schemars(description = "Opaque cursor; `null` on the last page. Sole termination signal.")]
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Serialize, JsonSchema)]
 pub struct LyricsResponse {
     #[schemars(description = "Provider-supplied stable ID scoped to `(track, provider_id)`.")]
     pub id: String,
