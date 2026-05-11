@@ -154,11 +154,18 @@ pub(crate) async fn build_ranged_file_body(
     let content_length = HeaderValue::from_str(&content_length_u64.to_string())
         .context("failed to encode content-length header")?;
     let (tx, rx) = tokio_mpsc::channel::<Result<Bytes, std::io::Error>>(64);
+    let shutdown = crate::services::shutdown::token();
 
     tokio::spawn(async move {
         let mut buffer = vec![0_u8; FILE_STREAM_CHUNK_SIZE];
         if start > 0
-            && let Err(err) = file.seek(SeekFrom::Start(start)).await
+            && let Err(err) = tokio::select! {
+                _ = shutdown.cancelled() => {
+                    cleanup_temp_file(cleanup_path).await;
+                    return;
+                }
+                result = file.seek(SeekFrom::Start(start)) => result,
+            }
         {
             let _ = tx.send(Err(err)).await;
             cleanup_temp_file(cleanup_path).await;
@@ -166,21 +173,33 @@ pub(crate) async fn build_ranged_file_body(
         }
         let mut remaining = content_length_u64;
         while remaining > 0 {
+            if shutdown.is_cancelled() {
+                break;
+            }
             let read_len = std::cmp::min(buffer.len() as u64, remaining) as usize;
-            match file.read(&mut buffer[..read_len]).await {
+            let read_result = tokio::select! {
+                _ = shutdown.cancelled() => break,
+                result = file.read(&mut buffer[..read_len]) => result,
+            };
+            match read_result {
                 Ok(0) => break,
                 Ok(read_len) => {
                     remaining = remaining.saturating_sub(read_len as u64);
-                    if tx
-                        .send(Ok(Bytes::copy_from_slice(&buffer[..read_len])))
-                        .await
-                        .is_err()
-                    {
-                        break;
+                    let chunk = Ok(Bytes::copy_from_slice(&buffer[..read_len]));
+                    tokio::select! {
+                        _ = shutdown.cancelled() => break,
+                        sent = tx.send(chunk) => {
+                            if sent.is_err() {
+                                break;
+                            }
+                        }
                     }
                 }
                 Err(err) => {
-                    let _ = tx.send(Err(err)).await;
+                    tokio::select! {
+                        _ = shutdown.cancelled() => {}
+                        _ = tx.send(Err(err)) => {}
+                    }
                     break;
                 }
             }
@@ -194,4 +213,44 @@ pub(crate) async fn build_ranged_file_body(
         status,
         content_range,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+    use std::time::{
+        Duration,
+        SystemTime,
+        UNIX_EPOCH,
+    };
+
+    struct ShutdownResetGuard;
+
+    impl Drop for ShutdownResetGuard {
+        fn drop(&mut self) {
+            crate::services::shutdown::reset_for_test();
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ranged_file_body_finishes_after_shutdown_cancelled() -> anyhow::Result<()> {
+        let _runtime_guard = crate::testing::runtime_test_lock().await;
+        let _guard = ShutdownResetGuard;
+        let shutdown = crate::services::shutdown::reset_for_test();
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let path = std::env::temp_dir().join(format!("lyra-ranged-shutdown-test-{nanos}.bin"));
+        let file_size = FILE_STREAM_CHUNK_SIZE * 96;
+        tokio::fs::write(&path, vec![7_u8; file_size]).await?;
+
+        let ranged =
+            build_ranged_file_body(&path, None, StatusCode::OK, Some(path.clone())).await?;
+        shutdown.cancel();
+        let bytes = tokio::time::timeout(Duration::from_secs(1), to_bytes(ranged.body, usize::MAX))
+            .await??;
+
+        assert!(bytes.len() <= file_size);
+        let _ = tokio::fs::remove_file(path).await;
+        Ok(())
+    }
 }

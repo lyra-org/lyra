@@ -35,6 +35,7 @@ use lyra_ffmpeg::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::sync::mpsc as std_mpsc;
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{
     Arc,
     atomic::{
@@ -42,11 +43,11 @@ use std::sync::{
         Ordering,
     },
 };
+use std::time::Duration;
 use tokio::sync::{
     mpsc as tokio_mpsc,
     oneshot,
 };
-use tokio_stream::wrappers::ReceiverStream;
 
 use crate::routes::AppError;
 
@@ -60,6 +61,8 @@ use super::{
     validate_and_get_track_source,
     validate_request,
 };
+
+const STREAM_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, thiserror::Error)]
 #[error("{message}")]
@@ -212,10 +215,15 @@ pub(crate) async fn stream_track_response(
     let (started_tx, started_rx) = oneshot::channel::<()>();
     let (done_tx, done_rx) = oneshot::channel::<Result<(), StreamChannelError>>();
     let client_disconnected = Arc::new(AtomicBool::new(false));
+    let shutdown = crate::services::shutdown::token();
 
     let write_callback = {
         let sync_tx = sync_tx.clone();
+        let shutdown = shutdown.clone();
         move |buf: &[u8]| -> i32 {
+            if shutdown.is_cancelled() {
+                return AVERROR_EOF;
+            }
             let bytes = buf.to_vec();
             let len = bytes.len() as i32;
             match sync_tx.send(bytes) {
@@ -245,9 +253,19 @@ pub(crate) async fn stream_track_response(
         .build()?;
 
     let client_disconnected_for_forwarder = Arc::clone(&client_disconnected);
+    let shutdown_for_forwarder = shutdown.clone();
     tokio::task::spawn_blocking(move || {
         let mut started_tx = Some(started_tx);
-        while let Ok(chunk) = sync_rx.recv() {
+        loop {
+            if shutdown_for_forwarder.is_cancelled() {
+                client_disconnected_for_forwarder.store(true, Ordering::Relaxed);
+                break;
+            }
+            let chunk = match sync_rx.recv_timeout(STREAM_SHUTDOWN_POLL_INTERVAL) {
+                Ok(chunk) => chunk,
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => break,
+            };
             if let Some(tx) = started_tx.take() {
                 let _ = tx.send(());
             }
@@ -259,9 +277,25 @@ pub(crate) async fn stream_track_response(
         }
     });
 
-    let client_disconnected_for_logger = Arc::clone(&client_disconnected);
-    tokio::spawn(async move {
-        let result = context.start().and_then(|handle| handle.wait());
+    let client_disconnected_for_worker = Arc::clone(&client_disconnected);
+    let shutdown_for_transcode = shutdown.clone();
+    tokio::task::spawn_blocking(move || {
+        let result = match context.start() {
+            Ok(mut handle) => loop {
+                if shutdown_for_transcode.is_cancelled()
+                    || client_disconnected_for_worker.load(Ordering::Relaxed)
+                {
+                    client_disconnected_for_worker.store(true, Ordering::Relaxed);
+                    break handle
+                        .abort_with_timeout(crate::services::shutdown::TRANSCODE_ABORT_TIMEOUT);
+                }
+                if let Some(result) = handle.wait_completion_timeout(STREAM_SHUTDOWN_POLL_INTERVAL)
+                {
+                    break result;
+                }
+            },
+            Err(err) => Err(err),
+        };
         drop(sync_tx);
         let _ = done_tx.send(
             result
@@ -275,7 +309,7 @@ pub(crate) async fn stream_track_response(
             Err(e) => {
                 let msg = e.to_string();
                 let eof_str = AVERROR_EOF.to_string();
-                if client_disconnected_for_logger.load(Ordering::Relaxed)
+                if client_disconnected_for_worker.load(Ordering::Relaxed)
                     || msg.contains("End of file")
                     || msg.contains(&eof_str)
                 {
@@ -305,7 +339,17 @@ pub(crate) async fn stream_track_response(
         }
     }
 
-    let stream = ReceiverStream::new(tokio_rx);
+    let shutdown_for_body = shutdown.clone();
+    let stream = futures::stream::unfold(
+        (tokio_rx, shutdown_for_body),
+        |(mut rx, shutdown)| async move {
+            let shutdown_for_select = shutdown.clone();
+            tokio::select! {
+                _ = shutdown_for_select.cancelled_owned() => None,
+                item = rx.recv() => item.map(|item| (item, (rx, shutdown))),
+            }
+        },
+    );
     let body = Body::from_stream(stream);
 
     let response = Response::builder()

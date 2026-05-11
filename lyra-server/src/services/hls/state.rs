@@ -164,13 +164,54 @@ pub(crate) async fn stop_hls_transcode(transcode_handle: Arc<Mutex<Option<Ffmpeg
     };
 
     if let Some(handle) = handle {
-        let _ = tokio::task::spawn_blocking(move || drop(handle)).await;
+        match tokio::task::spawn_blocking(move || {
+            handle.abort_with_timeout(crate::services::shutdown::TRANSCODE_ABORT_TIMEOUT)
+        })
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                tracing::warn!(
+                    error = %err,
+                    timeout_ms = crate::services::shutdown::TRANSCODE_ABORT_TIMEOUT.as_millis() as u64,
+                    "HLS transcode did not stop cleanly"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "failed to join HLS transcode stop task"
+                );
+            }
+        }
     }
 }
 
 pub(crate) async fn teardown_hls_job(job: HlsJob) {
     stop_hls_transcode(job.transcode_handle).await;
     cleanup_hls_dir(&job.dir_path).await;
+}
+
+pub(crate) async fn teardown_all_hls_jobs() {
+    let jobs = {
+        let mut jobs = HLS_JOBS.write().await;
+        jobs.drain().map(|(_, job)| job).collect::<Vec<_>>()
+    };
+    HLS_SESSIONS.write().await.clear();
+    let creating_notifies = {
+        let mut creating = HLS_JOB_CREATING.lock().await;
+        creating
+            .drain()
+            .map(|(_, notify)| notify)
+            .collect::<Vec<_>>()
+    };
+    for notify in creating_notifies {
+        notify.notify_waiters();
+    }
+
+    for job in jobs {
+        teardown_hls_job(job).await;
+    }
 }
 
 pub(crate) async fn hls_registry_counts() -> (usize, usize) {
@@ -356,16 +397,7 @@ pub(crate) mod test_helpers {
     }
 
     pub(crate) async fn reset_hls_state_for_test() {
-        let jobs = {
-            let mut jobs = HLS_JOBS.write().await;
-            jobs.drain().map(|(_, job)| job).collect::<Vec<_>>()
-        };
-        HLS_SESSIONS.write().await.clear();
-        HLS_JOB_CREATING.lock().await.clear();
-
-        for job in jobs {
-            teardown_hls_job(job).await;
-        }
+        teardown_all_hls_jobs().await;
     }
 
     pub(crate) fn build_test_job(dir_path: PathBuf, playlist_path: PathBuf) -> HlsJob {

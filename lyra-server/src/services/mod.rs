@@ -57,6 +57,7 @@ pub(crate) mod providers;
 pub(crate) mod releases;
 pub(crate) mod remote;
 pub(crate) mod search;
+pub(crate) mod shutdown;
 pub(crate) mod startup;
 mod system;
 pub(crate) mod tags;
