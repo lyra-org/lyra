@@ -407,8 +407,9 @@ local function handle(ctx: ProviderLyricsContext): HandlerResult
 		return { kind = "hit", candidates = { candidate } }
 	end
 
-	-- Positive-cache fast path on the lrclib id.
-	if cached_id ~= nil then
+	-- Positive-cache fast path on the lrclib id. Force refresh must re-run
+	-- search because the cached id may be a candidate Lyra's scorer rejected.
+	if cached_id ~= nil and not ctx.force_refresh then
 		local response, body = fetch_by_id(cached_id)
 		if response.status_code == 429 then
 			return { kind = "rate_limited", retry_after_ms = parse_retry_after_ms(response) }
