@@ -39,6 +39,9 @@ use crate::{
     db::{
         self,
         ListOptions,
+        SortDirection,
+        SortKey,
+        SortSpec,
     },
     routes::AppError,
     routes::deserialize_inc,
@@ -46,6 +49,7 @@ use crate::{
         LyricsLineResponse,
         LyricsResponse,
         LyricsWordResponse,
+        PageResponse,
         ReleaseResponse,
         TrackResponse,
     },
@@ -73,6 +77,8 @@ struct TrackListQuery {
     inc: Option<Vec<String>>,
     #[schemars(description = "Optional fuzzy text query matched against track titles.")]
     query: Option<String>,
+    #[serde(flatten)]
+    page: super::PageQuery,
 }
 
 fn parse_inc(inc: Option<Vec<String>>) -> Result<track_service::TrackIncludes, AppError> {
@@ -89,6 +95,13 @@ fn parse_inc(inc: Option<Vec<String>>) -> Result<track_service::TrackIncludes, A
         }
     }
     Ok(result)
+}
+
+fn default_track_sort() -> Vec<SortSpec> {
+    vec![SortSpec {
+        key: SortKey::SortName,
+        direction: SortDirection::Ascending,
+    }]
 }
 
 fn track_detail_to_response(
@@ -119,28 +132,46 @@ pub(crate) async fn list_track_responses(
     principal: &Principal,
     inc: Option<Vec<String>>,
     query: Option<String>,
-) -> Result<Vec<TrackResponse>, AppError> {
+    page_options: super::PageOptions,
+) -> Result<PageResponse<TrackResponse>, AppError> {
     let db = &*STATE.db.read().await;
     let includes = parse_inc(inc)?;
+    let search_term = super::parse_text_query(query);
     let options = ListOptions {
-        sort: Vec::new(),
+        sort: default_track_sort(),
         offset: None,
         limit: None,
-        search_term: super::parse_text_query(query),
+        search_term,
     };
-    let details = track_service::list_details(db, includes, &options)?;
 
-    let mut response = Vec::with_capacity(details.len());
-    for detail in details {
-        let Some(track_db_id) = detail.track.db_id.clone().map(agdb::DbId::from) else {
+    let tracks = db::tracks::get(db, "tracks")?;
+    let mut accessible_tracks = Vec::with_capacity(tracks.len());
+    for track in tracks {
+        let Some(track_db_id) = track.db_id.clone().map(agdb::DbId::from) else {
             continue;
         };
         if !super::entity_accessible_to_principal(db, principal, track_db_id)? {
             continue;
         }
-        response.push(track_detail_to_response(db, detail)?);
+        accessible_tracks.push(track);
     }
-    Ok(response)
+
+    let page = db::tracks::query_items(
+        accessible_tracks,
+        &ListOptions {
+            offset: Some(page_options.offset),
+            limit: Some(page_options.limit),
+            ..options
+        },
+    );
+    let next_cursor = super::next_page_cursor(page.offset, page.entries.len(), page.total_count);
+    let details = track_service::list_details_for_tracks(db, includes, page.entries)?;
+
+    let mut items = Vec::with_capacity(details.len());
+    for detail in details {
+        items.push(track_detail_to_response(db, detail)?);
+    }
+    Ok(PageResponse { items, next_cursor })
 }
 
 pub(crate) async fn get_track_response(
@@ -164,10 +195,12 @@ pub(crate) async fn get_track_response(
 async fn get_tracks(
     headers: HeaderMap,
     Query(list_query): Query<TrackListQuery>,
-) -> Result<Json<Vec<TrackResponse>>, AppError> {
+) -> Result<Json<PageResponse<TrackResponse>>, AppError> {
+    let TrackListQuery { inc, query, page } = list_query;
+    let page = page.resolve()?;
     let principal = require_authenticated(&headers).await?;
     Ok(Json(
-        list_track_responses(&principal, list_query.inc, list_query.query).await?,
+        list_track_responses(&principal, inc, query, page).await?,
     ))
 }
 
@@ -182,7 +215,7 @@ async fn get_track(
 
 fn list_tracks_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tracks").description(
-        "Returns tracks. Supported query parameters: `inc`, `query`. `query` is a fuzzy text match against track titles. Use `inc` to include releases and/or artists. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
+        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `limit`, `cursor`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles. Use `inc` to include releases and/or artists. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 

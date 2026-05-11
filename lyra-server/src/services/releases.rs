@@ -46,12 +46,6 @@ pub(crate) struct ReleaseDetails {
     pub(crate) entries: Option<Vec<Entry>>,
 }
 
-#[derive(Clone, Debug, Default)]
-pub(crate) struct ReleaseListFilters {
-    pub(crate) year: Option<u32>,
-    pub(crate) genres: Vec<String>,
-}
-
 fn collect_entries(db: &DbAny, tracks: &[Track]) -> anyhow::Result<Vec<Entry>> {
     let mut entries = Vec::new();
     let mut seen = HashSet::new();
@@ -214,33 +208,11 @@ pub(crate) fn get_appearances(db: &DbAny, artist_id: DbId) -> anyhow::Result<Vec
     db::releases::get_appearances(db, artist_id)
 }
 
-pub(crate) fn list_details_with_options(
+pub(crate) fn list_details_for_releases(
     db: &DbAny,
     includes: ReleaseIncludes,
-    list_options: ListOptions,
-    filters: ReleaseListFilters,
+    releases: Vec<Release>,
 ) -> anyhow::Result<Vec<ReleaseDetails>> {
-    let ids = if !filters.genres.is_empty() {
-        Some(db::genres::release_ids_matching_genres(
-            db,
-            &filters.genres,
-        )?)
-    } else {
-        None
-    };
-
-    let query_filters = db::releases::ReleaseQueryFilters {
-        year: filters.year,
-        ids,
-    };
-    let releases = db::releases::query(
-        db,
-        QueryId::Alias("releases".to_string()),
-        &list_options,
-        &query_filters,
-    )?
-    .entries;
-
     let release_ids: Vec<DbId> = releases
         .iter()
         .filter_map(|release| release.db_id.clone().map(DbId::from))
@@ -355,6 +327,41 @@ mod tests {
     };
     use crate::services::entities::ArtistCreditSource;
     use nanoid::nanoid;
+
+    #[derive(Clone, Debug, Default)]
+    struct ReleaseListFilters {
+        year: Option<u32>,
+        genres: Vec<String>,
+    }
+
+    fn list_details_with_options(
+        db: &DbAny,
+        includes: ReleaseIncludes,
+        list_options: ListOptions,
+        filters: ReleaseListFilters,
+    ) -> anyhow::Result<Vec<ReleaseDetails>> {
+        let ids = if !filters.genres.is_empty() {
+            Some(db::genres::release_ids_matching_genres(
+                db,
+                &filters.genres,
+            )?)
+        } else {
+            None
+        };
+
+        let query_filters = db::releases::ReleaseQueryFilters {
+            year: filters.year,
+            ids,
+        };
+        let releases = db::releases::query(
+            db,
+            QueryId::Alias("releases".to_string()),
+            &list_options,
+            &query_filters,
+        )?
+        .entries;
+        list_details_for_releases(db, includes, releases)
+    }
 
     fn insert_release(
         db: &mut DbAny,

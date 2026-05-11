@@ -261,12 +261,11 @@ pub(crate) fn get_relations_many(
     Ok(relations_by_artist_id)
 }
 
-pub(crate) fn list_details(
+pub(crate) fn list_details_for_artists(
     db: &DbAny,
     includes: ArtistIncludes,
-    options: &ListOptions,
+    artists: Vec<Artist>,
 ) -> anyhow::Result<Vec<ArtistDetails>> {
-    let artists = db::artists::query(db, "artists", options, None)?.entries;
     let mut details = Vec::with_capacity(artists.len());
 
     for artist in artists {
@@ -423,6 +422,15 @@ mod tests {
             limit: None,
             search_term: None,
         }
+    }
+
+    fn list_details(
+        db: &DbAny,
+        includes: ArtistIncludes,
+        options: &ListOptions,
+    ) -> anyhow::Result<Vec<ArtistDetails>> {
+        let artists = db::artists::query(db, "artists", options, None)?.entries;
+        list_details_for_artists(db, includes, artists)
     }
 
     fn set_artist_type(
