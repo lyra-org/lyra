@@ -97,7 +97,7 @@ const PAGE_CURSOR_BYTES_LEN: usize = 1 + PAGE_CURSOR_NONCE_LEN + size_of::<u64>(
 const PAGE_CURSOR_MAX_LEN: usize = 32;
 const PAGE_CURSOR_MASK_SEED: u64 = 0;
 
-#[derive(Deserialize, JsonSchema, Default)]
+#[derive(Clone, Deserialize, JsonSchema, Default)]
 pub(crate) struct PageQuery {
     #[schemars(description = "Page size. Default 100, cap 500.")]
     #[serde(default, deserialize_with = "deserialize_optional_u64")]

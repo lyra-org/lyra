@@ -37,6 +37,7 @@ use crate::{
     routes::{
         self,
         AppError,
+        responses::PageResponse,
     },
     services::{
         auth::{
@@ -53,8 +54,8 @@ use crate::{
 pub(super) struct MeListenQuery {
     #[schemars(description = "Optional track ID to narrow the summary to one track.")]
     track_id: Option<String>,
-    #[schemars(description = "Maximum number of summaries to return.")]
-    limit: Option<u64>,
+    #[serde(flatten)]
+    page: routes::PageQuery,
     #[schemars(
         description = "Comma-separated or repeated values: listen_count, count, last_played_at_ms, last_played, track_id, id."
     )]
@@ -74,8 +75,8 @@ struct ListenQuery {
     user_id: Option<String>,
     #[schemars(description = "Optional track ID to narrow the summary to one track.")]
     track_id: Option<String>,
-    #[schemars(description = "Maximum number of summaries to return.")]
-    limit: Option<u64>,
+    #[serde(flatten)]
+    page: routes::PageQuery,
     #[schemars(
         description = "Comma-separated or repeated values: listen_count, count, last_played_at_ms, last_played, user_id, track_id, id."
     )]
@@ -283,10 +284,15 @@ fn listen_row_to_response(row: ListenRow) -> ListenResponse {
     }
 }
 
-fn apply_limit<T>(rows: &mut Vec<T>, limit: Option<u64>) {
-    if let Some(limit) = limit {
-        rows.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
-    }
+fn apply_page<T>(rows: Vec<T>, page_options: routes::PageOptions) -> (Vec<T>, Option<String>) {
+    let total_count = rows.len() as u64;
+    let items = rows
+        .into_iter()
+        .skip(usize::try_from(page_options.offset).unwrap_or(usize::MAX))
+        .take(usize::try_from(page_options.limit).unwrap_or(usize::MAX))
+        .collect::<Vec<_>>();
+    let next_cursor = routes::next_page_cursor(page_options.offset, items.len(), total_count);
+    (items, next_cursor)
 }
 
 fn validate_merge_usage(
@@ -484,8 +490,9 @@ async fn rows_for_managed_listens(
 pub(super) async fn get_me_listens(
     headers: HeaderMap,
     Query(query): Query<MeListenQuery>,
-) -> Result<Json<Vec<MeListenResponse>>, AppError> {
+) -> Result<Json<PageResponse<MeListenResponse>>, AppError> {
     let principal = require_principal(&headers).await?;
+    let page = query.page.clone().resolve()?;
     let merge_unique_external_ids = query.merge_unique_external_ids.unwrap_or(false);
     validate_merge_usage(query.track_id.as_deref(), merge_unique_external_ids)?;
 
@@ -499,36 +506,37 @@ pub(super) async fn get_me_listens(
     .await?;
 
     sort_listen_rows(&mut rows, query.sort_by, query.sort_order, false)?;
-    apply_limit(&mut rows, query.limit);
+    let (rows, next_cursor) = apply_page(rows, page);
 
-    let response = rows.into_iter().map(listen_row_to_me_response).collect();
-    Ok(Json(response))
+    let items = rows.into_iter().map(listen_row_to_me_response).collect();
+    Ok(Json(PageResponse { items, next_cursor }))
 }
 
 async fn get_listens(
     headers: HeaderMap,
     Query(query): Query<ListenQuery>,
-) -> Result<Json<Vec<ListenResponse>>, AppError> {
+) -> Result<Json<PageResponse<ListenResponse>>, AppError> {
     let principal = require_principal(&headers).await?;
     require_permission(&principal, Permission::ManageLibraries)?;
+    let page = query.page.clone().resolve()?;
 
     let mut rows = rows_for_managed_listens(&principal, &query).await?;
     sort_listen_rows(&mut rows, query.sort_by, query.sort_order, true)?;
-    apply_limit(&mut rows, query.limit);
+    let (rows, next_cursor) = apply_page(rows, page);
 
-    let response = rows.into_iter().map(listen_row_to_response).collect();
-    Ok(Json(response))
+    let items = rows.into_iter().map(listen_row_to_response).collect();
+    Ok(Json(PageResponse { items, next_cursor }))
 }
 
 pub(super) fn get_me_listens_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List my listen summaries").description(
-        "Returns authenticated user-scoped per-track listen summaries. Use `track_id` to narrow the response to one track. Without `track_id`, summaries are sorted by listen_count descending and last_played_at_ms descending by default. Supported query parameters: `track_id`, `limit`, `sort_by`, `sort_order`, `merge_unique_external_ids`. Supported `sort_by` values: `listen_count`, `count`, `last_played_at_ms`, `last_played`, `track_id`, `id`.",
+        "Returns authenticated user-scoped per-track listen summaries as `{ items, next_cursor }`. Use `track_id` to narrow the response to one track. Without `track_id`, summaries are sorted by listen_count descending and last_played_at_ms descending by default. Supported query parameters: `track_id`, `limit`, `cursor`, `sort_by`, `sort_order`, `merge_unique_external_ids`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `sort_by` values: `listen_count`, `count`, `last_played_at_ms`, `last_played`, `track_id`, `id`.",
     )
 }
 
 fn get_listens_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List listen summaries").description(
-        "Requires ManageLibraries or Admin. Returns per-user per-track listen summaries for visible library content. Use `user_id` or `track_id` to narrow the response. Without `track_id`, summaries are sorted by listen_count descending and last_played_at_ms descending by default. Supported query parameters: `user_id`, `track_id`, `limit`, `sort_by`, `sort_order`, `merge_unique_external_ids`. Supported `sort_by` values: `listen_count`, `count`, `last_played_at_ms`, `last_played`, `user_id`, `track_id`, `id`.",
+        "Requires ManageLibraries or Admin. Returns per-user per-track listen summaries for visible library content as `{ items, next_cursor }`. Use `user_id` or `track_id` to narrow the response. Without `track_id`, summaries are sorted by listen_count descending and last_played_at_ms descending by default. Supported query parameters: `user_id`, `track_id`, `limit`, `cursor`, `sort_by`, `sort_order`, `merge_unique_external_ids`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `sort_by` values: `listen_count`, `count`, `last_played_at_ms`, `last_played`, `user_id`, `track_id`, `id`.",
     )
 }
 
