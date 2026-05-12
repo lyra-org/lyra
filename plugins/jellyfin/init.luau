@@ -1634,7 +1634,7 @@ local function handle_item_user_data_route(ctx: ApiContext): ApiResponse
 		return session.unauthorized()
 	end
 	if not session.require_matching_user_scope(ctx, principal) then
-		return session.unauthorized()
+		return base.forbidden("user is not allowed to view this item user data")
 	end
 
 	local params = if ctx then ctx.params else nil
@@ -1654,12 +1654,27 @@ local function handle_item_user_data_route(ctx: ApiContext): ApiResponse
 	end
 
 	local item_hex_id = base.encode_jellyfin_item_id(item_id)
+	local item_name = base.trim(item.Name)
+	local item_type = base.trim(item.Type)
+	local key = item_hex_id
+	if item_type == "MusicArtist" then
+		key = `Artist-{item_name or ""}`
+	elseif item_type == "MusicAlbum" then
+		key = `{base.trim(item.AlbumArtist) or ""}-{item_name or ""}`
+	elseif item_type == "Audio" then
+		key = `{item.ParentIndexNumber or 0}-{item.IndexNumber or 0}{item_name or ""}`
+	elseif item_type == "Playlist" then
+		key = `Playlist-{item_name or ""}`
+	elseif item_type == "MusicGenre" then
+		key = `MusicGenre-{item_name or ""}`
+	end
+
 	local user_data = item.UserData
 		or base.get_user_data({
 			item_id = item_id,
 			user_id = principal.user_id,
 			item_hex_id = item_hex_id,
-			key = item_hex_id,
+			key = key,
 			include_favorite = true,
 			include_play_count = true,
 		})
