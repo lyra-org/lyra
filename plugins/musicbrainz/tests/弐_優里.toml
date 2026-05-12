@@ -1,0 +1,223 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "優里 - 弐 [2023] [FLAC]/1.14 - メリーゴーランド.flac"
+album = "弐"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "メリーゴーランド"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 14
+duration_ms = 256680
+
+[[raw_tags]]
+file_path = "優里 - 弐 [2023] [FLAC]/1.13 - 告白直前酸欠状態.flac"
+album = "弐"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "告白直前酸欠状態"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 14
+duration_ms = 187586
+
+[[raw_tags]]
+file_path = "優里 - 弐 [2023] [FLAC]/1.12 - タイムマシン.flac"
+album = "弐"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "タイムマシン"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 14
+duration_ms = 201640
+
+[[raw_tags]]
+file_path = "優里 - 弐 [2023] [FLAC]/1.11 - フロントライン (feat. BAK & YO_CO).flac"
+album = "弐"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "フロントライン (feat. BAK & YO_CO)"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 14
+duration_ms = 181653
+
+[[raw_tags]]
+file_path = "優里 - 弐 [2023] [FLAC]/1.10 - うぉ.flac"
+album = "弐"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "うぉ"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 14
+duration_ms = 167866
+
+[[raw_tags]]
+file_path = "優里 - 弐 [2023] [FLAC]/1.09 - おにごっこ.flac"
+album = "弐"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "おにごっこ"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 14
+duration_ms = 231413
+
+[[raw_tags]]
+file_path = "優里 - 弐 [2023] [FLAC]/1.08 - ガリレオは恋をする.flac"
+album = "弐"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "ガリレオは恋をする"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 14
+duration_ms = 258186
+
+[[raw_tags]]
+file_path = "優里 - 弐 [2023] [FLAC]/1.07 - ライラ.flac"
+album = "弐"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "ライラ"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 14
+duration_ms = 185933
+
+[[raw_tags]]
+file_path = "優里 - 弐 [2023] [FLAC]/1.06 - ヒーローの居ない街.flac"
+album = "弐"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "ヒーローの居ない街"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 14
+duration_ms = 194826
+
+[[raw_tags]]
+file_path = "優里 - 弐 [2023] [FLAC]/1.05 - アダムとイブ.flac"
+album = "弐"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "アダムとイブ"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 14
+duration_ms = 238800
+
+[[raw_tags]]
+file_path = "優里 - 弐 [2023] [FLAC]/1.04 - アストロノーツ.flac"
+album = "弐"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "アストロノーツ"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 14
+duration_ms = 198893
+
+[[raw_tags]]
+file_path = "優里 - 弐 [2023] [FLAC]/1.03 - 恋人じゃなくなった日.flac"
+album = "弐"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "恋人じゃなくなった日"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 14
+duration_ms = 226093
+
+[[raw_tags]]
+file_path = "優里 - 弐 [2023] [FLAC]/1.02 - クリスマスイブ.flac"
+album = "弐"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "クリスマスイブ"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 14
+duration_ms = 234746
+
+[[raw_tags]]
+file_path = "優里 - 弐 [2023] [FLAC]/1.01 - ビリミリオン.flac"
+album = "弐"
+album_artists = ["優里"]
+artists = ["優里"]
+title = "ビリミリオン"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 14
+duration_ms = 228760
+
+[expect.release]
+ids = { release_group_id = "984d1b12-c334-454e-b122-bef27108afe8", release_id = ["565a1d73-094f-434a-b623-fa296e5f8834", "a01d5958-3ec5-4e9b-ae2e-52400f886e0a"] }
+fields = { release_title = "弐", release_date = "2023-03-29" }
+
+[expect.artists."4337f1a5-9e02-4b46-98c3-e3c28683a9b5"]
+fields = { artist_name = "優里", sort_name = "Yuuri" }
+
+[expect.tracks."0457cc3e-2e33-4012-b8e1-1878996ad6fe"]
+fields = { disc = 1, track = 10, track_title = "うぉ" }
+
+[expect.tracks."1a738d47-9a5e-4f4a-9ef6-fa6da812047e"]
+fields = { disc = 1, track = 7, track_title = "ライラ" }
+
+[expect.tracks."2a10d68e-b27c-4bb0-98e4-143b5140ffbc"]
+fields = { disc = 1, track = 12, track_title = "タイムマシン" }
+
+[expect.tracks."2c41837c-be11-40ae-a25e-1b06546ac3f4"]
+fields = { disc = 1, track = 1, track_title = "ビリミリオン" }
+
+[expect.tracks."37147e7a-bdc9-4a01-bec4-16018938bbe2"]
+fields = { disc = 1, track = 13, track_title = "告白直前酸欠状態" }
+
+[expect.tracks."3b18c423-9636-4178-8f58-659a026d7ce0"]
+fields = { disc = 1, track = 9, track_title = "おにごっこ" }
+
+[expect.tracks."3e6d52b3-93c3-4756-aadb-0415f84ef79b"]
+fields = { disc = 1, track = 5, track_title = "アダムとイブ" }
+
+[expect.tracks."48bfa2c9-ec66-449f-84f1-328c65b0ac23"]
+fields = { disc = 1, track = 14, track_title = "メリーゴーランド" }
+
+[expect.tracks."6269dccc-e86a-4a61-93cd-5adcb7ed3815"]
+fields = { disc = 1, track = 3, track_title = "恋人じゃなくなった日" }
+
+[expect.tracks."845c3926-be5e-4c5e-b4bd-c3ffbc25237a"]
+fields = { disc = 1, track = 2, track_title = "クリスマスイブ" }
+
+[expect.tracks."91643057-30bb-4578-842f-f9bc6c0ab031"]
+fields = { disc = 1, track = 8, track_title = "ガリレオは恋をする" }
+
+[expect.tracks."969908fb-b26b-4cb0-b44c-e27fd2508182"]
+fields = { disc = 1, track = 4, track_title = "アストロノーツ" }
+
+[expect.tracks."9796fdfc-7b9f-4593-92a5-d155eff37909"]
+fields = { disc = 1, track = 11, track_title = "フロントライン feat BAK&YO_CO" }
+
+[expect.tracks."d5eae929-c83b-40b0-869d-d2f21e88b928"]
+fields = { disc = 1, track = 6, track_title = "ヒーローの居ない街" }
