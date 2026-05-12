@@ -276,24 +276,6 @@ pub(crate) fn list_details_for_releases(
     Ok(details)
 }
 
-pub(crate) fn list_details_for_scope(
-    db: &DbAny,
-    scope: impl Into<QueryId>,
-    includes: ReleaseIncludes,
-) -> anyhow::Result<Vec<ReleaseDetails>> {
-    let releases = db::releases::get(db, scope)?;
-    let mut details = Vec::with_capacity(releases.len());
-    for release in releases {
-        let release_id = release
-            .db_id
-            .clone()
-            .map(DbId::from)
-            .ok_or_else(|| anyhow::anyhow!("release missing db id"))?;
-        details.push(hydrate_release(db, release_id, release, includes)?);
-    }
-    Ok(details)
-}
-
 pub(crate) fn get_details(
     db: &DbAny,
     release_db_id: DbId,

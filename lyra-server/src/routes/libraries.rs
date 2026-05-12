@@ -50,17 +50,9 @@ use crate::{
         },
         get_library_sync_status as get_library_sync_status_snapshot,
         refresh_library_metadata,
-        releases,
         start_library_sync,
     },
 };
-
-use super::releases::{
-    ReleaseQuery,
-    detail_to_release_response,
-    parse_release_includes,
-};
-use super::responses::ReleaseResponse;
 
 #[derive(Deserialize, JsonSchema)]
 struct LibraryRequest {
@@ -170,26 +162,6 @@ struct LibraryRefreshQuery {
 
 fn library_not_found(id: &str) -> AppError {
     AppError::not_found(format!("library not found: {id}"))
-}
-
-fn resolve_accessible_library_db_id(
-    db: &impl db::DbAccess,
-    principal: &crate::services::auth::Principal,
-    id: &str,
-) -> Result<agdb::DbId, AppError> {
-    if principal.permissions.contains(&Permission::Admin) {
-        if !principal.accessible_library_ids.contains(id) {
-            return Err(library_not_found(id));
-        }
-        let Some(library_db_id) = db::lookup::find_node_id_by_id(db, id)? else {
-            return Err(library_not_found(id));
-        };
-        db::libraries::get_by_id(db, library_db_id)?.ok_or_else(|| library_not_found(id))?;
-        return Ok(library_db_id);
-    }
-
-    db::libraries::find_accessible_node_id_by_id(db, principal, id)?
-        .ok_or_else(|| library_not_found(id))
 }
 
 fn public_user_role(db: &impl db::DbAccess, user_db_id: agdb::DbId) -> Option<String> {
@@ -436,41 +408,6 @@ fn list_libraries_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
-async fn get_library_releases(
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Query(query): Query<ReleaseQuery>,
-) -> Result<Json<Vec<ReleaseResponse>>, AppError> {
-    let principal = require_authenticated(&headers).await?;
-    let include_entry_paths =
-        db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
-
-    let db = &*STATE.db.read().await;
-    let library_db_id = resolve_accessible_library_db_id(db, &principal, &id)?;
-
-    let (includes, include_covers, include_genres) = parse_release_includes(query.inc)?;
-    let details = releases::list_details_for_scope(db, library_db_id, includes)?;
-
-    let mut response = Vec::with_capacity(details.len());
-    for detail in details {
-        response.push(detail_to_release_response(
-            db,
-            detail,
-            include_covers,
-            include_genres,
-            include_entry_paths,
-        )?);
-    }
-
-    Ok(Json(response))
-}
-
-fn get_library_releases_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("List library releases").description(
-        "Returns releases belonging to a library. Use `inc` to include artists, tracks, entries, and/or covers. When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
-    )
-}
-
 fn refresh_library_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Refresh library metadata")
         .description(
@@ -672,10 +609,6 @@ pub fn library_routes() -> ApiRouter {
                 .post_with(create_library, create_library_docs),
         )
         .api_route("/{id}", patch_with(update_library, update_library_docs))
-        .api_route(
-            "/{id}/releases",
-            get_with(get_library_releases, get_library_releases_docs),
-        )
         .api_route(
             "/{id}/refresh",
             post_with(refresh_library, refresh_library_docs),

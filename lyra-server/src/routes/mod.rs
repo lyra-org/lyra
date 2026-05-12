@@ -321,6 +321,44 @@ pub(crate) fn require_entity_accessible(
     }
 }
 
+pub(crate) fn resolve_accessible_library_db_id(
+    db: &impl db::DbAccess,
+    principal: &Principal,
+    library_id: &str,
+) -> Result<agdb::DbId, AppError> {
+    if principal.permissions.contains(&db::Permission::Admin) {
+        if !principal.accessible_library_ids.contains(library_id) {
+            return Err(AppError::not_found(format!(
+                "library not found: {library_id}"
+            )));
+        }
+        let library_db_id = db::lookup::find_node_id_by_id(db, library_id)?
+            .ok_or_else(|| AppError::not_found(format!("library not found: {library_id}")))?;
+        db::libraries::get_by_id(db, library_db_id)?
+            .ok_or_else(|| AppError::not_found(format!("library not found: {library_id}")))?;
+        return Ok(library_db_id);
+    }
+
+    db::libraries::find_accessible_node_id_by_id(db, principal, library_id)?
+        .ok_or_else(|| AppError::not_found(format!("library not found: {library_id}")))
+}
+
+pub(crate) fn resolve_optional_library_filter(
+    db: &impl db::DbAccess,
+    principal: &Principal,
+    library_id: Option<&str>,
+) -> Result<Option<agdb::DbId>, AppError> {
+    let Some(library_id) = library_id else {
+        return Ok(None);
+    };
+    let library_id = library_id.trim();
+    if library_id.is_empty() {
+        return Err(AppError::bad_request("library_id cannot be empty"));
+    }
+
+    resolve_accessible_library_db_id(db, principal, library_id).map(Some)
+}
+
 pub(crate) fn playlist_accessible_to_principal(
     db: &impl db::DbAccess,
     principal: &Principal,

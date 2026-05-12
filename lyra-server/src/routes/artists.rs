@@ -76,6 +76,8 @@ struct ArtistListQuery {
     inc: Option<Vec<String>>,
     #[schemars(description = "Optional fuzzy text query matched against artist names.")]
     query: Option<String>,
+    #[schemars(description = "Optional public library ID to scope returned artists.")]
+    library_id: Option<String>,
     #[serde(flatten)]
     page: super::PageQuery,
 }
@@ -187,6 +189,7 @@ pub(crate) async fn list_artist_responses(
     principal: &Principal,
     inc: Option<Vec<String>>,
     query: Option<String>,
+    library_id: Option<String>,
     page_options: super::PageOptions,
 ) -> Result<PageResponse<ArtistResponse>, AppError> {
     let db = &*STATE.db.read().await;
@@ -198,27 +201,43 @@ pub(crate) async fn list_artist_responses(
         limit: None,
         search_term,
     };
+    let library_scope =
+        super::resolve_optional_library_filter(db, principal, library_id.as_deref())?;
 
-    let artists = db::artists::get(db, "artists")?;
-    let mut accessible_artists = Vec::with_capacity(artists.len());
-    for artist in artists {
-        let Some(artist_db_id) = artist.db_id.clone().map(agdb::DbId::from) else {
-            continue;
-        };
-        if !super::entity_accessible_to_principal(db, principal, artist_db_id)? {
-            continue;
+    let page = match library_scope {
+        Some(library_db_id) => artist_service::query_credited(
+            db,
+            Some(&db::ResolveId::DbId(library_db_id)),
+            &artist_service::CreditedArtistFilters::default(),
+            &ListOptions {
+                offset: Some(page_options.offset),
+                limit: Some(page_options.limit),
+                ..options
+            },
+        )?,
+        None => {
+            let artists = db::artists::get(db, "artists")?;
+            let mut accessible_artists = Vec::with_capacity(artists.len());
+            for artist in artists {
+                let Some(artist_db_id) = artist.db_id.clone().map(agdb::DbId::from) else {
+                    continue;
+                };
+                if !super::entity_accessible_to_principal(db, principal, artist_db_id)? {
+                    continue;
+                }
+                accessible_artists.push(artist);
+            }
+
+            db::artists::query_items(
+                accessible_artists,
+                &ListOptions {
+                    offset: Some(page_options.offset),
+                    limit: Some(page_options.limit),
+                    ..options
+                },
+            )
         }
-        accessible_artists.push(artist);
-    }
-
-    let page = db::artists::query_items(
-        accessible_artists,
-        &ListOptions {
-            offset: Some(page_options.offset),
-            limit: Some(page_options.limit),
-            ..options
-        },
-    );
+    };
     let next_cursor = super::next_page_cursor(page.offset, page.entries.len(), page.total_count);
     let details = artist_service::list_details_for_artists(db, includes.service, page.entries)?;
 
@@ -251,11 +270,16 @@ async fn get_artists(
     headers: HeaderMap,
     Query(list_query): Query<ArtistListQuery>,
 ) -> Result<Json<PageResponse<ArtistResponse>>, AppError> {
-    let ArtistListQuery { inc, query, page } = list_query;
+    let ArtistListQuery {
+        inc,
+        query,
+        library_id,
+        page,
+    } = list_query;
     let page = page.resolve()?;
     let principal = require_authenticated(&headers).await?;
     Ok(Json(
-        list_artist_responses(&principal, inc, query, page).await?,
+        list_artist_responses(&principal, inc, query, library_id, page).await?,
     ))
 }
 
@@ -366,7 +390,7 @@ async fn update_artist(
 
 fn list_artists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List artists").description(
-        "Returns artists as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `limit`, `cursor`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against artist names. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, cover metadata includes a public image URL. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
+        "Returns artists as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `limit`, `cursor`. `library_id` scopes results to artists credited by releases or tracks belonging to that public library ID. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against artist names. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, cover metadata includes a public image URL. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
     )
 }
 
@@ -404,7 +428,14 @@ pub fn artist_routes() -> ApiRouter {
 mod tests {
     use super::*;
     use crate::{
-        db::test_db::insert_artist,
+        db::test_db::{
+            connect,
+            connect_artist,
+            insert_artist,
+            insert_library,
+            insert_release,
+            insert_track,
+        },
         services::auth::sessions,
         testing::{
             LibraryFixtureConfig,
@@ -412,6 +443,7 @@ mod tests {
             runtime_test_lock,
         },
     };
+    use agdb::DbId;
     use axum::{
         Json,
         extract::Path,
@@ -421,6 +453,7 @@ mod tests {
         },
     };
     use std::{
+        collections::HashSet,
         path::PathBuf,
         time::{
             SystemTime,
@@ -472,6 +505,17 @@ mod tests {
         Ok(headers)
     }
 
+    fn admin_principal(accessible_library_ids: HashSet<String>) -> Principal {
+        Principal {
+            user_db_id: DbId(1),
+            user_public_id: "admin".to_string(),
+            username: "admin".to_string(),
+            permissions: vec![db::Permission::Admin],
+            role_name: Some("admin".to_string()),
+            accessible_library_ids,
+        }
+    }
+
     #[test]
     fn parse_inc_accepts_covers() {
         let parsed = match parse_inc(Some(vec!["releases,covers".to_string()])) {
@@ -483,6 +527,72 @@ mod tests {
         assert!(!parsed.service.tracks);
         assert!(!parsed.service.relations);
         assert!(parsed.covers);
+    }
+
+    #[tokio::test]
+    async fn list_artist_responses_scopes_by_library_id() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let _test_dir = initialize_test_runtime().await?;
+
+        let (visible_library_id, hidden_library_id) = {
+            let mut db = STATE.db.write().await;
+            let visible_library =
+                insert_library(&mut db, "Visible Artists", "/tmp/lyra-visible-artists")?;
+            let hidden_library =
+                insert_library(&mut db, "Hidden Artists", "/tmp/lyra-hidden-artists")?;
+            let visible_release = insert_release(&mut db, "Visible Artist Release")?;
+            let hidden_release = insert_release(&mut db, "Hidden Artist Release")?;
+            let visible_track = insert_track(&mut db, "Visible Artist Track")?;
+            let hidden_track = insert_track(&mut db, "Hidden Artist Track")?;
+            let visible_release_artist = insert_artist(&mut db, "Visible Release Artist")?;
+            let visible_track_artist = insert_artist(&mut db, "Visible Track Artist")?;
+            let hidden_artist = insert_artist(&mut db, "Hidden Artist")?;
+
+            connect(&mut db, visible_library, visible_release)?;
+            connect(&mut db, visible_release, visible_track)?;
+            connect_artist(&mut db, visible_release, visible_release_artist)?;
+            connect_artist(&mut db, visible_track, visible_track_artist)?;
+            connect(&mut db, hidden_library, hidden_release)?;
+            connect(&mut db, hidden_release, hidden_track)?;
+            connect_artist(&mut db, hidden_release, hidden_artist)?;
+
+            let visible_library_id = db::libraries::get_by_id(&db, visible_library)?
+                .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
+                .id;
+            let hidden_library_id = db::libraries::get_by_id(&db, hidden_library)?
+                .ok_or_else(|| anyhow::anyhow!("hidden library missing"))?
+                .id;
+            (visible_library_id, hidden_library_id)
+        };
+        let principal = admin_principal(HashSet::from([
+            visible_library_id.clone(),
+            hidden_library_id,
+        ]));
+
+        let page = list_artist_responses(
+            &principal,
+            None,
+            None,
+            Some(visible_library_id),
+            super::super::PageOptions {
+                limit: 100,
+                offset: 0,
+            },
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        let mut names: Vec<String> = page.items.into_iter().map(|artist| artist.name).collect();
+        names.sort();
+
+        assert_eq!(
+            names,
+            vec![
+                "Visible Release Artist".to_string(),
+                "Visible Track Artist".to_string()
+            ]
+        );
+        assert!(page.next_cursor.is_none());
+        Ok(())
     }
 
     #[tokio::test]

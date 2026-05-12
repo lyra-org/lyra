@@ -77,6 +77,8 @@ struct TrackListQuery {
     inc: Option<Vec<String>>,
     #[schemars(description = "Optional fuzzy text query matched against track titles.")]
     query: Option<String>,
+    #[schemars(description = "Optional public library ID to scope returned tracks.")]
+    library_id: Option<String>,
     #[serde(flatten)]
     page: super::PageQuery,
 }
@@ -132,6 +134,7 @@ pub(crate) async fn list_track_responses(
     principal: &Principal,
     inc: Option<Vec<String>>,
     query: Option<String>,
+    library_id: Option<String>,
     page_options: super::PageOptions,
 ) -> Result<PageResponse<TrackResponse>, AppError> {
     let db = &*STATE.db.read().await;
@@ -143,18 +146,26 @@ pub(crate) async fn list_track_responses(
         limit: None,
         search_term,
     };
+    let library_scope =
+        super::resolve_optional_library_filter(db, principal, library_id.as_deref())?;
 
-    let tracks = db::tracks::get(db, "tracks")?;
-    let mut accessible_tracks = Vec::with_capacity(tracks.len());
-    for track in tracks {
-        let Some(track_db_id) = track.db_id.clone().map(agdb::DbId::from) else {
-            continue;
-        };
-        if !super::entity_accessible_to_principal(db, principal, track_db_id)? {
-            continue;
+    let accessible_tracks = match library_scope {
+        Some(library_db_id) => db::tracks::get_by_library(db, library_db_id)?,
+        None => {
+            let tracks = db::tracks::get(db, "tracks")?;
+            let mut accessible_tracks = Vec::with_capacity(tracks.len());
+            for track in tracks {
+                let Some(track_db_id) = track.db_id.clone().map(agdb::DbId::from) else {
+                    continue;
+                };
+                if !super::entity_accessible_to_principal(db, principal, track_db_id)? {
+                    continue;
+                }
+                accessible_tracks.push(track);
+            }
+            accessible_tracks
         }
-        accessible_tracks.push(track);
-    }
+    };
 
     let page = db::tracks::query_items(
         accessible_tracks,
@@ -196,11 +207,16 @@ async fn get_tracks(
     headers: HeaderMap,
     Query(list_query): Query<TrackListQuery>,
 ) -> Result<Json<PageResponse<TrackResponse>>, AppError> {
-    let TrackListQuery { inc, query, page } = list_query;
+    let TrackListQuery {
+        inc,
+        query,
+        library_id,
+        page,
+    } = list_query;
     let page = page.resolve()?;
     let principal = require_authenticated(&headers).await?;
     Ok(Json(
-        list_track_responses(&principal, inc, query, page).await?,
+        list_track_responses(&principal, inc, query, library_id, page).await?,
     ))
 }
 
@@ -215,7 +231,7 @@ async fn get_track(
 
 fn list_tracks_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tracks").description(
-        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `limit`, `cursor`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles. Use `inc` to include releases and/or artists. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
+        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `limit`, `cursor`. `library_id` scopes results to tracks belonging to that public library ID. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles. Use `inc` to include releases and/or artists. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 
@@ -531,4 +547,99 @@ pub fn track_routes() -> ApiRouter {
             "/{id}/lyrics/refresh",
             post_with(refresh_track_lyrics, refresh_track_lyrics_docs),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use agdb::DbId;
+
+    use super::*;
+    use crate::{
+        db::test_db::{
+            connect,
+            insert_library,
+            insert_release,
+            insert_track,
+        },
+        services::auth::Principal,
+        testing::{
+            LibraryFixtureConfig,
+            initialize_runtime,
+            runtime_test_lock,
+        },
+    };
+
+    async fn setup_route_test() -> anyhow::Result<()> {
+        initialize_runtime(&LibraryFixtureConfig {
+            directory: std::path::PathBuf::from("."),
+            language: None,
+            country: None,
+        })
+        .await
+    }
+
+    fn admin_principal(accessible_library_ids: HashSet<String>) -> Principal {
+        Principal {
+            user_db_id: DbId(1),
+            user_public_id: "admin".to_string(),
+            username: "admin".to_string(),
+            permissions: vec![db::Permission::Admin],
+            role_name: Some("admin".to_string()),
+            accessible_library_ids,
+        }
+    }
+
+    #[tokio::test]
+    async fn list_track_responses_scopes_by_library_id() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let (visible_library_id, hidden_library_id) = {
+            let mut db = STATE.db.write().await;
+            let visible_library =
+                insert_library(&mut db, "Visible Tracks", "/tmp/lyra-visible-tracks")?;
+            let hidden_library =
+                insert_library(&mut db, "Hidden Tracks", "/tmp/lyra-hidden-tracks")?;
+            let visible_release = insert_release(&mut db, "Visible Track Release")?;
+            let hidden_release = insert_release(&mut db, "Hidden Track Release")?;
+            let visible_track = insert_track(&mut db, "Visible Track")?;
+            let hidden_track = insert_track(&mut db, "Hidden Track")?;
+            connect(&mut db, visible_library, visible_release)?;
+            connect(&mut db, visible_release, visible_track)?;
+            connect(&mut db, hidden_library, hidden_release)?;
+            connect(&mut db, hidden_release, hidden_track)?;
+
+            let visible_library_id = db::libraries::get_by_id(&db, visible_library)?
+                .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
+                .id;
+            let hidden_library_id = db::libraries::get_by_id(&db, hidden_library)?
+                .ok_or_else(|| anyhow::anyhow!("hidden library missing"))?
+                .id;
+            (visible_library_id, hidden_library_id)
+        };
+        let principal = admin_principal(HashSet::from([
+            visible_library_id.clone(),
+            hidden_library_id,
+        ]));
+
+        let page = list_track_responses(
+            &principal,
+            None,
+            None,
+            Some(visible_library_id),
+            super::super::PageOptions {
+                limit: 100,
+                offset: 0,
+            },
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].title, "Visible Track");
+        assert!(page.next_cursor.is_none());
+        Ok(())
+    }
 }
