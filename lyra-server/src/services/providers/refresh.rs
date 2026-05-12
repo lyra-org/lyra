@@ -885,6 +885,11 @@ mod tests {
         Ok(())
     }
 
+    async fn seed_test_rate_limit() {
+        harmony_http::test_seed_rate_limit("provider-refresh.example", Arc::<str>::from("test"))
+            .await;
+    }
+
     fn make_test_png(color: [u8; 4]) -> anyhow::Result<Vec<u8>> {
         let image = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(1, 1, Rgba::<u8>(color)));
         let mut bytes = Cursor::new(Vec::new());
@@ -993,6 +998,7 @@ mod tests {
     {
         let _guard = runtime_test_lock().await;
         let (_test_dir, music_dir) = initialize_runtime_with_covers().await?;
+        seed_test_rate_limit().await;
         setup_metadata_module(STATE.lua.get().as_ref())?;
 
         let selected_release_png = make_test_png([0, 255, 0, 255])?;
