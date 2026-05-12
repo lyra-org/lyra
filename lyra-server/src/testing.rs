@@ -109,6 +109,7 @@ pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Resul
         port: 0,
         published_url: None,
         cors: config::CorsConfig::default(),
+        rate_limit: config::RateLimitConfig::default(),
         library: Some(config::LibraryConfig {
             path: Some(library.directory.clone()),
             name: None,
