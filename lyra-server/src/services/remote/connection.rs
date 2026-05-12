@@ -41,6 +41,7 @@ use super::registry::{
     ConnectionId,
 };
 
+use crate::STATE;
 use crate::services::auth::{
     self,
     AuthError,
@@ -239,6 +240,50 @@ async fn check_auth(token: &Option<String>, expected_user_public_id: &str) -> Au
     }
 }
 
+async fn pause_playing_scope_for_disconnected_connection(handle: &registry::ConnectionHandle) {
+    let now_ms = match playbacks::now_ms() {
+        Ok(now_ms) => now_ms,
+        Err(err) => {
+            tracing::warn!(
+                connection_id = handle.connection_id,
+                user_db_id = handle.user_db_id.0,
+                session_key = %handle.session_key,
+                error = %err,
+                "failed to timestamp disconnected playback scope"
+            );
+            return;
+        }
+    };
+
+    let update = {
+        let mut db = STATE.db.write().await;
+        playbacks::pause_playing_scopes_on_disconnect(
+            &mut db,
+            handle.user_db_id,
+            &handle.session_key,
+            now_ms,
+        )
+    };
+
+    match update {
+        Ok((paused_playbacks, evicted_playbacks)) => {
+            playbacks::dispatch_evicted_updates(evicted_playbacks);
+            for playback in paused_playbacks {
+                playbacks::dispatch_playback_update(&playback, "progress".to_string());
+            }
+        }
+        Err(err) => {
+            tracing::warn!(
+                connection_id = handle.connection_id,
+                user_db_id = handle.user_db_id.0,
+                session_key = %handle.session_key,
+                error = %err,
+                "failed to pause disconnected playback scope"
+            );
+        }
+    }
+}
+
 pub(crate) async fn run(
     mut socket: WebSocket,
     connection_id: ConnectionId,
@@ -404,6 +449,7 @@ pub(crate) async fn run(
             session_key = %handle.session_key,
             "websocket disconnected"
         );
+        pause_playing_scope_for_disconnected_connection(handle).await;
     }
 }
 

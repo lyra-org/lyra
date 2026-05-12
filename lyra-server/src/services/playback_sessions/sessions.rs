@@ -52,6 +52,30 @@ fn playback_session_scope_alias(plugin_id: &str, user_db_id: DbId, session_key: 
     )
 }
 
+fn take_length_prefixed_segment(input: &mut &str) -> Option<String> {
+    let colon = input.find(':')?;
+    let len = input[..colon].parse::<usize>().ok()?;
+    let segment_start = colon + 1;
+    let segment_end = segment_start.checked_add(len)?;
+    let segment = input.get(segment_start..segment_end)?.to_string();
+    *input = input.get(segment_end..)?;
+    Some(segment)
+}
+
+fn parse_playback_session_scope_alias(alias: &str) -> Option<(String, DbId, String)> {
+    let mut rest = alias.strip_prefix("playback_session_scope|")?;
+    let plugin_id = take_length_prefixed_segment(&mut rest)?;
+    rest = rest.strip_prefix('|')?;
+    let user_id_text = take_length_prefixed_segment(&mut rest)?;
+    rest = rest.strip_prefix('|')?;
+    let session_key = take_length_prefixed_segment(&mut rest)?;
+    if !rest.is_empty() {
+        return None;
+    }
+    let user_db_id = DbId(user_id_text.parse::<i64>().ok()?);
+    Some((plugin_id, user_db_id, session_key))
+}
+
 pub(crate) struct PlaybackScopeKey<'a> {
     pub(crate) plugin_id: &'a str,
     pub(crate) user_db_id: DbId,
@@ -70,6 +94,24 @@ pub(crate) fn get_playback_session(scope: &PlaybackScopeKey<'_>) -> Option<Playb
         .read()
         .expect("playback session scopes RwLock poisoned");
     scopes.get(&alias).cloned()
+}
+
+pub(crate) fn get_playback_sessions_for_user_session(
+    user_db_id: DbId,
+    session_key: &str,
+) -> Vec<(String, PlaybackSessionScope)> {
+    let scopes = PLAYBACK_SESSION_SCOPES
+        .read()
+        .expect("playback session scopes RwLock poisoned");
+    scopes
+        .iter()
+        .filter_map(|(alias, scope)| {
+            let (plugin_id, scope_user_db_id, scope_session_key) =
+                parse_playback_session_scope_alias(alias)?;
+            (scope_user_db_id == user_db_id && scope_session_key == session_key)
+                .then(|| (plugin_id, scope.clone()))
+        })
+        .collect()
 }
 
 pub(crate) fn upsert_playback_session(
