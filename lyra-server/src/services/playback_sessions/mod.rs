@@ -723,6 +723,7 @@ mod tests {
         assert_eq!(current.track_db_id, track_b_id);
         assert_eq!(previous.playback_session_id, started_a.playback_session_id);
         assert_eq!(previous.track_db_id, track_a_id);
+        assert_eq!(session.previous_demoted_at_ms, Some(2_000));
         assert_eq!(
             session.previous_expires_at_ms,
             Some(2_000 + PREVIOUS_PLAYBACK_GRACE_MS)
@@ -1135,6 +1136,93 @@ mod tests {
             .expect("persisted native playback");
         assert_eq!(persisted.position_ms, 22_000);
         assert_eq!(persisted.state, PlaybackState::Paused);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn disconnect_pauses_previous_scope_at_demotion_position() -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user_db_id = insert_user(&mut db, "alice")?;
+        let track_a_id = insert_track(&mut db, "Track A", 200_000)?;
+        let track_b_id = insert_track(&mut db, "Track B", 200_000)?;
+
+        let started_a = report_playback_session(
+            &mut db,
+            SessionPlaybackReportRequest {
+                plugin_id: "jellyfin",
+                user_db_id,
+                session_key: "device:1",
+                track_db_id: track_a_id,
+                mutation: PlaybackMutation {
+                    position_ms: Some(10_000),
+                    duration_ms: Some(200_000),
+                    state: Some(PlaybackState::Playing),
+                },
+                now_ms: 1_000,
+                active_event: ActiveEvent::Started,
+                stale_ttl_ms: ACTIVE_SESSION_TTL_MS,
+            },
+        )?
+        .expect("track A should start");
+        let started_b = report_playback_session(
+            &mut db,
+            SessionPlaybackReportRequest {
+                plugin_id: "jellyfin",
+                user_db_id,
+                session_key: "device:1",
+                track_db_id: track_b_id,
+                mutation: PlaybackMutation {
+                    position_ms: Some(20_000),
+                    duration_ms: Some(200_000),
+                    state: Some(PlaybackState::Playing),
+                },
+                now_ms: 2_000,
+                active_event: ActiveEvent::Started,
+                stale_ttl_ms: ACTIVE_SESSION_TTL_MS,
+            },
+        )?
+        .expect("track B should start");
+
+        let (paused_playbacks, evicted_playbacks) =
+            pause_playing_scopes_on_disconnect(&mut db, user_db_id, "device:1", 5_000)?;
+
+        assert_eq!(paused_playbacks.len(), 2);
+        assert!(evicted_playbacks.is_empty());
+
+        let paused_a = paused_playbacks
+            .iter()
+            .find(|playback| playback.playback_session_id == started_a.playback_session_id)
+            .expect("previous playback paused");
+        assert_eq!(paused_a.playback.position_ms, 11_000);
+        assert_eq!(paused_a.playback.state, PlaybackState::Paused);
+        assert_eq!(paused_a.playback.activity_ms, Some(1_000));
+        assert_eq!(paused_a.playback.updated_at_ms, 2_000);
+
+        let paused_b = paused_playbacks
+            .iter()
+            .find(|playback| playback.playback_session_id == started_b.playback_session_id)
+            .expect("current playback paused");
+        assert_eq!(paused_b.playback.position_ms, 23_000);
+        assert_eq!(paused_b.playback.state, PlaybackState::Paused);
+        assert_eq!(paused_b.playback.activity_ms, Some(3_000));
+        assert_eq!(paused_b.playback.updated_at_ms, 5_000);
+
+        let scope = PlaybackScopeKey {
+            plugin_id: "jellyfin",
+            user_db_id,
+            session_key: "device:1",
+        };
+        assert!(get_playback_session(&scope).is_none());
+
+        let persisted_a = db::playback_sessions::get_by_id(&db, started_a.playback_session_id)?
+            .expect("persisted previous playback");
+        assert_eq!(persisted_a.position_ms, 11_000);
+        assert_eq!(persisted_a.state, PlaybackState::Paused);
+
+        let persisted_b = db::playback_sessions::get_by_id(&db, started_b.playback_session_id)?
+            .expect("persisted current playback");
+        assert_eq!(persisted_b.position_ms, 23_000);
+        assert_eq!(persisted_b.state, PlaybackState::Paused);
         Ok(())
     }
 

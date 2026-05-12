@@ -29,51 +29,12 @@ pub(crate) struct PlaybackSessionScope {
     pub(crate) current_playback_session_public_id: Option<String>,
     pub(crate) previous_playback_session_id: Option<DbId>,
     pub(crate) previous_playback_session_public_id: Option<String>,
+    pub(crate) previous_demoted_at_ms: Option<u64>,
     pub(crate) previous_expires_at_ms: Option<u64>,
     pub(crate) updated_at_ms: u64,
     /// Set on command dispatch, cleared on any scope upsert (including
     /// non-state-changing reports). Scope is degraded if this exceeds the timeout.
     pub(crate) command_dispatched_at_ms: Option<u64>,
-}
-
-static PLAYBACK_SESSION_SCOPES: LazyLock<Arc<RwLock<HashMap<String, PlaybackSessionScope>>>> =
-    LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
-
-fn playback_session_scope_alias(plugin_id: &str, user_db_id: DbId, session_key: &str) -> String {
-    let user_id_text = user_db_id.0.to_string();
-    format!(
-        "playback_session_scope|{}:{}|{}:{}|{}:{}",
-        plugin_id.len(),
-        plugin_id,
-        user_id_text.len(),
-        user_id_text,
-        session_key.len(),
-        session_key
-    )
-}
-
-fn take_length_prefixed_segment(input: &mut &str) -> Option<String> {
-    let colon = input.find(':')?;
-    let len = input[..colon].parse::<usize>().ok()?;
-    let segment_start = colon + 1;
-    let segment_end = segment_start.checked_add(len)?;
-    let segment = input.get(segment_start..segment_end)?.to_string();
-    *input = input.get(segment_end..)?;
-    Some(segment)
-}
-
-fn parse_playback_session_scope_alias(alias: &str) -> Option<(String, DbId, String)> {
-    let mut rest = alias.strip_prefix("playback_session_scope|")?;
-    let plugin_id = take_length_prefixed_segment(&mut rest)?;
-    rest = rest.strip_prefix('|')?;
-    let user_id_text = take_length_prefixed_segment(&mut rest)?;
-    rest = rest.strip_prefix('|')?;
-    let session_key = take_length_prefixed_segment(&mut rest)?;
-    if !rest.is_empty() {
-        return None;
-    }
-    let user_db_id = DbId(user_id_text.parse::<i64>().ok()?);
-    Some((plugin_id, user_db_id, session_key))
 }
 
 pub(crate) struct PlaybackScopeKey<'a> {
@@ -83,33 +44,57 @@ pub(crate) struct PlaybackScopeKey<'a> {
 }
 
 impl PlaybackScopeKey<'_> {
-    fn alias(&self) -> String {
-        playback_session_scope_alias(self.plugin_id, self.user_db_id, self.session_key)
+    fn owned(&self) -> OwnedPlaybackScopeKey {
+        // Lookups allocate; scope counts are bounded by active clients and plugins.
+        OwnedPlaybackScopeKey {
+            plugin_id: self.plugin_id.to_string(),
+            user_db_id: self.user_db_id,
+            session_key: self.session_key.to_string(),
+        }
     }
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct OwnedPlaybackScopeKey {
+    pub(crate) plugin_id: String,
+    pub(crate) user_db_id: DbId,
+    pub(crate) session_key: String,
+}
+
+impl OwnedPlaybackScopeKey {
+    pub(crate) fn as_borrowed(&self) -> PlaybackScopeKey<'_> {
+        PlaybackScopeKey {
+            plugin_id: &self.plugin_id,
+            user_db_id: self.user_db_id,
+            session_key: &self.session_key,
+        }
+    }
+}
+
+static PLAYBACK_SESSION_SCOPES: LazyLock<
+    Arc<RwLock<HashMap<OwnedPlaybackScopeKey, PlaybackSessionScope>>>,
+> = LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+
 pub(crate) fn get_playback_session(scope: &PlaybackScopeKey<'_>) -> Option<PlaybackSessionScope> {
-    let alias = scope.alias();
+    let key = scope.owned();
     let scopes = PLAYBACK_SESSION_SCOPES
         .read()
         .expect("playback session scopes RwLock poisoned");
-    scopes.get(&alias).cloned()
+    scopes.get(&key).cloned()
 }
 
 pub(crate) fn get_playback_sessions_for_user_session(
     user_db_id: DbId,
     session_key: &str,
-) -> Vec<(String, PlaybackSessionScope)> {
+) -> Vec<(OwnedPlaybackScopeKey, PlaybackSessionScope)> {
     let scopes = PLAYBACK_SESSION_SCOPES
         .read()
         .expect("playback session scopes RwLock poisoned");
     scopes
         .iter()
-        .filter_map(|(alias, scope)| {
-            let (plugin_id, scope_user_db_id, scope_session_key) =
-                parse_playback_session_scope_alias(alias)?;
-            (scope_user_db_id == user_db_id && scope_session_key == session_key)
-                .then(|| (plugin_id, scope.clone()))
+        .filter_map(|(key, scope)| {
+            (key.user_db_id == user_db_id && key.session_key == session_key)
+                .then(|| (key.clone(), scope.clone()))
         })
         .collect()
 }
@@ -118,12 +103,12 @@ pub(crate) fn upsert_playback_session(
     scope: &PlaybackScopeKey<'_>,
     now_ms: u64,
 ) -> PlaybackSessionScope {
-    let alias = scope.alias();
+    let key = scope.owned();
     let mut scopes = PLAYBACK_SESSION_SCOPES
         .write()
         .expect("playback session scopes RwLock poisoned");
     let entry = scopes
-        .entry(alias)
+        .entry(key)
         .and_modify(|s| {
             s.updated_at_ms = now_ms;
             s.command_dispatched_at_ms = None;
@@ -133,6 +118,7 @@ pub(crate) fn upsert_playback_session(
             current_playback_session_public_id: None,
             previous_playback_session_id: None,
             previous_playback_session_public_id: None,
+            previous_demoted_at_ms: None,
             previous_expires_at_ms: None,
             updated_at_ms: now_ms,
             command_dispatched_at_ms: None,
@@ -144,11 +130,11 @@ pub(crate) fn update_playback_session(
     scope: &PlaybackScopeKey<'_>,
     session: &PlaybackSessionScope,
 ) {
-    let alias = scope.alias();
+    let key = scope.owned();
     let mut scopes = PLAYBACK_SESSION_SCOPES
         .write()
         .expect("playback session scopes RwLock poisoned");
-    if let Some(existing) = scopes.get_mut(&alias) {
+    if let Some(existing) = scopes.get_mut(&key) {
         *existing = session.clone();
     }
 }
@@ -212,11 +198,11 @@ pub(crate) fn resolve_previous_playback(
 }
 
 pub(crate) fn clear_playback_session_scope(scope: &PlaybackScopeKey<'_>) {
-    let alias = scope.alias();
+    let key = scope.owned();
     let mut scopes = PLAYBACK_SESSION_SCOPES
         .write()
         .expect("playback session scopes RwLock poisoned");
-    scopes.remove(&alias);
+    scopes.remove(&key);
 }
 
 pub(crate) fn clear_session_bindings_for_playback(
@@ -229,7 +215,7 @@ pub(crate) fn clear_session_bindings_for_playback(
     let mut cleared = 0usize;
     let mut to_remove = Vec::new();
 
-    for (alias, scope) in scopes.iter_mut() {
+    for (key, scope) in scopes.iter_mut() {
         let mut binding_changed = false;
 
         if scope.current_playback_session_id == Some(playback_session_id)
@@ -246,6 +232,7 @@ pub(crate) fn clear_session_bindings_for_playback(
         {
             scope.previous_playback_session_id = None;
             scope.previous_playback_session_public_id = None;
+            scope.previous_demoted_at_ms = None;
             scope.previous_expires_at_ms = None;
             binding_changed = true;
         }
@@ -257,12 +244,12 @@ pub(crate) fn clear_session_bindings_for_playback(
         if scope.current_playback_session_id.is_none()
             && scope.previous_playback_session_id.is_none()
         {
-            to_remove.push(alias.clone());
+            to_remove.push(key.clone());
         }
     }
 
-    for alias in to_remove {
-        scopes.remove(&alias);
+    for key in to_remove {
+        scopes.remove(&key);
     }
 
     cleared
@@ -319,22 +306,22 @@ const COMMAND_DEGRADED_TIMEOUT_MS: u64 = 30_000;
 /// No-op if the scope doesn't exist (e.g. command targets a connection
 /// that hasn't reported playback yet).
 pub(crate) fn mark_command_dispatched(scope: &PlaybackScopeKey<'_>, now_ms: u64) {
-    let alias = scope.alias();
+    let key = scope.owned();
     let mut scopes = PLAYBACK_SESSION_SCOPES
         .write()
         .expect("playback session scopes RwLock poisoned");
-    if let Some(session) = scopes.get_mut(&alias) {
+    if let Some(session) = scopes.get_mut(&key) {
         session.command_dispatched_at_ms = Some(now_ms);
     }
 }
 
 pub(crate) fn is_remote_control_degraded(scope: &PlaybackScopeKey<'_>, now_ms: u64) -> bool {
-    let alias = scope.alias();
+    let key = scope.owned();
     let scopes = PLAYBACK_SESSION_SCOPES
         .read()
         .expect("playback session scopes RwLock poisoned");
     scopes
-        .get(&alias)
+        .get(&key)
         .and_then(|s| s.command_dispatched_at_ms)
         .is_some_and(|dispatched_at| {
             now_ms.saturating_sub(dispatched_at) >= COMMAND_DEGRADED_TIMEOUT_MS

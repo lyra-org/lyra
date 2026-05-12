@@ -183,6 +183,7 @@ struct SessionBindingState {
     current_playback_session_public_id: Option<String>,
     previous_playback_session_id: Option<DbId>,
     previous_playback_session_public_id: Option<String>,
+    previous_demoted_at_ms: Option<u64>,
     previous_expires_at_ms: Option<u64>,
 }
 
@@ -194,6 +195,7 @@ fn clear_current_session_playback(state: &mut SessionBindingState) {
 fn clear_previous_session_playback(state: &mut SessionBindingState) {
     state.previous_playback_session_id = None;
     state.previous_playback_session_public_id = None;
+    state.previous_demoted_at_ms = None;
     state.previous_expires_at_ms = None;
 }
 
@@ -214,6 +216,7 @@ fn move_current_to_previous_session_playback(state: &mut SessionBindingState, no
 
     state.previous_playback_session_id = Some(current_playback_session_id);
     state.previous_playback_session_public_id = state.current_playback_session_public_id.clone();
+    state.previous_demoted_at_ms = Some(now_ms);
     state.previous_expires_at_ms = Some(now_ms.saturating_add(PREVIOUS_PLAYBACK_GRACE_MS));
 }
 
@@ -238,6 +241,7 @@ fn persist_playback_session_state(
     updated.current_playback_session_public_id = state.current_playback_session_public_id.clone();
     updated.previous_playback_session_id = state.previous_playback_session_id;
     updated.previous_playback_session_public_id = state.previous_playback_session_public_id.clone();
+    updated.previous_demoted_at_ms = state.previous_demoted_at_ms;
     updated.previous_expires_at_ms = state.previous_expires_at_ms;
     updated.command_dispatched_at_ms = None;
     sessions::update_playback_session(scope, &updated);
@@ -631,13 +635,14 @@ fn pause_bound_playback_on_disconnect(
     db: &mut DbAny,
     user_db_id: DbId,
     bound: sessions::BoundPlayback,
-    now_ms: u64,
+    pause_at_ms: u64,
 ) -> ServiceResult<Option<PlaybackRecord>> {
     if bound.playback.state != PlaybackState::Playing {
         return Ok(None);
     }
 
-    let position_ms = effective_playback_position_ms(&bound.playback, now_ms);
+    let pause_at_ms = pause_at_ms.max(bound.playback.updated_at_ms); // Keep updated_at_ms monotonic.
+    let position_ms = effective_playback_position_ms(&bound.playback, pause_at_ms);
     update_session_bound_playback(
         db,
         user_db_id,
@@ -647,7 +652,7 @@ fn pause_bound_playback_on_disconnect(
             duration_ms: None,
             state: Some(PlaybackState::Paused),
         },
-        now_ms,
+        pause_at_ms,
         ActivityPolicy::AnyState,
     )
     .map(Some)
@@ -662,19 +667,30 @@ pub(crate) fn pause_playing_scopes_on_disconnect(
     let scoped_sessions = get_playback_sessions_for_user_session(user_db_id, session_key);
     let mut playbacks = Vec::new();
 
-    for (plugin_id, session) in scoped_sessions {
-        let scope = PlaybackScopeKey {
-            plugin_id: &plugin_id,
-            user_db_id,
-            session_key,
-        };
+    for (scope_key, session) in scoped_sessions {
+        let scope = scope_key.as_borrowed();
 
-        let bound = map_internal(resolve_current_playback(db, &session))?;
-        if let Some(bound) = bound
+        let current_bound = map_internal(resolve_current_playback(db, &session))?;
+        let current_playback_session_id = current_bound
+            .as_ref()
+            .map(|bound| bound.playback_session_id);
+        if let Some(bound) = current_bound
             && let Some(playback) =
                 pause_bound_playback_on_disconnect(db, user_db_id, bound, now_ms)?
         {
             playbacks.push(playback);
+        }
+
+        let previous_bound = map_internal(resolve_previous_playback(db, &session))?;
+        if let Some(bound) = previous_bound
+            && Some(bound.playback_session_id) != current_playback_session_id
+        {
+            let pause_at_ms = session.previous_demoted_at_ms.unwrap_or(now_ms);
+            if let Some(playback) =
+                pause_bound_playback_on_disconnect(db, user_db_id, bound, pause_at_ms)?
+            {
+                playbacks.push(playback);
+            }
         }
         clear_playback_session_scope(&scope);
     }
@@ -866,6 +882,9 @@ pub(crate) fn report_playback_session(
         previous_playback_session_public_id: previous_bound_playback
             .as_ref()
             .map(|bound| bound.playback.id.clone()),
+        previous_demoted_at_ms: session
+            .as_ref()
+            .and_then(|session| session.previous_demoted_at_ms),
         previous_expires_at_ms: session
             .as_ref()
             .and_then(|session| session.previous_expires_at_ms),
