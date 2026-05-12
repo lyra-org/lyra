@@ -1,0 +1,269 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.20. 水槽の中の脳 (feat. 竹内アンナ).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "水槽の中の脳 (feat. 竹内アンナ)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 20
+track_total = 20
+duration_ms = 215493
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.19. 言えない -Acoustic ver.- (feat. 北澤 ゆうほ).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "言えない -Acoustic ver.- (feat. 北澤 ゆうほ)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 19
+track_total = 20
+duration_ms = 201946
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.18. 戻らない (feat. 八木海莉).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "戻らない (feat. 八木海莉)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 18
+track_total = 20
+duration_ms = 198640
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.17. しくない (feat. 水槽).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "しくない (feat. 水槽)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 17
+track_total = 20
+duration_ms = 214160
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.16. 醒めない (feat. WaMi).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "醒めない (feat. WaMi)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 16
+track_total = 20
+duration_ms = 195453
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.15. 厭わない (feat. 富田美憂 & 市ノ瀬加那).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "厭わない (feat. 富田美憂 & 市ノ瀬加那)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 15
+track_total = 20
+duration_ms = 211320
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.14. クランシック (feat. 北澤 ゆうほ).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "クランシック (feat. 北澤 ゆうほ)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 14
+track_total = 20
+duration_ms = 181466
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.13. Ring Line (feat. nene).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "Ring Line (feat. nene)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 13
+track_total = 20
+duration_ms = 146706
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.12. きゃない (feat. 麻婆豆腐).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "きゃない (feat. 麻婆豆腐)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 12
+track_total = 20
+duration_ms = 184826
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.11. 消えない (feat. 春茶).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "消えない (feat. 春茶)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 11
+track_total = 20
+duration_ms = 202853
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.10. 言えない (feat. asmi).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "言えない (feat. asmi)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 10
+track_total = 20
+duration_ms = 204560
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.09. とけない (feat. EMA).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "とけない (feat. EMA)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 9
+track_total = 20
+duration_ms = 173146
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.08. 想い槍 (feat. Sanghee).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "想い槍 (feat. Sanghee)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 8
+track_total = 20
+duration_ms = 226013
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.07. 会えない (feat. 相沢).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "会えない (feat. 相沢)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 7
+track_total = 20
+duration_ms = 208453
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.06. インスタント・ラヴ (feat. natsumi).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "インスタント・ラヴ (feat. natsumi)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 6
+track_total = 20
+duration_ms = 181320
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.05. 東京愛's (feat. 吉乃).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "東京愛's (feat. 吉乃)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 5
+track_total = 20
+duration_ms = 163786
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.04. られない (feat. Such).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "られない (feat. Such)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 4
+track_total = 20
+duration_ms = 185080
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.03. 酔えない (feat. Anonymouz).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "酔えない (feat. Anonymouz)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 3
+track_total = 20
+duration_ms = 182813
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.02. スペクトル (feat. HACHI).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "スペクトル (feat. HACHI)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 2
+track_total = 20
+duration_ms = 200440
+
+[[raw_tags]]
+file_path = "MIMiNARI - freq. (2025-03-26) [WEB FLAC]/1.01. 眠れない (feat. 楠木ともり).flac"
+album = "freq."
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "眠れない (feat. 楠木ともり)"
+copyright = "℗ 2022(10-11),2023(1,7,9,12,15,17),2024(3-4,14,16,18),2025(2,5-6,8,13,19-20) Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 20
+duration_ms = 225480
+
+[expect.release]
+ids = { release_group_id = "42740426-38e1-4d92-ba50-fbf4a6193319" }
