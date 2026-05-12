@@ -1,0 +1,25 @@
+[package]
+name = "harmony-macros"
+version = "0.0.1"
+description = "Harmony proc macros for Lua userdata glue and Luau doc generation."
+edition = "2024"
+license-file = "../LICENSE"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0", features = ["full"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+darling = "0.23.0"
+harmony-luau = { path = "../harmony-luau" }
+
+[dev-dependencies]
+harmony-core = { path = "../harmony-core" }
+harmony-luau = { path = "../harmony-luau" }
+mlua = { workspace = true, features = ["luau", "anyhow", "send", "serialize", "macros"] }
+serde = { workspace = true, features = ["derive"] }
+tracing = { workspace = true }
+tracing-subscriber = "0.3.20"
+smol = "2.0.2"
