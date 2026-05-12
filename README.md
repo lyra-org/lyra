@@ -82,7 +82,7 @@ We recommend that you set the `"kind"` in `"db"` to `"mmap"` or `"file"` for per
 ```ts
 type Config = {
   port?: number; // u16, default 4746
-  published_url?: string | null; // http/https URL only
+  published_url?: string | null; // public http/https origin only
   cors?: {
     allowed_origins?: string[]; // default []
   };
