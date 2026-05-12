@@ -1,0 +1,36 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2018.01.31] Sincerely (Artist Edition) - 唐沢美帆 [FLAC]/03. ふたりごと.flac"
+album = "Sincerely"
+album_artists = ["TRUE"]
+artists = ["TRUE&茅原実里"]
+title = "ふたりごと"
+track = 3
+duration_ms = 287386
+
+[[raw_tags]]
+file_path = "[2018.01.31] Sincerely (Artist Edition) - 唐沢美帆 [FLAC]/02. 泡影セカイ.flac"
+album = "Sincerely"
+album_artists = ["TRUE"]
+artists = ["TRUE"]
+title = "泡影セカイ"
+track = 2
+duration_ms = 243893
+
+[[raw_tags]]
+file_path = "[2018.01.31] Sincerely (Artist Edition) - 唐沢美帆 [FLAC]/01. Sincerely.flac"
+album = "Sincerely"
+album_artists = ["TRUE"]
+artists = ["TRUE"]
+title = "Sincerely"
+track = 1
+duration_ms = 275080
+
+[expect.release]
+ids = { release_id = ["c34c9428-6b36-436e-85f6-555ec71263b0", "9bdf0317-74fd-462d-a24b-21cdda3c9d66"] }
