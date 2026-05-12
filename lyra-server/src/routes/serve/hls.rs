@@ -76,6 +76,10 @@ const HLS_DURATION_MISMATCH_WARN_THRESHOLD_MS: u64 = 10;
 #[derive(Deserialize, JsonSchema)]
 struct HlsQuery {
     #[schemars(
+        description = "Scoped media token returned by `POST /api/tracks/{id}/playback-url`."
+    )]
+    media_token: Option<String>,
+    #[schemars(
         description = "Optional ordered HLS audio codec preferences (for example: copy,aac or aac,flac)."
     )]
     codec: Option<String>,
@@ -315,6 +319,7 @@ fn build_hls_media_playlist(
 }
 
 async fn get_hls_playlist(
+    headers: HeaderMap,
     Path(track_id): Path<String>,
     Query(query): Query<HlsQuery>,
 ) -> Result<Response<Body>, AppError> {
@@ -323,6 +328,7 @@ async fn get_hls_playlist(
         db::lookup::find_node_id_by_id(&*db, &track_id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {track_id}")))?
     };
+    super::require_hls_playlist_access(&headers, query.media_token.as_deref(), track_db_id).await?;
     serve_hls_playlist_for_track(
         track_db_id,
         query.codec,
@@ -549,7 +555,7 @@ async fn get_hls_segment(
 fn hls_playlist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create HLS playlist")
         .description(
-            "Generates a public HLS VOD media playlist for a finite track and returns M3U8 with segment URLs under `/api/stream/hls/{session_id}/...`. The optional `codec` query parameter supports `aac` (default), `alac`, `flac`, and `copy` when the source audio is already HLS-compatible and the request does not require audio changes.",
+            "Generates an HLS VOD media playlist for a finite track and returns M3U8 with segment URLs under `/api/stream/hls/{session_id}/...`. Requires either bearer authentication with access to the track or a scoped `media_token` from `POST /api/tracks/{track_id}/playback-url`. The optional `codec` query parameter supports `aac` (default), `alac`, `flac`, and `copy` when the source audio is already HLS-compatible and the request does not require audio changes.",
         )
 }
 

@@ -48,6 +48,12 @@ use crate::{
     services::{
         auth::{
             Principal,
+            media_tokens::{
+                MediaTokenError,
+                MediaTokenPurpose,
+                validate_media_token,
+            },
+            require_authenticated,
             require_download,
         },
         playback_sources as playback_source_service,
@@ -117,6 +123,104 @@ pub fn apply_request_start_offset(
 
 pub(crate) async fn require_download_access(headers: &HeaderMap) -> Result<Principal, AppError> {
     require_download(headers).await.map_err(Into::into)
+}
+
+enum TrackAccess {
+    Principal(Principal),
+    MediaToken,
+}
+
+fn media_token_error_to_app_error(err: MediaTokenError) -> AppError {
+    match err {
+        MediaTokenError::Invalid => AppError::unauthorized("invalid media token"),
+        MediaTokenError::Expired => AppError::unauthorized("media token expired"),
+    }
+}
+
+fn validate_track_media_token(
+    media_token: Option<&str>,
+    purpose: MediaTokenPurpose,
+    track_db_id: DbId,
+) -> Result<(), MediaTokenError> {
+    let Some(media_token) = media_token.map(str::trim).filter(|token| !token.is_empty()) else {
+        return Err(MediaTokenError::Invalid);
+    };
+    validate_media_token(media_token, purpose, track_db_id)
+}
+
+async fn require_authenticated_track_access(
+    headers: &HeaderMap,
+    track_db_id: DbId,
+) -> Result<Principal, AppError> {
+    let principal = require_authenticated(headers).await?;
+    {
+        let db = STATE.db.read().await;
+        crate::routes::require_entity_accessible(&*db, &principal, track_db_id, || {
+            AppError::not_found(format!("Track not found: {}", track_db_id.0))
+        })?;
+    }
+    Ok(principal)
+}
+
+pub(crate) async fn require_stream_access(
+    headers: &HeaderMap,
+    media_token: Option<&str>,
+    track_db_id: DbId,
+) -> Result<(), AppError> {
+    match validate_track_media_token(media_token, MediaTokenPurpose::Stream, track_db_id) {
+        Ok(()) => return Ok(()),
+        Err(token_error) if media_token.is_some() => {
+            match require_authenticated_track_access(headers, track_db_id).await {
+                Ok(_) => return Ok(()),
+                Err(_) => return Err(media_token_error_to_app_error(token_error)),
+            }
+        }
+        Err(_) => {}
+    }
+
+    require_authenticated_track_access(headers, track_db_id)
+        .await
+        .map(|_| ())
+}
+
+pub(crate) async fn require_hls_playlist_access(
+    headers: &HeaderMap,
+    media_token: Option<&str>,
+    track_db_id: DbId,
+) -> Result<(), AppError> {
+    match validate_track_media_token(media_token, MediaTokenPurpose::HlsPlaylist, track_db_id) {
+        Ok(()) => return Ok(()),
+        Err(token_error) if media_token.is_some() => {
+            match require_authenticated_track_access(headers, track_db_id).await {
+                Ok(_) => return Ok(()),
+                Err(_) => return Err(media_token_error_to_app_error(token_error)),
+            }
+        }
+        Err(_) => {}
+    }
+
+    require_authenticated_track_access(headers, track_db_id)
+        .await
+        .map(|_| ())
+}
+
+async fn require_download_track_access(
+    headers: &HeaderMap,
+    media_token: Option<&str>,
+    track_db_id: DbId,
+) -> Result<TrackAccess, AppError> {
+    match validate_track_media_token(media_token, MediaTokenPurpose::Download, track_db_id) {
+        Ok(()) => return Ok(TrackAccess::MediaToken),
+        Err(token_error) if media_token.is_some() => match require_download_access(headers).await {
+            Ok(principal) => return Ok(TrackAccess::Principal(principal)),
+            Err(_) => return Err(media_token_error_to_app_error(token_error)),
+        },
+        Err(_) => {}
+    }
+
+    require_download_access(headers)
+        .await
+        .map(TrackAccess::Principal)
 }
 
 pub async fn validate_and_get_track_source(
@@ -562,6 +666,8 @@ mod tests {
         apply_request_start_offset,
         configure_output,
         require_download_access,
+        require_hls_playlist_access,
+        require_stream_access,
         resolve_codec,
         resolve_output_format,
         validate_request,
@@ -595,7 +701,14 @@ mod tests {
             User,
             roles::Role,
         },
-        services::auth::sessions,
+        services::auth::{
+            media_tokens::{
+                MediaTokenPurpose,
+                clear_media_tokens_for_tests,
+                issue_media_token,
+            },
+            sessions,
+        },
         testing::{
             LibraryFixtureConfig,
             initialize_runtime,
@@ -708,6 +821,42 @@ mod tests {
             .expect("user with download permission should be allowed");
 
         assert_eq!(principal.username, "downloader");
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn require_stream_access_allows_matching_media_token_without_bearer() -> anyhow::Result<()>
+    {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        clear_media_tokens_for_tests();
+
+        let track_id = agdb::DbId(123);
+        let token = issue_media_token(track_id, MediaTokenPurpose::Stream);
+        require_stream_access(&HeaderMap::new(), Some(&token.token), track_id)
+            .await
+            .expect("matching stream media token should grant access");
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn require_hls_playlist_access_rejects_wrong_media_token_purpose() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        clear_media_tokens_for_tests();
+
+        let track_id = agdb::DbId(123);
+        let token = issue_media_token(track_id, MediaTokenPurpose::Stream);
+        let status = require_hls_playlist_access(&HeaderMap::new(), Some(&token.token), track_id)
+            .await
+            .expect_err("stream token should not authorize HLS playlist creation")
+            .into_response()
+            .status();
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())

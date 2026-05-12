@@ -73,6 +73,10 @@ struct StreamChannelError {
 #[derive(Deserialize, JsonSchema)]
 struct StreamQuery {
     #[schemars(
+        description = "Scoped media token returned by `POST /api/tracks/{id}/playback-url`."
+    )]
+    media_token: Option<String>,
+    #[schemars(
         description = "Optional output format (e.g. mp3, flac, wav, ogg, webm, aac, opus)."
     )]
     format: Option<String>,
@@ -106,6 +110,7 @@ async fn get_stream(
         crate::db::lookup::find_node_id_by_id(&*db, &track_id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {track_id}")))?
     };
+    super::require_stream_access(&headers, query.media_token.as_deref(), track_db_id).await?;
     stream_track_response(
         &headers,
         track_db_id,
@@ -367,7 +372,7 @@ pub(crate) async fn stream_track_response(
 fn stream_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Stream audio")
         .description(
-            "Publicly streams audio data for the track ID, including cue-derived virtual segments, optionally transcoded to the requested format or codec. Supports streamable formats: mp3, flac, wav, ogg, aac, opus, and aiff. Direct-copy stream responses support byte ranges; transcoded stream responses are chunked. HLS playback is available via `/api/stream/{track_id}/hls.m3u8`.",
+            "Streams audio data for the track ID, including cue-derived virtual segments, optionally transcoded to the requested format or codec. Requires either bearer authentication with access to the track or a scoped `media_token` from `POST /api/tracks/{track_id}/playback-url`. Supports streamable formats: mp3, flac, wav, ogg, aac, opus, and aiff. Direct-copy stream responses support byte ranges; transcoded stream responses are chunked. HLS playback is available via `/api/stream/{track_id}/hls.m3u8`.",
         )
 }
 

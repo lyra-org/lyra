@@ -261,6 +261,7 @@ pub(super) async fn lua_response_to_axum(
                     options.channels,
                     options.prefer_vbr,
                     options.start_offset_ms,
+                    None,
                 )
                 .await
                 {

@@ -45,6 +45,7 @@ static DUMMY_PASSWORD_HASH: LazyLock<String> = LazyLock::new(|| {
 });
 
 pub(crate) mod api_keys;
+pub(crate) mod media_tokens;
 pub(crate) mod sessions;
 
 pub(crate) fn random_hex_secret<const BYTES: usize>() -> String {

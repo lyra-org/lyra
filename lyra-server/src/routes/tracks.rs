@@ -32,7 +32,11 @@ use axum::{
     },
 };
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{
+    Deserialize,
+    Serialize,
+};
+use url::form_urlencoded;
 
 use crate::{
     STATE,
@@ -56,7 +60,13 @@ use crate::{
     services::{
         auth::{
             Principal,
+            media_tokens::{
+                MEDIA_TOKEN_IDLE_TTL_SECONDS,
+                MediaTokenPurpose,
+                issue_media_token,
+            },
             require_authenticated,
+            require_permission,
         },
         metadata::lyrics as lyrics_service,
         tracks as track_service,
@@ -203,6 +213,155 @@ pub(crate) async fn get_track_response(
     Ok(track_detail_to_response(db, detail)?)
 }
 
+fn add_optional_query_pair<T: ToString>(
+    pairs: &mut Vec<(&'static str, String)>,
+    key: &'static str,
+    value: Option<T>,
+) {
+    if let Some(value) = value {
+        pairs.push((key, value.to_string()));
+    }
+}
+
+fn add_optional_string_query_pair(
+    pairs: &mut Vec<(&'static str, String)>,
+    key: &'static str,
+    value: Option<&String>,
+) {
+    let Some(value) = value
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    pairs.push((key, value.to_string()));
+}
+
+fn build_media_url(path: String, pairs: Vec<(&'static str, String)>) -> String {
+    let mut serializer = form_urlencoded::Serializer::new(String::new());
+    for (key, value) in pairs {
+        serializer.append_pair(key, &value);
+    }
+    let query = serializer.finish();
+    format!("{path}?{query}")
+}
+
+fn media_url_common_pairs(
+    media_token: &str,
+    query: &PlaybackUrlQuery,
+) -> Vec<(&'static str, String)> {
+    let mut pairs = vec![("media_token", media_token.to_string())];
+    add_optional_query_pair(&mut pairs, "bitrate_bps", query.bitrate_bps);
+    add_optional_query_pair(&mut pairs, "sample_rate_hz", query.sample_rate_hz);
+    add_optional_query_pair(&mut pairs, "channels", query.channels);
+    add_optional_query_pair(&mut pairs, "prefer_vbr", query.prefer_vbr);
+    add_optional_query_pair(&mut pairs, "start_offset_ms", query.start_offset_ms);
+    pairs
+}
+
+fn build_stream_url(id: &str, token: &str, query: &PlaybackUrlQuery) -> String {
+    let mut pairs = media_url_common_pairs(token, query);
+    add_optional_string_query_pair(&mut pairs, "format", query.format.as_ref());
+    add_optional_string_query_pair(&mut pairs, "codec", query.codec.as_ref());
+    build_media_url(format!("/api/stream/{id}"), pairs)
+}
+
+fn build_hls_url(id: &str, token: &str, query: &PlaybackUrlQuery) -> String {
+    let mut pairs = media_url_common_pairs(token, query);
+    add_optional_string_query_pair(&mut pairs, "codec", query.hls_codec.as_ref());
+    build_media_url(format!("/api/stream/{id}/hls.m3u8"), pairs)
+}
+
+fn build_download_url(id: &str, token: &str, query: &PlaybackUrlQuery) -> String {
+    let mut pairs = media_url_common_pairs(token, query);
+    add_optional_string_query_pair(&mut pairs, "format", query.format.as_ref());
+    add_optional_string_query_pair(&mut pairs, "codec", query.codec.as_ref());
+    build_media_url(format!("/api/download/{id}"), pairs)
+}
+
+fn validate_playback_url_query(query: &PlaybackUrlQuery) -> Result<(), AppError> {
+    if matches!(query.bitrate_bps, Some(0)) {
+        return Err(AppError::bad_request(
+            "bitrate_bps must be greater than zero",
+        ));
+    }
+    if matches!(query.sample_rate_hz, Some(0)) {
+        return Err(AppError::bad_request(
+            "sample_rate_hz must be greater than zero",
+        ));
+    }
+    if matches!(query.channels, Some(0)) {
+        return Err(AppError::bad_request("channels must be greater than zero"));
+    }
+
+    Ok(())
+}
+
+fn validate_playback_url_output(
+    query: &PlaybackUrlQuery,
+    source: &super::serve::ValidatedTrackSource,
+) -> Result<(), AppError> {
+    let stream_request = super::serve::validate_request(query.format.clone(), query.codec.clone())?;
+    let stream_format = super::serve::resolve_output_format(
+        stream_request.format,
+        &stream_request.preferred_codecs,
+        source.entry_format,
+        &source.full_path,
+        true,
+    )?;
+    if !stream_format.supports_streaming() {
+        return Err(AppError::bad_request(format!(
+            "Format '{}' does not support streaming. Use /api/download or choose a streamable format (mp3, flac, wav, ogg, webm, aac, opus, aiff).",
+            stream_format.extension()
+        )));
+    }
+
+    super::serve::validate_request(None, query.hls_codec.clone())?;
+
+    Ok(())
+}
+
+async fn create_track_playback_url(
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(query): Query<PlaybackUrlQuery>,
+) -> Result<Json<PlaybackUrlResponse>, AppError> {
+    validate_playback_url_query(&query)?;
+    let principal = require_authenticated(&headers).await?;
+
+    let track_db_id = {
+        let db = &*STATE.db.read().await;
+        let track_db_id = db::lookup::find_node_id_by_id(db, &id)?
+            .ok_or_else(|| AppError::not_found(format!("Track not found: {id}")))?;
+        super::require_entity_accessible(db, &principal, track_db_id, || {
+            AppError::not_found(format!("Track not found: {id}"))
+        })?;
+        track_db_id
+    };
+
+    let source = super::serve::validate_and_get_track_source(track_db_id).await?;
+    validate_playback_url_output(&query, &source)?;
+
+    let stream_token = issue_media_token(track_db_id, MediaTokenPurpose::Stream);
+    let hls_token = issue_media_token(track_db_id, MediaTokenPurpose::HlsPlaylist);
+    let mut expires_at = stream_token.expires_at.min(hls_token.expires_at);
+    let download_url = if require_permission(&principal, db::Permission::Download).is_ok() {
+        let download_token = issue_media_token(track_db_id, MediaTokenPurpose::Download);
+        expires_at = expires_at.min(download_token.expires_at);
+        Some(build_download_url(&id, &download_token.token, &query))
+    } else {
+        None
+    };
+
+    Ok(Json(PlaybackUrlResponse {
+        stream_url: build_stream_url(&id, &stream_token.token, &query),
+        hls_url: build_hls_url(&id, &hls_token.token, &query),
+        download_url,
+        expires_at: super::unix_secs_to_rfc3339_i64(expires_at),
+        idle_expires_after_seconds: MEDIA_TOKEN_IDLE_TTL_SECONDS,
+    }))
+}
+
 async fn get_tracks(
     headers: HeaderMap,
     Query(list_query): Query<TrackListQuery>,
@@ -257,6 +416,48 @@ struct LyricsQuery {
 struct LyricsWriteQuery {
     #[schemars(description = "Language for raw LRC and plain text uploads. Defaults to `und`.")]
     language: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct PlaybackUrlQuery {
+    #[schemars(
+        description = "Optional stream output format (e.g. mp3, flac, wav, ogg, webm, aac, opus)."
+    )]
+    format: Option<String>,
+    #[schemars(
+        description = "Optional ordered stream codec preferences (e.g. opus,aac or pcm_s24le,pcm_s16le)."
+    )]
+    codec: Option<String>,
+    #[schemars(
+        description = "Optional ordered HLS codec preferences for `hls_url` (for example: copy,aac or aac,flac)."
+    )]
+    hls_codec: Option<String>,
+    #[schemars(
+        description = "Target bitrate cap in bits per second. Applied to generated stream, HLS, and download URLs."
+    )]
+    bitrate_bps: Option<u32>,
+    #[schemars(description = "Target sample rate in Hz.")]
+    sample_rate_hz: Option<u32>,
+    #[schemars(description = "Target channel count.")]
+    channels: Option<u32>,
+    #[schemars(
+        description = "Prefer VBR for lossy transcodes when the selected encoder supports it."
+    )]
+    prefer_vbr: Option<bool>,
+    #[schemars(description = "Per-request playback start offset in milliseconds.")]
+    start_offset_ms: Option<u64>,
+}
+
+#[derive(Serialize, JsonSchema)]
+struct PlaybackUrlResponse {
+    stream_url: String,
+    hls_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    download_url: Option<String>,
+    #[schemars(description = "Absolute media-token expiration as an RFC3339 timestamp.")]
+    expires_at: String,
+    #[schemars(description = "Media tokens also expire after this many seconds without use.")]
+    idle_expires_after_seconds: u64,
 }
 
 async fn get_track_lyrics(
@@ -527,10 +728,24 @@ fn refresh_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
         .response::<204, ()>()
 }
 
+fn create_track_playback_url_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Create playable track URLs").description(
+        "Returns browser-friendly stream and HLS URLs containing scoped media tokens for the track. \
+         The caller must authenticate with a bearer session token or API key and have access to the \
+         track. Returned media tokens are limited to this track and endpoint purpose, expire after \
+         a fixed maximum lifetime, and also expire after an idle period. `download_url` is included \
+         only when the caller has download permission.",
+    )
+}
+
 pub fn track_routes() -> ApiRouter {
     ApiRouter::new()
         .api_route("/", get_with(get_tracks, list_tracks_docs))
         .api_route("/{id}", get_with(get_track, get_track_docs))
+        .api_route(
+            "/{id}/playback-url",
+            post_with(create_track_playback_url, create_track_playback_url_docs),
+        )
         .api_route(
             "/{id}/lyrics",
             get_with(get_track_lyrics, get_track_lyrics_docs),
@@ -641,5 +856,32 @@ mod tests {
         assert_eq!(page.items[0].title, "Visible Track");
         assert!(page.next_cursor.is_none());
         Ok(())
+    }
+
+    #[test]
+    fn build_stream_url_encodes_media_token_and_options() {
+        let query = PlaybackUrlQuery {
+            format: Some("mp3".to_string()),
+            codec: Some("copy,mp3".to_string()),
+            hls_codec: Some("aac".to_string()),
+            bitrate_bps: Some(128_000),
+            sample_rate_hz: Some(44_100),
+            channels: Some(2),
+            prefer_vbr: Some(true),
+            start_offset_ms: Some(12_345),
+        };
+
+        let url = build_stream_url("track/id", "token value", &query);
+
+        assert!(url.starts_with("/api/stream/track/id?"));
+        assert!(url.contains("media_token=token+value"));
+        assert!(url.contains("format=mp3"));
+        assert!(url.contains("codec=copy%2Cmp3"));
+        assert!(url.contains("bitrate_bps=128000"));
+        assert!(url.contains("sample_rate_hz=44100"));
+        assert!(url.contains("channels=2"));
+        assert!(url.contains("prefer_vbr=true"));
+        assert!(url.contains("start_offset_ms=12345"));
+        assert!(!url.contains("hls_codec"));
     }
 }
