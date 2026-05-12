@@ -1,0 +1,156 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "藤井風 - HELP EVER HURT NEVER (2020) [WEB 24bit FLAC]/11. 帰ろう.flac"
+album = "HELP EVER HURT NEVER"
+album_artists = ["藤井風"]
+artists = ["藤井風"]
+title = "帰ろう"
+track = 11
+track_total = 11
+duration_ms = 284459
+
+[[raw_tags]]
+file_path = "藤井風 - HELP EVER HURT NEVER (2020) [WEB 24bit FLAC]/10. さよならべいべ.flac"
+album = "HELP EVER HURT NEVER"
+album_artists = ["藤井風"]
+artists = ["藤井風"]
+title = "さよならべいべ"
+track = 10
+track_total = 11
+duration_ms = 260537
+
+[[raw_tags]]
+file_path = "藤井風 - HELP EVER HURT NEVER (2020) [WEB 24bit FLAC]/09. 風よ.flac"
+album = "HELP EVER HURT NEVER"
+album_artists = ["藤井風"]
+artists = ["藤井風"]
+title = "風よ"
+track = 9
+track_total = 11
+duration_ms = 284525
+
+[[raw_tags]]
+file_path = "藤井風 - HELP EVER HURT NEVER (2020) [WEB 24bit FLAC]/08. 死ぬのがいいわ.flac"
+album = "HELP EVER HURT NEVER"
+album_artists = ["藤井風"]
+artists = ["藤井風"]
+title = "死ぬのがいいわ"
+track = 8
+track_total = 11
+duration_ms = 185567
+
+[[raw_tags]]
+file_path = "藤井風 - HELP EVER HURT NEVER (2020) [WEB 24bit FLAC]/07. 特にない.flac"
+album = "HELP EVER HURT NEVER"
+album_artists = ["藤井風"]
+artists = ["藤井風"]
+title = "特にない"
+track = 7
+track_total = 11
+duration_ms = 205257
+
+[[raw_tags]]
+file_path = "藤井風 - HELP EVER HURT NEVER (2020) [WEB 24bit FLAC]/06. 調子のっちゃって.flac"
+album = "HELP EVER HURT NEVER"
+album_artists = ["藤井風"]
+artists = ["藤井風"]
+title = "調子のっちゃって"
+track = 6
+track_total = 11
+duration_ms = 282243
+
+[[raw_tags]]
+file_path = "藤井風 - HELP EVER HURT NEVER (2020) [WEB 24bit FLAC]/05. 罪の香り.flac"
+album = "HELP EVER HURT NEVER"
+album_artists = ["藤井風"]
+artists = ["藤井風"]
+title = "罪の香り"
+track = 5
+track_total = 11
+duration_ms = 214200
+
+[[raw_tags]]
+file_path = "藤井風 - HELP EVER HURT NEVER (2020) [WEB 24bit FLAC]/04. キリがないから.flac"
+album = "HELP EVER HURT NEVER"
+album_artists = ["藤井風"]
+artists = ["藤井風"]
+title = "キリがないから"
+track = 4
+track_total = 11
+duration_ms = 217611
+
+[[raw_tags]]
+file_path = "藤井風 - HELP EVER HURT NEVER (2020) [WEB 24bit FLAC]/03. 優しさ.flac"
+album = "HELP EVER HURT NEVER"
+album_artists = ["藤井風"]
+artists = ["藤井風"]
+title = "優しさ"
+track = 3
+track_total = 11
+duration_ms = 240080
+
+[[raw_tags]]
+file_path = "藤井風 - HELP EVER HURT NEVER (2020) [WEB 24bit FLAC]/02. もうええわ.flac"
+album = "HELP EVER HURT NEVER"
+album_artists = ["藤井風"]
+artists = ["藤井風"]
+title = "もうええわ"
+track = 2
+track_total = 11
+duration_ms = 301941
+
+[[raw_tags]]
+file_path = "藤井風 - HELP EVER HURT NEVER (2020) [WEB 24bit FLAC]/01. 何なんw.flac"
+album = "HELP EVER HURT NEVER"
+album_artists = ["藤井風"]
+artists = ["藤井風"]
+title = "何なんw"
+track = 1
+track_total = 11
+duration_ms = 320642
+
+[expect.release]
+ids = { release_group_id = "77b3bbd2-a07e-4580-b6c9-ac90c91078cc", release_id = ["82512c8e-b3b7-4636-8e9d-ef5402944477", "05c6d076-f439-4e18-955f-2c20bab9826b"] }
+fields = { release_title = "HELP EVER HURT NEVER", release_date = "2020-05-20" }
+
+[expect.artists."c3a4aeca-8f02-4d22-b1ff-693434ab09a8"]
+fields = { artist_name = "藤井風", sort_name = "Fujii, Kaze" }
+
+[expect.tracks."355928bf-e5ed-4843-afe9-25a218016ffd"]
+fields = { disc = 1, track = 5, track_title = "罪の香り" }
+
+[expect.tracks."36304f25-263a-4d48-af5d-6c0623b7ed52"]
+fields = { disc = 1, track = 11, track_title = "帰ろう" }
+
+[expect.tracks."667da965-0609-44c8-91b4-571c4b87a81a"]
+fields = { disc = 1, track = 4, track_title = "キリがないから" }
+
+[expect.tracks."9c5da2f1-4fc8-4dcf-b25d-001e8afd8e03"]
+fields = { disc = 1, track = 10, track_title = "さよならべいべ" }
+
+[expect.tracks."9eba2bb3-7519-4a22-b46e-5c225ec2f401"]
+fields = { disc = 1, track = 3, track_title = "優しさ" }
+
+[expect.tracks."a97992ca-5d3d-4ce9-bab1-e631360c618b"]
+fields = { disc = 1, track = 8, track_title = "死ぬのがいいわ" }
+
+[expect.tracks."bf658ff4-b1b7-43c6-9261-c07dbb687c38"]
+fields = { disc = 1, track = 2, track_title = "もうええわ" }
+
+[expect.tracks."c3dd4e6d-68c1-407c-86e7-1750b43b601a"]
+fields = { disc = 1, track = 6, track_title = "調子のっちゃって" }
+
+[expect.tracks."d0754339-ee3d-41e0-a54e-c4c7f0a37885"]
+fields = { disc = 1, track = 7, track_title = "特にない" }
+
+[expect.tracks."d820812d-1bda-4177-bb68-5bd562ecfb60"]
+fields = { disc = 1, track = 1, track_title = "何なんw" }
+
+[expect.tracks."d96668c1-0d05-4ff2-bbfa-a16710157292"]
+fields = { disc = 1, track = 9, track_title = "風よ" }

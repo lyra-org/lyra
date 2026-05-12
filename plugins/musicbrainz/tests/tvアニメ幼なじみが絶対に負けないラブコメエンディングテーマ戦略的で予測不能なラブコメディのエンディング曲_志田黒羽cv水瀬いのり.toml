@@ -1,0 +1,80 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "TVアニメ「幼なじみが絶対に負けないラブコメ」エンディングテーマ「戦略的で予測不能なラブコメディのエンディング曲」/4. Baby Monster(instrumental).flac"
+album = "TVアニメ「幼なじみが絶対に負けないラブコメ」エンディングテーマ「戦略的で予測不能なラブコメディのエンディング曲」"
+album_artists = ["志田黒羽(CV:水瀬いのり)、可知白草(CV:佐倉綾音)"]
+artists = ["志田黒羽(CV:水瀬いのり)、可知白草(CV:佐倉綾音)"]
+title = "Baby Monster(instrumental)"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 192906
+
+[[raw_tags]]
+file_path = "TVアニメ「幼なじみが絶対に負けないラブコメ」エンディングテーマ「戦略的で予測不能なラブコメディのエンディング曲」/3. 戦略的で予測不能なラブコメディのエンディング曲(instrumental).flac"
+album = "TVアニメ「幼なじみが絶対に負けないラブコメ」エンディングテーマ「戦略的で予測不能なラブコメディのエンディング曲」"
+album_artists = ["志田黒羽(CV:水瀬いのり)、可知白草(CV:佐倉綾音)"]
+artists = ["志田黒羽(CV:水瀬いのり)、可知白草(CV:佐倉綾音)"]
+title = "戦略的で予測不能なラブコメディのエンディング曲(instrumental)"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 237080
+
+[[raw_tags]]
+file_path = "TVアニメ「幼なじみが絶対に負けないラブコメ」エンディングテーマ「戦略的で予測不能なラブコメディのエンディング曲」/2. Baby Monster.flac"
+album = "TVアニメ「幼なじみが絶対に負けないラブコメ」エンディングテーマ「戦略的で予測不能なラブコメディのエンディング曲」"
+album_artists = ["志田黒羽(CV:水瀬いのり)、可知白草(CV:佐倉綾音)"]
+artists = ["志田黒羽(CV:水瀬いのり)、可知白草(CV:佐倉綾音)"]
+title = "Baby Monster"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 194186
+
+[[raw_tags]]
+file_path = "TVアニメ「幼なじみが絶対に負けないラブコメ」エンディングテーマ「戦略的で予測不能なラブコメディのエンディング曲」/1. 戦略的で予測不能なラブコメディのエンディング曲.flac"
+album = "TVアニメ「幼なじみが絶対に負けないラブコメ」エンディングテーマ「戦略的で予測不能なラブコメディのエンディング曲」"
+album_artists = ["志田黒羽(CV:水瀬いのり)、可知白草(CV:佐倉綾音)"]
+artists = ["志田黒羽(CV:水瀬いのり)、可知白草(CV:佐倉綾音)"]
+title = "戦略的で予測不能なラブコメディのエンディング曲"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 237080
+
+[expect.release]
+ids = { release_group_id = "58d04836-d9c3-4851-9fb0-ebfbe2aa8364", release_id = "291807bf-9364-4684-a5d9-dd819be01576" }
+fields = { release_title = "戦略的で予測不能なラブコメディのエンディング曲", release_date = "2021-04-28" }
+
+[expect.artists."3a0eff85-d78b-4539-8fa8-045cfd32289a"]
+fields = { artist_name = "志田黒羽", sort_name = "Shida, Kuroha" }
+
+[expect.artists."dbcb425c-92c3-4317-9339-fd7b8f512a8e"]
+fields = { artist_name = "可知白草", sort_name = "Kachi, Shirokusa" }
+
+[expect.tracks."01c3ba9b-b396-47be-979c-539b8ed0bc17"]
+fields = { disc = 1, track = 2, track_title = "Baby Monster" }
+
+[expect.tracks."4770cff7-ff66-4964-8051-651216a1b097"]
+fields = { disc = 1, track = 4, track_title = "Baby Monster (instrumental)" }
+
+[expect.tracks."a8b35399-1774-4b21-9351-3e43c9339743"]
+fields = { disc = 1, track = 1, track_title = "戦略的で予測不能なラブコメディのエンディング曲" }
+
+[expect.tracks."bb7770d7-bd2e-4649-ba7d-1f63c291d3ed"]
+fields = { disc = 1, track = 3, track_title = "戦略的で予測不能なラブコメディのエンディング曲 (instrumental)" }
