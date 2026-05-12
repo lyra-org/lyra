@@ -112,6 +112,12 @@ pub(crate) struct ProviderIdSpec {
     pub(crate) unique: bool,
 }
 
+#[derive(Clone)]
+pub(crate) enum ProviderIdUrlGenerator {
+    Callback(PluginFunctionHandle),
+    Template(String),
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ProviderCoverRequireSpec {
     pub(crate) all_of: Vec<String>,
@@ -169,16 +175,26 @@ impl ProviderRegistry {
         &mut self,
         provider_id: &str,
         id_spec: ProviderIdSpec,
-        generator: Option<PluginFunctionHandle>,
+        generator: Option<ProviderIdUrlGenerator>,
     ) {
         if let Some(provider) = self.state_mut(provider_id) {
             provider
                 .id_specs
                 .insert(id_spec.id.clone(), id_spec.clone());
-            if let Some(generator) = generator {
-                provider.id_generators.insert(id_spec.id, generator);
-            } else {
-                provider.id_generators.remove(&id_spec.id);
+            match generator {
+                Some(ProviderIdUrlGenerator::Callback(callback)) => {
+                    provider
+                        .id_generators
+                        .insert(id_spec.id, ProviderIdUrlGenerator::Callback(callback));
+                }
+                Some(ProviderIdUrlGenerator::Template(template)) => {
+                    provider
+                        .id_generators
+                        .insert(id_spec.id, ProviderIdUrlGenerator::Template(template));
+                }
+                None => {
+                    provider.id_generators.remove(&id_spec.id);
+                }
             }
         }
     }
@@ -300,6 +316,15 @@ impl ProviderRegistry {
         let spec = provider.id_specs.get(id_type)?.clone();
         let has_generator = provider.id_generators.contains_key(id_type);
         Some((spec, has_generator))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn id_url_template(&self, provider_id: &str, id_type: &str) -> Option<String> {
+        let provider = self.state(provider_id)?;
+        match provider.id_generators.get(id_type)? {
+            ProviderIdUrlGenerator::Template(template) => Some(template.clone()),
+            ProviderIdUrlGenerator::Callback(_) => None,
+        }
     }
 
     pub(crate) fn id_spec_matches_entity(
@@ -437,7 +462,7 @@ impl PluginScopedInner for ProviderRegistry {
 
 #[derive(Default)]
 struct ProviderState {
-    id_generators: HashMap<String, PluginFunctionHandle>,
+    id_generators: HashMap<String, ProviderIdUrlGenerator>,
     id_specs: HashMap<String, ProviderIdSpec>,
     search_handlers: HashMap<EntityType, PluginFunctionHandle>,
     cover_handlers: HashMap<EntityType, Vec<ProviderCoverSpec>>,

@@ -78,6 +78,7 @@ use crate::{
         PROVIDER_REGISTRY,
         ProviderCoverSpec,
         ProviderIdSpec,
+        ProviderIdUrlGenerator,
     },
 };
 
@@ -121,6 +122,36 @@ impl DescribeTypeAlias for LuaCallback {
             "LuaCallback",
             Self::luau_type(),
             Some("Generic Lua callback."),
+        )
+    }
+}
+
+struct ProviderIdUrlGeneratorArg;
+
+impl LuauTypeInfo for ProviderIdUrlGeneratorArg {
+    fn luau_type() -> LuauType {
+        LuauType::union(vec![
+            String::luau_type(),
+            LuauType::function(
+                vec![harmony_luau::FunctionParameter {
+                    name: Some("id"),
+                    ty: String::luau_type(),
+                    variadic: false,
+                }],
+                vec![String::luau_type()],
+            ),
+        ])
+    }
+}
+
+impl DescribeTypeAlias for ProviderIdUrlGeneratorArg {
+    fn type_alias_descriptor() -> TypeAliasDescriptor {
+        TypeAliasDescriptor::new(
+            "ProviderIdUrlGenerator",
+            Self::luau_type(),
+            Some(
+                "External ID URL generator. String templates must contain exactly one `{id}` placeholder.",
+            ),
         )
     }
 }
@@ -350,6 +381,25 @@ fn parse_id_spec(spec: Table) -> Result<ProviderIdSpec> {
     Ok(ProviderIdSpec { id, entity, unique })
 }
 
+fn parse_id_url_template(value: mlua::String) -> Result<String> {
+    let template = value
+        .to_str()
+        .map_err(|_| mlua::Error::runtime("provider:id URL template must be utf-8"))?
+        .trim()
+        .to_string();
+    if template.is_empty() {
+        return Err(mlua::Error::runtime(
+            "provider:id URL template must be a non-empty string",
+        ));
+    }
+    if template.matches("{id}").count() != 1 {
+        return Err(mlua::Error::runtime(
+            "provider:id URL template must contain exactly one {id} placeholder",
+        ));
+    }
+    Ok(template)
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct Provider {
     pub(crate) plugin_id: PluginId,
@@ -425,12 +475,12 @@ impl Provider {
     }
 
     /// Registers an external id generator for this provider.
-    #[harmony(args(spec: ProviderIdRegistration, generator: Option<LuaCallback>))]
+    #[harmony(args(spec: ProviderIdRegistration, generator: Option<ProviderIdUrlGeneratorArg>))]
     pub(crate) async fn id(
         &self,
         plugin_id: Option<Arc<str>>,
         spec: Table,
-        generator: Option<Function>,
+        generator: Option<Value>,
     ) -> Result<()> {
         let plugin_id = plugin_id
             .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
@@ -442,8 +492,18 @@ impl Provider {
             .ensure_registrations_open(&self.plugin_id)
             .await?;
         let generator = match generator {
-            Some(func) => Some(self.wrap_handler(func).await?),
-            None => None,
+            Some(Value::Function(func)) => Some(ProviderIdUrlGenerator::Callback(
+                self.wrap_handler(func).await?,
+            )),
+            Some(Value::String(template)) => Some(ProviderIdUrlGenerator::Template(
+                parse_id_url_template(template)?,
+            )),
+            Some(Value::Nil) | None => None,
+            Some(_) => {
+                return Err(mlua::Error::runtime(
+                    "provider:id generator must be a function, string template, or nil",
+                ));
+            }
         };
         let mut registry = PROVIDER_REGISTRY.write().await;
         registry.set_id_registration(&self.id, id_spec, generator);
@@ -1162,6 +1222,7 @@ impl MetadataModule {
     fn support_aliases() -> Vec<TypeAliasDescriptor> {
         vec![
             LuaCallback::type_alias_descriptor(),
+            ProviderIdUrlGeneratorArg::type_alias_descriptor(),
             ProviderExternalIdMap::type_alias_descriptor(),
             ExternalIdsByProvider::type_alias_descriptor(),
             ProviderCustomFieldMap::type_alias_descriptor(),
@@ -2126,6 +2187,76 @@ mod tests {
             has_generator,
             "generator should be present when callback is provided"
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn provider_id_registration_accepts_url_template_generator() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let provider_id = next_provider_id("id-spec-template");
+        let lua_provider_id = provider_id.clone();
+
+        setup_metadata_module(STATE.lua.get().as_ref())?;
+
+        let register_fn = STATE
+            .lua
+            .get()
+            .load(chunk! {
+                local provider = metadata.Provider.new($lua_provider_id)
+                provider:id({
+                    id = "release_id",
+                    entity = "release",
+                    unique = true,
+                }, "https://example.test/release/{id}")
+            })
+            .set_name(&harmony_core::format_plugin_chunk_name("test", "init"))
+            .into_function()?;
+        register_fn.call_async::<()>(()).await?;
+
+        let registry = PROVIDER_REGISTRY.read().await;
+        let (spec, has_generator) = registry
+            .id_registration(&provider_id, "release_id")
+            .ok_or_else(|| anyhow!("id spec missing"))?;
+        assert_eq!(spec.id, "release_id");
+        assert_eq!(spec.entity, EntityType::Release);
+        assert!(spec.unique);
+        assert!(
+            has_generator,
+            "generator should be present when template is provided"
+        );
+        assert_eq!(
+            registry
+                .id_url_template(&provider_id, "release_id")
+                .as_deref(),
+            Some("https://example.test/release/{id}")
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn provider_id_registration_rejects_invalid_url_template() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let provider_id = next_provider_id("id-spec-bad-template");
+        let lua_provider_id = provider_id.clone();
+
+        setup_metadata_module(STATE.lua.get().as_ref())?;
+
+        let register_fn = STATE
+            .lua
+            .get()
+            .load(chunk! {
+                local provider = metadata.Provider.new($lua_provider_id)
+                provider:id({
+                    id = "release_id",
+                    entity = "release",
+                }, "https://example.test/release")
+            })
+            .set_name(&harmony_core::format_plugin_chunk_name("test", "init"))
+            .into_function()?;
+        let err = register_fn.call_async::<()>(()).await.unwrap_err();
+        assert!(err.to_string().contains("exactly one {id} placeholder"));
 
         Ok(())
     }

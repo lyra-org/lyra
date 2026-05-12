@@ -363,9 +363,7 @@ for _, id_spec in id_specs do
 		id = field_name,
 		entity = id_spec.entity,
 		unique = id_spec.unique,
-	}, function(id)
-		return `{BASE_URL}/{id_spec.id_type}/{id}`
-	end)
+	}, BASE_URL .. "/" .. id_spec.id_type .. "/{id}")
 end
 
 local function release_cover_handler(ctx: ProviderCoverContext): JsonValue
@@ -500,9 +498,7 @@ local acoustid_deps: acoustid.ResolveDeps = {
 provider:id({
 	id = "acoustid_track_id",
 	entity = "track",
-}, function(id)
-	return `https://acoustid.org/track/{id}`
-end)
+}, "https://acoustid.org/track/{id}")
 
 provider:declare_option({
 	name = "acoustid_fingerprint",
