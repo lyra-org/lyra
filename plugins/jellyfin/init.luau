@@ -1649,11 +1649,20 @@ local function handle_item_user_data_route(ctx: ApiContext): ApiResponse
 	end
 
 	local item = catalog.find_item_by_id(item_id, principal.user_id)
-	if not item or not item.UserData then
+	if not item then
 		return base.not_found("item not found")
 	end
 
-	return api.response.json(200, base.user_data_to_json(item.UserData))
+	local user_data = item.UserData
+		or base.get_user_data({
+			item_id = item_id,
+			user_id = principal.user_id,
+			item_hex_id = base.encode_jellyfin_item_id(item_id),
+			include_favorite = true,
+			include_play_count = true,
+		})
+
+	return api.response.json(200, base.user_data_to_json(user_data))
 end
 
 api.get(P .. "/UserItems/{itemId}/UserData", handle_item_user_data_route, nil, true)
