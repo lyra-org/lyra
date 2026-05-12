@@ -117,8 +117,8 @@ struct ListResponse {
 struct FavoriteItem {
     target_id: String,
     entity: String,
-    first_favorited_at_ms: i64,
-    last_refreshed_at_ms: i64,
+    first_favorited_at: String,
+    last_refreshed_at: String,
 }
 
 fn favorite_item_from_edge(edge: crate::db::favorites::FavoriteEdge) -> Option<FavoriteItem> {
@@ -128,8 +128,8 @@ fn favorite_item_from_edge(edge: crate::db::favorites::FavoriteEdge) -> Option<F
     Some(FavoriteItem {
         target_id: edge.target_public_id,
         entity: edge.kind.as_str().to_string(),
-        first_favorited_at_ms: edge.first_favorited_at_ms,
-        last_refreshed_at_ms: edge.last_refreshed_at_ms,
+        first_favorited_at: super::unix_ms_to_rfc3339_i64(edge.first_favorited_at_ms),
+        last_refreshed_at: super::unix_ms_to_rfc3339_i64(edge.last_refreshed_at_ms),
     })
 }
 
@@ -278,7 +278,7 @@ fn put_favorite_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Mark a target as favorited")
         .description(
             "Marks a target as favorited. Idempotent: repeated PUT requests refresh \
-         `last_refreshed_at_ms` but leave `first_favorited_at_ms` unchanged, so paginated \
+         `last_refreshed_at` but leave `first_favorited_at` unchanged, so paginated \
          lists are not reordered. To bump a favorite's position, DELETE then PUT. Returns \
          204 on success, 400 for malformed IDs, and 404 when the target is not a track, \
          release, artist, or visible playlist.",
@@ -313,7 +313,7 @@ fn check_favorites_docs(op: TransformOperation) -> TransformOperation {
 
 fn list_favorites_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List favorites").description(
-        "Returns favorites for one entity kind, paginated by `first_favorited_at_ms DESC` \
+        "Returns favorites for one entity kind, paginated by creation time descending \
          with an opaque cursor. `limit` is best-effort: visibility filters and elided \
          snapshots can return `items.len() < limit`. Drive iteration off `next_cursor`.",
     )
@@ -394,8 +394,8 @@ mod tests {
         let item = favorite_item_from_edge(edge).expect("snapshot edge renders");
         assert_eq!(item.target_id, "tr-snapshot");
         assert_eq!(item.entity, "track");
-        assert_eq!(item.first_favorited_at_ms, 1);
-        assert_eq!(item.last_refreshed_at_ms, 2);
+        assert_eq!(item.first_favorited_at, "1970-01-01T00:00:00.001Z");
+        assert_eq!(item.last_refreshed_at, "1970-01-01T00:00:00.002Z");
     }
 
     #[test]

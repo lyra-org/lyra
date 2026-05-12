@@ -57,7 +57,7 @@ pub(super) struct MeListenQuery {
     #[serde(flatten)]
     page: routes::PageQuery,
     #[schemars(
-        description = "Comma-separated or repeated values: listen_count, count, last_played_at_ms, last_played, track_id, id."
+        description = "Comma-separated or repeated values: listen_count, count, last_played_at, last_played, track_id, id."
     )]
     #[serde(default, deserialize_with = "routes::deserialize_inc")]
     sort_by: Option<Vec<String>>,
@@ -78,7 +78,7 @@ struct ListenQuery {
     #[serde(flatten)]
     page: routes::PageQuery,
     #[schemars(
-        description = "Comma-separated or repeated values: listen_count, count, last_played_at_ms, last_played, user_id, track_id, id."
+        description = "Comma-separated or repeated values: listen_count, count, last_played_at, last_played, user_id, track_id, id."
     )]
     #[serde(default, deserialize_with = "routes::deserialize_inc")]
     sort_by: Option<Vec<String>>,
@@ -96,10 +96,8 @@ pub(super) struct MeListenResponse {
     track_id: String,
     #[schemars(description = "Number of listens for the authenticated user and track.")]
     listen_count: u64,
-    #[schemars(
-        description = "Most recent listen time for the authenticated user and track in Unix milliseconds."
-    )]
-    last_played_at_ms: Option<u64>,
+    #[schemars(description = "Most recent listen time for the authenticated user and track.")]
+    last_played_at: Option<String>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -110,10 +108,8 @@ struct ListenResponse {
     track_id: String,
     #[schemars(description = "Number of listens for this user and track.")]
     listen_count: u64,
-    #[schemars(
-        description = "Most recent listen time for this user and track in Unix milliseconds."
-    )]
-    last_played_at_ms: Option<u64>,
+    #[schemars(description = "Most recent listen time for this user and track.")]
+    last_played_at: Option<String>,
 }
 
 #[derive(Clone)]
@@ -155,9 +151,9 @@ fn parse_sort_order(
 
 fn supported_sort_values(include_user_id: bool) -> &'static str {
     if include_user_id {
-        "listen_count, count, last_played_at_ms, last_played, user_id, track_id, id"
+        "listen_count, count, last_played_at, last_played, user_id, track_id, id"
     } else {
-        "listen_count, count, last_played_at_ms, last_played, track_id, id"
+        "listen_count, count, last_played_at, last_played, track_id, id"
     }
 }
 
@@ -181,7 +177,7 @@ fn parse_sort_keys(
             let token = entry.to_ascii_lowercase();
             let key = match token.as_str() {
                 "listen_count" | "count" => ListenSortKey::ListenCount,
-                "last_played_at_ms" | "last_played" => ListenSortKey::LastPlayedAt,
+                "last_played_at" | "last_played" => ListenSortKey::LastPlayedAt,
                 "user_id" if include_user_id => ListenSortKey::UserId,
                 "track_id" | "id" => ListenSortKey::TrackId,
                 _ => {
@@ -271,7 +267,7 @@ fn listen_row_to_me_response(row: ListenRow) -> MeListenResponse {
     MeListenResponse {
         track_id: row.track_id,
         listen_count: row.listen_count,
-        last_played_at_ms: row.last_played_ms,
+        last_played_at: row.last_played_ms.map(super::unix_ms_to_rfc3339_u64),
     }
 }
 
@@ -280,7 +276,7 @@ fn listen_row_to_response(row: ListenRow) -> ListenResponse {
         user_id: row.user_id,
         track_id: row.track_id,
         listen_count: row.listen_count,
-        last_played_at_ms: row.last_played_ms,
+        last_played_at: row.last_played_ms.map(super::unix_ms_to_rfc3339_u64),
     }
 }
 
@@ -530,13 +526,13 @@ async fn get_listens(
 
 pub(super) fn get_me_listens_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List my listen summaries").description(
-        "Returns authenticated user-scoped per-track listen summaries as `{ items, next_cursor }`. Use `track_id` to narrow the response to one track. Without `track_id`, summaries are sorted by listen_count descending and last_played_at_ms descending by default. Supported query parameters: `track_id`, `limit`, `cursor`, `sort_by`, `sort_order`, `merge_unique_external_ids`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `sort_by` values: `listen_count`, `count`, `last_played_at_ms`, `last_played`, `track_id`, `id`.",
+        "Returns authenticated user-scoped per-track listen summaries. Defaults to listen_count descending, then last_played_at descending.",
     )
 }
 
 fn get_listens_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List listen summaries").description(
-        "Requires ManageLibraries or Admin. Returns per-user per-track listen summaries for visible library content as `{ items, next_cursor }`. Use `user_id` or `track_id` to narrow the response. Without `track_id`, summaries are sorted by listen_count descending and last_played_at_ms descending by default. Supported query parameters: `user_id`, `track_id`, `limit`, `cursor`, `sort_by`, `sort_order`, `merge_unique_external_ids`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `sort_by` values: `listen_count`, `count`, `last_played_at_ms`, `last_played`, `user_id`, `track_id`, `id`.",
+        "Requires ManageLibraries or Admin. Returns per-user per-track listen summaries for visible library content.",
     )
 }
 

@@ -37,6 +37,7 @@ use crate::db::{
     DbAsync,
     Library,
 };
+use crate::routes::unix_secs_to_rfc3339_u64;
 
 use super::sync::{
     MAX_CONCURRENT_ALBUM_PIPELINE,
@@ -143,11 +144,14 @@ pub(crate) struct LibrarySyncRun {
     pub(crate) id: Option<u64>,
     pub(crate) status: LibrarySyncRunStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) started_at: Option<u64>,
+    #[schemars(description = "Run start time as an RFC3339 timestamp.")]
+    pub(crate) started_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) updated_at: Option<u64>,
+    #[schemars(description = "Most recent run status update time as an RFC3339 timestamp.")]
+    pub(crate) updated_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) finished_at: Option<u64>,
+    #[schemars(description = "Run completion time as an RFC3339 timestamp.")]
+    pub(crate) finished_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) error: Option<String>,
 }
@@ -210,7 +214,8 @@ pub(crate) struct LibrarySyncActiveWork {
     pub(crate) release_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) provider_id: Option<String>,
-    pub(crate) stage_started_at: u64,
+    #[schemars(description = "Active work stage start time as an RFC3339 timestamp.")]
+    pub(crate) stage_started_at: String,
 }
 
 #[derive(Clone, Debug, Serialize, JsonSchema)]
@@ -304,7 +309,7 @@ impl From<LibrarySyncState> for LibrarySyncStatus {
                 source_dir: item.source_dir,
                 release_title: item.release_title,
                 provider_id: item.provider_id,
-                stage_started_at: item.stage_started_at,
+                stage_started_at: unix_secs_to_rfc3339_u64(item.stage_started_at),
             })
             .collect();
 
@@ -312,9 +317,9 @@ impl From<LibrarySyncState> for LibrarySyncStatus {
             run: LibrarySyncRun {
                 id: state.run_id,
                 status: state.status,
-                started_at: state.started_at,
-                updated_at: state.updated_at,
-                finished_at: state.finished_at,
+                started_at: state.started_at.map(unix_secs_to_rfc3339_u64),
+                updated_at: state.updated_at.map(unix_secs_to_rfc3339_u64),
+                finished_at: state.finished_at.map(unix_secs_to_rfc3339_u64),
                 error: state.error,
             },
             progress: LibrarySyncStatusProgress {
@@ -783,6 +788,11 @@ mod tests {
         assert_eq!(value["changes"]["covers"]["hashed"], 2);
         assert_eq!(value["changes"]["covers"]["synced"], 1);
         assert_eq!(value["active"][0]["release_title"], "Album");
+        assert_eq!(
+            value["active"][0]["stage_started_at"],
+            "1970-01-01T00:01:40Z"
+        );
+        assert_eq!(value["run"]["started_at"], "1970-01-01T00:00:10Z");
 
         Ok(())
     }

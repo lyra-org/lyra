@@ -48,6 +48,7 @@ tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt", "registry", "std"] }
 tracing-appender = { version = "0.2", default-features = false }
 thiserror = { workspace = true }
+time = { version = "0.3", features = ["formatting"] }
 walkdir = "2"
 # async-ffmpeg-sidecar = "0.0"
 blake3 = { workspace = true }

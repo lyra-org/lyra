@@ -37,6 +37,10 @@ use serde::{
     Deserializer,
     de,
 };
+use time::{
+    OffsetDateTime,
+    format_description::well_known::Rfc3339,
+};
 
 use base64::{
     Engine as _,
@@ -130,6 +134,36 @@ impl PageQuery {
 pub(crate) fn next_page_cursor(offset: u64, item_count: usize, total_count: u64) -> Option<String> {
     let next_offset = offset.saturating_add(item_count as u64);
     (next_offset < total_count).then(|| encode_page_cursor(next_offset))
+}
+
+pub(crate) fn unix_secs_to_rfc3339_u64(seconds: u64) -> String {
+    let seconds = i64::try_from(seconds).expect("Unix timestamp seconds should fit in i64");
+    unix_secs_to_rfc3339_i64(seconds)
+}
+
+pub(crate) fn unix_secs_to_rfc3339_i64(seconds: i64) -> String {
+    OffsetDateTime::from_unix_timestamp(seconds)
+        .expect("Unix timestamp seconds should be RFC3339-representable")
+        .format(&Rfc3339)
+        .expect("RFC3339 formatting should succeed")
+}
+
+pub(crate) fn unix_ms_to_rfc3339_u64(milliseconds: u64) -> String {
+    unix_ms_to_rfc3339_i128(i128::from(milliseconds))
+}
+
+pub(crate) fn unix_ms_to_rfc3339_i64(milliseconds: i64) -> String {
+    unix_ms_to_rfc3339_i128(i128::from(milliseconds))
+}
+
+fn unix_ms_to_rfc3339_i128(milliseconds: i128) -> String {
+    let nanoseconds = milliseconds
+        .checked_mul(1_000_000)
+        .expect("Unix timestamp milliseconds should fit in nanoseconds");
+    OffsetDateTime::from_unix_timestamp_nanos(nanoseconds)
+        .expect("Unix timestamp milliseconds should be RFC3339-representable")
+        .format(&Rfc3339)
+        .expect("RFC3339 formatting should succeed")
 }
 
 fn encode_page_cursor(offset: u64) -> String {

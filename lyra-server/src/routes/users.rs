@@ -83,8 +83,10 @@ struct LoginResponse {
 struct ApiKeyResponse {
     id: String,
     name: String,
-    created_at: i64,
-    last_used_at: Option<i64>,
+    #[schemars(description = "API key creation time as an RFC3339 timestamp.")]
+    created_at: String,
+    #[schemars(description = "Most recent API key use time as an RFC3339 timestamp.")]
+    last_used_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -92,8 +94,10 @@ struct CreatedApiKeyResponse {
     id: String,
     name: String,
     key: String,
-    created_at: i64,
-    last_used_at: Option<i64>,
+    #[schemars(description = "API key creation time as an RFC3339 timestamp.")]
+    created_at: String,
+    #[schemars(description = "Most recent API key use time as an RFC3339 timestamp.")]
+    last_used_at: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -171,8 +175,8 @@ impl From<api_keys::ApiKeyInfo> for ApiKeyResponse {
         Self {
             id: api_key.id,
             name: api_key.name,
-            created_at: api_key.created_at,
-            last_used_at: api_key.last_used_at,
+            created_at: super::unix_secs_to_rfc3339_i64(api_key.created_at),
+            last_used_at: api_key.last_used_at.map(super::unix_secs_to_rfc3339_i64),
         }
     }
 }
@@ -183,8 +187,8 @@ impl From<api_keys::CreatedApiKey> for CreatedApiKeyResponse {
             id: api_key.id,
             name: api_key.name,
             key: api_key.key,
-            created_at: api_key.created_at,
-            last_used_at: api_key.last_used_at,
+            created_at: super::unix_secs_to_rfc3339_i64(api_key.created_at),
+            last_used_at: api_key.last_used_at.map(super::unix_secs_to_rfc3339_i64),
         }
     }
 }
@@ -1222,7 +1226,7 @@ mod tests {
         let test_dir = initialize_test_runtime().await?;
 
         let password = "session-meta-pass";
-        let user_db_id = {
+        {
             let mut db = STATE.db.write().await;
             db::roles::ensure_builtin_roles(&mut db)?;
             let user = User {
@@ -1234,7 +1238,6 @@ mod tests {
             };
             let user_db_id = db::users::create(&mut db, &user)?;
             db::roles::ensure_user_has_role(&mut db, user_db_id, db::roles::BUILTIN_USER_ROLE)?;
-            user_db_id
         };
 
         let mut headers = HeaderMap::new();
@@ -1256,7 +1259,10 @@ mod tests {
             db::users::find_by_session_token_hash(&db, &hash_secret(&login.token))?
                 .ok_or_else(|| anyhow::anyhow!("session must exist after login"))?;
 
-        assert_eq!(session.user_agent.as_deref(), Some("lyra-test/1.0 (integration)"));
+        assert_eq!(
+            session.user_agent.as_deref(),
+            Some("lyra-test/1.0 (integration)")
+        );
         assert_eq!(session.client_name.as_deref(), Some("Lyra Desktop"));
         assert!(session.created_at > 0);
         assert_eq!(session.last_seen_at, session.created_at);

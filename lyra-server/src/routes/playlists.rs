@@ -103,9 +103,11 @@ struct PlaylistResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     owner_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    created_at: Option<u64>,
+    #[schemars(description = "Playlist creation time as an RFC3339 timestamp.")]
+    created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    updated_at: Option<u64>,
+    #[schemars(description = "Playlist update time as an RFC3339 timestamp.")]
+    updated_at: Option<String>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -185,8 +187,8 @@ fn playlist_to_response(
         is_public: playlist.is_public.unwrap_or(false),
         tracks,
         owner_id,
-        created_at: playlist.created_at,
-        updated_at: playlist.updated_at,
+        created_at: playlist.created_at.map(super::unix_secs_to_rfc3339_u64),
+        updated_at: playlist.updated_at.map(super::unix_secs_to_rfc3339_u64),
     })
 }
 

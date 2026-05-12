@@ -112,7 +112,7 @@ struct TagResponse {
     id: String,
     tag: String,
     color: String,
-    created_at_ms: i64,
+    created_at: String,
 }
 
 fn tag_to_response(tag: db::Tag) -> TagResponse {
@@ -120,7 +120,7 @@ fn tag_to_response(tag: db::Tag) -> TagResponse {
         id: tag.id,
         tag: tag.tag,
         color: tag.color,
-        created_at_ms: tag.created_at_ms,
+        created_at: super::unix_ms_to_rfc3339_i64(tag.created_at_ms),
     }
 }
 
@@ -417,7 +417,7 @@ fn create_tag_docs(op: TransformOperation) -> TransformOperation {
 
 fn list_tags_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tags").description(
-        "Returns the authenticated user's tags, paginated by `created_at_ms` descending with \
+        "Returns the authenticated user's tags, paginated by creation time descending with \
          a stable tiebreaker. Renaming does not reorder tags. `next_cursor` is the only \
          termination signal.",
     )
