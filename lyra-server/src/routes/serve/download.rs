@@ -37,7 +37,6 @@ use super::{
     apply_transcode_policy,
     configure_output,
     file_response,
-    require_download_access,
     resolve_codec,
     resolve_output_format,
     temp_file_response,
@@ -48,6 +47,10 @@ use super::{
 
 #[derive(Deserialize, JsonSchema)]
 struct DownloadQuery {
+    #[schemars(
+        description = "Scoped download token returned by `POST /api/tracks/{id}/playback-url`."
+    )]
+    media_token: Option<String>,
     #[schemars(
         description = "Optional output format (e.g. mp3, flac, wav, ogg, webm, m4a, alac)."
     )]
@@ -92,6 +95,7 @@ async fn get_download(
         query.channels,
         query.prefer_vbr,
         query.start_offset_ms,
+        query.media_token,
     )
     .await
 }
@@ -106,13 +110,17 @@ pub(crate) async fn download_track_response(
     channels: Option<u32>,
     prefer_vbr: Option<bool>,
     start_offset_ms: Option<u64>,
+    media_token: Option<String>,
 ) -> Result<Response<Body>, AppError> {
-    let principal = require_download_access(headers).await?;
+    match super::require_download_track_access(headers, media_token.as_deref(), track_db_id).await?
     {
-        let db = crate::STATE.db.read().await;
-        routes::require_entity_accessible(&*db, &principal, track_db_id, || {
-            AppError::not_found(format!("Track not found: {}", track_db_id.0))
-        })?;
+        super::TrackAccess::Principal(principal) => {
+            let db = crate::STATE.db.read().await;
+            routes::require_entity_accessible(&*db, &principal, track_db_id, || {
+                AppError::not_found(format!("Track not found: {}", track_db_id.0))
+            })?;
+        }
+        super::TrackAccess::MediaToken => {}
     }
     let validated = validate_request(format, codec)?;
     let source = apply_request_start_offset(
@@ -222,7 +230,7 @@ pub(crate) async fn download_track_response(
 fn download_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Download audio")
         .description(
-            "Downloads audio for the track ID, including cue-derived virtual segments, optionally transcoded to the requested format or codec. Supports all formats including m4a, alac, and caf. Returns a complete file with byte-range support.",
+            "Downloads audio for the track ID, including cue-derived virtual segments, optionally transcoded to the requested format or codec. Requires bearer authentication with download permission or a scoped download `media_token` from `POST /api/tracks/{track_id}/playback-url`. Supports all formats including m4a, alac, and caf. Returns a complete file with byte-range support.",
         )
 }
 

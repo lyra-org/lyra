@@ -816,9 +816,9 @@ impl ApiModule {
         build_download_track_response(lua, args)
     }
 
-    /// Builds an HLS playlist response for a track. Clients follow segment URLs from
-    /// the returned M3U8 back to the native Lyra HLS endpoints, which are authorized
-    /// via short-lived signed tokens.
+    /// Builds an HLS playlist response for a track. Plugin routes should perform
+    /// their own auth before returning this response; clients follow segment URLs
+    /// from the returned M3U8 back to the native Lyra HLS session endpoint.
     #[harmony(path = "response.hls_playlist", args(track_id: i64, options: Option<HlsServeOptions>), returns(ApiHlsPlaylistResponse))]
     pub(crate) fn response_hls_playlist_fn(
         lua: &Lua,
