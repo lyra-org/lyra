@@ -1,0 +1,22 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "imase & なとり - メトロシティ (2024) [WEB-FLAC]/01. メトロシティ.flac"
+album = "メトロシティ"
+album_artists = ["imase & なとり"]
+artists = ["imase & なとり"]
+title = "メトロシティ"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 200511
+
+[expect.release]
+ids = { release_id = "eebe00b8-abb3-4d5e-ad70-e1ffd8d44933" }
+fields = { release_title = "メトロシティ", release_date = "2024-09-25" }
