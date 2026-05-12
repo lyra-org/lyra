@@ -1,0 +1,149 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Remindful.Two/08 - カタオモイ.flac"
+album = "Remindful.Two"
+album_artists = ["ダズビー"]
+artists = ["ダズビー"]
+title = "カタオモイ"
+copyright = "℗ 2022 Accelers, Inc."
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 8
+duration_ms = 202848
+
+[[raw_tags]]
+file_path = "Remindful.Two/07 - Mela!.flac"
+album = "Remindful.Two"
+album_artists = ["ダズビー"]
+artists = ["ダズビー"]
+title = "Mela!"
+copyright = "℗ 2022 Accelers, Inc."
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 8
+duration_ms = 233314
+
+[[raw_tags]]
+file_path = "Remindful.Two/06 - 寄り酔い.flac"
+album = "Remindful.Two"
+album_artists = ["ダズビー"]
+artists = ["ダズビー"]
+title = "寄り酔い"
+copyright = "℗ 2022 Accelers, Inc."
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 8
+duration_ms = 209500
+
+[[raw_tags]]
+file_path = "Remindful.Two/05 - たばこ.flac"
+album = "Remindful.Two"
+album_artists = ["ダズビー"]
+artists = ["ダズビー"]
+title = "たばこ"
+copyright = "℗ 2022 Accelers, Inc."
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 8
+duration_ms = 365068
+
+[[raw_tags]]
+file_path = "Remindful.Two/04 - 瞬き.flac"
+album = "Remindful.Two"
+album_artists = ["ダズビー"]
+artists = ["ダズビー"]
+title = "瞬き"
+copyright = "℗ 2022 Accelers, Inc."
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 8
+duration_ms = 297829
+
+[[raw_tags]]
+file_path = "Remindful.Two/03 - アスノヨゾラ哨戒班.flac"
+album = "Remindful.Two"
+album_artists = ["ダズビー"]
+artists = ["ダズビー"]
+title = "アスノヨゾラ哨戒班"
+copyright = "℗ 2022 Accelers, Inc."
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 8
+duration_ms = 177800
+
+[[raw_tags]]
+file_path = "Remindful.Two/02 - 香水.flac"
+album = "Remindful.Two"
+album_artists = ["ダズビー"]
+artists = ["ダズビー"]
+title = "香水"
+copyright = "℗ 2022 Accelers, Inc."
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 8
+duration_ms = 248766
+
+[[raw_tags]]
+file_path = "Remindful.Two/01 - 忘れじの言の葉.flac"
+album = "Remindful.Two"
+album_artists = ["ダズビー"]
+artists = ["ダズビー"]
+title = "忘れじの言の葉"
+copyright = "℗ 2022 Accelers, Inc."
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 8
+duration_ms = 236218
+
+[expect.release]
+ids = { release_group_id = "3f8a3743-a4f3-4527-aa26-c2b81d1fd89b", release_id = "412c6206-4bdc-4b6b-bbd8-9eb17b996678" }
+fields = { release_title = "Remindful.Two", release_date = "2022-05-31" }
+
+[expect.artists."10623c33-205c-49f4-b8a0-55a105dd4fa3"]
+fields = { artist_name = "ダズビー", sort_name = "Dazbee" }
+
+[expect.tracks."01a2618a-c69c-4021-918d-7bc7bd6bd660"]
+fields = { disc = 1, track = 7, track_title = "Mela!" }
+
+[expect.tracks."50b21951-fab4-4b19-beaa-2cb866730907"]
+fields = { disc = 1, track = 2, track_title = "香水" }
+
+[expect.tracks."7275628b-3eb8-4b51-966b-d7e5711ac314"]
+fields = { disc = 1, track = 4, track_title = "瞬き" }
+
+[expect.tracks."a25b7e58-fcb9-4e38-896a-3bba3b90f359"]
+fields = { disc = 1, track = 1, track_title = "忘れじの言の葉" }
+
+[expect.tracks."b06378b9-a218-4bd6-96df-cd88187ede6d"]
+fields = { disc = 1, track = 8, track_title = "カタオモイ" }
+
+[expect.tracks."b7474012-cdc7-4ef5-87bb-f03f24792312"]
+fields = { disc = 1, track = 6, track_title = "寄り酔い" }
+
+[expect.tracks."d372e500-e74e-4bc5-bb65-997a7496fed2"]
+fields = { disc = 1, track = 3, track_title = "アスノヨゾラ哨戒班" }
+
+[expect.tracks."d5b596af-f7dd-47cc-ac7b-0539d6f9e5f9"]
+fields = { disc = 1, track = 5, track_title = "たばこ" }
