@@ -35,6 +35,7 @@ pub(crate) use self::workflow::{
     cleanup_evicted_playbacks,
     clear_playback_session,
     list_playbacks,
+    pause_playing_scopes_on_disconnect,
     playback_activity_ms,
     report_playback_session_with_cleanup,
     report_playback_with_cleanup,
@@ -282,6 +283,7 @@ mod tests {
     use super::workflow::{
         apply_playback_mutation,
         collect_unique_track_external_id_keys,
+        pause_playing_scopes_on_disconnect,
         report_playback_session,
         report_playback_session_with_cleanup,
     };
@@ -1038,6 +1040,101 @@ mod tests {
         )?;
 
         assert!(!is_remote_control_degraded(&scope, 50_000 + 30_000));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn disconnect_pauses_playing_scopes_at_effective_position() -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user_db_id = insert_user(&mut db, "alice")?;
+        let track_db_id = insert_track(&mut db, "Track A", 200_000)?;
+        let native_track_db_id = insert_track(&mut db, "Track B", 200_000)?;
+
+        let jellyfin_started = report_playback_session(
+            &mut db,
+            SessionPlaybackReportRequest {
+                plugin_id: "jellyfin",
+                user_db_id,
+                session_key: "device:1",
+                track_db_id,
+                mutation: PlaybackMutation {
+                    position_ms: Some(10_000),
+                    duration_ms: Some(200_000),
+                    state: Some(PlaybackState::Playing),
+                },
+                now_ms: 1_000,
+                active_event: ActiveEvent::Started,
+                stale_ttl_ms: ACTIVE_SESSION_TTL_MS,
+            },
+        )?
+        .expect("started playback");
+        let native_started = report_playback_session(
+            &mut db,
+            SessionPlaybackReportRequest {
+                plugin_id: "native",
+                user_db_id,
+                session_key: "device:1",
+                track_db_id: native_track_db_id,
+                mutation: PlaybackMutation {
+                    position_ms: Some(20_000),
+                    duration_ms: Some(200_000),
+                    state: Some(PlaybackState::Playing),
+                },
+                now_ms: 2_000,
+                active_event: ActiveEvent::Started,
+                stale_ttl_ms: ACTIVE_SESSION_TTL_MS,
+            },
+        )?
+        .expect("started native playback");
+
+        let (paused_playbacks, evicted_playbacks) =
+            pause_playing_scopes_on_disconnect(&mut db, user_db_id, "device:1", 4_000)?;
+
+        assert_eq!(paused_playbacks.len(), 2);
+        assert!(evicted_playbacks.is_empty());
+
+        let jellyfin_paused = paused_playbacks
+            .iter()
+            .find(|playback| playback.playback_session_id == jellyfin_started.playback_session_id)
+            .expect("jellyfin playback paused");
+        assert_eq!(jellyfin_paused.playback.position_ms, 13_000);
+        assert_eq!(jellyfin_paused.playback.state, PlaybackState::Paused);
+        assert_eq!(jellyfin_paused.playback.activity_ms, Some(3_000));
+        assert_eq!(jellyfin_paused.playback.updated_at_ms, 4_000);
+
+        let native_paused = paused_playbacks
+            .iter()
+            .find(|playback| playback.playback_session_id == native_started.playback_session_id)
+            .expect("native playback paused");
+        assert_eq!(native_paused.playback.position_ms, 22_000);
+        assert_eq!(native_paused.playback.state, PlaybackState::Paused);
+        assert_eq!(native_paused.playback.activity_ms, Some(2_000));
+        assert_eq!(native_paused.playback.updated_at_ms, 4_000);
+
+        let jellyfin_scope = PlaybackScopeKey {
+            plugin_id: "jellyfin",
+            user_db_id,
+            session_key: "device:1",
+        };
+        assert!(get_playback_session(&jellyfin_scope).is_none());
+
+        let native_scope = PlaybackScopeKey {
+            plugin_id: "native",
+            user_db_id,
+            session_key: "device:1",
+        };
+        assert!(get_playback_session(&native_scope).is_none());
+
+        let persisted =
+            db::playback_sessions::get_by_id(&db, jellyfin_started.playback_session_id)?
+                .expect("persisted playback");
+        assert_eq!(persisted.position_ms, 13_000);
+        assert_eq!(persisted.state, PlaybackState::Paused);
+
+        let persisted = db::playback_sessions::get_by_id(&db, native_started.playback_session_id)?
+            .expect("persisted native playback");
+        assert_eq!(persisted.position_ms, 22_000);
+        assert_eq!(persisted.state, PlaybackState::Paused);
         Ok(())
     }
 

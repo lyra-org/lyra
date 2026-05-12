@@ -24,6 +24,7 @@ use super::sessions::{
     clear_playback_session_scope,
     clear_session_bindings_for_playbacks,
     get_playback_session,
+    get_playback_sessions_for_user_session,
     resolve_current_playback,
     resolve_previous_playback,
     upsert_playback_session,
@@ -248,13 +249,9 @@ fn update_session_bound_playback(
     mut bound: sessions::BoundPlayback,
     mutation: PlaybackMutation,
     now_ms: u64,
+    activity_policy: ActivityPolicy,
 ) -> ServiceResult<PlaybackRecord> {
-    apply_playback_mutation(
-        &mut bound.playback,
-        &mutation,
-        now_ms,
-        ActivityPolicy::PlayingOnly,
-    )?;
+    apply_playback_mutation(&mut bound.playback, &mutation, now_ms, activity_policy)?;
     bound.playback.db_id = Some(bound.playback_session_id);
     map_internal(db::playback_sessions::update(db, &bound.playback))?;
 
@@ -287,6 +284,19 @@ pub(crate) fn ensure_position_within_duration(
 
 pub(crate) fn playback_activity_ms(playback: &PlaybackSession) -> u64 {
     playback.activity_ms.unwrap_or(playback.position_ms)
+}
+
+fn effective_playback_position_ms(playback: &PlaybackSession, now_ms: u64) -> u64 {
+    let mut position_ms = playback.position_ms;
+    if playback.state == PlaybackState::Playing {
+        position_ms = position_ms.saturating_add(now_ms.saturating_sub(playback.updated_at_ms));
+    }
+
+    if let Some(duration_ms) = playback.duration_ms {
+        position_ms = position_ms.min(duration_ms);
+    }
+
+    position_ms
 }
 
 fn maybe_record_listen(
@@ -617,6 +627,66 @@ pub(crate) fn report_playback_session_with_cleanup(
     finalize_optional_playback_update(db, playback, active_event, now_ms)
 }
 
+fn pause_bound_playback_on_disconnect(
+    db: &mut DbAny,
+    user_db_id: DbId,
+    bound: sessions::BoundPlayback,
+    now_ms: u64,
+) -> ServiceResult<Option<PlaybackRecord>> {
+    if bound.playback.state != PlaybackState::Playing {
+        return Ok(None);
+    }
+
+    let position_ms = effective_playback_position_ms(&bound.playback, now_ms);
+    update_session_bound_playback(
+        db,
+        user_db_id,
+        bound,
+        PlaybackMutation {
+            position_ms: Some(position_ms),
+            duration_ms: None,
+            state: Some(PlaybackState::Paused),
+        },
+        now_ms,
+        ActivityPolicy::AnyState,
+    )
+    .map(Some)
+}
+
+pub(crate) fn pause_playing_scopes_on_disconnect(
+    db: &mut DbAny,
+    user_db_id: DbId,
+    session_key: &str,
+    now_ms: u64,
+) -> ServiceResult<(Vec<PlaybackRecord>, Vec<EvictedPlaybackRecord>)> {
+    let scoped_sessions = get_playback_sessions_for_user_session(user_db_id, session_key);
+    let mut playbacks = Vec::new();
+
+    for (plugin_id, session) in scoped_sessions {
+        let scope = PlaybackScopeKey {
+            plugin_id: &plugin_id,
+            user_db_id,
+            session_key,
+        };
+
+        let bound = map_internal(resolve_current_playback(db, &session))?;
+        if let Some(bound) = bound
+            && let Some(playback) =
+                pause_bound_playback_on_disconnect(db, user_db_id, bound, now_ms)?
+        {
+            playbacks.push(playback);
+        }
+        clear_playback_session_scope(&scope);
+    }
+
+    for playback in &mut playbacks {
+        maybe_record_listen(db, playback, now_ms)?;
+    }
+    let evicted_playbacks = cleanup_evicted_playbacks(db, now_ms)?;
+
+    Ok((playbacks, evicted_playbacks))
+}
+
 pub(crate) fn start_playback(
     db: &mut DbAny,
     request: StartPlaybackRequest,
@@ -894,6 +964,7 @@ pub(crate) fn report_playback_session(
                     state: Some(state),
                 },
                 now_ms,
+                ActivityPolicy::PlayingOnly,
             )?;
 
             set_current_session_playback(
@@ -953,6 +1024,7 @@ pub(crate) fn report_playback_session(
                         state: Some(state),
                     },
                     now_ms,
+                    ActivityPolicy::PlayingOnly,
                 )?;
 
                 if promoted_to_current {
