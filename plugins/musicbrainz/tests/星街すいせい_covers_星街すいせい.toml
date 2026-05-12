@@ -1,0 +1,108 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "星街すいせい Covers/きゅうくらりん.m4a"
+artists = ["星街すいせい"]
+title = "きゅうくらりん"
+genre = "Jpop"
+track = 14
+duration_ms = 216085
+
+[[raw_tags]]
+file_path = "星街すいせい Covers/踊.m4a"
+artists = ["星街すいせい"]
+genre = "JPop"
+track = 13
+duration_ms = 215829
+
+[[raw_tags]]
+file_path = "星街すいせい Covers/言って。.m4a"
+artists = ["星街すいせい"]
+genre = "JPop"
+track = 12
+duration_ms = 242347
+
+[[raw_tags]]
+file_path = "星街すいせい Covers/覚醒.m4a"
+artists = ["星街すいせい"]
+genre = "JPop"
+track = 11
+duration_ms = 255234
+
+[[raw_tags]]
+file_path = "星街すいせい Covers/死神.m4a"
+artists = ["星街すいせい"]
+genre = "JPop"
+track = 10
+duration_ms = 181418
+
+[[raw_tags]]
+file_path = "星街すいせい Covers/怪物.m4a"
+artists = ["星街すいせい"]
+genre = "JPop"
+track = 9
+duration_ms = 205079
+
+[[raw_tags]]
+file_path = "星街すいせい Covers/廻廻奇譚.m4a"
+artists = ["星街すいせい"]
+genre = "JPop"
+track = 8
+duration_ms = 219103
+
+[[raw_tags]]
+file_path = "星街すいせい Covers/幽霊東京.m4a"
+artists = ["星街すいせい"]
+genre = "JPop"
+track = 7
+duration_ms = 201062
+
+[[raw_tags]]
+file_path = "星街すいせい Covers/マーシャル・マキシマイザー.m4a"
+artists = ["星街すいせい"]
+genre = "JPop"
+track = 6
+duration_ms = 168321
+
+[[raw_tags]]
+file_path = "星街すいせい Covers/フォニイ.m4a"
+artists = ["星街すいせい"]
+genre = "JPop"
+track = 5
+duration_ms = 189219
+
+[[raw_tags]]
+file_path = "星街すいせい Covers/トウキョウ・シャンディ・ランデヴ.m4a"
+artists = ["星街すいせい"]
+genre = "JPop"
+track = 4
+duration_ms = 183948
+
+[[raw_tags]]
+file_path = "星街すいせい Covers/Overdose.m4a"
+artists = ["星街すいせい"]
+genre = "JPop"
+track = 3
+duration_ms = 192911
+
+[[raw_tags]]
+file_path = "星街すいせい Covers/FACT.m4a"
+artists = ["星街すいせい"]
+genre = "JPop"
+track = 2
+duration_ms = 192424
+
+[[raw_tags]]
+file_path = "星街すいせい Covers/Cry Baby.m4a"
+artists = ["星街すいせい"]
+genre = "JPop"
+track = 1
+duration_ms = 243299
+
+[expect.release]
+ids = { release_id = "" }
