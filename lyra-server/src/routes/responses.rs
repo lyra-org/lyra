@@ -39,8 +39,8 @@ pub struct LyricsResponse {
     pub plain_text: String,
     #[schemars(description = "True when any line carries per-word timing in `words`.")]
     pub has_word_cues: bool,
-    #[schemars(description = "Seconds since the Unix epoch; updated only when content changes.")]
-    pub updated_at: u64,
+    #[schemars(description = "RFC3339 timestamp; updated only when content changes.")]
+    pub updated_at: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     #[schemars(description = "Synced lines in playback order. Empty for plain-text-only lyrics.")]
     pub lines: Vec<LyricsLineResponse>,
@@ -345,7 +345,8 @@ pub struct EntryResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hash: Option<String>,
     pub size: u64,
-    pub mtime: u64,
+    #[schemars(description = "Filesystem modification time as an RFC3339 timestamp.")]
+    pub modified_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tracks: Option<Vec<TrackResponse>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -364,7 +365,7 @@ impl EntryResponse {
             name: entry.name,
             hash: entry.hash,
             size: entry.size,
-            mtime: entry.mtime,
+            modified_at: super::unix_secs_to_rfc3339_u64(entry.mtime),
             tracks: None,
             releases: None,
             artists: None,
@@ -375,5 +376,36 @@ impl EntryResponse {
 impl From<db::Entry> for EntryResponse {
     fn from(entry: db::Entry) -> Self {
         Self::from_entry(entry, true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn entry_response_serializes_modified_at_as_rfc3339() -> anyhow::Result<()> {
+        let value = serde_json::to_value(EntryResponse::from_entry(
+            db::Entry {
+                db_id: None,
+                id: "entry".to_string(),
+                full_path: PathBuf::from("/tmp/track.flac"),
+                kind: db::entries::EntryKind::File,
+                file_kind: Some("audio".to_string()),
+                name: "track.flac".to_string(),
+                hash: None,
+                size: 123,
+                mtime: 1_700_000_000,
+                ctime: 1_700_000_000,
+            },
+            false,
+        ))?;
+
+        assert_eq!(value["modified_at"], json!("2023-11-14T22:13:20Z"));
+        Ok(())
     }
 }

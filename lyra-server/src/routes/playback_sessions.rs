@@ -105,8 +105,8 @@ struct PlaybackResponse {
     state: PlaybackState,
     #[schemars(description = "Accumulated effective listening activity in milliseconds.")]
     activity_ms: u64,
-    #[schemars(description = "Last report timestamp in epoch milliseconds.")]
-    updated_at_ms: u64,
+    #[schemars(description = "Last report timestamp as an RFC 3339 UTC timestamp.")]
+    updated_at: String,
     #[schemars(
         description = "Server-time playback position in milliseconds extrapolated from last update while playing."
     )]
@@ -164,7 +164,7 @@ fn playback_to_response(
         duration_ms: playback.playback.duration_ms,
         state: playback.playback.state,
         activity_ms,
-        updated_at_ms: playback.playback.updated_at_ms,
+        updated_at: routes::unix_ms_to_rfc3339_u64(playback.playback.updated_at_ms),
         effective_position_ms,
     })
 }
@@ -223,10 +223,14 @@ async fn get_playbacks(
             continue;
         }
 
-        response.push(playback_to_response(&*db, &playback, current_ms)?);
+        response.push((
+            playback.playback.updated_at_ms,
+            playback_to_response(&*db, &playback, current_ms)?,
+        ));
     }
 
-    response.sort_by(|a, b| b.updated_at_ms.cmp(&a.updated_at_ms));
+    response.sort_by(|a, b| b.0.cmp(&a.0));
+    let response = response.into_iter().map(|(_, playback)| playback).collect();
 
     Ok(Json(response))
 }
@@ -413,18 +417,22 @@ async fn get_active_sessions(
             })
             .unwrap_or(false);
 
-        response.push(ActiveSessionResponse {
-            playback: playback_response,
-            connection_token: connection.map(|c| c.token.clone()),
-            connection_session_key: connection.map(|c| c.session_key.clone()),
-            supported_commands: connection
-                .map(|c| c.supported_commands.clone())
-                .unwrap_or_default(),
-            remote_control_degraded: degraded,
-        });
+        response.push((
+            playback.playback.updated_at_ms,
+            ActiveSessionResponse {
+                playback: playback_response,
+                connection_token: connection.map(|c| c.token.clone()),
+                connection_session_key: connection.map(|c| c.session_key.clone()),
+                supported_commands: connection
+                    .map(|c| c.supported_commands.clone())
+                    .unwrap_or_default(),
+                remote_control_degraded: degraded,
+            },
+        ));
     }
 
-    response.sort_by(|a, b| b.playback.updated_at_ms.cmp(&a.playback.updated_at_ms));
+    response.sort_by(|a, b| b.0.cmp(&a.0));
+    let response = response.into_iter().map(|(_, session)| session).collect();
 
     Ok(Json(response))
 }

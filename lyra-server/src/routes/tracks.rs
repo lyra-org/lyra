@@ -416,7 +416,7 @@ fn lyrics_response_json(detail: db::lyrics::LyricsDetail) -> Json<LyricsResponse
         origin: lyrics.origin.into(),
         plain_text: lyrics.plain_text,
         has_word_cues: lyrics.has_word_cues,
-        updated_at: lyrics.updated_at,
+        updated_at: super::unix_ms_to_rfc3339_u64(lyrics.updated_at),
         lines: response_lines,
     })
 }
