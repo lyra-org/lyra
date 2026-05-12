@@ -54,6 +54,7 @@ pub(crate) mod playback_sources;
 pub(crate) mod playlists;
 pub(crate) mod plugin_settings;
 pub(crate) mod providers;
+pub(crate) mod rate_limit;
 pub(crate) mod releases;
 pub(crate) mod remote;
 pub(crate) mod search;

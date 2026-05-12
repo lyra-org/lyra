@@ -170,6 +170,7 @@ async fn serve(
     shutdown_token: CancellationToken,
 ) -> Result<()> {
     tracing::info!("listening on {}", listener.local_addr()?);
+    let app = services::rate_limit::apply(app, config);
     let app = app.layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES));
     let app = services::cors::apply(app, config);
     let app = app.layer(TraceLayer::new_for_http());
@@ -179,9 +180,12 @@ async fn serve(
         signal_token.cancel();
     });
 
-    let server = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_token.clone().cancelled_owned())
-        .into_future();
+    let server = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_token.clone().cancelled_owned())
+    .into_future();
     tokio::pin!(server);
 
     tokio::select! {

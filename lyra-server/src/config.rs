@@ -12,6 +12,11 @@ use serde::Deserialize;
 use std::{
     env,
     ffi::OsString,
+    net::{
+        IpAddr,
+        Ipv4Addr,
+        Ipv6Addr,
+    },
     path::PathBuf,
 };
 
@@ -63,6 +68,7 @@ pub(crate) struct Config {
     pub(crate) port: u16,
     pub(crate) published_url: Option<String>,
     pub(crate) cors: CorsConfig,
+    pub(crate) rate_limit: RateLimitConfig,
     pub(crate) library: Option<LibraryConfig>,
     pub(crate) covers_path: Option<PathBuf>,
     pub(crate) db: DbConfig,
@@ -77,6 +83,7 @@ impl Default for Config {
             port: DEFAULT_PORT,
             published_url: None,
             cors: CorsConfig::default(),
+            rate_limit: RateLimitConfig::default(),
             library: None,
             covers_path: None,
             db: DbConfig::default(),
@@ -91,6 +98,27 @@ impl Default for Config {
 pub(crate) struct CorsConfig {
     #[serde(default)]
     pub(crate) allowed_origins: Vec<String>,
+}
+
+#[derive(Clone, Deserialize)]
+pub(crate) struct RateLimitConfig {
+    #[serde(default = "default_rate_limit_enabled")]
+    pub(crate) enabled: bool,
+    #[serde(default = "default_rate_limit_trusted_proxies")]
+    pub(crate) trusted_proxies: Vec<IpAddr>,
+    #[serde(default = "default_global_rate_limit_per_minute")]
+    pub(crate) global_per_minute: u32,
+    #[serde(default = "default_global_rate_limit_burst")]
+    pub(crate) global_burst: u32,
+    // Checked in addition to the global client bucket.
+    #[serde(default = "default_authenticated_rate_limit_per_minute")]
+    pub(crate) authenticated_per_minute: u32,
+    #[serde(default = "default_authenticated_rate_limit_burst")]
+    pub(crate) authenticated_burst: u32,
+    #[serde(default = "default_login_rate_limit_per_minute")]
+    pub(crate) login_per_minute: u32,
+    #[serde(default = "default_login_rate_limit_burst")]
+    pub(crate) login_burst: u32,
 }
 
 #[derive(Clone, Deserialize)]
@@ -191,8 +219,58 @@ impl Default for AuthConfig {
     }
 }
 
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_rate_limit_enabled(),
+            trusted_proxies: default_rate_limit_trusted_proxies(),
+            global_per_minute: default_global_rate_limit_per_minute(),
+            global_burst: default_global_rate_limit_burst(),
+            authenticated_per_minute: default_authenticated_rate_limit_per_minute(),
+            authenticated_burst: default_authenticated_rate_limit_burst(),
+            login_per_minute: default_login_rate_limit_per_minute(),
+            login_burst: default_login_rate_limit_burst(),
+        }
+    }
+}
+
 fn default_db_path() -> PathBuf {
     PathBuf::from(DEFAULT_DB_FILE_NAME)
+}
+
+fn default_rate_limit_enabled() -> bool {
+    true
+}
+
+fn default_rate_limit_trusted_proxies() -> Vec<IpAddr> {
+    vec![
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        IpAddr::V6(Ipv6Addr::LOCALHOST),
+    ]
+}
+
+fn default_global_rate_limit_per_minute() -> u32 {
+    1_200
+}
+
+fn default_global_rate_limit_burst() -> u32 {
+    300
+}
+
+fn default_authenticated_rate_limit_per_minute() -> u32 {
+    600
+}
+
+fn default_authenticated_rate_limit_burst() -> u32 {
+    120
+}
+
+fn default_login_rate_limit_per_minute() -> u32 {
+    10
+}
+
+fn default_login_rate_limit_burst() -> u32 {
+    3
 }
 
 fn default_allow_default_login_when_disabled() -> bool {
@@ -374,6 +452,7 @@ mod tests {
         DbKind,
         HlsConfig,
         LibraryConfig,
+        RateLimitConfig,
         SyncConfig,
         configured_db_dir,
         normalize_config_library_locale_inputs,
@@ -387,6 +466,7 @@ mod tests {
             port: DEFAULT_PORT,
             published_url: None,
             cors: CorsConfig::default(),
+            rate_limit: RateLimitConfig::default(),
             library,
             covers_path: None,
             db: DbConfig::default(),
