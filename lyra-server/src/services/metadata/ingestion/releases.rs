@@ -15,6 +15,7 @@ use std::time::{
 use agdb::{
     DbAny,
     DbId,
+    DbType,
     QueryBuilder,
 };
 use nanoid::nanoid;
@@ -29,10 +30,13 @@ use super::artists::{
 };
 use crate::db::{
     self,
+    ArtistRelationType,
+    ArtistType,
     CreditType,
     DbAccess,
     Release,
     Track,
+    artists::relations::ArtistRelation,
     graph::{
         ensure_owned_edge,
         remove_edges_between,
@@ -110,6 +114,103 @@ fn infer_release_artists(release_tracks: &[TrackIngest]) -> Vec<String> {
         .into_iter()
         .filter(|name| counts.get(name.as_str()).copied().unwrap_or(0) > total / 2)
         .collect()
+}
+
+fn parsed_artist_type_to_db(artist_type: lyra_metadata::ParsedArtistType) -> ArtistType {
+    match artist_type {
+        lyra_metadata::ParsedArtistType::Person => ArtistType::Person,
+        lyra_metadata::ParsedArtistType::Character => ArtistType::Character,
+    }
+}
+
+fn parsed_relation_type_to_db(
+    relation_type: lyra_metadata::ArtistRelationKind,
+) -> ArtistRelationType {
+    match relation_type {
+        lyra_metadata::ArtistRelationKind::VoiceActor => ArtistRelationType::VoiceActor,
+    }
+}
+
+fn set_artist_type_if_missing(
+    db: &mut impl DbAccess,
+    artist_id: DbId,
+    artist_type: Option<lyra_metadata::ParsedArtistType>,
+) -> anyhow::Result<()> {
+    let Some(artist_type) = artist_type else {
+        return Ok(());
+    };
+    let Some(mut artist) = db::artists::get_by_id(db, artist_id)? else {
+        return Ok(());
+    };
+    if artist.artist_type.is_none() {
+        artist.artist_type = Some(parsed_artist_type_to_db(artist_type));
+        db::artists::update(db, &artist)?;
+    }
+    Ok(())
+}
+
+fn ensure_artist_relation(
+    db: &mut impl DbAccess,
+    source_artist_id: DbId,
+    target_artist_id: DbId,
+    relation_type: ArtistRelationType,
+) -> anyhow::Result<()> {
+    let edge_ids = db::graph::direct_edge_ids(db, source_artist_id, target_artist_id)?;
+    if !edge_ids.is_empty() {
+        let result = db.exec(QueryBuilder::select().ids(edge_ids).query())?;
+        for element in result.elements {
+            if let Ok(existing) = ArtistRelation::from_db_element(&element) {
+                if existing.relation_type == relation_type {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    db.exec_mut(
+        QueryBuilder::insert()
+            .edges()
+            .from(source_artist_id)
+            .to(target_artist_id)
+            .values_uniform(ArtistRelation {
+                db_id: None,
+                relation_type,
+                attributes: None,
+            })
+            .query(),
+    )?;
+
+    Ok(())
+}
+
+fn sync_scanned_artist_relations(
+    db: &mut impl DbAccess,
+    relations: &[lyra_metadata::ArtistRelationMetadata],
+    cache: &mut HashMap<String, DbId>,
+) -> anyhow::Result<()> {
+    for relation in relations {
+        let source_ids =
+            resolve_artist_ids(db, std::slice::from_ref(&relation.source_artist), cache)?;
+        let target_ids =
+            resolve_artist_ids(db, std::slice::from_ref(&relation.target_artist), cache)?;
+        let Some(source_artist_id) = source_ids.first().copied() else {
+            continue;
+        };
+        let Some(target_artist_id) = target_ids.first().copied() else {
+            continue;
+        };
+
+        set_artist_type_if_missing(db, source_artist_id, relation.source_artist_type)?;
+        set_artist_type_if_missing(db, target_artist_id, relation.target_artist_type)?;
+        ensure_artist_relation(
+            db,
+            source_artist_id,
+            target_artist_id,
+            parsed_relation_type_to_db(relation.relation_type),
+        )?;
+    }
+
+    Ok(())
 }
 
 fn release_date_from_track(track: &TrackMetadata) -> Option<String> {
@@ -307,6 +408,7 @@ fn persist_release_inner(
             year,
             title,
             artists,
+            artist_relations,
             disc,
             disc_total,
             track: track_number,
@@ -491,6 +593,7 @@ fn persist_release_inner(
             resolve_artist_ids(db, &track_artist_names, &mut artist_cache)?
         };
         sync_artist_edges(db, track_db_id, &track_artist_ids, CreditType::Artist)?;
+        sync_scanned_artist_relations(db, &artist_relations, &mut artist_cache)?;
 
         let current_releases = db::releases::get_by_track(db, track_db_id)?;
         for release in current_releases {

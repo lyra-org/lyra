@@ -11,8 +11,13 @@ mod path;
 mod year;
 
 pub use artists::{
+    ArtistRelationKind,
+    ArtistRelationMetadata,
+    ParsedArtistCredits,
+    ParsedArtistType,
     normalize_unicode_nfc,
     normalize_unicode_nfkc,
+    parse_cv_artist_credits,
     split_artist_string,
     split_delimited_string,
     split_on_word,
@@ -91,6 +96,8 @@ pub struct TrackMetadata {
     pub year: Option<u32>,
     pub title: Option<String>,
     pub artists: Option<Vec<String>>,
+    #[serde(default)]
+    pub artist_relations: Vec<ArtistRelationMetadata>,
     pub disc: Option<u32>,
     pub disc_total: Option<u32>,
     pub track: Option<u32>,
@@ -205,6 +212,7 @@ pub fn process_raw_tags(raw_tags: Vec<RawTrackTags>) -> Vec<TrackMetadata> {
             year,
             title: raw.title,
             artists,
+            artist_relations: Vec::new(),
             disc: raw.disc,
             disc_total: raw.disc_total,
             track: raw.track,
@@ -262,6 +270,35 @@ pub fn process_raw_tags(raw_tags: Vec<RawTrackTags>) -> Vec<TrackMetadata> {
         let title = meta.title.clone();
         if let Some(artists) = meta.artists.as_mut() {
             artists::enrich_artists_with_title_features(artists, title.as_deref());
+        }
+
+        let mut relations = Vec::new();
+        if let Some(album_artists) = meta.album_artists.take() {
+            let parsed = artists::parse_cv_artist_credits(album_artists);
+            relations.extend(parsed.relations);
+            meta.album_artists = if parsed.artists.is_empty() {
+                None
+            } else {
+                Some(parsed.artists)
+            };
+        }
+        if let Some(track_artists) = meta.artists.take() {
+            let parsed = artists::parse_cv_artist_credits(track_artists);
+            relations.extend(parsed.relations);
+            meta.artists = if parsed.artists.is_empty() {
+                None
+            } else {
+                Some(parsed.artists)
+            };
+        }
+        for relation in relations {
+            if !meta
+                .artist_relations
+                .iter()
+                .any(|existing| existing == &relation)
+            {
+                meta.artist_relations.push(relation);
+            }
         }
     }
 
@@ -323,7 +360,9 @@ pub fn process_raw_tags(raw_tags: Vec<RawTrackTags>) -> Vec<TrackMetadata> {
 #[cfg(test)]
 mod tests {
     use super::{
+        ArtistRelationKind,
         LookupHints,
+        ParsedArtistType,
         ParsedReleaseGroup,
         RawTrackTags,
         TrackMetadata,
@@ -411,6 +450,211 @@ mod tests {
         assert_eq!(
             artists,
             &vec!["MIMiNARI".to_string(), "富田美憂".to_string()]
+        );
+    }
+
+    #[test]
+    fn process_raw_tags_parses_single_cv_artist_credit() {
+        let raw = RawTrackTags {
+            file_path: "/tmp/rikka.flac".to_string(),
+            album: Some("瞬く日々へ".to_string()),
+            album_artists: vec!["井ノ華六花（CV.瀬戸桃子）".to_string()],
+            artists: vec!["井ノ華六花（CV.瀬戸桃子）".to_string()],
+            title: Some("瞬く日々へ".to_string()),
+            date: Some("2026-01-01".to_string()),
+            copyright: None,
+            genre: None,
+            label: None,
+            catalog_number: None,
+            disc: Some(1),
+            disc_total: Some(1),
+            track: Some(1),
+            track_total: Some(1),
+            duration_ms: 180_000,
+            sample_rate_hz: None,
+            channel_count: None,
+            bit_depth: None,
+            bitrate_bps: None,
+        };
+
+        let processed = process_raw_tags(vec![raw]);
+        let track = &processed[0];
+        assert_eq!(
+            track.album_artists.as_deref(),
+            Some(&["井ノ華六花".to_string()][..])
+        );
+        assert_eq!(
+            track.artists.as_deref(),
+            Some(&["井ノ華六花".to_string()][..])
+        );
+        assert_eq!(track.artist_relations.len(), 1);
+        let relation = &track.artist_relations[0];
+        assert_eq!(relation.source_artist, "瀬戸桃子");
+        assert_eq!(relation.target_artist, "井ノ華六花");
+        assert_eq!(relation.relation_type, ArtistRelationKind::VoiceActor);
+        assert_eq!(relation.source_artist_type, Some(ParsedArtistType::Person));
+        assert_eq!(
+            relation.target_artist_type,
+            Some(ParsedArtistType::Character)
+        );
+    }
+
+    #[test]
+    fn process_raw_tags_parses_equal_cv_artist_lists() {
+        let raw = RawTrackTags {
+            file_path: "/tmp/fukashigi.flac".to_string(),
+            album: Some("不可思議のカルテ".to_string()),
+            album_artists: Vec::new(),
+            artists: vec![
+                "桜島麻衣、古賀朋絵、双葉理央(CV:瀬戸麻沙美、東山奈央、種﨑敦美)".to_string(),
+            ],
+            title: Some("不可思議のカルテ".to_string()),
+            date: Some("2018-10-03".to_string()),
+            copyright: None,
+            genre: None,
+            label: None,
+            catalog_number: None,
+            disc: Some(1),
+            disc_total: Some(1),
+            track: Some(1),
+            track_total: Some(1),
+            duration_ms: 240_000,
+            sample_rate_hz: None,
+            channel_count: None,
+            bit_depth: None,
+            bitrate_bps: None,
+        };
+
+        let processed = process_raw_tags(vec![raw]);
+        let track = &processed[0];
+        assert_eq!(
+            track.artists.as_deref(),
+            Some(
+                &[
+                    "桜島麻衣".to_string(),
+                    "古賀朋絵".to_string(),
+                    "双葉理央".to_string()
+                ][..]
+            )
+        );
+        let pairs: Vec<(&str, &str)> = track
+            .artist_relations
+            .iter()
+            .map(|relation| {
+                (
+                    relation.source_artist.as_str(),
+                    relation.target_artist.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("瀬戸麻沙美", "桜島麻衣"),
+                ("東山奈央", "古賀朋絵"),
+                ("種﨑敦美", "双葉理央")
+            ]
+        );
+        assert!(
+            track
+                .artist_relations
+                .iter()
+                .all(|relation| relation.target_artist_type == Some(ParsedArtistType::Character))
+        );
+    }
+
+    #[test]
+    fn process_raw_tags_parses_one_cv_for_multiple_characters() {
+        let raw = RawTrackTags {
+            file_path: "/tmp/shared-cv.flac".to_string(),
+            album: Some("Shared CV".to_string()),
+            album_artists: Vec::new(),
+            artists: vec!["朝比奈姉妹、朝比奈母(CV:佐藤花子)".to_string()],
+            title: Some("Shared CV".to_string()),
+            date: Some("2024-01-01".to_string()),
+            copyright: None,
+            genre: None,
+            label: None,
+            catalog_number: None,
+            disc: Some(1),
+            disc_total: Some(1),
+            track: Some(1),
+            track_total: Some(1),
+            duration_ms: 180_000,
+            sample_rate_hz: None,
+            channel_count: None,
+            bit_depth: None,
+            bitrate_bps: None,
+        };
+
+        let processed = process_raw_tags(vec![raw]);
+        let track = &processed[0];
+        assert_eq!(
+            track.artists.as_deref(),
+            Some(&["朝比奈姉妹".to_string(), "朝比奈母".to_string()][..])
+        );
+        let pairs: Vec<(&str, &str)> = track
+            .artist_relations
+            .iter()
+            .map(|relation| {
+                (
+                    relation.source_artist.as_str(),
+                    relation.target_artist.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![("佐藤花子", "朝比奈姉妹"), ("佐藤花子", "朝比奈母")]
+        );
+        assert!(
+            track
+                .artist_relations
+                .iter()
+                .all(|relation| relation.target_artist_type == Some(ParsedArtistType::Character))
+        );
+    }
+
+    #[test]
+    fn process_raw_tags_keeps_group_cv_credit_as_single_primary_artist() {
+        let raw = RawTrackTags {
+            file_path: "/tmp/sweet-bullet.flac".to_string(),
+            album: Some("不可思議のカルテ".to_string()),
+            album_artists: Vec::new(),
+            artists: vec![
+                "スイートバレット(CV：内田真礼、雨宮 天、うらのねこ、こまりまこ、いちいちご)"
+                    .to_string(),
+            ],
+            title: Some("BABY!".to_string()),
+            date: Some("2018-10-03".to_string()),
+            copyright: None,
+            genre: None,
+            label: None,
+            catalog_number: None,
+            disc: Some(1),
+            disc_total: Some(1),
+            track: Some(2),
+            track_total: Some(4),
+            duration_ms: 220_000,
+            sample_rate_hz: None,
+            channel_count: None,
+            bit_depth: None,
+            bitrate_bps: None,
+        };
+
+        let processed = process_raw_tags(vec![raw]);
+        let track = &processed[0];
+        assert_eq!(
+            track.artists.as_deref(),
+            Some(&["スイートバレット".to_string()][..])
+        );
+        assert_eq!(track.artist_relations.len(), 5);
+        assert!(
+            track
+                .artist_relations
+                .iter()
+                .all(|relation| relation.target_artist == "スイートバレット"
+                    && relation.target_artist_type.is_none())
         );
     }
 
@@ -656,6 +900,7 @@ mod tests {
             year,
             title: Some(format!("Track {track}")),
             artists: Some(vec![artist.to_string()]),
+            artist_relations: Vec::new(),
             disc,
             disc_total: None,
             track: Some(track),

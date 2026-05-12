@@ -476,6 +476,7 @@ mod tests {
             year,
             title: Some(format!("Track {track}")),
             artists: Some(vec![artist.to_string()]),
+            artist_relations: Vec::new(),
             disc,
             disc_total: None,
             track: Some(track),
@@ -888,6 +889,7 @@ mod tests {
                 year: Some(2022),
                 title: Some("CapSule".to_string()),
                 artists: Some(vec!["Zulu Artist".to_string(), "Alpha Artist".to_string()]),
+                artist_relations: Vec::new(),
                 disc: Some(1),
                 disc_total: Some(1),
                 track: Some(1),
@@ -926,6 +928,108 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn apply_metadata_persists_scanned_voice_actor_artist_relations() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+
+        let library =
+            test_db::insert_test_library_node(&mut db, "CV Library", PathBuf::from("/music/cv"))?;
+        let library_db_id = library.db_id.expect("test library has db_id");
+
+        let entry_db_id = insert_entry(&mut db, "/music/cv/01.flac")?;
+        connect(&mut db, library_db_id, entry_db_id)?;
+
+        apply_metadata(
+            &mut db,
+            library_db_id,
+            vec![TrackMetadata {
+                entry_db_id,
+                album: Some("瞬く日々へ".to_string()),
+                album_artists: Some(vec!["井ノ華六花".to_string()]),
+                date: None,
+                year: Some(2026),
+                title: Some("瞬く日々へ".to_string()),
+                artists: Some(vec!["井ノ華六花".to_string()]),
+                artist_relations: vec![lyra_metadata::ArtistRelationMetadata {
+                    source_artist: "瀬戸桃子".to_string(),
+                    target_artist: "井ノ華六花".to_string(),
+                    relation_type: lyra_metadata::ArtistRelationKind::VoiceActor,
+                    source_artist_type: Some(lyra_metadata::ParsedArtistType::Person),
+                    target_artist_type: Some(lyra_metadata::ParsedArtistType::Character),
+                }],
+                disc: Some(1),
+                disc_total: Some(1),
+                track: Some(1),
+                track_total: Some(1),
+                duration_ms: Some(180_000),
+                genres: None,
+                label: None,
+                catalog_number: None,
+                source_kind: Some("embedded_tags".to_string()),
+                source_key: Some(format!("entry:{}:embedded", entry_db_id.0)),
+                segment_start_ms: None,
+                segment_end_ms: None,
+                cue_sheet_entry_id: None,
+                cue_sheet_hash: None,
+                cue_track_no: None,
+                cue_audio_entry_id: None,
+                cue_index00_frames: None,
+                cue_index01_frames: None,
+                sample_rate_hz: None,
+                channel_count: None,
+                bit_depth: None,
+                bitrate_bps: None,
+            }],
+        )?;
+
+        let release = select_releases(&db)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("release missing"))?;
+        let release_db_id: DbId = release
+            .db_id
+            .ok_or_else(|| anyhow!("release missing db_id"))?
+            .into();
+        let release_artists = db::artists::get(&db, release_db_id)?;
+        assert_eq!(release_artists.len(), 1);
+        assert_eq!(release_artists[0].artist_name, "井ノ華六花");
+        assert_eq!(
+            release_artists[0].artist_type,
+            Some(db::ArtistType::Character)
+        );
+
+        let character_id = db::lookup::find_id_by_indexed_string_field(
+            &db,
+            "artists",
+            "scan_name",
+            "scan_name",
+            "井ノ華六花",
+        )?
+        .ok_or_else(|| anyhow!("character artist missing"))?;
+        let actor_id = db::lookup::find_id_by_indexed_string_field(
+            &db,
+            "artists",
+            "scan_name",
+            "scan_name",
+            "瀬戸桃子",
+        )?
+        .ok_or_else(|| anyhow!("voice actor artist missing"))?;
+
+        let actor =
+            db::artists::get_by_id(&db, actor_id)?.ok_or_else(|| anyhow!("actor missing"))?;
+        assert_eq!(actor.artist_type, Some(db::ArtistType::Person));
+
+        let relations = db::artists::relations::get_relations_from(
+            &db,
+            actor_id,
+            Some(db::ArtistRelationType::VoiceActor),
+        )?;
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].1, character_id);
+
+        Ok(())
+    }
+
     fn track_metadata_with_audio_properties(
         entry_db_id: DbId,
         title: &str,
@@ -942,6 +1046,7 @@ mod tests {
             year: Some(2024),
             title: Some(title.to_string()),
             artists: Some(vec!["Audio Props Artist".to_string()]),
+            artist_relations: Vec::new(),
             disc: Some(1),
             disc_total: Some(1),
             track: Some(1),
@@ -1128,6 +1233,7 @@ mod tests {
                 year: Some(2024),
                 title: Some(format!("Track {track_no}")),
                 artists: Some(vec!["Split Band".to_string()]),
+                artist_relations: Vec::new(),
                 disc: Some(1),
                 disc_total: Some(1),
                 track: Some(track_no),
@@ -1205,6 +1311,7 @@ mod tests {
             year: Some(1957),
             title: Some(format!("Track {track_no}")),
             artists: Some(vec!["Artist".to_string()]),
+            artist_relations: Vec::new(),
             disc: Some(1),
             disc_total: Some(1),
             track: Some(track_no),
@@ -1281,6 +1388,7 @@ mod tests {
                 year: Some(2010),
                 title: Some(format!("Track {track_no}")),
                 artists: Some(vec!["Artist".to_string()]),
+                artist_relations: Vec::new(),
                 disc: Some(1),
                 disc_total: Some(1),
                 track: Some(track_no),
@@ -1571,6 +1679,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 year: Some(2024),
                 title: Some("Track 1".to_string()),
                 artists: Some(vec!["Artist".to_string()]),
+                artist_relations: Vec::new(),
                 disc: Some(1),
                 disc_total: Some(1),
                 track: Some(1),
@@ -1602,6 +1711,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 year: Some(2024),
                 title: Some("Track 2".to_string()),
                 artists: Some(vec!["Artist".to_string()]),
+                artist_relations: Vec::new(),
                 disc: Some(1),
                 disc_total: Some(1),
                 track: Some(2),
@@ -1670,6 +1780,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 year: Some(2024),
                 title: Some("Disc 1 Track 1".to_string()),
                 artists: Some(vec!["Artist".to_string()]),
+                artist_relations: Vec::new(),
                 disc: Some(1),
                 disc_total: None,
                 track: Some(1),
@@ -1701,6 +1812,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 year: Some(2024),
                 title: Some("Disc 2 Track 1".to_string()),
                 artists: Some(vec!["Artist".to_string()]),
+                artist_relations: Vec::new(),
                 disc: Some(2),
                 disc_total: None,
                 track: Some(1),
@@ -1771,6 +1883,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 year: Some(2024),
                 title: Some("Disc 1 Track 1".to_string()),
                 artists: Some(vec!["Artist".to_string()]),
+                artist_relations: Vec::new(),
                 disc: Some(1),
                 disc_total: Some(5),
                 track: Some(1),
@@ -1802,6 +1915,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 year: Some(2024),
                 title: Some("Disc 2 Track 1".to_string()),
                 artists: Some(vec!["Artist".to_string()]),
+                artist_relations: Vec::new(),
                 disc: Some(2),
                 disc_total: Some(5),
                 track: Some(1),
@@ -1837,6 +1951,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 year: Some(2024),
                 title: Some("Disc 1 Track 1".to_string()),
                 artists: Some(vec!["Artist".to_string()]),
+                artist_relations: Vec::new(),
                 disc: Some(1),
                 disc_total: None,
                 track: Some(1),
@@ -1868,6 +1983,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 year: Some(2024),
                 title: Some("Disc 2 Track 1".to_string()),
                 artists: Some(vec!["Artist".to_string()]),
+                artist_relations: Vec::new(),
                 disc: Some(2),
                 disc_total: None,
                 track: Some(1),
@@ -2119,6 +2235,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             year: Some(2001),
             title: Some("Track".to_string()),
             artists: Some(vec!["Artist".to_string()]),
+            artist_relations: Vec::new(),
             disc: Some(1),
             disc_total: Some(1),
             track: Some(1),
@@ -2233,6 +2350,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             year: Some(2005),
             title: Some("Track".to_string()),
             artists: Some(vec!["Artist".to_string()]),
+            artist_relations: Vec::new(),
             disc: Some(1),
             disc_total: Some(1),
             track: Some(1),
@@ -2299,6 +2417,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             year: Some(2001),
             title: Some("Track".to_string()),
             artists: Some(vec!["Artist".to_string()]),
+            artist_relations: Vec::new(),
             disc: Some(1),
             disc_total: Some(1),
             track: Some(1),
@@ -2380,6 +2499,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             year: Some(2001),
             title: Some("Track".to_string()),
             artists: Some(vec!["Artist".to_string()]),
+            artist_relations: Vec::new(),
             disc: Some(1),
             disc_total: Some(1),
             track: Some(1),
@@ -2436,6 +2556,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             year: Some(2001),
             title: Some("Track".to_string()),
             artists: Some(vec!["Artist".to_string()]),
+            artist_relations: Vec::new(),
             disc: Some(1),
             disc_total: Some(1),
             track: Some(1),

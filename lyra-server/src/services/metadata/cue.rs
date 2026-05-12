@@ -542,6 +542,7 @@ pub(super) async fn parse_cue_metadata_for_entry(
             year: None,
             title: track_title,
             artists: performer.map(|value| vec![value]),
+            artist_relations: Vec::new(),
             disc: inferred_disc,
             disc_total: None,
             track: Some(track.track_no),
@@ -669,6 +670,15 @@ pub(super) fn merge_embedded_into_cue_metadata(
     merge_opt(&mut cue.channel_count, &embedded.channel_count);
     merge_opt(&mut cue.bit_depth, &embedded.bit_depth);
     merge_opt(&mut cue.bitrate_bps, &embedded.bitrate_bps);
+    for relation in &embedded.artist_relations {
+        if !cue
+            .artist_relations
+            .iter()
+            .any(|existing| existing == relation)
+        {
+            cue.artist_relations.push(relation.clone());
+        }
+    }
 
     if !preserve_cue_track_identity {
         merge_opt(&mut cue.title, &embedded.title);
@@ -718,6 +728,7 @@ mod tests {
             year: None,
             title: None,
             artists: None,
+            artist_relations: Vec::new(),
             disc: None,
             disc_total: None,
             track: None,

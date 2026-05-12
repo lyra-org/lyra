@@ -206,6 +206,7 @@ mod tests {
             year: None,
             title: None,
             artists: None,
+            artist_relations: Vec::new(),
             disc: None,
             disc_total: None,
             track: None,

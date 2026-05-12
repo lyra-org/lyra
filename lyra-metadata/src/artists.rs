@@ -5,6 +5,36 @@
 
 use unicode_normalization::UnicodeNormalization;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtistRelationKind {
+    VoiceActor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ParsedArtistType {
+    Person,
+    Character,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct ArtistRelationMetadata {
+    pub source_artist: String,
+    pub target_artist: String,
+    pub relation_type: ArtistRelationKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_artist_type: Option<ParsedArtistType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_artist_type: Option<ParsedArtistType>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ParsedArtistCredits {
+    pub artists: Vec<String>,
+    pub relations: Vec<ArtistRelationMetadata>,
+}
+
 pub fn normalize_unicode_nfc(value: &str) -> String {
     value.nfc().collect()
 }
@@ -79,6 +109,163 @@ pub fn split_delimited_string(items: Vec<String>) -> Vec<String> {
     } else {
         vec![s.clone()]
     }
+}
+
+fn is_open_paren(ch: char) -> bool {
+    matches!(ch, '(' | '\u{ff08}')
+}
+
+fn is_close_paren(ch: char) -> bool {
+    matches!(ch, ')' | '\u{ff09}')
+}
+
+fn find_trailing_parenthetical(value: &str) -> Option<(usize, usize)> {
+    let trimmed = value.trim();
+    let (close_idx, close_ch) = trimmed.char_indices().next_back()?;
+    if !is_close_paren(close_ch) {
+        return None;
+    }
+
+    let mut depth = 0u32;
+    for (idx, ch) in trimmed.char_indices().rev() {
+        if is_close_paren(ch) {
+            depth += 1;
+        } else if is_open_paren(ch) {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                return Some((idx, close_idx));
+            }
+        }
+    }
+
+    None
+}
+
+fn strip_cv_marker(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    let mut chars = trimmed.char_indices();
+    let (_, first) = chars.next()?;
+    let (second_idx, second) = chars.next()?;
+    if !first.eq_ignore_ascii_case(&'c') || !second.eq_ignore_ascii_case(&'v') {
+        return None;
+    }
+    let marker_end = second_idx + second.len_utf8();
+
+    let rest = trimmed[marker_end..]
+        .trim_start()
+        .trim_start_matches(|ch: char| matches!(ch, ':' | '\u{ff1a}' | '.' | '\u{ff0e}'))
+        .trim_start();
+    (!rest.is_empty()).then_some(rest)
+}
+
+fn add_unique_artist(artists: &mut Vec<String>, name: String) {
+    if !artists.iter().any(|artist| artist == &name) {
+        artists.push(name);
+    }
+}
+
+fn add_unique_relation(
+    relations: &mut Vec<ArtistRelationMetadata>,
+    relation: ArtistRelationMetadata,
+) {
+    if !relations.iter().any(|existing| existing == &relation) {
+        relations.push(relation);
+    }
+}
+
+fn parse_cv_artist_credit(value: &str) -> Option<ParsedArtistCredits> {
+    let trimmed = value.trim();
+    let (open_idx, close_idx) = find_trailing_parenthetical(trimmed)?;
+    let subject = trimmed[..open_idx].trim();
+    let open_len = trimmed[open_idx..]
+        .chars()
+        .next()
+        .map(char::len_utf8)
+        .unwrap_or(1);
+    let cv_segment = &trimmed[open_idx + open_len..close_idx];
+    let voice_actors = strip_cv_marker(cv_segment)?;
+    if subject.is_empty() {
+        return None;
+    }
+
+    let primary_artists = split_delimited_string(vec![subject.to_string()]);
+    let voice_actor_artists = split_delimited_string(vec![voice_actors.to_string()]);
+    if primary_artists.is_empty() || voice_actor_artists.is_empty() {
+        return None;
+    }
+
+    let mut parsed = ParsedArtistCredits {
+        artists: primary_artists.clone(),
+        relations: Vec::new(),
+    };
+
+    if primary_artists.len() == voice_actor_artists.len() {
+        for (target_artist, source_artist) in primary_artists.iter().zip(voice_actor_artists.iter())
+        {
+            add_unique_relation(
+                &mut parsed.relations,
+                ArtistRelationMetadata {
+                    source_artist: source_artist.clone(),
+                    target_artist: target_artist.clone(),
+                    relation_type: ArtistRelationKind::VoiceActor,
+                    source_artist_type: Some(ParsedArtistType::Person),
+                    target_artist_type: Some(ParsedArtistType::Character),
+                },
+            );
+        }
+    } else if voice_actor_artists.len() == 1 {
+        for target_artist in &primary_artists {
+            add_unique_relation(
+                &mut parsed.relations,
+                ArtistRelationMetadata {
+                    source_artist: voice_actor_artists[0].clone(),
+                    target_artist: target_artist.clone(),
+                    relation_type: ArtistRelationKind::VoiceActor,
+                    source_artist_type: Some(ParsedArtistType::Person),
+                    target_artist_type: Some(ParsedArtistType::Character),
+                },
+            );
+        }
+    } else if primary_artists.len() == 1 {
+        for source_artist in &voice_actor_artists {
+            add_unique_relation(
+                &mut parsed.relations,
+                ArtistRelationMetadata {
+                    source_artist: source_artist.clone(),
+                    target_artist: primary_artists[0].clone(),
+                    relation_type: ArtistRelationKind::VoiceActor,
+                    source_artist_type: Some(ParsedArtistType::Person),
+                    target_artist_type: None,
+                },
+            );
+        }
+    }
+
+    Some(parsed)
+}
+
+pub fn parse_cv_artist_credits(items: Vec<String>) -> ParsedArtistCredits {
+    let mut parsed = ParsedArtistCredits::default();
+
+    for item in items {
+        let trimmed = item.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if let Some(cv_credit) = parse_cv_artist_credit(trimmed) {
+            for artist in cv_credit.artists {
+                add_unique_artist(&mut parsed.artists, artist);
+            }
+            for relation in cv_credit.relations {
+                add_unique_relation(&mut parsed.relations, relation);
+            }
+        } else {
+            add_unique_artist(&mut parsed.artists, trimmed.to_string());
+        }
+    }
+
+    parsed
 }
 
 fn is_feature_marker_boundary(title: &str, index: usize) -> bool {

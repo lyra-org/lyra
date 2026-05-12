@@ -384,6 +384,7 @@ fn raw_track_to_service_metadata(
         year: track.year,
         title: track.title,
         artists: track.artists,
+        artist_relations: track.artist_relations,
         disc: track.disc,
         disc_total: track.disc_total,
         track: track.track,
