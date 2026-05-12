@@ -1,0 +1,221 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Breakthrough!/13 - 夢を撃ち抜く瞬間に!.flac"
+album = "Breakthrough!"
+album_artists = ["Poppin'Party"]
+artists = ["Poppin'Party"]
+title = "夢を撃ち抜く瞬間に!"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 13
+duration_ms = 283000
+
+[[raw_tags]]
+file_path = "Breakthrough!/12 - ミライトレイン.flac"
+album = "Breakthrough!"
+album_artists = ["Poppin'Party"]
+artists = ["Poppin'Party"]
+title = "ミライトレイン"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 13
+duration_ms = 355306
+
+[[raw_tags]]
+file_path = "Breakthrough!/11 - キズナミュージック♪.flac"
+album = "Breakthrough!"
+album_artists = ["Poppin'Party"]
+artists = ["Poppin'Party"]
+title = "キズナミュージック♪"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 13
+duration_ms = 316506
+
+[[raw_tags]]
+file_path = "Breakthrough!/10 - Dreamers Go!.flac"
+album = "Breakthrough!"
+album_artists = ["Poppin'Party"]
+artists = ["Poppin'Party"]
+title = "Dreamers Go!"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 13
+duration_ms = 257186
+
+[[raw_tags]]
+file_path = "Breakthrough!/09 - Returns.flac"
+album = "Breakthrough!"
+album_artists = ["Poppin'Party"]
+artists = ["Poppin'Party"]
+title = "Returns"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 13
+duration_ms = 322213
+
+[[raw_tags]]
+file_path = "Breakthrough!/08 - キラキラスター!.flac"
+album = "Breakthrough!"
+album_artists = ["Poppin'Party"]
+artists = ["Poppin'Party"]
+title = "キラキラスター!"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 13
+duration_ms = 275560
+
+[[raw_tags]]
+file_path = "Breakthrough!/07 - White Afternoon.flac"
+album = "Breakthrough!"
+album_artists = ["Poppin'Party"]
+artists = ["Poppin'Party"]
+title = "White Afternoon"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 13
+duration_ms = 298760
+
+[[raw_tags]]
+file_path = "Breakthrough!/06 - Jumpin'.flac"
+album = "Breakthrough!"
+album_artists = ["Poppin'Party"]
+artists = ["Poppin'Party"]
+title = "Jumpin'"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 13
+duration_ms = 248573
+
+[[raw_tags]]
+file_path = "Breakthrough!/05 - Step×Step!.flac"
+album = "Breakthrough!"
+album_artists = ["Poppin'Party"]
+artists = ["Poppin'Party"]
+title = "Step×Step!"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 13
+duration_ms = 248400
+
+[[raw_tags]]
+file_path = "Breakthrough!/04 - Hello! Wink!.flac"
+album = "Breakthrough!"
+album_artists = ["Poppin'Party"]
+artists = ["Poppin'Party"]
+title = "Hello! Wink!"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 13
+duration_ms = 280733
+
+[[raw_tags]]
+file_path = "Breakthrough!/03 - イニシャル.flac"
+album = "Breakthrough!"
+album_artists = ["Poppin'Party"]
+artists = ["Poppin'Party"]
+title = "イニシャル"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 13
+duration_ms = 294560
+
+[[raw_tags]]
+file_path = "Breakthrough!/02 - NO GIRL NO CRYPoppin'Party Ver..flac"
+album = "Breakthrough!"
+album_artists = ["Poppin'Party"]
+artists = ["Poppin'Party"]
+title = "NO GIRL NO CRY/Poppin'Party Ver."
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 13
+duration_ms = 311733
+
+[[raw_tags]]
+file_path = "Breakthrough!/01 - Breakthrough!.flac"
+album = "Breakthrough!"
+album_artists = ["Poppin'Party"]
+artists = ["Poppin'Party"]
+title = "Breakthrough!"
+genre = "Anime"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 13
+duration_ms = 273666
+
+[expect.release]
+ids = { release_id = "c24fdfde-5aff-4ff1-bbb7-8af2184e39fe" }
+fields = { release_title = "Breakthrough!", release_date = "2020-06-24" }
+
+[expect.artists."9cacc8a5-fb40-4584-aea2-591172da6e84"]
+fields = { artist_name = "Poppin'Party", sort_name = "Poppin'Party" }
+
+[expect.tracks."2e1a119f-60bc-49d8-b9a6-2317ff6729eb"]
+fields = { disc = 1, track = 3, track_title = "イニシャル" }
+
+[expect.tracks."2ec46bdc-82a5-49f1-8776-d7e4b9176c90"]
+fields = { disc = 1, track = 12, track_title = "ミライトレイン" }
+
+[expect.tracks."79322a42-2935-4ec1-aa15-2c1f03191454"]
+fields = { disc = 1, track = 7, track_title = "White Afternoon" }
+
+[expect.tracks."96b28f8d-4693-47e3-b22f-30c8b793e20d"]
+fields = { disc = 1, track = 8, track_title = "キラキラスター！" }
+
+[expect.tracks."9f4354fd-cbf1-4d9c-a8e8-3d365d0ffc82"]
+fields = { disc = 1, track = 5, track_title = "Step×Step！" }
+
+[expect.tracks."a09105d3-58d1-4801-b8c1-f4d8efbfc91b"]
+fields = { disc = 1, track = 1, track_title = "Breakthrough!" }
+
+[expect.tracks."b09ee371-4bf6-46d2-8b2d-cc3f9f2772cd"]
+fields = { disc = 1, track = 11, track_title = "キズナミュージック♪" }
+
+[expect.tracks."b2c577a6-dd8f-4de4-ac9e-c0bf2d2d46db"]
+fields = { disc = 1, track = 2, track_title = "NO GIRL NO CRY/Poppin'Party Ver." }
+
+[expect.tracks."be0f098f-ff32-4533-9dbd-f5f8139e4032"]
+fields = { disc = 1, track = 10, track_title = "Dreamers Go!" }
+
+[expect.tracks."beb860e8-ec74-43f4-878d-d195137c0860"]
+fields = { disc = 1, track = 4, track_title = "Hello! Wink!" }
+
+[expect.tracks."dbaf318a-bc7b-44e6-a40e-1294265dc566"]
+fields = { disc = 1, track = 13, track_title = "夢を撃ち抜く瞬間に！" }
+
+[expect.tracks."ebaf3244-8b65-41ca-893f-3f648ea9bc38"]
+fields = { disc = 1, track = 9, track_title = "Returns" }
+
+[expect.tracks."f8ef0b2f-d679-43fc-b109-f83fb06ec7a9"]
+fields = { disc = 1, track = 6, track_title = "Jumpin'" }
