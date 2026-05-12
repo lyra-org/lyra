@@ -1,0 +1,27 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "さんひ - ハイナラブストーリー (2023) [FLAC]/01. さんひ - ハイナラブストーリー.flac"
+album = "ハイナラブストーリー"
+album_artists = ["さんひ"]
+artists = ["さんひ"]
+title = "ハイナラブストーリー"
+disc = 1
+disc_total = 1
+track = 1
+duration_ms = 164853
+
+[expect.release]
+ids = { release_group_id = "8c383b52-96ce-4ea4-a0fd-d566b0a04f40", release_id = "ffc1170d-9d68-49a1-848f-f6012b9e5b91" }
+fields = { release_title = "ハイナラブストーリー", release_date = "2023-12-27" }
+
+[expect.artists."8b5167cd-63de-401b-a734-ad9245432dba"]
+fields = { artist_name = "さんひ", sort_name = "Sanghee" }
+
+[expect.tracks."c4aee34f-0b4d-4715-99e8-30f4ccebd23b"]
+fields = { disc = 1, track = 1, track_title = "ハイナラブストーリー" }
