@@ -1,0 +1,32 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "鈴木雅之 - GIRI GIRI feat. すぅ (2022 EP) [Web]/01 GIRI GIRI.flac"
+album = "GIRI GIRI (EP) [Web]"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木雅之 feat. すぅ"]
+title = "GIRI GIRI"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 258766
+
+[expect.release]
+ids = { release_group_id = "cd0200a3-a0f2-4356-93b4-f0ed11634573", release_id = "ac1f8da0-21d7-426e-83b0-befff06f0871" }
+fields = { release_title = "GIRI GIRI", release_date = "2022-04-15" }
+
+[expect.artists."30f851bb-dba3-4e9b-811c-5f27f595c86a"]
+fields = { artist_name = "鈴木雅之", sort_name = "Suzuki, Masayuki" }
+
+[expect.artists."b79e7d27-1f09-4ae6-9e64-d1082b559b49"]
+fields = { artist_name = "吉田菫", sort_name = "Yoshida, Sumire" }
+
+[expect.tracks."ee9ec664-b579-4dca-9e5a-76190439b2b4"]
+fields = { disc = 1, track = 1, track_title = "GIRI GIRI", work_id = "7a5a8e4a-4ad6-480b-8cce-7ace31c152bc" }
