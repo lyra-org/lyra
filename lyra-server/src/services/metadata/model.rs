@@ -16,6 +16,7 @@ pub(crate) struct TrackMetadata {
     pub(crate) year: Option<u32>,
     pub(crate) title: Option<String>,
     pub(crate) artists: Option<Vec<String>>,
+    pub(crate) artist_relations: Vec<lyra_metadata::ArtistRelationMetadata>,
     pub(crate) disc: Option<u32>,
     pub(crate) disc_total: Option<u32>,
     pub(crate) track: Option<u32>,

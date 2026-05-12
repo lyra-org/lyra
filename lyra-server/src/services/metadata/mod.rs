@@ -312,6 +312,17 @@ pub(crate) async fn parse_metadata(
                     .map(|value| normalize_unicode_nfc(&value))
                     .collect()
             }),
+            artist_relations: track
+                .artist_relations
+                .into_iter()
+                .map(|relation| lyra_metadata::ArtistRelationMetadata {
+                    source_artist: normalize_unicode_nfc(&relation.source_artist),
+                    target_artist: normalize_unicode_nfc(&relation.target_artist),
+                    relation_type: relation.relation_type,
+                    source_artist_type: relation.source_artist_type,
+                    target_artist_type: relation.target_artist_type,
+                })
+                .collect(),
             disc: track.disc,
             disc_total: track.disc_total,
             track: track.track,
