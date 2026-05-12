@@ -1,0 +1,223 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "yama - the meaning of life 【初回生産限定盤】 (2021) [CD-FLAC]/14 a.m.3：21 (From THE FIRST TAKE).flac"
+album = "the meaning of life"
+artists = ["yama"]
+title = "a.m.3:21 (From THE FIRST TAKE)"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 14
+duration_ms = 244240
+
+[[raw_tags]]
+file_path = "yama - the meaning of life 【初回生産限定盤】 (2021) [CD-FLAC]/13 真っ白 (From THE FIRST TAKE).flac"
+album = "the meaning of life"
+artists = ["yama"]
+title = "真っ白 (From THE FIRST TAKE)"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 14
+duration_ms = 384773
+
+[[raw_tags]]
+file_path = "yama - the meaning of life 【初回生産限定盤】 (2021) [CD-FLAC]/12 春を告げる (From THE FIRST TAKE).flac"
+album = "the meaning of life"
+artists = ["yama"]
+title = "春を告げる (From THE FIRST TAKE)"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 14
+duration_ms = 300266
+
+[[raw_tags]]
+file_path = "yama - the meaning of life 【初回生産限定盤】 (2021) [CD-FLAC]/11 天色.flac"
+album = "the meaning of life"
+artists = ["yama"]
+title = "天色"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 14
+duration_ms = 240133
+
+[[raw_tags]]
+file_path = "yama - the meaning of life 【初回生産限定盤】 (2021) [CD-FLAC]/10 希望論.flac"
+album = "the meaning of life"
+artists = ["yama"]
+title = "希望論"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 14
+duration_ms = 274800
+
+[[raw_tags]]
+file_path = "yama - the meaning of life 【初回生産限定盤】 (2021) [CD-FLAC]/09 名前のない日々へ.flac"
+album = "the meaning of life"
+artists = ["yama"]
+title = "名前のない日々へ"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 14
+duration_ms = 216800
+
+[[raw_tags]]
+file_path = "yama - the meaning of life 【初回生産限定盤】 (2021) [CD-FLAC]/08 一寸の赤.flac"
+album = "the meaning of life"
+artists = ["yama"]
+title = "一寸の赤"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 14
+duration_ms = 232960
+
+[[raw_tags]]
+file_path = "yama - the meaning of life 【初回生産限定盤】 (2021) [CD-FLAC]/07 クローバー.flac"
+album = "the meaning of life"
+artists = ["yama"]
+title = "クローバー"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 14
+duration_ms = 268306
+
+[[raw_tags]]
+file_path = "yama - the meaning of life 【初回生産限定盤】 (2021) [CD-FLAC]/06 Sleepless Night.flac"
+album = "the meaning of life"
+artists = ["yama"]
+title = "Sleepless Night"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 14
+duration_ms = 258866
+
+[[raw_tags]]
+file_path = "yama - the meaning of life 【初回生産限定盤】 (2021) [CD-FLAC]/05 真っ白.flac"
+album = "the meaning of life"
+artists = ["yama"]
+title = "真っ白"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 14
+duration_ms = 287066
+
+[[raw_tags]]
+file_path = "yama - the meaning of life 【初回生産限定盤】 (2021) [CD-FLAC]/04 カーテンコール.flac"
+album = "the meaning of life"
+artists = ["yama"]
+title = "カーテンコール"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 14
+duration_ms = 219893
+
+[[raw_tags]]
+file_path = "yama - the meaning of life 【初回生産限定盤】 (2021) [CD-FLAC]/03 麻痺.flac"
+album = "the meaning of life"
+artists = ["yama"]
+title = "麻痺"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 14
+duration_ms = 198040
+
+[[raw_tags]]
+file_path = "yama - the meaning of life 【初回生産限定盤】 (2021) [CD-FLAC]/02 血流.flac"
+album = "the meaning of life"
+artists = ["yama"]
+title = "血流"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 14
+duration_ms = 208093
+
+[[raw_tags]]
+file_path = "yama - the meaning of life 【初回生産限定盤】 (2021) [CD-FLAC]/01 ランニングアウト.flac"
+album = "the meaning of life"
+artists = ["yama"]
+title = "ランニングアウト"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 14
+duration_ms = 243866
+
+[expect.release]
+ids = { release_id = ["5adcd983-c03b-4c5e-9104-c4b7aa5567d4", "a77d2e51-3b9d-4586-9fe4-76da1b8b4ad5"] }
+fields = { release_title = "the meaning of life" }
+
+[expect.artists."a3becc83-9dab-48c6-9513-e269e1e4c49a"]
+fields = { artist_name = "yama", sort_name = "yama" }
+
+[expect.tracks."06c59e52-fe62-4e64-9eef-0b2d8aec9163"]
+fields = { disc = 1, track = 12, track_title = "春を告げる - From THE FIRST TAKE" }
+
+[expect.tracks."0a377a7b-19b7-4841-97ce-d37c378a4cdb"]
+fields = { disc = 1, track = 11, track_title = "天色" }
+
+[expect.tracks."1e12f796-fa85-49a6-8823-69b44663483a"]
+fields = { disc = 1, track = 13, track_title = "真っ白 - From THE FIRST TAKE" }
+
+[expect.tracks."2296af72-3a1f-4aba-a77f-8338d3ef49ce"]
+fields = { disc = 1, track = 9, track_title = "名前のない日々へ" }
+
+[expect.tracks."6e7ed55b-b831-4772-92fa-624c3378d20e"]
+fields = { disc = 1, track = 6, track_title = "Sleepless Night" }
+
+[expect.tracks."7390a971-6e9c-4dad-9658-b8a06fb2dc59"]
+fields = { disc = 1, track = 2, track_title = "血流" }
+
+[expect.tracks."743df10c-df94-4af5-9903-6b14f8d974de"]
+fields = { disc = 1, track = 3, track_title = "麻痺" }
+
+[expect.tracks."8aefc8e2-6ab5-4b01-ac71-f7a097b67c42"]
+fields = { disc = 1, track = 14, track_title = "a.m.3:21 - From THE FIRST TAKE" }
+
+[expect.tracks."8f157333-1285-4178-81d5-caa761446218"]
+fields = { disc = 1, track = 4, track_title = "カーテンコール" }
+
+[expect.tracks."a5195446-ceb6-4005-b02d-1b012509d9fe"]
+fields = { disc = 1, track = 10, track_title = "希望論" }
+
+[expect.tracks."baccc7a2-ef7a-40ef-b17b-c6076ce2c3e7"]
+fields = { disc = 1, track = 8, track_title = "一寸の赤" }
+
+[expect.tracks."be036836-7b8e-4f5b-a875-be56e2cf53c2"]
+fields = { disc = 1, track = 1, track_title = "ランニングアウト" }
+
+[expect.tracks."de41942d-9b90-4266-972b-c4a88b0e7e06"]
+fields = { disc = 1, track = 7, track_title = "クローバー" }
+
+[expect.tracks."f6d032ce-721a-4c5a-915a-b69bb07979c4"]
+fields = { disc = 1, track = 5, track_title = "真っ白" }
