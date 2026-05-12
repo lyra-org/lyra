@@ -1,0 +1,153 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[TBS] nameless x TOA - 212 [FLAC]/Bonus/13 [untitled].flac"
+album = "212"
+artists = ["nameless; とあ"]
+title = "[untitled]"
+track = 13
+duration_ms = 206853
+
+[[raw_tags]]
+file_path = "[TBS] nameless x TOA - 212 [FLAC]/12 『13』.flac"
+album = "212"
+artists = ["nameless; とあ"]
+title = "『13』"
+track = 12
+duration_ms = 292586
+
+[[raw_tags]]
+file_path = "[TBS] nameless x TOA - 212 [FLAC]/11 アイシテ.flac"
+album = "212"
+artists = ["nameless; とあ"]
+title = "アイシテ"
+track = 11
+duration_ms = 212186
+
+[[raw_tags]]
+file_path = "[TBS] nameless x TOA - 212 [FLAC]/10 ランプ.flac"
+album = "212"
+artists = ["nameless; とあ"]
+title = "ランプ"
+track = 10
+duration_ms = 252733
+
+[[raw_tags]]
+file_path = "[TBS] nameless x TOA - 212 [FLAC]/09 ミュージックミュージック.flac"
+album = "212"
+artists = ["nameless; とあ"]
+title = "ミュージックミュージック"
+track = 9
+duration_ms = 214986
+
+[[raw_tags]]
+file_path = "[TBS] nameless x TOA - 212 [FLAC]/08 恋の才能.flac"
+album = "212"
+artists = ["nameless; とあ"]
+title = "恋の才能"
+track = 8
+duration_ms = 267013
+
+[[raw_tags]]
+file_path = "[TBS] nameless x TOA - 212 [FLAC]/07 M.flac"
+album = "212"
+artists = ["nameless; とあ"]
+title = "M"
+track = 7
+duration_ms = 239653
+
+[[raw_tags]]
+file_path = "[TBS] nameless x TOA - 212 [FLAC]/06 シクス.flac"
+album = "212"
+artists = ["nameless; とあ"]
+title = "シクス"
+track = 6
+duration_ms = 201213
+
+[[raw_tags]]
+file_path = "[TBS] nameless x TOA - 212 [FLAC]/05 静夢.flac"
+album = "212"
+artists = ["nameless; とあ"]
+title = "静夢"
+track = 5
+duration_ms = 236493
+
+[[raw_tags]]
+file_path = "[TBS] nameless x TOA - 212 [FLAC]/04 ツギハギスタッカート.flac"
+album = "212"
+artists = ["nameless; とあ"]
+title = "ツギハギスタッカート"
+track = 4
+duration_ms = 248160
+
+[[raw_tags]]
+file_path = "[TBS] nameless x TOA - 212 [FLAC]/03 てをつないだらさようなら.flac"
+album = "212"
+artists = ["nameless; とあ"]
+title = "てをつないだらさようなら"
+track = 3
+duration_ms = 196560
+
+[[raw_tags]]
+file_path = "[TBS] nameless x TOA - 212 [FLAC]/02 パズルガール.flac"
+album = "212"
+artists = ["nameless; とあ"]
+title = "パズルガール"
+track = 2
+duration_ms = 270773
+
+[[raw_tags]]
+file_path = "[TBS] nameless x TOA - 212 [FLAC]/01 リグレット.flac"
+album = "212"
+artists = ["nameless; とあ"]
+title = "リグレット"
+track = 1
+duration_ms = 282493
+
+[expect.release]
+ids = { release_group_id = "2f2f6d22-eec8-4bcc-ae1f-afe31477baac", release_id = "d7e7711a-dcfd-42c6-968f-e79956418d7f" }
+fields = { release_title = "212", release_date = "2015-11-25" }
+
+[expect.tracks."054f872a-aa66-4715-b0ae-5d399bc58257"]
+fields = { disc = 1, track = 8, track_title = "恋の才能" }
+
+[expect.tracks."18241ad8-e2f7-4564-849e-87b9b7cf92be"]
+fields = { disc = 1, track = 5, track_title = "静夢" }
+
+[expect.tracks."26ffb56a-61b1-41af-89d4-c45015735d64"]
+fields = { disc = 1, track = 7, track_title = "M" }
+
+[expect.tracks."2c86934c-7f5a-4d80-8751-53c4d0bee114"]
+fields = { disc = 1, track = 4, track_title = "ツギハギスタッカート" }
+
+[expect.tracks."53aa5f07-fbd3-4acf-a39f-98d2582179ec"]
+fields = { disc = 1, track = 11, track_title = "アイシテ" }
+
+[expect.tracks."6b1c306f-2002-40fb-a515-f49d09144938"]
+fields = { disc = 1, track = 2, track_title = "パズルガール" }
+
+[expect.tracks."8424f7d7-6c12-4a86-9a2a-4eb96900b5f1"]
+fields = { disc = 1, track = 13, track_title = "[untitled]" }
+
+[expect.tracks."8f654af7-cc5e-4a6e-b3cd-53bf76c71ec0"]
+fields = { disc = 1, track = 1, track_title = "リグレット" }
+
+[expect.tracks."95898975-6571-4968-afcd-513c72d67bbd"]
+fields = { disc = 1, track = 10, track_title = "ランプ" }
+
+[expect.tracks."b6dea169-39b8-4ba0-be04-a6b189d5b95e"]
+fields = { disc = 1, track = 6, track_title = "シクス" }
+
+[expect.tracks."c5ae11a5-53fc-4002-8c17-e68d66872717"]
+fields = { disc = 1, track = 9, track_title = "ミュージックミュージック" }
+
+[expect.tracks."ce228d13-0c60-4ab1-9ead-a20f0080227a"]
+fields = { disc = 1, track = 3, track_title = "てをつないだらさようなら" }
+
+[expect.tracks."fd2af79e-af6b-463e-b037-8ad2f2b069bd"]
+fields = { disc = 1, track = 12, track_title = "『13』" }
