@@ -1628,6 +1628,37 @@ api.get(P .. "/Items/{id}", function(ctx: ApiContext)
 	return api.response.json(200, catalog.item_to_json(item))
 end, nil, true)
 
+local function handle_item_user_data_route(ctx: ApiContext): ApiResponse
+	local principal = session.require_jellyfin_principal(ctx)
+	if not principal then
+		return session.unauthorized()
+	end
+	if not session.require_matching_user_scope(ctx, principal) then
+		return session.unauthorized()
+	end
+
+	local params = if ctx then ctx.params else nil
+	local raw_item_id = if params then params.itemId else nil
+	if not raw_item_id then
+		return base.bad_request("missing item id")
+	end
+
+	local item_id = base.decode_jellyfin_item_id(raw_item_id)
+	if not item_id then
+		return base.not_found("item not found")
+	end
+
+	local item = catalog.find_item_by_id(item_id, principal.user_id)
+	if not item or not item.UserData then
+		return base.not_found("item not found")
+	end
+
+	return api.response.json(200, base.user_data_to_json(item.UserData))
+end
+
+api.get(P .. "/UserItems/{itemId}/UserData", handle_item_user_data_route, nil, true)
+api.get(P .. "/Users/{userId}/Items/{itemId}/UserData", handle_item_user_data_route, nil, true)
+
 local function handle_favorite_item_route(ctx: ApiContext, should_favorite: boolean)
 	local principal = session.require_jellyfin_principal(ctx)
 	if not principal then
