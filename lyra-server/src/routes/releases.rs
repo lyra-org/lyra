@@ -78,6 +78,8 @@ pub(crate) struct ReleaseListQuery {
     pub(crate) query: Option<String>,
     #[schemars(description = "Optional exact release year filter derived from `release_date`.")]
     pub(crate) year: Option<u32>,
+    #[schemars(description = "Optional public library ID to scope returned releases.")]
+    pub(crate) library_id: Option<String>,
     #[schemars(description = "Comma-separated or repeated genre values.")]
     #[serde(default, deserialize_with = "deserialize_inc")]
     pub(crate) genre: Option<Vec<String>>,
@@ -274,6 +276,7 @@ async fn get_releases(
         inc,
         query,
         year,
+        library_id,
         genre,
         sort_by,
         sort_order,
@@ -297,6 +300,8 @@ async fn get_releases(
         limit: None,
         search_term,
     };
+    let library_scope =
+        super::resolve_optional_library_filter(db, &principal, library_id.as_deref())?;
     let genre_filter = parse_genre_filter(genre);
     let query_filters = db::releases::ReleaseQueryFilters {
         year,
@@ -307,28 +312,47 @@ async fn get_releases(
         },
     };
 
-    let releases = db::releases::query(
-        db,
-        "releases",
-        &ListOptions {
-            sort: Vec::new(),
-            offset: None,
-            limit: None,
-            search_term: None,
-        },
-        &query_filters,
-    )?
-    .entries;
-    let mut accessible_releases = Vec::with_capacity(releases.len());
-    for release in releases {
-        let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
-            continue;
-        };
-        if !super::entity_accessible_to_principal(db, &principal, release_db_id)? {
-            continue;
+    let accessible_releases = match library_scope {
+        Some(library_db_id) => {
+            db::releases::query(
+                db,
+                library_db_id,
+                &ListOptions {
+                    sort: Vec::new(),
+                    offset: None,
+                    limit: None,
+                    search_term: None,
+                },
+                &query_filters,
+            )?
+            .entries
         }
-        accessible_releases.push(release);
-    }
+        None => {
+            let releases = db::releases::query(
+                db,
+                "releases",
+                &ListOptions {
+                    sort: Vec::new(),
+                    offset: None,
+                    limit: None,
+                    search_term: None,
+                },
+                &query_filters,
+            )?
+            .entries;
+            let mut accessible_releases = Vec::with_capacity(releases.len());
+            for release in releases {
+                let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
+                    continue;
+                };
+                if !super::entity_accessible_to_principal(db, &principal, release_db_id)? {
+                    continue;
+                }
+                accessible_releases.push(release);
+            }
+            accessible_releases
+        }
+    };
 
     let page = db::releases::query_items(
         accessible_releases,
@@ -420,7 +444,7 @@ async fn search_release_covers(
 
 fn list_releases_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List releases").description(
-        "Returns releases as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `year`, `genre`, `sort_by`, `sort_order`, `limit`, `cursor`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `inc` values: `artists`, `tracks`, `track_artists`, `entries`, `covers`, `genres`. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits (for example, artist and producer). Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
+        "Returns releases as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `year`, `library_id`, `genre`, `sort_by`, `sort_order`, `limit`, `cursor`. `library_id` scopes results to releases belonging to that public library ID. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `inc` values: `artists`, `tracks`, `track_artists`, `entries`, `covers`, `genres`. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits (for example, artist and producer). Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
     )
 }
 
@@ -456,12 +480,27 @@ mod tests {
     };
     use axum::{
         body::to_bytes,
-        http::StatusCode,
+        http::{
+            HeaderMap,
+            StatusCode,
+            header::AUTHORIZATION,
+        },
         response::IntoResponse,
     };
 
     use crate::db::SortDirection;
-    use crate::db::test_db::TestDb;
+    use crate::db::test_db::{
+        TestDb,
+        connect,
+        insert_library,
+        insert_release as insert_test_release,
+    };
+    use crate::services::auth::sessions;
+    use crate::testing::{
+        LibraryFixtureConfig,
+        initialize_runtime,
+        runtime_test_lock,
+    };
 
     use super::*;
     use nanoid::nanoid;
@@ -505,6 +544,35 @@ mod tests {
         )?;
 
         Ok(())
+    }
+
+    async fn setup_route_test() -> anyhow::Result<()> {
+        initialize_runtime(&LibraryFixtureConfig {
+            directory: std::path::PathBuf::from("."),
+            language: None,
+            country: None,
+        })
+        .await
+    }
+
+    async fn create_admin_headers(username: &str) -> anyhow::Result<HeaderMap> {
+        let user_db_id = {
+            let mut db = STATE.db.write().await;
+            db::roles::ensure_builtin_roles(&mut db)?;
+            let user_db_id = db::users::create(&mut db, &db::users::test_user(username)?)?;
+            db::roles::ensure_user_has_role(&mut db, user_db_id, db::roles::BUILTIN_ADMIN_ROLE)?;
+            user_db_id
+        };
+
+        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            format!("Bearer {}", session.token)
+                .parse()
+                .expect("valid auth header"),
+        );
+        Ok(headers)
     }
 
     #[test]
@@ -589,6 +657,50 @@ mod tests {
             "electronic".to_string(),
         ]));
         assert_eq!(genres, vec!["rock", "jazz", "electronic"]);
+    }
+
+    #[tokio::test]
+    async fn get_releases_scopes_by_library_id() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let visible_library_id = {
+            let mut db = STATE.db.write().await;
+            let visible_library =
+                insert_library(&mut db, "Visible Releases", "/tmp/lyra-visible-releases")?;
+            let hidden_library =
+                insert_library(&mut db, "Hidden Releases", "/tmp/lyra-hidden-releases")?;
+            let visible_release = insert_test_release(&mut db, "Visible Release")?;
+            let hidden_release = insert_test_release(&mut db, "Hidden Release")?;
+            connect(&mut db, visible_library, visible_release)?;
+            connect(&mut db, hidden_library, hidden_release)?;
+
+            db::libraries::get_by_id(&db, visible_library)?
+                .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
+                .id
+        };
+        let headers = create_admin_headers("release-scope-admin").await?;
+
+        let Json(page) = get_releases(
+            headers,
+            Query(ReleaseListQuery {
+                inc: None,
+                query: None,
+                year: None,
+                library_id: Some(visible_library_id),
+                genre: None,
+                sort_by: None,
+                sort_order: None,
+                page: super::super::PageQuery::default(),
+            }),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].title, "Visible Release");
+        assert!(page.next_cursor.is_none());
+        Ok(())
     }
 
     #[test]

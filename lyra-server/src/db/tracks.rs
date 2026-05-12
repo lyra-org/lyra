@@ -194,7 +194,18 @@ pub(crate) fn get_by_library(db: &DbAny, library_id: DbId) -> anyhow::Result<Vec
         return Ok(Vec::new());
     }
     let track_map = get_direct_many(db, &release_ids)?;
-    Ok(track_map.into_values().flatten().collect())
+    let mut tracks = Vec::new();
+    let mut seen = HashSet::new();
+    for track in track_map.into_values().flatten() {
+        if let Some(track_db_id) = track.db_id.clone().map(DbId::from) {
+            if seen.insert(track_db_id) {
+                tracks.push(track);
+            }
+            continue;
+        }
+        tracks.push(track);
+    }
+    Ok(tracks)
 }
 
 pub(crate) fn get_by_artist(db: &DbAny, artist_db_id: DbId) -> anyhow::Result<Vec<Track>> {
