@@ -37,6 +37,7 @@ pub(crate) use registry::{
     ProviderCoverRequireSpec,
     ProviderCoverSpec,
     ProviderIdSpec,
+    ProviderIdUrlGenerator,
     SYNC_LOCKS,
     reset_provider_registry_for_test,
     teardown_plugin_providers,
