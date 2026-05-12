@@ -1,0 +1,27 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "suisoh - p.h. [FLAC]/suisoh - p.h.flac"
+album = "p.h."
+album_artists = ["suisoh"]
+artists = ["suisoh"]
+title = "p.h."
+genre = "JPop"
+disc = 1
+track = 1
+duration_ms = 152929
+
+[expect.release]
+ids = { release_group_id = "65773968-e0e3-42d1-9a35-93a2a4b9bd09", release_id = "5cb3a265-ce71-4fc0-816d-3104741d4a97" }
+fields = { release_title = "p.h.", release_date = "2020-11-28" }
+
+[expect.artists."9cb45a5f-b858-4d15-abbe-a02a8342687d"]
+fields = { artist_name = "水槽", sort_name = "suisoh" }
+
+[expect.tracks."a4a77ac2-b63d-4680-9b12-2eb356a9198b"]
+fields = { disc = 1, track = 1, track_title = "p.h." }
