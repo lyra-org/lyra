@@ -1653,11 +1653,13 @@ local function handle_item_user_data_route(ctx: ApiContext): ApiResponse
 		return base.not_found("item not found")
 	end
 
+	local item_hex_id = base.encode_jellyfin_item_id(item_id)
 	local user_data = item.UserData
 		or base.get_user_data({
 			item_id = item_id,
 			user_id = principal.user_id,
-			item_hex_id = base.encode_jellyfin_item_id(item_id),
+			item_hex_id = item_hex_id,
+			key = item_hex_id,
 			include_favorite = true,
 			include_play_count = true,
 		})
