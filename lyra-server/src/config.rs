@@ -352,20 +352,33 @@ fn normalize_published_url(config: &mut Config) -> Result<()> {
         return Ok(());
     };
 
-    let parsed = url::Url::parse(raw)
-        .map_err(|err| anyhow!("invalid config published_url '{raw}': {err}"))?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("invalid config published_url: empty URL"));
+    }
+
+    let parsed = url::Url::parse(trimmed)
+        .map_err(|err| anyhow!("invalid config published_url '{trimmed}': {err}"))?;
 
     let scheme = parsed.scheme();
     if scheme != "http" && scheme != "https" {
         return Err(anyhow!(
-            "invalid config published_url '{raw}': scheme must be http or https, got '{scheme}'"
+            "invalid config published_url '{trimmed}': scheme must be http or https, got '{scheme}'"
+        ));
+    }
+    if parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.path() != "/"
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(anyhow!(
+            "invalid config published_url '{trimmed}': expected an origin without path, query, fragment, or credentials"
         ));
     }
 
-    config.published_url = Some(match (parsed.query(), parsed.fragment()) {
-        (None, None) => parsed.to_string().trim_end_matches('/').to_string(),
-        _ => parsed.to_string(),
-    });
+    config.published_url = Some(parsed.origin().ascii_serialization());
     Ok(())
 }
 
@@ -458,6 +471,7 @@ mod tests {
         normalize_config_library_locale_inputs,
         normalize_cors_allowed_origins,
         normalize_db_path_with_dir,
+        normalize_published_url,
     };
     use std::path::PathBuf;
 
@@ -565,6 +579,38 @@ mod tests {
                 .to_string()
                 .contains("invalid config library.language")
         );
+    }
+
+    #[test]
+    fn published_url_is_normalized_to_origin() -> anyhow::Result<()> {
+        let mut config = Config::default();
+        config.published_url = Some(" http://LOCALHOST:8080/ ".to_string());
+
+        normalize_published_url(&mut config)?;
+
+        assert_eq!(
+            config.published_url.as_deref(),
+            Some("http://localhost:8080")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn published_url_rejects_paths() {
+        let mut config = Config::default();
+        config.published_url = Some("https://example.com/app".to_string());
+
+        let error = normalize_published_url(&mut config).expect_err("expected error");
+        assert!(error.to_string().contains("expected an origin"));
+    }
+
+    #[test]
+    fn published_url_rejects_query_strings() {
+        let mut config = Config::default();
+        config.published_url = Some("https://example.com?token=secret".to_string());
+
+        let error = normalize_published_url(&mut config).expect_err("expected error");
+        assert!(error.to_string().contains("expected an origin"));
     }
 
     #[test]

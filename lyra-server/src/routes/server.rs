@@ -23,6 +23,7 @@ use super::AppError;
 struct ServerInfoResponse {
     server_id: String,
     version: String,
+    published_url: Option<String>,
     setup_complete: bool,
 }
 
@@ -31,12 +32,14 @@ async fn get_server_info() -> Result<Json<ServerInfoResponse>, AppError> {
     let info =
         db::server::get(&db)?.ok_or_else(|| AppError::not_found("server info not initialized"))?;
 
-    let default_username = &STATE.config.get().auth.default_username;
+    let config = STATE.config.get();
+    let default_username = &config.auth.default_username;
     let setup_complete = db::roles::has_non_default_admin(&db, default_username)?;
 
     Ok(Json(ServerInfoResponse {
         server_id: info.id,
         version: env!("CARGO_PKG_VERSION").to_string(),
+        published_url: config.published_url.clone(),
         setup_complete,
     }))
 }
