@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/release?release-group=d077e5f5-0896-444c-9846-12656fd09021&limit=100",
+  "status_code": 200,
+  "body": "{\"release-count\":1,\"releases\":[{\"text-representation\":{\"language\":\"jpn\",\"script\":\"Jpan\"},\"title\":\"maimai ALL PERFECT COLLECTiON\",\"date\":\"2020-11-04\",\"country\":\"JP\",\"quality\":\"normal\",\"id\":\"a5606161-a6b1-48f1-b92d-bd2d73216c3b\",\"packaging-id\":null,\"asin\":null,\"barcode\":\"4571164387987\",\"release-events\":[{\"date\":\"2020-11-04\",\"area\":{\"iso-3166-1-codes\":[\"JP\"],\"type\":null,\"sort-name\":\"Japan\",\"disambiguation\":\"\",\"name\":\"Japan\",\"type-id\":null,\"id\":\"2db42837-c832-3c27-b4a3-08198f75693c\"}}],\"packaging\":null,\"cover-art-archive\":{\"front\":true,\"back\":true,\"artwork\":true,\"count\":6,\"darkened\":false},\"disambiguation\":\"\",\"status-id\":\"4e304316-386d-3409-af2e-78857eec5cfe\",\"status\":\"Official\"}],\"release-offset\":0}"
+}
