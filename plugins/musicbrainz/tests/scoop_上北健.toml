@@ -1,0 +1,221 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "上北健 - SCOOP (2015) [WEB FLAC]/13 - COMPASS.flac"
+album = "SCOOP"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "COMPASS"
+copyright = "℗© 2015 Victor Entertainment"
+genre = "J-Pop"
+disc = 1
+track = 13
+track_total = 13
+duration_ms = 279800
+
+[[raw_tags]]
+file_path = "上北健 - SCOOP (2015) [WEB FLAC]/12 - log.flac"
+album = "SCOOP"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "log"
+copyright = "℗© 2015 Victor Entertainment"
+genre = "J-Pop"
+disc = 1
+track = 12
+track_total = 13
+duration_ms = 145000
+
+[[raw_tags]]
+file_path = "上北健 - SCOOP (2015) [WEB FLAC]/11 - 空が繋いだ.flac"
+album = "SCOOP"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "空が繋いだ"
+copyright = "℗© 2015 Victor Entertainment"
+genre = "J-Pop"
+disc = 1
+track = 11
+track_total = 13
+duration_ms = 231666
+
+[[raw_tags]]
+file_path = "上北健 - SCOOP (2015) [WEB FLAC]/10 - ミスト.flac"
+album = "SCOOP"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "ミスト"
+copyright = "℗© 2015 Victor Entertainment"
+genre = "J-Pop"
+disc = 1
+track = 10
+track_total = 13
+duration_ms = 315666
+
+[[raw_tags]]
+file_path = "上北健 - SCOOP (2015) [WEB FLAC]/09 - アイニイキル.flac"
+album = "SCOOP"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "アイニイキル"
+copyright = "℗© 2015 Victor Entertainment"
+genre = "J-Pop"
+disc = 1
+track = 9
+track_total = 13
+duration_ms = 307000
+
+[[raw_tags]]
+file_path = "上北健 - SCOOP (2015) [WEB FLAC]/08 - 本音の手紙.flac"
+album = "SCOOP"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "本音の手紙"
+copyright = "℗© 2015 Victor Entertainment"
+genre = "J-Pop"
+disc = 1
+track = 8
+track_total = 13
+duration_ms = 290066
+
+[[raw_tags]]
+file_path = "上北健 - SCOOP (2015) [WEB FLAC]/07 - 緑閃光.flac"
+album = "SCOOP"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "緑閃光"
+copyright = "℗© 2015 Victor Entertainment"
+genre = "J-Pop"
+disc = 1
+track = 7
+track_total = 13
+duration_ms = 248466
+
+[[raw_tags]]
+file_path = "上北健 - SCOOP (2015) [WEB FLAC]/06 - 泣いていたから.flac"
+album = "SCOOP"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "泣いていたから"
+copyright = "℗© 2015 Victor Entertainment"
+genre = "J-Pop"
+disc = 1
+track = 6
+track_total = 13
+duration_ms = 286133
+
+[[raw_tags]]
+file_path = "上北健 - SCOOP (2015) [WEB FLAC]/05 - ゆらぎ.flac"
+album = "SCOOP"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "ゆらぎ"
+copyright = "℗© 2015 Victor Entertainment"
+genre = "J-Pop"
+disc = 1
+track = 5
+track_total = 13
+duration_ms = 303266
+
+[[raw_tags]]
+file_path = "上北健 - SCOOP (2015) [WEB FLAC]/04 - Phototaxis.flac"
+album = "SCOOP"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "Phototaxis"
+copyright = "℗© 2015 Victor Entertainment"
+genre = "J-Pop"
+disc = 1
+track = 4
+track_total = 13
+duration_ms = 304466
+
+[[raw_tags]]
+file_path = "上北健 - SCOOP (2015) [WEB FLAC]/03 - クロス・ストリート.flac"
+album = "SCOOP"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "クロス・ストリート"
+copyright = "℗© 2015 Victor Entertainment"
+genre = "J-Pop"
+disc = 1
+track = 3
+track_total = 13
+duration_ms = 319600
+
+[[raw_tags]]
+file_path = "上北健 - SCOOP (2015) [WEB FLAC]/02 - DIARY.flac"
+album = "SCOOP"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "DIARY"
+copyright = "℗© 2015 Victor Entertainment"
+genre = "J-Pop"
+disc = 1
+track = 2
+track_total = 13
+duration_ms = 352333
+
+[[raw_tags]]
+file_path = "上北健 - SCOOP (2015) [WEB FLAC]/01 - false color.flac"
+album = "SCOOP"
+album_artists = ["上北健"]
+artists = ["上北健"]
+title = "false color"
+copyright = "℗© 2015 Victor Entertainment"
+genre = "J-Pop"
+disc = 1
+track = 1
+track_total = 13
+duration_ms = 310400
+
+[expect.release]
+ids = { release_group_id = "957c6e52-1b13-45f1-a66f-322bcf7e784c", release_id = "d5511301-a503-4b7c-b18b-fa0505306c06" }
+fields = { release_title = "SCOOP", release_date = "2015-09-09" }
+
+[expect.artists."17951579-3b02-4b9d-a699-6019a567b918"]
+fields = { artist_name = "上北健", sort_name = "Kamikita, Ken" }
+
+[expect.tracks."06f79f7a-520a-4cb8-b163-1f94d322a3cc"]
+fields = { disc = 1, track = 10, track_title = "ミスト" }
+
+[expect.tracks."1345437a-cef0-487d-a81a-7b5cdc4426d6"]
+fields = { disc = 1, track = 2, track_title = "DIARY" }
+
+[expect.tracks."1f714256-3dde-4c00-80be-ff74e06f7de8"]
+fields = { disc = 1, track = 4, track_title = "Phototaxis" }
+
+[expect.tracks."26783605-cc22-44ee-8970-63005aabadba"]
+fields = { disc = 1, track = 9, track_title = "アイニイキル" }
+
+[expect.tracks."3a489148-d8c3-4623-bb6a-701a2ddc9562"]
+fields = { disc = 1, track = 3, track_title = "クロス・ストリート" }
+
+[expect.tracks."4e5c8a33-7203-4e95-9136-df21609aecc0"]
+fields = { disc = 1, track = 13, track_title = "COMPASS" }
+
+[expect.tracks."89ee0fee-ab86-42df-a9be-54335127faad"]
+fields = { disc = 1, track = 8, track_title = "本音の手紙" }
+
+[expect.tracks."93e39e6b-882f-4fbb-81c0-ca3bebe1d485"]
+fields = { disc = 1, track = 12, track_title = "log" }
+
+[expect.tracks."de1f1b50-79a6-42aa-ac77-9537ad20e071"]
+fields = { disc = 1, track = 6, track_title = "泣いていたから" }
+
+[expect.tracks."e3030a28-ee35-468d-bbac-5612e49ce915"]
+fields = { disc = 1, track = 1, track_title = "false color" }
+
+[expect.tracks."e9a469a6-a2a8-4aee-94a7-aed34a0039ad"]
+fields = { disc = 1, track = 11, track_title = "空が繋いだ" }
+
+[expect.tracks."ed92b009-6e5e-444a-b203-7007cad23928"]
+fields = { disc = 1, track = 7, track_title = "緑閃光" }
+
+[expect.tracks."f30f1a9e-b090-4c14-8481-7fd2cb34a71e"]
+fields = { disc = 1, track = 5, track_title = "ゆらぎ" }
