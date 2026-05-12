@@ -1,0 +1,205 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Da-iCE - (2018) BET [FLAC.WEB]/12 Itsuka.flac"
+album = "BET"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "いつか..."
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 12
+duration_ms = 266160
+
+[[raw_tags]]
+file_path = "Da-iCE - (2018) BET [FLAC.WEB]/11 Tokyo Merry Go Round.flac"
+album = "BET"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "TOKYO MERRY GO ROUND"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 12
+duration_ms = 258706
+
+[[raw_tags]]
+file_path = "Da-iCE - (2018) BET [FLAC.WEB]/10 Bodyguard.flac"
+album = "BET"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Bodyguard"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 12
+duration_ms = 237800
+
+[[raw_tags]]
+file_path = "Da-iCE - (2018) BET [FLAC.WEB]/9 Blackjack.flac"
+album = "BET"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Blackjack"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 12
+duration_ms = 204746
+
+[[raw_tags]]
+file_path = "Da-iCE - (2018) BET [FLAC.WEB]/8 Tonikaku Hey.flac"
+album = "BET"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "トニカクHEY"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 12
+duration_ms = 224146
+
+[[raw_tags]]
+file_path = "Da-iCE - (2018) BET [FLAC.WEB]/7 Regret.flac"
+album = "BET"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "リグレット"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 12
+duration_ms = 311893
+
+[[raw_tags]]
+file_path = "Da-iCE - (2018) BET [FLAC.WEB]/6 Kimiiro.flac"
+album = "BET"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "君色"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 12
+duration_ms = 268973
+
+[[raw_tags]]
+file_path = "Da-iCE - (2018) BET [FLAC.WEB]/5 Live Goes On.flac"
+album = "BET"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Live goes on"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 12
+duration_ms = 260453
+
+[[raw_tags]]
+file_path = "Da-iCE - (2018) BET [FLAC.WEB]/4 Flash Back.flac"
+album = "BET"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Flash Back"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 12
+duration_ms = 181973
+
+[[raw_tags]]
+file_path = "Da-iCE - (2018) BET [FLAC.WEB]/3 It's Not Over.flac"
+album = "BET"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "It's not over"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 12
+duration_ms = 235160
+
+[[raw_tags]]
+file_path = "Da-iCE - (2018) BET [FLAC.WEB]/2 Fakeshow.flac"
+album = "BET"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "FAKESHOW"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 12
+duration_ms = 266720
+
+[[raw_tags]]
+file_path = "Da-iCE - (2018) BET [FLAC.WEB]/1 Bet.flac"
+album = "BET"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "BET"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 12
+duration_ms = 239080
+
+[expect.release]
+ids = { release_group_id = "60b22e6b-4163-497f-af49-1073e2a30e4a", release_id = "b41c573d-a2a1-43b0-bc02-20cc8a4161b1" }
+fields = { release_title = "BET", release_date = "2018-08-08" }
+
+[expect.artists."2fc5c58a-711b-4a11-9b7a-7b5ba1f58e04"]
+fields = { artist_name = "Da‐iCE", sort_name = "Da‐iCE" }
+
+[expect.tracks."083f5ec7-a772-4290-86e7-c77fcad29673"]
+fields = { disc = 1, track = 9, track_title = "Blackjack" }
+
+[expect.tracks."2f1186bf-be8b-48e8-8fb6-38bc24adff9a"]
+fields = { disc = 1, track = 11, track_title = "TOKYO MERRY GO ROUND" }
+
+[expect.tracks."3839e064-0c81-4049-b8bb-fc9afdf7be1c"]
+fields = { disc = 1, track = 2, track_title = "FAKESHOW" }
+
+[expect.tracks."3bf9735c-965c-4951-95b9-f9e0fdd7ecf2"]
+fields = { disc = 1, track = 1, track_title = "BET" }
+
+[expect.tracks."4f53981e-ee21-497a-85ee-12308c6539b0"]
+fields = { disc = 1, track = 3, track_title = "It’s not over" }
+
+[expect.tracks."779ebc68-21ec-45fd-bace-2090d370fbd1"]
+fields = { disc = 1, track = 12, track_title = "いつか…" }
+
+[expect.tracks."831752e5-a668-45ad-aded-3de1f8df61ad"]
+fields = { disc = 1, track = 6, track_title = "君色" }
+
+[expect.tracks."aa71084d-848b-49fa-87b7-326d35ba7008"]
+fields = { disc = 1, track = 5, track_title = "Live goes on" }
+
+[expect.tracks."b3536f35-2e71-4170-83d5-764c3e9f8ba0"]
+fields = { disc = 1, track = 4, track_title = "Flash Back" }
+
+[expect.tracks."c8c8cfcd-d776-4512-ad09-39067c015980"]
+fields = { disc = 1, track = 8, track_title = "トニカクHEY" }
+
+[expect.tracks."d53591c3-7ab6-46dc-8d75-c4c238b1d632"]
+fields = { disc = 1, track = 10, track_title = "Bodyguard" }
+
+[expect.tracks."d77413b1-dca8-4b10-8626-e9d28676c7ad"]
+fields = { disc = 1, track = 7, track_title = "リグレット" }
