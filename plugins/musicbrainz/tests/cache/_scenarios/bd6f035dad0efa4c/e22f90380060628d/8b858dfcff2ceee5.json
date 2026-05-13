@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/8378e3f8-7411-4bd3-927d-a4cbf0dd5d51?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"id\":\"8378e3f8-7411-4bd3-927d-a4cbf0dd5d51\",\"attributes\":[],\"title\":\"The Blessing\",\"relations\":[{\"source-credit\":\"\",\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"ended\":false,\"attributes\":[],\"artist\":{\"type\":\"Person\",\"name\":\"Konnie Aoki\",\"country\":\"JP\",\"disambiguation\":\"\",\"id\":\"3d5d1fad-acd8-48dc-bf2a-dd9692839ff8\",\"sort-name\":\"Aoki, Konnie\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"end\":null,\"type-id\":\"da6c5d8a-ce13-474d-9375-61feb29039a5\",\"begin\":null,\"target-credit\":\"\",\"type\":\"translator\",\"attribute-values\":{}}],\"disambiguation\":\"\",\"type\":\"Song\",\"iswcs\":[],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"languages\":[\"eng\"],\"language\":\"eng\"}"
+}

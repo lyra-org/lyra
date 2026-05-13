@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/a4f2a597-ad51-4a5a-b2fa-37ae8793324c?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"disambiguation\":\"\",\"id\":\"a4f2a597-ad51-4a5a-b2fa-37ae8793324c\",\"type\":null,\"title\":\"夏の日の思い出\",\"attributes\":[],\"type-id\":null,\"relations\":[{\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\",\"begin\":null,\"end\":null,\"artist\":{\"country\":\"JP\",\"type\":\"Person\",\"disambiguation\":\"\",\"id\":\"eb18af98-09ff-467c-921e-9db3e0000d48\",\"sort-name\":\"Konishi, Toshiki\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"小西利樹\"},\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"attribute-ids\":{},\"target-type\":\"artist\",\"direction\":\"backward\",\"attributes\":[]}],\"languages\":[\"zxx\"],\"language\":\"zxx\"}"
+}

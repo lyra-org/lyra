@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/6bf9e6d4-421e-4d3f-9fb5-567a9466d832?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[{\"type\":\"APRA ID\",\"value\":\"GW50886235\",\"type-id\":\"bdf50af8-0881-322a-8ab7-f031a4935d04\"},{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"715-6858-1\"}],\"id\":\"6bf9e6d4-421e-4d3f-9fb5-567a9466d832\",\"title\":\"口噛み酒トリップ\",\"relations\":[{\"source-credit\":\"\",\"attribute-ids\":{},\"direction\":\"backward\",\"ended\":false,\"target-type\":\"artist\",\"attributes\":[],\"artist\":{\"country\":\"JP\",\"disambiguation\":\"\",\"name\":\"野田洋次郎\",\"type\":\"Person\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Noda, Yōjirō\"},\"end\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"target-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{}}],\"disambiguation\":\"\",\"type\":null,\"iswcs\":[\"T-920.208.475-1\"],\"type-id\":null,\"languages\":[\"zxx\"],\"language\":\"zxx\"}"
+}

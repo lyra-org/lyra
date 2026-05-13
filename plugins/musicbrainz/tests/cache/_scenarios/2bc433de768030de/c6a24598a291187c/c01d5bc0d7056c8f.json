@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/5ab3f3b1-499d-444d-b560-8605f8d35d1c?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"id\":\"5ab3f3b1-499d-444d-b560-8605f8d35d1c\",\"language\":\"zxx\",\"type\":null,\"iswcs\":[\"T-920.208.486-4\"],\"disambiguation\":\"\",\"relations\":[{\"begin\":null,\"attributes\":[],\"direction\":\"backward\",\"end\":null,\"target-type\":\"artist\",\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"target-credit\":\"\",\"attribute-ids\":{},\"artist\":{\"disambiguation\":\"\",\"type\":\"Person\",\"country\":\"JP\",\"id\":\"a67614ed-ff05-472d-b0c2-edfcd4113dd8\",\"name\":\"武田祐介\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Takeda, Yūsuke\"}}],\"title\":\"町長説得\",\"languages\":[\"zxx\"],\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"715-6863-8\",\"type\":\"JASRAC ID\"}],\"type-id\":null}"
+}

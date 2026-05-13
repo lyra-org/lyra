@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/artist/d86ece76-5d5d-47a2-a6ca-602397949319?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"life-span\":{\"end\":null,\"begin\":null,\"ended\":false},\"id\":\"d86ece76-5d5d-47a2-a6ca-602397949319\",\"disambiguation\":\"キミとアイドルプリキュア♪\",\"gender-id\":\"93452b5a-a947-30c8-934f-6a4056b151c2\",\"sort-name\":\"Cure Idol\",\"area\":null,\"name\":\"キュアアイドル\",\"end-area\":null,\"country\":null,\"isnis\":[],\"relations\":[{\"source-credit\":\"\",\"type\":\"is person\",\"attribute-values\":{},\"target-credit\":\"\",\"type-id\":\"dd9886f2-1dfe-4270-97db-283f6839a666\",\"ended\":false,\"begin\":null,\"end\":null,\"artist\":{\"type-id\":\"5c1375b0-f18d-3db7-a164-a49d7a63773f\",\"name\":\"咲良うた\",\"country\":null,\"type\":\"Character\",\"disambiguation\":\"キミとアイドルプリキュア♪\",\"id\":\"639b9d36-5e59-406d-b707-439f58b6dd43\",\"sort-name\":\"Sakura, Uta\"},\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"attributes\":[]}],\"type-id\":\"5c1375b0-f18d-3db7-a164-a49d7a63773f\",\"ipis\":[],\"begin-area\":null,\"type\":\"Character\",\"gender\":\"Female\"}"
+}

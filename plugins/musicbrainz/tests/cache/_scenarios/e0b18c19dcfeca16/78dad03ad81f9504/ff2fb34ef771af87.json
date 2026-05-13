@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/3558de29-12bb-4d93-9629-80c82effa73d?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"type-id\":null,\"languages\":[\"zxx\"],\"language\":\"zxx\",\"id\":\"3558de29-12bb-4d93-9629-80c82effa73d\",\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"729-2245-1\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"title\":\"真夏の雪\",\"relations\":[{\"ended\":false,\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{},\"source-credit\":\"\",\"end\":null,\"artist\":{\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"name\":\"野田洋次郎\",\"type\":\"Person\",\"disambiguation\":\"\",\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Noda, Yōjirō\"},\"attributes\":[],\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attribute-values\":{},\"type\":\"composer\",\"begin\":null,\"target-credit\":\"\"}],\"disambiguation\":\"\",\"type\":null}"
+}
