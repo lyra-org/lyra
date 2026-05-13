@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/1cf84d9c-1f48-417c-aec5-c51f56088456?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"title\":\"My Homie\",\"id\":\"1cf84d9c-1f48-417c-aec5-c51f56088456\",\"disambiguation\":\"\",\"iswcs\":[],\"languages\":[\"zxx\"],\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"ended\":false,\"begin\":null,\"end\":null,\"artist\":{\"name\":\"目黒将司\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"sort-name\":\"Meguro, Shōji\",\"country\":\"JP\",\"type\":\"Person\"},\"source-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"attributes\":[],\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\"}],\"language\":\"zxx\",\"type-id\":null,\"attributes\":[]}"
+}

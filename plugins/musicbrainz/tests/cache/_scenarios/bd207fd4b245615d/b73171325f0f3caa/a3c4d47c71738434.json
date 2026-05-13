@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/f63fd06c-1f52-4984-aa30-800c8952266b?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"attributes\":[],\"type\":\"Song\",\"title\":\"Blizzardman Stage\",\"id\":\"f63fd06c-1f52-4984-aa30-800c8952266b\",\"languages\":[\"zxx\"],\"relations\":[{\"target-credit\":\"\",\"end\":null,\"attributes\":[],\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"竹原裕子\",\"sort-name\":\"Takehara, Yuko\",\"id\":\"7a463c32-b9b3-4143-8c4c-96590473dad0\"},\"ended\":false,\"source-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"direction\":\"backward\",\"begin\":null,\"attribute-ids\":{},\"attribute-values\":{},\"type\":\"composer\"}],\"disambiguation\":\"ロックマン6\",\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"iswcs\":[\"T-909.798.284-8\"]}"
+}

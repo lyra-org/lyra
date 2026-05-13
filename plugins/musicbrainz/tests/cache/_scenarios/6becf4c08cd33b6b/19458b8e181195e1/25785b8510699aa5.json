@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/b19ea524-4274-4dfb-ab9b-bcca7553d670?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"languages\":[],\"attributes\":[],\"title\":\"許されぬ恋\",\"relations\":[{\"target-type\":\"artist\",\"target-credit\":\"\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attributes\":[],\"artist\":{\"country\":\"JP\",\"name\":\"甲田雅人\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"disambiguation\":\"\",\"sort-name\":\"Kouda, Masato\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\"},\"ended\":false,\"direction\":\"backward\",\"attribute-values\":{},\"attribute-ids\":{},\"end\":null,\"source-credit\":\"\",\"type\":\"composer\"}],\"disambiguation\":\"\",\"iswcs\":[],\"language\":null,\"id\":\"b19ea524-4274-4dfb-ab9b-bcca7553d670\",\"type\":null,\"type-id\":null}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/b1450d04-c069-4e41-aeb4-7f05909bcf20?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"208-3603-1\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"type-id\":null,\"relations\":[{\"attributes\":[],\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"begin\":null,\"artist\":{\"name\":\"澤野弘之\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Sawano, Hiroyuki\",\"disambiguation\":\"\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\",\"type\":\"Person\",\"country\":\"JP\"},\"end\":null,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\"}],\"language\":\"zxx\",\"languages\":[\"zxx\"],\"iswcs\":[\"T-917.368.777-9\"],\"id\":\"b1450d04-c069-4e41-aeb4-7f05909bcf20\",\"disambiguation\":\"進撃の巨人 前編〜紅蓮の弓矢〜\",\"type\":null,\"title\":\"ymniam-orch\"}"
+}

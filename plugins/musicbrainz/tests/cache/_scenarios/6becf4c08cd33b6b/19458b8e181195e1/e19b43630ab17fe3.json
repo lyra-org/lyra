@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/db8dab71-73bf-4cbd-9e52-6306eec335bd?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":null,\"id\":\"db8dab71-73bf-4cbd-9e52-6306eec335bd\",\"disambiguation\":\"\",\"iswcs\":[],\"type-id\":null,\"type\":null,\"attributes\":[],\"languages\":[],\"title\":\"親友 ～文哉のテーマ～\",\"relations\":[{\"target-type\":\"artist\",\"target-credit\":\"\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attributes\":[],\"artist\":{\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"sort-name\":\"Kouda, Masato\",\"disambiguation\":\"\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"country\":\"JP\",\"name\":\"甲田雅人\"},\"ended\":false,\"direction\":\"backward\",\"attribute-ids\":{},\"attribute-values\":{},\"end\":null,\"source-credit\":\"\",\"type\":\"composer\"}]}"
+}

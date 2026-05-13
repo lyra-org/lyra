@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/f1229a77-8c99-4bb1-9be6-aa1b6b3dc64f?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[],\"languages\":[\"zxx\"],\"title\":\"A Woman\",\"relations\":[{\"target-type\":\"artist\",\"target-credit\":\"\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attributes\":[],\"artist\":{\"name\":\"目黒将司\",\"country\":\"JP\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"sort-name\":\"Meguro, Shōji\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\"},\"ended\":false,\"direction\":\"backward\",\"attribute-ids\":{},\"attribute-values\":{},\"end\":null,\"source-credit\":\"\",\"type\":\"composer\"}],\"language\":\"zxx\",\"id\":\"f1229a77-8c99-4bb1-9be6-aa1b6b3dc64f\",\"disambiguation\":\"\",\"iswcs\":[],\"type\":null,\"type-id\":null}"
+}

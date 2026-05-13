@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/452cbeed-db21-4000-a373-44a91f41c4e9?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"attributes\":[],\"relations\":[{\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"ended\":false,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"artist\":{\"sort-name\":\"Yanagi, Nagi\",\"id\":\"eeacda09-891d-4367-b9cc-c6371c96d4d9\",\"disambiguation\":\"\",\"type\":\"Person\",\"country\":\"JP\",\"name\":\"やなぎなぎ\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"end\":null,\"begin\":null,\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{},\"attributes\":[]}],\"languages\":[],\"language\":null,\"iswcs\":[],\"title\":\"Follow My Tracks\",\"type\":\"Song\",\"id\":\"452cbeed-db21-4000-a373-44a91f41c4e9\",\"disambiguation\":\"\"}"
+}
