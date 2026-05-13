@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/2f3b6057-7471-45f3-bee6-858aaf98977d?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[],\"type-id\":null,\"languages\":[\"zxx\"],\"relations\":[{\"attributes\":[],\"direction\":\"backward\",\"target-type\":\"artist\",\"attribute-ids\":{},\"artist\":{\"type\":\"Person\",\"country\":\"JP\",\"sort-name\":\"Meguro, Shōji\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"目黒将司\"},\"end\":null,\"begin\":null,\"ended\":false,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"source-credit\":\"\"}],\"language\":\"zxx\",\"iswcs\":[],\"id\":\"2f3b6057-7471-45f3-bee6-858aaf98977d\",\"disambiguation\":\"\",\"title\":\"Sweatshop ‐another version‐\",\"type\":null}"
+}

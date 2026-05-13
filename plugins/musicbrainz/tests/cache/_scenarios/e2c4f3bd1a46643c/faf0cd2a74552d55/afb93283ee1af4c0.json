@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/a6610753-da5a-3419-89c7-38979b8bd8c0?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"languages\":[\"zxx\"],\"attributes\":[{\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"152-3392-8\"}],\"title\":\"Omen\",\"relations\":[{\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"target-type\":\"artist\",\"source-credit\":\"\",\"end\":null,\"attribute-ids\":{},\"attribute-values\":{},\"type\":\"composer\",\"artist\":{\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"sort-name\":\"Meguro, Shōji\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"name\":\"目黒将司\"},\"attributes\":[],\"direction\":\"backward\",\"ended\":false}],\"disambiguation\":\"\",\"iswcs\":[],\"language\":\"zxx\",\"id\":\"a6610753-da5a-3419-89c7-38979b8bd8c0\",\"type-id\":null,\"type\":null}"
+}

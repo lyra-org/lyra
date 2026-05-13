@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/fcf87e31-aa27-41d4-93f2-58a0490c62f1?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"id\":\"fcf87e31-aa27-41d4-93f2-58a0490c62f1\",\"type-id\":null,\"languages\":[],\"disambiguation\":\"\",\"relations\":[{\"begin\":null,\"direction\":\"backward\",\"attributes\":[],\"attribute-ids\":{},\"target-credit\":\"\",\"end\":null,\"ended\":false,\"attribute-values\":{},\"source-credit\":\"\",\"target-type\":\"artist\",\"artist\":{\"sort-name\":\"Kouda, Masato\",\"disambiguation\":\"\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"type\":\"Person\",\"name\":\"甲田雅人\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\"},\"type\":\"composer\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"iswcs\":[],\"attributes\":[],\"title\":\"陽のあたる部屋\",\"language\":null}"
+}
