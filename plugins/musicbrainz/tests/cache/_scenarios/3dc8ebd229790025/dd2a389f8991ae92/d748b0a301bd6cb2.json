@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/ade3c794-488a-4228-af04-1c17de5617ec?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"id\":\"ade3c794-488a-4228-af04-1c17de5617ec\",\"disambiguation\":\"進撃の巨人\",\"iswcs\":[\"T-913.274.742-3\"],\"type\":null,\"type-id\":null,\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"195-7830-0\"}],\"languages\":[\"zxx\"],\"title\":\"進撃 vn-pf20130524 巨人\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"target-credit\":\"\",\"target-type\":\"artist\",\"type\":\"composer\",\"end\":null,\"source-credit\":\"\",\"attribute-ids\":{},\"attribute-values\":{},\"direction\":\"backward\",\"ended\":false,\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\",\"sort-name\":\"Sawano, Hiroyuki\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"澤野弘之\"},\"attributes\":[]}]}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/db3769f9-8ff4-4e48-9173-34af01f6200c?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[],\"type-id\":null,\"relations\":[],\"language\":\"zxx\",\"languages\":[\"zxx\"],\"iswcs\":[],\"disambiguation\":\"\",\"id\":\"db3769f9-8ff4-4e48-9173-34af01f6200c\",\"title\":\"Ai II\",\"type\":null}"
+}

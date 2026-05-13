@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/4ad87168-0b19-4b7e-9790-7c4d6689d290?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"title\":\"空の海\",\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"729-2246-0\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"language\":\"zxx\",\"type-id\":null,\"iswcs\":[],\"relations\":[{\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"direction\":\"backward\",\"attribute-ids\":{},\"type\":\"composer\",\"attribute-values\":{},\"begin\":null,\"end\":null,\"target-credit\":\"\",\"source-credit\":\"\",\"attributes\":[],\"artist\":{\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"sort-name\":\"Noda, Yōjirō\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"野田洋次郎\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"ended\":false}],\"disambiguation\":\"\",\"languages\":[\"zxx\"],\"id\":\"4ad87168-0b19-4b7e-9790-7c4d6689d290\"}"
+}

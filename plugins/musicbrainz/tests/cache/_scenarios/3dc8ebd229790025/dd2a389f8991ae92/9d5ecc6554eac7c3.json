@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/9668b0a2-f39b-4ba4-a77e-92f203f54820?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"attributes\":[{\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"195-7827-0\"}],\"languages\":[\"zxx\"],\"relations\":[{\"source-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attribute-values\":{},\"artist\":{\"disambiguation\":\"\",\"type\":\"Person\",\"country\":\"JP\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\",\"name\":\"澤野弘之\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Sawano, Hiroyuki\"},\"ended\":false,\"attribute-ids\":{},\"target-credit\":\"\",\"attributes\":[],\"direction\":\"backward\",\"end\":null,\"target-type\":\"artist\",\"begin\":null,\"type\":\"composer\"}],\"title\":\"進撃 st-hrn-gt-pf20130629 巨人\",\"iswcs\":[\"T-913.274.738-7\"],\"disambiguation\":\"進撃の巨人\",\"type\":null,\"language\":\"zxx\",\"id\":\"9668b0a2-f39b-4ba4-a77e-92f203f54820\"}"
+}

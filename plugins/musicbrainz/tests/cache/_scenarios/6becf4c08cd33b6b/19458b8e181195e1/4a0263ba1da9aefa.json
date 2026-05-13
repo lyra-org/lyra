@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/25c14f08-7f60-49ba-bde0-dd4f7a10ccfa?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"iswcs\":[],\"languages\":[],\"language\":null,\"relations\":[{\"attributes\":[],\"artist\":{\"sort-name\":\"Kouda, Masato\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"type\":\"Person\",\"name\":\"甲田雅人\",\"disambiguation\":\"\",\"country\":\"JP\"},\"end\":null,\"source-credit\":\"\",\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"ended\":false,\"begin\":null,\"target-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"title\":\"ドメカノタンゴ\",\"id\":\"25c14f08-7f60-49ba-bde0-dd4f7a10ccfa\",\"attributes\":[],\"type\":null,\"disambiguation\":\"\"}"
+}

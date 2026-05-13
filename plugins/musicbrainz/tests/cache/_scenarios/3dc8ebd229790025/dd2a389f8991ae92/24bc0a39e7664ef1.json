@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/ead46a80-c7e1-4a70-a40f-3949aacc92cf?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"title\":\"son2seaVer\",\"relations\":[{\"direction\":\"backward\",\"ended\":false,\"artist\":{\"country\":\"JP\",\"name\":\"澤野弘之\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\",\"sort-name\":\"Sawano, Hiroyuki\",\"disambiguation\":\"\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"attributes\":[],\"type\":\"composer\",\"end\":null,\"source-credit\":\"\",\"attribute-values\":{},\"attribute-ids\":{},\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"target-credit\":\"\"}],\"languages\":[\"zxx\"],\"attributes\":[{\"value\":\"228-8378-9\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\"}],\"type\":null,\"type-id\":null,\"disambiguation\":\"進撃の巨人 Season 2\",\"iswcs\":[\"T-922.352.731-9\"],\"language\":\"zxx\",\"id\":\"ead46a80-c7e1-4a70-a40f-3949aacc92cf\"}"
+}

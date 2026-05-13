@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/31cdbc4e-9f74-480a-baad-1b6791f1ab81?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[{\"value\":\"215-2559-5\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"id\":\"31cdbc4e-9f74-480a-baad-1b6791f1ab81\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"begin\":null,\"attribute-values\":{},\"type\":\"composer\",\"direction\":\"backward\",\"attribute-ids\":{},\"source-credit\":\"\",\"target-type\":\"artist\",\"ended\":false,\"attributes\":[],\"end\":null,\"artist\":{\"country\":\"JP\",\"disambiguation\":\"\",\"name\":\"澤野弘之\",\"type\":\"Person\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Sawano, Hiroyuki\"}}],\"title\":\"2Volt\",\"type\":null,\"disambiguation\":\"進撃の巨人 後編〜自由の翼〜\",\"iswcs\":[\"T-918.830.389-1\"],\"type-id\":null,\"language\":\"zxx\",\"languages\":[\"zxx\"]}"
+}

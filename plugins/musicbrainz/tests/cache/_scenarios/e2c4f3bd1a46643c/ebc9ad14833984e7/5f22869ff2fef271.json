@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/7d92b5d2-e8f4-34cc-aca4-3518851e4c82?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"languages\":[\"zxx\"],\"id\":\"7d92b5d2-e8f4-34cc-aca4-3518851e4c82\",\"type\":null,\"language\":\"zxx\",\"relations\":[{\"direction\":\"backward\",\"begin\":null,\"target-credit\":\"\",\"attribute-ids\":{},\"attributes\":[],\"ended\":false,\"attribute-values\":{},\"end\":null,\"target-type\":\"artist\",\"source-credit\":\"\",\"type\":\"composer\",\"artist\":{\"disambiguation\":\"Japanese composer, guitarist & game director\",\"sort-name\":\"Meguro, Shōji\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"name\":\"目黒将司\",\"type\":\"Person\",\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"disambiguation\":\"\",\"title\":\"Period\",\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"152-3383-9\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"iswcs\":[]}"
+}

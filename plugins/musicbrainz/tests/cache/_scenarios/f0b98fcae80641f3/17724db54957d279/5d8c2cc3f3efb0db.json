@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/90ba0d69-fdd5-4e1b-8cfc-d7bfdc51aeae?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"type\":null,\"attributes\":[],\"id\":\"90ba0d69-fdd5-4e1b-8cfc-d7bfdc51aeae\",\"title\":\"色欲の崩壊\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"target-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"direction\":\"backward\",\"source-credit\":\"\",\"attribute-ids\":{},\"target-type\":\"artist\",\"ended\":false,\"attributes\":[],\"end\":null,\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Konishi, Toshiki\",\"type\":\"Person\",\"name\":\"小西利樹\",\"country\":\"JP\",\"disambiguation\":\"\",\"id\":\"eb18af98-09ff-467c-921e-9db3e0000d48\"}}],\"languages\":[\"zxx\"],\"language\":\"zxx\",\"iswcs\":[],\"type-id\":null}"
+}

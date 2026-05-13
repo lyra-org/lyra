@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/05609d63-f839-48d7-90ac-81f9a3007444?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"title\":\"通じ合うふたり\",\"language\":null,\"attributes\":[],\"relations\":[{\"begin\":null,\"attribute-ids\":{},\"attribute-values\":{},\"type\":\"composer\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"direction\":\"backward\",\"attributes\":[],\"artist\":{\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"sort-name\":\"Kouda, Masato\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"甲田雅人\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"ended\":false,\"source-credit\":\"\",\"target-credit\":\"\",\"end\":null}],\"disambiguation\":\"\",\"type-id\":null,\"iswcs\":[],\"id\":\"05609d63-f839-48d7-90ac-81f9a3007444\",\"languages\":[]}"
+}
