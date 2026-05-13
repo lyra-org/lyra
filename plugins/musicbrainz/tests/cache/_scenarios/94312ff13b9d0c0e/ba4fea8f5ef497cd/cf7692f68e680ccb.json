@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/48344349-ea82-4147-936c-2181ac1fadea?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"languages\":[\"zxx\"],\"type-id\":null,\"iswcs\":[],\"type\":null,\"disambiguation\":\"\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"target-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"direction\":\"backward\",\"attribute-ids\":{},\"source-credit\":\"\",\"ended\":false,\"target-type\":\"artist\",\"attributes\":[],\"end\":null,\"artist\":{\"sort-name\":\"Oki, Sōjirō\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"id\":\"5c518a1e-62d7-4838-85e5-dad52462b15b\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"沖聡次郎\",\"type\":\"Person\"}}],\"title\":\"Prologue 〜Before the dawn〜\",\"attributes\":[],\"id\":\"48344349-ea82-4147-936c-2181ac1fadea\"}"
+}

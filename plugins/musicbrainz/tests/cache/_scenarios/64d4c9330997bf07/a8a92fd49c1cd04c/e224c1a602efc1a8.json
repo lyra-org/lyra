@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/98d255be-4ef9-4c51-9506-51d45214651d?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":\"Song\",\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"id\":\"98d255be-4ef9-4c51-9506-51d45214651d\",\"language\":\"jpn\",\"iswcs\":[],\"disambiguation\":\"\",\"relations\":[],\"title\":\"HOPE\",\"attributes\":[],\"languages\":[\"jpn\"]}"
+}

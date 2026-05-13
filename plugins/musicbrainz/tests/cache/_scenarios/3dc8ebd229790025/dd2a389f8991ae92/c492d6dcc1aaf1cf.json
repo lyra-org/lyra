@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/1109915a-faab-463f-8d4d-1088d6dfdbc6?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"disambiguation\":\"進撃の巨人 後編〜自由の翼〜\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"215-2557-9\"}],\"id\":\"1109915a-faab-463f-8d4d-1088d6dfdbc6\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"type\":\"composer\",\"attribute-values\":{},\"begin\":null,\"target-credit\":\"\",\"ended\":false,\"target-type\":\"artist\",\"direction\":\"backward\",\"source-credit\":\"\",\"attribute-ids\":{},\"end\":null,\"artist\":{\"country\":\"JP\",\"disambiguation\":\"\",\"name\":\"澤野弘之\",\"type\":\"Person\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Sawano, Hiroyuki\"},\"attributes\":[]}],\"title\":\"TWO-lives\",\"language\":\"zxx\",\"languages\":[\"zxx\"],\"iswcs\":[\"T-918.830.383-5\"],\"type-id\":null}"
+}

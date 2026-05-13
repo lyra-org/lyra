@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/7d515898-4b2a-4f9e-a8a0-44f3265fc449?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"iswcs\":[\"T-910.740.785-2\"],\"languages\":[\"zxx\"],\"language\":\"zxx\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attribute-values\":{},\"type\":\"composer\",\"target-credit\":\"\",\"begin\":null,\"ended\":false,\"target-type\":\"artist\",\"attribute-ids\":{},\"source-credit\":\"\",\"direction\":\"backward\",\"artist\":{\"type\":\"Person\",\"name\":\"澤野弘之\",\"disambiguation\":\"\",\"country\":\"JP\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\",\"sort-name\":\"Sawano, Hiroyuki\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"end\":null,\"attributes\":[]}],\"title\":\"omake-pfadlib\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"194-3638-6\"}],\"id\":\"7d515898-4b2a-4f9e-a8a0-44f3265fc449\",\"type\":null,\"disambiguation\":\"進撃の巨人\"}"
+}

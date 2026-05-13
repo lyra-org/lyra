@@ -1,0 +1,633 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-27. Electronica In Velvet Room.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Electronica In Velvet Room"
+disc = 2
+disc_total = 2
+track = 27
+track_total = 27
+duration_ms = 285200
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-26. Never More.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Never More"
+disc = 2
+disc_total = 2
+track = 26
+track_total = 27
+duration_ms = 400346
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-25. I'll Face Myself-another version-.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "I'll Face Myself-another version-"
+disc = 2
+disc_total = 2
+track = 25
+track_total = 27
+duration_ms = 104053
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-24. The Genesis.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "The Genesis"
+disc = 2
+disc_total = 2
+track = 24
+track_total = 27
+duration_ms = 470906
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-23. The Almighty.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "The Almighty"
+disc = 2
+disc_total = 2
+track = 23
+track_total = 27
+duration_ms = 279306
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-22. 回廊.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "回廊"
+disc = 2
+disc_total = 2
+track = 22
+track_total = 27
+duration_ms = 140040
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-21. Omen.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Omen"
+disc = 2
+disc_total = 2
+track = 21
+track_total = 27
+duration_ms = 53693
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-20. Long Way.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Long Way"
+disc = 2
+disc_total = 2
+track = 20
+track_total = 27
+duration_ms = 143520
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-19. 推理-another version-.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "推理-another version-"
+disc = 2
+disc_total = 2
+track = 19
+track_total = 27
+duration_ms = 43560
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-18. Alone.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Alone"
+disc = 2
+disc_total = 2
+track = 18
+track_total = 27
+duration_ms = 119946
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-17. Heaven.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Heaven"
+disc = 2
+disc_total = 2
+track = 17
+track_total = 27
+duration_ms = 179653
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-16. Secret Base.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Secret Base"
+disc = 2
+disc_total = 2
+track = 16
+track_total = 27
+duration_ms = 150186
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-15. How much？.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "How much?"
+disc = 2
+disc_total = 2
+track = 15
+track_total = 27
+duration_ms = 80293
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-14. 夢想曲.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "夢想曲"
+disc = 2
+disc_total = 2
+track = 14
+track_total = 27
+duration_ms = 143106
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-13. The Path is Open (P4ver.).flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "The Path is Open (P4ver.)"
+disc = 2
+disc_total = 2
+track = 13
+track_total = 27
+duration_ms = 110133
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-12. 心の力 (P4ver.).flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "心の力 (P4ver.)"
+disc = 2
+disc_total = 2
+track = 12
+track_total = 27
+duration_ms = 119146
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-11. ジュネスのテーマ.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "ジュネスのテーマ"
+disc = 2
+disc_total = 2
+track = 11
+track_total = 27
+duration_ms = 99386
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-10. Period.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Period"
+disc = 2
+disc_total = 2
+track = 10
+track_total = 27
+duration_ms = 60800
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-09. 霧.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "霧"
+disc = 2
+disc_total = 2
+track = 9
+track_total = 27
+duration_ms = 235666
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-08. A New World Fool.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "A New World Fool"
+disc = 2
+disc_total = 2
+track = 8
+track_total = 27
+duration_ms = 257946
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-07. ZONE TIME.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "ZONE TIME"
+disc = 2
+disc_total = 2
+track = 7
+track_total = 27
+duration_ms = 92773
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-06. Game.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Game"
+disc = 2
+disc_total = 2
+track = 6
+track_total = 27
+duration_ms = 159226
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-05. youthful lunch.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "youthful lunch"
+disc = 2
+disc_total = 2
+track = 5
+track_total = 27
+duration_ms = 101933
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-04. Heartbeat, Heartbreak.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Heartbeat, Heartbreak"
+disc = 2
+disc_total = 2
+track = 4
+track_total = 27
+duration_ms = 135226
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-03. Theater.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Theater"
+disc = 2
+disc_total = 2
+track = 3
+track_total = 27
+duration_ms = 112706
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-02. specialist.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "specialist"
+disc = 2
+disc_total = 2
+track = 2
+track_total = 27
+duration_ms = 133413
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 2/2-01. Reach Out To The Truth -Inst version-.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Reach Out To The Truth -Inst version-"
+disc = 2
+disc_total = 2
+track = 1
+track_total = 27
+duration_ms = 92266
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-25. Reach Out To The Truth.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Reach Out To The Truth"
+disc = 1
+disc_total = 2
+track = 25
+track_total = 25
+duration_ms = 167880
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-24. 覚醒.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "覚醒"
+disc = 1
+disc_total = 2
+track = 24
+track_total = 25
+duration_ms = 83480
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-23. Sauna.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Sauna"
+disc = 1
+disc_total = 2
+track = 23
+track_total = 25
+duration_ms = 123946
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-22. ケロリンMAGIC!.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "ケロリンMAGIC!"
+disc = 1
+disc_total = 2
+track = 22
+track_total = 25
+duration_ms = 63506
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-21. 人の夫.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "人の夫"
+disc = 1
+disc_total = 2
+track = 21
+track_total = 25
+duration_ms = 100240
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-20. It's SHOW TIME!.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "It's SHOW TIME!"
+disc = 1
+disc_total = 2
+track = 20
+track_total = 25
+duration_ms = 51186
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-19. muscle blues.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "muscle blues"
+disc = 1
+disc_total = 2
+track = 19
+track_total = 25
+duration_ms = 89040
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-18. I'll Face Myself.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "I'll Face Myself"
+disc = 1
+disc_total = 2
+track = 18
+track_total = 25
+duration_ms = 161240
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-17. I'll Face Myself -Battle-.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "I'll Face Myself -Battle-"
+disc = 1
+disc_total = 2
+track = 17
+track_total = 25
+duration_ms = 179986
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-16. 狂気の境界線.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "狂気の境界線"
+disc = 1
+disc_total = 2
+track = 16
+track_total = 25
+duration_ms = 139346
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-15. Castle.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Castle"
+disc = 1
+disc_total = 2
+track = 15
+track_total = 25
+duration_ms = 158053
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-14. 推理.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "推理"
+disc = 1
+disc_total = 2
+track = 14
+track_total = 25
+duration_ms = 202306
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-13. Backside Of The TV.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Backside Of The TV"
+disc = 1
+disc_total = 2
+track = 13
+track_total = 25
+duration_ms = 174213
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-12. SMILE.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "SMILE"
+disc = 1
+disc_total = 2
+track = 12
+track_total = 25
+duration_ms = 203240
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-11. Reach Out To The Truth -First Battle-.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Reach Out To The Truth -First Battle-"
+disc = 1
+disc_total = 2
+track = 11
+track_total = 25
+duration_ms = 177386
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-10. そこにいるのは誰？.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "そこにいるのは誰?"
+disc = 1
+disc_total = 2
+track = 10
+track_total = 25
+duration_ms = 112066
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-09. Like a dream come true.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Like a dream come true"
+disc = 1
+disc_total = 2
+track = 9
+track_total = 25
+duration_ms = 157066
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-08. Your Affection.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Your Affection"
+disc = 1
+disc_total = 2
+track = 8
+track_total = 25
+duration_ms = 172013
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-07. マヨナカテレビ.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "マヨナカテレビ"
+disc = 1
+disc_total = 2
+track = 7
+track_total = 25
+duration_ms = 78013
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-06. Signs Of Love.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Signs Of Love"
+disc = 1
+disc_total = 2
+track = 6
+track_total = 25
+duration_ms = 180986
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-05. New Days.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "New Days"
+disc = 1
+disc_total = 2
+track = 5
+track_total = 25
+duration_ms = 137680
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-04. 全ての人の魂の詩.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "全ての人の魂の詩"
+disc = 1
+disc_total = 2
+track = 4
+track_total = 25
+duration_ms = 338306
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-03. Welcome to the limousine.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Welcome to the limousine"
+disc = 1
+disc_total = 2
+track = 3
+track_total = 25
+duration_ms = 26320
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-02. 記憶の片隅.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "記憶の片隅"
+disc = 1
+disc_total = 2
+track = 2
+track_total = 25
+duration_ms = 70986
+
+[[raw_tags]]
+file_path = "[2008.07.23] 目黒将司 — Persona4 Original Soundtrack {SVWC-7566~7} [CD-FLAC]/Disc 1/1-01. Pursuing My True Self.flac"
+album = "Persona4 Original Soundtrack"
+album_artists = ["目黒将司"]
+artists = ["目黒将司"]
+title = "Pursuing My True Self"
+disc = 1
+disc_total = 2
+track = 1
+track_total = 25
+duration_ms = 86053
+
+[expect.release]
+ids = { release_id = "a124503a-cd95-4382-bbb8-60b093b72dde" }

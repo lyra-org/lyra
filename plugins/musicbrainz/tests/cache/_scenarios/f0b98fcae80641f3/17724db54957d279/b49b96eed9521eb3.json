@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/03fd8db3-a47b-4f8d-9be6-b8fa9f006963?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[],\"id\":\"03fd8db3-a47b-4f8d-9be6-b8fa9f006963\",\"title\":\"RUN, RUN, RUN!\",\"relations\":[{\"direction\":\"backward\",\"attribute-ids\":{},\"source-credit\":\"\",\"ended\":false,\"target-type\":\"artist\",\"attributes\":[],\"end\":null,\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Meguro, Shōji\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"country\":\"JP\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"type\":\"Person\",\"name\":\"目黒将司\"},\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"target-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\"}],\"disambiguation\":\"\",\"type\":null,\"iswcs\":[],\"type-id\":null,\"language\":\"zxx\",\"languages\":[\"zxx\"]}"
+}

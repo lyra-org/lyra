@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/fd198b3e-d442-43a5-a261-5ee05084be39?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"target-credit\":\"\",\"target-type\":\"artist\",\"type\":\"composer\",\"end\":null,\"source-credit\":\"\",\"attribute-ids\":{},\"attribute-values\":{},\"direction\":\"backward\",\"ended\":false,\"artist\":{\"name\":\"緑黄色社会\",\"country\":\"JP\",\"type\":\"Group\",\"type-id\":\"e431f5f6-b5d2-343d-8b36-72607fffb74b\",\"disambiguation\":\"\",\"sort-name\":\"Ryokuoushoku Shakai\",\"id\":\"3ed40054-97ab-4783-b3c3-15c2c7b06546\"},\"attributes\":[]}],\"title\":\"SINGALONG\",\"attributes\":[{\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"253-9670-6\"}],\"languages\":[\"zxx\"],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"type\":\"Song\",\"id\":\"fd198b3e-d442-43a5-a261-5ee05084be39\",\"language\":\"zxx\",\"iswcs\":[],\"disambiguation\":\"\"}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/5988abc2-1782-4c18-b1ac-c87bba39c5a6?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"languages\":[\"zxx\"],\"id\":\"5988abc2-1782-4c18-b1ac-c87bba39c5a6\",\"type\":null,\"language\":\"zxx\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"source-credit\":\"\",\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"type\":\"Person\",\"name\":\"目黒将司\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"sort-name\":\"Meguro, Shōji\",\"disambiguation\":\"Japanese composer, guitarist & game director\"},\"type\":\"composer\",\"end\":null,\"ended\":false,\"attribute-values\":{},\"attribute-ids\":{},\"attributes\":[],\"target-credit\":\"\",\"begin\":null,\"direction\":\"backward\"}],\"disambiguation\":\"\",\"title\":\"A Woman (another version)\",\"attributes\":[],\"iswcs\":[]}"
+}

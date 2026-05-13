@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/f8fb0547-37c1-4b6f-b6af-32773bd450ed?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"languages\":[\"zxx\"],\"type-id\":null,\"iswcs\":[\"T-920.197.877-0\"],\"type\":null,\"disambiguation\":\"\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"target-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"direction\":\"backward\",\"attribute-ids\":{},\"source-credit\":\"\",\"ended\":false,\"target-type\":\"artist\",\"attributes\":[],\"end\":null,\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Noda, Yōjirō\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"野田洋次郎\",\"type\":\"Person\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\"}}],\"title\":\"デート\",\"id\":\"f8fb0547-37c1-4b6f-b6af-32773bd450ed\",\"attributes\":[{\"type-id\":\"bdf50af8-0881-322a-8ab7-f031a4935d04\",\"value\":\"GW50886238\",\"type\":\"APRA ID\"},{\"value\":\"221-1241-3\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}]}"
+}

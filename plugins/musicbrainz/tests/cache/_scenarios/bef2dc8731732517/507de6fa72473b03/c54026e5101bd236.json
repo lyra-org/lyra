@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/01583108-3704-4c64-9677-2dcf99f52162?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"languages\":[\"zxx\"],\"iswcs\":[\"T-930.336.361-3\"],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"type\":\"Song\",\"disambiguation\":\"\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"248-0472-0\",\"type\":\"JASRAC ID\"}],\"id\":\"01583108-3704-4c64-9677-2dcf99f52162\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attribute-values\":{},\"type\":\"composer\",\"target-credit\":\"\",\"begin\":null,\"target-type\":\"artist\",\"ended\":false,\"direction\":\"backward\",\"attribute-ids\":{},\"source-credit\":\"\",\"end\":null,\"artist\":{\"id\":\"e963b252-7f3e-450e-b3d8-85bb495e96c1\",\"type\":\"Person\",\"name\":\"n-buna\",\"disambiguation\":\"\",\"country\":\"JP\",\"sort-name\":\"nabuna\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"attributes\":[]}],\"title\":\"森の教会\"}"
+}
