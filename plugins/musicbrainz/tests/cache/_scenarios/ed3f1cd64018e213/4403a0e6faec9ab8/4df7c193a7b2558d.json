@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/b95861f5-5027-4601-bd2f-cfe86649650b?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"type\":\"Soundtrack\",\"attributes\":[{\"value\":\"N01198192\",\"type\":\"NexTone ID\",\"type-id\":\"97aac6a3-f2dd-4372-96fe-2462eb4e652a\"},{\"value\":\"278-2712-7\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"id\":\"b95861f5-5027-4601-bd2f-cfe86649650b\",\"title\":\"ドライブ\",\"relations\":[{\"direction\":\"backward\",\"attribute-ids\":{},\"source-credit\":\"\",\"target-type\":\"artist\",\"ended\":false,\"attributes\":[],\"end\":null,\"artist\":{\"sort-name\":\"Jinnouchi, Kazuma\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"id\":\"c9c59c75-f51b-4e38-bc15-b3a036f4d0ad\",\"disambiguation\":\"\",\"country\":\"JP\",\"type\":\"Person\",\"name\":\"陣内一真\"},\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"target-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\"}],\"language\":\"zxx\",\"languages\":[\"zxx\"],\"iswcs\":[],\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\"}"
+}

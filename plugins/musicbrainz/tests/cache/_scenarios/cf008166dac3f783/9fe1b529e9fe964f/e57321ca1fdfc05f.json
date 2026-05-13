@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/58f79038-0d71-44cd-b42c-130499e2c126?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"jpn\",\"languages\":[\"jpn\"],\"iswcs\":[],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"disambiguation\":\"\",\"type\":\"Song\",\"id\":\"58f79038-0d71-44cd-b42c-130499e2c126\",\"attributes\":[],\"title\":\"忠犬ハチ\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"type\":\"composer\",\"attribute-values\":{},\"target-credit\":\"\",\"begin\":null,\"target-type\":\"artist\",\"ended\":false,\"source-credit\":\"\",\"attribute-ids\":{},\"direction\":\"backward\",\"artist\":{\"sort-name\":\"Pusu\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"id\":\"51f9df8c-abea-4e7d-a3bd-05c3d3196b4d\",\"country\":\"JP\",\"disambiguation\":\"\",\"type\":\"Person\",\"name\":\"ぷす\"},\"end\":null,\"attributes\":[]}]}"
+}

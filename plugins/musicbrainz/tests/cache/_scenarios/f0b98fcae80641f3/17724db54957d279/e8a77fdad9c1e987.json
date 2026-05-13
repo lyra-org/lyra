@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/485505ab-af3b-4533-bb57-440b2485bd7f?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"title\":\"デスティニー・ランド\",\"relations\":[{\"ended\":false,\"direction\":\"backward\",\"attributes\":[],\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"id\":\"2aaa4d3d-5100-4c03-b464-7ab6af8854e6\",\"sort-name\":\"Kitajoh, Atsushi\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"喜多條敦志\"},\"type\":\"composer\",\"attribute-ids\":{},\"attribute-values\":{},\"end\":null,\"source-credit\":\"\",\"target-type\":\"artist\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\"}],\"attributes\":[],\"languages\":[\"zxx\"],\"type\":null,\"type-id\":null,\"language\":\"zxx\",\"id\":\"485505ab-af3b-4533-bb57-440b2485bd7f\",\"disambiguation\":\"\",\"iswcs\":[]}"
+}

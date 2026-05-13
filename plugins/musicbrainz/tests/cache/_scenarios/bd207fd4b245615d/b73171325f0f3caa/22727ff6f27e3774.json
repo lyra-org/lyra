@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/bc254087-85e8-4adc-b396-8974e2d931cc?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":\"Song\",\"iswcs\":[\"T-909.802.612-1\"],\"disambiguation\":\"ロックマン3\",\"id\":\"bc254087-85e8-4adc-b396-8974e2d931cc\",\"language\":\"zxx\",\"relations\":[{\"attribute-values\":{},\"source-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attribute-ids\":{},\"target-credit\":\"\",\"ended\":false,\"artist\":{\"sort-name\":\"Fujita, Yasuaki\",\"name\":\"藤田靖明\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"id\":\"4eba6513-771a-40b3-a208-bb2ae28a67ca\",\"disambiguation\":\"\",\"type\":\"Person\"},\"begin\":null,\"end\":null,\"target-type\":\"artist\",\"attributes\":[],\"direction\":\"backward\",\"type\":\"composer\"}],\"title\":\"Boss\",\"languages\":[\"zxx\"],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"attributes\":[]}"
+}

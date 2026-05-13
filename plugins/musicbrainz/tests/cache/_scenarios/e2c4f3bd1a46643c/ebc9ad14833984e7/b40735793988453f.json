@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/d5d42589-c5d6-33b1-9b6a-b64a7905acb7?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"relations\":[{\"end\":null,\"target-credit\":\"\",\"attributes\":[],\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"name\":\"目黒将司\",\"country\":\"JP\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"sort-name\":\"Meguro, Shōji\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\"},\"ended\":false,\"source-credit\":\"\",\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"direction\":\"backward\",\"begin\":null,\"attribute-ids\":{},\"type\":\"composer\",\"attribute-values\":{}}],\"iswcs\":[],\"type-id\":null,\"id\":\"d5d42589-c5d6-33b1-9b6a-b64a7905acb7\",\"languages\":[\"zxx\"],\"title\":\"覚醒\",\"type\":null,\"language\":\"zxx\",\"attributes\":[{\"value\":\"152-3371-5\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}]}"
+}

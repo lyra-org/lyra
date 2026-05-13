@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/2015dfb9-702e-3840-afe8-2c27ef28f386?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"disambiguation\":\"\",\"relations\":[{\"target-credit\":\"\",\"begin\":null,\"attribute-values\":{},\"type\":\"composer\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attributes\":[],\"artist\":{\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"country\":\"JP\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"name\":\"目黒将司\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Meguro, Shōji\"},\"end\":null,\"attribute-ids\":{},\"source-credit\":\"\",\"direction\":\"backward\",\"ended\":false,\"target-type\":\"artist\"}],\"title\":\"The Almighty\",\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"152-3395-2\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"id\":\"2015dfb9-702e-3840-afe8-2c27ef28f386\",\"language\":\"zxx\",\"languages\":[\"zxx\"],\"type-id\":null,\"iswcs\":[]}"
+}

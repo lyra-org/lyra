@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/037ab1f1-68aa-430b-9207-2db2295f7a22?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"id\":\"037ab1f1-68aa-430b-9207-2db2295f7a22\",\"disambiguation\":\"\",\"type\":\"Song\",\"title\":\"fake face dance music\",\"attributes\":[],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"relations\":[],\"languages\":[\"jpn\"],\"language\":\"jpn\"}"
+}

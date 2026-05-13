@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/7f29266b-1cc6-4e31-83c8-1a033e1d89b0?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"disambiguation\":\"\",\"relations\":[{\"attribute-values\":{},\"ended\":false,\"end\":null,\"target-credit\":\"\",\"attributes\":[],\"attribute-ids\":{},\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"name\":\"n-buna\",\"type\":\"Person\",\"id\":\"e963b252-7f3e-450e-b3d8-85bb495e96c1\",\"disambiguation\":\"\",\"sort-name\":\"nabuna\"},\"type\":\"composer\",\"target-type\":\"artist\",\"source-credit\":\"\",\"direction\":\"backward\",\"begin\":null}],\"iswcs\":[\"T-930.336.353-3\"],\"attributes\":[{\"value\":\"248-0464-9\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"title\":\"車窓\",\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"languages\":[\"zxx\"],\"type\":\"Song\",\"id\":\"7f29266b-1cc6-4e31-83c8-1a033e1d89b0\"}"
+}

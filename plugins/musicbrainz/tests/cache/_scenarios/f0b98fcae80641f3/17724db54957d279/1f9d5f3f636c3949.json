@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/07094a54-fd64-475d-a9f0-6dfdc15d7715?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"type\":\"Soundtrack\",\"attributes\":[],\"id\":\"07094a54-fd64-475d-a9f0-6dfdc15d7715\",\"title\":\"Interrogation Room\",\"relations\":[],\"languages\":[\"zxx\"],\"language\":\"zxx\",\"iswcs\":[],\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\"}"
+}

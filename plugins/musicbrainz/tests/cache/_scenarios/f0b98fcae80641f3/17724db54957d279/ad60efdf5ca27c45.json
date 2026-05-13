@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/c72432b7-52f1-4642-90a2-e6bdc18add21?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"attributes\":[],\"title\":\"Sweet\",\"type\":null,\"id\":\"c72432b7-52f1-4642-90a2-e6bdc18add21\",\"languages\":[\"zxx\"],\"disambiguation\":\"\",\"relations\":[{\"attribute-ids\":{},\"attribute-values\":{},\"type\":\"composer\",\"begin\":null,\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"direction\":\"backward\",\"source-credit\":\"\",\"attributes\":[],\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"name\":\"目黒将司\",\"country\":\"JP\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"sort-name\":\"Meguro, Shōji\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\"},\"ended\":false,\"end\":null,\"target-credit\":\"\"}],\"iswcs\":[],\"type-id\":null}"
+}
