@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/68ee79c1-484e-417e-88ff-b4a2ed8100a1?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"type-id\":null,\"languages\":[\"zxx\"],\"language\":\"zxx\",\"attributes\":[{\"value\":\"729-2240-1\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"id\":\"68ee79c1-484e-417e-88ff-b4a2ed8100a1\",\"title\":\"晴天と喪失\",\"relations\":[{\"attributes\":[],\"artist\":{\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"type\":\"Person\",\"name\":\"野田洋次郎\",\"country\":\"JP\",\"disambiguation\":\"\",\"sort-name\":\"Noda, Yōjirō\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"end\":null,\"source-credit\":\"\",\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"ended\":false,\"begin\":null,\"target-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"disambiguation\":\"\",\"type\":null}"
+}

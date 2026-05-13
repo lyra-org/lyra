@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/c492c726-2839-463b-9dbb-a39a06e15370?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"attribute-ids\":{},\"target-type\":\"artist\",\"direction\":\"backward\",\"attributes\":[],\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"begin\":null,\"end\":null,\"artist\":{\"sort-name\":\"Sawano, Hiroyuki\",\"disambiguation\":\"\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\",\"type\":\"Person\",\"country\":\"JP\",\"name\":\"澤野弘之\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"}}],\"languages\":[\"eng\"],\"language\":\"eng\",\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"208-3602-3\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"disambiguation\":\"\",\"id\":\"c492c726-2839-463b-9dbb-a39a06e15370\",\"type\":\"Song\",\"title\":\"ymniam-MKorch\",\"iswcs\":[\"T-917.368.776-8\"]}"
+}

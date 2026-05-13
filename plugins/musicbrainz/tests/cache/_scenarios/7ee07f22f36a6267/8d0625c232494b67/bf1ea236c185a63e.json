@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/866655c7-01d9-4ccf-ae6c-d97f78b884e8?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[],\"language\":\"eng\",\"title\":\"SNOWFLAKES (NARASAKI Remix)\",\"type\":\"Song\",\"languages\":[\"eng\"],\"id\":\"866655c7-01d9-4ccf-ae6c-d97f78b884e8\",\"iswcs\":[],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"disambiguation\":\"expanded lyrics version\",\"relations\":[{\"direction\":\"backward\",\"target-type\":\"artist\",\"type-id\":\"3e48faba-ec01-47fd-8e89-30e81161661c\",\"begin\":null,\"type\":\"lyricist\",\"attribute-values\":{},\"attribute-ids\":{},\"end\":null,\"target-credit\":\"\",\"ended\":false,\"attributes\":[],\"artist\":{\"id\":\"2959b2cd-81d5-4852-a3f3-9c8dbd27f3fb\",\"sort-name\":\"Franklin, Ben\",\"name\":\"Ben Franklin\",\"country\":\"JP\",\"disambiguation\":\"Japan-based production music composer, singer, lyricist\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"source-credit\":\"\"}]}"
+}

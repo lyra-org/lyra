@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/ddb46c9e-9c90-4dcb-8c35-15495935d046?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"languages\":[\"zxx\"],\"relations\":[{\"artist\":{\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"disambiguation\":\"\",\"sort-name\":\"Noda, Yōjirō\",\"country\":\"JP\",\"type\":\"Person\",\"name\":\"野田洋次郎\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"end\":null,\"begin\":null,\"ended\":false,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"source-credit\":\"\",\"attributes\":[],\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{}}],\"language\":\"zxx\",\"type-id\":null,\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"729-2247-8\"}],\"title\":\"芝公園\",\"type\":null,\"disambiguation\":\"\",\"id\":\"ddb46c9e-9c90-4dcb-8c35-15495935d046\",\"iswcs\":[]}"
+}

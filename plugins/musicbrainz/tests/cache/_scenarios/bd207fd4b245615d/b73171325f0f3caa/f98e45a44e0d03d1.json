@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/ead1f6d2-4e57-4a83-b1f8-ab0c16d6e8b4?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"relations\":[{\"target-credit\":\"\",\"attribute-ids\":{},\"attributes\":[],\"ended\":false,\"attribute-values\":{},\"end\":null,\"artist\":{\"id\":\"8b089567-8879-4d0e-bf24-6f8352b63a16\",\"type\":\"Person\",\"name\":\"ナノ\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"sort-name\":\"nano\",\"disambiguation\":\"Japanese-American pop/rock singer\"},\"type\":\"lyricist\",\"source-credit\":\"\",\"target-type\":\"artist\",\"type-id\":\"3e48faba-ec01-47fd-8e89-30e81161661c\",\"direction\":\"backward\",\"begin\":null}],\"iswcs\":[],\"attributes\":[],\"title\":\"Together As One\",\"language\":\"eng\",\"type\":\"Song\",\"id\":\"ead1f6d2-4e57-4a83-b1f8-ab0c16d6e8b4\",\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"languages\":[\"eng\"]}"
+}
