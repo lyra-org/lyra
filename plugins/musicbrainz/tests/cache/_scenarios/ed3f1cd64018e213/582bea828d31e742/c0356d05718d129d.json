@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/ee352283-f6f5-48cf-88e7-8ffa59f114e5?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"type\":\"Soundtrack\",\"title\":\"予兆\",\"relations\":[{\"attributes\":[],\"artist\":{\"id\":\"c9c59c75-f51b-4e38-bc15-b3a036f4d0ad\",\"type\":\"Person\",\"name\":\"陣内一真\",\"disambiguation\":\"\",\"country\":\"JP\",\"sort-name\":\"Jinnouchi, Kazuma\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"end\":null,\"source-credit\":\"\",\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"ended\":false,\"begin\":null,\"target-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"attributes\":[{\"type-id\":\"97aac6a3-f2dd-4372-96fe-2462eb4e652a\",\"type\":\"NexTone ID\",\"value\":\"N01198198\"},{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"278-2727-5\"}],\"id\":\"ee352283-f6f5-48cf-88e7-8ffa59f114e5\",\"languages\":[\"zxx\"],\"language\":\"zxx\",\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"iswcs\":[]}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/a015f774-4d9f-4292-9f69-f2211aacd2e6?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"type\":\"composer\",\"target-type\":\"artist\",\"end\":null,\"direction\":\"backward\",\"attributes\":[],\"begin\":null,\"artist\":{\"id\":\"d56ebf31-469c-4f77-bb23-d53cd02823a5\",\"country\":\"JP\",\"type\":\"Person\",\"disambiguation\":\"\",\"sort-name\":\"Yamaguchi, Mari\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"山口真理\"},\"attribute-ids\":{},\"target-credit\":\"\",\"ended\":false,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"source-credit\":\"\",\"attribute-values\":{}}],\"title\":\"Dr.WILY STAGE\",\"id\":\"a015f774-4d9f-4292-9f69-f2211aacd2e6\",\"language\":\"zxx\",\"type\":null,\"disambiguation\":\"ロックマン5\",\"iswcs\":[],\"attributes\":[],\"type-id\":null,\"languages\":[\"zxx\"]}"
+}

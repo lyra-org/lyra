@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/dca4ff25-7c24-431e-9f5a-12cca2736781?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"relations\":[{\"source-credit\":\"\",\"artist\":{\"sort-name\":\"とうかさ\",\"id\":\"5ceac59e-4512-49b3-8736-6dd1b84c6f67\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"とうかさ\"},\"attributes\":[],\"ended\":false,\"target-credit\":\"\",\"end\":null,\"attribute-ids\":{},\"type\":\"composer\",\"attribute-values\":{},\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"direction\":\"backward\"}],\"disambiguation\":\"\",\"languages\":[\"zxx\"],\"id\":\"dca4ff25-7c24-431e-9f5a-12cca2736781\",\"title\":\"欠けた心象\",\"type\":\"Song\",\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"264-8184-7\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"language\":\"zxx\"}"
+}

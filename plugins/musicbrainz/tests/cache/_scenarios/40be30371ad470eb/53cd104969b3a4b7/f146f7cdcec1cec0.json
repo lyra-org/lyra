@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/76dd1e4b-794a-4543-8885-ea78bf92fce9?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[\"T-919.213.868-4\"],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"languages\":[\"zxx\"],\"language\":\"zxx\",\"id\":\"76dd1e4b-794a-4543-8885-ea78bf92fce9\",\"attributes\":[{\"type\":\"NexTone ID\",\"value\":\"N00118846\",\"type-id\":\"97aac6a3-f2dd-4372-96fe-2462eb4e652a\"},{\"value\":\"202-8616-3\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"title\":\"-Ending-\",\"relations\":[{\"attribute-ids\":{},\"source-credit\":\"\",\"direction\":\"backward\",\"ended\":false,\"target-type\":\"artist\",\"attributes\":[],\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Giga\",\"country\":\"JP\",\"disambiguation\":\"Japanese producer\",\"type\":\"Person\",\"name\":\"Giga\",\"id\":\"fc7a99ac-32f0-4e2a-a2eb-03670470003d\"},\"end\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"target-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\"}],\"disambiguation\":\"\",\"type\":\"Song\"}"
+}

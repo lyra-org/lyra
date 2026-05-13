@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/be4176ea-9827-4d3d-86f9-ce8bada90508?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"begin\":null,\"artist\":{\"name\":\"澤野弘之\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Sawano, Hiroyuki\",\"disambiguation\":\"\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\",\"type\":\"Person\",\"country\":\"JP\"},\"end\":null,\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"attributes\":[],\"attribute-ids\":{},\"target-type\":\"artist\",\"direction\":\"backward\"}],\"languages\":[\"zxx\"],\"language\":\"zxx\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"228-8379-7\",\"type\":\"JASRAC ID\"}],\"type-id\":null,\"disambiguation\":\"進撃の巨人 Season 2\",\"id\":\"be4176ea-9827-4d3d-86f9-ce8bada90508\",\"title\":\"ERENthe標\",\"type\":null,\"iswcs\":[\"T-922.352.732-0\"]}"
+}

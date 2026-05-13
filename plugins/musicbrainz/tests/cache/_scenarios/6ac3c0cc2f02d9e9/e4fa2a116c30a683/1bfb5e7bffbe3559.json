@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/ef9b2b69-25aa-4450-b906-eeb571b7da57?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"title\":\"凸】♀】♂】←巨人\",\"id\":\"ef9b2b69-25aa-4450-b906-eeb571b7da57\",\"disambiguation\":\"進撃の巨人\",\"iswcs\":[\"T-910.740.766-9\"],\"languages\":[\"zxx\"],\"relations\":[{\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"begin\":null,\"end\":null,\"artist\":{\"type\":\"Person\",\"country\":\"JP\",\"sort-name\":\"Sawano, Hiroyuki\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\",\"disambiguation\":\"\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"澤野弘之\"},\"attribute-ids\":{},\"target-type\":\"artist\",\"direction\":\"backward\",\"attributes\":[]}],\"language\":\"zxx\",\"type-id\":null,\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"194-3626-2\",\"type\":\"JASRAC ID\"}]}"
+}

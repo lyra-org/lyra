@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/af8ea29e-0ea0-336a-a922-9d62f79eff07?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"id\":\"af8ea29e-0ea0-336a-a922-9d62f79eff07\",\"disambiguation\":\"\",\"type\":null,\"title\":\"The Genesis\",\"iswcs\":[],\"relations\":[{\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"attributes\":[],\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\",\"begin\":null,\"artist\":{\"sort-name\":\"Meguro, Shōji\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"type\":\"Person\",\"country\":\"JP\",\"name\":\"目黒将司\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"end\":null,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false}],\"language\":\"zxx\",\"languages\":[\"zxx\"],\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"152-3396-1\",\"type\":\"JASRAC ID\"}],\"type-id\":null}"
+}

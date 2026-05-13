@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/8bdb781b-0a1a-4c51-a55c-74c2050a34c8?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"type-id\":null,\"language\":\"zxx\",\"languages\":[\"zxx\"],\"attributes\":[],\"id\":\"8bdb781b-0a1a-4c51-a55c-74c2050a34c8\",\"title\":\"母のいた日々 ‐another version‐\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"begin\":null,\"type\":\"composer\",\"attribute-values\":{},\"direction\":\"backward\",\"source-credit\":\"\",\"attribute-ids\":{},\"ended\":false,\"target-type\":\"artist\",\"attributes\":[],\"end\":null,\"artist\":{\"disambiguation\":\"Japanese composer, guitarist & game director\",\"country\":\"JP\",\"type\":\"Person\",\"name\":\"目黒将司\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"sort-name\":\"Meguro, Shōji\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"}}],\"disambiguation\":\"\",\"type\":null}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/d1352955-29a3-4c64-ad3d-27a7b145a47c?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":\"Song\",\"title\":\"海のまにまに\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"760-6198-1\",\"type\":\"JASRAC ID\"}],\"language\":\"jpn\",\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"iswcs\":[\"T-317.475.627-1\"],\"relations\":[{\"end\":null,\"target-credit\":\"\",\"attributes\":[],\"artist\":{\"id\":\"4173073b-ae68-476a-a715-e22f1f43046d\",\"sort-name\":\"Ayase\",\"country\":\"JP\",\"disambiguation\":\"Vocaloid producer, YOASOBI composer\",\"name\":\"Ayase\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"ended\":false,\"source-credit\":\"\",\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"direction\":\"backward\",\"begin\":null,\"attribute-ids\":{},\"type\":\"composer\",\"attribute-values\":{}}],\"disambiguation\":\"\",\"languages\":[\"jpn\"],\"id\":\"d1352955-29a3-4c64-ad3d-27a7b145a47c\"}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/6d7a11e5-3c19-414c-9d06-eae3beebf208?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":\"Soundtrack\",\"id\":\"6d7a11e5-3c19-414c-9d06-eae3beebf208\",\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"languages\":[\"zxx\"],\"disambiguation\":\"\",\"relations\":[{\"direction\":\"backward\",\"begin\":null,\"target-credit\":\"\",\"attributes\":[],\"attribute-ids\":{},\"attribute-values\":{},\"ended\":false,\"end\":null,\"source-credit\":\"\",\"target-type\":\"artist\",\"artist\":{\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"桑原彰\",\"type\":\"Person\",\"id\":\"3f2b5932-8bc6-4d2e-b2c3-ec53aa242847\",\"sort-name\":\"Kuwahara, Akira\",\"disambiguation\":\"\"},\"type\":\"composer\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"iswcs\":[\"T-317.519.096-8\"],\"title\":\"猫探し\",\"attributes\":[{\"type-id\":\"97aac6a3-f2dd-4372-96fe-2462eb4e652a\",\"type\":\"NexTone ID\",\"value\":\"N01198189\"},{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"277-7882-7\"}],\"language\":\"zxx\"}"
+}

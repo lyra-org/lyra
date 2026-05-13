@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/b9073234-9597-4d68-8d96-e92dcb071136?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"disambiguation\":\"\",\"id\":\"b9073234-9597-4d68-8d96-e92dcb071136\",\"attributes\":[{\"type-id\":\"bdf50af8-0881-322a-8ab7-f031a4935d04\",\"type\":\"APRA ID\",\"value\":\"GW50886239\"},{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"221-1244-8\",\"type\":\"JASRAC ID\"}],\"relations\":[{\"target-credit\":\"\",\"begin\":null,\"attribute-values\":{},\"type\":\"composer\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attributes\":[],\"end\":null,\"artist\":{\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"country\":\"JP\",\"disambiguation\":\"\",\"type\":\"Person\",\"name\":\"野田洋次郎\",\"sort-name\":\"Noda, Yōjirō\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"direction\":\"backward\",\"attribute-ids\":{},\"source-credit\":\"\",\"target-type\":\"artist\",\"ended\":false}],\"title\":\"三葉のテーマ\",\"language\":\"zxx\",\"languages\":[\"zxx\"],\"iswcs\":[\"T-920.197.885-0\"],\"type-id\":null}"
+}
