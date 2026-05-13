@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/3e6ffbc2-df53-4414-bc1b-4759594d0a5d?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"jpn\",\"id\":\"3e6ffbc2-df53-4414-bc1b-4759594d0a5d\",\"disambiguation\":\"\",\"iswcs\":[],\"type\":\"Song\",\"title\":\"GALAXY FANTASY\",\"relations\":[{\"type-id\":\"3e48faba-ec01-47fd-8e89-30e81161661c\",\"source-credit\":\"\",\"attribute-values\":{},\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"Blue E\",\"sort-name\":\"Blue E\",\"type\":\"Person\",\"disambiguation\":\"lyricist, SOUND HOLIC\",\"country\":\"JP\",\"id\":\"a7d907e9-adbd-4070-b5dc-fcd1fe30159e\"},\"target-credit\":\"\",\"attribute-ids\":{},\"ended\":false,\"target-type\":\"artist\",\"end\":null,\"direction\":\"backward\",\"attributes\":[],\"begin\":null,\"type\":\"lyricist\"}],\"languages\":[\"jpn\"],\"attributes\":[],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\"}"
+}

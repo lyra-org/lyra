@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/e0d2df27-a385-4fd5-ba26-98263ef41a53?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[],\"type-id\":null,\"relations\":[{\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"ended\":false,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"end\":null,\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"甲田雅人\",\"country\":\"JP\",\"type\":\"Person\",\"disambiguation\":\"\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"sort-name\":\"Kouda, Masato\"},\"begin\":null,\"direction\":\"backward\",\"target-type\":\"artist\",\"attribute-ids\":{},\"attributes\":[]}],\"languages\":[],\"language\":null,\"iswcs\":[],\"disambiguation\":\"\",\"id\":\"e0d2df27-a385-4fd5-ba26-98263ef41a53\",\"title\":\"サプライズ!?\",\"type\":null}"
+}

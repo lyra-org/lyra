@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/61c8088e-c6d8-4630-a31b-a3e7c78bab69?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"id\":\"61c8088e-c6d8-4630-a31b-a3e7c78bab69\",\"disambiguation\":\"\",\"type\":null,\"title\":\"自由と安心\",\"attributes\":[],\"type-id\":null,\"languages\":[\"zxx\"],\"relations\":[{\"attributes\":[],\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"begin\":null,\"artist\":{\"sort-name\":\"Meguro, Shōji\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"type\":\"Person\",\"country\":\"JP\",\"name\":\"目黒将司\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"end\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"ended\":false,\"attribute-values\":{},\"type\":\"composer\",\"source-credit\":\"\"}],\"language\":\"zxx\"}"
+}

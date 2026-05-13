@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/aca33329-46f5-3737-ab13-ce3831ee1ea7?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"attributes\":[],\"attribute-ids\":{},\"target-type\":\"artist\",\"direction\":\"backward\",\"begin\":null,\"end\":null,\"artist\":{\"sort-name\":\"Meguro, Shōji\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"type\":\"Person\",\"country\":\"JP\",\"name\":\"目黒将司\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\"}],\"language\":\"zxx\",\"languages\":[\"zxx\"],\"type-id\":null,\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"152-3380-4\",\"type\":\"JASRAC ID\"}],\"title\":\"ZONE TIME\",\"type\":null,\"id\":\"aca33329-46f5-3737-ab13-ce3831ee1ea7\",\"disambiguation\":\"\",\"iswcs\":[]}"
+}

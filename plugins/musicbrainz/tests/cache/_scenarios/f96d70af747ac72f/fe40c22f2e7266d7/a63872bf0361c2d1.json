@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/22f34493-a534-4ed5-8a79-741f5626465b?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":\"Song\",\"id\":\"22f34493-a534-4ed5-8a79-741f5626465b\",\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"languages\":[\"zxx\"],\"disambiguation\":\"\",\"relations\":[{\"begin\":null,\"direction\":\"backward\",\"end\":null,\"attribute-values\":{},\"ended\":false,\"attributes\":[],\"attribute-ids\":{},\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"source-credit\":\"\",\"type\":\"composer\",\"artist\":{\"sort-name\":\"nabuna\",\"disambiguation\":\"\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"id\":\"e963b252-7f3e-450e-b3d8-85bb495e96c1\",\"name\":\"n-buna\",\"type\":\"Person\"}}],\"iswcs\":[\"T-302.440.929-4\"],\"title\":\"幼年期、思い出の中\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"256-0472-4\",\"type\":\"JASRAC ID\"}],\"language\":\"zxx\"}"
+}
