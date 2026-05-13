@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/fe33260e-995b-4d5a-ac2b-2295e82ba735?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"729-2223-1\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"relations\":[{\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"attributes\":[],\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"begin\":null,\"end\":null,\"artist\":{\"name\":\"野田洋次郎\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"disambiguation\":\"\",\"sort-name\":\"Noda, Yōjirō\",\"country\":\"JP\",\"type\":\"Person\"}}],\"language\":\"zxx\",\"languages\":[\"zxx\"],\"iswcs\":[],\"type\":null,\"title\":\"二つの告白\",\"disambiguation\":\"\",\"id\":\"fe33260e-995b-4d5a-ac2b-2295e82ba735\"}"
+}

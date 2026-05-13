@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/be59148a-04f2-33a0-9475-52e56910edcd?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"ended\":false,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"目黒将司\",\"type\":\"Person\",\"country\":\"JP\",\"sort-name\":\"Meguro, Shōji\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"disambiguation\":\"Japanese composer, guitarist & game director\"},\"end\":null,\"begin\":null,\"direction\":\"backward\",\"target-type\":\"artist\",\"attribute-ids\":{},\"attributes\":[]}],\"language\":\"zxx\",\"languages\":[\"zxx\"],\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"152-3379-1\"}],\"type-id\":null,\"disambiguation\":\"\",\"id\":\"be59148a-04f2-33a0-9475-52e56910edcd\",\"title\":\"Game\",\"type\":null,\"iswcs\":[]}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/artist/ca4adf5e-55c6-4b1b-a545-f97efe337a5a?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"area\":{\"sort-name\":\"Japan\",\"id\":\"2db42837-c832-3c27-b4a3-08198f75693c\",\"type\":null,\"disambiguation\":\"\",\"name\":\"Japan\",\"type-id\":null,\"iso-3166-1-codes\":[\"JP\"]},\"isnis\":[],\"type-id\":\"5c1375b0-f18d-3db7-a164-a49d7a63773f\",\"life-span\":{\"end\":null,\"begin\":null,\"ended\":false},\"type\":\"Character\",\"id\":\"ca4adf5e-55c6-4b1b-a545-f97efe337a5a\",\"end-area\":null,\"begin-area\":null,\"ipis\":[\"01027887730\"],\"relations\":[],\"disambiguation\":\"バーチャルYouTuber\",\"gender\":\"Male\",\"country\":\"JP\",\"sort-name\":\"BotchiBoromaru\",\"gender-id\":\"36d3d30a-839d-3eda-8cb3-29be4384e4a9\",\"name\":\"ぼっちぼろまる\"}"
+}
