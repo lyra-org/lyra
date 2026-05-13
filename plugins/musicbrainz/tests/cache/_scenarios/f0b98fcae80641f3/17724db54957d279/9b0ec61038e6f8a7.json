@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/f5fca986-d33b-4412-97d7-c95fd25521cc?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"languages\":[\"zxx\"],\"type\":null,\"id\":\"f5fca986-d33b-4412-97d7-c95fd25521cc\",\"language\":\"zxx\",\"disambiguation\":\"\",\"relations\":[{\"type\":\"composer\",\"artist\":{\"disambiguation\":\"video game composer\",\"sort-name\":\"Kozuka, Ryota\",\"id\":\"a0b5f196-b505-4de0-8a85-1b0a0951496d\",\"name\":\"小塚良太\",\"type\":\"Person\",\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"source-credit\":\"\",\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"attribute-ids\":{},\"attributes\":[],\"attribute-values\":{},\"ended\":false,\"end\":null,\"direction\":\"backward\",\"begin\":null}],\"iswcs\":[],\"attributes\":[],\"title\":\"クレーンゲーム\"}"
+}

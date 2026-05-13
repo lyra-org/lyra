@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/2c9f7fa6-049b-4321-95ea-7018646c7001?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"type\":null,\"id\":\"2c9f7fa6-049b-4321-95ea-7018646c7001\",\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"221-1238-3\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"title\":\"奥寺先輩のテーマ\",\"relations\":[{\"target-type\":\"artist\",\"ended\":false,\"attribute-ids\":{},\"source-credit\":\"\",\"direction\":\"backward\",\"artist\":{\"id\":\"3f2b5932-8bc6-4d2e-b2c3-ec53aa242847\",\"type\":\"Person\",\"name\":\"桑原彰\",\"country\":\"JP\",\"disambiguation\":\"\",\"sort-name\":\"Kuwahara, Akira\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"end\":null,\"attributes\":[],\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attribute-values\":{},\"type\":\"composer\",\"begin\":null,\"target-credit\":\"\"}],\"languages\":[\"zxx\"],\"language\":\"zxx\",\"iswcs\":[\"T-920.197.870-3\"],\"type-id\":null}"
+}

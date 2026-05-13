@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/e7f95c00-ae43-3835-935a-90ed00bb3907?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"title\":\"New Days\",\"relations\":[{\"source-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attribute-values\":{},\"artist\":{\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"country\":\"JP\",\"type\":\"Person\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"sort-name\":\"Meguro, Shōji\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"目黒将司\"},\"target-credit\":\"\",\"attribute-ids\":{},\"ended\":false,\"end\":null,\"target-type\":\"artist\",\"attributes\":[],\"direction\":\"backward\",\"begin\":null,\"type\":\"composer\"}],\"language\":\"zxx\",\"id\":\"e7f95c00-ae43-3835-935a-90ed00bb3907\",\"disambiguation\":\"\",\"iswcs\":[],\"type\":null,\"attributes\":[{\"value\":\"152-3349-9\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\"}],\"type-id\":null,\"languages\":[\"zxx\"]}"
+}

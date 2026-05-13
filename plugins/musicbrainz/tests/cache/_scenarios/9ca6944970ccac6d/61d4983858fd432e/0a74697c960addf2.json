@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/a3fa6b08-0d0a-4da3-aa03-0e8f3ec223b6?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"type\":null,\"attributes\":[],\"id\":\"a3fa6b08-0d0a-4da3-aa03-0e8f3ec223b6\",\"title\":\"True Friends by Kengo Morimoto\",\"relations\":[],\"languages\":[\"zxx\"],\"language\":\"zxx\",\"iswcs\":[],\"type-id\":null}"
+}

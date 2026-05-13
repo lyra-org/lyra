@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/ad195cab-e6bc-387d-b74a-8e62744a63da?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"languages\":[\"zxx\"],\"type-id\":null,\"id\":\"ad195cab-e6bc-387d-b74a-8e62744a63da\",\"type\":null,\"language\":\"zxx\",\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"152-3381-2\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"title\":\"A New World Fool\",\"iswcs\":[],\"relations\":[{\"type\":\"composer\",\"artist\":{\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"type\":\"Person\",\"name\":\"目黒将司\",\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"sort-name\":\"Meguro, Shōji\"},\"source-credit\":\"\",\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attributes\":[],\"attribute-ids\":{},\"target-credit\":\"\",\"end\":null,\"ended\":false,\"attribute-values\":{},\"begin\":null,\"direction\":\"backward\"}],\"disambiguation\":\"\"}"
+}

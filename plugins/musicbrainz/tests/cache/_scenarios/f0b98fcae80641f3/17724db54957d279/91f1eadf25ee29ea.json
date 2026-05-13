@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/faa32eca-41e0-4a68-bc2c-7bd6896c0c03?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":\"Song\",\"title\":\"Getaway & Arrest\",\"id\":\"faa32eca-41e0-4a68-bc2c-7bd6896c0c03\",\"disambiguation\":\"\",\"iswcs\":[],\"language\":null,\"relations\":[],\"languages\":[],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"attributes\":[]}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/4794f45d-c9f1-424b-8985-2243a5fc3ac4?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[\"T-920.208.479-5\"],\"disambiguation\":\"\",\"id\":\"4794f45d-c9f1-424b-8985-2243a5fc3ac4\",\"type\":null,\"title\":\"作戦会議\",\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"715-6859-0\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"type-id\":null,\"language\":\"zxx\",\"relations\":[{\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"begin\":null,\"end\":null,\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"野田洋次郎\",\"country\":\"JP\",\"type\":\"Person\",\"disambiguation\":\"\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"sort-name\":\"Noda, Yōjirō\"},\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"attributes\":[]}],\"languages\":[\"zxx\"]}"
+}
