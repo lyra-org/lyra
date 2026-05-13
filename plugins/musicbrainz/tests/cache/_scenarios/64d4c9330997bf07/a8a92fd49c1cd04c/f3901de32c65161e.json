@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/7683fa6b-67c6-4224-a643-d9b43770a9b4?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[],\"title\":\"「Q」&「A」\",\"id\":\"7683fa6b-67c6-4224-a643-d9b43770a9b4\",\"attributes\":[],\"type\":\"Song\",\"disambiguation\":\"\",\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"iswcs\":[],\"languages\":[\"jpn\"],\"language\":\"jpn\"}"
+}

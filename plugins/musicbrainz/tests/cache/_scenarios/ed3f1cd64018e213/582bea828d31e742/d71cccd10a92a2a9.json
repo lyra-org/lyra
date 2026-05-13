@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/7856ebdb-1f1c-466f-9cc5-5da4e7ed8c74?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"languages\":[\"zxx\"],\"type\":\"Soundtrack\",\"id\":\"7856ebdb-1f1c-466f-9cc5-5da4e7ed8c74\",\"language\":\"zxx\",\"disambiguation\":\"\",\"relations\":[{\"target-credit\":\"\",\"attributes\":[],\"attribute-ids\":{},\"ended\":false,\"attribute-values\":{},\"end\":null,\"artist\":{\"name\":\"陣内一真\",\"type\":\"Person\",\"id\":\"c9c59c75-f51b-4e38-bc15-b3a036f4d0ad\",\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"disambiguation\":\"\",\"sort-name\":\"Jinnouchi, Kazuma\"},\"type\":\"composer\",\"target-type\":\"artist\",\"source-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"direction\":\"backward\",\"begin\":null}],\"iswcs\":[],\"attributes\":[{\"type-id\":\"97aac6a3-f2dd-4372-96fe-2462eb4e652a\",\"type\":\"NexTone ID\",\"value\":\"N01198190\"},{\"value\":\"278-2699-6\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"title\":\"廃校の風景\"}"
+}

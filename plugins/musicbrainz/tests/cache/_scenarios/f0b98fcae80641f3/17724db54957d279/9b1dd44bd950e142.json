@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/b84c354d-5bca-49e7-8cf9-5e059197ad65?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"name\":\"小西利樹\",\"type\":\"Person\",\"id\":\"eb18af98-09ff-467c-921e-9db3e0000d48\",\"sort-name\":\"Konishi, Toshiki\",\"disambiguation\":\"\"},\"type\":\"composer\",\"source-credit\":\"\",\"target-type\":\"artist\",\"end\":null,\"ended\":false,\"attribute-values\":{},\"attributes\":[],\"attribute-ids\":{},\"target-credit\":\"\",\"begin\":null,\"direction\":\"backward\"}],\"disambiguation\":\"\",\"attributes\":[],\"title\":\"Trick\",\"iswcs\":[],\"type-id\":null,\"languages\":[\"zxx\"],\"id\":\"b84c354d-5bca-49e7-8cf9-5e059197ad65\",\"type\":null}"
+}

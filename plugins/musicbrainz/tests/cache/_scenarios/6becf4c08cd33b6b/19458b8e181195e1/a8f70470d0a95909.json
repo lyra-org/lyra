@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/ed98d04e-a72b-48c8-ac6e-b9a8cfd9c3d5?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"ended\":false,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"end\":null,\"artist\":{\"sort-name\":\"Kouda, Masato\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"disambiguation\":\"\",\"type\":\"Person\",\"country\":\"JP\",\"name\":\"甲田雅人\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"begin\":null,\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"attributes\":[],\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{}}],\"language\":null,\"languages\":[],\"attributes\":[],\"type-id\":null,\"disambiguation\":\"\",\"id\":\"ed98d04e-a72b-48c8-ac6e-b9a8cfd9c3d5\",\"type\":null,\"title\":\"文芸部\",\"iswcs\":[]}"
+}

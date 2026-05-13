@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/df39621d-b0ec-4540-a1d0-ebd1b1505f1f?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"disambiguation\":\"\",\"id\":\"df39621d-b0ec-4540-a1d0-ebd1b1505f1f\",\"language\":null,\"type\":null,\"type-id\":null,\"languages\":[],\"attributes\":[],\"relations\":[{\"target-type\":\"artist\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"ended\":false,\"direction\":\"backward\",\"attributes\":[],\"artist\":{\"sort-name\":\"Kouda, Masato\",\"disambiguation\":\"\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"name\":\"甲田雅人\",\"country\":\"JP\"},\"type\":\"composer\",\"attribute-ids\":{},\"attribute-values\":{},\"source-credit\":\"\",\"end\":null}],\"title\":\"期待と不安と...\"}"
+}

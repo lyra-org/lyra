@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/199c08b3-baf8-40e8-80c2-211802d97a12?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"title\":\"Sunset Bridge\",\"language\":\"zxx\",\"attributes\":[],\"relations\":[{\"artist\":{\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"sort-name\":\"Meguro, Shōji\",\"country\":\"JP\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"name\":\"目黒将司\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"attributes\":[],\"ended\":false,\"source-credit\":\"\",\"target-credit\":\"\",\"end\":null,\"begin\":null,\"attribute-ids\":{},\"type\":\"composer\",\"attribute-values\":{},\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"direction\":\"backward\"}],\"disambiguation\":\"\",\"type-id\":null,\"iswcs\":[],\"id\":\"199c08b3-baf8-40e8-80c2-211802d97a12\",\"languages\":[\"zxx\"]}"
+}

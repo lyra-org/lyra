@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/6540841a-cf94-387d-80e1-a43afe2b0861?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"title\":\"Theater\",\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"152-3377-4\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"disambiguation\":\"\",\"relations\":[{\"begin\":null,\"direction\":\"backward\",\"end\":null,\"ended\":false,\"attribute-values\":{},\"attributes\":[],\"attribute-ids\":{},\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"source-credit\":\"\",\"type\":\"composer\",\"artist\":{\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"name\":\"目黒将司\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"sort-name\":\"Meguro, Shōji\",\"disambiguation\":\"Japanese composer, guitarist & game director\"}}],\"language\":\"zxx\",\"type\":null,\"id\":\"6540841a-cf94-387d-80e1-a43afe2b0861\",\"languages\":[\"zxx\"],\"type-id\":null}"
+}
