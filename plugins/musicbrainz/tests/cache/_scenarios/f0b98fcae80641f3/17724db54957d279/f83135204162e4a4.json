@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/5181faf6-0f3f-42a0-b2e5-d44ff744cab9?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"languages\":[\"zxx\"],\"id\":\"5181faf6-0f3f-42a0-b2e5-d44ff744cab9\",\"type\":null,\"language\":\"zxx\",\"relations\":[{\"direction\":\"backward\",\"begin\":null,\"attribute-values\":{},\"ended\":false,\"end\":null,\"target-credit\":\"\",\"attribute-ids\":{},\"attributes\":[],\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"source-credit\":\"\",\"artist\":{\"disambiguation\":\"\",\"sort-name\":\"Konishi, Toshiki\",\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"name\":\"小西利樹\",\"id\":\"eb18af98-09ff-467c-921e-9db3e0000d48\"},\"type\":\"composer\"}],\"disambiguation\":\"\",\"title\":\"出会い\",\"attributes\":[],\"iswcs\":[]}"
+}

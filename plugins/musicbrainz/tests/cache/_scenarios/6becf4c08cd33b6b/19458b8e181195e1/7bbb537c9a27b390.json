@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/55f56a13-8276-4dda-af97-6d189cbe1d1c?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"type\":null,\"title\":\"さようなら ～夢のあと～\",\"id\":\"55f56a13-8276-4dda-af97-6d189cbe1d1c\",\"disambiguation\":\"\",\"type-id\":null,\"attributes\":[],\"relations\":[{\"ended\":false,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"end\":null,\"artist\":{\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"disambiguation\":\"\",\"sort-name\":\"Kouda, Masato\",\"country\":\"JP\",\"type\":\"Person\",\"name\":\"甲田雅人\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"begin\":null,\"source-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"attributes\":[],\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{}}],\"languages\":[],\"language\":null}"
+}

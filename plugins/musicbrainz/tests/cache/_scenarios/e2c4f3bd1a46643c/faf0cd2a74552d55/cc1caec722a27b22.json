@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/386bb436-ba7e-388e-baeb-71e350be80a3?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"disambiguation\":\"\",\"id\":\"386bb436-ba7e-388e-baeb-71e350be80a3\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"152-3361-8\"}],\"relations\":[{\"artist\":{\"country\":\"JP\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"name\":\"目黒将司\",\"type\":\"Person\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Meguro, Shōji\"},\"end\":null,\"attributes\":[],\"target-type\":\"artist\",\"ended\":false,\"attribute-ids\":{},\"source-credit\":\"\",\"direction\":\"backward\",\"attribute-values\":{},\"type\":\"composer\",\"begin\":null,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"title\":\"Castle\",\"language\":\"zxx\",\"languages\":[\"zxx\"],\"iswcs\":[],\"type-id\":null}"
+}

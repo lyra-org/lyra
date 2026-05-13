@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/b635e385-7bb6-3114-b7f2-15b116f972c4?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"id\":\"b635e385-7bb6-3114-b7f2-15b116f972c4\",\"type\":null,\"type-id\":null,\"languages\":[\"zxx\"],\"relations\":[{\"attribute-ids\":{},\"attributes\":[],\"target-credit\":\"\",\"end\":null,\"ended\":false,\"attribute-values\":{},\"type\":\"composer\",\"artist\":{\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"name\":\"目黒将司\",\"type\":\"Person\",\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Meguro, Shōji\",\"disambiguation\":\"Japanese composer, guitarist & game director\"},\"target-type\":\"artist\",\"source-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"direction\":\"backward\"}],\"disambiguation\":\"\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"135-1506-3\"}],\"title\":\"心の力\",\"iswcs\":[],\"language\":\"zxx\"}"
+}

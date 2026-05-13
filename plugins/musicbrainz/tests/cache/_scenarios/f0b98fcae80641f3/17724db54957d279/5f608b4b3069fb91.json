@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/141c920c-5106-42a3-98a0-cc699dc60a25?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"attributes\":[],\"languages\":[\"zxx\"],\"relations\":[{\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"begin\":null,\"artist\":{\"id\":\"eb18af98-09ff-467c-921e-9db3e0000d48\",\"disambiguation\":\"\",\"sort-name\":\"Konishi, Toshiki\",\"country\":\"JP\",\"type\":\"Person\",\"name\":\"小西利樹\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"end\":null,\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"attributes\":[],\"attribute-ids\":{},\"target-type\":\"artist\",\"direction\":\"backward\"}],\"language\":\"zxx\",\"iswcs\":[],\"title\":\"Nothingness...?\",\"type\":null,\"disambiguation\":\"\",\"id\":\"141c920c-5106-42a3-98a0-cc699dc60a25\"}"
+}

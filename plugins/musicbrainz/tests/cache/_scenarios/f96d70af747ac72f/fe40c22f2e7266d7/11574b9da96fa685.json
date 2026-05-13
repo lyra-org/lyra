@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/87cc902d-0a51-4709-ab85-6b85bad3a3f7?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"256-0467-8\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"relations\":[{\"attribute-values\":{},\"type\":\"composer\",\"source-credit\":\"\",\"end\":null,\"artist\":{\"name\":\"n-buna\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"nabuna\",\"id\":\"e963b252-7f3e-450e-b3d8-85bb495e96c1\",\"disambiguation\":\"\",\"type\":\"Person\",\"country\":\"JP\"},\"begin\":null,\"ended\":false,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"direction\":\"backward\",\"target-type\":\"artist\",\"attribute-ids\":{},\"attributes\":[]}],\"languages\":[\"zxx\"],\"language\":\"zxx\",\"iswcs\":[\"T-302.440.932-9\"],\"id\":\"87cc902d-0a51-4709-ab85-6b85bad3a3f7\",\"disambiguation\":\"\",\"title\":\"青年期、空き巣\",\"type\":\"Song\"}"
+}

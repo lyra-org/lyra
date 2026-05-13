@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/dfee4892-372f-4e5b-bed4-7aa1a15e4705?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"iswcs\":[],\"relations\":[{\"attribute-ids\":{},\"attribute-values\":{},\"type\":\"composer\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"direction\":\"backward\",\"source-credit\":\"\",\"attributes\":[],\"artist\":{\"sort-name\":\"Ryoji Shinomoto\",\"id\":\"bc037669-d20b-45e8-9e70-780e305288f0\",\"type\":\"Person\",\"name\":\"Ryoji Shinomoto\",\"country\":\"JP\",\"disambiguation\":\"GYZE\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"ended\":false,\"target-credit\":\"\",\"end\":null}],\"disambiguation\":\"\",\"languages\":[\"zxx\"],\"id\":\"dfee4892-372f-4e5b-bed4-7aa1a15e4705\",\"type\":null,\"title\":\"明日への光\",\"attributes\":[],\"language\":\"zxx\"}"
+}

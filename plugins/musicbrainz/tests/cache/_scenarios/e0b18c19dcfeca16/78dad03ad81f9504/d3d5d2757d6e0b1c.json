@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/b60d6d9d-f992-4f4e-bbfc-d0bb83682deb?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"languages\":[\"zxx\"],\"relations\":[{\"ended\":false,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"artist\":{\"country\":\"JP\",\"type\":\"Person\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"disambiguation\":\"\",\"sort-name\":\"Noda, Yōjirō\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"野田洋次郎\"},\"end\":null,\"begin\":null,\"source-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"attributes\":[],\"direction\":\"backward\",\"target-type\":\"artist\",\"attribute-ids\":{}}],\"language\":\"zxx\",\"type-id\":null,\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"729-2222-2\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"type\":null,\"title\":\"バイクチェイス\",\"disambiguation\":\"\",\"id\":\"b60d6d9d-f992-4f4e-bbfc-d0bb83682deb\",\"iswcs\":[]}"
+}

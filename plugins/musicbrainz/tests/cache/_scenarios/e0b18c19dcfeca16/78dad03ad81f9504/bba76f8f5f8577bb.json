@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/a4afbdd2-c7b0-458a-bed1-f2c7561325c1?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"type\":null,\"disambiguation\":\"\",\"iswcs\":[],\"language\":\"zxx\",\"id\":\"a4afbdd2-c7b0-458a-bed1-f2c7561325c1\",\"title\":\"初の晴れ女バイト\",\"relations\":[{\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"target-type\":\"artist\",\"source-credit\":\"\",\"end\":null,\"attribute-values\":{},\"attribute-ids\":{},\"type\":\"composer\",\"artist\":{\"name\":\"野田洋次郎\",\"country\":\"JP\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Noda, Yōjirō\",\"disambiguation\":\"\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\"},\"attributes\":[],\"direction\":\"backward\",\"ended\":false}],\"languages\":[\"zxx\"],\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"729-2230-3\",\"type\":\"JASRAC ID\"}]}"
+}

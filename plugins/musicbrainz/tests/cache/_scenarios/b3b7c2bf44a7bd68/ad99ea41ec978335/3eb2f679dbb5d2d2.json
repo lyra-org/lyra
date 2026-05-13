@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/4096e18a-615c-45fb-8d32-aad1a60fb6c5?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"type-id\":null,\"languages\":[\"zxx\"],\"language\":\"zxx\",\"attributes\":[],\"id\":\"4096e18a-615c-45fb-8d32-aad1a60fb6c5\",\"relations\":[],\"title\":\"parade –Я–\",\"type\":null,\"disambiguation\":\"\"}"
+}
