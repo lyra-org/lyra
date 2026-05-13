@@ -1,0 +1,72 @@
+{
+  "test_name": "unity_expanded_edition_mrs_green_apple",
+  "scenario_id": "e88d1af404b51efb",
+  "responses": [
+    {
+      "cache_key": "1f7d7496c6502431",
+      "url": "https://musicbrainz.org/ws/2/work/d5df5c6f-1f20-4cba-a3b7-6e239838af32?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c617c375c9a16c23"
+    },
+    {
+      "cache_key": "2529581266e5f1a2",
+      "url": "https://musicbrainz.org/ws/2/work/0d7341ee-f382-4463-abb3-e69a753bdc71?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b240dff32e225914"
+    },
+    {
+      "cache_key": "27dddfcc5a781497",
+      "url": "https://musicbrainz.org/ws/2/artist/9ce674b7-5180-41f7-9ac2-95dc0d8a0ed2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c34a4d333adf2674"
+    },
+    {
+      "cache_key": "75a60d65d07322d1",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A9ce674b7-5180-41f7-9ac2-95dc0d8a0ed2%20AND%20(release%3AUnity%20%5C(Expanded%20Edition%5C)%20OR%20recording%3A%E3%83%8B%E3%83%A5%E3%83%BC%E3%83%BB%E3%83%9E%E3%82%A4%E3%83%BB%E3%83%8E%E3%83%BC%E3%83%9E%E3%83%AB)",
+      "status_code": 200,
+      "body_hash": "71c99bc35df46091"
+    },
+    {
+      "cache_key": "77fe1de7a97df521",
+      "url": "https://musicbrainz.org/ws/2/work/a0888c61-6b85-42e8-88ff-0d7a0b104e3c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "bd99722cfd848e87"
+    },
+    {
+      "cache_key": "8f273c9ddb461dbc",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AUnity&limit=100",
+      "status_code": 200,
+      "body_hash": "52cf5668b3360f38"
+    },
+    {
+      "cache_key": "91beeae230e60cc9",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Mrs.%20GREEN%20APPLE",
+      "status_code": 200,
+      "body_hash": "1bb538396733c43c"
+    },
+    {
+      "cache_key": "ac344aaf41c963f4",
+      "url": "https://musicbrainz.org/ws/2/work/d4628a6b-96d6-4021-a8de-1f7e59b0d155?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1430d9fe71121c5d"
+    },
+    {
+      "cache_key": "c87c7e0cb17b6a8e",
+      "url": "https://musicbrainz.org/ws/2/work/7ad4b23d-285c-416c-a86e-c7d058a2f3e7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a3a3d566c70f5c69"
+    },
+    {
+      "cache_key": "f6e620b8ce965d47",
+      "url": "https://musicbrainz.org/ws/2/work/60f8133e-22f9-4be2-b1a3-37cd5c86f084?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ef1271f6b50ca10c"
+    },
+    {
+      "cache_key": "fe125e395c0a621c",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=05b6ee03-78f4-426c-84ff-a0c4f47e7fc1&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "4d6dd026879c5482"
+    }
+  ]
+}

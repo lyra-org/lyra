@@ -1,0 +1,36 @@
+{
+  "test_name": "おもいでしりとり_ep_web_dialogue",
+  "scenario_id": "2410517d698b8877",
+  "responses": [
+    {
+      "cache_key": "48a3daf7e138b8d4",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=fcc4acb2-6b7c-44e2-950d-b0c0662de0df&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3897eb04fafde701"
+    },
+    {
+      "cache_key": "71fe87951e287be3",
+      "url": "https://musicbrainz.org/ws/2/artist?query=DIALOGUE%2B",
+      "status_code": 200,
+      "body_hash": "f04efdc1e18944b7"
+    },
+    {
+      "cache_key": "8bfa78d2c1d4c631",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%8A%E3%82%82%E3%81%84%E3%81%A7%E3%81%97%E3%82%8A%E3%81%A8%E3%82%8A&limit=100",
+      "status_code": 200,
+      "body_hash": "06f3739d5502860b"
+    },
+    {
+      "cache_key": "e30cbffc52282793",
+      "url": "https://musicbrainz.org/ws/2/artist/c1129b37-b474-41ea-ae2a-64cfab4209ff?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2da29f5d34f0a8f2"
+    },
+    {
+      "cache_key": "f6ea778afa033322",
+      "url": "https://musicbrainz.org/ws/2/work/2d3934d2-da0a-4e0e-bd05-0dc1776f7603?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3d9ed0d9dbf1aa29"
+    }
+  ]
+}

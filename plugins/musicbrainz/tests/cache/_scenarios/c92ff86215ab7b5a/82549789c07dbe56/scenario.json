@@ -1,0 +1,108 @@
+{
+  "test_name": "ぐされ_ずっと真夜中でいいのに",
+  "scenario_id": "82549789c07dbe56",
+  "responses": [
+    {
+      "cache_key": "0f7f742a08314093",
+      "url": "https://musicbrainz.org/ws/2/work/d1025195-2f51-478d-bb93-e17fd9ea504e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9b1b4567a82f5917"
+    },
+    {
+      "cache_key": "12cba6863402b3ea",
+      "url": "https://musicbrainz.org/ws/2/work/6857a5fb-1102-4c79-926c-82c9a86911ab?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8498a6c856c9736c"
+    },
+    {
+      "cache_key": "251058c7b16a8788",
+      "url": "https://musicbrainz.org/ws/2/work/b6987694-14a0-4ab6-b9ba-284c68616ca4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c96ce6d69835603d"
+    },
+    {
+      "cache_key": "2a79986c11579f7c",
+      "url": "https://musicbrainz.org/ws/2/work/7e0a443b-ff43-46b6-8a82-181346b68e88?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2cf05c901dd0f860"
+    },
+    {
+      "cache_key": "564f9425c766c265",
+      "url": "https://musicbrainz.org/ws/2/work/606d67f3-6f28-4257-b827-3556062e3f8e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ec365cab32b3098d"
+    },
+    {
+      "cache_key": "6080f60ca41306a9",
+      "url": "https://musicbrainz.org/ws/2/work/8d1db049-4fea-4ca8-9946-bea6ef017adb?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "85162cdcfec64b19"
+    },
+    {
+      "cache_key": "79c309fd58f9f26a",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=11159944-a346-4f66-88cd-7d4e6a0fc0fe&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "48f858debd6f06ca"
+    },
+    {
+      "cache_key": "7cadd9a70de8b9e7",
+      "url": "https://musicbrainz.org/ws/2/work/a6f70812-632e-4f99-aa8b-1cf96d6c6ff5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "726d86c51ff279b2"
+    },
+    {
+      "cache_key": "7fca0afdda3dfcef",
+      "url": "https://musicbrainz.org/ws/2/work/31212ff8-9bba-4e25-9408-0dab9498b418?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "53d829438b7d9e1b"
+    },
+    {
+      "cache_key": "7fd5dbaa70315a3f",
+      "url": "https://musicbrainz.org/ws/2/work/3378ce52-46da-49e8-aceb-b2c92c860c8b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3e17382efff1543d"
+    },
+    {
+      "cache_key": "811f6fd695c139b9",
+      "url": "https://musicbrainz.org/ws/2/artist/14d2a235-30e2-489f-b490-f9dc7d2c0861?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "229b2a02635ea782"
+    },
+    {
+      "cache_key": "85eb1ab59a7c0ed4",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%90%E3%81%95%E3%82%8C&limit=100",
+      "status_code": 200,
+      "body_hash": "763f3b102b6d8105"
+    },
+    {
+      "cache_key": "96e8a4758b50a637",
+      "url": "https://musicbrainz.org/ws/2/work/0f49647a-aaf6-4265-8171-0d40845e32d8?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "52ec4df459378915"
+    },
+    {
+      "cache_key": "b55c2c8f136cd473",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%9A%E3%81%A3%E3%81%A8%E7%9C%9F%E5%A4%9C%E4%B8%AD%E3%81%A7%E3%81%84%E3%81%84%E3%81%AE%E3%81%AB%E3%80%82",
+      "status_code": 200,
+      "body_hash": "1aa5805a9fbc3188"
+    },
+    {
+      "cache_key": "b673558ceba73bab",
+      "url": "https://musicbrainz.org/ws/2/work/b877e9a7-f520-4361-868b-efd6da11a795?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "34a7be76c680afd3"
+    },
+    {
+      "cache_key": "dbb87d81a1b37ca7",
+      "url": "https://musicbrainz.org/ws/2/work/62146549-7ac0-4a91-92e8-8dea09baeaba?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6af702d67a70672f"
+    },
+    {
+      "cache_key": "ddce48215b791823",
+      "url": "https://musicbrainz.org/ws/2/work/ff6e00f4-3a4a-4457-89f8-88da4ae18b5a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5682e1b190cf2bb1"
+    }
+  ]
+}

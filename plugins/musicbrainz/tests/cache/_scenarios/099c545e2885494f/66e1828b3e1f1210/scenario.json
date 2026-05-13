@@ -1,0 +1,30 @@
+{
+  "test_name": "life_ep_iri",
+  "scenario_id": "66e1828b3e1f1210",
+  "responses": [
+    {
+      "cache_key": "0f43d0cd63d258c7",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3Alife%20ep&limit=100",
+      "status_code": 200,
+      "body_hash": "e76256a7980cf93f"
+    },
+    {
+      "cache_key": "a508c027edf38ec2",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Iri",
+      "status_code": 200,
+      "body_hash": "996eb205665b7110"
+    },
+    {
+      "cache_key": "b60085bc75fdb92b",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=ed994558-6fc3-45ad-b64d-6b979f099320&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "636f035a9a95ec6e"
+    },
+    {
+      "cache_key": "ee6b85c45874e1d4",
+      "url": "https://musicbrainz.org/ws/2/work/9fcec39a-c387-44a5-9ecb-d2a828b61ad4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f902852fd0acdf67"
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "test_name": "tvアニメ幼なじみが絶対に負けないラブコメエンディングテーマ戦略的で予測不能なラブコメディのエンディング曲_志田黒羽cv水瀬いのり",
+  "scenario_id": "f1beb14a1b37f1b1",
+  "responses": [
+    {
+      "cache_key": "15f6fac3c405d681",
+      "url": "https://musicbrainz.org/ws/2/work/e488ce92-dbb5-4b13-ac03-8d44d1a90769?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a55282218bd578e5"
+    },
+    {
+      "cache_key": "22e953b510e7eeb6",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=58d04836-d9c3-4851-9fb0-ebfbe2aa8364&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "999dc8817c8539d9"
+    },
+    {
+      "cache_key": "38f68bf394406d86",
+      "url": "https://musicbrainz.org/ws/2/work/f8bfc47d-33bc-4ab0-b986-f8ec4fd7e9bb?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f77ba76b210226b9"
+    },
+    {
+      "cache_key": "74b870288d3235fc",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ATV%E3%82%A2%E3%83%8B%E3%83%A1%E3%80%8C%E5%B9%BC%E3%81%AA%E3%81%98%E3%81%BF%E3%81%8C%E7%B5%B6%E5%AF%BE%E3%81%AB%E8%B2%A0%E3%81%91%E3%81%AA%E3%81%84%E3%83%A9%E3%83%96%E3%82%B3%E3%83%A1%E3%80%8D%E3%82%A8%E3%83%B3%E3%83%87%E3%82%A3%E3%83%B3%E3%82%B0%E3%83%86%E3%83%BC%E3%83%9E%E3%80%8C%E6%88%A6%E7%95%A5%E7%9A%84%E3%81%A7%E4%BA%88%E6%B8%AC%E4%B8%8D%E8%83%BD%E3%81%AA%E3%83%A9%E3%83%96%E3%82%B3%E3%83%A1%E3%83%87%E3%82%A3%E3%81%AE%E3%82%A8%E3%83%B3%E3%83%87%E3%82%A3%E3%83%B3%E3%82%B0%E6%9B%B2%E3%80%8D&limit=100",
+      "status_code": 200,
+      "body_hash": "2087aced9027d37f"
+    },
+    {
+      "cache_key": "8fd6ea6c6bb7b4cf",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E5%BF%97%E7%94%B0%E9%BB%92%E7%BE%BD(CV%3A%E6%B0%B4%E7%80%AC%E3%81%84%E3%81%AE%E3%82%8A)",
+      "status_code": 200,
+      "body_hash": "c04b8ebbbe2861e7"
+    },
+    {
+      "cache_key": "daaef46c9f699817",
+      "url": "https://musicbrainz.org/ws/2/artist/3a0eff85-d78b-4539-8fa8-045cfd32289a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "25c23eab18fafb46"
+    },
+    {
+      "cache_key": "f2e2d6752b97a028",
+      "url": "https://musicbrainz.org/ws/2/artist/dbcb425c-92c3-4317-9339-fd7b8f512a8e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "dfc4680bb30bcf66"
+    }
+  ]
+}

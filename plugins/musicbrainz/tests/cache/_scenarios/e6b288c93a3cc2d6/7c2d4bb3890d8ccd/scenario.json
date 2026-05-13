@@ -1,10 +1,30 @@
 {
   "test_name": "propose_9lana",
   "scenario_id": "7c2d4bb3890d8ccd",
-  "cache_keys": [
-    "52185d770df53ce8",
-    "70022c14714122fd",
-    "8017489d250986c5",
-    "f34c43d1307be965"
+  "responses": [
+    {
+      "cache_key": "52185d770df53ce8",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3Apropose&limit=100",
+      "status_code": 200,
+      "body_hash": "bac1ec412aba9405"
+    },
+    {
+      "cache_key": "70022c14714122fd",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A3fa52c01-4985-407e-a6e0-784564cc52c7%20AND%20(release%3Apropose%20OR%20recording%3Apropose)",
+      "status_code": 200,
+      "body_hash": "e4df004900d6fe64"
+    },
+    {
+      "cache_key": "8017489d250986c5",
+      "url": "https://musicbrainz.org/ws/2/artist?query=9Lana",
+      "status_code": 200,
+      "body_hash": "2308fc264b8ee213"
+    },
+    {
+      "cache_key": "f34c43d1307be965",
+      "url": "https://musicbrainz.org/ws/2/recording?query=alias%3Apropose%20AND%20arid%3A3fa52c01-4985-407e-a6e0-784564cc52c7",
+      "status_code": 200,
+      "body_hash": "1c0ee2a813f815de"
+    }
   ]
 }

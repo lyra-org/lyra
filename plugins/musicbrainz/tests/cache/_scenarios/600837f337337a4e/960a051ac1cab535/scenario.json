@@ -1,0 +1,36 @@
+{
+  "test_name": "ザイオン_星街すいせい",
+  "scenario_id": "960a051ac1cab535",
+  "responses": [
+    {
+      "cache_key": "3b89bb835bb07ff3",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%B6%E3%82%A4%E3%82%AA%E3%83%B3&limit=100",
+      "status_code": 200,
+      "body_hash": "c9ec49e490bb8dfc"
+    },
+    {
+      "cache_key": "3ee072c4bf7e2322",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%98%9F%E8%A1%97%E3%81%99%E3%81%84%E3%81%9B%E3%81%84",
+      "status_code": 200,
+      "body_hash": "8c19c3e932824a94"
+    },
+    {
+      "cache_key": "6a414cb3a357b907",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=000d659f-2ca9-4bbd-af24-cd54d9adfb7d&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "f65f5b5310c34814"
+    },
+    {
+      "cache_key": "87b28a10ada30e64",
+      "url": "https://musicbrainz.org/ws/2/work/a104f90f-c591-4a6f-8473-1194b06789a3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d2a5466bec666961"
+    },
+    {
+      "cache_key": "cfbaf84da135f9eb",
+      "url": "https://musicbrainz.org/ws/2/artist/8eeb59f4-0071-4261-b1f8-91d8294622d2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9c803faf4c06ceee"
+    }
+  ]
+}

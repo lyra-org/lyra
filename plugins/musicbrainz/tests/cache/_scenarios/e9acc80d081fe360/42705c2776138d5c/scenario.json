@@ -1,10 +1,30 @@
 {
   "test_name": "いいね_すんひ",
   "scenario_id": "42705c2776138d5c",
-  "cache_keys": [
-    "3394b7e76ab31087",
-    "371603de7d2b6b54",
-    "54e74789d86a47f9",
-    "fd3915ab983d71a2"
+  "responses": [
+    {
+      "cache_key": "3394b7e76ab31087",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A6498d8a9-d901-461a-8c0d-3ea72a5379bd%20AND%20(release%3A%E2%99%A1%E3%81%84%E3%81%84%E3%81%AD%20OR%20recording%3A%E2%99%A1%E3%81%84%E3%81%84%E3%81%AD)",
+      "status_code": 200,
+      "body_hash": "4f672e6f998ba032"
+    },
+    {
+      "cache_key": "371603de7d2b6b54",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E2%99%A1%E3%81%84%E3%81%84%E3%81%AD&limit=100",
+      "status_code": 200,
+      "body_hash": "0c945e487446bec0"
+    },
+    {
+      "cache_key": "54e74789d86a47f9",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%99%E3%82%93%E3%81%B2",
+      "status_code": 200,
+      "body_hash": "dac56470235da23a"
+    },
+    {
+      "cache_key": "fd3915ab983d71a2",
+      "url": "https://musicbrainz.org/ws/2/release/7674a553-88ec-44ea-ad68-935a7d505fc2?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels",
+      "status_code": 200,
+      "body_hash": "29b4c78ead00e06d"
+    }
   ]
 }

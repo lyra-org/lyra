@@ -1,9 +1,24 @@
 {
   "test_name": "palette_japanese_ver_andora",
   "scenario_id": "afcaa11dafbb69e0",
-  "cache_keys": [
-    "149759ece57b9bbf",
-    "1a90c83227dc42bb",
-    "a1e5f862125ffcbb"
+  "responses": [
+    {
+      "cache_key": "149759ece57b9bbf",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=f4572917-2fc6-43fc-9312-adfbaef3410d&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "9254ec19067a3b83"
+    },
+    {
+      "cache_key": "1a90c83227dc42bb",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A1c07f1e6-66f6-4bbf-a75b-e99a733d16f1%20AND%20(release%3APalette%20%5C(Japanese%20ver%5C)%20OR%20recording%3APalette%20%5C(Japanese%20ver%5C))&limit=100",
+      "status_code": 200,
+      "body_hash": "f8be2e89e3390338"
+    },
+    {
+      "cache_key": "a1e5f862125ffcbb",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Andora",
+      "status_code": 200,
+      "body_hash": "9161bbe200a2af5d"
+    }
   ]
 }

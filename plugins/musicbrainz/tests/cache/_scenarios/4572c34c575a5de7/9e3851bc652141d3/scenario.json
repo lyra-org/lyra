@@ -1,0 +1,66 @@
+{
+  "test_name": "tvアニメ推しの子キャラクターソングcd_vol2_b小町_ルビーcv伊駒ゆりえ",
+  "scenario_id": "9e3851bc652141d3",
+  "responses": [
+    {
+      "cache_key": "1dab6e6f4c479b33",
+      "url": "https://musicbrainz.org/ws/2/work/fbce7131-1946-4703-a223-930daa7c0aa2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b90b1c9406d24aec"
+    },
+    {
+      "cache_key": "2f79e790e4173f66",
+      "url": "https://musicbrainz.org/ws/2/work/e70f1899-9ecf-4f8a-8d0a-e459b33d8f40?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ff4e364d06908bcf"
+    },
+    {
+      "cache_key": "3e9758c9517390ff",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ATV%E3%82%A2%E3%83%8B%E3%83%A1%E3%80%8C%E3%80%90%E6%8E%A8%E3%81%97%E3%81%AE%E5%AD%90%E3%80%91%E3%80%8D%E3%82%AD%E3%83%A3%E3%83%A9%E3%82%AF%E3%82%BF%E3%83%BC%E3%82%BD%E3%83%B3%E3%82%B0CD%20Vol.2&limit=100",
+      "status_code": 200,
+      "body_hash": "8730f810e8bc0e23"
+    },
+    {
+      "cache_key": "5ce24e3e4370f13f",
+      "url": "https://musicbrainz.org/ws/2/artist/de137401-a128-4d33-a4bd-0ad6157a054b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0ef346645e6e4460"
+    },
+    {
+      "cache_key": "831774846c1745b0",
+      "url": "https://musicbrainz.org/ws/2/artist?query=B%E5%B0%8F%E7%94%BA%20%E3%83%AB%E3%83%93%E3%83%BC(CV%3A%E4%BC%8A%E9%A7%92%E3%82%86%E3%82%8A%E3%81%88)",
+      "status_code": 200,
+      "body_hash": "c2e600e5922f57b9"
+    },
+    {
+      "cache_key": "ade00d591457c4a7",
+      "url": "https://musicbrainz.org/ws/2/artist/6d68b4fd-fe41-460d-97de-aacbd733a9b1?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6414b115fef731e8"
+    },
+    {
+      "cache_key": "cb00c2b059d0d9df",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=fb3381a9-81c0-471c-96a8-fd4e8fcffbc6&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "b5f1c81902dac65d"
+    },
+    {
+      "cache_key": "cfc7a1c92f0e48aa",
+      "url": "https://musicbrainz.org/ws/2/work/ba7bc162-01b6-4f30-a705-6960a4ee7a1e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a79defd8d48ce94e"
+    },
+    {
+      "cache_key": "d86a652a3a253409",
+      "url": "https://musicbrainz.org/ws/2/artist/fbadebba-dcfe-4497-a645-ab085b2e5cbb?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6f94fbf002beabe4"
+    },
+    {
+      "cache_key": "fbb79c9fbcb926a4",
+      "url": "https://musicbrainz.org/ws/2/artist/5e25ae55-6adf-462e-9285-41316752d3d2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8a8e684e1d078454"
+    }
+  ]
+}

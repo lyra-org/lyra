@@ -1,10 +1,30 @@
 {
   "test_name": "アルコールアンコール_すんひ",
   "scenario_id": "f2c18bd9fe16fb0a",
-  "cache_keys": [
-    "54e74789d86a47f9",
-    "8451f5cd150c6706",
-    "e382fcea706f78ad",
-    "ec7afd4e3bfff765"
+  "responses": [
+    {
+      "cache_key": "54e74789d86a47f9",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%99%E3%82%93%E3%81%B2",
+      "status_code": 200,
+      "body_hash": "dac56470235da23a"
+    },
+    {
+      "cache_key": "8451f5cd150c6706",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A6498d8a9-d901-461a-8c0d-3ea72a5379bd%20AND%20(release%3A%E3%82%A2%E3%83%AB%E3%82%B3%E3%83%BC%E3%83%AB%E3%80%81%E3%82%A2%E3%83%B3%E3%82%B3%E3%83%BC%E3%83%AB%20OR%20recording%3A%E3%82%A2%E3%83%AB%E3%82%B3%E3%83%BC%E3%83%AB%E3%80%81%E3%82%A2%E3%83%B3%E3%82%B3%E3%83%BC%E3%83%AB)",
+      "status_code": 200,
+      "body_hash": "70ce0d0ebb8df03e"
+    },
+    {
+      "cache_key": "e382fcea706f78ad",
+      "url": "https://musicbrainz.org/ws/2/release/936f779e-99df-4c9c-8fee-cd7539039bcc?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels",
+      "status_code": 200,
+      "body_hash": "140c5326bbeb1f13"
+    },
+    {
+      "cache_key": "ec7afd4e3bfff765",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%A2%E3%83%AB%E3%82%B3%E3%83%BC%E3%83%AB%E3%80%81%E3%82%A2%E3%83%B3%E3%82%B3%E3%83%BC%E3%83%AB&limit=100",
+      "status_code": 200,
+      "body_hash": "30355a32ad82f27c"
+    }
   ]
 }

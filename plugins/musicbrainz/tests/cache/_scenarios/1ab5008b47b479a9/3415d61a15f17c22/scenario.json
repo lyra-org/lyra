@@ -1,0 +1,30 @@
+{
+  "test_name": "人生讃歌_song_of_life_tuki",
+  "scenario_id": "3415d61a15f17c22",
+  "responses": [
+    {
+      "cache_key": "498f08e7b9b314ba",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=b698a5c4-946b-4ebb-bd44-fc5a6e06a710&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "1a03fb2e22100d5e"
+    },
+    {
+      "cache_key": "9cd59ce803cea68d",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E4%BA%BA%E7%94%9F%E8%AE%83%E6%AD%8C%20%5C-%20Song%20of%20Life&limit=100",
+      "status_code": 200,
+      "body_hash": "d5d251d77433a39d"
+    },
+    {
+      "cache_key": "a2bccfdf77488e23",
+      "url": "https://musicbrainz.org/ws/2/artist?query=tuki.",
+      "status_code": 200,
+      "body_hash": "705a512a88c03128"
+    },
+    {
+      "cache_key": "c6f87ce1ca4d7e1a",
+      "url": "https://musicbrainz.org/ws/2/work/3871018e-5261-400e-8b8b-9a2d1608c204?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cd54944c96a99957"
+    }
+  ]
+}

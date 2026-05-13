@@ -1,0 +1,84 @@
+{
+  "test_name": "no_title_in_nippon_budokan_reol",
+  "scenario_id": "53cd104969b3a4b7",
+  "responses": [
+    {
+      "cache_key": "0fad6b3cc02ac483",
+      "url": "https://musicbrainz.org/ws/2/work/6b602e5a-0b47-4f6c-ac74-08bf50d858c4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ae8a1621b4a67ac0"
+    },
+    {
+      "cache_key": "3bff3d7fcfb5b7dc",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Reol",
+      "status_code": 200,
+      "body_hash": "dde574f29080c3ee"
+    },
+    {
+      "cache_key": "54a7fc210c26faad",
+      "url": "https://musicbrainz.org/ws/2/work/2f2e4a3f-702b-491f-826a-0401259b3905?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "57cdab6835993511"
+    },
+    {
+      "cache_key": "7ace94ec38d4eeb1",
+      "url": "https://musicbrainz.org/ws/2/work/d2ea62e3-10bc-44d3-bcb3-6ec176d59b73?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "19a09293fff3c626"
+    },
+    {
+      "cache_key": "7af2bb0e99d9e3f4",
+      "url": "https://musicbrainz.org/ws/2/work/f3f5100e-527a-482a-a78b-92c03c985b18?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "426fd8884eba91aa"
+    },
+    {
+      "cache_key": "871f294934413742",
+      "url": "https://musicbrainz.org/ws/2/work/80425233-faaa-42d9-8322-95aeb7c288d3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ce43d23a7da8f1cb"
+    },
+    {
+      "cache_key": "91d26048972b5f13",
+      "url": "https://musicbrainz.org/ws/2/work/f2b03f45-d738-46ee-af0e-8e7b2f33287e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fd25e861f026e624"
+    },
+    {
+      "cache_key": "c18fdc840072c3c6",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E2%80%9CNo%20title%E2%80%9D%20in%20NIPPON%20BUDOKAN&limit=100",
+      "status_code": 200,
+      "body_hash": "f0135506413fa31c"
+    },
+    {
+      "cache_key": "c64565da6b9e89fd",
+      "url": "https://musicbrainz.org/ws/2/work/bb7c8c04-bbf8-4201-9d22-c9d650f4ec1e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "27c5cc44b27076aa"
+    },
+    {
+      "cache_key": "f146f7cdcec1cec0",
+      "url": "https://musicbrainz.org/ws/2/work/76dd1e4b-794a-4543-8885-ea78bf92fce9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "34718bd4e2014900"
+    },
+    {
+      "cache_key": "fb45047de8f6bc72",
+      "url": "https://musicbrainz.org/ws/2/work/773735e2-e1f7-4c6c-a0de-b1c2d9f13799?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cb0753678722ec91"
+    },
+    {
+      "cache_key": "fbcee8d30bccb6e1",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=8ba841f0-a017-4f4e-8120-08f9533c679e&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "1e150ca5aee33178"
+    },
+    {
+      "cache_key": "ff5c6148f70978c6",
+      "url": "https://musicbrainz.org/ws/2/work/4a9019fb-d58d-4ca8-bc13-b88f213d1b37?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3f03014f98839e9d"
+    }
+  ]
+}

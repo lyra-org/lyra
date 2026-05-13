@@ -1,0 +1,96 @@
+{
+  "test_name": "landspace_lisa",
+  "scenario_id": "2a0d6dcd81240935",
+  "responses": [
+    {
+      "cache_key": "02dee9be34743a13",
+      "url": "https://musicbrainz.org/ws/2/work/86fc9b45-c77e-4121-97da-bdc0d9435557?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d23aedf746e08b1b"
+    },
+    {
+      "cache_key": "38ab3f679dee1f95",
+      "url": "https://musicbrainz.org/ws/2/work/f84a1f6f-ea67-4d0d-ad93-47d3d72b710b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8f68a03c6437ae62"
+    },
+    {
+      "cache_key": "39cf7a6c6161f70e",
+      "url": "https://musicbrainz.org/ws/2/work/ef477b50-ba76-4d4c-bb7d-0eb855e1397f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "484ac0916fc29e66"
+    },
+    {
+      "cache_key": "3f9383f6d7f9d4b1",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=47eca8de-f468-4fa8-9a51-f3bc33bca9b3&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "dc94b418424c1e0a"
+    },
+    {
+      "cache_key": "520fd24aef8ec06e",
+      "url": "https://musicbrainz.org/ws/2/work/8c9140f3-5cbd-4be9-a6b3-556dc8f9d5e6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "df03c37a19577254"
+    },
+    {
+      "cache_key": "5a5c9d841ba74bdf",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ALANDSPACE&limit=100",
+      "status_code": 200,
+      "body_hash": "f295276f9a631be7"
+    },
+    {
+      "cache_key": "79fbc82f3c32d654",
+      "url": "https://musicbrainz.org/ws/2/work/63a15ed0-e30a-48e0-a14b-c4732fc5e551?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c660cfd06963a3db"
+    },
+    {
+      "cache_key": "a98d5377f3b0518e",
+      "url": "https://musicbrainz.org/ws/2/work/a6a83398-ef26-4f9e-860c-7d9653e77794?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "70ad10a1ef202403"
+    },
+    {
+      "cache_key": "c577eeb602dac90b",
+      "url": "https://musicbrainz.org/ws/2/work/9f9e8eba-e932-4d08-a872-96e7eef38a4b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f1007b347b974a00"
+    },
+    {
+      "cache_key": "d48154a8d9de3d41",
+      "url": "https://musicbrainz.org/ws/2/work/3ee63910-9360-4ece-b17b-49fd22225dd5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d6eb2966d0a7a111"
+    },
+    {
+      "cache_key": "d5129fc3a27bee92",
+      "url": "https://musicbrainz.org/ws/2/work/2dd123e3-d09a-465b-b7c9-e660cca44dd6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cf52cf2af98d7272"
+    },
+    {
+      "cache_key": "d742ef51e5f89927",
+      "url": "https://musicbrainz.org/ws/2/work/9c559bf7-c07a-457d-b4d7-a395aa08f80c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0dbbffa24329d46f"
+    },
+    {
+      "cache_key": "e0c0aa371e6cda29",
+      "url": "https://musicbrainz.org/ws/2/artist?query=LiSA",
+      "status_code": 200,
+      "body_hash": "bf242bde19289aea"
+    },
+    {
+      "cache_key": "e15716a59022747e",
+      "url": "https://musicbrainz.org/ws/2/work/8705be89-5d0c-4187-bca8-2096d01f2336?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9802a455d6a89f58"
+    },
+    {
+      "cache_key": "f1fa32e9fd9666e5",
+      "url": "https://musicbrainz.org/ws/2/work/1b38913b-0ad5-4cf7-b6b1-736176b09ff2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b2447608d9706782"
+    }
+  ]
+}

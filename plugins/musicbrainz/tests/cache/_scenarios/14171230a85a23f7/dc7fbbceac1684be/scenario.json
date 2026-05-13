@@ -1,0 +1,66 @@
+{
+  "test_name": "伸び仕草懲りて暇乞い_ずっと真夜中でいいのに",
+  "scenario_id": "dc7fbbceac1684be",
+  "responses": [
+    {
+      "cache_key": "22d669295e5d08de",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=c454e7ea-1b68-4a80-a1c9-cf5cbfed59bb&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "40f48c1bad1a4352"
+    },
+    {
+      "cache_key": "33868864cdd2db49",
+      "url": "https://musicbrainz.org/ws/2/work/2d276093-d8fc-47e2-a6be-f1f855a7e031?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2810c00546958f49"
+    },
+    {
+      "cache_key": "6168f0a04b727fd9",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E4%BC%B8%E3%81%B3%E4%BB%95%E8%8D%89%E6%87%B2%E3%82%8A%E3%81%A6%E6%9A%87%E4%B9%9E%E3%81%84&limit=100",
+      "status_code": 200,
+      "body_hash": "aaf1ea1ac91c6a13"
+    },
+    {
+      "cache_key": "807a724444971eb9",
+      "url": "https://musicbrainz.org/ws/2/work/d330c4b8-40b8-4f6a-b2fd-ca571afb9393?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "629ae73accb06cdb"
+    },
+    {
+      "cache_key": "811f6fd695c139b9",
+      "url": "https://musicbrainz.org/ws/2/artist/14d2a235-30e2-489f-b490-f9dc7d2c0861?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d47fde87dd77c993"
+    },
+    {
+      "cache_key": "b55c2c8f136cd473",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%9A%E3%81%A3%E3%81%A8%E7%9C%9F%E5%A4%9C%E4%B8%AD%E3%81%A7%E3%81%84%E3%81%84%E3%81%AE%E3%81%AB%E3%80%82",
+      "status_code": 200,
+      "body_hash": "1aa5805a9fbc3188"
+    },
+    {
+      "cache_key": "e358e6fc20dd8795",
+      "url": "https://musicbrainz.org/ws/2/work/9eb4b26c-4f37-468e-b224-a3c7b2154b8a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7ba33064013520a9"
+    },
+    {
+      "cache_key": "e37de85db4764890",
+      "url": "https://musicbrainz.org/ws/2/work/8bb0cc8b-8f54-4193-9963-55eff76422c8?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "91fb0ae10cb51f90"
+    },
+    {
+      "cache_key": "f43edc44084a719e",
+      "url": "https://musicbrainz.org/ws/2/work/422fbc16-69ca-4f38-856e-b704f8204346?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "467c13481724bfb8"
+    },
+    {
+      "cache_key": "f6769b3f6d3e2909",
+      "url": "https://musicbrainz.org/ws/2/work/ee17af9d-9543-400f-b1f7-a5b26cadb762?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "23417c81dbd4ea97"
+    }
+  ]
+}

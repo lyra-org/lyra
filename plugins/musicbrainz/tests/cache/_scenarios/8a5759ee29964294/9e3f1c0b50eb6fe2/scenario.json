@@ -1,10 +1,30 @@
 {
   "test_name": "3650_bentham",
   "scenario_id": "9e3f1c0b50eb6fe2",
-  "cache_keys": [
-    "187fec234cfdac23",
-    "56cbc307c122583e",
-    "74def88d540a1f12",
-    "f20a716b40a0eb2a"
+  "responses": [
+    {
+      "cache_key": "187fec234cfdac23",
+      "url": "https://musicbrainz.org/ws/2/release/1f3cd9cd-2ab5-4f79-bc9d-6c4addff4f91?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels",
+      "status_code": 200,
+      "body_hash": "598736a8c31b3d05"
+    },
+    {
+      "cache_key": "56cbc307c122583e",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A3650&limit=100",
+      "status_code": 200,
+      "body_hash": "4157e1587667c32f"
+    },
+    {
+      "cache_key": "74def88d540a1f12",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Ab6d37a3d-77a2-4659-996c-a880cde56a67%20AND%20(release%3A3650%20OR%20recording%3A%E3%83%9E%E3%83%BC%E3%82%AC%E3%83%AC%E3%83%83%E3%83%88)",
+      "status_code": 200,
+      "body_hash": "89346c0acd2a26c0"
+    },
+    {
+      "cache_key": "f20a716b40a0eb2a",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Bentham",
+      "status_code": 200,
+      "body_hash": "fd98850b54394bd6"
+    }
   ]
 }

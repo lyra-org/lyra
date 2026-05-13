@@ -1,10 +1,30 @@
 {
   "test_name": "ghost_avenue_eve",
   "scenario_id": "25185dfef0af2ec5",
-  "cache_keys": [
-    "1400d5679f83192a",
-    "2ae539f180e40c79",
-    "db9db701060408aa",
-    "eb984ef6fc56692d"
+  "responses": [
+    {
+      "cache_key": "1400d5679f83192a",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A66bdd1c9-d1c5-40b7-a487-5061fffbd87d%20AND%20(release%3AGhost%20Avenue%20OR%20recording%3AGhost%20Avenue)&limit=100",
+      "status_code": 200,
+      "body_hash": "8638c153da17765f"
+    },
+    {
+      "cache_key": "2ae539f180e40c79",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AGhost%20Avenue&limit=100",
+      "status_code": 200,
+      "body_hash": "56af6914ca8875e6"
+    },
+    {
+      "cache_key": "db9db701060408aa",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A66bdd1c9-d1c5-40b7-a487-5061fffbd87d%20AND%20date%3A2025&limit=100&inc=recordings+genres+artist-credits+media+release-groups",
+      "status_code": 200,
+      "body_hash": "610f31d067da2ef1"
+    },
+    {
+      "cache_key": "eb984ef6fc56692d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Eve",
+      "status_code": 200,
+      "body_hash": "1217d568e97df533"
+    }
   ]
 }

@@ -1,0 +1,36 @@
+{
+  "test_name": "あのバンド_結束バンド",
+  "scenario_id": "f735764bb078acbe",
+  "responses": [
+    {
+      "cache_key": "357a0e024a64e49d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%B5%90%E6%9D%9F%E3%83%90%E3%83%B3%E3%83%89",
+      "status_code": 200,
+      "body_hash": "ffc73dde112f97a6"
+    },
+    {
+      "cache_key": "52fd0403af3e0844",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%82%E3%81%AE%E3%83%90%E3%83%B3%E3%83%89&limit=100",
+      "status_code": 200,
+      "body_hash": "c1a24bf9105a21f5"
+    },
+    {
+      "cache_key": "c63da08baa1bcd90",
+      "url": "https://musicbrainz.org/ws/2/artist/c1b0fe0a-779d-43ed-b193-4370f0d0f88f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "eee7636534ab6f18"
+    },
+    {
+      "cache_key": "e9fe8fe5050f35ef",
+      "url": "https://musicbrainz.org/ws/2/work/be864074-98ca-4861-9dee-eee9ea17d130?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "57f3cb4018b128e2"
+    },
+    {
+      "cache_key": "ed17ed64ccac337f",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=b51cd345-114b-45e6-a6e3-c28340913fa9&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "71f495a335bf55b1"
+    }
+  ]
+}

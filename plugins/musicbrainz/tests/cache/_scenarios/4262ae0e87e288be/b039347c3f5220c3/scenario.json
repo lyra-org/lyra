@@ -1,9 +1,24 @@
 {
   "test_name": "今夜は君と_akasaki",
   "scenario_id": "b039347c3f5220c3",
-  "cache_keys": [
-    "248235d27284a500",
-    "a6990dc73e0eb1dd",
-    "be980f1a11921090"
+  "responses": [
+    {
+      "cache_key": "248235d27284a500",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E4%BB%8A%E5%A4%9C%E3%81%AF%E5%90%9B%E3%81%A8&limit=100",
+      "status_code": 200,
+      "body_hash": "c1318a2e5823be9d"
+    },
+    {
+      "cache_key": "a6990dc73e0eb1dd",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=dac9c646-6197-4cc8-9fb9-11683567c853&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "2663a8099d0446fe"
+    },
+    {
+      "cache_key": "be980f1a11921090",
+      "url": "https://musicbrainz.org/ws/2/artist?query=AKASAKI",
+      "status_code": 200,
+      "body_hash": "d30862a1a7f6155a"
+    }
   ]
 }

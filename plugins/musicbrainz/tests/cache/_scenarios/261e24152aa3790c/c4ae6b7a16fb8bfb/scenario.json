@@ -1,9 +1,24 @@
 {
   "test_name": "グッバイ宣言_まふまふ",
   "scenario_id": "c4ae6b7a16fb8bfb",
-  "cache_keys": [
-    "36b2df1339642f7d",
-    "606dbc209d87012a",
-    "d621d2b6b646a3db"
+  "responses": [
+    {
+      "cache_key": "36b2df1339642f7d",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=ada69271-492e-49fc-9ac3-99579e7b3b42&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "99cb75f76cdfd2b3"
+    },
+    {
+      "cache_key": "606dbc209d87012a",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%BE%E3%81%B5%E3%81%BE%E3%81%B5",
+      "status_code": 200,
+      "body_hash": "453986cb86bcd37b"
+    },
+    {
+      "cache_key": "d621d2b6b646a3db",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%B0%E3%83%83%E3%83%90%E3%82%A4%E5%AE%A3%E8%A8%80&limit=100",
+      "status_code": 200,
+      "body_hash": "e9076b816e03a187"
+    }
   ]
 }

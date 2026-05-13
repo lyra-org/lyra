@@ -1,0 +1,30 @@
+{
+  "test_name": "pastoral_aimer",
+  "scenario_id": "f23d39c2ce8c5859",
+  "responses": [
+    {
+      "cache_key": "02e5a0c27deb181e",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=f192bf60-24f9-44db-9937-e79016861a1c&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "1b55e2b42b3776b0"
+    },
+    {
+      "cache_key": "18b2a3891b54f9aa",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A9388cee2-7d57-4598-905f-106019b267d3%20AND%20(release%3APastoral%20OR%20recording%3APastoral)&limit=100",
+      "status_code": 200,
+      "body_hash": "9e31618c9226867e"
+    },
+    {
+      "cache_key": "5349bcc1a8622725",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Aimer",
+      "status_code": 200,
+      "body_hash": "5e2235a338c13c9b"
+    },
+    {
+      "cache_key": "68c78c93cc0f7cc0",
+      "url": "https://musicbrainz.org/ws/2/work/6cd96cfa-abf9-47b6-97bc-4958328ae42d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fc9b76012073c8b9"
+    }
+  ]
+}

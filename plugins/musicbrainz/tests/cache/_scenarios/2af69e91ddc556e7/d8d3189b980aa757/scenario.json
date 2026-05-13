@@ -1,0 +1,30 @@
+{
+  "test_name": "erica_yurica花たん",
+  "scenario_id": "d8d3189b980aa757",
+  "responses": [
+    {
+      "cache_key": "15ba2e866886beb2",
+      "url": "https://musicbrainz.org/ws/2/artist?query=YURiCa%2F%E8%8A%B1%E3%81%9F%E3%82%93",
+      "status_code": 200,
+      "body_hash": "2946b887a3c67802"
+    },
+    {
+      "cache_key": "71e881e343d23042",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AERiCa&limit=100",
+      "status_code": 200,
+      "body_hash": "6d2292ef207d6969"
+    },
+    {
+      "cache_key": "b4ad2424d1edb729",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=3e4332e2-1338-4a99-95b6-372d72a365fd&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "dbf82a4c337cd672"
+    },
+    {
+      "cache_key": "e25fc9b4e18d6ffa",
+      "url": "https://musicbrainz.org/ws/2/work/0cccfd67-9cc8-4963-840a-17ee439ed83c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3eac8e997ba4c64e"
+    }
+  ]
+}

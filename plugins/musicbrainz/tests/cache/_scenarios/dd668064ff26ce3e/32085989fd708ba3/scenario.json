@@ -1,0 +1,30 @@
+{
+  "test_name": "最低界隈_saitei_kaiwai_tuki",
+  "scenario_id": "32085989fd708ba3",
+  "responses": [
+    {
+      "cache_key": "30451e64c7d7980f",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=cdf2df35-4fd9-4889-8677-932ccf998247&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "d119523dab4e863a"
+    },
+    {
+      "cache_key": "a2bccfdf77488e23",
+      "url": "https://musicbrainz.org/ws/2/artist?query=tuki.",
+      "status_code": 200,
+      "body_hash": "705a512a88c03128"
+    },
+    {
+      "cache_key": "cf7e80336d910772",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%9C%80%E4%BD%8E%E7%95%8C%E9%9A%88%20%5C-%20Saitei%20Kaiwai&limit=100",
+      "status_code": 200,
+      "body_hash": "44835d049ba9f770"
+    },
+    {
+      "cache_key": "d735b0d1e31711f4",
+      "url": "https://musicbrainz.org/ws/2/work/cdec9797-7dd1-4201-b6fe-9b77ad6fa5a8?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "20ffa4832a789421"
+    }
+  ]
+}

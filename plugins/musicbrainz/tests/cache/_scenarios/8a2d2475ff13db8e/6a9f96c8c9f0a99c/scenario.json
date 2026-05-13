@@ -1,0 +1,30 @@
+{
+  "test_name": "laundry_penthouse",
+  "scenario_id": "6a9f96c8c9f0a99c",
+  "responses": [
+    {
+      "cache_key": "50acbb2de4f43fec",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=23913d4f-68ba-41fe-8567-0d69de17ba10&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "01470d9a29631d9b"
+    },
+    {
+      "cache_key": "746e6ba744e1a729",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Penthouse",
+      "status_code": 200,
+      "body_hash": "70fa71dab0291dd1"
+    },
+    {
+      "cache_key": "b6b2484525f6e7c7",
+      "url": "https://musicbrainz.org/ws/2/artist/9604bb00-65c5-4b67-a174-c46c063ba794?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c8f4900b9c6566a0"
+    },
+    {
+      "cache_key": "e9d5fa6abe23f1cb",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ALaundry&limit=100",
+      "status_code": 200,
+      "body_hash": "e66cc3582a63c035"
+    }
+  ]
+}

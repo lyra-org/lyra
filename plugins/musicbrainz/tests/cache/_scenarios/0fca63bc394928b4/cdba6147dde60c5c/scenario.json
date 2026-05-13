@@ -1,0 +1,48 @@
+{
+  "test_name": "the_bravery_supercell",
+  "scenario_id": "cdba6147dde60c5c",
+  "responses": [
+    {
+      "cache_key": "18a529ead246e9b7",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AThe%20Bravery&limit=100",
+      "status_code": 200,
+      "body_hash": "5597149731098fd4"
+    },
+    {
+      "cache_key": "2e94a93b0c6ecf37",
+      "url": "https://musicbrainz.org/ws/2/work/3cdf1c12-e8be-4bf0-9e8f-87656763fba7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "679bf9ac48cd28ac"
+    },
+    {
+      "cache_key": "3b79574133e815e9",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=48334009-2f9d-4163-95f9-95c39450f8d0&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "c9a4583bbccc177f"
+    },
+    {
+      "cache_key": "47de636f60d7c428",
+      "url": "https://musicbrainz.org/ws/2/work/19cb8ebb-bab2-4466-a8b3-a2bcd6ba86ce?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "bea92f1b18309f6a"
+    },
+    {
+      "cache_key": "6568c5a97b0a47e1",
+      "url": "https://musicbrainz.org/ws/2/artist/9b15ff5e-5bd1-43c2-821d-e31240aad334?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3af40bc94c7c4899"
+    },
+    {
+      "cache_key": "8bda0701490aff25",
+      "url": "https://musicbrainz.org/ws/2/artist?query=supercell",
+      "status_code": 200,
+      "body_hash": "33e89e6781da6682"
+    },
+    {
+      "cache_key": "c4573c4a0723b924",
+      "url": "https://musicbrainz.org/ws/2/work/c86c3dc9-e0b4-4739-8a30-01681629cb86?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0dfaf29d2ec17c0d"
+    }
+  ]
+}

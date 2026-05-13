@@ -1,0 +1,30 @@
+{
+  "test_name": "balcony_penthouse",
+  "scenario_id": "cdcf69c30507b6e9",
+  "responses": [
+    {
+      "cache_key": "699c346a1b363bbe",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=43fae8cb-803f-4c59-bda7-fefc4498e36b&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "226dc80fe9c4a987"
+    },
+    {
+      "cache_key": "746e6ba744e1a729",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Penthouse",
+      "status_code": 200,
+      "body_hash": "70fa71dab0291dd1"
+    },
+    {
+      "cache_key": "b6b2484525f6e7c7",
+      "url": "https://musicbrainz.org/ws/2/artist/9604bb00-65c5-4b67-a174-c46c063ba794?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1d1c8b4c4f8ccb8f"
+    },
+    {
+      "cache_key": "f8d4a81cff8a5166",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ABalcony&limit=100",
+      "status_code": 200,
+      "body_hash": "569b1d0801cb6d39"
+    }
+  ]
+}

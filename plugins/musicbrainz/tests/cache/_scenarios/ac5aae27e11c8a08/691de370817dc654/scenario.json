@@ -1,9 +1,24 @@
 {
   "test_name": "scoop_上北健",
   "scenario_id": "691de370817dc654",
-  "cache_keys": [
-    "0e044b5fbe8c7a85",
-    "23543701c0e5b037",
-    "6348a3947b4ce135"
+  "responses": [
+    {
+      "cache_key": "0e044b5fbe8c7a85",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E4%B8%8A%E5%8C%97%E5%81%A5",
+      "status_code": 200,
+      "body_hash": "20c1353e2f15a826"
+    },
+    {
+      "cache_key": "23543701c0e5b037",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=957c6e52-1b13-45f1-a66f-322bcf7e784c&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "bb867cafe545860c"
+    },
+    {
+      "cache_key": "6348a3947b4ce135",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ASCOOP&limit=100",
+      "status_code": 200,
+      "body_hash": "40fed22ed961e4a3"
+    }
   ]
 }

@@ -1,0 +1,30 @@
+{
+  "test_name": "スノウドロップ_conton_candy",
+  "scenario_id": "6db3f5895fff14d6",
+  "responses": [
+    {
+      "cache_key": "53c8bb239d4c4822",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=e37f60fa-d732-4ebe-8da8-92f7f3e4544f&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "decd3b17dba4bcdc"
+    },
+    {
+      "cache_key": "b57d52d049ef056a",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%B9%E3%83%8E%E3%82%A6%E3%83%89%E3%83%AD%E3%83%83%E3%83%97&limit=100",
+      "status_code": 200,
+      "body_hash": "3d0de24cd4edea31"
+    },
+    {
+      "cache_key": "bb4fe9e03c08f586",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Conton%20Candy",
+      "status_code": 200,
+      "body_hash": "84ef4b38377b5d40"
+    },
+    {
+      "cache_key": "e0f270851cea89dc",
+      "url": "https://musicbrainz.org/ws/2/artist/c7825fee-8c74-4007-aae0-8e5d5117b2db?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f82787d27c158a71"
+    }
+  ]
+}

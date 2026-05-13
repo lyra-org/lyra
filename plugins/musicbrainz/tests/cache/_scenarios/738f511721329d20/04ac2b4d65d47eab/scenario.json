@@ -1,0 +1,36 @@
+{
+  "test_name": "guitar_to_kodoku_to_aoi_hoshi_kessoku_band",
+  "scenario_id": "04ac2b4d65d47eab",
+  "responses": [
+    {
+      "cache_key": "196988c1dd75cb31",
+      "url": "https://musicbrainz.org/ws/2/work/bdbb3b17-eb71-426e-a2c1-81bae653397f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "40c1edee98b8bf1b"
+    },
+    {
+      "cache_key": "86e2e982a44210e0",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Ac1b0fe0a-779d-43ed-b193-4370f0d0f88f%20AND%20(release%3AGuitar%20to%20Kodoku%20to%20Aoi%20Hoshi%20OR%20recording%3AGuitar%20to%20Kodoku%20to%20Aoi%20Hoshi)&limit=100",
+      "status_code": 200,
+      "body_hash": "37452d5a124bde15"
+    },
+    {
+      "cache_key": "c63da08baa1bcd90",
+      "url": "https://musicbrainz.org/ws/2/artist/c1b0fe0a-779d-43ed-b193-4370f0d0f88f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cea702fe9b5f56a7"
+    },
+    {
+      "cache_key": "caec2627e8d9caee",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Kessoku%20Band",
+      "status_code": 200,
+      "body_hash": "a6ffd4f48041b5d7"
+    },
+    {
+      "cache_key": "e1746475963f1a5b",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=40afb369-8230-494f-8507-def48bc53f22&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "855f392d3b0165e4"
+    }
+  ]
+}

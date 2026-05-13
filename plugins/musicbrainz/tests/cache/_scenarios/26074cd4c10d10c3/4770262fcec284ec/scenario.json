@@ -1,0 +1,30 @@
+{
+  "test_name": "メロドラマ_なとり",
+  "scenario_id": "4770262fcec284ec",
+  "responses": [
+    {
+      "cache_key": "1eda84b84e8191cb",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%AA%E3%81%A8%E3%82%8A",
+      "status_code": 200,
+      "body_hash": "6694dfca520ef243"
+    },
+    {
+      "cache_key": "92dac954f6edda1c",
+      "url": "https://musicbrainz.org/ws/2/work/bdbe3263-c574-4e3b-bc5e-1981473d51df?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ac4dc390d9d16a82"
+    },
+    {
+      "cache_key": "a0e95491f96bfb7e",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=ddbe08f0-c366-4ed3-9391-76eac68141be&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "59a43103190777c3"
+    },
+    {
+      "cache_key": "ff5f65876a9136b5",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%83%A1%E3%83%AD%E3%83%89%E3%83%A9%E3%83%9E&limit=100",
+      "status_code": 200,
+      "body_hash": "380352f599622ec7"
+    }
+  ]
+}

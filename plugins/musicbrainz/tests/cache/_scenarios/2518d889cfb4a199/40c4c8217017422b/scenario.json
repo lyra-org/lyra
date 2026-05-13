@@ -1,0 +1,36 @@
+{
+  "test_name": "虹_masaki_suda마사키_스다菅田将暉",
+  "scenario_id": "40c4c8217017422b",
+  "responses": [
+    {
+      "cache_key": "127d956a4cb726c0",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A264955bb-3412-4ab5-9ba5-4423a28b3641%20AND%20(release%3A%E8%99%B9%20OR%20recording%3A%E8%99%B9)",
+      "status_code": 200,
+      "body_hash": "3d2306398a106440"
+    },
+    {
+      "cache_key": "7c787ac3b660fd69",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=64324497-34b4-4d19-88d3-d09906fad9cb&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "c1387d853310022a"
+    },
+    {
+      "cache_key": "98582795d1498552",
+      "url": "https://musicbrainz.org/ws/2/work/91309447-130e-4f0d-88c7-181b13849d3b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3745e78ccea3f543"
+    },
+    {
+      "cache_key": "d1e4cfc6c56eeda4",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Masaki%20Suda(%EB%A7%88%EC%82%AC%ED%82%A4%20%EC%8A%A4%EB%8B%A4%2F%E8%8F%85%E7%94%B0%E5%B0%86%E6%9A%89)",
+      "status_code": 200,
+      "body_hash": "c7e17ca6fc8a8e59"
+    },
+    {
+      "cache_key": "d9bca4e57f8e7207",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E8%99%B9&limit=100",
+      "status_code": 200,
+      "body_hash": "1df77fdedf8937e0"
+    }
+  ]
+}

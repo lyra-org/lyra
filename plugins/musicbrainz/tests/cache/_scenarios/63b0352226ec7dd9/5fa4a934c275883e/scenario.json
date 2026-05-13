@@ -1,0 +1,90 @@
+{
+  "test_name": "ray_of_hope_明透",
+  "scenario_id": "5fa4a934c275883e",
+  "responses": [
+    {
+      "cache_key": "0856b4d7ced2beb8",
+      "url": "https://musicbrainz.org/ws/2/work/d866c45b-7b0b-41c7-baf5-051e32fa6693?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3b7fae119db3d8ca"
+    },
+    {
+      "cache_key": "0b6ff34b3ae0f5ab",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%98%8E%E9%80%8F",
+      "status_code": 200,
+      "body_hash": "2e33163e093ac56b"
+    },
+    {
+      "cache_key": "1d1559df9577d857",
+      "url": "https://musicbrainz.org/ws/2/work/e680ba38-a4c5-4725-96b9-bed5a59f1f6a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5e457ade50dc8072"
+    },
+    {
+      "cache_key": "30b0d11d3a84cc2d",
+      "url": "https://musicbrainz.org/ws/2/artist/800fb09b-f395-4e26-96b8-3a10e228e8f5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7e73c6f55836af55"
+    },
+    {
+      "cache_key": "3ca3bc92693a30b2",
+      "url": "https://musicbrainz.org/ws/2/work/6c281fa9-366c-4f11-9464-6e39c0553e2c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6e528d8e27bffd7b"
+    },
+    {
+      "cache_key": "54ca3c8d0af03027",
+      "url": "https://musicbrainz.org/ws/2/work/e3e4c01a-dd7f-4724-811d-e5230114c9e0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7d3519f79e3fdd88"
+    },
+    {
+      "cache_key": "62b1858c23db7fc0",
+      "url": "https://musicbrainz.org/ws/2/work/12e61892-3edb-4968-a5bf-bb3c48b71010?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d667fe6c15d1a02e"
+    },
+    {
+      "cache_key": "67f4e47ac2492a35",
+      "url": "https://musicbrainz.org/ws/2/work/21b6215f-7eea-4898-a4c9-aa84a4b23214?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "26d86abb9fb5e6b8"
+    },
+    {
+      "cache_key": "6949ca7db6672436",
+      "url": "https://musicbrainz.org/ws/2/work/6075efae-b049-4385-99ac-8f69ee98b69d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b0e9652896b643be"
+    },
+    {
+      "cache_key": "8ef4352036a5de87",
+      "url": "https://musicbrainz.org/ws/2/work/86e01997-e215-4717-81f7-adf980e28c2a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a5c5ff0d2d579052"
+    },
+    {
+      "cache_key": "925e68c629ec55cc",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=1ef0ae9d-d6f7-47e0-a61a-2656913d4ecb&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "35ca1451cade8dfd"
+    },
+    {
+      "cache_key": "9537a03f84e188f0",
+      "url": "https://musicbrainz.org/ws/2/work/f1238a80-f79d-4aad-85f2-0a252f01a062?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fe7db68c0f9afc46"
+    },
+    {
+      "cache_key": "a21366102929f510",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3Aray%20of%20hope&limit=100",
+      "status_code": 200,
+      "body_hash": "8e234a09beeb7885"
+    },
+    {
+      "cache_key": "da2384ff2119afaf",
+      "url": "https://musicbrainz.org/ws/2/work/c2ae1c99-7c89-4acd-93e8-ad34493a2e37?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "36b90a85418bae44"
+    }
+  ]
+}

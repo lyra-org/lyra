@@ -1,0 +1,36 @@
+{
+  "test_name": "specialz_king_gnu",
+  "scenario_id": "763979dd0a56a369",
+  "responses": [
+    {
+      "cache_key": "312899d925224f2e",
+      "url": "https://musicbrainz.org/ws/2/artist?query=King%20Gnu",
+      "status_code": 200,
+      "body_hash": "599556eaa1d1b5e1"
+    },
+    {
+      "cache_key": "46775e93a08fbbfc",
+      "url": "https://musicbrainz.org/ws/2/work/f4e8b732-0c99-481f-a840-73514e20a737?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f4fb468f89b65f7e"
+    },
+    {
+      "cache_key": "c85817237ab390d7",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A338f5d97-3133-4bf8-a58e-068ff9b5405d%20AND%20(release%3ASPECIALZ%20OR%20recording%3ASPECIALZ)&limit=100",
+      "status_code": 200,
+      "body_hash": "1bf0b68a4619c455"
+    },
+    {
+      "cache_key": "f45483c1bfee9573",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=af38e04e-f562-43f6-bd63-372642d59dac&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "c578f4bf5ef385f0"
+    },
+    {
+      "cache_key": "fcbcbf0e37cf2822",
+      "url": "https://musicbrainz.org/ws/2/artist/338f5d97-3133-4bf8-a58e-068ff9b5405d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f40a10092e801b3f"
+    }
+  ]
+}

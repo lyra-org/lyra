@@ -1,0 +1,60 @@
+{
+  "test_name": "love_amplified_キタニタツヤ",
+  "scenario_id": "c11cfe5ab93ec8fb",
+  "responses": [
+    {
+      "cache_key": "312ef66bee325cf8",
+      "url": "https://musicbrainz.org/ws/2/work/612a74b4-4009-4bf3-887c-37c3a54d418f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "999141464b93c926"
+    },
+    {
+      "cache_key": "4863a908375a181f",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=5c07c6df-e4b4-4dd1-9cba-531f63a83729&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "9e71d2d1491ee7d2"
+    },
+    {
+      "cache_key": "5b283674ce4dd3c3",
+      "url": "https://musicbrainz.org/ws/2/work/09aa13a2-21aa-41b4-be3f-fdc8ea1c76d0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1620c61d2c50539a"
+    },
+    {
+      "cache_key": "7263aa394682a38b",
+      "url": "https://musicbrainz.org/ws/2/work/365d117b-4e8c-469f-b9cf-c37fec780c94?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "446fb37e7506ec7d"
+    },
+    {
+      "cache_key": "7f88978c3dcf556b",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ALOVE%5C%3A%20AMPLIFIED&limit=100",
+      "status_code": 200,
+      "body_hash": "e9afc01aa3a94627"
+    },
+    {
+      "cache_key": "a4060e5168b2153a",
+      "url": "https://musicbrainz.org/ws/2/work/fa4fcfb8-2f05-4192-b136-010fee30faba?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b1a54b7df06dd98a"
+    },
+    {
+      "cache_key": "c7cfdecf3e975191",
+      "url": "https://musicbrainz.org/ws/2/artist/8d17b65b-8ccf-495c-8b79-1f53d6226448?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "bea98f82a34e0edb"
+    },
+    {
+      "cache_key": "d5c10760f4493df0",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%82%AD%E3%82%BF%E3%83%8B%E3%82%BF%E3%83%84%E3%83%A4",
+      "status_code": 200,
+      "body_hash": "12e8c5fb0a8c6f39"
+    },
+    {
+      "cache_key": "f3dd3f26f2d0368e",
+      "url": "https://musicbrainz.org/ws/2/artist/3f53eb17-3338-4920-8b79-31c26a90ef28?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a0d8d2b4fe97ae19"
+    }
+  ]
+}

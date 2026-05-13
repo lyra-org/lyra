@@ -1,0 +1,48 @@
+{
+  "test_name": "ao_to_natsu_mrs_green_apple",
+  "scenario_id": "a508d4f3ff4c62aa",
+  "responses": [
+    {
+      "cache_key": "08f508c42cfd33e1",
+      "url": "https://musicbrainz.org/ws/2/work/ab492b35-2dbc-4d97-97f9-1a7e41cddef9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "89d2878210171d75"
+    },
+    {
+      "cache_key": "27dddfcc5a781497",
+      "url": "https://musicbrainz.org/ws/2/artist/9ce674b7-5180-41f7-9ac2-95dc0d8a0ed2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2f78ac705f11be5a"
+    },
+    {
+      "cache_key": "2ed82b3682538f0f",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AAo%20To%20Natsu&limit=100",
+      "status_code": 200,
+      "body_hash": "e598fb218d57fdab"
+    },
+    {
+      "cache_key": "873b04303be2f05b",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=ae08d14d-8df3-4cb3-b05c-2ae1be96f2e2&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "001da855242b7436"
+    },
+    {
+      "cache_key": "c442835e4bf9a88a",
+      "url": "https://musicbrainz.org/ws/2/work/529689f5-f664-45d3-b15f-45752bed6116?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "215c6240ba99b8fb"
+    },
+    {
+      "cache_key": "d636b5d0843e46d7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Mrs.%20Green%20Apple",
+      "status_code": 200,
+      "body_hash": "5c8ea83b11d6c238"
+    },
+    {
+      "cache_key": "d69ef9b458de1afc",
+      "url": "https://musicbrainz.org/ws/2/work/f218d11d-3b2b-4ff6-809b-63a87fe783a3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "666301f81a81e2b1"
+    }
+  ]
+}

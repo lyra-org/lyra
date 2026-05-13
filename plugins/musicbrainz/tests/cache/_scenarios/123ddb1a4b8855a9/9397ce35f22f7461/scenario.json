@@ -1,9 +1,24 @@
 {
   "test_name": "asleep_among_endives_ichiko_aoba",
   "scenario_id": "9397ce35f22f7461",
-  "cache_keys": [
-    "0ea3dbb8f165647d",
-    "6fa6ea957d2c2223",
-    "b74732bc4e494cb5"
+  "responses": [
+    {
+      "cache_key": "0ea3dbb8f165647d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Ichiko%20Aoba",
+      "status_code": 200,
+      "body_hash": "f1e7e7f3181e6e34"
+    },
+    {
+      "cache_key": "6fa6ea957d2c2223",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=85be3b8d-eb76-4e72-b69b-cf6d61624489&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "7b581858afd43e34"
+    },
+    {
+      "cache_key": "b74732bc4e494cb5",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Afc3ae4dd-dcc5-4f99-a865-6bc1a5c9b705%20AND%20(release%3AAsleep%20Among%20Endives%20OR%20recording%3AAsleep%20Among%20Endives)&limit=100",
+      "status_code": 200,
+      "body_hash": "583a7aa52fe154c9"
+    }
   ]
 }

@@ -1,0 +1,72 @@
+{
+  "test_name": "心音_kk",
+  "scenario_id": "d4ef723f9eeaf505",
+  "responses": [
+    {
+      "cache_key": "2580d0a710b51ba8",
+      "url": "https://musicbrainz.org/ws/2/work/c1dd4916-11b3-4309-91e5-a745a5e0cb38?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1e1a2c306d02ba99"
+    },
+    {
+      "cache_key": "3372978c4c3b8f42",
+      "url": "https://musicbrainz.org/ws/2/work/399bdce6-ea9b-4890-b402-02e31afe0353?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "14580a3fe4920210"
+    },
+    {
+      "cache_key": "50e74bee26e184a7",
+      "url": "https://musicbrainz.org/ws/2/work/193cb83b-d101-4150-b008-47e4858736e7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c88fdf0b6f48d890"
+    },
+    {
+      "cache_key": "6bc2f50b02b8453b",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=558ae490-bc8b-4f0c-bc56-d719a4d4295c&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "800cec393ce78974"
+    },
+    {
+      "cache_key": "a08d80f81629550e",
+      "url": "https://musicbrainz.org/ws/2/work/3acfc4b9-1723-4874-a847-6336f79d17c3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0e506087d175582d"
+    },
+    {
+      "cache_key": "a3d7710b1fb1ff18",
+      "url": "https://musicbrainz.org/ws/2/work/3ffafe4f-02ad-4653-b414-aa0b6ee54752?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2bcba0fbc4e4373c"
+    },
+    {
+      "cache_key": "d001e151d9c40169",
+      "url": "https://musicbrainz.org/ws/2/work/a6b5a0bb-ffe9-404b-8322-874a8bda79f2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e0888a40bcd90f59"
+    },
+    {
+      "cache_key": "d04beb3ac8366905",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%BF%83%E9%9F%B3&limit=100",
+      "status_code": 200,
+      "body_hash": "9111fb287645cb04"
+    },
+    {
+      "cache_key": "de3fa02b7cecd5ad",
+      "url": "https://musicbrainz.org/ws/2/work/e47d5dd0-5c04-4c7e-a691-f4b01db68997?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6ad3242203123975"
+    },
+    {
+      "cache_key": "e5bb2c573b955463",
+      "url": "https://musicbrainz.org/ws/2/artist?query=KK",
+      "status_code": 200,
+      "body_hash": "1feed4449f76d73b"
+    },
+    {
+      "cache_key": "f472b4792ec10565",
+      "url": "https://musicbrainz.org/ws/2/work/5a74c1a4-f8f3-4700-b5d9-881036eb4747?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c1a38ed2fb36b081"
+    }
+  ]
+}

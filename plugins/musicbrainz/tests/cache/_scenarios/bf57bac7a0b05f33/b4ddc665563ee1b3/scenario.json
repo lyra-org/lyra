@@ -1,0 +1,36 @@
+{
+  "test_name": "夜撫でるメノウ_幽霊東京_ayase",
+  "scenario_id": "b4ddc665563ee1b3",
+  "responses": [
+    {
+      "cache_key": "6ff6c248d9fa60b2",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%A4%9C%E6%92%AB%E3%81%A7%E3%82%8B%E3%83%A1%E3%83%8E%E3%82%A6%20%5C%2F%20%E5%B9%BD%E9%9C%8A%E6%9D%B1%E4%BA%AC&limit=100",
+      "status_code": 200,
+      "body_hash": "636e6c59249f235d"
+    },
+    {
+      "cache_key": "9273bfa866fad78e",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Ayase",
+      "status_code": 200,
+      "body_hash": "1a43008396db029e"
+    },
+    {
+      "cache_key": "a4872d4756966968",
+      "url": "https://musicbrainz.org/ws/2/work/83dbd2cf-c9f7-482d-91e6-088778992d64?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9c4746a137541d4f"
+    },
+    {
+      "cache_key": "f167d5d3179fb36e",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=67b7477b-438f-417a-a986-9b2cd8601c28&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "a4833d572b93d7e3"
+    },
+    {
+      "cache_key": "feeb3b5161b2c022",
+      "url": "https://musicbrainz.org/ws/2/work/8c6c9968-240f-41b5-9f05-2a8a57cad91a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3bcb9f9bd6b5445d"
+    }
+  ]
+}

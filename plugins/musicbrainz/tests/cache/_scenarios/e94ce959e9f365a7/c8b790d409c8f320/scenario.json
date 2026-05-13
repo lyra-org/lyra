@@ -1,9 +1,24 @@
 {
   "test_name": "severniy_veter_green_apelsin",
   "scenario_id": "c8b790d409c8f320",
-  "cache_keys": [
-    "2a4c5a7bc0bec2fd",
-    "49e1bd0493021797",
-    "5ccdebbd9819be8c"
+  "responses": [
+    {
+      "cache_key": "2a4c5a7bc0bec2fd",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=bf693850-d767-4cad-86eb-ae5a792dd8af&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "4fc7c737389440d8"
+    },
+    {
+      "cache_key": "49e1bd0493021797",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Green%20Apelsin",
+      "status_code": 200,
+      "body_hash": "d1d11812f7b2d444"
+    },
+    {
+      "cache_key": "5ccdebbd9819be8c",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Af1cab269-eb96-445a-92ca-9f64a81ede34%20AND%20(release%3A%D0%A1%D0%B5%D0%B2%D0%B5%D1%80%D0%BD%D1%8B%D0%B9%20%D0%B2%D0%B5%D1%82%D0%B5%D1%80%20OR%20recording%3ASevernyj%20veter)&limit=100",
+      "status_code": 200,
+      "body_hash": "c3585e106a3a94e2"
+    }
   ]
 }

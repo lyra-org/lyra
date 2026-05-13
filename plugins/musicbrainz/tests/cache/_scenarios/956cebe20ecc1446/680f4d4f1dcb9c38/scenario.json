@@ -1,0 +1,36 @@
+{
+  "test_name": "i_love_official髭男dism",
+  "scenario_id": "680f4d4f1dcb9c38",
+  "responses": [
+    {
+      "cache_key": "2b1130c9828ea26d",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AI%20LOVE...&limit=100",
+      "status_code": 200,
+      "body_hash": "4d69e93ec254f7ac"
+    },
+    {
+      "cache_key": "673c48a8cbca0b3f",
+      "url": "https://musicbrainz.org/ws/2/work/2ade74cf-1b49-4db4-a7bc-76a29a3b5530?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "88838bd9a0c5cd73"
+    },
+    {
+      "cache_key": "ac202f410fb14406",
+      "url": "https://musicbrainz.org/ws/2/artist/6dddd7a2-5583-49d0-a8b2-9ee46d04f27e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "039ebdd63e696dab"
+    },
+    {
+      "cache_key": "b0f7dc78dd2c382f",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=405ab15e-d6c5-4a99-8b0c-2872a7d7ca02&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "6af9e77774e5f711"
+    },
+    {
+      "cache_key": "e632cd6797fe55ad",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Official%E9%AB%AD%E7%94%B7dism",
+      "status_code": 200,
+      "body_hash": "f11c6a7d683b0020"
+    }
+  ]
+}

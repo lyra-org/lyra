@@ -1,0 +1,30 @@
+{
+  "test_name": "aijanai_dazbee",
+  "scenario_id": "e07b8fd22fe4fb26",
+  "responses": [
+    {
+      "cache_key": "71045a0deff21821",
+      "url": "https://musicbrainz.org/ws/2/work/69910b8f-6eb8-4716-9323-5a1f7790f050?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6d29a860669eeb7b"
+    },
+    {
+      "cache_key": "bb9a937084ae50e4",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=8322ce04-9e9f-494f-b83a-5ac1b9ffe3bb&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "c6878286968f631e"
+    },
+    {
+      "cache_key": "d3155a3f7201d230",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A10623c33-205c-49f4-b8a0-55a105dd4fa3%20AND%20(release%3AAijanai%20OR%20recording%3AAijanai)&limit=100",
+      "status_code": 200,
+      "body_hash": "ab9615b8700fcf99"
+    },
+    {
+      "cache_key": "eae8a10a9c69bdfd",
+      "url": "https://musicbrainz.org/ws/2/artist?query=DAZBEE",
+      "status_code": 200,
+      "body_hash": "c922b57bae05544f"
+    }
+  ]
+}

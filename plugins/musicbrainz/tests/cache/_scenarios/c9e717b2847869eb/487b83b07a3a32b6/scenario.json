@@ -1,0 +1,30 @@
+{
+  "test_name": "ばかのうた_星野源",
+  "scenario_id": "487b83b07a3a32b6",
+  "responses": [
+    {
+      "cache_key": "166b5bf812747c80",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%B0%E3%81%8B%E3%81%AE%E3%81%86%E3%81%9F&limit=100",
+      "status_code": 200,
+      "body_hash": "f9ec6179d2c999ce"
+    },
+    {
+      "cache_key": "3cd1035e93761b6f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%98%9F%E9%87%8E%E6%BA%90",
+      "status_code": 200,
+      "body_hash": "42e99e6685b13ff8"
+    },
+    {
+      "cache_key": "80a23d054b7179da",
+      "url": "https://musicbrainz.org/ws/2/work/28b1be73-440c-4856-8df1-97b821fcee7a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8e73be73c1cb7dcf"
+    },
+    {
+      "cache_key": "9514139d93106065",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=25d11ecf-30c1-447a-9ec5-cddecd112519&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "0b49f3735d45e92d"
+    }
+  ]
+}

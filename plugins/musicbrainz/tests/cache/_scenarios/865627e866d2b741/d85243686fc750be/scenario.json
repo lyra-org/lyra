@@ -1,9 +1,24 @@
 {
   "test_name": "nostalzia_ダズビー",
   "scenario_id": "d85243686fc750be",
-  "cache_keys": [
-    "532268219e3f597a",
-    "65826539023c03b9",
-    "e2a79058567c4baa"
+  "responses": [
+    {
+      "cache_key": "532268219e3f597a",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ANostalzia&limit=100",
+      "status_code": 200,
+      "body_hash": "f97d7fd436ea8ae0"
+    },
+    {
+      "cache_key": "65826539023c03b9",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%80%E3%82%BA%E3%83%93%E3%83%BC",
+      "status_code": 200,
+      "body_hash": "fd3edcc33c790ae6"
+    },
+    {
+      "cache_key": "e2a79058567c4baa",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=85a7526b-9bd2-40d9-9521-91d74223e33b&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "87dc3fe9922a742f"
+    }
   ]
 }

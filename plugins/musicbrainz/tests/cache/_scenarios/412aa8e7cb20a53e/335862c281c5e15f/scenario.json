@@ -1,0 +1,30 @@
+{
+  "test_name": "青のすみか_from_the_first_take_キタニタツヤ",
+  "scenario_id": "335862c281c5e15f",
+  "responses": [
+    {
+      "cache_key": "75685679e3bd0a0a",
+      "url": "https://musicbrainz.org/ws/2/work/ddfb9a6b-8313-496b-86e3-ddca16e7f8e6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "492240b56b9c4fc7"
+    },
+    {
+      "cache_key": "79a418ac08514a35",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E9%9D%92%E3%81%AE%E3%81%99%E3%81%BF%E3%81%8B%20%5C-%20From%20THE%20FIRST%20TAKE&limit=100",
+      "status_code": 200,
+      "body_hash": "cc7bd4c8fbbcd22f"
+    },
+    {
+      "cache_key": "cc6af1141c76643d",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=200170f2-3c34-44e3-88ad-3f4c1c333be3&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "db54a863c2c8cc3c"
+    },
+    {
+      "cache_key": "d5c10760f4493df0",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%82%AD%E3%82%BF%E3%83%8B%E3%82%BF%E3%83%84%E3%83%A4",
+      "status_code": 200,
+      "body_hash": "97f89323f8b59201"
+    }
+  ]
+}

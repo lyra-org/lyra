@@ -1,10 +1,30 @@
 {
   "test_name": "ペトリコールについて_すんひ",
   "scenario_id": "901c8b81930c4c1b",
-  "cache_keys": [
-    "03dcb70c2179a7ab",
-    "07e3938fbb2e6def",
-    "54e74789d86a47f9",
-    "b24640d29d4fa75c"
+  "responses": [
+    {
+      "cache_key": "03dcb70c2179a7ab",
+      "url": "https://musicbrainz.org/ws/2/release/849bc100-a61c-45af-a9c7-45b5c8070dd7?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels",
+      "status_code": 200,
+      "body_hash": "b36aae91ae718aec"
+    },
+    {
+      "cache_key": "07e3938fbb2e6def",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%83%9A%E3%83%88%E3%83%AA%E3%82%B3%E3%83%BC%E3%83%AB%E3%81%AB%E3%81%A4%E3%81%84%E3%81%A6&limit=100",
+      "status_code": 200,
+      "body_hash": "14080200b902964f"
+    },
+    {
+      "cache_key": "54e74789d86a47f9",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%99%E3%82%93%E3%81%B2",
+      "status_code": 200,
+      "body_hash": "dac56470235da23a"
+    },
+    {
+      "cache_key": "b24640d29d4fa75c",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A6498d8a9-d901-461a-8c0d-3ea72a5379bd%20AND%20(release%3A%E3%83%9A%E3%83%88%E3%83%AA%E3%82%B3%E3%83%BC%E3%83%AB%E3%81%AB%E3%81%A4%E3%81%84%E3%81%A6%20OR%20recording%3A%E3%83%9A%E3%83%88%E3%83%AA%E3%82%B3%E3%83%BC%E3%83%AB%E3%81%AB%E3%81%A4%E3%81%84%E3%81%A6)",
+      "status_code": 200,
+      "body_hash": "bc93c91c22e932aa"
+    }
   ]
 }

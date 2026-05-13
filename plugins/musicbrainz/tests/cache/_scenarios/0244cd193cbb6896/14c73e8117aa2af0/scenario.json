@@ -1,0 +1,30 @@
+{
+  "test_name": "原神_輝く星々vol_4_original_game_soundtrack_hoyo_mix",
+  "scenario_id": "14c73e8117aa2af0",
+  "responses": [
+    {
+      "cache_key": "005cd9d89868b977",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%8E%9F%E7%A5%9E%5C-%E8%BC%9D%E3%81%8F%E6%98%9F%E3%80%85Vol.%204&limit=100",
+      "status_code": 200,
+      "body_hash": "34832c93a027cc01"
+    },
+    {
+      "cache_key": "3b4f6a63a876e25e",
+      "url": "https://musicbrainz.org/ws/2/artist?query=HOYO-MiX",
+      "status_code": 200,
+      "body_hash": "af93d8c477d23b7d"
+    },
+    {
+      "cache_key": "7273bdae01c4a9ad",
+      "url": "https://musicbrainz.org/ws/2/artist/9df7ddfb-75fe-4470-9269-5810d9263b09?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5e670a5a9c3df3b5"
+    },
+    {
+      "cache_key": "88e319251cc5bbca",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=43a41781-fe2b-4ec6-a623-2a17f55967ae&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "e0a0c0e5d86ce50f"
+    }
+  ]
+}

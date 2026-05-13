@@ -1,0 +1,36 @@
+{
+  "test_name": "love_2000_八奈見杏菜cv_遠野ひかる",
+  "scenario_id": "6d2c11db4906d72a",
+  "responses": [
+    {
+      "cache_key": "308e61d078e33fd8",
+      "url": "https://musicbrainz.org/ws/2/artist/4450fa5e-8369-4ad4-ad50-a3c5a526f68f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d6242fb2c1f833a1"
+    },
+    {
+      "cache_key": "4e56f7ae1ea34f8c",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=4e3b5cb6-fe23-4ea0-a908-e79480f2a0a4&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "de401e4b5835ddae"
+    },
+    {
+      "cache_key": "84643e82757cb735",
+      "url": "https://musicbrainz.org/ws/2/work/2e06f71a-0690-45b5-98fa-b86f9beba389?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0c08bccb192ca857"
+    },
+    {
+      "cache_key": "a6c560a3a868d60a",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E5%85%AB%E5%A5%88%E8%A6%8B%E6%9D%8F%E8%8F%9C",
+      "status_code": 200,
+      "body_hash": "369fea34742e0742"
+    },
+    {
+      "cache_key": "fedd72042c176c73",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A4450fa5e-8369-4ad4-ad50-a3c5a526f68f%20AND%20(release%3ALOVE%202000%20OR%20recording%3ALOVE%202000)&limit=100",
+      "status_code": 200,
+      "body_hash": "460d486cc9bdad47"
+    }
+  ]
+}

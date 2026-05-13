@@ -1,0 +1,72 @@
+{
+  "test_name": "skywalk_novelbright",
+  "scenario_id": "127a5e455a834fd3",
+  "responses": [
+    {
+      "cache_key": "19262da7a0439114",
+      "url": "https://musicbrainz.org/ws/2/work/dcab14ad-fbc3-4dec-9be1-34c6e6e25a28?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3f494ab1f07164ef"
+    },
+    {
+      "cache_key": "40269699e98d46be",
+      "url": "https://musicbrainz.org/ws/2/work/563d312a-d569-4e65-bdfa-91fca44a4296?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e78e0c312836d50c"
+    },
+    {
+      "cache_key": "58f83333ea93196b",
+      "url": "https://musicbrainz.org/ws/2/work/d65c0ea1-1ab1-44ba-b9c7-835284a5e9d6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "338745fc19c55ea4"
+    },
+    {
+      "cache_key": "5fbf81912ca3e77a",
+      "url": "https://musicbrainz.org/ws/2/work/f1cae353-aa80-4cbc-bde1-4dd079ffbc1a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1b22bfc97ff5a894"
+    },
+    {
+      "cache_key": "6b335460a7daed41",
+      "url": "https://musicbrainz.org/ws/2/work/aef59b3c-9439-4481-9b23-2699728b3477?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ad0554764b800e9a"
+    },
+    {
+      "cache_key": "7f70e5b5772189e9",
+      "url": "https://musicbrainz.org/ws/2/work/205a3e6f-8d60-4d26-9f42-3a188615b730?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "68c88e49a2a67948"
+    },
+    {
+      "cache_key": "82f0013c47fee5a2",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ASKYWALK&limit=100",
+      "status_code": 200,
+      "body_hash": "a408d8903c876551"
+    },
+    {
+      "cache_key": "8c7c75e69a6c77c3",
+      "url": "https://musicbrainz.org/ws/2/work/0555d62c-6559-4dda-ab2b-64bf3cb8ed21?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9f5d513a6697bac2"
+    },
+    {
+      "cache_key": "905dbb34ccec8ca1",
+      "url": "https://musicbrainz.org/ws/2/artist/f1d9bc16-a8a2-4733-9b9d-2e101e010ea0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c68fada58ff0f77f"
+    },
+    {
+      "cache_key": "a9e9d7e4a521c24d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Novelbright",
+      "status_code": 200,
+      "body_hash": "28e5dfbfe92bec7d"
+    },
+    {
+      "cache_key": "ecac58f6daa6b526",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=09111fab-6b71-4228-884d-8b338c3bf089&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "cfb61a7535b69248"
+    }
+  ]
+}

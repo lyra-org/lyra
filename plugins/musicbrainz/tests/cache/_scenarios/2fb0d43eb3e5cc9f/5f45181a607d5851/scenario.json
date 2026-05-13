@@ -1,0 +1,84 @@
+{
+  "test_name": "月が満ちる_月詠み",
+  "scenario_id": "5f45181a607d5851",
+  "responses": [
+    {
+      "cache_key": "10a53f895d28264e",
+      "url": "https://musicbrainz.org/ws/2/work/82ca83f4-e487-4239-b6c7-2b1e5fa242ea?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8f677965fb11cbdd"
+    },
+    {
+      "cache_key": "1803d28bfe076233",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=92f914f2-b537-4573-bc14-8e8f2450ec63&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "06ecc0f67394146c"
+    },
+    {
+      "cache_key": "278955a2a5bd530e",
+      "url": "https://musicbrainz.org/ws/2/work/6d55b41e-417e-42f5-9d5e-346310b7b1b9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b4a6b97e35e85241"
+    },
+    {
+      "cache_key": "28c2f23068b5a2cc",
+      "url": "https://musicbrainz.org/ws/2/work/6ba6b16a-2cb1-426b-8209-7484f4ff3ba0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e0e2661727e5fa03"
+    },
+    {
+      "cache_key": "2d26ee5d4602377a",
+      "url": "https://musicbrainz.org/ws/2/work/45d991b1-ac56-4f80-8216-0801d8991880?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3654e7d1f737bea7"
+    },
+    {
+      "cache_key": "35c965c71e0fd8fc",
+      "url": "https://musicbrainz.org/ws/2/work/d1d92c02-b18b-4e56-804f-e1aca354d34a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7af8302d6be5dc95"
+    },
+    {
+      "cache_key": "5020698fd5ef48ff",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%9C%88%E3%81%8C%E6%BA%80%E3%81%A1%E3%82%8B&limit=100",
+      "status_code": 200,
+      "body_hash": "2dbe44b7be55ae56"
+    },
+    {
+      "cache_key": "73c3aa3e9be3eca6",
+      "url": "https://musicbrainz.org/ws/2/work/1aabb13f-51fa-4427-9041-5a3413643b3e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5e0ad1481db1c2e0"
+    },
+    {
+      "cache_key": "75d00e86f0ee0926",
+      "url": "https://musicbrainz.org/ws/2/artist/6825ace2-3563-4ac5-8d85-c7bf1334bd2c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fe1b5feb00e88750"
+    },
+    {
+      "cache_key": "a2ef91f68d9d8103",
+      "url": "https://musicbrainz.org/ws/2/work/7291c76c-08a4-4bde-8b23-67ad486186ff?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b05ab7bd12659a20"
+    },
+    {
+      "cache_key": "d210b6ddd740546c",
+      "url": "https://musicbrainz.org/ws/2/work/c1067f42-3918-458f-89e0-c0dfa3269f66?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9d88b5c47ff045b1"
+    },
+    {
+      "cache_key": "d2a1ef2821aa58ca",
+      "url": "https://musicbrainz.org/ws/2/work/26d5a751-631f-4d44-b63e-54507490bc6d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "23a17689a6473d83"
+    },
+    {
+      "cache_key": "d9f5f2c66f0267b8",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%9C%88%E8%A9%A0%E3%81%BF",
+      "status_code": 200,
+      "body_hash": "2f97fb9c6977b676"
+    }
+  ]
+}

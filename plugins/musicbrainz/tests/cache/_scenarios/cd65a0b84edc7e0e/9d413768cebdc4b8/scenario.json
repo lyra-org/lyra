@@ -1,0 +1,30 @@
+{
+  "test_name": "真珠の歌4_original_game_soundtrack_hoyo_mix",
+  "scenario_id": "9d413768cebdc4b8",
+  "responses": [
+    {
+      "cache_key": "2231e8b756fef047",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%9C%9F%E7%8F%A0%E3%81%AE%E6%AD%8C4&limit=100",
+      "status_code": 200,
+      "body_hash": "05f22b4be4101e09"
+    },
+    {
+      "cache_key": "3b4f6a63a876e25e",
+      "url": "https://musicbrainz.org/ws/2/artist?query=HOYO-MiX",
+      "status_code": 200,
+      "body_hash": "715ce52238cf57a6"
+    },
+    {
+      "cache_key": "7273bdae01c4a9ad",
+      "url": "https://musicbrainz.org/ws/2/artist/9df7ddfb-75fe-4470-9269-5810d9263b09?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7f20b18e2bd558e6"
+    },
+    {
+      "cache_key": "c0d9e0e65dbf925c",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=0a419e0b-0e5b-4dd5-8680-335aa1c3f968&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "e5b3693d0d98b528"
+    }
+  ]
+}

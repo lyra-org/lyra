@@ -1,9 +1,24 @@
 {
   "test_name": "猿芝居_なとり",
   "scenario_id": "1078c2da79ac375c",
-  "cache_keys": [
-    "1eda84b84e8191cb",
-    "43a31ddf310208c9",
-    "4ba1f6de7f77c2a5"
+  "responses": [
+    {
+      "cache_key": "1eda84b84e8191cb",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%AA%E3%81%A8%E3%82%8A",
+      "status_code": 200,
+      "body_hash": "89606c89ade627c1"
+    },
+    {
+      "cache_key": "43a31ddf310208c9",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=1d651962-8d72-4fa8-bce9-62578850877e&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "9b70d4cdfca039a1"
+    },
+    {
+      "cache_key": "4ba1f6de7f77c2a5",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%8C%BF%E8%8A%9D%E5%B1%85&limit=100",
+      "status_code": 200,
+      "body_hash": "56f063c3cf47fdde"
+    }
   ]
 }

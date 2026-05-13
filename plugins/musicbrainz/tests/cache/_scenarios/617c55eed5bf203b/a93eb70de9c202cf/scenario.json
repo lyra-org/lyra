@@ -1,0 +1,30 @@
+{
+  "test_name": "真っ白_藤井_風",
+  "scenario_id": "a93eb70de9c202cf",
+  "responses": [
+    {
+      "cache_key": "1c97b647319c3596",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E8%97%A4%E4%BA%95%20%E9%A2%A8",
+      "status_code": 200,
+      "body_hash": "5ba5b2e9e554d328"
+    },
+    {
+      "cache_key": "2001bf809ba8c3a5",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=1109a8dd-b27b-4ead-aeb0-5c8ed3b88595&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "ef8ea1bb5d0bd902"
+    },
+    {
+      "cache_key": "722a58f809866166",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%9C%9F%E3%81%A3%E7%99%BD&limit=100",
+      "status_code": 200,
+      "body_hash": "a3e78ecd800be488"
+    },
+    {
+      "cache_key": "ecf26711b5d69bd7",
+      "url": "https://musicbrainz.org/ws/2/work/4b88a8b5-74e4-49b6-9c13-2dc30f9baa46?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f2a809bf110f5cf4"
+    }
+  ]
+}

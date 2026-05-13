@@ -1,9 +1,24 @@
 {
   "test_name": "under_night_in_birth_exelate_original_sound_track_来兎",
   "scenario_id": "8bbd94651d979563",
-  "cache_keys": [
-    "7d15eb56c8e4cc33",
-    "9af5b8b258498074",
-    "9f7be830dfd81b98"
+  "responses": [
+    {
+      "cache_key": "7d15eb56c8e4cc33",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AUNDER%20NIGHT%20IN%5C-BIRTH%20Exe%5C%3ALate%20Original%20Sound%20Track&limit=100",
+      "status_code": 200,
+      "body_hash": "9436840c335cca82"
+    },
+    {
+      "cache_key": "9af5b8b258498074",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%9D%A5%E5%85%8E",
+      "status_code": 200,
+      "body_hash": "b07a0c5422ada0b3"
+    },
+    {
+      "cache_key": "9f7be830dfd81b98",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=ea1e8e67-3489-48ad-b86c-881f721e6c35&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "18c2417ad850228e"
+    }
   ]
 }

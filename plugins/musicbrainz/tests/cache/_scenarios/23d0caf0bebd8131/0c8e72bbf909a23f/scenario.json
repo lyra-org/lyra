@@ -1,9 +1,24 @@
 {
   "test_name": "薔薇と散る_akasaki",
   "scenario_id": "0c8e72bbf909a23f",
-  "cache_keys": [
-    "311ae23268bdeb2f",
-    "80ea61ca99c8578c",
-    "be980f1a11921090"
+  "responses": [
+    {
+      "cache_key": "311ae23268bdeb2f",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E8%96%94%E8%96%87%E3%81%A8%E6%95%A3%E3%82%8B&limit=100",
+      "status_code": 200,
+      "body_hash": "c99aad32a75bee5b"
+    },
+    {
+      "cache_key": "80ea61ca99c8578c",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=baaeecaf-a87f-4897-9d86-3458ebf9c262&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "2b8eaeebffa45992"
+    },
+    {
+      "cache_key": "be980f1a11921090",
+      "url": "https://musicbrainz.org/ws/2/artist?query=AKASAKI",
+      "status_code": 200,
+      "body_hash": "d30862a1a7f6155a"
+    }
   ]
 }

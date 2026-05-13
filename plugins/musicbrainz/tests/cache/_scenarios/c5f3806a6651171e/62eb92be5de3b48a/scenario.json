@@ -1,0 +1,42 @@
+{
+  "test_name": "shine_as_usual_now_im_going_from_underground_kessoku_band",
+  "scenario_id": "62eb92be5de3b48a",
+  "responses": [
+    {
+      "cache_key": "2f82b1cef9403ffe",
+      "url": "https://musicbrainz.org/ws/2/work/8ae86c2f-15ad-4207-9e0f-1f06f4363323?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ef4cbb48ac745861"
+    },
+    {
+      "cache_key": "3936beea59f7c89c",
+      "url": "https://musicbrainz.org/ws/2/artist?query=kessoku%20band",
+      "status_code": 200,
+      "body_hash": "3a11944fc33b4b14"
+    },
+    {
+      "cache_key": "6e9aea5f7833a69e",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=db06a359-0c3a-4d10-afa4-17e53340164b&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "0ecb7de755e94fb9"
+    },
+    {
+      "cache_key": "72a5c85c7583e757",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AShine%20as%20usual%20%5C%2F%20Now%2C%20I'm%20going%20from%20underground&limit=100",
+      "status_code": 200,
+      "body_hash": "23ebaba26aa193f6"
+    },
+    {
+      "cache_key": "c63da08baa1bcd90",
+      "url": "https://musicbrainz.org/ws/2/artist/c1b0fe0a-779d-43ed-b193-4370f0d0f88f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "eee7636534ab6f18"
+    },
+    {
+      "cache_key": "e147e8f319a10972",
+      "url": "https://musicbrainz.org/ws/2/work/25837981-2492-44a9-88b7-7900820f7dd4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "12bf721a90d81968"
+    }
+  ]
+}

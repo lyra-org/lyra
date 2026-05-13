@@ -1,0 +1,42 @@
+{
+  "test_name": "メフィスト_女王蜂",
+  "scenario_id": "354698fe509321ed",
+  "responses": [
+    {
+      "cache_key": "353261cba635fcd3",
+      "url": "https://musicbrainz.org/ws/2/work/e20c8cd5-9206-4bba-a697-dfcbd3d9cb77?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "571b0064fd5f2aa9"
+    },
+    {
+      "cache_key": "9afede5c13e59112",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%83%A1%E3%83%95%E3%82%A3%E3%82%B9%E3%83%88&limit=100",
+      "status_code": 200,
+      "body_hash": "c213b48d27cf852a"
+    },
+    {
+      "cache_key": "aed5f7bf97936c63",
+      "url": "https://musicbrainz.org/ws/2/work/4ac9d397-d4e2-4a24-b112-07f7a6dd25bf?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3868510a25dbc3e5"
+    },
+    {
+      "cache_key": "af806097585f8b6c",
+      "url": "https://musicbrainz.org/ws/2/artist/9b643375-2913-4877-bb1e-3de576ff20ab?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "318dd2d204ca23c5"
+    },
+    {
+      "cache_key": "c1039b908bf8ec37",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=5cd56563-4149-4988-a2f8-653f52ed0ddd&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "8503a1b0bb332978"
+    },
+    {
+      "cache_key": "dfa66c4b368212d3",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E5%A5%B3%E7%8E%8B%E8%9C%82",
+      "status_code": 200,
+      "body_hash": "df225ec8e8159f1c"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "test_name": "chance_revenge_ep_web_安月名莉子",
+  "scenario_id": "0dc3eeec21541d2a",
+  "responses": [
+    {
+      "cache_key": "0074954efa00cd36",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AChance%5C!%20%26%20Revenge%5C!&limit=100",
+      "status_code": 200,
+      "body_hash": "674e4ee6b8c92d28"
+    },
+    {
+      "cache_key": "00e10cbb6989837f",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=8f2204c4-b6c2-4e8c-994d-8bc0b687c3eb&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "d48eaa89754dfc3b"
+    },
+    {
+      "cache_key": "028b739f70472178",
+      "url": "https://musicbrainz.org/ws/2/work/fcd7d2ff-6fe6-4b91-b21b-2749339d992c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "59fc494f6eff8cc0"
+    },
+    {
+      "cache_key": "a20f74a816ff2d25",
+      "url": "https://musicbrainz.org/ws/2/work/b9b3f81d-75e3-4ceb-a5e7-771014209cf6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6b0ad896efafa2b3"
+    },
+    {
+      "cache_key": "c4b2174b4e55689b",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E5%AE%89%E6%9C%88%E5%90%8D%E8%8E%89%E5%AD%90",
+      "status_code": 200,
+      "body_hash": "6728bd0153f97876"
+    }
+  ]
+}

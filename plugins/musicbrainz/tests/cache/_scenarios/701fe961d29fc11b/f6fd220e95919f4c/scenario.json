@@ -1,0 +1,54 @@
+{
+  "test_name": "ウェザーステーション_稲葉曇",
+  "scenario_id": "f6fd220e95919f4c",
+  "responses": [
+    {
+      "cache_key": "3e7ea44eb49f1f11",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%A8%B2%E8%91%89%E6%9B%87",
+      "status_code": 200,
+      "body_hash": "895274b0e8cb07ea"
+    },
+    {
+      "cache_key": "9635041f9611c0d0",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%A6%E3%82%A7%E3%82%B6%E3%83%BC%E3%82%B9%E3%83%86%E3%83%BC%E3%82%B7%E3%83%A7%E3%83%B3&limit=100",
+      "status_code": 200,
+      "body_hash": "3571ab004520c6bc"
+    },
+    {
+      "cache_key": "a3bb500ce95957cb",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=16a3a5f3-5108-442e-9454-990367f5a490&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "4de5d295f2dadf9f"
+    },
+    {
+      "cache_key": "a777a883adf248b6",
+      "url": "https://musicbrainz.org/ws/2/work/16df2078-2a4c-4ac1-987c-09620db81a9c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9d4e45fa0ebfd09b"
+    },
+    {
+      "cache_key": "add82660cc81a7e9",
+      "url": "https://musicbrainz.org/ws/2/work/8c555c68-eedb-4f5d-8033-0fe362effdbf?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c73e20ea3930ff47"
+    },
+    {
+      "cache_key": "e1340cedec636b3a",
+      "url": "https://musicbrainz.org/ws/2/work/1a58acfd-1a52-48df-aa91-3322a5e882b5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e4690e52cc5dc6f0"
+    },
+    {
+      "cache_key": "e23a031168564f6c",
+      "url": "https://musicbrainz.org/ws/2/work/bd658610-7df6-4dbc-9aa0-2e64517696fa?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7f2877bafb748f51"
+    },
+    {
+      "cache_key": "f5567686725d7af1",
+      "url": "https://musicbrainz.org/ws/2/work/a9088585-83cd-4a8d-9639-9e2f70c68d73?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "bf706d177056fde6"
+    }
+  ]
+}

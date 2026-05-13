@@ -1,10 +1,30 @@
 {
   "test_name": "flower_drops_cordelia",
   "scenario_id": "42621bad443f45bc",
-  "cache_keys": [
-    "00c7f35f5a2d5dab",
-    "55299eb5fa243045",
-    "5b949dae22e4fcc8",
-    "840fae3b09295dc1"
+  "responses": [
+    {
+      "cache_key": "00c7f35f5a2d5dab",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A002c20a3-8836-405b-babb-6ca9ba9324fb%20AND%20(release%3AFLOWER%20DROPS%20OR%20recording%3AFlower%20Drops)",
+      "status_code": 200,
+      "body_hash": "da156d48942dadb2"
+    },
+    {
+      "cache_key": "55299eb5fa243045",
+      "url": "https://musicbrainz.org/ws/2/release/8b169d5b-423a-40fc-8cc4-ab5b3eb08d87?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels",
+      "status_code": 200,
+      "body_hash": "ce03aebe33ab20fb"
+    },
+    {
+      "cache_key": "5b949dae22e4fcc8",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AFLOWER%20DROPS&limit=100",
+      "status_code": 200,
+      "body_hash": "a8d6432e38f4de18"
+    },
+    {
+      "cache_key": "840fae3b09295dc1",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Cordelia",
+      "status_code": 200,
+      "body_hash": "5a000c04fceb527c"
+    }
   ]
 }

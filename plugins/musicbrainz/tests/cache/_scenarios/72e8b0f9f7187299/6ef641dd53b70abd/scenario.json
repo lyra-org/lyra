@@ -1,9 +1,24 @@
 {
   "test_name": "非常口_逃げてみた_なとり",
   "scenario_id": "6ef641dd53b70abd",
-  "cache_keys": [
-    "1eda84b84e8191cb",
-    "e9a7b3a2b92d93b6",
-    "f12c02f4bcfc62b0"
+  "responses": [
+    {
+      "cache_key": "1eda84b84e8191cb",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%AA%E3%81%A8%E3%82%8A",
+      "status_code": 200,
+      "body_hash": "89606c89ade627c1"
+    },
+    {
+      "cache_key": "e9a7b3a2b92d93b6",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E9%9D%9E%E5%B8%B8%E5%8F%A3%20%E9%80%83%E3%81%92%E3%81%A6%E3%81%BF%E3%81%9F&limit=100",
+      "status_code": 200,
+      "body_hash": "68c878f35367fabc"
+    },
+    {
+      "cache_key": "f12c02f4bcfc62b0",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=32bb509e-5a0a-4d19-b22a-bb740eeb1c8e&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "25c4778370e0ebc2"
+    }
   ]
 }

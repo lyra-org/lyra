@@ -1,0 +1,36 @@
+{
+  "test_name": "それでも雨は降るんだね_ツユ",
+  "scenario_id": "9b81530749e87eb7",
+  "responses": [
+    {
+      "cache_key": "22700090babf8c1b",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%9D%E3%82%8C%E3%81%A7%E3%82%82%E9%9B%A8%E3%81%AF%E9%99%8D%E3%82%8B%E3%82%93%E3%81%A0%E3%81%AD&limit=100",
+      "status_code": 200,
+      "body_hash": "387cc8251caf1b61"
+    },
+    {
+      "cache_key": "23a0870128b7f5fd",
+      "url": "https://musicbrainz.org/ws/2/work/5c193796-a168-49f5-9e16-18426e780d37?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "01b248104cc2c6fa"
+    },
+    {
+      "cache_key": "383568b2984357a3",
+      "url": "https://musicbrainz.org/ws/2/artist/2b0a8be6-bfb8-4f62-b21d-f47a3104157e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3b5382f73c70ae12"
+    },
+    {
+      "cache_key": "4f00c44fba590d06",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%84%E3%83%A6",
+      "status_code": 200,
+      "body_hash": "c94a444412bb61a7"
+    },
+    {
+      "cache_key": "d3030453a0966ead",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=a553ba51-45f4-4ee8-9ba7-c9fb50292d70&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "c19a6aad8729538d"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "test_name": "make_me_wonder_official髭男dism",
+  "scenario_id": "c52605f2c93160fc",
+  "responses": [
+    {
+      "cache_key": "233bd64eaf962295",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=ee8b914f-4682-4568-8081-f12fbd201ed5&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "87ad1d4c4e979b7b"
+    },
+    {
+      "cache_key": "5c432dfce495e3b4",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A6dddd7a2-5583-49d0-a8b2-9ee46d04f27e%20AND%20(release%3AMake%20Me%20Wonder%20OR%20recording%3AMake%20Me%20Wonder)&limit=100",
+      "status_code": 200,
+      "body_hash": "d24b8ece6de2c68a"
+    },
+    {
+      "cache_key": "ac202f410fb14406",
+      "url": "https://musicbrainz.org/ws/2/artist/6dddd7a2-5583-49d0-a8b2-9ee46d04f27e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "afd919c36f77a8bb"
+    },
+    {
+      "cache_key": "e632cd6797fe55ad",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Official%E9%AB%AD%E7%94%B7dism",
+      "status_code": 200,
+      "body_hash": "f11c6a7d683b0020"
+    }
+  ]
+}

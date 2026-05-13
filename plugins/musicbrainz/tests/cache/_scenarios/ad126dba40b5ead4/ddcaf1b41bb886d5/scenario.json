@@ -1,0 +1,42 @@
+{
+  "test_name": "やっぱり雨は降るんだね_アコースティックアレンジcd_ツユ",
+  "scenario_id": "ddcaf1b41bb886d5",
+  "responses": [
+    {
+      "cache_key": "079d87ef515de4b3",
+      "url": "https://musicbrainz.org/ws/2/work/aec0daaa-890b-458d-ad55-802cc86092c5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5e7ef837a6049695"
+    },
+    {
+      "cache_key": "36540d220380a767",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%84%E3%81%A3%E3%81%B1%E3%82%8A%E9%9B%A8%E3%81%AF%E9%99%8D%E3%82%8B%E3%82%93%E3%81%A0%E3%81%AD%20%E3%82%A2%E3%82%B3%E3%83%BC%E3%82%B9%E3%83%86%E3%82%A3%E3%83%83%E3%82%AF%E3%82%A2%E3%83%AC%E3%83%B3%E3%82%B8CD&limit=100",
+      "status_code": 200,
+      "body_hash": "0c2df85deecb9adf"
+    },
+    {
+      "cache_key": "383568b2984357a3",
+      "url": "https://musicbrainz.org/ws/2/artist/2b0a8be6-bfb8-4f62-b21d-f47a3104157e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3b5382f73c70ae12"
+    },
+    {
+      "cache_key": "4f00c44fba590d06",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%84%E3%83%A6",
+      "status_code": 200,
+      "body_hash": "e4ae2571d799811c"
+    },
+    {
+      "cache_key": "618d50441e44a9ad",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=ced2e35a-dbed-4a0a-ba91-43f7b5e19769&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3843f429c46b48d9"
+    },
+    {
+      "cache_key": "df87fd30f46a9c1f",
+      "url": "https://musicbrainz.org/ws/2/work/bd99fc64-bcac-4248-b435-d1c48c8c6e1d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b1631a3bdfbb6355"
+    }
+  ]
+}

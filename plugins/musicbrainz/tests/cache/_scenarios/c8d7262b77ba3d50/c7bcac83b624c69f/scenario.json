@@ -1,0 +1,42 @@
+{
+  "test_name": "ブルーバード_いきものがかり",
+  "scenario_id": "c7bcac83b624c69f",
+  "responses": [
+    {
+      "cache_key": "21987d5b0eebecf6",
+      "url": "https://musicbrainz.org/ws/2/work/07b96f24-7565-3396-9733-8f23b0f4de12?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a80a7686fbd49bf4"
+    },
+    {
+      "cache_key": "5ccc49e2579ba352",
+      "url": "https://musicbrainz.org/ws/2/work/ec6eeaad-9345-441a-8827-78f49f2e54b7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ba5af125442d068f"
+    },
+    {
+      "cache_key": "61354e24b582a26f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%84%E3%81%8D%E3%82%82%E3%81%AE%E3%81%8C%E3%81%8B%E3%82%8A",
+      "status_code": 200,
+      "body_hash": "c0b2044056ab427e"
+    },
+    {
+      "cache_key": "9c90316d8a1d1fb9",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=ed160ce2-48b5-3524-bb61-83f31d17f603&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "23d7c9aeb5e0f65b"
+    },
+    {
+      "cache_key": "b147d28ae2e7f914",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%83%96%E3%83%AB%E3%83%BC%E3%83%90%E3%83%BC%E3%83%89&limit=100",
+      "status_code": 200,
+      "body_hash": "690cb2e555c7bd2a"
+    },
+    {
+      "cache_key": "caa5556f9c74e0f2",
+      "url": "https://musicbrainz.org/ws/2/artist/18191eea-369f-42e8-96ab-c1c24e4d0011?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fb16a13bd1f828e9"
+    }
+  ]
+}

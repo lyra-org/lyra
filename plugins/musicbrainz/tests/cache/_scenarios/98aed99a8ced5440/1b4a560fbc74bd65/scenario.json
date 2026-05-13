@@ -1,9 +1,24 @@
 {
   "test_name": "tvアニメ陰の実力者になりたくて_2nd_seasonオリジナルサウンドトラック_末廣_健一郎",
   "scenario_id": "1b4a560fbc74bd65",
-  "cache_keys": [
-    "086b239c6c7e4431",
-    "43fe803099b8985b",
-    "4a15cb3b72e3f791"
+  "responses": [
+    {
+      "cache_key": "086b239c6c7e4431",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=9786791e-70d1-4d06-b316-a0180d41b3be&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "74121662ce6f1ced"
+    },
+    {
+      "cache_key": "43fe803099b8985b",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ATV%E3%82%A2%E3%83%8B%E3%83%A1%E3%80%8C%E9%99%B0%E3%81%AE%E5%AE%9F%E5%8A%9B%E8%80%85%E3%81%AB%E3%81%AA%E3%82%8A%E3%81%9F%E3%81%8F%E3%81%A6%5C!%202nd%20season%E3%80%8D%E3%82%AA%E3%83%AA%E3%82%B8%E3%83%8A%E3%83%AB%E3%82%B5%E3%82%A6%E3%83%B3%E3%83%89%E3%83%88%E3%83%A9%E3%83%83%E3%82%AF&limit=100",
+      "status_code": 200,
+      "body_hash": "983a9d035e403a45"
+    },
+    {
+      "cache_key": "4a15cb3b72e3f791",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%9C%AB%E5%BB%A3%20%E5%81%A5%E4%B8%80%E9%83%8E",
+      "status_code": 200,
+      "body_hash": "2f137ae1c9124cac"
+    }
   ]
 }

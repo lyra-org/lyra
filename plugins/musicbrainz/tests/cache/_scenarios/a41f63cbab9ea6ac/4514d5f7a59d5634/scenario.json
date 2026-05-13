@@ -1,9 +1,24 @@
 {
   "test_name": "philia_上北健",
   "scenario_id": "4514d5f7a59d5634",
-  "cache_keys": [
-    "0e044b5fbe8c7a85",
-    "21afb2910c8300cf",
-    "865a564d3bab3d08"
+  "responses": [
+    {
+      "cache_key": "0e044b5fbe8c7a85",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E4%B8%8A%E5%8C%97%E5%81%A5",
+      "status_code": 200,
+      "body_hash": "20c1353e2f15a826"
+    },
+    {
+      "cache_key": "21afb2910c8300cf",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3APhilia&limit=100",
+      "status_code": 200,
+      "body_hash": "8fd1e391ec2038fd"
+    },
+    {
+      "cache_key": "865a564d3bab3d08",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=75656463-ac43-4ab7-a909-3391a6fd1457&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "848f6a97f42dfb74"
+    }
   ]
 }

@@ -1,9 +1,24 @@
 {
   "test_name": "chainsaw_man_the_movie_reze_arc_original_soundtrack_summers_end_牛尾憲輔",
   "scenario_id": "944b8a7e0b6c4e5b",
-  "cache_keys": [
-    "7398e49ac00b05c5",
-    "b293297b73007225",
-    "d6fd4297855f37ff"
+  "responses": [
+    {
+      "cache_key": "7398e49ac00b05c5",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=bc0bfa64-a0da-47a2-8ef5-2f1e499e6ed5&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "0f6b06e809fd7682"
+    },
+    {
+      "cache_key": "b293297b73007225",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A3f5999c4-6647-45a1-90d6-857c667ca80b%20AND%20(release%3ACHAINSAW%20MAN%20THE%20MOVIE%EF%BC%9A%20REZE%20ARC%20original%20soundtrack%20%5C-summer's%20end%5C-%20%5C(2025%5C)%20%5C%7Bmappa%20records%2C%20IXCL%5C-10001%2C%20CD%5C%7D%20OR%20recording%3Afrom%20below%20with%20love)&limit=100",
+      "status_code": 200,
+      "body_hash": "0dfe52a868911a2c"
+    },
+    {
+      "cache_key": "d6fd4297855f37ff",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%89%9B%E5%B0%BE%E6%86%B2%E8%BC%94",
+      "status_code": 200,
+      "body_hash": "d02355d557f4a0f0"
+    }
   ]
 }

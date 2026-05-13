@@ -1,0 +1,36 @@
+{
+  "test_name": "海馬成長痛_ずっと真夜中でいいのに",
+  "scenario_id": "843da17c9d158847",
+  "responses": [
+    {
+      "cache_key": "638b486c9b64e1e6",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=ff51f597-075c-43d9-bd5f-8fbfaa63c2cc&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "fa5da34f2d2d4f6f"
+    },
+    {
+      "cache_key": "811f6fd695c139b9",
+      "url": "https://musicbrainz.org/ws/2/artist/14d2a235-30e2-489f-b490-f9dc7d2c0861?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "740c6677a850bf4c"
+    },
+    {
+      "cache_key": "8e193bd90a4d035b",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%B5%B7%E9%A6%AC%E6%88%90%E9%95%B7%E7%97%9B&limit=100",
+      "status_code": 200,
+      "body_hash": "064793fc4ae54cf0"
+    },
+    {
+      "cache_key": "a9d8b4556c2b964a",
+      "url": "https://musicbrainz.org/ws/2/work/85125e95-70e9-40f3-80bf-be89e82b24f0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fa722cb61e5106ee"
+    },
+    {
+      "cache_key": "b55c2c8f136cd473",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%9A%E3%81%A3%E3%81%A8%E7%9C%9F%E5%A4%9C%E4%B8%AD%E3%81%A7%E3%81%84%E3%81%84%E3%81%AE%E3%81%AB%E3%80%82",
+      "status_code": 200,
+      "body_hash": "d7c0bce408f90ecc"
+    }
+  ]
+}

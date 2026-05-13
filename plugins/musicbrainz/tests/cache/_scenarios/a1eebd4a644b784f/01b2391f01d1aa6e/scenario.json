@@ -1,0 +1,30 @@
+{
+  "test_name": "糸電話_なとり",
+  "scenario_id": "01b2391f01d1aa6e",
+  "responses": [
+    {
+      "cache_key": "1eda84b84e8191cb",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%AA%E3%81%A8%E3%82%8A",
+      "status_code": 200,
+      "body_hash": "89606c89ade627c1"
+    },
+    {
+      "cache_key": "68672eced2b0868b",
+      "url": "https://musicbrainz.org/ws/2/work/a5d7047c-8c6f-4e69-8706-8cc7c1a85ac1?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a440de1e996ce6e5"
+    },
+    {
+      "cache_key": "a4990a17a6c3751c",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%B3%B8%E9%9B%BB%E8%A9%B1&limit=100",
+      "status_code": 200,
+      "body_hash": "9f2026efae4a372d"
+    },
+    {
+      "cache_key": "d046c233a3a97ac7",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=982d9749-8af6-4940-8ff0-b0d4ba617b59&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3291db759518865d"
+    }
+  ]
+}

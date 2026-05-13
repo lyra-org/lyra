@@ -1,0 +1,30 @@
+{
+  "test_name": "workin_hard_藤井風",
+  "scenario_id": "8d1fbcc7c2ebbf6d",
+  "responses": [
+    {
+      "cache_key": "197f002ce6dea3be",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Ac3a4aeca-8f02-4d22-b1ff-693434ab09a8%20AND%20(release%3AWorkin'%20Hard%20OR%20recording%3AWorkin'%20Hard)&limit=100",
+      "status_code": 200,
+      "body_hash": "88dab22c09d645c1"
+    },
+    {
+      "cache_key": "44e0e816df2f598c",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=b91e26e2-8c08-41db-8e4d-47b7151e4248&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "75725b7f16158f0a"
+    },
+    {
+      "cache_key": "bd96934d5d4d2fa7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E8%97%A4%E4%BA%95%E9%A2%A8",
+      "status_code": 200,
+      "body_hash": "379c7170bade508f"
+    },
+    {
+      "cache_key": "e7b4e471412d9e17",
+      "url": "https://musicbrainz.org/ws/2/work/1adcc228-5442-4d9a-ab5d-90020da74704?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "41a405de51d9c5c2"
+    }
+  ]
+}

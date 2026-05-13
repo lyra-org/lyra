@@ -1,0 +1,36 @@
+{
+  "test_name": "アドレナ_yoasobi",
+  "scenario_id": "9bc77393e5e13fea",
+  "responses": [
+    {
+      "cache_key": "52a497a70ee5743a",
+      "url": "https://musicbrainz.org/ws/2/artist/df6c619f-4334-43e2-8b6a-4a32af1e4f85?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "58c45e6af3cae791"
+    },
+    {
+      "cache_key": "75c4e9f9d304ab15",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=74355935-5cb0-4974-a7bb-74296a3b4c9e&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "f86a1e8a4db2532d"
+    },
+    {
+      "cache_key": "7ab75e70a4eadbfc",
+      "url": "https://musicbrainz.org/ws/2/work/50613a47-eeb5-43f1-9c20-0b6392688d7e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "41086f23aad796e2"
+    },
+    {
+      "cache_key": "9f896e1e04fd8bb2",
+      "url": "https://musicbrainz.org/ws/2/artist?query=YOASOBI",
+      "status_code": 200,
+      "body_hash": "1a72644d0fe57a2a"
+    },
+    {
+      "cache_key": "f164c2019527ef0a",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%A2%E3%83%89%E3%83%AC%E3%83%8A&limit=100",
+      "status_code": 200,
+      "body_hash": "4b73154ab930bb4a"
+    }
+  ]
+}

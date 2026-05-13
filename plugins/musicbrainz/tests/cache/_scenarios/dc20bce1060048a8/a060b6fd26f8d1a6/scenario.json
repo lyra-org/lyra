@@ -1,10 +1,30 @@
 {
   "test_name": "羊は眠らない_susumu",
   "scenario_id": "a060b6fd26f8d1a6",
-  "cache_keys": [
-    "38c135c36978eed5",
-    "60421524416ea6b5",
-    "6afa489b619e48a6",
-    "ec5e0a40fafb47e0"
+  "responses": [
+    {
+      "cache_key": "38c135c36978eed5",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A7b05d6fe-91e8-4cb9-a401-2a13b1578716%20AND%20(release%3A%E7%BE%8A%E3%81%AF%E7%9C%A0%E3%82%89%E3%81%AA%E3%81%84%20OR%20recording%3A%E7%BE%8A%E3%81%AF%E7%9C%A0%E3%82%89%E3%81%AA%E3%81%84)",
+      "status_code": 200,
+      "body_hash": "7e6d631f87374464"
+    },
+    {
+      "cache_key": "60421524416ea6b5",
+      "url": "https://musicbrainz.org/ws/2/artist?query=susumu.",
+      "status_code": 200,
+      "body_hash": "bfe96506e98a551c"
+    },
+    {
+      "cache_key": "6afa489b619e48a6",
+      "url": "https://musicbrainz.org/ws/2/release/dec3efe3-1ffc-4108-9a5c-4b68213daf39?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels",
+      "status_code": 200,
+      "body_hash": "6527e53d8493dfc0"
+    },
+    {
+      "cache_key": "ec5e0a40fafb47e0",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%BE%8A%E3%81%AF%E7%9C%A0%E3%82%89%E3%81%AA%E3%81%84&limit=100",
+      "status_code": 200,
+      "body_hash": "cf0e19496369fbf6"
+    }
   ]
 }

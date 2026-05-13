@@ -1,0 +1,42 @@
+{
+  "test_name": "sincerely_true",
+  "scenario_id": "68e01013f9707947",
+  "responses": [
+    {
+      "cache_key": "5e3e08a7eec0b3c5",
+      "url": "https://musicbrainz.org/ws/2/work/6f2a8d9e-3806-447d-a8f7-2ad8fd6726b6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6db9bc71a3722057"
+    },
+    {
+      "cache_key": "6c042368acf5f578",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Aff5404bc-147f-47ee-bf7e-1fc21eb082e0%20AND%20(release%3A%E5%94%90%E6%B2%A2%E7%BE%8E%E5%B8%86%20OR%20recording%3ASincerely)&limit=100",
+      "status_code": 200,
+      "body_hash": "ccc51ed440411e09"
+    },
+    {
+      "cache_key": "7acd92bcf5646afa",
+      "url": "https://musicbrainz.org/ws/2/work/cf0549ac-b151-4285-9aab-ffe541c38495?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "95123219ef846331"
+    },
+    {
+      "cache_key": "c06a3822d9fb0737",
+      "url": "https://musicbrainz.org/ws/2/work/4e0b8e81-47e5-4c0b-9df1-5582fb54de32?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "832615f005b2bee0"
+    },
+    {
+      "cache_key": "e55129aeee1f6297",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=423c8d2a-1603-42ef-924f-5ab7e4c2e636&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "095a4c9ee85f1829"
+    },
+    {
+      "cache_key": "e77dbc909c7168dd",
+      "url": "https://musicbrainz.org/ws/2/artist?query=TRUE",
+      "status_code": 200,
+      "body_hash": "2ded03e6322c0f74"
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "test_name": "remindfultwo_ダズビー",
+  "scenario_id": "322e95b02092d01b",
+  "responses": [
+    {
+      "cache_key": "464af276c4d35619",
+      "url": "https://musicbrainz.org/ws/2/work/a4666588-07c4-49d8-9329-1d4f6abc9d19?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4859bbf14c5e1a10"
+    },
+    {
+      "cache_key": "4cbe52492fd2863d",
+      "url": "https://musicbrainz.org/ws/2/work/7302259b-3d3f-44c2-b792-a4fb83701813?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0432a61ccdf67ee5"
+    },
+    {
+      "cache_key": "4d37cf891c1bc75b",
+      "url": "https://musicbrainz.org/ws/2/work/1602b4b7-3014-424b-ab56-4817bafe18b0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f725ce86f073d92c"
+    },
+    {
+      "cache_key": "65826539023c03b9",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%80%E3%82%BA%E3%83%93%E3%83%BC",
+      "status_code": 200,
+      "body_hash": "fd3edcc33c790ae6"
+    },
+    {
+      "cache_key": "6b2c697c5d9cbe68",
+      "url": "https://musicbrainz.org/ws/2/work/797da6cc-3a8a-4d52-b37f-6404d949fb6b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "12b7a630a2ccbbdd"
+    },
+    {
+      "cache_key": "7bb9665f0141b207",
+      "url": "https://musicbrainz.org/ws/2/work/b2ce8435-e0f3-48a1-be81-4832b5b19c53?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f031166ec58f2e73"
+    },
+    {
+      "cache_key": "83aae8822dd95f27",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=3f8a3743-a4f3-4527-aa26-c2b81d1fd89b&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "91566be7398f8446"
+    },
+    {
+      "cache_key": "8a86595d30797367",
+      "url": "https://musicbrainz.org/ws/2/work/890a2eb9-de0b-4374-9f09-226fe3708d74?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "83e2feed2881a3db"
+    },
+    {
+      "cache_key": "a13343cf8fe7fa16",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ARemindful.Two&limit=100",
+      "status_code": 200,
+      "body_hash": "55982477cc516b4d"
+    },
+    {
+      "cache_key": "dd97afa3f5c13214",
+      "url": "https://musicbrainz.org/ws/2/work/91651c87-18fe-47aa-83a2-d85645e0f069?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "370bff14da910d90"
+    },
+    {
+      "cache_key": "ea29b3d1c6dd2172",
+      "url": "https://musicbrainz.org/ws/2/work/1d474205-acea-4c8e-a2de-0a10b98282cd?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2e236388ace2efe1"
+    }
+  ]
+}

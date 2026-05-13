@@ -1,0 +1,102 @@
+{
+  "test_name": "the_meaning_of_life_yama",
+  "scenario_id": "b77fca39ec8d673a",
+  "responses": [
+    {
+      "cache_key": "0196d6e26336bcc1",
+      "url": "https://musicbrainz.org/ws/2/work/1b17c26f-b61e-4e84-80f3-4a54dd63790a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "65c08455988414aa"
+    },
+    {
+      "cache_key": "063c8dbf5220dac8",
+      "url": "https://musicbrainz.org/ws/2/artist?query=yama",
+      "status_code": 200,
+      "body_hash": "2062b5af355cd550"
+    },
+    {
+      "cache_key": "2d93bbe4385612f2",
+      "url": "https://musicbrainz.org/ws/2/work/304e8c73-765c-4c21-8126-0892efffe330?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e18353f93560aaf2"
+    },
+    {
+      "cache_key": "42c836f105b3ddd9",
+      "url": "https://musicbrainz.org/ws/2/work/8cef9eaf-814a-4514-be31-dd3ae7d51dfb?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cf6586efa7143bad"
+    },
+    {
+      "cache_key": "5e9a00b00efb985f",
+      "url": "https://musicbrainz.org/ws/2/work/805da4c9-406a-4ac0-9833-afa5d6345d0b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4349e439d3b0ca6c"
+    },
+    {
+      "cache_key": "6a498fb596c4dc68",
+      "url": "https://musicbrainz.org/ws/2/work/b10c6bb5-83d9-4071-a1b4-375161300768?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a15ebc9049a84ecf"
+    },
+    {
+      "cache_key": "6f05be492f129432",
+      "url": "https://musicbrainz.org/ws/2/work/ac67da05-0b39-4444-a8f9-f7eb19eca6d5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6582ece05c19c4bd"
+    },
+    {
+      "cache_key": "751bb4397c1f4d25",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3Athe%20meaning%20of%20life&limit=100",
+      "status_code": 200,
+      "body_hash": "2840c37d1142e093"
+    },
+    {
+      "cache_key": "9a0596e8c1bcb41b",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=f449d698-5add-470a-aa5e-5c24062e92d4&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "1c49bf0022ec4453"
+    },
+    {
+      "cache_key": "a2d8ae8d53d0f614",
+      "url": "https://musicbrainz.org/ws/2/work/2af90249-7fd0-47fe-b642-4f36c70075ae?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ce30499f23a6495b"
+    },
+    {
+      "cache_key": "a5b4ffb32ed88a9d",
+      "url": "https://musicbrainz.org/ws/2/work/215288fb-f25c-423c-99cc-29e7830288b3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9dfe55af23bb65be"
+    },
+    {
+      "cache_key": "aad99c8e7721c317",
+      "url": "https://musicbrainz.org/ws/2/work/375227b5-5dec-4194-9090-78862d214c6e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8dbc7614f99e2388"
+    },
+    {
+      "cache_key": "b821f96b2b03807a",
+      "url": "https://musicbrainz.org/ws/2/work/9a02900e-0717-40e3-8e9a-11382104c773?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "eaeae4f9dd774e11"
+    },
+    {
+      "cache_key": "daca4a13fb38c8bd",
+      "url": "https://musicbrainz.org/ws/2/work/c1c19372-dcb8-4743-91c9-5ce670c9eec3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "05187370679f8769"
+    },
+    {
+      "cache_key": "e0a22fd9c6088839",
+      "url": "https://musicbrainz.org/ws/2/work/ca6b277a-8f0b-4080-8709-2fe940ec7895?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4bcf51358ade0938"
+    },
+    {
+      "cache_key": "f87eafb8b929aa2c",
+      "url": "https://musicbrainz.org/ws/2/work/d272df86-d383-489c-9395-65d7388351d7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2e3d59f0a55d9c6f"
+    }
+  ]
+}

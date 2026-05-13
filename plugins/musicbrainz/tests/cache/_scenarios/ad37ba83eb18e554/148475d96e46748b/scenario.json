@@ -1,0 +1,36 @@
+{
+  "test_name": "one_man_tour_2021_2022_editorial_saitama_super_arena_official髭男dism",
+  "scenario_id": "148475d96e46748b",
+  "responses": [
+    {
+      "cache_key": "ac202f410fb14406",
+      "url": "https://musicbrainz.org/ws/2/artist/6dddd7a2-5583-49d0-a8b2-9ee46d04f27e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7dd1e9d4912bb0b6"
+    },
+    {
+      "cache_key": "b30e561407908d9e",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=b36f5deb-0165-4147-afbc-f95fd8b3c6c2&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "1721890648313ed4"
+    },
+    {
+      "cache_key": "bbfed18c48c6d57e",
+      "url": "https://musicbrainz.org/ws/2/work/445592e2-a78f-433f-97b2-2ae42720c773?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "54b06dc49d2acc81"
+    },
+    {
+      "cache_key": "dda3403e3a28e6b1",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AOne%5C-Man%20Tour%202021%5C-2022%20%5C-Editorial%5C-%40Saitama%20Super%20Arena&limit=100",
+      "status_code": 200,
+      "body_hash": "95452cbedc8f037b"
+    },
+    {
+      "cache_key": "e632cd6797fe55ad",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Official%E9%AB%AD%E7%94%B7dism",
+      "status_code": 200,
+      "body_hash": "89d702e5027d7e17"
+    }
+  ]
+}

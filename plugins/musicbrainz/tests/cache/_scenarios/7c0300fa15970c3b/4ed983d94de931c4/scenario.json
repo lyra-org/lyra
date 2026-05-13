@@ -1,0 +1,36 @@
+{
+  "test_name": "もうどうなってもいいや_星街すいせい",
+  "scenario_id": "4ed983d94de931c4",
+  "responses": [
+    {
+      "cache_key": "3ee072c4bf7e2322",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%98%9F%E8%A1%97%E3%81%99%E3%81%84%E3%81%9B%E3%81%84",
+      "status_code": 200,
+      "body_hash": "8c19c3e932824a94"
+    },
+    {
+      "cache_key": "577e264ccbbe9aba",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=f9dd9f33-8c94-4b9f-948e-d0870146ceca&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "68421d1b925c10f0"
+    },
+    {
+      "cache_key": "6da22be16d768ca5",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%82%E3%81%86%E3%81%A9%E3%81%86%E3%81%AA%E3%81%A3%E3%81%A6%E3%82%82%E3%81%84%E3%81%84%E3%82%84&limit=100",
+      "status_code": 200,
+      "body_hash": "c051785289ef2339"
+    },
+    {
+      "cache_key": "8dbb54a94161e07d",
+      "url": "https://musicbrainz.org/ws/2/work/84db0d27-8c1e-4d94-8cde-5b3ef60c0765?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c98bf099205e0c89"
+    },
+    {
+      "cache_key": "cfbaf84da135f9eb",
+      "url": "https://musicbrainz.org/ws/2/artist/8eeb59f4-0071-4261-b1f8-91d8294622d2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d6a7ee09750c792e"
+    }
+  ]
+}

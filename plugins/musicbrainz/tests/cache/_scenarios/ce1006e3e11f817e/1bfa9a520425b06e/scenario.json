@@ -1,0 +1,48 @@
+{
+  "test_name": "drown_you_i_milet",
+  "scenario_id": "1bfa9a520425b06e",
+  "responses": [
+    {
+      "cache_key": "09c42eb2d4731c20",
+      "url": "https://musicbrainz.org/ws/2/work/d35a9f3c-3eb6-4b5a-971d-8a796318ecc0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0b22a94f2be68ff5"
+    },
+    {
+      "cache_key": "0dd4a951f13267b8",
+      "url": "https://musicbrainz.org/ws/2/work/b07342de-9e72-471b-a5df-bffaaf829852?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "785224d045ddfcf7"
+    },
+    {
+      "cache_key": "8a2a42f9f9d2166e",
+      "url": "https://musicbrainz.org/ws/2/artist?query=milet",
+      "status_code": 200,
+      "body_hash": "c545ad8b5479f567"
+    },
+    {
+      "cache_key": "9bfbe2b1cd0a8bd4",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=30a2fe5a-aecc-4af8-b064-1b72c647b6c5&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "5702a37c106e7b6f"
+    },
+    {
+      "cache_key": "b77c3f3044ea9e93",
+      "url": "https://musicbrainz.org/ws/2/work/49f8bd0f-b19e-4cdc-a090-305cd5ed12fd?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "936752cb4b96f1bb"
+    },
+    {
+      "cache_key": "bf11a42352e4acec",
+      "url": "https://musicbrainz.org/ws/2/work/822810e8-5efb-41ab-bfdd-0cf7d1e6caa9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ff8d71bcf4c71d34"
+    },
+    {
+      "cache_key": "c869941fcf30e1dc",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ADrown%20%5C%2F%20You%20%26%20I&limit=100",
+      "status_code": 200,
+      "body_hash": "d2d9c5700adf47e2"
+    }
+  ]
+}

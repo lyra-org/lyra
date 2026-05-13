@@ -1,0 +1,36 @@
+{
+  "test_name": "otomodachi_phantom_siita",
+  "scenario_id": "c67f27e9128ec293",
+  "responses": [
+    {
+      "cache_key": "1143cf3b85f04032",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A10527a74-4a9a-4d5a-9deb-96fb4242d90f%20AND%20(release%3AOtomodachi%20OR%20recording%3AOtomodachi)&limit=100",
+      "status_code": 200,
+      "body_hash": "79b5313c8e284d52"
+    },
+    {
+      "cache_key": "66b26e805c562c79",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Phantom%20Siita",
+      "status_code": 200,
+      "body_hash": "c915dea4f21b269d"
+    },
+    {
+      "cache_key": "7add2b87ed5f1108",
+      "url": "https://musicbrainz.org/ws/2/artist/10527a74-4a9a-4d5a-9deb-96fb4242d90f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1ebe66fc89f416d2"
+    },
+    {
+      "cache_key": "951a6432cc258506",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=0cc1caac-f105-47d5-994e-6ca44e8b8e80&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "cd44e063691176ee"
+    },
+    {
+      "cache_key": "afd7a2eca04ce079",
+      "url": "https://musicbrainz.org/ws/2/work/e577af13-0db2-4f71-af23-f28e95b09a8f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3598581bee6e316a"
+    }
+  ]
+}

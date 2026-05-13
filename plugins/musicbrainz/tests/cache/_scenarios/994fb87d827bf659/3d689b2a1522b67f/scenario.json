@@ -1,9 +1,24 @@
 {
   "test_name": "ホリミヤ_piece_オリジナルサウンドトラック_横山克",
   "scenario_id": "3d689b2a1522b67f",
-  "cache_keys": [
-    "26fe3db4e3aa57c8",
-    "611a52ff5f921b08",
-    "99bd16a4dea85d2b"
+  "responses": [
+    {
+      "cache_key": "26fe3db4e3aa57c8",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%83%9B%E3%83%AA%E3%83%9F%E3%83%A4%20%5C-piece%5C-%20%E3%82%AA%E3%83%AA%E3%82%B8%E3%83%8A%E3%83%AB%E3%82%B5%E3%82%A6%E3%83%B3%E3%83%89%E3%83%88%E3%83%A9%E3%83%83%E3%82%AF&limit=100",
+      "status_code": 200,
+      "body_hash": "3d2192a3784d99f9"
+    },
+    {
+      "cache_key": "611a52ff5f921b08",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%A8%AA%E5%B1%B1%E5%85%8B",
+      "status_code": 200,
+      "body_hash": "7ab722e70bad84cd"
+    },
+    {
+      "cache_key": "99bd16a4dea85d2b",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=a9ecb929-b256-4beb-a3d0-1e00fff6592b&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "dd8aed6e6c6444c5"
+    }
   ]
 }

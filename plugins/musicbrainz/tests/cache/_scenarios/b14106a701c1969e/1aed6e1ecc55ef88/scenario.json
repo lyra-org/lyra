@@ -1,10 +1,30 @@
 {
   "test_name": "銃口をこちらに向けて_すんひ",
   "scenario_id": "1aed6e1ecc55ef88",
-  "cache_keys": [
-    "2651637499ab9b5d",
-    "54e74789d86a47f9",
-    "c40cfbc9f98a9b53",
-    "c910e1ac3909b0e6"
+  "responses": [
+    {
+      "cache_key": "2651637499ab9b5d",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E9%8A%83%E5%8F%A3%E3%82%92%E3%81%93%E3%81%A1%E3%82%89%E3%81%AB%E5%90%91%E3%81%91%E3%81%A6&limit=100",
+      "status_code": 200,
+      "body_hash": "d230f2b9ba9a9d9f"
+    },
+    {
+      "cache_key": "54e74789d86a47f9",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%99%E3%82%93%E3%81%B2",
+      "status_code": 200,
+      "body_hash": "4d6041219fd6f73f"
+    },
+    {
+      "cache_key": "c40cfbc9f98a9b53",
+      "url": "https://musicbrainz.org/ws/2/release/c0c7d349-64ab-4b7c-9d1a-171f280f45e6?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels",
+      "status_code": 200,
+      "body_hash": "8f96e6f02c3fd1e0"
+    },
+    {
+      "cache_key": "c910e1ac3909b0e6",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A6498d8a9-d901-461a-8c0d-3ea72a5379bd%20AND%20(release%3A%E9%8A%83%E5%8F%A3%E3%82%92%E3%81%93%E3%81%A1%E3%82%89%E3%81%AB%E5%90%91%E3%81%91%E3%81%A6%20OR%20recording%3A%E9%8A%83%E5%8F%A3%E3%82%92%E3%81%93%E3%81%A1%E3%82%89%E3%81%AB%E5%90%91%E3%81%91%E3%81%A6)",
+      "status_code": 200,
+      "body_hash": "cb72ab25018764de"
+    }
   ]
 }

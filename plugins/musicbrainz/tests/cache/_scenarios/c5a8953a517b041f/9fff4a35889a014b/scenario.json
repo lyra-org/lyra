@@ -1,0 +1,102 @@
+{
+  "test_name": "black_bride_gyze",
+  "scenario_id": "9fff4a35889a014b",
+  "responses": [
+    {
+      "cache_key": "1f5fe604e77012d3",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=10c9cc61-ae32-455d-abd8-f8faf4362552&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "1ba4ae001cda1446"
+    },
+    {
+      "cache_key": "5756034602b80354",
+      "url": "https://musicbrainz.org/ws/2/work/4e4398b7-cd36-45a7-ab55-8561ace8d400?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "daa9bf1f4c8167e2"
+    },
+    {
+      "cache_key": "5f038c57a8bd2b8d",
+      "url": "https://musicbrainz.org/ws/2/work/087c9ad0-fe61-4209-ac8e-9417560a0d70?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3619162439563c2b"
+    },
+    {
+      "cache_key": "6c2abb57641974c0",
+      "url": "https://musicbrainz.org/ws/2/work/4a873272-cd5c-48e2-89ec-e8e77a8a62e7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9cb424ceed60f632"
+    },
+    {
+      "cache_key": "862173894e6c6ba4",
+      "url": "https://musicbrainz.org/ws/2/work/abcac63c-8a36-4a25-ab4d-7e1fd286fc37?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8ba2d09ab7a47df1"
+    },
+    {
+      "cache_key": "8e22f7e543444ecd",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Gyze",
+      "status_code": 200,
+      "body_hash": "8cd76224edac1552"
+    },
+    {
+      "cache_key": "cdbcd4b6bc06aaad",
+      "url": "https://musicbrainz.org/ws/2/work/b13ecb20-069f-48f2-b17a-9c32d15ac671?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "aa9682fe73cc2edf"
+    },
+    {
+      "cache_key": "d5d6257237df1ee9",
+      "url": "https://musicbrainz.org/ws/2/work/dfee4892-372f-4e5b-bed4-7aa1a15e4705?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f07d9d8cf507a3b4"
+    },
+    {
+      "cache_key": "d99c9c859073f371",
+      "url": "https://musicbrainz.org/ws/2/work/e753690e-37d5-401f-97bd-fbc80fc778f1?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9e18c78ec37e91e0"
+    },
+    {
+      "cache_key": "e0f49d31d8c409c8",
+      "url": "https://musicbrainz.org/ws/2/work/c057f20f-b33d-46c6-b6ee-e8a97b7ac900?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6454faff0e6356fe"
+    },
+    {
+      "cache_key": "e293df4f0a239ded",
+      "url": "https://musicbrainz.org/ws/2/artist/e0efb258-e7fc-4305-96fa-45e8bac2200e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "de823333e2c3d4b7"
+    },
+    {
+      "cache_key": "e3603a8062e09fa6",
+      "url": "https://musicbrainz.org/ws/2/work/6af4797f-930c-48e0-94b0-9ed236e22962?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e108ee6ecae4539c"
+    },
+    {
+      "cache_key": "eb954eaec04d51ca",
+      "url": "https://musicbrainz.org/ws/2/work/1ae25891-ce6f-4a06-a475-46b931bbb8dc?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f4759071a54956da"
+    },
+    {
+      "cache_key": "efa546bb4cdc7e46",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ABlack%20Bride&limit=100",
+      "status_code": 200,
+      "body_hash": "11941e4213d3a157"
+    },
+    {
+      "cache_key": "f1199f4d0b78ae50",
+      "url": "https://musicbrainz.org/ws/2/work/54e40f0b-1744-409f-b5f3-78643262a21d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5599165365077190"
+    },
+    {
+      "cache_key": "f1cde6949954422d",
+      "url": "https://musicbrainz.org/ws/2/work/453295af-016b-475d-b74f-0db35e39d487?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "42cfe65f64464a82"
+    }
+  ]
+}

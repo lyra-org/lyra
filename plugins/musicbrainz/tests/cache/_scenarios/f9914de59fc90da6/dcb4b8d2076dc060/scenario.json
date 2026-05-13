@@ -1,0 +1,42 @@
+{
+  "test_name": "starry_wish_水瀬いのり",
+  "scenario_id": "dcb4b8d2076dc060",
+  "responses": [
+    {
+      "cache_key": "1181de3e313872af",
+      "url": "https://musicbrainz.org/ws/2/work/540bcec3-6b90-4424-b32c-89c5a9e2e123?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "eeaa83c18d219f36"
+    },
+    {
+      "cache_key": "12f14f483ad11605",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%B0%B4%E7%80%AC%E3%81%84%E3%81%AE%E3%82%8A",
+      "status_code": 200,
+      "body_hash": "087a6b27dc751090"
+    },
+    {
+      "cache_key": "47a2716226d62012",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AStarry%20Wish&limit=100",
+      "status_code": 200,
+      "body_hash": "de1267a232145a25"
+    },
+    {
+      "cache_key": "6b1c70217907290e",
+      "url": "https://musicbrainz.org/ws/2/work/878475ee-644f-4504-87f5-c91f4d88499d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b08822d455e2e093"
+    },
+    {
+      "cache_key": "70c3133834706744",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=48c2a978-4e45-4e1e-8aa5-61c2661b772d&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "41f6b1a79d251769"
+    },
+    {
+      "cache_key": "9b96e84efcba1fc9",
+      "url": "https://musicbrainz.org/ws/2/work/7c44a6aa-a708-4248-ba95-47b60d9cfb71?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b30dbb1bdc8a4cb4"
+    }
+  ]
+}

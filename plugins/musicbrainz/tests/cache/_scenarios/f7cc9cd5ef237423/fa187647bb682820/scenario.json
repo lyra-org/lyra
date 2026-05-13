@@ -1,0 +1,30 @@
+{
+  "test_name": "25_eill",
+  "scenario_id": "fa187647bb682820",
+  "responses": [
+    {
+      "cache_key": "1511f16a5dbcb494",
+      "url": "https://musicbrainz.org/ws/2/artist?query=eill",
+      "status_code": 200,
+      "body_hash": "85cc3f4055b8389b"
+    },
+    {
+      "cache_key": "27d368c2e834d9c5",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Addd72af5-34b6-4321-8338-47c4b67cb247%20AND%20(release%3A25%20OR%20recording%3A25)&limit=100",
+      "status_code": 200,
+      "body_hash": "f8dd9977c82f8505"
+    },
+    {
+      "cache_key": "c2817b03df0d2aa9",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=870bd6e0-8b7f-45a4-8551-091eb1f8abe3&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3da3fc734569c6ff"
+    },
+    {
+      "cache_key": "fc74a6d7b7dd61b6",
+      "url": "https://musicbrainz.org/ws/2/work/f0eda7a6-3b4c-4f30-b6d0-f0e0406d39f5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "71f403a2248dab0a"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "test_name": "yellow_dancer_星野源",
+  "scenario_id": "682b961685c17588",
+  "responses": [
+    {
+      "cache_key": "114e6eccf18d137d",
+      "url": "https://musicbrainz.org/ws/2/work/bb04e663-1c25-4acf-8b9e-7f7cd2ed939b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cc158cacd19a31be"
+    },
+    {
+      "cache_key": "3cd1035e93761b6f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%98%9F%E9%87%8E%E6%BA%90",
+      "status_code": 200,
+      "body_hash": "42e99e6685b13ff8"
+    },
+    {
+      "cache_key": "56c04ec5b959643f",
+      "url": "https://musicbrainz.org/ws/2/work/5b5aa919-d138-4408-b1fa-906099f48be0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "dd20d00dd39abbd5"
+    },
+    {
+      "cache_key": "8339f8cbba53e074",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=923d6e29-8672-46d3-9b3f-847fd630f42c&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "9a933144223bf265"
+    },
+    {
+      "cache_key": "f52ca252f2cfb9d4",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AYELLOW%20DANCER&limit=100",
+      "status_code": 200,
+      "body_hash": "9206ff757ef90962"
+    }
+  ]
+}

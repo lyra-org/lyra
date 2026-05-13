@@ -1,0 +1,36 @@
+{
+  "test_name": "忘れてください_ヨルシカ",
+  "scenario_id": "c62560d0655fb185",
+  "responses": [
+    {
+      "cache_key": "138ea91b876f78d1",
+      "url": "https://musicbrainz.org/ws/2/work/1d770d85-5764-40e7-9e32-7f78c83165f6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "dae0ba9298313b58"
+    },
+    {
+      "cache_key": "1a0d6623f277920b",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=418c1f40-d567-4d5a-b8ee-6e8fc5bd7362&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "eeb820a9e36304e7"
+    },
+    {
+      "cache_key": "266c2bc5c6705fb3",
+      "url": "https://musicbrainz.org/ws/2/artist/dfc6a151-3792-4695-8fda-f64723eaa788?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2fce9613acbd0d0c"
+    },
+    {
+      "cache_key": "5b4e746c416e7e65",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%BF%98%E3%82%8C%E3%81%A6%E3%81%8F%E3%81%A0%E3%81%95%E3%81%84&limit=100",
+      "status_code": 200,
+      "body_hash": "f3851e967758ef00"
+    },
+    {
+      "cache_key": "781e5a6d34dc95ea",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%A8%E3%83%AB%E3%82%B7%E3%82%AB",
+      "status_code": 200,
+      "body_hash": "1cb0f6d8dc20473c"
+    }
+  ]
+}

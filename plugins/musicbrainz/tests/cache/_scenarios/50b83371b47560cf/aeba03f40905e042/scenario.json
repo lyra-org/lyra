@@ -1,0 +1,30 @@
+{
+  "test_name": "満ちてゆく_藤井風",
+  "scenario_id": "aeba03f40905e042",
+  "responses": [
+    {
+      "cache_key": "5410c73953bba241",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%BA%80%E3%81%A1%E3%81%A6%E3%82%86%E3%81%8F&limit=100",
+      "status_code": 200,
+      "body_hash": "34883f74396ce9b4"
+    },
+    {
+      "cache_key": "7f5ec6dcb16ba341",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=e2d00042-0880-4947-958d-0c6ccd877373&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "bc63bbbd31214b90"
+    },
+    {
+      "cache_key": "8e48122f47006931",
+      "url": "https://musicbrainz.org/ws/2/work/53160992-5fae-4e14-8110-45dd60dae2d0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cb095bf44b826776"
+    },
+    {
+      "cache_key": "bd96934d5d4d2fa7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E8%97%A4%E4%BA%95%E9%A2%A8",
+      "status_code": 200,
+      "body_hash": "82e0c2a1790da31b"
+    }
+  ]
+}

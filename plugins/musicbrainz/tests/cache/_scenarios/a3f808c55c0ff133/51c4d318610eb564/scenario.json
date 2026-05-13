@@ -1,9 +1,24 @@
 {
   "test_name": "ph_suisoh",
   "scenario_id": "51c4d318610eb564",
-  "cache_keys": [
-    "567daee3d6b2196c",
-    "5b0f7ef83166153d",
-    "d95f79800c9743f6"
+  "responses": [
+    {
+      "cache_key": "567daee3d6b2196c",
+      "url": "https://musicbrainz.org/ws/2/artist?query=suisoh",
+      "status_code": 200,
+      "body_hash": "c8cdb5b816d1e69b"
+    },
+    {
+      "cache_key": "5b0f7ef83166153d",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=65773968-e0e3-42d1-9a35-93a2a4b9bd09&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "6854de24c66b0bc2"
+    },
+    {
+      "cache_key": "d95f79800c9743f6",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3Ap.h.&limit=100",
+      "status_code": 200,
+      "body_hash": "5832a91b84351ee9"
+    }
   ]
 }

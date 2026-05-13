@@ -1,0 +1,30 @@
+{
+  "test_name": "bloody_stream_coda",
+  "scenario_id": "9659b7591087e7b1",
+  "responses": [
+    {
+      "cache_key": "2b7ca1ec9b36a3c8",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ABLOODY%20STREAM&limit=100",
+      "status_code": 200,
+      "body_hash": "49f35f2b5f65025e"
+    },
+    {
+      "cache_key": "a1dd625badd4f7b5",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Coda",
+      "status_code": 200,
+      "body_hash": "7a7f4c7d2516e5d9"
+    },
+    {
+      "cache_key": "bd32b71ac30215f4",
+      "url": "https://musicbrainz.org/ws/2/work/1e660d77-eec7-44ad-b3ba-98125eb68a9d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5377425493858cbe"
+    },
+    {
+      "cache_key": "c0e8df040e887f8a",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=b696bd64-9717-4ba1-a059-dd37151c8a6f&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "1fad4b4f00416693"
+    }
+  ]
+}

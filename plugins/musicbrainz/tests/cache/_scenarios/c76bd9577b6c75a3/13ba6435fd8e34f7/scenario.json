@@ -1,0 +1,36 @@
+{
+  "test_name": "magic_tayori",
+  "scenario_id": "13ba6435fd8e34f7",
+  "responses": [
+    {
+      "cache_key": "11d1032d3d7e9094",
+      "url": "https://musicbrainz.org/ws/2/artist/fdfd04bd-f124-4d38-a219-1ad1e8714b9c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f1881b3ba2432edc"
+    },
+    {
+      "cache_key": "27edbcb32f513354",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Afdfd04bd-f124-4d38-a219-1ad1e8714b9c%20AND%20(release%3Amagic%20OR%20recording%3Aenvision)",
+      "status_code": 200,
+      "body_hash": "af6072c4b1eaae17"
+    },
+    {
+      "cache_key": "5fac683fa234fa2b",
+      "url": "https://musicbrainz.org/ws/2/artist?query=tayori",
+      "status_code": 200,
+      "body_hash": "23f5142a103d1550"
+    },
+    {
+      "cache_key": "6416196a00a3f793",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3Amagic&limit=100",
+      "status_code": 200,
+      "body_hash": "6ea2b48221932796"
+    },
+    {
+      "cache_key": "d46efa1b4f7bc053",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=df82f273-b328-4414-aeb1-603a0c058511&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3574d53b35c391cf"
+    }
+  ]
+}

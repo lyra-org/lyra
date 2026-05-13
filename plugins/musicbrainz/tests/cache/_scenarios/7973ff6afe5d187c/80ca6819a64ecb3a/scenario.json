@@ -1,0 +1,30 @@
+{
+  "test_name": "usseewa_ado",
+  "scenario_id": "80ca6819a64ecb3a",
+  "responses": [
+    {
+      "cache_key": "879a4bb5f936642b",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Ae134b52f-2e9e-4734-9bc3-bea9648d1fa1%20AND%20(release%3AUsseewa%20OR%20recording%3AUsseewa)&limit=100",
+      "status_code": 200,
+      "body_hash": "70e17ab8d53b6d79"
+    },
+    {
+      "cache_key": "893cae74f0f5d42c",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=c9e581f3-8ebf-4f51-b80c-a2f5e51234f7&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "f0ddc84f46170670"
+    },
+    {
+      "cache_key": "8b4b3a067f7030ad",
+      "url": "https://musicbrainz.org/ws/2/work/ac1adfb3-e534-41b4-b91b-f9d8203a81a9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "53a9996f729cc49f"
+    },
+    {
+      "cache_key": "9540247bcbf53f6b",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Ado",
+      "status_code": 200,
+      "body_hash": "b89336656cffa89f"
+    }
+  ]
+}

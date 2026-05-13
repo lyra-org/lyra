@@ -1,0 +1,30 @@
+{
+  "test_name": "sanitizer_official髭男dism",
+  "scenario_id": "9515980947cb5580",
+  "responses": [
+    {
+      "cache_key": "581a3de5ce8956a8",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A6dddd7a2-5583-49d0-a8b2-9ee46d04f27e%20AND%20(release%3ASanitizer%20OR%20recording%3ASanitizer)&limit=100",
+      "status_code": 200,
+      "body_hash": "bf73fe65c9dbd207"
+    },
+    {
+      "cache_key": "ac202f410fb14406",
+      "url": "https://musicbrainz.org/ws/2/artist/6dddd7a2-5583-49d0-a8b2-9ee46d04f27e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "559372e096debcbf"
+    },
+    {
+      "cache_key": "dab7ef775f0d8a19",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=e188fc2e-eeef-4121-9e46-cc4fae1eabbb&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "f1cba6a37ab8e37e"
+    },
+    {
+      "cache_key": "e632cd6797fe55ad",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Official%E9%AB%AD%E7%94%B7dism",
+      "status_code": 200,
+      "body_hash": "89d702e5027d7e17"
+    }
+  ]
+}

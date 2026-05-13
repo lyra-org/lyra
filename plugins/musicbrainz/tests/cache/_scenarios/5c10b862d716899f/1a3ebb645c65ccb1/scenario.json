@@ -1,0 +1,42 @@
+{
+  "test_name": "universe_official髭男dism",
+  "scenario_id": "1a3ebb645c65ccb1",
+  "responses": [
+    {
+      "cache_key": "17ce9d3f0f66474d",
+      "url": "https://musicbrainz.org/ws/2/work/c1c12575-ad1c-45f3-b0e1-2f3bf757fa02?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "487c2b4a51e2829b"
+    },
+    {
+      "cache_key": "73218dd86b52f24e",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AUniverse&limit=100",
+      "status_code": 200,
+      "body_hash": "b1f6e4e5e0110b44"
+    },
+    {
+      "cache_key": "a2d142a076f27a8b",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A6dddd7a2-5583-49d0-a8b2-9ee46d04f27e%20AND%20(release%3AUniverse%20OR%20recording%3AUniverse)",
+      "status_code": 200,
+      "body_hash": "676c0852e3e19852"
+    },
+    {
+      "cache_key": "ac202f410fb14406",
+      "url": "https://musicbrainz.org/ws/2/artist/6dddd7a2-5583-49d0-a8b2-9ee46d04f27e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8817acf902941759"
+    },
+    {
+      "cache_key": "e632cd6797fe55ad",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Official%E9%AB%AD%E7%94%B7dism",
+      "status_code": 200,
+      "body_hash": "89d702e5027d7e17"
+    },
+    {
+      "cache_key": "fac7be2e6d4c0f51",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=b1afa50b-6415-41a7-9c4f-5b8480c0d305&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "ccc1d2a690dc1398"
+    }
+  ]
+}

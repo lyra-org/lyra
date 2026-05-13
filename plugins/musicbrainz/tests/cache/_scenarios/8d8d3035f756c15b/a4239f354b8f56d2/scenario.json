@@ -1,0 +1,66 @@
+{
+  "test_name": "demagog_キタニタツヤ",
+  "scenario_id": "a4239f354b8f56d2",
+  "responses": [
+    {
+      "cache_key": "396adcd1b79d00bc",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ADEMAGOG&limit=100",
+      "status_code": 200,
+      "body_hash": "3f9a7f6e27b34fed"
+    },
+    {
+      "cache_key": "5be502008d6d6267",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=4c72672e-f795-4fa6-9c2c-51f73776a828&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "dccecc8e32d3a828"
+    },
+    {
+      "cache_key": "5fcb93a529ba6978",
+      "url": "https://musicbrainz.org/ws/2/work/0ce6d55d-dbfb-40fd-aa8e-421abcd0ce16?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5dec1a278d2becc1"
+    },
+    {
+      "cache_key": "86dcb12f85681e77",
+      "url": "https://musicbrainz.org/ws/2/work/648eb6fa-6166-48c8-8393-9ddd9ee4cdfb?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "dd1ded0f105c0419"
+    },
+    {
+      "cache_key": "883ea970b498fdcf",
+      "url": "https://musicbrainz.org/ws/2/work/4d1321fa-bc01-42e8-8cb2-618c0ecfe9f8?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "12407f0bbe26bb59"
+    },
+    {
+      "cache_key": "936199c470c5b704",
+      "url": "https://musicbrainz.org/ws/2/work/01fff2d1-26e1-43b3-9773-39b55bcb42fb?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "945de53c8cb87c49"
+    },
+    {
+      "cache_key": "ac0511e49115d995",
+      "url": "https://musicbrainz.org/ws/2/work/3f911523-647d-4abb-86b3-2445185151a0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "90f113e8193433db"
+    },
+    {
+      "cache_key": "d5c10760f4493df0",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%82%AD%E3%82%BF%E3%83%8B%E3%82%BF%E3%83%84%E3%83%A4",
+      "status_code": 200,
+      "body_hash": "12e8c5fb0a8c6f39"
+    },
+    {
+      "cache_key": "d60dccbf50d0776e",
+      "url": "https://musicbrainz.org/ws/2/work/274868ec-5cbe-446d-afca-722520a11f9c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c2d5e85959c6fd27"
+    },
+    {
+      "cache_key": "ff5ba01ded8b6cdc",
+      "url": "https://musicbrainz.org/ws/2/work/c1e845f6-0a0b-4382-b0d4-f3c939fae501?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "09f98d2e8015e5d1"
+    }
+  ]
+}

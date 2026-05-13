@@ -1,0 +1,30 @@
+{
+  "test_name": "fight_back_da_ice",
+  "scenario_id": "e5a4da29b68ccde0",
+  "responses": [
+    {
+      "cache_key": "1ebac8df2fe9da16",
+      "url": "https://musicbrainz.org/ws/2/artist/2fc5c58a-711b-4a11-9b7a-7b5ba1f58e04?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "dd605ab11ef62a07"
+    },
+    {
+      "cache_key": "94091b2dceb78412",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Da-iCE",
+      "status_code": 200,
+      "body_hash": "1f9fd8c1b9cf9406"
+    },
+    {
+      "cache_key": "a18b8abd0b5979db",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=2d4eb2e8-75e5-4002-8318-d21733a36009&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "f2803ee07f73869c"
+    },
+    {
+      "cache_key": "d05c010ab395c8ee",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AFIGHT%20BACK&limit=100",
+      "status_code": 200,
+      "body_hash": "329ac3f479d08e88"
+    }
+  ]
+}

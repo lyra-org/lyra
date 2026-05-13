@@ -1,0 +1,102 @@
+{
+  "test_name": "nicheシンドローム_one_ok_rock",
+  "scenario_id": "299dc11986650066",
+  "responses": [
+    {
+      "cache_key": "0029544ba5121665",
+      "url": "https://musicbrainz.org/ws/2/work/8795a11c-ce60-4239-99e7-22387b2b8d7f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a1a910d01ef5709b"
+    },
+    {
+      "cache_key": "03b4870faaef6e65",
+      "url": "https://musicbrainz.org/ws/2/work/deb16488-8881-42e9-a50d-6485df23cbd3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b648ffe5c255ebfc"
+    },
+    {
+      "cache_key": "048df2faacfd74d2",
+      "url": "https://musicbrainz.org/ws/2/work/928fc23a-9396-4888-97d7-3c07d39fafc0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "118ae26c89a4657c"
+    },
+    {
+      "cache_key": "080c007a7741bc13",
+      "url": "https://musicbrainz.org/ws/2/work/5e4eba35-5dfc-47c7-b991-63ce3e28a3b5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c0549bd1625bc373"
+    },
+    {
+      "cache_key": "3a5b446c13e47fb7",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=d540a95f-2462-4c02-992f-8b34fa3c6f37&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "691ee4d8020bb221"
+    },
+    {
+      "cache_key": "5641d761c30b9b6e",
+      "url": "https://musicbrainz.org/ws/2/work/6060e39f-9fbe-4d37-9a2c-3b71f27b3345?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "950d2ac0de44a112"
+    },
+    {
+      "cache_key": "64ca984385996069",
+      "url": "https://musicbrainz.org/ws/2/artist?query=ONE%20OK%20ROCK",
+      "status_code": 200,
+      "body_hash": "128f2e758a976389"
+    },
+    {
+      "cache_key": "6d9706d6edcb4526",
+      "url": "https://musicbrainz.org/ws/2/work/b341a695-699c-4d92-a88e-1b8d4203552a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5ada62125038f563"
+    },
+    {
+      "cache_key": "790ec02fd1d97142",
+      "url": "https://musicbrainz.org/ws/2/work/5a0af198-b0dd-4790-bda3-f98bb9f205b8?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7322853402fca33a"
+    },
+    {
+      "cache_key": "7b42f6a646f25daf",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ANiche%E3%82%B7%E3%83%B3%E3%83%89%E3%83%AD%E3%83%BC%E3%83%A0&limit=100",
+      "status_code": 200,
+      "body_hash": "07d2e99b5f6cfe5c"
+    },
+    {
+      "cache_key": "a272c43fc8f25711",
+      "url": "https://musicbrainz.org/ws/2/work/5f90130f-8a08-4b17-b785-c9be3102391a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8783020be91cb262"
+    },
+    {
+      "cache_key": "ad20bac304f1fe2c",
+      "url": "https://musicbrainz.org/ws/2/work/133a671a-d8ab-49fb-ada2-50f32ade428f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2fd7f6f21e69620a"
+    },
+    {
+      "cache_key": "ce695d4b46931372",
+      "url": "https://musicbrainz.org/ws/2/artist/6ef00829-fa94-4fee-a5a6-b28e1208e96a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "375ce6955ce1b4fd"
+    },
+    {
+      "cache_key": "ce9a1275a42bef76",
+      "url": "https://musicbrainz.org/ws/2/work/4630a52e-62ce-498e-9fea-9c0cc90d30c9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8401ae5c32d24864"
+    },
+    {
+      "cache_key": "eb0105a73409a2eb",
+      "url": "https://musicbrainz.org/ws/2/work/c8d5cac2-3a47-427b-af1b-d15e3ee986f1?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "00c6df348743637d"
+    },
+    {
+      "cache_key": "ef84ac6714ccd59c",
+      "url": "https://musicbrainz.org/ws/2/work/e07c8cd3-7fae-4287-9b83-0e0b3ef36804?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a7bdb93cdfed8c4b"
+    }
+  ]
+}

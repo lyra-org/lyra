@@ -1,0 +1,78 @@
+{
+  "test_name": "欠けた心象世のよすが_月詠み",
+  "scenario_id": "e54c6872a1831c89",
+  "responses": [
+    {
+      "cache_key": "20945b961f8f9678",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%AC%A0%E3%81%91%E3%81%9F%E5%BF%83%E8%B1%A1%E3%80%81%E4%B8%96%E3%81%AE%E3%82%88%E3%81%99%E3%81%8C&limit=100",
+      "status_code": 200,
+      "body_hash": "1b0460e41eaac8cf"
+    },
+    {
+      "cache_key": "30eee2f6c7d5525b",
+      "url": "https://musicbrainz.org/ws/2/work/3b89966c-13d6-41a9-bc23-1bde3dc6ae1f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7bd2acae0bec1bb4"
+    },
+    {
+      "cache_key": "379a0e90f48b5f60",
+      "url": "https://musicbrainz.org/ws/2/work/870f23a3-ed1c-4313-8b6b-20bc35dc8160?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5afe6ebe644b4509"
+    },
+    {
+      "cache_key": "422d4af79f145303",
+      "url": "https://musicbrainz.org/ws/2/work/dca4ff25-7c24-431e-9f5a-12cca2736781?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0e98bf452d692c16"
+    },
+    {
+      "cache_key": "6a9e1e33a32d4d13",
+      "url": "https://musicbrainz.org/ws/2/work/ee335bbf-d3a7-4086-bac6-fdff69d00268?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "11879d6ab807713e"
+    },
+    {
+      "cache_key": "6c387c67140688f4",
+      "url": "https://musicbrainz.org/ws/2/work/c95909ee-9374-425e-9bc1-2d83a7f8c83f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0880a80fb9ed9adf"
+    },
+    {
+      "cache_key": "6ee9981ded891bf7",
+      "url": "https://musicbrainz.org/ws/2/work/5d9ecaf5-1acb-4b7d-8799-f1b84d535d33?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4b338b2885a92f47"
+    },
+    {
+      "cache_key": "75d00e86f0ee0926",
+      "url": "https://musicbrainz.org/ws/2/artist/6825ace2-3563-4ac5-8d85-c7bf1334bd2c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4f5faae6f32b9689"
+    },
+    {
+      "cache_key": "b2f64829781bcdfb",
+      "url": "https://musicbrainz.org/ws/2/work/65d69b68-ef77-43e8-9973-e2c88262957b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fd88f27bd83e7aad"
+    },
+    {
+      "cache_key": "d5da377225df7493",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=81d75493-78b6-4a37-b5ae-2a3918ee3756&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "05656081828e48aa"
+    },
+    {
+      "cache_key": "d9f5f2c66f0267b8",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%9C%88%E8%A9%A0%E3%81%BF",
+      "status_code": 200,
+      "body_hash": "2f97fb9c6977b676"
+    },
+    {
+      "cache_key": "f8c4a621940eb278",
+      "url": "https://musicbrainz.org/ws/2/work/f9374929-25a0-4740-bd24-93cd7cab0d40?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4861e05949ad01dd"
+    }
+  ]
+}

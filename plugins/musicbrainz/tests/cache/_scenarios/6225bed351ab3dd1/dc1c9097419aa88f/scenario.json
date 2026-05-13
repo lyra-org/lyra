@@ -1,0 +1,42 @@
+{
+  "test_name": "seisyun_complex_kessoku_band",
+  "scenario_id": "dc1c9097419aa88f",
+  "responses": [
+    {
+      "cache_key": "3936beea59f7c89c",
+      "url": "https://musicbrainz.org/ws/2/artist?query=kessoku%20band",
+      "status_code": 200,
+      "body_hash": "3a11944fc33b4b14"
+    },
+    {
+      "cache_key": "63985ad9a33ee0ab",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=cb8b43d3-a221-48b4-92d4-ab1e11bc76bd&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "314b31a581907647"
+    },
+    {
+      "cache_key": "7057511e7e87abdc",
+      "url": "https://musicbrainz.org/ws/2/work/4fd14407-787a-4f3c-9481-9a3a1e372d0d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "42bf2654649e7c69"
+    },
+    {
+      "cache_key": "c63da08baa1bcd90",
+      "url": "https://musicbrainz.org/ws/2/artist/c1b0fe0a-779d-43ed-b193-4370f0d0f88f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "eb673570663d5473"
+    },
+    {
+      "cache_key": "eaff2e9bee40c502",
+      "url": "https://musicbrainz.org/ws/2/work/115f2677-39a8-4db9-bda3-381118765d32?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "dead58dcd95571ae"
+    },
+    {
+      "cache_key": "f3f59377e2dee73a",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3Aseisyun%20complex&limit=100",
+      "status_code": 200,
+      "body_hash": "9d8c11340b021d96"
+    }
+  ]
+}

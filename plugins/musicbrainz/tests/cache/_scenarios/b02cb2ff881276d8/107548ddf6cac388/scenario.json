@@ -1,0 +1,54 @@
+{
+  "test_name": "スカー_キタニタツヤ",
+  "scenario_id": "107548ddf6cac388",
+  "responses": [
+    {
+      "cache_key": "0eb4084371c400f4",
+      "url": "https://musicbrainz.org/ws/2/work/237f4ddd-4fc2-41d2-8304-bf5d953263f5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e65edbf0178eecba"
+    },
+    {
+      "cache_key": "3139185fa5ccae34",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%B9%E3%82%AB%E3%83%BC&limit=100",
+      "status_code": 200,
+      "body_hash": "a1970f5934697d91"
+    },
+    {
+      "cache_key": "4fbb9da9c74a730d",
+      "url": "https://musicbrainz.org/ws/2/work/3d8e65f7-0589-4259-95b5-31b25552b82b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4faf2212425f6ddf"
+    },
+    {
+      "cache_key": "5fc08b0665911a74",
+      "url": "https://musicbrainz.org/ws/2/work/e8a41480-4470-4c39-b3fb-b039ff218489?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "521c98cbc92cefe1"
+    },
+    {
+      "cache_key": "624716883385e625",
+      "url": "https://musicbrainz.org/ws/2/work/54918a0c-7d5d-49f5-a8e7-9c410ce7c231?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "217a756cf0785e3b"
+    },
+    {
+      "cache_key": "c0a80491205c7e7a",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=5dfc5b49-556a-4bbd-b76b-f0131c512ec7&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "37354846f7087630"
+    },
+    {
+      "cache_key": "d5c10760f4493df0",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%82%AD%E3%82%BF%E3%83%8B%E3%82%BF%E3%83%84%E3%83%A4",
+      "status_code": 200,
+      "body_hash": "138229d65b006f89"
+    },
+    {
+      "cache_key": "f77d878b94c7aba2",
+      "url": "https://musicbrainz.org/ws/2/work/96c5d1df-bfeb-4e0c-85fe-f0fac0ff111d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3a019a1f47a1fc94"
+    }
+  ]
+}

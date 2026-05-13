@@ -1,0 +1,36 @@
+{
+  "test_name": "へび_ヨルシカ",
+  "scenario_id": "18d1f58e5f876d4d",
+  "responses": [
+    {
+      "cache_key": "266c2bc5c6705fb3",
+      "url": "https://musicbrainz.org/ws/2/artist/dfc6a151-3792-4695-8fda-f64723eaa788?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fc55e4248d9cb5a7"
+    },
+    {
+      "cache_key": "361edb0caa95280e",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=bd052190-adf5-4c3a-9dfc-69e4cd5e0921&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "e46627e6ee4362fa"
+    },
+    {
+      "cache_key": "5897635a181f9c5c",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%B8%E3%81%B3&limit=100",
+      "status_code": 200,
+      "body_hash": "1ba0a0a11739ff8f"
+    },
+    {
+      "cache_key": "781e5a6d34dc95ea",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%A8%E3%83%AB%E3%82%B7%E3%82%AB",
+      "status_code": 200,
+      "body_hash": "103ccacd0cd2663f"
+    },
+    {
+      "cache_key": "ac72e14fa65f90ae",
+      "url": "https://musicbrainz.org/ws/2/work/d72fc1df-5bef-4b0f-a2df-f56dcafef2bb?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "88b7b9548afb3315"
+    }
+  ]
+}

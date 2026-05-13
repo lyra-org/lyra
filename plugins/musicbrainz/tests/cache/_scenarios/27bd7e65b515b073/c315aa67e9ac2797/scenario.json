@@ -1,0 +1,108 @@
+{
+  "test_name": "pop_virus_星野源",
+  "scenario_id": "c315aa67e9ac2797",
+  "responses": [
+    {
+      "cache_key": "009d057bc8c897bb",
+      "url": "https://musicbrainz.org/ws/2/work/f7bd9d59-f853-418b-84e1-75ae802ea1b8?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "44308761c14d88f0"
+    },
+    {
+      "cache_key": "02f67b83356c157e",
+      "url": "https://musicbrainz.org/ws/2/work/a9f0fac3-88d7-49a6-b5e1-65e59bbb6338?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c4260b493dbe9949"
+    },
+    {
+      "cache_key": "09eb2df4c7f1da8d",
+      "url": "https://musicbrainz.org/ws/2/work/6e611374-0d85-45b0-b5ec-a6f25f6d8e4c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b397808a877e460b"
+    },
+    {
+      "cache_key": "275d1f1ffdc7006b",
+      "url": "https://musicbrainz.org/ws/2/work/868ff82f-05af-4d20-80a4-de34e33ac2da?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ec26ff476f9cae7f"
+    },
+    {
+      "cache_key": "369667b73aea6c40",
+      "url": "https://musicbrainz.org/ws/2/work/a7bd10b4-2a18-4c35-88f9-a6a2246238f0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "efd70e6a0c6619da"
+    },
+    {
+      "cache_key": "3cd1035e93761b6f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%98%9F%E9%87%8E%E6%BA%90",
+      "status_code": 200,
+      "body_hash": "42e99e6685b13ff8"
+    },
+    {
+      "cache_key": "543269bbde40d187",
+      "url": "https://musicbrainz.org/ws/2/work/413054d9-fa89-443b-abd0-729490d45c23?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "853e8f248881d46c"
+    },
+    {
+      "cache_key": "60f45b2859bfe1d8",
+      "url": "https://musicbrainz.org/ws/2/work/0bee46d5-e8e5-47ea-b64a-664272b39a04?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5faadabe187a3213"
+    },
+    {
+      "cache_key": "8d2fac5998ff4cc8",
+      "url": "https://musicbrainz.org/ws/2/work/bcb124e2-4876-4ec6-ba46-49dfdfc6b1c2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9bacc447b89fec02"
+    },
+    {
+      "cache_key": "8ec01e5b4f8a5081",
+      "url": "https://musicbrainz.org/ws/2/work/d6b391bd-5b2e-43a9-b857-25c730a34a78?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e5d262bb2db8f106"
+    },
+    {
+      "cache_key": "8ec87d9a5f07011a",
+      "url": "https://musicbrainz.org/ws/2/work/a715211e-f62d-47f2-83ca-37acedf1f39a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3c523cd0026c1898"
+    },
+    {
+      "cache_key": "97b0a5bb48ed8a84",
+      "url": "https://musicbrainz.org/ws/2/work/73e92683-825e-4651-bef5-efaae15ee637?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "617c41ec13b5ce79"
+    },
+    {
+      "cache_key": "bb220f2386e5935c",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=7d7ef13e-5f28-4f47-b404-3bc03e819941&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3841b321124c2961"
+    },
+    {
+      "cache_key": "c314cec1f70216b9",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3APop%20Virus&limit=100",
+      "status_code": 200,
+      "body_hash": "1fe6df7c02fb5494"
+    },
+    {
+      "cache_key": "de9a8b210b4a243d",
+      "url": "https://musicbrainz.org/ws/2/work/8761ceb4-a887-4406-95c9-c749cbabafdb?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9797387a0bd088f2"
+    },
+    {
+      "cache_key": "f732dbcd61f90d8c",
+      "url": "https://musicbrainz.org/ws/2/work/6c74f844-2b29-44f9-8bd3-3827a9edd135?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "62860119fb1c749d"
+    },
+    {
+      "cache_key": "f8f09811c1c77e2f",
+      "url": "https://musicbrainz.org/ws/2/work/32db3790-89f2-4c0c-8e11-0d95244d6097?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3c84fc780f18038d"
+    }
+  ]
+}

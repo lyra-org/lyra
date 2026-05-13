@@ -1,9 +1,24 @@
 {
   "test_name": "moonrise_andorawami",
   "scenario_id": "c3e8000cf74257ae",
-  "cache_keys": [
-    "486a461de1ca878e",
-    "706750eb596103bd",
-    "ebfde55a5ad4824d"
+  "responses": [
+    {
+      "cache_key": "486a461de1ca878e",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A1c07f1e6-66f6-4bbf-a75b-e99a733d16f1%20AND%20(release%3AMoonrise%20OR%20recording%3AMoonrise)&limit=100",
+      "status_code": 200,
+      "body_hash": "9f10a432e7c3fea6"
+    },
+    {
+      "cache_key": "706750eb596103bd",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=50d8d17d-7421-46e8-b667-5cf1d539e619&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "e08fa919957a93a7"
+    },
+    {
+      "cache_key": "ebfde55a5ad4824d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Andora%3BWami",
+      "status_code": 200,
+      "body_hash": "1c3b60874c1bd07c"
+    }
   ]
 }

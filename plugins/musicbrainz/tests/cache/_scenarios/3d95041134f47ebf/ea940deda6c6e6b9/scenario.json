@@ -1,0 +1,42 @@
+{
+  "test_name": "松下下上上ab_various",
+  "scenario_id": "ea940deda6c6e6b9",
+  "responses": [
+    {
+      "cache_key": "25d61a63952d5927",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=28e306ae-1d75-4c48-b3f3-122b4eec148e&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "86c408ec9f1df8cb"
+    },
+    {
+      "cache_key": "7af2bb0e99d9e3f4",
+      "url": "https://musicbrainz.org/ws/2/work/f3f5100e-527a-482a-a78b-92c03c985b18?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "80c941c4b4fb65f0"
+    },
+    {
+      "cache_key": "7b585ba8ecf38581",
+      "url": "https://musicbrainz.org/ws/2/work/dbcd5c5c-bff7-48c0-9202-287dc6554708?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4641994db8c4f1c4"
+    },
+    {
+      "cache_key": "95cb7581e314c77c",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%9D%BE%E4%B8%8B%E4%B8%8B%E4%B8%8A%E4%B8%8A%E2%86%90%E2%86%92AB&limit=100",
+      "status_code": 200,
+      "body_hash": "c0fb458c6d45241a"
+    },
+    {
+      "cache_key": "bd806c805524de95",
+      "url": "https://musicbrainz.org/ws/2/work/4f5f7cd1-23b3-4f3b-9a1e-50c79f888693?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2fd2ed9cd9e8d89a"
+    },
+    {
+      "cache_key": "d97837e47efe6852",
+      "url": "https://musicbrainz.org/ws/2/artist/2389a6c5-09bc-4fb2-8c1d-97f63115d2ed?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a4911379e7e8ea61"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "test_name": "名前は片想い_indigo_la_end",
+  "scenario_id": "034e428769aba372",
+  "responses": [
+    {
+      "cache_key": "0bfafdcea92a4d75",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=5b436eb0-a5f7-4701-9efb-b452fe1e6f93&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "bcd63e3b87a24f9a"
+    },
+    {
+      "cache_key": "1676a0150b075561",
+      "url": "https://musicbrainz.org/ws/2/artist?query=indigo%20la%20End",
+      "status_code": 200,
+      "body_hash": "baf4e19e5eb53758"
+    },
+    {
+      "cache_key": "9bb732c3b26fff0a",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%90%8D%E5%89%8D%E3%81%AF%E7%89%87%E6%83%B3%E3%81%84&limit=100",
+      "status_code": 200,
+      "body_hash": "1aa09755a84dc2f4"
+    },
+    {
+      "cache_key": "c7cfdecf3e975191",
+      "url": "https://musicbrainz.org/ws/2/artist/8d17b65b-8ccf-495c-8b79-1f53d6226448?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a3a1083d10fadf46"
+    }
+  ]
+}

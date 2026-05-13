@@ -1,0 +1,36 @@
+{
+  "test_name": "青い珊瑚礁_松田聖子",
+  "scenario_id": "a3bf9b13a93f6230",
+  "responses": [
+    {
+      "cache_key": "04e2124d24073e8a",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%9D%BE%E7%94%B0%E8%81%96%E5%AD%90",
+      "status_code": 200,
+      "body_hash": "f1e2b3846fba453e"
+    },
+    {
+      "cache_key": "0ed58de4a18d2f8f",
+      "url": "https://musicbrainz.org/ws/2/work/9ec1c176-bdb2-4329-bf55-747b94225e98?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1f8046e8045feb86"
+    },
+    {
+      "cache_key": "ac7c23c1dbe50f24",
+      "url": "https://musicbrainz.org/ws/2/work/15d2641c-c2cb-4db7-b1bb-bcecb9f9ea1c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e4bcdef62cef22c3"
+    },
+    {
+      "cache_key": "df7dbfc5645d91e6",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E9%9D%92%E3%81%84%E7%8F%8A%E7%91%9A%E7%A4%81&limit=100",
+      "status_code": 200,
+      "body_hash": "f54b999b622a7590"
+    },
+    {
+      "cache_key": "ea21105e684abf40",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=a5f4ad94-a47b-4b49-9bc6-b992fb2de362&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "86e48da51ae27498"
+    }
+  ]
+}

@@ -1,9 +1,24 @@
 {
   "test_name": "dressing_room_natori",
   "scenario_id": "d38e6a623dcbc602",
-  "cache_keys": [
-    "8844fd8a6a676920",
-    "8ff27a6075f94a2e",
-    "c184f3cfd1bf058f"
+  "responses": [
+    {
+      "cache_key": "8844fd8a6a676920",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=fc360207-f965-49df-aacc-e89f1e0b7a57&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3f51f3ada61d19a0"
+    },
+    {
+      "cache_key": "8ff27a6075f94a2e",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Acad9e169-893d-4432-a23f-3aa16beb9f0e%20AND%20(release%3ADRESSING%20ROOM%20OR%20recording%3ADRESSING%20ROOM)&limit=100",
+      "status_code": 200,
+      "body_hash": "c0efd19ab2950d81"
+    },
+    {
+      "cache_key": "c184f3cfd1bf058f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Natori",
+      "status_code": 200,
+      "body_hash": "b5dbf78cb8b5ecda"
+    }
   ]
 }

@@ -1,0 +1,102 @@
+{
+  "test_name": "pink_blue_緑黄色社会",
+  "scenario_id": "0d6485133c03d427",
+  "responses": [
+    {
+      "cache_key": "0dda4350497eba9a",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%B7%91%E9%BB%84%E8%89%B2%E7%A4%BE%E4%BC%9A",
+      "status_code": 200,
+      "body_hash": "7c9500e24fb22265"
+    },
+    {
+      "cache_key": "106e8a810fdccf13",
+      "url": "https://musicbrainz.org/ws/2/work/2c4cb1b0-3e23-466c-82b9-eb1c6bdfdab4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6ef34c2b9e0a1f9f"
+    },
+    {
+      "cache_key": "161230a29d71dfc3",
+      "url": "https://musicbrainz.org/ws/2/artist/3ed40054-97ab-4783-b3c3-15c2c7b06546?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1963b87d5a14f6e0"
+    },
+    {
+      "cache_key": "20cd51057271f58f",
+      "url": "https://musicbrainz.org/ws/2/work/acf8e4e8-be44-4231-9c1c-1672e93259ed?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f0e8d0543c3c2632"
+    },
+    {
+      "cache_key": "2ee953b19c66ea68",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3Apink%20blue&limit=100",
+      "status_code": 200,
+      "body_hash": "cb5bc05e546aa7b7"
+    },
+    {
+      "cache_key": "58f084ddedd0abeb",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=a17662c5-c421-4edc-a3b3-3551b008382c&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "bfde37c8313c4638"
+    },
+    {
+      "cache_key": "64a2f27a991a41d5",
+      "url": "https://musicbrainz.org/ws/2/work/8ef2d8eb-a8d7-4a54-8e9d-d612313dbc55?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f25541b00d1c1a4e"
+    },
+    {
+      "cache_key": "689fe5cbb54c0bd1",
+      "url": "https://musicbrainz.org/ws/2/work/75b3c7bc-33fb-4d81-9168-34f8b03d3c44?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "023fa7aa81e86f58"
+    },
+    {
+      "cache_key": "719550b953b827d8",
+      "url": "https://musicbrainz.org/ws/2/work/b7f1d00a-d11a-41a2-a2db-4f14bbdc7b97?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "983029d48600e7b2"
+    },
+    {
+      "cache_key": "754eaa569704533a",
+      "url": "https://musicbrainz.org/ws/2/work/8f3614c4-493b-40dd-94c6-701e22bcf98f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8835e79277cddd36"
+    },
+    {
+      "cache_key": "77f43c33aac378db",
+      "url": "https://musicbrainz.org/ws/2/work/f479f5c7-c0be-458d-994f-39d32236246a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "73553577360aca16"
+    },
+    {
+      "cache_key": "78d9c0bca62202af",
+      "url": "https://musicbrainz.org/ws/2/work/c601f59e-816f-470d-99a7-b81b091a3fb0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "714622acc4237414"
+    },
+    {
+      "cache_key": "8fe281c5e1059790",
+      "url": "https://musicbrainz.org/ws/2/work/3380af4b-a441-472b-80ac-4afb1fc7b2f7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d2adcbcd983a36f3"
+    },
+    {
+      "cache_key": "b38efc48a2033685",
+      "url": "https://musicbrainz.org/ws/2/work/404b805c-4e5f-4687-b236-45f19e8ebb84?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7618881409e79514"
+    },
+    {
+      "cache_key": "c638568230d10cc6",
+      "url": "https://musicbrainz.org/ws/2/work/ebf4f241-e120-46bf-b6b4-49ee662c5b1d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2e155d1c031649a8"
+    },
+    {
+      "cache_key": "f18b4f29c64b7a51",
+      "url": "https://musicbrainz.org/ws/2/work/80c74576-8d4b-4689-9bfe-6a7846f206df?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b36ed530f1e148cb"
+    }
+  ]
+}

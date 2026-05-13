@@ -1,0 +1,42 @@
+{
+  "test_name": "tvアニメ推しの子オリジナルサウンドトラック_伊賀拓郎",
+  "scenario_id": "61d4983858fd432e",
+  "responses": [
+    {
+      "cache_key": "066ad7414848925f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E4%BC%8A%E8%B3%80%E6%8B%93%E9%83%8E",
+      "status_code": 200,
+      "body_hash": "4b64fa49100fe678"
+    },
+    {
+      "cache_key": "0a74697c960addf2",
+      "url": "https://musicbrainz.org/ws/2/work/a3fa6b08-0d0a-4da3-aa03-0e8f3ec223b6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "46a9daccbb76695f"
+    },
+    {
+      "cache_key": "374f7238e090754d",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=655f1d1b-1a97-4a25-95cb-229da8f70388&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "ad219462a53c564b"
+    },
+    {
+      "cache_key": "8035f04bdde016e2",
+      "url": "https://musicbrainz.org/ws/2/work/db3769f9-8ff4-4e48-9173-34af01f6200c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1e3ede8507ab3684"
+    },
+    {
+      "cache_key": "e907f8cb0bdb4920",
+      "url": "https://musicbrainz.org/ws/2/work/108e42be-030c-408a-89c2-6028b7b3db72?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "aec0d9baed9e7fc8"
+    },
+    {
+      "cache_key": "fbd0d065ebfef83b",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ATV%E3%82%A2%E3%83%8B%E3%83%A1%E3%80%8C%E3%80%90%E6%8E%A8%E3%81%97%E3%81%AE%E5%AD%90%E3%80%91%E3%80%8D%E3%82%AA%E3%83%AA%E3%82%B8%E3%83%8A%E3%83%AB%E3%82%B5%E3%82%A6%E3%83%B3%E3%83%89%E3%83%88%E3%83%A9%E3%83%83%E3%82%AF&limit=100",
+      "status_code": 200,
+      "body_hash": "3ddb4e5af45364c9"
+    }
+  ]
+}

@@ -1,0 +1,108 @@
+{
+  "test_name": "wonderland_novelbright",
+  "scenario_id": "ba4fea8f5ef497cd",
+  "responses": [
+    {
+      "cache_key": "18406d70382d0e1c",
+      "url": "https://musicbrainz.org/ws/2/work/b582a4f0-1a86-46d5-ae3c-4d1997c22d7c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "efd209dfc3fd089e"
+    },
+    {
+      "cache_key": "3e24a75a1e7a3e8a",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Af1d9bc16-a8a2-4733-9b9d-2e101e010ea0%20AND%20(release%3AWONDERLAND%20OR%20recording%3A%E3%83%A9%E3%83%B3%E3%83%8A%E3%83%BC%E3%82%BA%E3%83%8F%E3%82%A4)",
+      "status_code": 200,
+      "body_hash": "ab1090284b901b5b"
+    },
+    {
+      "cache_key": "44d2117ccbee2d9d",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AWONDERLAND&limit=100",
+      "status_code": 200,
+      "body_hash": "c733928b2a9285a0"
+    },
+    {
+      "cache_key": "4dc62cb9f0abeee9",
+      "url": "https://musicbrainz.org/ws/2/work/6240de37-c704-4254-8747-f7addd6385d8?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5fef99ad33300fdb"
+    },
+    {
+      "cache_key": "7880c93e8d496661",
+      "url": "https://musicbrainz.org/ws/2/work/c80e4ff5-152f-4275-9b2c-111fab2ee0a4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "97d88a3ff72563ad"
+    },
+    {
+      "cache_key": "7a8795aeda6a6072",
+      "url": "https://musicbrainz.org/ws/2/work/59dfe16f-c685-4bf4-ae48-82c70b564339?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "972405607dc8c37e"
+    },
+    {
+      "cache_key": "8626057282a5569f",
+      "url": "https://musicbrainz.org/ws/2/work/6857df10-b2e5-4185-b907-ec026dd4bc93?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a25aa834812b6b47"
+    },
+    {
+      "cache_key": "905dbb34ccec8ca1",
+      "url": "https://musicbrainz.org/ws/2/artist/f1d9bc16-a8a2-4733-9b9d-2e101e010ea0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "effd65d54ef76989"
+    },
+    {
+      "cache_key": "a48b945e6ae52933",
+      "url": "https://musicbrainz.org/ws/2/work/f933a2ef-25bf-4475-97f9-dc011b5d6a38?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2e6eb2d7e766ba3a"
+    },
+    {
+      "cache_key": "a9e9d7e4a521c24d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Novelbright",
+      "status_code": 200,
+      "body_hash": "3481dbef36b442de"
+    },
+    {
+      "cache_key": "bc7dfd145ca54c80",
+      "url": "https://musicbrainz.org/ws/2/work/1696da34-36ad-4de4-86b6-a3013b2fe26f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1f8483d7bef9cc86"
+    },
+    {
+      "cache_key": "cbcbfb33ac7ae188",
+      "url": "https://musicbrainz.org/ws/2/work/f39c7cc1-3c6f-4dfe-b095-7b4249192e58?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8af7df9a5bcbc82b"
+    },
+    {
+      "cache_key": "cf7692f68e680ccb",
+      "url": "https://musicbrainz.org/ws/2/work/48344349-ea82-4147-936c-2181ac1fadea?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6dfc1a43859fd3db"
+    },
+    {
+      "cache_key": "d9696451546b5616",
+      "url": "https://musicbrainz.org/ws/2/work/17cc8aee-7ba9-467c-913f-340d6e0acfd4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3ad04b6782659a4d"
+    },
+    {
+      "cache_key": "dc4347ac40552cd3",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=ab9a392b-6da3-450c-a884-ee923a734ddf&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "ab40b44aab153346"
+    },
+    {
+      "cache_key": "e28b8886162b8dbf",
+      "url": "https://musicbrainz.org/ws/2/work/5a2ecf3d-5043-4291-a707-f10ee594d8be?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0d394423b8b01477"
+    },
+    {
+      "cache_key": "ed5604909d851883",
+      "url": "https://musicbrainz.org/ws/2/work/f9adaa37-293f-4b22-a867-943e8c9ba363?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "bad9ec0d91c1b10e"
+    }
+  ]
+}

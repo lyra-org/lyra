@@ -1,0 +1,72 @@
+{
+  "test_name": "overture_midnight_grand_orchestra",
+  "scenario_id": "f38bf32404ebd5aa",
+  "responses": [
+    {
+      "cache_key": "0204ed3d84292aeb",
+      "url": "https://musicbrainz.org/ws/2/work/ab5d0f21-1208-4fae-b2d0-7023ba453e23?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6e3faea255ceb4bf"
+    },
+    {
+      "cache_key": "0f8b3dbc296a2f2c",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AOverture&limit=100",
+      "status_code": 200,
+      "body_hash": "b449e551fd9d0835"
+    },
+    {
+      "cache_key": "10884c8a10f0926e",
+      "url": "https://musicbrainz.org/ws/2/work/da43ab72-a31d-4ffd-a783-2c088cf5ed5c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cb6b6d9e5c6a6d3b"
+    },
+    {
+      "cache_key": "4f99f632f0e5a473",
+      "url": "https://musicbrainz.org/ws/2/work/f540dde1-bd9d-48ac-8753-060161da89ef?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2b86ba7388d96280"
+    },
+    {
+      "cache_key": "54af299236d2b4b2",
+      "url": "https://musicbrainz.org/ws/2/work/9f5261fc-d964-404b-ad89-dc152d67a49e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "86838de4347a7587"
+    },
+    {
+      "cache_key": "8877753034154cf2",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=626377a7-34c2-405e-89db-ac486b41d219&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "6461b12bd2677e75"
+    },
+    {
+      "cache_key": "8defbd5dcf872ab5",
+      "url": "https://musicbrainz.org/ws/2/work/d65df83d-cb57-498b-936b-a4ad774cef47?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "19df27cb1736d1e5"
+    },
+    {
+      "cache_key": "997cdc7394b49c07",
+      "url": "https://musicbrainz.org/ws/2/work/3a784124-bcfc-4a3f-a44b-c903c433f961?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c223e2f89c518463"
+    },
+    {
+      "cache_key": "cd3733e255f00ac4",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Midnight%20Grand%20Orchestra",
+      "status_code": 200,
+      "body_hash": "4d18b76a17cdafbf"
+    },
+    {
+      "cache_key": "d362ccde98299373",
+      "url": "https://musicbrainz.org/ws/2/artist/337a25b8-2ffc-40b6-a4b7-22dbfe5b1ecd?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "07ed968e680daf1f"
+    },
+    {
+      "cache_key": "f23ac0dbc1347c4f",
+      "url": "https://musicbrainz.org/ws/2/work/da2d0f86-52e8-4126-848c-89f9d188c4fa?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4180b44eaa2f415e"
+    }
+  ]
+}

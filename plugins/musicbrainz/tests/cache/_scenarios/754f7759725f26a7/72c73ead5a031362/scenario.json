@@ -1,0 +1,312 @@
+{
+  "test_name": "persona_4_vinyl_soundtrack_shoji_meguro",
+  "scenario_id": "72c73ead5a031362",
+  "responses": [
+    {
+      "cache_key": "0ae62d72daf338b0",
+      "url": "https://musicbrainz.org/ws/2/work/6540841a-cf94-387d-80e1-a43afe2b0861?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "00d3ce224992e2ae"
+    },
+    {
+      "cache_key": "0b0a62ac503251c2",
+      "url": "https://musicbrainz.org/ws/2/work/117f7751-3671-339d-95e3-a5da86110a4c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2125648fb85b3d65"
+    },
+    {
+      "cache_key": "0d22a2af27053f57",
+      "url": "https://musicbrainz.org/ws/2/work/068d2903-4b33-3fc0-96f2-69bc7d3df3b9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f40cd770a129b9a0"
+    },
+    {
+      "cache_key": "0f021ec5bd73a548",
+      "url": "https://musicbrainz.org/ws/2/work/f11ee370-7721-3446-b487-f9ec1c140bad?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "08afddedc05f822c"
+    },
+    {
+      "cache_key": "0f35e2c4c4bf3ff1",
+      "url": "https://musicbrainz.org/ws/2/work/af8ea29e-0ea0-336a-a922-9d62f79eff07?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e0a8514d13595a47"
+    },
+    {
+      "cache_key": "119410254531f407",
+      "url": "https://musicbrainz.org/ws/2/work/f43c4306-f4d9-3454-99e9-4d2c14ee915e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5b6e8a4b9782396d"
+    },
+    {
+      "cache_key": "1991243043f2b415",
+      "url": "https://musicbrainz.org/ws/2/work/6e5fdadb-3947-3088-b3f6-fc15941bd133?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3cd9ce5c75d352b1"
+    },
+    {
+      "cache_key": "1c6e65f97be75fbe",
+      "url": "https://musicbrainz.org/ws/2/work/ca2fa8c4-3d90-3a51-b220-f2501ad165c9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "650c16f16b78b0aa"
+    },
+    {
+      "cache_key": "1e21e392b37f0ec8",
+      "url": "https://musicbrainz.org/ws/2/work/e32720ed-5ca0-3fa4-89f8-971e0a73e9c2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c4670854080b0ffc"
+    },
+    {
+      "cache_key": "23c5960fb16f11d6",
+      "url": "https://musicbrainz.org/ws/2/work/810b68f6-5a7d-3f20-8afd-5a25503ada40?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "368809a9dcfb5532"
+    },
+    {
+      "cache_key": "2c36864fd527359f",
+      "url": "https://musicbrainz.org/ws/2/work/4c198889-7dc9-325a-a245-e2ffa8ad518b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e9ce521d82747ab1"
+    },
+    {
+      "cache_key": "2e831d04dca4ca77",
+      "url": "https://musicbrainz.org/ws/2/work/4cfc3788-7016-379e-9518-d68041848187?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1ea665eaeaea80ed"
+    },
+    {
+      "cache_key": "39f96ab520da3464",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3APersona%204%20Vinyl%20Soundtrack&limit=100",
+      "status_code": 200,
+      "body_hash": "dde73f8cf74b18d4"
+    },
+    {
+      "cache_key": "45496d9a0f70a3ea",
+      "url": "https://musicbrainz.org/ws/2/work/50f4d16c-7e4c-311a-83db-cc1c33e74325?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d909221045c72f57"
+    },
+    {
+      "cache_key": "46272fd44511821b",
+      "url": "https://musicbrainz.org/ws/2/work/8e5f75b7-cc14-31e6-9b7d-697bee910bc7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "20775a2b871c8ae7"
+    },
+    {
+      "cache_key": "53328b1c78df2f0f",
+      "url": "https://musicbrainz.org/ws/2/work/049de252-345e-3cc8-a1a1-8e63544177fb?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "161118d671a7db56"
+    },
+    {
+      "cache_key": "5ce40b55a6c49608",
+      "url": "https://musicbrainz.org/ws/2/work/be59148a-04f2-33a0-9475-52e56910edcd?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6eb6bcc578b6973a"
+    },
+    {
+      "cache_key": "5f22869ff2fef271",
+      "url": "https://musicbrainz.org/ws/2/work/7d92b5d2-e8f4-34cc-aca4-3518851e4c82?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "868a97f2279b9567"
+    },
+    {
+      "cache_key": "769be23c46fa5e4d",
+      "url": "https://musicbrainz.org/ws/2/work/0c8423a4-77c5-3fad-9cde-9088807ee4f7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6992974c78598f6e"
+    },
+    {
+      "cache_key": "77bd2f7bb1b6c2f9",
+      "url": "https://musicbrainz.org/ws/2/work/ebe64799-47ae-367e-bdc5-6a6eaecc3eb3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c525916f7a303c9c"
+    },
+    {
+      "cache_key": "7ef78e15190a6aa2",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Shoji%20Meguro%20%2C%20Atlus%20Sound%20Team",
+      "status_code": 200,
+      "body_hash": "2663d8f415f49def"
+    },
+    {
+      "cache_key": "7f251c17a30c222a",
+      "url": "https://musicbrainz.org/ws/2/work/a4232380-d105-3205-8949-39770fdf061d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3b48ecb37a6b67b6"
+    },
+    {
+      "cache_key": "7f7fff7bbbb3921e",
+      "url": "https://musicbrainz.org/ws/2/work/e7f95c00-ae43-3835-935a-90ed00bb3907?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "49fcf032de870088"
+    },
+    {
+      "cache_key": "82c9d17515d2bb3b",
+      "url": "https://musicbrainz.org/ws/2/work/f74ce62e-bfb1-38b1-aec0-7f829c1bac2e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "30309542416c8330"
+    },
+    {
+      "cache_key": "8523c60a48110686",
+      "url": "https://musicbrainz.org/ws/2/work/78aa09ab-91ab-372d-a0b5-ff2a2cd5530c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "090deaa2bb0f9c34"
+    },
+    {
+      "cache_key": "858c5e5498672c1d",
+      "url": "https://musicbrainz.org/ws/2/work/e42254d6-7052-3500-afce-ff4322cabf43?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f74fb3ffe7160e46"
+    },
+    {
+      "cache_key": "860c6898c25d5a77",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=a7ed4623-300c-35c2-8fc3-71b335b9b716&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "8fdcc1d47f9933e8"
+    },
+    {
+      "cache_key": "891e04c17960609e",
+      "url": "https://musicbrainz.org/ws/2/work/7a164643-7de1-3830-8a25-0d4a8db3c219?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c0126a44f5f757d4"
+    },
+    {
+      "cache_key": "98d611bbe2f53954",
+      "url": "https://musicbrainz.org/ws/2/work/2015dfb9-702e-3840-afe8-2c27ef28f386?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e8449e8e888f88e4"
+    },
+    {
+      "cache_key": "9a152f88b96e6938",
+      "url": "https://musicbrainz.org/ws/2/work/aca33329-46f5-3737-ab13-ce3831ee1ea7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f63860e1c40128de"
+    },
+    {
+      "cache_key": "9f8f494556296da9",
+      "url": "https://musicbrainz.org/ws/2/work/25c537a4-063c-32c3-a116-c7e1c4aa73ce?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a52e22d657ddf937"
+    },
+    {
+      "cache_key": "a12fc4ebb938bc26",
+      "url": "https://musicbrainz.org/ws/2/work/05256b97-f142-3e2c-8f4b-73be6e33b137?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4815d08df25b840b"
+    },
+    {
+      "cache_key": "abd2c1f41c939628",
+      "url": "https://musicbrainz.org/ws/2/work/26fa7e30-697d-3c97-abe8-1d8cb6bea415?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "bfa57931f7cb7cf8"
+    },
+    {
+      "cache_key": "ae2c2e198403c8fb",
+      "url": "https://musicbrainz.org/ws/2/work/b635e385-7bb6-3114-b7f2-15b116f972c4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fd79a6a9407d7773"
+    },
+    {
+      "cache_key": "afb93283ee1af4c0",
+      "url": "https://musicbrainz.org/ws/2/work/a6610753-da5a-3419-89c7-38979b8bd8c0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d16a4abed74c24bb"
+    },
+    {
+      "cache_key": "b40735793988453f",
+      "url": "https://musicbrainz.org/ws/2/work/d5d42589-c5d6-33b1-9b6a-b64a7905acb7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6376aa1baa3d38c3"
+    },
+    {
+      "cache_key": "b4c81de98e844eb6",
+      "url": "https://musicbrainz.org/ws/2/work/40ef7955-9cd1-39de-9e76-8a5f7d8f9852?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5c62d68bac829f20"
+    },
+    {
+      "cache_key": "b894892169bd0215",
+      "url": "https://musicbrainz.org/ws/2/work/69a14ab4-7f70-3b40-8b87-f52932761fbb?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "51938eafe05d4537"
+    },
+    {
+      "cache_key": "c34e30727e8c70d6",
+      "url": "https://musicbrainz.org/ws/2/work/349cd063-629c-3819-90d3-94a3f53d93e4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f389a6a3cb8da3d5"
+    },
+    {
+      "cache_key": "c539e6a81967c20c",
+      "url": "https://musicbrainz.org/ws/2/artist/37e85ee8-366a-4f17-a011-de94b6632408?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "65fb4c3d8a1257a1"
+    },
+    {
+      "cache_key": "c5b0c5c94d39219c",
+      "url": "https://musicbrainz.org/ws/2/work/d36e7463-aeb6-3790-acbb-f6e3dde0e921?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8c6c91a0ad4024c3"
+    },
+    {
+      "cache_key": "cc1caec722a27b22",
+      "url": "https://musicbrainz.org/ws/2/work/386bb436-ba7e-388e-baeb-71e350be80a3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a7d84c54c2954491"
+    },
+    {
+      "cache_key": "cd70636f11f31d92",
+      "url": "https://musicbrainz.org/ws/2/work/f69dbbb7-4afc-3cc2-bc63-0a8224c91e1d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c948430802839af6"
+    },
+    {
+      "cache_key": "dade93e7a6f1852b",
+      "url": "https://musicbrainz.org/ws/2/work/5d861548-1e36-349f-805d-868caf3463bc?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "79dfd32409881d0a"
+    },
+    {
+      "cache_key": "de5d938ed3a84cc9",
+      "url": "https://musicbrainz.org/ws/2/work/b72eda2a-197f-3df9-aea4-5976a28445c1?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c257c81477079185"
+    },
+    {
+      "cache_key": "e3c131583d7facc2",
+      "url": "https://musicbrainz.org/ws/2/work/631b90cd-b41d-348e-9d55-83fcb0bb01e7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ccf77f3c98bcf3d2"
+    },
+    {
+      "cache_key": "eea92c7c3300db15",
+      "url": "https://musicbrainz.org/ws/2/work/4fbe7276-94ff-3d63-9f4a-c507ff6effef?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c2a36b6fa67e8430"
+    },
+    {
+      "cache_key": "ef33c69b3c950b59",
+      "url": "https://musicbrainz.org/ws/2/work/2c14183e-8708-373e-bd28-5075a52a656a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7e85958b86f7a83a"
+    },
+    {
+      "cache_key": "f1a489ebc4c8b860",
+      "url": "https://musicbrainz.org/ws/2/work/ad195cab-e6bc-387d-b74a-8e62744a63da?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b4c74448c614b0e2"
+    },
+    {
+      "cache_key": "f1d043f3d1ff5917",
+      "url": "https://musicbrainz.org/ws/2/work/defb7f60-0362-3017-a2b4-ace0234d10ac?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a75c129fb27fed59"
+    },
+    {
+      "cache_key": "f80a3e9617cbdd26",
+      "url": "https://musicbrainz.org/ws/2/work/b07d7b50-9446-338c-ad27-c9e0912b818e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5fcd041bd0acc861"
+    }
+  ]
+}

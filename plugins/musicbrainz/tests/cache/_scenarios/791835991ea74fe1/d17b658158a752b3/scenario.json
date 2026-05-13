@@ -1,0 +1,36 @@
+{
+  "test_name": "裸の勇者_vaundy",
+  "scenario_id": "d17b658158a752b3",
+  "responses": [
+    {
+      "cache_key": "02b5bcf387c598da",
+      "url": "https://musicbrainz.org/ws/2/work/7c5ef8dc-1e7a-40c2-af25-fe2632671886?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "363f200014477b9f"
+    },
+    {
+      "cache_key": "0824eb2c62e9feb7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Vaundy",
+      "status_code": 200,
+      "body_hash": "00dfb3d6add842d3"
+    },
+    {
+      "cache_key": "1ad1a7673a13e4b3",
+      "url": "https://musicbrainz.org/ws/2/work/c9baca20-fcdf-46d9-ad78-644b331e860c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "dfbb24731d721594"
+    },
+    {
+      "cache_key": "3e3b2a43da64c17b",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=1167f128-43e3-442d-9c66-d694d7ee2a8d&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "e753f4fb490f1714"
+    },
+    {
+      "cache_key": "cd083c866d13305e",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E8%A3%B8%E3%81%AE%E5%8B%87%E8%80%85&limit=100",
+      "status_code": 200,
+      "body_hash": "9a40eeb9938bf52e"
+    }
+  ]
+}

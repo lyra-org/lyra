@@ -1,5 +1,0 @@
-{
-  "url": "https://musicbrainz.org/ws/2/artist?query=%E3%82%A6%E3%82%A9%E3%83%AB%E3%83%94%E3%82%B9%E3%82%AB%E3%83%BC%E3%82%BF%E3%83%BC",
-  "status_code": 200,
-  "body": "{\"created\":\"2026-03-10T02:34:36.826Z\",\"count\":1,\"offset\":0,\"artists\":[{\"id\":\"168b8ecd-f8ac-4528-9838-e7669b6ef63f\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"score\":100,\"name\":\"ウォルピスカーター\",\"sort-name\":\"Wolpis Carter\",\"country\":\"JP\",\"area\":{\"id\":\"2db42837-c832-3c27-b4a3-08198f75693c\",\"type\":\"Country\",\"type-id\":\"06dd0ae4-8c74-30bb-b43d-95dcedf961de\",\"name\":\"Japan\",\"sort-name\":\"Japan\",\"life-span\":{\"ended\":null}},\"ipis\":[\"00837660511\"],\"isnis\":[\"0000000503072816\"],\"life-span\":{\"ended\":null}}]}"
-}

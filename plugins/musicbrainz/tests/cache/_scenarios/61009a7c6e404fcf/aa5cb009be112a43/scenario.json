@@ -1,0 +1,30 @@
+{
+  "test_name": "balalaika_9lana",
+  "scenario_id": "aa5cb009be112a43",
+  "responses": [
+    {
+      "cache_key": "0cea621e1fa9c802",
+      "url": "https://musicbrainz.org/ws/2/work/cc49255f-54a5-4cbb-a3e6-7da5878c699c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5f53635811cfa9e7"
+    },
+    {
+      "cache_key": "3dbc6b6b8851d026",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A3fa52c01-4985-407e-a6e0-784564cc52c7%20AND%20(release%3ABALALAIKA%20OR%20recording%3ABALALAIKA)&limit=100",
+      "status_code": 200,
+      "body_hash": "8dc50956a7593ac1"
+    },
+    {
+      "cache_key": "7ae489903d8e7598",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=00f835b0-7cc1-4598-975a-0d872ea66e4f&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "7bd825ce8508ab4e"
+    },
+    {
+      "cache_key": "8017489d250986c5",
+      "url": "https://musicbrainz.org/ws/2/artist?query=9Lana",
+      "status_code": 200,
+      "body_hash": "2308fc264b8ee213"
+    }
+  ]
+}

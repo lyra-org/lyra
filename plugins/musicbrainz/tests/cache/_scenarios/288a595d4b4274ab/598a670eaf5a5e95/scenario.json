@@ -1,0 +1,114 @@
+{
+  "test_name": "沈香学_ずっと真夜中でいいのに",
+  "scenario_id": "598a670eaf5a5e95",
+  "responses": [
+    {
+      "cache_key": "05e46f742ee780c5",
+      "url": "https://musicbrainz.org/ws/2/work/b0a71cf7-7914-4fc8-983c-8124cd2d73c5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f3946ef1dd486712"
+    },
+    {
+      "cache_key": "068c2e0cea372549",
+      "url": "https://musicbrainz.org/ws/2/work/2041a45c-25af-456a-bd16-8f4aef8c922b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b9b61f3659fc9257"
+    },
+    {
+      "cache_key": "30db5838f951ecf3",
+      "url": "https://musicbrainz.org/ws/2/work/7704d9ec-0cc0-4ce5-92fe-f91777ee41d7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c0c7ad30fdf8159d"
+    },
+    {
+      "cache_key": "37d82be31af4e27f",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=43359016-cb2b-46b4-87be-952cc59a2ca8&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "4abbd859e6e881d1"
+    },
+    {
+      "cache_key": "4237338eb054f543",
+      "url": "https://musicbrainz.org/ws/2/work/5d894e62-03f6-4c23-8d32-cd3dbaebca4e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f9266aabdb92b86e"
+    },
+    {
+      "cache_key": "60d172eb9d8cb9df",
+      "url": "https://musicbrainz.org/ws/2/work/da84a541-4a9f-4952-89a4-4af2419d381a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "655f565bcef5d52b"
+    },
+    {
+      "cache_key": "7615582c42b28a88",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%B2%88%E9%A6%99%E5%AD%A6&limit=100",
+      "status_code": 200,
+      "body_hash": "5d0958436bf0c9e3"
+    },
+    {
+      "cache_key": "807a724444971eb9",
+      "url": "https://musicbrainz.org/ws/2/work/d330c4b8-40b8-4f6a-b2fd-ca571afb9393?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6b14cb950af64cde"
+    },
+    {
+      "cache_key": "811f6fd695c139b9",
+      "url": "https://musicbrainz.org/ws/2/artist/14d2a235-30e2-489f-b490-f9dc7d2c0861?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4bfcc0b8be3588ed"
+    },
+    {
+      "cache_key": "828e6032e3aebbe8",
+      "url": "https://musicbrainz.org/ws/2/work/d195ed94-a5b5-4b6a-b9ad-6daa5c0e623e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4f7975f14bc46428"
+    },
+    {
+      "cache_key": "8fa52586af9d424c",
+      "url": "https://musicbrainz.org/ws/2/work/951b2fc6-9cfd-42b9-af52-0c131bcc931f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8e9c6f9e191ec4c9"
+    },
+    {
+      "cache_key": "b55c2c8f136cd473",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%9A%E3%81%A3%E3%81%A8%E7%9C%9F%E5%A4%9C%E4%B8%AD%E3%81%A7%E3%81%84%E3%81%84%E3%81%AE%E3%81%AB%E3%80%82",
+      "status_code": 200,
+      "body_hash": "d7c0bce408f90ecc"
+    },
+    {
+      "cache_key": "b611d00ec2943796",
+      "url": "https://musicbrainz.org/ws/2/work/ddef5669-f645-4e8d-96ab-e10210b3f0a3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9886c7acd7e6cac8"
+    },
+    {
+      "cache_key": "b70b5caf67f5f971",
+      "url": "https://musicbrainz.org/ws/2/artist/8a9d0b90-951e-4ab8-b2dc-9d3618af3d28?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4201a90eec335082"
+    },
+    {
+      "cache_key": "e358e6fc20dd8795",
+      "url": "https://musicbrainz.org/ws/2/work/9eb4b26c-4f37-468e-b224-a3c7b2154b8a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "afc94c0e2b352763"
+    },
+    {
+      "cache_key": "e37de85db4764890",
+      "url": "https://musicbrainz.org/ws/2/work/8bb0cc8b-8f54-4193-9963-55eff76422c8?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ddfbc2bd4bdb91b5"
+    },
+    {
+      "cache_key": "e53b38c37623513a",
+      "url": "https://musicbrainz.org/ws/2/work/4e25a6b6-495e-4611-96a8-e759d603a46d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0ac0bf3e17917bd5"
+    },
+    {
+      "cache_key": "f6769b3f6d3e2909",
+      "url": "https://musicbrainz.org/ws/2/work/ee17af9d-9543-400f-b1f7-a5b26cadb762?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5c7e4734214f6a7c"
+    }
+  ]
+}

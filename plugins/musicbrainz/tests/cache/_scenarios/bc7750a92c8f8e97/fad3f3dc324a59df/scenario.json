@@ -1,0 +1,48 @@
+{
+  "test_name": "月姫_a_piece_of_blue_glass_moon_theme_song_ep_reona",
+  "scenario_id": "fad3f3dc324a59df",
+  "responses": [
+    {
+      "cache_key": "3e37a4bc1b9de4ff",
+      "url": "https://musicbrainz.org/ws/2/artist?query=ReoNa",
+      "status_code": 200,
+      "body_hash": "ef16ec8e84e32d77"
+    },
+    {
+      "cache_key": "8d359f6ed5eeca8f",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%9C%88%E5%A7%AB%20%5C-A%20piece%20of%20blue%20glass%20moon%5C-%20THEME%20SONG%20E.P.&limit=100",
+      "status_code": 200,
+      "body_hash": "7877c7f981e3ce54"
+    },
+    {
+      "cache_key": "a4d57c87a87ce2da",
+      "url": "https://musicbrainz.org/ws/2/work/b206dca9-edef-420d-96ac-ba575b67f58e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d1dd7aca25393ebf"
+    },
+    {
+      "cache_key": "b32b038c349cfb31",
+      "url": "https://musicbrainz.org/ws/2/work/5e368f0e-3e71-4ece-9ef8-316fdf1bb01d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "66cee7e85384daa1"
+    },
+    {
+      "cache_key": "c97b8278ae7986c0",
+      "url": "https://musicbrainz.org/ws/2/work/a7893a7e-cc58-4b52-ae1d-9e6afdff5cc9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "10a34a0f5439d6ce"
+    },
+    {
+      "cache_key": "dfbedd49d5e2a724",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=780963ed-e092-45dd-a302-d3dfbc5d8200&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "963f75729da9a9c0"
+    },
+    {
+      "cache_key": "f4daa75fe52885e3",
+      "url": "https://musicbrainz.org/ws/2/work/8e4c1808-3d3f-43db-bf6c-70b13455f840?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3716518dc002886b"
+    }
+  ]
+}

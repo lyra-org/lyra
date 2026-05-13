@@ -1,0 +1,30 @@
+{
+  "test_name": "再会_produced_by_ayase_lisa",
+  "scenario_id": "b996e2069bae6196",
+  "responses": [
+    {
+      "cache_key": "544db5ec85af6527",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%86%8D%E4%BC%9A&limit=100",
+      "status_code": 200,
+      "body_hash": "47037f2a0cb3e3c3"
+    },
+    {
+      "cache_key": "71d9ba367df34a4b",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=4ad55f66-8cf0-4db4-8775-ed98a5bf4b71&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "c8fe33f75c214914"
+    },
+    {
+      "cache_key": "dd3c22ca8ab38979",
+      "url": "https://musicbrainz.org/ws/2/work/55690be8-b2cc-4947-809b-f523bc196e36?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2a6221e588e3b12c"
+    },
+    {
+      "cache_key": "e0c0aa371e6cda29",
+      "url": "https://musicbrainz.org/ws/2/artist?query=LiSA",
+      "status_code": 200,
+      "body_hash": "bf242bde19289aea"
+    }
+  ]
+}

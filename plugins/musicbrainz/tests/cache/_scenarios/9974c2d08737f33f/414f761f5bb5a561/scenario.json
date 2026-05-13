@@ -1,10 +1,30 @@
 {
   "test_name": "极限委托_hoyo_mix",
   "scenario_id": "414f761f5bb5a561",
-  "cache_keys": [
-    "63edfbf6fbc86241",
-    "73d7962a044c6874",
-    "a68dea318bcbffec",
-    "d0efc4c6ba6ec316"
+  "responses": [
+    {
+      "cache_key": "63edfbf6fbc86241",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=c48e0aa6-38f2-4b21-93d9-8252d3465a25&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "78a635c9ee1384c9"
+    },
+    {
+      "cache_key": "73d7962a044c6874",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=c48e0aa6-38f2-4b21-93d9-8252d3465a25&limit=100",
+      "status_code": 200,
+      "body_hash": "23ab029556321e65"
+    },
+    {
+      "cache_key": "a68dea318bcbffec",
+      "url": "https://musicbrainz.org/ws/2/artist?query=S%C4%81n-Z",
+      "status_code": 200,
+      "body_hash": "4e34ffc79cb8c4c7"
+    },
+    {
+      "cache_key": "d0efc4c6ba6ec316",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%9E%81%E9%99%90%E5%A7%94%E6%89%98&limit=100",
+      "status_code": 200,
+      "body_hash": "b85fd7d8bdd83ca0"
+    }
   ]
 }

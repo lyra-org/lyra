@@ -1,0 +1,48 @@
+{
+  "test_name": "逆輸入航空局_椎名林檎",
+  "scenario_id": "35051edccd463933",
+  "responses": [
+    {
+      "cache_key": "0a2ad0f658b1e273",
+      "url": "https://musicbrainz.org/ws/2/work/c3ec8f5b-5123-4386-b8b7-83725cef8fb9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "72e29712c635e89c"
+    },
+    {
+      "cache_key": "57fe21e38e16086e",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%A4%8E%E5%90%8D%E6%9E%97%E6%AA%8E",
+      "status_code": 200,
+      "body_hash": "c39d0966e7507122"
+    },
+    {
+      "cache_key": "8f517d6f978d9cef",
+      "url": "https://musicbrainz.org/ws/2/work/99c9adca-a465-473f-999c-e623c7e399a2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "25bae6b89c951892"
+    },
+    {
+      "cache_key": "a28d23558d614e45",
+      "url": "https://musicbrainz.org/ws/2/work/2da496b4-971d-4d17-b2a6-e7e8b9f450e9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "55905c5e11ee6909"
+    },
+    {
+      "cache_key": "d3cc5ffc975b4138",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=f43e2517-3dd7-4977-9ab1-f50a12742589&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "14ffa87b2680700c"
+    },
+    {
+      "cache_key": "ea23453ce3697659",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E9%80%86%E8%BC%B8%E5%85%A5%5C~%E8%88%AA%E7%A9%BA%E5%B1%80%5C~&limit=100",
+      "status_code": 200,
+      "body_hash": "406106c29cd4228d"
+    },
+    {
+      "cache_key": "ef5a27fdd1ee69ba",
+      "url": "https://musicbrainz.org/ws/2/work/1ca44f31-cd8c-44f8-a5c5-8ca44e3b58ca?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b78ad520989a8fca"
+    }
+  ]
+}

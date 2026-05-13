@@ -1,0 +1,36 @@
+{
+  "test_name": "たましいの居場所_マカロニえんぴつ",
+  "scenario_id": "c2b2296affff4129",
+  "responses": [
+    {
+      "cache_key": "6849917e44168fe3",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=5b07740a-1964-45cc-b2c6-806a1c232cae&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "df66dd4fe7bf311f"
+    },
+    {
+      "cache_key": "7cc036b7740d3164",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%9E%E3%82%AB%E3%83%AD%E3%83%8B%E3%81%88%E3%82%93%E3%81%B4%E3%81%A4",
+      "status_code": 200,
+      "body_hash": "0262b1a83f0e3b30"
+    },
+    {
+      "cache_key": "9b4f730ed240bf03",
+      "url": "https://musicbrainz.org/ws/2/work/ffe7027b-58c2-4645-aa85-52562ec33aa2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "705a1c82d9c02baa"
+    },
+    {
+      "cache_key": "a4fedc97114e6d42",
+      "url": "https://musicbrainz.org/ws/2/artist/c65f10b6-be99-4e3a-a010-2a11fd965780?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1d74f232ad675086"
+    },
+    {
+      "cache_key": "ef5b7ed660ccf0a7",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%9F%E3%81%BE%E3%81%97%E3%81%84%E3%81%AE%E5%B1%85%E5%A0%B4%E6%89%80&limit=100",
+      "status_code": 200,
+      "body_hash": "5e6bb8509be0b2d4"
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "test_name": "結束バンド_extra_music_結束バンド",
+  "scenario_id": "f437aa5afbf21c26",
+  "responses": [
+    {
+      "cache_key": "196988c1dd75cb31",
+      "url": "https://musicbrainz.org/ws/2/work/bdbb3b17-eb71-426e-a2c1-81bae653397f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5f02fca941a12926"
+    },
+    {
+      "cache_key": "1d33fe33bc9eb1ed",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=8e6fd968-e20c-4822-9923-354edc4ab0df&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "038a4cdd90271c29"
+    },
+    {
+      "cache_key": "357a0e024a64e49d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%B5%90%E6%9D%9F%E3%83%90%E3%83%B3%E3%83%89",
+      "status_code": 200,
+      "body_hash": "3a3e205279eed1f2"
+    },
+    {
+      "cache_key": "56b495a71f5055ed",
+      "url": "https://musicbrainz.org/ws/2/work/64557885-021f-4d67-aa7a-fc9c712dfdae?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c7069be32baebc00"
+    },
+    {
+      "cache_key": "c63da08baa1bcd90",
+      "url": "https://musicbrainz.org/ws/2/artist/c1b0fe0a-779d-43ed-b193-4370f0d0f88f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c2d4a391659c46be"
+    },
+    {
+      "cache_key": "e9fe8fe5050f35ef",
+      "url": "https://musicbrainz.org/ws/2/work/be864074-98ca-4861-9dee-eee9ea17d130?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c71369e59ebf948c"
+    },
+    {
+      "cache_key": "f10a687a8e20788a",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%B5%90%E6%9D%9F%E3%83%90%E3%83%B3%E3%83%89%20EXTRA%20MUSIC&limit=100",
+      "status_code": 200,
+      "body_hash": "7789405c3bbaccda"
+    },
+    {
+      "cache_key": "f5854cde7d05a0ad",
+      "url": "https://musicbrainz.org/ws/2/work/db8d9894-ff5c-456f-8321-5b5c23ed163e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "274c84ff9a869aa8"
+    }
+  ]
+}

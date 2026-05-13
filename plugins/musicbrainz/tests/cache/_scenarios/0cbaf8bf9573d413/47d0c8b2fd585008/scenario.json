@@ -1,0 +1,90 @@
+{
+  "test_name": "kinjitou_reol",
+  "scenario_id": "47d0c8b2fd585008",
+  "responses": [
+    {
+      "cache_key": "08bd357376567395",
+      "url": "https://musicbrainz.org/ws/2/work/f2cea43e-c17c-48c4-812e-ebcd978d2dc0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0e5926747b503a29"
+    },
+    {
+      "cache_key": "274d906b9d7a501a",
+      "url": "https://musicbrainz.org/ws/2/work/d5e035d1-a0d3-4105-9772-73924784858b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4058142698a652ca"
+    },
+    {
+      "cache_key": "51fcad02bc8cbfb7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=reol",
+      "status_code": 200,
+      "body_hash": "ce17e8e8b821b725"
+    },
+    {
+      "cache_key": "6cbd085ea34226a4",
+      "url": "https://musicbrainz.org/ws/2/work/81afdcff-55ad-41ca-9249-dd27513fbc8e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fef34dd51fac7974"
+    },
+    {
+      "cache_key": "7569edc840b7f20e",
+      "url": "https://musicbrainz.org/ws/2/work/b2201675-876c-40a2-9230-21e5f9157331?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "865327db943ee2b5"
+    },
+    {
+      "cache_key": "8879adc08ebbaca8",
+      "url": "https://musicbrainz.org/ws/2/work/d8e98e71-a982-4b17-99db-ea7e6fd20f01?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "02046e53bd80fb42"
+    },
+    {
+      "cache_key": "ae8fd9c305e82296",
+      "url": "https://musicbrainz.org/ws/2/work/8ea749f4-5b19-4132-aa8b-8db351edd951?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e05e62c2baac97bc"
+    },
+    {
+      "cache_key": "b2ff6cad069a985a",
+      "url": "https://musicbrainz.org/ws/2/work/062500df-38b9-4fa7-8076-6df2b1e98ee0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "df29532bad312c63"
+    },
+    {
+      "cache_key": "c5dfd1e19affd673",
+      "url": "https://musicbrainz.org/ws/2/work/2a5aab65-f60f-463c-8915-ac29e0615980?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a0ca7bd0e1dc7589"
+    },
+    {
+      "cache_key": "c7e5abd80d2824f6",
+      "url": "https://musicbrainz.org/ws/2/work/5fad4299-c80b-4902-a8bf-b426c3c2e450?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "731caf373203b0ec"
+    },
+    {
+      "cache_key": "cc8795922edc4c90",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AKinjitou&limit=100",
+      "status_code": 200,
+      "body_hash": "d9b77f1e1c24843d"
+    },
+    {
+      "cache_key": "cd0122b2678e6db9",
+      "url": "https://musicbrainz.org/ws/2/work/ec61daa5-e4c6-43f0-913f-c0edd84466d2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ce789b0486a80c49"
+    },
+    {
+      "cache_key": "da1c9d7dd64fb862",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=d9b5f4da-cc8b-4305-8a04-53a80e995b11&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "abcc9e245b8ebb71"
+    },
+    {
+      "cache_key": "de2adbd1850c7aae",
+      "url": "https://musicbrainz.org/ws/2/work/c9c1c4fd-333e-4ebb-a779-25a3a8720f7e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "81557a227ff62462"
+    }
+  ]
+}

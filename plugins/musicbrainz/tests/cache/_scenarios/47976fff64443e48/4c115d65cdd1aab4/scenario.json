@@ -1,9 +1,24 @@
 {
   "test_name": "白いキセキ_shimamo",
   "scenario_id": "4c115d65cdd1aab4",
-  "cache_keys": [
-    "6b4ef3bc5e4d0c57",
-    "b0570ac60f748b9e",
-    "f4dacafacd7076d6"
+  "responses": [
+    {
+      "cache_key": "6b4ef3bc5e4d0c57",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%99%BD%E3%81%84%E3%82%AD%E3%82%BB%E3%82%AD&limit=100",
+      "status_code": 200,
+      "body_hash": "ff71ba97e5bc0fbe"
+    },
+    {
+      "cache_key": "b0570ac60f748b9e",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=1ae86edc-13e4-4b0b-a86d-0914ddc9d98f&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "263b061b33a36824"
+    },
+    {
+      "cache_key": "f4dacafacd7076d6",
+      "url": "https://musicbrainz.org/ws/2/artist?query=shimamo",
+      "status_code": 200,
+      "body_hash": "5ef3c0f61aa81fbb"
+    }
   ]
 }

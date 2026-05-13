@@ -1,10 +1,30 @@
 {
   "test_name": "わかってるよ_すんひ",
   "scenario_id": "b62a5024d8207993",
-  "cache_keys": [
-    "31a7cebcf42449c4",
-    "54e74789d86a47f9",
-    "761d48b3299b0c0c",
-    "db725e87fee68e0b"
+  "responses": [
+    {
+      "cache_key": "31a7cebcf42449c4",
+      "url": "https://musicbrainz.org/ws/2/release/425daa10-9260-4980-a5fa-bc2348473f44?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels",
+      "status_code": 200,
+      "body_hash": "9fcd6904d6d787bd"
+    },
+    {
+      "cache_key": "54e74789d86a47f9",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%99%E3%82%93%E3%81%B2",
+      "status_code": 200,
+      "body_hash": "dac56470235da23a"
+    },
+    {
+      "cache_key": "761d48b3299b0c0c",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%8F%E3%81%8B%E3%81%A3%E3%81%A6%E3%82%8B%E3%82%88%E3%80%82&limit=100",
+      "status_code": 200,
+      "body_hash": "d9b43dfaaf760f4f"
+    },
+    {
+      "cache_key": "db725e87fee68e0b",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A6498d8a9-d901-461a-8c0d-3ea72a5379bd%20AND%20(release%3A%E3%82%8F%E3%81%8B%E3%81%A3%E3%81%A6%E3%82%8B%E3%82%88%E3%80%82%20OR%20recording%3A%E3%82%8F%E3%81%8B%E3%81%A3%E3%81%A6%E3%82%8B%E3%82%88%E3%80%82)",
+      "status_code": 200,
+      "body_hash": "a7b373543d58cd2b"
+    }
   ]
 }

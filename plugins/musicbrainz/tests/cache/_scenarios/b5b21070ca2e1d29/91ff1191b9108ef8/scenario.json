@@ -1,10 +1,30 @@
 {
   "test_name": "twilight_土岐麻子",
   "scenario_id": "91ff1191b9108ef8",
-  "cache_keys": [
-    "28c6004ee25b667e",
-    "d15f20e7287f99b7",
-    "dcc0c29a0adf16dd",
-    "ece483e8c3108089"
+  "responses": [
+    {
+      "cache_key": "28c6004ee25b667e",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=104d64d9-3500-4b92-a063-997184773b0e&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "b55bbf3d4112b07c"
+    },
+    {
+      "cache_key": "d15f20e7287f99b7",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A0412cd16-5507-4474-86e2-3c94dd1428f2%20AND%20(release%3ATwilight%20OR%20recording%3A%E3%82%BD%E3%83%AB%E3%83%AC%E3%83%A0)",
+      "status_code": 200,
+      "body_hash": "4e601a8a5ab5b19e"
+    },
+    {
+      "cache_key": "dcc0c29a0adf16dd",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E5%9C%9F%E5%B2%90%E9%BA%BB%E5%AD%90",
+      "status_code": 200,
+      "body_hash": "c6f66a0c3bf9288a"
+    },
+    {
+      "cache_key": "ece483e8c3108089",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ATwilight&limit=100",
+      "status_code": 200,
+      "body_hash": "da11727848f8d383"
+    }
   ]
 }

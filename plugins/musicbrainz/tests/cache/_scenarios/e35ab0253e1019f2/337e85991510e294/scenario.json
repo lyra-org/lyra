@@ -1,0 +1,30 @@
+{
+  "test_name": "アブナイキオク_古賀_葵",
+  "scenario_id": "337e85991510e294",
+  "responses": [
+    {
+      "cache_key": "0ba840e49c24ea25",
+      "url": "https://musicbrainz.org/ws/2/work/fea8244e-6ae2-4886-9d49-63743f41586d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8e23cafe8e97c165"
+    },
+    {
+      "cache_key": "1347b48d0b97a5c6",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=05600372-8f12-41d7-8196-e2be10653034&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "fd33b9b49aa6a807"
+    },
+    {
+      "cache_key": "25c7f7349bf5b01c",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E9%88%B4%E6%9C%A8%E9%9B%85%E4%B9%8B",
+      "status_code": 200,
+      "body_hash": "c254497389169fc1"
+    },
+    {
+      "cache_key": "59c315aba3512293",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%A2%E3%83%96%E3%83%8A%E3%82%A4%E3%82%AD%E3%82%AA%E3%82%AF&limit=100",
+      "status_code": 200,
+      "body_hash": "5814583ded80dee9"
+    }
+  ]
+}

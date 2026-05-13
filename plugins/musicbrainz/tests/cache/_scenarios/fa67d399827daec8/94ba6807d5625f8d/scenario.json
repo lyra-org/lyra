@@ -1,0 +1,60 @@
+{
+  "test_name": "悪夢のような1週間_ブランデー戦記",
+  "scenario_id": "94ba6807d5625f8d",
+  "responses": [
+    {
+      "cache_key": "06d37f2209454007",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%96%E3%83%A9%E3%83%B3%E3%83%87%E3%83%BC%E6%88%A6%E8%A8%98",
+      "status_code": 200,
+      "body_hash": "06f9f69ea205c503"
+    },
+    {
+      "cache_key": "2c04e1c9f3aa42ae",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%82%AA%E5%A4%A2%E3%81%AE%E3%82%88%E3%81%86%E3%81%AA1%E9%80%B1%E9%96%93&limit=100",
+      "status_code": 200,
+      "body_hash": "24399aa028bf294c"
+    },
+    {
+      "cache_key": "4e4c8768c3a747d3",
+      "url": "https://musicbrainz.org/ws/2/work/9c0c53f2-918e-405c-b10d-a2507025574c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8f9e3e1142eeeb25"
+    },
+    {
+      "cache_key": "56199d8ea8b453b2",
+      "url": "https://musicbrainz.org/ws/2/work/c9ba81aa-298b-4ff3-8700-5220c60faf78?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "eb2980c11e411d1a"
+    },
+    {
+      "cache_key": "6122ff343eefd2f1",
+      "url": "https://musicbrainz.org/ws/2/work/a564e439-f68c-48a1-8ef4-73964186fa05?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f02798dc74cdb9e9"
+    },
+    {
+      "cache_key": "76b3c41c93993502",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=762f0539-a6fa-4766-8469-f927edd955cf&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "0e3cb948833da36e"
+    },
+    {
+      "cache_key": "83e52daaeff22acb",
+      "url": "https://musicbrainz.org/ws/2/work/c2437ede-5d9b-4c5e-aff9-3c6e7d7a2c74?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d4a343f0d31ad4c7"
+    },
+    {
+      "cache_key": "b5468254efcd5095",
+      "url": "https://musicbrainz.org/ws/2/artist/4e42a5ac-6bff-4da2-98b5-7aafde59e0ab?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3e36fb84aa05de55"
+    },
+    {
+      "cache_key": "b845cb9779b187b4",
+      "url": "https://musicbrainz.org/ws/2/work/c037f059-01fb-4351-9764-dd057670c7aa?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fd2deb1b876a403c"
+    }
+  ]
+}

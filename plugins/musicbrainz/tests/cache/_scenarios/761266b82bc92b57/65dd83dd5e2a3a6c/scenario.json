@@ -1,0 +1,30 @@
+{
+  "test_name": "小さな恋のうた_高木さんcv高橋李依",
+  "scenario_id": "65dd83dd5e2a3a6c",
+  "responses": [
+    {
+      "cache_key": "a1ead2b2ec3a4a82",
+      "url": "https://musicbrainz.org/ws/2/release/933342b2-2a92-4c31-9492-8f6effcd1490?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels",
+      "status_code": 200,
+      "body_hash": "ad482422ddacef1a"
+    },
+    {
+      "cache_key": "acca3e629b99f787",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%B0%8F%E3%81%95%E3%81%AA%E6%81%8B%E3%81%AE%E3%81%86%E3%81%9F&limit=100",
+      "status_code": 200,
+      "body_hash": "a409dfecb0c3418f"
+    },
+    {
+      "cache_key": "ba180a0d70139365",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A647e735a-fb03-480f-a9ad-20a4b24e8f3e%20AND%20(release%3A%E5%B0%8F%E3%81%95%E3%81%AA%E6%81%8B%E3%81%AE%E3%81%86%E3%81%9F%20OR%20recording%3A%E5%B0%8F%E3%81%95%E3%81%AA%E6%81%8B%E3%81%AE%E3%81%86%E3%81%9F)",
+      "status_code": 200,
+      "body_hash": "6c27af974aa51c96"
+    },
+    {
+      "cache_key": "d9a157e806eed028",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E9%AB%98%E6%9C%A8%E3%81%95%E3%82%93",
+      "status_code": 200,
+      "body_hash": "faedff49afc3dbb3"
+    }
+  ]
+}

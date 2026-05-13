@@ -7,6 +7,10 @@ use std::collections::{
     HashMap,
     HashSet,
 };
+use std::io::{
+    Read,
+    Write,
+};
 use std::path::{
     Path,
     PathBuf,
@@ -25,6 +29,11 @@ use std::time::{
     Instant,
 };
 
+use flate2::read::GzDecoder;
+use flate2::{
+    Compression,
+    GzBuilder,
+};
 use harmony_core::{
     LuaAsyncExt,
     Module,
@@ -75,10 +84,18 @@ pub struct RequestTraceEntry {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ScenarioManifest {
+struct ScenarioManifest {
     test_name: String,
     scenario_id: String,
-    cache_keys: Vec<String>,
+    responses: Vec<ScenarioResponse>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ScenarioResponse {
+    cache_key: String,
+    url: String,
+    status_code: u16,
+    body_hash: String,
 }
 
 #[derive(Clone, Debug)]
@@ -253,21 +270,25 @@ pub fn get_module(
                             .map_err(|_| mlua::Error::runtime("missing or invalid 'url' field"))?;
 
                         let cache_key = xxh3_hex(&url);
-                        let base_cache_file = base_cache_dir.join(format!("{cache_key}.json"));
-                        let overlay_cache_file = overlay_cache_dir
-                            .as_ref()
-                            .map(|dir| dir.join(format!("{cache_key}.json")));
-
                         {
                             let mut keys = accessed_keys.write().await;
                             keys.insert(cache_key.clone());
                         }
 
-                        if let Some(cached) = overlay_cache_file
-                            .as_deref()
-                            .and_then(read_cache)
-                            .or_else(|| read_cache(&base_cache_file))
-                        {
+                        let cached = if let Some(overlay_cache_dir) = overlay_cache_dir.as_deref() {
+                            match read_cache(overlay_cache_dir, &cache_key, &url)
+                                .map_err(mlua::Error::external)?
+                            {
+                                Some(cached) => Some(cached),
+                                None => read_cache(&base_cache_dir, &cache_key, &url)
+                                    .map_err(mlua::Error::external)?,
+                            }
+                        } else {
+                            read_cache(&base_cache_dir, &cache_key, &url)
+                                .map_err(mlua::Error::external)?
+                        };
+
+                        if let Some(cached) = cached {
                             record_trace_entry(
                                 &request_trace,
                                 &cache_key,
@@ -315,16 +336,18 @@ pub fn get_module(
                             let response = execute_single_request(&url, options.clone())
                                 .await
                                 .map_err(mlua::Error::external)?;
-                            let write_cache_file =
-                                overlay_cache_file.as_ref().unwrap_or(&base_cache_file);
+                            let write_cache_dir =
+                                overlay_cache_dir.as_ref().unwrap_or(&base_cache_dir);
                             write_cache(
-                                write_cache_file,
+                                write_cache_dir,
+                                &cache_key,
                                 &CachedResponse {
                                     url: url.clone(),
                                     status_code: response.status_code,
                                     body: response.body.clone(),
                                 },
-                            );
+                            )
+                            .map_err(mlua::Error::external)?;
 
                             let should_retry = config.as_ref().is_some_and(|cfg| {
                                 retries < cfg.max_retries
@@ -459,26 +482,61 @@ fn extract_domain(url_str: &str) -> Option<String> {
         .and_then(|url| url.host_str().map(|host| host.to_string()))
 }
 
-fn read_cache(path: &Path) -> Option<CachedResponse> {
-    let data = std::fs::read_to_string(path).ok()?;
-    let cached: CachedResponse = serde_json::from_str(&data).ok()?;
-    if (200..400).contains(&cached.status_code) {
-        Some(cached)
-    } else {
-        None
+fn read_cache(
+    scenario_cache_dir: &Path,
+    cache_key: &str,
+    url: &str,
+) -> std::io::Result<Option<CachedResponse>> {
+    let Some(entry) = read_response_entry(scenario_cache_dir, cache_key)? else {
+        return Ok(None);
+    };
+    if entry.url != url || !(200..400).contains(&entry.status_code) {
+        return Ok(None);
     }
+    let body = read_response_body(scenario_cache_dir, &entry.body_hash)?;
+    Ok(Some(CachedResponse {
+        url: entry.url,
+        status_code: entry.status_code,
+        body,
+    }))
 }
 
-fn write_cache(path: &Path, response: &CachedResponse) {
+fn write_cache(
+    scenario_cache_dir: &Path,
+    cache_key: &str,
+    response: &CachedResponse,
+) -> std::io::Result<()> {
     if !(200..400).contains(&response.status_code) {
-        return;
+        return Ok(());
     }
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    let body_hash = response_body_hash(&response.body);
+    write_response_body(scenario_cache_dir, &body_hash, &response.body)?;
+    let mut manifest = match read_scenario_manifest(scenario_cache_dir) {
+        Ok(manifest) => manifest,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            default_scenario_manifest(scenario_cache_dir)
+        }
+        Err(e) => return Err(e),
+    };
+    let entry = ScenarioResponse {
+        cache_key: cache_key.to_string(),
+        url: response.url.clone(),
+        status_code: response.status_code,
+        body_hash,
+    };
+    if let Some(existing) = manifest
+        .responses
+        .iter_mut()
+        .find(|existing| existing.cache_key == entry.cache_key)
+    {
+        *existing = entry;
+    } else {
+        manifest.responses.push(entry);
     }
-    if let Ok(json) = serde_json::to_string_pretty(response) {
-        let _ = std::fs::write(path, json);
-    }
+    manifest
+        .responses
+        .sort_by(|a, b| a.cache_key.cmp(&b.cache_key));
+    write_scenario_manifest(scenario_cache_dir, &manifest)
 }
 
 async fn record_trace_entry(
@@ -604,6 +662,194 @@ fn scenario_manifest_path(scenario_cache_dir: &Path) -> PathBuf {
     scenario_cache_dir.join("scenario.json")
 }
 
+fn default_scenario_manifest(scenario_cache_dir: &Path) -> ScenarioManifest {
+    ScenarioManifest {
+        test_name: String::new(),
+        scenario_id: scenario_cache_dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+        responses: Vec::new(),
+    }
+}
+
+fn read_scenario_manifest(scenario_cache_dir: &Path) -> std::io::Result<ScenarioManifest> {
+    let data = std::fs::read(scenario_manifest_path(scenario_cache_dir))?;
+    serde_json::from_slice(&data).map_err(std::io::Error::other)
+}
+
+fn write_scenario_manifest(
+    scenario_cache_dir: &Path,
+    manifest: &ScenarioManifest,
+) -> std::io::Result<()> {
+    std::fs::create_dir_all(scenario_cache_dir)?;
+    let mut json = serde_json::to_vec_pretty(manifest).map_err(std::io::Error::other)?;
+    json.push(b'\n');
+    std::fs::write(scenario_manifest_path(scenario_cache_dir), json)
+}
+
+fn read_response_entry(
+    scenario_cache_dir: &Path,
+    cache_key: &str,
+) -> std::io::Result<Option<ScenarioResponse>> {
+    let manifest = match read_scenario_manifest(scenario_cache_dir) {
+        Ok(manifest) => manifest,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    Ok(manifest
+        .responses
+        .into_iter()
+        .find(|entry| entry.cache_key == cache_key))
+}
+
+fn cache_root_for_scenario_dir(scenario_cache_dir: &Path) -> std::io::Result<PathBuf> {
+    let scenarios_dir = scenario_cache_dir
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "scenario cache path is not under a cache/_scenarios tree: {}",
+                    scenario_cache_dir.display()
+                ),
+            )
+        })?;
+    if scenarios_dir.file_name().and_then(|name| name.to_str()) != Some("_scenarios") {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "scenario cache path is not under a cache/_scenarios tree: {}",
+                scenario_cache_dir.display()
+            ),
+        ));
+    }
+    scenarios_dir
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "scenario cache path has no cache root: {}",
+                    scenario_cache_dir.display()
+                ),
+            )
+        })
+}
+
+fn response_body_hash(body: &str) -> String {
+    xxh3_hex_bytes(body.as_bytes())
+}
+
+fn response_body_path(cache_root: &Path, body_hash: &str) -> PathBuf {
+    let prefix = body_hash.get(..2).unwrap_or("00");
+    cache_root
+        .join("_responses")
+        .join(prefix)
+        .join(format!("{body_hash}.body.gz"))
+}
+
+fn read_response_body(scenario_cache_dir: &Path, body_hash: &str) -> std::io::Result<String> {
+    let cache_root = cache_root_for_scenario_dir(scenario_cache_dir)?;
+    read_response_body_file(&response_body_path(&cache_root, body_hash), body_hash)
+}
+
+fn read_response_body_file(path: &Path, body_hash: &str) -> std::io::Result<String> {
+    let file = std::fs::File::open(path)?;
+    let mut decoder = GzDecoder::new(file);
+    let mut body = String::new();
+    decoder.read_to_string(&mut body)?;
+    validate_response_body_hash(path, body_hash, &body)?;
+    Ok(body)
+}
+
+fn validate_response_body_hash(
+    path: &Path,
+    expected_hash: &str,
+    body: &str,
+) -> std::io::Result<()> {
+    let actual_hash = response_body_hash(body);
+    if actual_hash == expected_hash {
+        return Ok(());
+    }
+
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!(
+            "cached response body hash mismatch for {}: expected {expected_hash}, got {actual_hash}",
+            path.display()
+        ),
+    ))
+}
+
+fn write_response_body(
+    scenario_cache_dir: &Path,
+    body_hash: &str,
+    body: &str,
+) -> std::io::Result<()> {
+    let cache_root = cache_root_for_scenario_dir(scenario_cache_dir)?;
+    let path = response_body_path(&cache_root, body_hash);
+    if path.is_file() {
+        let existing_body = read_response_body_file(&path, body_hash)?;
+        if existing_body != body {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "cached response body hash collision for {}: existing body differs",
+                    path.display()
+                ),
+            ));
+        }
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::File::create(&path)?;
+    let mut encoder = GzBuilder::new().mtime(0).write(file, Compression::best());
+    encoder.write_all(body.as_bytes())?;
+    encoder.finish()?;
+    let written_body = read_response_body_file(&path, body_hash)?;
+    if written_body != body {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "cached response body write verification failed for {}",
+                path.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn copy_response_body(
+    source_scenario_cache_dir: &Path,
+    dest_scenario_cache_dir: &Path,
+    body_hash: &str,
+) -> std::io::Result<()> {
+    let source_root = cache_root_for_scenario_dir(source_scenario_cache_dir)?;
+    let dest_root = cache_root_for_scenario_dir(dest_scenario_cache_dir)?;
+    let source = response_body_path(&source_root, body_hash);
+    read_response_body_file(&source, body_hash)?;
+    if source_root == dest_root {
+        return Ok(());
+    }
+    let dest = response_body_path(&dest_root, body_hash);
+    if dest.is_file() {
+        read_response_body_file(&dest, body_hash)?;
+        return Ok(());
+    }
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(source, &dest)?;
+    read_response_body_file(&dest, body_hash)?;
+    Ok(())
+}
+
 pub fn persist_scenario(
     cache_dir: &Path,
     test_name: &str,
@@ -616,33 +862,31 @@ pub fn persist_scenario(
     let is_new = !scenario_dir.exists();
     std::fs::create_dir_all(&scenario_dir)?;
 
+    let mut responses = Vec::with_capacity(cache_keys.len());
     for cache_key in cache_keys {
-        let file_name = format!("{cache_key}.json");
-        let overlay_path = overlay_cache_dir.join(&file_name);
-        let seed_path = seed_cache_dir.join(&file_name);
-        let dest_path = scenario_dir.join(&file_name);
-        let source = if overlay_path.exists() {
-            overlay_path
-        } else if seed_path.exists() {
-            seed_path
-        } else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("missing cached response for key {cache_key}"),
-            ));
+        let (source_dir, entry) = match read_response_entry(overlay_cache_dir, cache_key)? {
+            Some(entry) => (overlay_cache_dir, entry),
+            None => match read_response_entry(seed_cache_dir, cache_key)? {
+                Some(entry) => (seed_cache_dir, entry),
+                None => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("missing cached response for key {cache_key}"),
+                    ));
+                }
+            },
         };
-        if source != dest_path {
-            std::fs::copy(source, dest_path)?;
-        }
+        copy_response_body(source_dir, &scenario_dir, &entry.body_hash)?;
+        responses.push(entry);
     }
+    responses.sort_by(|a, b| a.cache_key.cmp(&b.cache_key));
 
     let manifest = ScenarioManifest {
         test_name: test_name.to_string(),
         scenario_id: scenario_id.to_string(),
-        cache_keys: cache_keys.to_vec(),
+        responses,
     };
-    let json = serde_json::to_vec_pretty(&manifest).map_err(std::io::Error::other)?;
-    std::fs::write(scenario_manifest_path(&scenario_dir), json)?;
+    write_scenario_manifest(&scenario_dir, &manifest)?;
     Ok(is_new)
 }
 
@@ -767,4 +1011,85 @@ pub fn prune_stale_scenarios(
         }
     }
     Ok(pruned)
+}
+
+pub fn prune_unreferenced_responses(cache_dir: &Path) -> std::io::Result<usize> {
+    let mut referenced = HashSet::new();
+    let scenarios_dir = scenarios_root(cache_dir);
+    if scenarios_dir.is_dir() {
+        for fixture_entry in std::fs::read_dir(&scenarios_dir)?.flatten() {
+            let fixture_root = fixture_entry.path();
+            if !fixture_root.is_dir() {
+                continue;
+            }
+            for scenario_entry in std::fs::read_dir(fixture_root)?.flatten() {
+                let scenario_dir = scenario_entry.path();
+                if !scenario_dir.is_dir() {
+                    continue;
+                }
+                let manifest = match read_scenario_manifest(&scenario_dir) {
+                    Ok(manifest) => manifest,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(e) => return Err(e),
+                };
+                referenced.extend(manifest.responses.into_iter().map(|entry| entry.body_hash));
+            }
+        }
+    }
+
+    let responses_root = cache_dir.join("_responses");
+    let mut response_paths = Vec::new();
+    collect_response_body_paths(&responses_root, &mut response_paths)?;
+
+    let mut pruned = 0;
+    for response_path in response_paths {
+        let Some(file_name) = response_path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some(body_hash) = file_name.strip_suffix(".body.gz") else {
+            continue;
+        };
+        if referenced.contains(body_hash) {
+            continue;
+        }
+        std::fs::remove_file(response_path)?;
+        pruned += 1;
+    }
+
+    remove_empty_response_dirs(&responses_root)?;
+    Ok(pruned)
+}
+
+fn collect_response_body_paths(root: &Path, paths: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_response_body_paths(&path, paths)?;
+        } else {
+            paths.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn remove_empty_response_dirs(root: &Path) -> std::io::Result<bool> {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() && remove_empty_response_dirs(&path)? {
+            std::fs::remove_dir(&path)?;
+        }
+    }
+
+    Ok(std::fs::read_dir(root)?.next().is_none())
 }

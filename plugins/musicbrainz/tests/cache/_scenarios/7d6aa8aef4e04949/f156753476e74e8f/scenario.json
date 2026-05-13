@@ -1,0 +1,30 @@
+{
+  "test_name": "恋_星野源",
+  "scenario_id": "f156753476e74e8f",
+  "responses": [
+    {
+      "cache_key": "02f67b83356c157e",
+      "url": "https://musicbrainz.org/ws/2/work/a9f0fac3-88d7-49a6-b5e1-65e59bbb6338?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "130f5d8e9cad7920"
+    },
+    {
+      "cache_key": "3cd1035e93761b6f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%98%9F%E9%87%8E%E6%BA%90",
+      "status_code": 200,
+      "body_hash": "e6bf8b8f18fa3060"
+    },
+    {
+      "cache_key": "61be51d48e369f88",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=11c3e56e-baa8-4e19-908f-a6d50c7ff8e3&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "314ac26e55e6188e"
+    },
+    {
+      "cache_key": "66f5ffb1c60099ec",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%81%8B&limit=100",
+      "status_code": 200,
+      "body_hash": "a0ce8200fa97af0c"
+    }
+  ]
+}

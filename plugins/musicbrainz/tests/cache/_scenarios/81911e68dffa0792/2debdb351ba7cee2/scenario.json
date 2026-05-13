@@ -1,9 +1,24 @@
 {
   "test_name": "wonderland_from_the_first_take_iri",
   "scenario_id": "2debdb351ba7cee2",
-  "cache_keys": [
-    "23aafd24f45f47a9",
-    "9adbc8359d81a403",
-    "a6be751025db5e32"
+  "responses": [
+    {
+      "cache_key": "23aafd24f45f47a9",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=60fa3e84-3cb9-4e8a-b507-7561637f3f02&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "e3fc7ac7de161bf6"
+    },
+    {
+      "cache_key": "9adbc8359d81a403",
+      "url": "https://musicbrainz.org/ws/2/artist?query=iri",
+      "status_code": 200,
+      "body_hash": "4b89589f81be855f"
+    },
+    {
+      "cache_key": "a6be751025db5e32",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Ac1439dbc-2424-4142-b96b-cadcaf0cc2e0%20AND%20(release%3AWonderland%20%5C-%20From%20THE%20FIRST%20TAKE%20OR%20recording%3AWonderland%20%5C-%20From%20THE%20FIRST%20TAKE)&limit=100",
+      "status_code": 200,
+      "body_hash": "cd08a42f7f2944f2"
+    }
   ]
 }

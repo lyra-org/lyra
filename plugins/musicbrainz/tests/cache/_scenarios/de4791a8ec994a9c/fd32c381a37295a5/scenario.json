@@ -1,0 +1,30 @@
+{
+  "test_name": "man_in_the_mirror_official髭男dism",
+  "scenario_id": "fd32c381a37295a5",
+  "responses": [
+    {
+      "cache_key": "1ef1306dfb738fdc",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=a15f64a0-f15b-4db8-bf3b-8403d0e56f6d&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3090d99cc9a76158"
+    },
+    {
+      "cache_key": "ac202f410fb14406",
+      "url": "https://musicbrainz.org/ws/2/artist/6dddd7a2-5583-49d0-a8b2-9ee46d04f27e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7dd1e9d4912bb0b6"
+    },
+    {
+      "cache_key": "b034310a67f0edc5",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AMAN%20IN%20THE%20MIRROR&limit=100",
+      "status_code": 200,
+      "body_hash": "5c922f01443c058e"
+    },
+    {
+      "cache_key": "e632cd6797fe55ad",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Official%E9%AB%AD%E7%94%B7dism",
+      "status_code": 200,
+      "body_hash": "f11c6a7d683b0020"
+    }
+  ]
+}

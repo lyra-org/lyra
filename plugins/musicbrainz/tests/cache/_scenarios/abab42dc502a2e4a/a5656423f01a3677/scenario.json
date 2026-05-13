@@ -1,0 +1,42 @@
+{
+  "test_name": "palette_eill",
+  "scenario_id": "a5656423f01a3677",
+  "responses": [
+    {
+      "cache_key": "0794fbfd41b14e0b",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=d291ab1e-7402-47a7-aab9-bd5f7032d9c5&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3ac70521d9b9fbac"
+    },
+    {
+      "cache_key": "1511f16a5dbcb494",
+      "url": "https://musicbrainz.org/ws/2/artist?query=eill",
+      "status_code": 200,
+      "body_hash": "43aebdfe48ff7a32"
+    },
+    {
+      "cache_key": "21745c2d52ce0903",
+      "url": "https://musicbrainz.org/ws/2/work/3b7c6a3b-4a07-4435-9f03-e6495a947b74?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6df2ba9f4c7231d7"
+    },
+    {
+      "cache_key": "3e31d6c99a40a310",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3APALETTE&limit=100",
+      "status_code": 200,
+      "body_hash": "915157a63bd0c52e"
+    },
+    {
+      "cache_key": "6991781e04d2b3cc",
+      "url": "https://musicbrainz.org/ws/2/work/177a09d7-c765-49bf-b60a-d8e703cb9183?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "67ec21b4b307a720"
+    },
+    {
+      "cache_key": "d40695144ec02972",
+      "url": "https://musicbrainz.org/ws/2/work/406fd667-c3fb-4a4e-8d1e-d53418933a7f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "da2cc0a0fca3fdab"
+    }
+  ]
+}

@@ -1,9 +1,24 @@
 {
   "test_name": "生活を愛せるようになるまで_くじら",
   "scenario_id": "c2b14fdbe3ed3f1e",
-  "cache_keys": [
-    "4fca283e732ee62b",
-    "c5616ae9e21cb289",
-    "d55bf4aa7bdd8bc2"
+  "responses": [
+    {
+      "cache_key": "4fca283e732ee62b",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%94%9F%E6%B4%BB%E3%82%92%E6%84%9B%E3%81%9B%E3%82%8B%E3%82%88%E3%81%86%E3%81%AB%E3%81%AA%E3%82%8B%E3%81%BE%E3%81%A7&limit=100",
+      "status_code": 200,
+      "body_hash": "d6efb16ccebaf76f"
+    },
+    {
+      "cache_key": "c5616ae9e21cb289",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=86da8fcb-3a56-4467-8f6a-38b540856121&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "c647a9e6c2c732e4"
+    },
+    {
+      "cache_key": "d55bf4aa7bdd8bc2",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%8F%E3%81%98%E3%82%89",
+      "status_code": 200,
+      "body_hash": "2c56012560e04042"
+    }
   ]
 }

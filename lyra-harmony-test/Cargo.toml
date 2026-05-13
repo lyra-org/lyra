@@ -24,3 +24,4 @@ xxh3 = { workspace = true }
 percent-encoding = { workspace = true }
 url = { workspace = true }
 anyhow = { workspace = true }
+flate2 = "1"

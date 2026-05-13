@@ -1,0 +1,72 @@
+{
+  "test_name": "elza_神崎エルザ_starring_reona",
+  "scenario_id": "b7423a57c06fe3e4",
+  "responses": [
+    {
+      "cache_key": "67f389994a469810",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%A5%9E%E5%B4%8E%E3%82%A8%E3%83%AB%E3%82%B6%20starring%20ReoNa",
+      "status_code": 200,
+      "body_hash": "c49aa1c67d248ca0"
+    },
+    {
+      "cache_key": "6811f7d99277340d",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AELZA&limit=100",
+      "status_code": 200,
+      "body_hash": "0a80e7915a316337"
+    },
+    {
+      "cache_key": "6ec412b47dea3f29",
+      "url": "https://musicbrainz.org/ws/2/work/d23627e3-7cd4-4566-a1b9-562057a138fc?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f9ac98fc5dd54b98"
+    },
+    {
+      "cache_key": "85dac697b97d15ee",
+      "url": "https://musicbrainz.org/ws/2/work/ccf7a422-5662-41ec-94b2-b4b86b071e41?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9e273e8f18c86915"
+    },
+    {
+      "cache_key": "8660e845cadabe69",
+      "url": "https://musicbrainz.org/ws/2/work/d633f228-95ea-4715-a97e-eb798a725b79?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3c0b88645477a14c"
+    },
+    {
+      "cache_key": "934a5d21d0d827b3",
+      "url": "https://musicbrainz.org/ws/2/work/0e4be759-2418-4747-888b-2b2aa51d9372?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9660c1f081461d1b"
+    },
+    {
+      "cache_key": "94d904d473a5e6ae",
+      "url": "https://musicbrainz.org/ws/2/work/9627e24b-e7d2-41f2-8545-2d00c621a7ac?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f27031c41cc70a3b"
+    },
+    {
+      "cache_key": "c3c29e881ed1d7d7",
+      "url": "https://musicbrainz.org/ws/2/work/54d88417-8842-4f89-a2f2-93c723aead2f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "42d216a1bc549cf8"
+    },
+    {
+      "cache_key": "df4f5e754f100d75",
+      "url": "https://musicbrainz.org/ws/2/work/3cbf9162-065f-4d4f-b9e6-58c0ff1f7cb0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4b2b828297654cb8"
+    },
+    {
+      "cache_key": "e4cc7995f997ec0a",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=ca6e9844-3e11-4dda-9d2e-9ee0af31c3d5&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "5d159478ac16ee11"
+    },
+    {
+      "cache_key": "f8f11428dd7f4d03",
+      "url": "https://musicbrainz.org/ws/2/artist/2d8e8cd4-cd36-4c50-a2cf-c9fd967f085e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f109597e6c0d3b6f"
+    }
+  ]
+}

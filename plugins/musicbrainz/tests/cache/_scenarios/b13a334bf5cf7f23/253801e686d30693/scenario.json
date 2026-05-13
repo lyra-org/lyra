@@ -1,0 +1,108 @@
+{
+  "test_name": "today_is_a_beautiful_day_supercell",
+  "scenario_id": "253801e686d30693",
+  "responses": [
+    {
+      "cache_key": "165d6973a46b5419",
+      "url": "https://musicbrainz.org/ws/2/work/fbf534fe-6cab-31be-856b-a115c474fd66?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "35c7740a0f2b592f"
+    },
+    {
+      "cache_key": "1fd682d7b99e7779",
+      "url": "https://musicbrainz.org/ws/2/work/90a6aa38-6068-4200-8e77-43e18cc8f308?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3052e54df99245f3"
+    },
+    {
+      "cache_key": "2f400e1e7c501c3b",
+      "url": "https://musicbrainz.org/ws/2/work/7a2daf34-cd8d-40e3-bb77-746f21f97ad1?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5012879340f87778"
+    },
+    {
+      "cache_key": "4d2fc1d2922953f1",
+      "url": "https://musicbrainz.org/ws/2/work/abb5246d-eca6-4b8a-b635-52116ea5e1f1?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f2ac667a035bee00"
+    },
+    {
+      "cache_key": "5f93b894f3d4f01c",
+      "url": "https://musicbrainz.org/ws/2/work/b65611f0-e027-4e57-98cc-ef60cc619d7b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "62546a90ce4596bb"
+    },
+    {
+      "cache_key": "6568c5a97b0a47e1",
+      "url": "https://musicbrainz.org/ws/2/artist/9b15ff5e-5bd1-43c2-821d-e31240aad334?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "25754707c3bdc747"
+    },
+    {
+      "cache_key": "71f05bfb0026d3c2",
+      "url": "https://musicbrainz.org/ws/2/work/32656089-e67b-4933-9211-58c7b16ef89c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c9d32ecadccf418d"
+    },
+    {
+      "cache_key": "853952b3b237d29f",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AToday%20Is%20A%20Beautiful%20Day&limit=100",
+      "status_code": 200,
+      "body_hash": "01c8c37bfcc8967f"
+    },
+    {
+      "cache_key": "8bda0701490aff25",
+      "url": "https://musicbrainz.org/ws/2/artist?query=supercell",
+      "status_code": 200,
+      "body_hash": "33e89e6781da6682"
+    },
+    {
+      "cache_key": "8f3b9d34fbf2eb22",
+      "url": "https://musicbrainz.org/ws/2/work/dcec4a0b-fe09-3ffc-9590-4dbd81025102?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2f7d80faefedc778"
+    },
+    {
+      "cache_key": "95386ed8fa3eef7d",
+      "url": "https://musicbrainz.org/ws/2/work/78b31548-a68a-3d00-a680-f8c25fec9ff7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4b036c1cc03e8bdd"
+    },
+    {
+      "cache_key": "a12221de77ebc69f",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=93bb79c2-2995-4607-af5e-061a25a4e06f&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "1aff3eff462cc70a"
+    },
+    {
+      "cache_key": "a547abba87ea5d0a",
+      "url": "https://musicbrainz.org/ws/2/work/fff6e858-ac6e-3177-ace4-9a63062c7ea6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2678bc3b9be4530c"
+    },
+    {
+      "cache_key": "b1ff6b418d110dbe",
+      "url": "https://musicbrainz.org/ws/2/work/611f1c71-ba9b-4458-909c-88bbefc291db?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "84810a2ec34af1dd"
+    },
+    {
+      "cache_key": "b27917c7734deec2",
+      "url": "https://musicbrainz.org/ws/2/work/717a6517-290e-3696-942a-aba233ffc398?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cc6139f3f9365cf9"
+    },
+    {
+      "cache_key": "e4ee5aeaaaa8a169",
+      "url": "https://musicbrainz.org/ws/2/work/e451d47e-ca3a-431c-9f1d-fa6e730a66d9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6fcc08c4631bc4ab"
+    },
+    {
+      "cache_key": "fa0362eb47ed8b5c",
+      "url": "https://musicbrainz.org/ws/2/work/2ea07ea1-27d1-43ef-97cc-015b01ccc346?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "55a81642fddd2188"
+    }
+  ]
+}

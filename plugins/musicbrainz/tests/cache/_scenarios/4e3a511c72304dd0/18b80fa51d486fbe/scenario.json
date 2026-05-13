@@ -1,0 +1,36 @@
+{
+  "test_name": "絶対零度_なとり",
+  "scenario_id": "18b80fa51d486fbe",
+  "responses": [
+    {
+      "cache_key": "1eda84b84e8191cb",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%AA%E3%81%A8%E3%82%8A",
+      "status_code": 200,
+      "body_hash": "89606c89ade627c1"
+    },
+    {
+      "cache_key": "e0c59c882df83cc9",
+      "url": "https://musicbrainz.org/ws/2/work/1d2bc7e8-d7cd-452b-a4e9-cc347283b99e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "931aff7f1f5296a3"
+    },
+    {
+      "cache_key": "e262f8c50f80a313",
+      "url": "https://musicbrainz.org/ws/2/work/2731c145-f6d1-46cc-95f6-86809251d20c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "78e081463611b207"
+    },
+    {
+      "cache_key": "ea194efb20bcc81a",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=7a1e5522-d608-4bce-b24e-5b68134d5141&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "e86dbe8b2e32b245"
+    },
+    {
+      "cache_key": "edf78a3257f13613",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%B5%B6%E5%AF%BE%E9%9B%B6%E5%BA%A6&limit=100",
+      "status_code": 200,
+      "body_hash": "d29fd2c443a0179c"
+    }
+  ]
+}

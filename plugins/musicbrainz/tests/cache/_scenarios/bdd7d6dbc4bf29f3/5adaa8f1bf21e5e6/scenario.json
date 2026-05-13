@@ -1,9 +1,24 @@
 {
   "test_name": "モエチャッカファイア_まふまふ",
   "scenario_id": "5adaa8f1bf21e5e6",
-  "cache_keys": [
-    "3e41f9ae8513f639",
-    "606dbc209d87012a",
-    "a91a16bffd37259d"
+  "responses": [
+    {
+      "cache_key": "3e41f9ae8513f639",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=4f4ab15f-0260-48a1-bb2c-7edd617b9238&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "2140f8e1212231c3"
+    },
+    {
+      "cache_key": "606dbc209d87012a",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%BE%E3%81%B5%E3%81%BE%E3%81%B5",
+      "status_code": 200,
+      "body_hash": "453986cb86bcd37b"
+    },
+    {
+      "cache_key": "a91a16bffd37259d",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%83%A2%E3%82%A8%E3%83%81%E3%83%A3%E3%83%83%E3%82%AB%E3%83%95%E3%82%A1%E3%82%A4%E3%82%A2&limit=100",
+      "status_code": 200,
+      "body_hash": "50615ae50b12f615"
+    }
   ]
 }

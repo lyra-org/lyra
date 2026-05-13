@@ -1,9 +1,24 @@
 {
   "test_name": "きゅうくらりん_cover_まふまふ",
   "scenario_id": "dc6140ba1fe0352c",
-  "cache_keys": [
-    "5bd48b6b152130c7",
-    "606dbc209d87012a",
-    "f7ae2d3eb8ece3ab"
+  "responses": [
+    {
+      "cache_key": "5bd48b6b152130c7",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%8D%E3%82%85%E3%81%86%E3%81%8F%E3%82%89%E3%82%8A%E3%82%93%20%5C(Cover%5C)&limit=100",
+      "status_code": 200,
+      "body_hash": "64eb82f6796a678b"
+    },
+    {
+      "cache_key": "606dbc209d87012a",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%BE%E3%81%B5%E3%81%BE%E3%81%B5",
+      "status_code": 200,
+      "body_hash": "453986cb86bcd37b"
+    },
+    {
+      "cache_key": "f7ae2d3eb8ece3ab",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=a8ac1db6-8af2-4723-9427-9ec5f994c387&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "4a614ebc02a765cb"
+    }
   ]
 }

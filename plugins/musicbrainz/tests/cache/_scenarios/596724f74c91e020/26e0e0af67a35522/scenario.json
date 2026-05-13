@@ -1,0 +1,42 @@
+{
+  "test_name": "アイリス_藍井エイル",
+  "scenario_id": "26e0e0af67a35522",
+  "responses": [
+    {
+      "cache_key": "20592b5693481ff6",
+      "url": "https://musicbrainz.org/ws/2/work/9bd6398b-0672-4b69-a5b0-3cbef556d728?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "32ac6f878c85a8ce"
+    },
+    {
+      "cache_key": "343515226fca4a6f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E8%97%8D%E4%BA%95%E3%82%A8%E3%82%A4%E3%83%AB",
+      "status_code": 200,
+      "body_hash": "3e0cb3626401ff0e"
+    },
+    {
+      "cache_key": "725556c0ef37124a",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%A2%E3%82%A4%E3%83%AA%E3%82%B9&limit=100",
+      "status_code": 200,
+      "body_hash": "86b0f2cdd34d99bc"
+    },
+    {
+      "cache_key": "90c2ebde140ce770",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=b654837f-24e5-494f-aca1-56ae45e97400&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "da394ccf679dbb1b"
+    },
+    {
+      "cache_key": "a44b93f6dea13ab3",
+      "url": "https://musicbrainz.org/ws/2/work/1665a6b1-ae89-4ffd-af1e-a2a06c286683?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4e34bdb5b1306f4a"
+    },
+    {
+      "cache_key": "c6c3aeef8b1570f1",
+      "url": "https://musicbrainz.org/ws/2/work/8a7e2328-6b22-44ed-a85e-301ac831c3ee?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "de6a35ad0b59477c"
+    }
+  ]
+}
