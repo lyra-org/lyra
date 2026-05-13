@@ -91,13 +91,13 @@ export type ProviderLayer = {
 
 export type ProviderHandle = {
 	layer: (ProviderHandle, number) -> ProviderLayer,
+	mark_unmatched: (ProviderHandle, number, { string }) -> (),
 }
 
 export type SearchDeps = {
 	is_blank_text: (string?) -> boolean,
 	is_generic_artist: (string?) -> boolean,
 	clean_release_title: (string?) -> string,
-	apply_artist_fallback_updates: (ReleaseContext, { ReleaseArtist }, string?) -> number,
 	contains_multibyte: (string?) -> boolean,
 	infer_lookup_hints: (LookupHintReleaseContext?) -> (string?, string?, number?),
 	sort_tracks_for_refresh: ({ LocalTrack }) -> (),
@@ -453,7 +453,6 @@ local function search_and_fetch_release(
 	local is_blank_text = deps.is_blank_text
 	local is_generic_artist = deps.is_generic_artist
 	local clean_release_title = deps.clean_release_title
-	local apply_artist_fallback_updates = deps.apply_artist_fallback_updates
 	local contains_multibyte = deps.contains_multibyte
 	local infer_lookup_hints = deps.infer_lookup_hints
 	local sort_tracks_for_refresh = deps.sort_tracks_for_refresh
@@ -481,18 +480,37 @@ local function search_and_fetch_release(
 	local provider = deps.provider
 	local for_each_local_artist = deps.for_each_local_artist
 
+	local marked_artist_ids: { [number]: boolean } = {}
+	local function mark_artist_unmatched(artist: LocalArtist)
+		if artist.db_id and not marked_artist_ids[artist.db_id] then
+			marked_artist_ids[artist.db_id] = true
+			provider:mark_unmatched(artist.db_id, { "artist_id" })
+		end
+	end
+	local function mark_artist_ids_unmatched(): boolean
+		for_each_local_artist(release_context, mark_artist_unmatched)
+		return false
+	end
+	local function mark_lookup_ids_unmatched(): boolean
+		for_each_local_artist(release_context, mark_artist_unmatched)
+		for _, track: LocalTrack in release_context.tracks do
+			if track.db_id then
+				provider:mark_unmatched(track.db_id, { "recording_id" })
+			end
+		end
+		return false
+	end
+
 	if is_blank_text(artist_name) or is_generic_artist(artist_name) then
 		artist_name = nil
 	end
 
-	local artist_candidate_pool: { ReleaseArtist } = {}
 	local search_title = clean_release_title(release_title)
 	if is_blank_text(search_title) and #release_context.tracks > 0 then
 		local first_track = release_context.tracks[1]
 		search_title = clean_release_title(if first_track then first_track.track_title else "")
 	end
 	if is_blank_text(search_title) then
-		apply_artist_fallback_updates(release_context, artist_candidate_pool, preferred_country)
 		return false
 	end
 	local search_title_has_multibyte = contains_multibyte(search_title)
@@ -615,9 +633,6 @@ local function search_and_fetch_release(
 							end
 						end
 					end
-					if i <= 5 then
-						table.insert(artist_candidate_pool, artist)
-					end
 				end
 				if not query_top_artist_id and artists_data.artists[1] then
 					query_top_artist_id = artists_data.artists[1].id
@@ -640,8 +655,7 @@ local function search_and_fetch_release(
 			artist_ids = { [top_artist_id] = true }
 		end
 		if not artist_ids then
-			apply_artist_fallback_updates(release_context, artist_candidate_pool, preferred_country)
-			return false
+			return mark_artist_ids_unmatched()
 		end
 		if top_artist_id then
 			top_artist_ids = { [top_artist_id] = true }
@@ -834,8 +848,7 @@ local function search_and_fetch_release(
 		end
 	end
 	if not releases_data or releases_data.count == 0 then
-		apply_artist_fallback_updates(release_context, artist_candidate_pool, preferred_country)
-		return false
+		return mark_lookup_ids_unmatched()
 	end
 
 	local function medium_has_track_count(release: Release, expected_count: number): boolean
@@ -1202,10 +1215,13 @@ local function search_and_fetch_release(
 						return true
 					end
 					if group_result == false then
-						return false
+						return mark_lookup_ids_unmatched()
 					end
 					if fallback_release.id then
-						return fetch_release_by_id(fallback_release.id, release_context)
+						if fetch_release_by_id(fallback_release.id, release_context) then
+							return true
+						end
+						return mark_lookup_ids_unmatched()
 					end
 				end
 			end
@@ -1449,7 +1465,7 @@ local function search_and_fetch_release(
 						return true
 					end
 					if group_result == false then
-						return false
+						return mark_lookup_ids_unmatched()
 					end
 					if translit_release.id and fetch_release_by_id(translit_release.id, release_context) then
 						return true
@@ -1484,7 +1500,9 @@ local function search_and_fetch_release(
 					and overlap >= 1
 					and validate_release_durations(release_context.tracks, deferred_data)
 				then
-					return process_release(deferred_data, release_context)
+					if process_release(deferred_data, release_context) then
+						return true
+					end
 				end
 			end
 		elseif deferred_track_count == 1 and deferred_release.id then
@@ -1506,34 +1524,18 @@ local function search_and_fetch_release(
 					and count_track_title_overlap(release_context.tracks, deferred_data) >= 1
 					and #norm_title >= 6
 				then
-					return process_release(deferred_data, release_context)
+					if process_release(deferred_data, release_context) then
+						return true
+					end
 				end
 			end
 		elseif deferred_release.id then
-			return fetch_release_by_id(deferred_release.id, release_context)
-		end
-	end
-	local fallback_updates = apply_artist_fallback_updates(release_context, artist_candidate_pool, preferred_country)
-	if fallback_updates == 0 then
-		local cleared_artist_ids: { [number]: boolean } = {}
-		local function clear_artist_id(artist: LocalArtist)
-			if artist.db_id and not cleared_artist_ids[artist.db_id] then
-				cleared_artist_ids[artist.db_id] = true
-				local artist_layer = provider:layer(artist.db_id)
-				artist_layer:set_id("artist_id", "")
-				artist_layer:save()
-			end
-		end
-		for_each_local_artist(release_context, clear_artist_id)
-		for _, track: LocalTrack in release_context.tracks do
-			if track.db_id then
-				local track_layer = provider:layer(track.db_id)
-				track_layer:set_id("recording_id", "")
-				track_layer:save()
+			if fetch_release_by_id(deferred_release.id, release_context) then
+				return true
 			end
 		end
 	end
-	return false
+	return mark_lookup_ids_unmatched()
 end
 
 module.search_and_fetch_release = search_and_fetch_release

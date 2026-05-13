@@ -211,6 +211,7 @@ pub fn get_module(
     cache_misses: CacheMisses,
     request_trace: RequestTrace,
     live_policy: LivePolicy,
+    plugin_id: String,
 ) -> Module {
     Module {
         path: "harmony/http".into(),
@@ -225,6 +226,7 @@ pub fn get_module(
             let cache_misses = cache_misses.clone();
             let request_trace = request_trace.clone();
             let live_policy = live_policy;
+            let plugin_id = plugin_id.clone();
 
             let base_cache_dir_req = base_cache_dir.clone();
             let overlay_cache_dir_req = overlay_cache_dir.clone();
@@ -354,63 +356,72 @@ pub fn get_module(
 
             table.set(
                 "set_rate_limit",
-                lua.create_async_function(|_lua, options: Value| async move {
-                    let table = match options {
-                        Value::Table(table) => table,
-                        _ => {
+                lua.create_async_function(move |_lua, options: Value| {
+                    let plugin_id = plugin_id.clone();
+                    async move {
+                        let table = match options {
+                            Value::Table(table) => table,
+                            _ => {
+                                return Err(mlua::Error::runtime(
+                                    "http.set_rate_limit expects a table",
+                                ));
+                            }
+                        };
+
+                        let domain: String = table.get("domain").map_err(|e| {
+                            mlua::Error::runtime(format!("invalid 'domain' field: {e}"))
+                        })?;
+                        let requests_per_second = table
+                            .get::<Option<f64>>("requests_per_second")
+                            .map_err(|e| {
+                                mlua::Error::runtime(format!(
+                                    "invalid 'requests_per_second' field: {e}"
+                                ))
+                            })?
+                            .unwrap_or(1.0);
+                        if !requests_per_second.is_finite() || requests_per_second <= 0.0 {
                             return Err(mlua::Error::runtime(
-                                "http.set_rate_limit expects a table",
+                                "requests_per_second must be a positive number",
                             ));
                         }
-                    };
 
-                    let domain: String = table.get("domain").map_err(|e| {
-                        mlua::Error::runtime(format!("invalid 'domain' field: {e}"))
-                    })?;
-                    let requests_per_second = table
-                        .get::<Option<f64>>("requests_per_second")
-                        .map_err(|e| {
-                            mlua::Error::runtime(format!(
-                                "invalid 'requests_per_second' field: {e}"
-                            ))
-                        })?
-                        .unwrap_or(1.0);
-                    if !requests_per_second.is_finite() || requests_per_second <= 0.0 {
-                        return Err(mlua::Error::runtime(
-                            "requests_per_second must be a positive number",
-                        ));
-                    }
-
-                    let config = RateLimitConfig {
-                        requests_per_second,
-                        retry_status_codes: table
-                            .get::<Option<Vec<u16>>>("retry_on")
-                            .map_err(|e| {
-                                mlua::Error::runtime(format!("invalid 'retry_on' field: {e}"))
-                            })?
-                            .unwrap_or_else(|| vec![429, 503]),
-                        max_retries: table
-                            .get::<Option<u32>>("max_retries")
-                            .map_err(|e| {
-                                mlua::Error::runtime(format!("invalid 'max_retries' field: {e}"))
-                            })?
-                            .unwrap_or(3),
-                        initial_backoff: Duration::from_millis(
-                            table
-                                .get::<Option<u64>>("backoff_ms")
+                        let config = RateLimitConfig {
+                            requests_per_second,
+                            retry_status_codes: table
+                                .get::<Option<Vec<u16>>>("retry_on")
                                 .map_err(|e| {
-                                    mlua::Error::runtime(format!("invalid 'backoff_ms' field: {e}"))
+                                    mlua::Error::runtime(format!("invalid 'retry_on' field: {e}"))
                                 })?
-                                .unwrap_or(1000),
-                        ),
-                    };
+                                .unwrap_or_else(|| vec![429, 503]),
+                            max_retries: table
+                                .get::<Option<u32>>("max_retries")
+                                .map_err(|e| {
+                                    mlua::Error::runtime(format!(
+                                        "invalid 'max_retries' field: {e}"
+                                    ))
+                                })?
+                                .unwrap_or(3),
+                            initial_backoff: Duration::from_millis(
+                                table
+                                    .get::<Option<u64>>("backoff_ms")
+                                    .map_err(|e| {
+                                        mlua::Error::runtime(format!(
+                                            "invalid 'backoff_ms' field: {e}"
+                                        ))
+                                    })?
+                                    .unwrap_or(1000),
+                            ),
+                        };
 
-                    RATE_LIMITER
-                        .lock()
-                        .expect("rate limiter mutex poisoned")
-                        .set_config(domain, config);
+                        RATE_LIMITER
+                            .lock()
+                            .expect("rate limiter mutex poisoned")
+                            .set_config(domain.clone(), config);
 
-                    Ok(())
+                        harmony_http::test_seed_rate_limit(domain, plugin_id).await;
+
+                        Ok(())
+                    }
                 })?,
             )?;
 

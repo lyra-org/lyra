@@ -90,6 +90,62 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
+fn layer_artist_type(
+    fields: &HashMap<String, serde_json::Value>,
+    node_id: DbId,
+    provider_id: &str,
+) -> Option<db::ArtistType> {
+    let value = fields.get("artist_type")?;
+    let Some(raw) = value.as_str() else {
+        tracing::warn!(
+            node_id = node_id.0,
+            provider_id,
+            "ignoring non-string artist_type in provider metadata layer"
+        );
+        return None;
+    };
+
+    match db::ArtistType::from_db_str(raw) {
+        Ok(artist_type) => Some(artist_type),
+        Err(err) => {
+            tracing::warn!(
+                node_id = node_id.0,
+                provider_id,
+                artist_type = raw,
+                error = %err,
+                "ignoring unrecognized artist_type in provider metadata layer"
+            );
+            None
+        }
+    }
+}
+
+fn artist_type_conflicts_with_layer(
+    artist: Option<&db::Artist>,
+    fields: &HashMap<String, serde_json::Value>,
+    node_id: DbId,
+    provider_id: &str,
+) -> bool {
+    let Some(existing_type) = artist.and_then(|artist| artist.artist_type) else {
+        return false;
+    };
+    let Some(incoming_type) = layer_artist_type(fields, node_id, provider_id) else {
+        return false;
+    };
+    if existing_type == incoming_type {
+        return false;
+    }
+
+    tracing::warn!(
+        node_id = node_id.0,
+        provider_id,
+        existing_artist_type = %existing_type,
+        incoming_artist_type = %incoming_type,
+        "skipping provider artist identity update with conflicting artist_type"
+    );
+    true
+}
+
 fn save_provider_custom_fields(
     db: &mut DbAny,
     node_id: DbId,
@@ -141,7 +197,11 @@ pub(crate) fn save_provider_layer(
     ensure_entity_exists(db, node_id)?;
 
     let is_locked = is_entity_locked(db, node_id)?;
-    if !is_locked && !fields.is_empty() {
+    let artist = db::artists::get_by_id(db, node_id)?;
+    let artist_type_conflict =
+        artist_type_conflicts_with_layer(artist.as_ref(), fields, node_id, provider_id);
+
+    if !is_locked && !artist_type_conflict && !fields.is_empty() {
         let fields_json = serde_json::to_string(fields)?;
         let existing_layer = db::metadata::layers::get_for_entity(db, node_id)?
             .into_iter()
@@ -172,11 +232,14 @@ pub(crate) fn save_provider_layer(
         remove_custom_field_versions,
     )?;
 
+    if artist_type_conflict {
+        return Ok(());
+    }
+
     if external_ids.is_empty() {
         return Ok(());
     }
 
-    let artist = db::artists::get_by_id(db, node_id)?;
     let is_artist_entity = artist.is_some();
     let artist_is_verified = artist.as_ref().is_some_and(|a| a.verified);
     let mut should_recompute_artist_verification = false;

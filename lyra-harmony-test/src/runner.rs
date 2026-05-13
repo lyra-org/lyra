@@ -104,7 +104,9 @@ pub async fn run_test(
         cache_misses.clone(),
         request_trace.clone(),
         live_policy,
+        test_case.plugin.clone(),
     );
+    harmony_http::test_clear_rate_limits_for_plugin(&test_case.plugin).await;
     let started = Instant::now();
     lyra_server::testing::exec_plugins(&parent, plugins_dir, http_module, &test_case.plugin)
         .await?;
