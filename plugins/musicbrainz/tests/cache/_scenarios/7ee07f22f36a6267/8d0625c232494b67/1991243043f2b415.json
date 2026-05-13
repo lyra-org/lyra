@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/6e5fdadb-3947-3088-b3f6-fc15941bd133?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"152-3384-7\"}],\"title\":\"ジュネスのテーマ\",\"iswcs\":[],\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"id\":\"a0b5f196-b505-4de0-8a85-1b0a0951496d\",\"type\":\"Person\",\"name\":\"小塚良太\",\"disambiguation\":\"video game composer\",\"sort-name\":\"Kozuka, Ryota\"},\"type\":\"composer\",\"target-type\":\"artist\",\"source-credit\":\"\",\"end\":null,\"attribute-values\":{},\"ended\":false,\"attribute-ids\":{},\"attributes\":[],\"target-credit\":\"\",\"begin\":null,\"direction\":\"backward\"}],\"disambiguation\":\"\",\"languages\":[\"zxx\"],\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"id\":\"6e5fdadb-3947-3088-b3f6-fc15941bd133\",\"type\":\"Soundtrack\"}"
+}

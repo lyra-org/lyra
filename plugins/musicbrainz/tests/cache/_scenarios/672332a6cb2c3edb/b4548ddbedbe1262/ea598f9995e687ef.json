@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/170cd7c6-81a3-49d2-a559-cc0e2d930e6b?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"iswcs\":[],\"languages\":[\"zxx\"],\"language\":\"zxx\",\"relations\":[{\"attribute-values\":{},\"type\":\"composer\",\"target-credit\":\"\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"artist\":{\"sort-name\":\"Vaundy\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"name\":\"Vaundy\",\"country\":\"JP\",\"disambiguation\":\"Japanese singer‐songwriter, producer\",\"id\":\"114b26ff-a1fe-41f3-9df8-5c093afe9c56\"},\"end\":null,\"attributes\":[],\"target-type\":\"artist\",\"ended\":false,\"attribute-ids\":{},\"source-credit\":\"\",\"direction\":\"backward\"}],\"title\":\"Audio 008\",\"id\":\"170cd7c6-81a3-49d2-a559-cc0e2d930e6b\",\"attributes\":[],\"type\":\"Song\",\"disambiguation\":\"\"}"
+}

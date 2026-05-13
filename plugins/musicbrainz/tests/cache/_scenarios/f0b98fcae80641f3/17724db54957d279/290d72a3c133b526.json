@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/bd2d695d-32cd-4e27-990b-73e08e1c69a9?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"attributes\":[],\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"ended\":false,\"begin\":null,\"artist\":{\"name\":\"目黒将司\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Meguro, Shōji\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"type\":\"Person\",\"country\":\"JP\"},\"end\":null,\"source-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\"}],\"language\":\"zxx\",\"languages\":[\"zxx\"],\"type-id\":null,\"attributes\":[],\"title\":\"Blooming Villain\",\"type\":null,\"disambiguation\":\"\",\"id\":\"bd2d695d-32cd-4e27-990b-73e08e1c69a9\",\"iswcs\":[]}"
+}

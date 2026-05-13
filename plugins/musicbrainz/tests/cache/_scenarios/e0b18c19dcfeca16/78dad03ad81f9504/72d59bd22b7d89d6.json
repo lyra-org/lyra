@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/4011ead1-826b-4464-9473-4b4cd0c470fb?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"type\":null,\"disambiguation\":\"\",\"iswcs\":[],\"language\":\"zxx\",\"id\":\"4011ead1-826b-4464-9473-4b4cd0c470fb\",\"title\":\"陽菜と、走る帆高\",\"relations\":[{\"attribute-ids\":{},\"attribute-values\":{},\"end\":null,\"source-credit\":\"\",\"type\":\"composer\",\"attributes\":[],\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"sort-name\":\"Noda, Yōjirō\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"野田洋次郎\"},\"ended\":false,\"direction\":\"backward\",\"target-credit\":\"\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\"}],\"languages\":[\"zxx\"],\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"729-2251-6\"}]}"
+}

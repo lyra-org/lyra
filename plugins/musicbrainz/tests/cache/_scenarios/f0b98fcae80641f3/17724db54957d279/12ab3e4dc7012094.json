@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/d4d13fd3-6004-41c9-bf06-aa192986f991?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"iswcs\":[],\"disambiguation\":\"\",\"id\":\"d4d13fd3-6004-41c9-bf06-aa192986f991\",\"language\":\"zxx\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"source-credit\":\"\",\"attribute-values\":{},\"artist\":{\"sort-name\":\"Konishi, Toshiki\",\"name\":\"小西利樹\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"id\":\"eb18af98-09ff-467c-921e-9db3e0000d48\",\"country\":\"JP\",\"disambiguation\":\"\",\"type\":\"Person\"},\"attribute-ids\":{},\"target-credit\":\"\",\"ended\":false,\"target-type\":\"artist\",\"end\":null,\"direction\":\"backward\",\"attributes\":[],\"begin\":null,\"type\":\"composer\"}],\"title\":\"Hawaii\",\"languages\":[\"zxx\"],\"type-id\":null,\"attributes\":[]}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/da80d51d-06e6-4c51-b7c8-a4e16d388f75?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"relations\":[{\"attributes\":[],\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"begin\":null,\"end\":null,\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"喜多條敦志\",\"type\":\"Person\",\"country\":\"JP\",\"sort-name\":\"Kitajoh, Atsushi\",\"disambiguation\":\"\",\"id\":\"2aaa4d3d-5100-4c03-b464-7ab6af8854e6\"},\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{}}],\"languages\":[\"zxx\"],\"attributes\":[],\"type-id\":null,\"id\":\"da80d51d-06e6-4c51-b7c8-a4e16d388f75\",\"disambiguation\":\"\",\"title\":\"TRIPLE SEVEN\",\"type\":null,\"iswcs\":[]}"
+}

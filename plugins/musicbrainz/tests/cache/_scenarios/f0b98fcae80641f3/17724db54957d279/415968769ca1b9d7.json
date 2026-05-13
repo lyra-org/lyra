@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/3e08728f-b7c7-40fb-b84f-e8d0c921c9b0?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"type-id\":null,\"relations\":[{\"attributes\":[],\"artist\":{\"sort-name\":\"Meguro, Shōji\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"type\":\"Person\",\"country\":\"JP\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"name\":\"目黒将司\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"ended\":false,\"source-credit\":\"\",\"end\":null,\"target-credit\":\"\",\"begin\":null,\"attribute-ids\":{},\"type\":\"composer\",\"attribute-values\":{},\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"direction\":\"backward\"}],\"disambiguation\":\"\",\"languages\":[\"zxx\"],\"id\":\"3e08728f-b7c7-40fb-b84f-e8d0c921c9b0\",\"title\":\"Jaldabaoth\",\"type\":null,\"attributes\":[],\"language\":\"zxx\"}"
+}

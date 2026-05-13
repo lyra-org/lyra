@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/f9929312-b4e3-4aa3-86b9-8cfc6a0150df?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[],\"language\":\"jpn\",\"languages\":[\"jpn\"],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"attributes\":[],\"title\":\"loop loop loop\",\"type\":\"Song\",\"disambiguation\":\"\",\"id\":\"f9929312-b4e3-4aa3-86b9-8cfc6a0150df\",\"iswcs\":[]}"
+}

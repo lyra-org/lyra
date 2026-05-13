@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/1936ad36-95f7-4249-91bc-81b76b2880ce?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"attributes\":[],\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"begin\":null,\"end\":null,\"artist\":{\"sort-name\":\"Meguro, Shōji\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"type\":\"Person\",\"country\":\"JP\",\"name\":\"目黒将司\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"}}],\"languages\":[\"zxx\"],\"language\":\"zxx\",\"type-id\":null,\"attributes\":[],\"title\":\"闇ネットたなか\",\"type\":null,\"disambiguation\":\"\",\"id\":\"1936ad36-95f7-4249-91bc-81b76b2880ce\",\"iswcs\":[]}"
+}
