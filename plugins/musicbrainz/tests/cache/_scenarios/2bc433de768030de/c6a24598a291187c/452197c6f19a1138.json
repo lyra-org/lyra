@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/9e20daf2-245d-4cb5-b153-4d97c7c0d5cf?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[\"T-920.199.421-0\"],\"title\":\"憧れカフェ\",\"type\":null,\"disambiguation\":\"\",\"id\":\"9e20daf2-245d-4cb5-b153-4d97c7c0d5cf\",\"type-id\":null,\"attributes\":[{\"value\":\"GW50886222\",\"type\":\"APRA ID\",\"type-id\":\"bdf50af8-0881-322a-8ab7-f031a4935d04\"},{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"221-3864-1\",\"type\":\"JASRAC ID\"}],\"relations\":[{\"attributes\":[],\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"begin\":null,\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"桑原彰\",\"country\":\"JP\",\"type\":\"Person\",\"disambiguation\":\"\",\"id\":\"3f2b5932-8bc6-4d2e-b2c3-ec53aa242847\",\"sort-name\":\"Kuwahara, Akira\"},\"end\":null,\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{}}],\"language\":\"zxx\",\"languages\":[\"zxx\"]}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/a4232380-d105-3205-8949-39770fdf061d?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"type-id\":null,\"languages\":[\"zxx\"],\"language\":\"zxx\",\"id\":\"a4232380-d105-3205-8949-39770fdf061d\",\"attributes\":[{\"value\":\"152-3386-3\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"target-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"attribute-ids\":{},\"source-credit\":\"\",\"direction\":\"backward\",\"ended\":false,\"target-type\":\"artist\",\"attributes\":[],\"artist\":{\"sort-name\":\"Meguro, Shōji\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"country\":\"JP\",\"type\":\"Person\",\"name\":\"目黒将司\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\"},\"end\":null}],\"title\":\"夢想曲\",\"type\":null,\"disambiguation\":\"\"}"
+}

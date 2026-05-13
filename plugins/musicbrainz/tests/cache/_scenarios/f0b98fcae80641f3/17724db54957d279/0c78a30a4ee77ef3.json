@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/d0fe3e2c-ef6b-45cc-a932-cf95a7d8b297?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"iswcs\":[],\"language\":\"zxx\",\"id\":\"d0fe3e2c-ef6b-45cc-a932-cf95a7d8b297\",\"type\":null,\"type-id\":null,\"languages\":[\"zxx\"],\"attributes\":[],\"title\":\"Swear to My Bones\",\"relations\":[{\"target-credit\":\"\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"attribute-ids\":{},\"attribute-values\":{},\"end\":null,\"source-credit\":\"\",\"type\":\"composer\",\"attributes\":[],\"artist\":{\"name\":\"目黒将司\",\"country\":\"JP\",\"sort-name\":\"Meguro, Shōji\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\"},\"ended\":false,\"direction\":\"backward\"}]}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/ea70c356-06b0-4a7b-9cab-00f027b0fe80?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"languages\":[\"zxx\"],\"type-id\":null,\"attributes\":[],\"type\":null,\"iswcs\":[],\"disambiguation\":\"\",\"id\":\"ea70c356-06b0-4a7b-9cab-00f027b0fe80\",\"language\":\"zxx\",\"relations\":[{\"target-type\":\"artist\",\"end\":null,\"direction\":\"backward\",\"attributes\":[],\"begin\":null,\"type\":\"composer\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"source-credit\":\"\",\"attribute-values\":{},\"artist\":{\"type\":\"Person\",\"disambiguation\":\"\",\"country\":\"JP\",\"id\":\"eb18af98-09ff-467c-921e-9db3e0000d48\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"小西利樹\",\"sort-name\":\"Konishi, Toshiki\"},\"target-credit\":\"\",\"attribute-ids\":{},\"ended\":false}],\"title\":\"Betrayer\"}"
+}
