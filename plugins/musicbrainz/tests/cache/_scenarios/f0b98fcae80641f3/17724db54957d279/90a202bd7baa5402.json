@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/aabc1611-2240-401d-adc5-1ba7ebe51725?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[],\"language\":\"zxx\",\"title\":\"異世界へ\",\"type\":null,\"languages\":[\"zxx\"],\"id\":\"aabc1611-2240-401d-adc5-1ba7ebe51725\",\"iswcs\":[],\"type-id\":null,\"relations\":[{\"end\":null,\"target-credit\":\"\",\"source-credit\":\"\",\"ended\":false,\"artist\":{\"type\":\"Person\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"小西利樹\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Konishi, Toshiki\",\"id\":\"eb18af98-09ff-467c-921e-9db3e0000d48\"},\"attributes\":[],\"direction\":\"backward\",\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attribute-values\":{},\"type\":\"composer\",\"attribute-ids\":{},\"begin\":null}],\"disambiguation\":\"\"}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/80bfb6d6-cb5e-4395-86cb-09117cf5eca6?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"ended\":false,\"target-credit\":\"\",\"attribute-ids\":{},\"artist\":{\"country\":\"JP\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"type\":\"Person\",\"disambiguation\":\"\",\"sort-name\":\"Noda, Yōjirō\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"野田洋次郎\"},\"attribute-values\":{},\"source-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"type\":\"composer\",\"begin\":null,\"attributes\":[],\"direction\":\"backward\",\"end\":null,\"target-type\":\"artist\"}],\"title\":\"『天気の子』のテーマ\",\"type\":null,\"disambiguation\":\"\",\"iswcs\":[],\"id\":\"80bfb6d6-cb5e-4395-86cb-09117cf5eca6\",\"language\":\"zxx\",\"type-id\":null,\"attributes\":[{\"value\":\"729-2215-0\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\"}],\"languages\":[\"zxx\"]}"
+}

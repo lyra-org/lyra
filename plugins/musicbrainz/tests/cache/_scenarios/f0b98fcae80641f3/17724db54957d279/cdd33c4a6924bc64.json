@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/1633e55a-3d68-4ab9-8c30-1b9e79a73325?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"languages\":[\"zxx\"],\"iswcs\":[],\"type-id\":null,\"disambiguation\":\"\",\"type\":null,\"id\":\"1633e55a-3d68-4ab9-8c30-1b9e79a73325\",\"attributes\":[],\"title\":\"底知れぬ傲慢\",\"relations\":[{\"attributes\":[],\"artist\":{\"sort-name\":\"Konishi, Toshiki\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"id\":\"eb18af98-09ff-467c-921e-9db3e0000d48\",\"type\":\"Person\",\"name\":\"小西利樹\",\"disambiguation\":\"\",\"country\":\"JP\"},\"end\":null,\"attribute-ids\":{},\"source-credit\":\"\",\"direction\":\"backward\",\"ended\":false,\"target-type\":\"artist\",\"begin\":null,\"target-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}]}"
+}

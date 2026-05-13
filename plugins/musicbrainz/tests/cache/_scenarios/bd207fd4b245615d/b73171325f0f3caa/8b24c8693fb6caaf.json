@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/82936986-80f9-4679-b999-4ebd777f3e79?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"type\":\"Song\",\"title\":\"太陽はいつも君のそばに\",\"disambiguation\":\"\",\"id\":\"82936986-80f9-4679-b999-4ebd777f3e79\",\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"attributes\":[],\"languages\":[\"jpn\"],\"relations\":[{\"source-credit\":\"\",\"attribute-values\":{},\"type\":\"lyricist\",\"ended\":false,\"type-id\":\"3e48faba-ec01-47fd-8e89-30e81161661c\",\"target-credit\":\"\",\"end\":null,\"artist\":{\"id\":\"2592ecf7-cb4e-486b-8af7-4f97731e01b5\",\"disambiguation\":\"SOUND HOLIC / cold kiss / GSK48 / KAPA\",\"sort-name\":\"Takahashi, Nana\",\"country\":\"JP\",\"type\":\"Person\",\"name\":\"高橋菜々\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"begin\":null,\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{},\"attributes\":[]}],\"language\":\"jpn\"}"
+}

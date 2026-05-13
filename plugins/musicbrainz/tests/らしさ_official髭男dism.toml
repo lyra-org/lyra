@@ -1,0 +1,28 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Official髭男dism - らしさ (2025-08-06) [WEB FLAC]/1.01. らしさ.flac"
+album = "らしさ"
+album_artists = ["Official髭男dism"]
+artists = ["OFFICIAL HIGE DANDISM"]
+title = "らしさ"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 302880
+
+[expect.release]
+ids = { release_group_id = "e5c6dac6-3740-49be-8790-48efa055f319", release_id = ["4192800f-c152-438a-84ed-db89525a93c3", "15a864de-5c46-4de7-bccb-44d9af354ffa"] }
+fields = { release_title = "らしさ", release_date = "2025-08-06" }
+
+[expect.artists."6dddd7a2-5583-49d0-a8b2-9ee46d04f27e"]
+fields = { artist_name = "Official髭男dism", sort_name = "Official HIGE DANdism" }
+
+[expect.tracks."39f23093-3fb6-48d1-b30e-7a09cbe7d5b3"]
+fields = { disc = 1, track = 1, track_title = "らしさ" }

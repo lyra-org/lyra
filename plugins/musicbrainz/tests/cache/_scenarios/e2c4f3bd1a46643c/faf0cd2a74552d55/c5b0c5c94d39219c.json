@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/d36e7463-aeb6-3790-acbb-f6e3dde0e921?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"id\":\"d36e7463-aeb6-3790-acbb-f6e3dde0e921\",\"disambiguation\":\"\",\"type\":null,\"title\":\"記憶の片隅\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"152-3347-2\"}],\"type-id\":null,\"language\":\"zxx\",\"relations\":[{\"artist\":{\"name\":\"目黒将司\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"sort-name\":\"Meguro, Shōji\",\"country\":\"JP\",\"type\":\"Person\"},\"end\":null,\"begin\":null,\"ended\":false,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\",\"attributes\":[],\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{}}],\"languages\":[\"zxx\"]}"
+}

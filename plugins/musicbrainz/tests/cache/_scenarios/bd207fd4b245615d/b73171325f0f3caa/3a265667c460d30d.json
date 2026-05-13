@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/68ec8b3a-c52e-421d-a6b1-382a34b2f1e1?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"jpn\",\"iswcs\":[],\"attributes\":[],\"title\":\"黄昏ロンリネス\",\"disambiguation\":\"\",\"relations\":[{\"end\":null,\"attribute-values\":{},\"ended\":false,\"attribute-ids\":{},\"attributes\":[],\"target-credit\":\"\",\"type-id\":\"3e48faba-ec01-47fd-8e89-30e81161661c\",\"type\":\"lyricist\",\"artist\":{\"disambiguation\":\"lyricist, SOUND HOLIC\",\"sort-name\":\"Blue E\",\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"Blue E\",\"type\":\"Person\",\"id\":\"a7d907e9-adbd-4070-b5dc-fcd1fe30159e\"},\"source-credit\":\"\",\"target-type\":\"artist\",\"begin\":null,\"direction\":\"backward\"}],\"languages\":[\"jpn\"],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"type\":\"Song\",\"id\":\"68ec8b3a-c52e-421d-a6b1-382a34b2f1e1\"}"
+}

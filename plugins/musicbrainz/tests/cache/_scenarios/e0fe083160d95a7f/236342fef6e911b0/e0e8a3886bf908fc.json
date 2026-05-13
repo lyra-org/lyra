@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/artist/b6d37a3d-77a2-4659-996c-a880cde56a67?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":\"Group\",\"isnis\":[],\"begin-area\":null,\"gender-id\":null,\"ipis\":[],\"disambiguation\":\"\",\"sort-name\":\"Bentham\",\"area\":{\"name\":\"Japan\",\"iso-3166-1-codes\":[\"JP\"],\"id\":\"2db42837-c832-3c27-b4a3-08198f75693c\",\"sort-name\":\"Japan\",\"disambiguation\":\"\",\"type-id\":null,\"type\":null},\"id\":\"b6d37a3d-77a2-4659-996c-a880cde56a67\",\"type-id\":\"e431f5f6-b5d2-343d-8b36-72607fffb74b\",\"gender\":null,\"name\":\"Bentham\",\"life-span\":{\"begin\":null,\"ended\":false,\"end\":null},\"country\":\"JP\",\"end-area\":null,\"relations\":[]}"
+}

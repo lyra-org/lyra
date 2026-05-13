@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/0df44f70-6efd-45d7-ac99-cec3c1cf56d0?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"title\":\"廃人化\",\"attributes\":[],\"language\":\"zxx\",\"type-id\":null,\"iswcs\":[],\"relations\":[{\"direction\":\"backward\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"type\":\"composer\",\"attribute-values\":{},\"attribute-ids\":{},\"begin\":null,\"target-credit\":\"\",\"end\":null,\"source-credit\":\"\",\"ended\":false,\"artist\":{\"id\":\"eb18af98-09ff-467c-921e-9db3e0000d48\",\"sort-name\":\"Konishi, Toshiki\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"小西利樹\",\"type\":\"Person\"},\"attributes\":[]}],\"disambiguation\":\"\",\"languages\":[\"zxx\"],\"id\":\"0df44f70-6efd-45d7-ac99-cec3c1cf56d0\"}"
+}
