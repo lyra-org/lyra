@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/a1b629d1-650f-4290-86c5-7175220cf066?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"attributes\":[],\"direction\":\"backward\",\"end\":null,\"target-type\":\"artist\",\"begin\":null,\"type\":\"composer\",\"source-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attribute-values\":{},\"artist\":{\"type\":\"Person\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"目黒将司\",\"sort-name\":\"Meguro, Shōji\"},\"ended\":false,\"target-credit\":\"\",\"attribute-ids\":{}}],\"title\":\"Our Beginning\",\"iswcs\":[],\"disambiguation\":\"\",\"type\":null,\"language\":\"zxx\",\"id\":\"a1b629d1-650f-4290-86c5-7175220cf066\",\"type-id\":null,\"attributes\":[],\"languages\":[\"zxx\"]}"
+}

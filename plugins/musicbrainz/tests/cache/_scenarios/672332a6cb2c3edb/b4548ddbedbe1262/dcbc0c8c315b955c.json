@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/addfa964-a523-4396-94b2-57d5b7df5ae3?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"id\":\"addfa964-a523-4396-94b2-57d5b7df5ae3\",\"language\":\"zxx\",\"iswcs\":[],\"disambiguation\":\"\",\"type\":\"Song\",\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"attributes\":[],\"languages\":[\"zxx\"],\"relations\":[{\"target-credit\":\"\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"attribute-values\":{},\"attribute-ids\":{},\"end\":null,\"source-credit\":\"\",\"type\":\"composer\",\"attributes\":[],\"artist\":{\"name\":\"Vaundy\",\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"disambiguation\":\"Japanese singer‐songwriter, producer\",\"sort-name\":\"Vaundy\",\"id\":\"114b26ff-a1fe-41f3-9df8-5c093afe9c56\"},\"ended\":false,\"direction\":\"backward\"}],\"title\":\"Audio 007\"}"
+}

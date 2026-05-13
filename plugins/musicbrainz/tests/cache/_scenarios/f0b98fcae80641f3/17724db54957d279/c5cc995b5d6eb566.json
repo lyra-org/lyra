@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/6e6566f9-1366-4682-8830-2e14af6db980?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"iswcs\":[],\"languages\":[\"zxx\"],\"language\":\"zxx\",\"relations\":[{\"target-credit\":\"\",\"begin\":null,\"attribute-values\":{},\"type\":\"composer\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attributes\":[],\"end\":null,\"artist\":{\"disambiguation\":\"Japanese composer, guitarist & game director\",\"country\":\"JP\",\"name\":\"目黒将司\",\"type\":\"Person\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"sort-name\":\"Meguro, Shōji\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"direction\":\"backward\",\"attribute-ids\":{},\"source-credit\":\"\",\"ended\":false,\"target-type\":\"artist\"}],\"title\":\"The Spirit\",\"attributes\":[],\"id\":\"6e6566f9-1366-4682-8830-2e14af6db980\",\"type\":null,\"disambiguation\":\"\"}"
+}

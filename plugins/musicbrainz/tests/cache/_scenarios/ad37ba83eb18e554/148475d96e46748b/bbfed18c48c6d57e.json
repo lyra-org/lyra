@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/445592e2-a78f-433f-97b2-2ae42720c773?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[],\"id\":\"445592e2-a78f-433f-97b2-2ae42720c773\",\"relations\":[],\"title\":\"異端なスター\",\"type\":\"Song\",\"disambiguation\":\"Official髭男dism\",\"iswcs\":[],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"language\":\"jpn\",\"languages\":[\"jpn\"]}"
+}

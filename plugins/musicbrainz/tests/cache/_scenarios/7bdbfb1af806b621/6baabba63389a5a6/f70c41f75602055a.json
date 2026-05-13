@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/bc40222f-094d-4e56-9562-7bdbc71e41cd?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"begin\":null,\"artist\":{\"disambiguation\":\"Vocaloid producer, YOASOBI composer\",\"id\":\"4173073b-ae68-476a-a715-e22f1f43046d\",\"sort-name\":\"Ayase\",\"country\":\"JP\",\"type\":\"Person\",\"name\":\"Ayase\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"end\":null,\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"attributes\":[]}],\"language\":\"eng\",\"languages\":[\"eng\"],\"attributes\":[],\"type-id\":null,\"id\":\"bc40222f-094d-4e56-9562-7bdbc71e41cd\",\"disambiguation\":\"\",\"title\":\"Interlude \\\"Worship\\\"\",\"type\":null,\"iswcs\":[]}"
+}

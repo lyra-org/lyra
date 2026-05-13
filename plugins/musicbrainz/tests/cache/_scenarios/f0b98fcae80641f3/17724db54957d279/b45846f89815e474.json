@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/41481463-a7b7-4dca-86f2-3f8dd3cd5ae4?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"type\":null,\"title\":\"対峙\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"begin\":null,\"attribute-values\":{},\"type\":\"composer\",\"attribute-ids\":{},\"source-credit\":\"\",\"direction\":\"backward\",\"ended\":false,\"target-type\":\"artist\",\"attributes\":[],\"artist\":{\"id\":\"eb18af98-09ff-467c-921e-9db3e0000d48\",\"disambiguation\":\"\",\"country\":\"JP\",\"type\":\"Person\",\"name\":\"小西利樹\",\"sort-name\":\"Konishi, Toshiki\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"end\":null}],\"attributes\":[],\"id\":\"41481463-a7b7-4dca-86f2-3f8dd3cd5ae4\",\"language\":\"zxx\",\"languages\":[\"zxx\"],\"type-id\":null,\"iswcs\":[]}"
+}

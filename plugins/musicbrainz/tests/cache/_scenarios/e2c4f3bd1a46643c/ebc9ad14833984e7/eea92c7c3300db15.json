@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/4fbe7276-94ff-3d63-9f4a-c507ff6effef?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"title\":\"The Path is Open\",\"relations\":[{\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"target-credit\":\"\",\"direction\":\"backward\",\"ended\":false,\"artist\":{\"country\":\"JP\",\"name\":\"目黒将司\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"sort-name\":\"Meguro, Shōji\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\"},\"attributes\":[],\"type\":\"composer\",\"end\":null,\"source-credit\":\"\",\"attribute-ids\":{},\"attribute-values\":{}}],\"attributes\":[{\"value\":\"135-1469-5\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\"}],\"languages\":[\"zxx\"],\"type\":null,\"type-id\":null,\"language\":\"zxx\",\"id\":\"4fbe7276-94ff-3d63-9f4a-c507ff6effef\",\"disambiguation\":\"\",\"iswcs\":[]}"
+}

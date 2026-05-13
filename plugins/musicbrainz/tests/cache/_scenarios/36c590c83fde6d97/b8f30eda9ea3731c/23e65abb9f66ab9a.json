@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/81cea5da-b153-49ba-ab6a-4297e38b838b?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":\"Song\",\"disambiguation\":\"\",\"relations\":[{\"end\":null,\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Yonezu, Kenshi\",\"id\":\"09d4a85c-4916-4b4e-bc96-c4cfcf371046\",\"type\":\"Person\",\"name\":\"米津玄師\",\"disambiguation\":\"\",\"country\":\"JP\"},\"attributes\":[],\"target-type\":\"artist\",\"ended\":false,\"direction\":\"backward\",\"source-credit\":\"\",\"attribute-ids\":{},\"type\":\"composer\",\"attribute-values\":{},\"begin\":null,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"title\":\"おはよう\",\"id\":\"81cea5da-b153-49ba-ab6a-4297e38b838b\",\"attributes\":[],\"languages\":[],\"language\":null,\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"iswcs\":[]}"
+}

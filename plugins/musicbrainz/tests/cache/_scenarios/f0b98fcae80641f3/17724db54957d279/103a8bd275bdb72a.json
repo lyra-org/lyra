@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/d63a34f7-e199-436c-8993-00784436e214?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"disambiguation\":\"\",\"id\":\"d63a34f7-e199-436c-8993-00784436e214\",\"type\":null,\"title\":\"放送事故\",\"attributes\":[],\"type-id\":null,\"relations\":[{\"direction\":\"backward\",\"target-type\":\"artist\",\"attribute-ids\":{},\"attributes\":[],\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\",\"end\":null,\"artist\":{\"country\":\"JP\",\"type\":\"Person\",\"id\":\"292f533f-b2c0-424c-b9be-547a19aa8a37\",\"disambiguation\":\"\",\"sort-name\":\"Tsuchiya, Kenichi\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"土屋憲一\"},\"begin\":null,\"ended\":false,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"language\":\"zxx\",\"languages\":[\"zxx\"]}"
+}
