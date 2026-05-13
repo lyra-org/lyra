@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/80d24313-fa35-4a23-a722-053003e3b513?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"title\":\"御宅訪問\",\"disambiguation\":\"\",\"id\":\"80d24313-fa35-4a23-a722-053003e3b513\",\"iswcs\":[],\"language\":\"zxx\",\"relations\":[{\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\",\"artist\":{\"name\":\"野田洋次郎\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"disambiguation\":\"\",\"sort-name\":\"Noda, Yōjirō\",\"country\":\"JP\",\"type\":\"Person\"},\"end\":null,\"begin\":null,\"ended\":false,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"direction\":\"backward\",\"target-type\":\"artist\",\"attribute-ids\":{},\"attributes\":[]}],\"languages\":[\"zxx\"],\"type-id\":null,\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"729-2238-9\"}]}"
+}

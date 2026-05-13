@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/ea72d3fa-65e6-4b87-953b-d4a46c464286?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"attributes\":[],\"languages\":[\"zxx\"],\"relations\":[{\"ended\":false,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"end\":null,\"artist\":{\"country\":\"JP\",\"type\":\"Person\",\"disambiguation\":\"\",\"id\":\"2aaa4d3d-5100-4c03-b464-7ab6af8854e6\",\"sort-name\":\"Kitajoh, Atsushi\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"喜多條敦志\"},\"begin\":null,\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"attributes\":[],\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{}}],\"language\":\"zxx\",\"iswcs\":[],\"title\":\"ビッグバン・バーガーのマーチ\",\"type\":null,\"disambiguation\":\"\",\"id\":\"ea72d3fa-65e6-4b87-953b-d4a46c464286\"}"
+}

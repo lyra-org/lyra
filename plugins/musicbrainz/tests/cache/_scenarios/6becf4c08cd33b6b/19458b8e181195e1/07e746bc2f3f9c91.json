@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/9424fbd9-a058-4247-be32-adf066272f02?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"end\":null,\"target-credit\":\"\",\"ended\":false,\"artist\":{\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"sort-name\":\"Kouda, Masato\",\"country\":\"JP\",\"name\":\"甲田雅人\",\"disambiguation\":\"\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"attributes\":[],\"source-credit\":\"\",\"direction\":\"backward\",\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"attribute-values\":{},\"type\":\"composer\",\"attribute-ids\":{}}],\"disambiguation\":\"\",\"type-id\":null,\"iswcs\":[],\"id\":\"9424fbd9-a058-4247-be32-adf066272f02\",\"languages\":[],\"type\":null,\"title\":\"それでも青春!\",\"language\":null,\"attributes\":[]}"
+}

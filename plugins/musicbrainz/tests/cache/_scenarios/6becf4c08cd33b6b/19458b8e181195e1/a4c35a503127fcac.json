@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/a1407193-87e1-451b-801c-0e4e7e0f88ff?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"attributes\":[],\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"sort-name\":\"Kouda, Masato\",\"disambiguation\":\"\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"name\":\"甲田雅人\",\"country\":\"JP\"},\"ended\":false,\"direction\":\"backward\",\"attribute-ids\":{},\"attribute-values\":{},\"source-credit\":\"\",\"end\":null,\"type\":\"composer\",\"target-type\":\"artist\",\"target-credit\":\"\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"title\":\"凍りつく笑顔\",\"languages\":[],\"attributes\":[],\"type-id\":null,\"type\":null,\"iswcs\":[],\"disambiguation\":\"\",\"id\":\"a1407193-87e1-451b-801c-0e4e7e0f88ff\",\"language\":null}"
+}

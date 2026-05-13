@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/5c193796-a168-49f5-9e16-18426e780d37?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"jpn\",\"languages\":[\"jpn\"],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"iswcs\":[],\"disambiguation\":\"\",\"type\":\"Song\",\"title\":\"それでも雨は降るんだね\",\"relations\":[],\"attributes\":[],\"id\":\"5c193796-a168-49f5-9e16-18426e780d37\"}"
+}

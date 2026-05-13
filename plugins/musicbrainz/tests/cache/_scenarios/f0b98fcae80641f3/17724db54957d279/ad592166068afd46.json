@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/783035d3-4eec-453c-9ae8-f46d61516551?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"disambiguation\":\"\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"artist\":{\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"喜多條敦志\",\"type\":\"Person\",\"id\":\"2aaa4d3d-5100-4c03-b464-7ab6af8854e6\",\"sort-name\":\"Kitajoh, Atsushi\",\"disambiguation\":\"\"},\"type\":\"composer\",\"target-type\":\"artist\",\"source-credit\":\"\",\"ended\":false,\"attribute-values\":{},\"end\":null,\"target-credit\":\"\",\"attribute-ids\":{},\"attributes\":[],\"direction\":\"backward\",\"begin\":null}],\"iswcs\":[],\"attributes\":[],\"title\":\"BAR にゅぅカマー\",\"type-id\":null,\"languages\":[\"zxx\"],\"type\":null,\"id\":\"783035d3-4eec-453c-9ae8-f46d61516551\"}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/f2cea43e-c17c-48c4-812e-ebcd978d2dc0?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"begin\":null,\"target-type\":\"artist\",\"end\":null,\"direction\":\"backward\",\"attributes\":[],\"type\":\"composer\",\"attribute-values\":{},\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"source-credit\":\"\",\"target-credit\":\"Giga\",\"attribute-ids\":{},\"ended\":false,\"artist\":{\"sort-name\":\"Giga\",\"name\":\"Giga\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"id\":\"fc7a99ac-32f0-4e2a-a2eb-03670470003d\",\"disambiguation\":\"Japanese producer\",\"type\":\"Person\"}}],\"title\":\"-ムーブのための試奏曲 Nr.4-\",\"id\":\"f2cea43e-c17c-48c4-812e-ebcd978d2dc0\",\"language\":\"zxx\",\"type\":null,\"iswcs\":[\"T-932.909.808-0\"],\"disambiguation\":\"\",\"attributes\":[{\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"251-2426-9\"}],\"type-id\":null,\"languages\":[\"zxx\"]}"
+}
