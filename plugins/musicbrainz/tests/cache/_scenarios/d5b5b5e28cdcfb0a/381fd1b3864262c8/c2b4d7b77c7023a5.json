@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/artist/5005beb6-9da2-48ba-bfd9-aa8ddc6d0117?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"end-area\":null,\"area\":{\"name\":\"Japan\",\"type-id\":null,\"iso-3166-1-codes\":[\"JP\"],\"sort-name\":\"Japan\",\"id\":\"2db42837-c832-3c27-b4a3-08198f75693c\",\"disambiguation\":\"\",\"type\":null},\"name\":\"MAISONdes\",\"gender-id\":null,\"sort-name\":\"MAISONdes\",\"disambiguation\":\"\",\"id\":\"5005beb6-9da2-48ba-bfd9-aa8ddc6d0117\",\"life-span\":{\"begin\":\"2021\",\"end\":null,\"ended\":false},\"gender\":null,\"type\":\"Group\",\"type-id\":\"e431f5f6-b5d2-343d-8b36-72607fffb74b\",\"begin-area\":null,\"ipis\":[],\"isnis\":[\"0000000506100827\"],\"country\":\"JP\",\"relations\":[]}"
+}

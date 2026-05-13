@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/5ee7a1b7-6746-41ec-9f8a-5d04db26a579?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"attributes\":[{\"type\":\"NexTone ID\",\"value\":\"N01198188\",\"type-id\":\"97aac6a3-f2dd-4372-96fe-2462eb4e652a\"},{\"value\":\"277-7881-9\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"language\":\"zxx\",\"relations\":[{\"attribute-ids\":{},\"target-type\":\"artist\",\"direction\":\"backward\",\"attributes\":[],\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\",\"begin\":null,\"artist\":{\"type\":\"Person\",\"country\":\"JP\",\"sort-name\":\"Noda, Yōjirō\",\"disambiguation\":\"\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"野田洋次郎\"},\"end\":null,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false}],\"languages\":[\"zxx\"],\"iswcs\":[\"T-317.519.099-1\"],\"title\":\"夜のフェリー\",\"type\":\"Soundtrack\",\"disambiguation\":\"\",\"id\":\"5ee7a1b7-6746-41ec-9f8a-5d04db26a579\"}"
+}

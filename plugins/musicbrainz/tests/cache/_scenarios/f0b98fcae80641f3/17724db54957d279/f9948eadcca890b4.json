@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/648fcc7c-bd62-489e-88e4-7445166e92b4?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"iswcs\":[],\"attributes\":[],\"title\":\"スターフォルネウス\",\"disambiguation\":\"\",\"relations\":[{\"begin\":null,\"direction\":\"backward\",\"attributes\":[],\"attribute-ids\":{},\"target-credit\":\"\",\"end\":null,\"attribute-values\":{},\"ended\":false,\"target-type\":\"artist\",\"source-credit\":\"\",\"type\":\"composer\",\"artist\":{\"disambiguation\":\"\",\"sort-name\":\"Tsuchiya, Kenichi\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"id\":\"292f533f-b2c0-424c-b9be-547a19aa8a37\",\"name\":\"土屋憲一\",\"type\":\"Person\"},\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"languages\":[\"zxx\"],\"type-id\":null,\"type\":null,\"id\":\"648fcc7c-bd62-489e-88e4-7445166e92b4\"}"
+}

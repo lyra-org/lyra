@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/cf6de211-3e47-42e8-a4f9-275ec2dd92e4?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"title\":\"三葉の通学\",\"relations\":[{\"ended\":false,\"direction\":\"backward\",\"attributes\":[],\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"sort-name\":\"Noda, Yōjirō\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"野田洋次郎\"},\"type\":\"composer\",\"attribute-ids\":{},\"attribute-values\":{},\"source-credit\":\"\",\"end\":null,\"target-type\":\"artist\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\"}],\"attributes\":[{\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"221-1161-1\"}],\"languages\":[\"zxx\"],\"type-id\":null,\"type\":null,\"language\":\"zxx\",\"id\":\"cf6de211-3e47-42e8-a4f9-275ec2dd92e4\",\"disambiguation\":\"\",\"iswcs\":[\"T-920.197.804-3\"]}"
+}

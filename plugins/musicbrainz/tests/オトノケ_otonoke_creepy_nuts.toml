@@ -1,0 +1,43 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Creepy Nuts - オトノケ (2024) [WEB FLAC 24B]/02 - オトノケ - Otonoke (instrumental).flac"
+album = "オトノケ - Otonoke"
+album_artists = ["Creepy Nuts"]
+artists = ["Creepy Nuts"]
+title = "オトノケ - Otonoke (instrumental)"
+copyright = "(P) 2024 Sony Music Labels Inc."
+genre = "Hip-Hop/Rap"
+track = 2
+track_total = 2
+duration_ms = 185620
+
+[[raw_tags]]
+file_path = "Creepy Nuts - オトノケ (2024) [WEB FLAC 24B]/01 - オトノケ - Otonoke.flac"
+album = "オトノケ - Otonoke"
+album_artists = ["Creepy Nuts"]
+artists = ["Creepy Nuts"]
+title = "オトノケ - Otonoke"
+copyright = "(P) 2024 Sony Music Labels Inc."
+genre = "Hip-Hop/Rap"
+track = 1
+track_total = 2
+duration_ms = 185626
+
+[expect.release]
+ids = { release_group_id = "2955111b-9fdb-42c8-bf69-7edfdb34076f", release_id = "00cc3df7-29aa-4a6c-bc41-2b3d79ddaad2" }
+fields = { release_title = "オトノケ", release_date = "2024-10-04" }
+
+[expect.artists."e5e045da-59a3-4b65-8bb4-3c7f3ac9a529"]
+fields = { artist_name = "Creepy Nuts", sort_name = "Creepy Nuts" }
+
+[expect.tracks."2558f091-dcb9-4c97-8c47-af8eb5318c62"]
+fields = { disc = 1, track = 1, track_title = "オトノケ" }
+
+[expect.tracks."b1fbac3b-78d2-479f-adf8-b00fa539caf0"]
+fields = { disc = 1, track = 2, track_title = "オトノケ (instrumental)" }
