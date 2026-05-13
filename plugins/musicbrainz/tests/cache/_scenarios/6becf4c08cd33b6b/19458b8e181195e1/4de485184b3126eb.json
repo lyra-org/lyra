@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/0f1188f5-7f9d-44e0-b88a-48a5856890ee?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"title\":\"夏の夜の夢\",\"disambiguation\":\"\",\"id\":\"0f1188f5-7f9d-44e0-b88a-48a5856890ee\",\"iswcs\":[],\"relations\":[{\"attributes\":[],\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"begin\":null,\"end\":null,\"artist\":{\"name\":\"甲田雅人\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"disambiguation\":\"\",\"sort-name\":\"Kouda, Masato\",\"country\":\"JP\",\"type\":\"Person\"},\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\"}],\"language\":null,\"languages\":[],\"type-id\":null,\"attributes\":[]}"
+}

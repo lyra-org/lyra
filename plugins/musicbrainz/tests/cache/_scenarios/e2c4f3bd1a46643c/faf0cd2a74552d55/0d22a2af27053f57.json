@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/068d2903-4b33-3fc0-96f2-69bc7d3df3b9?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"title\":\"I’ll Face Myself\",\"relations\":[{\"attribute-values\":{},\"source-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"target-credit\":\"\",\"attribute-ids\":{},\"artist\":{\"name\":\"目黒将司\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Meguro, Shōji\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"type\":\"Person\",\"country\":\"JP\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\"},\"begin\":null,\"attributes\":[],\"direction\":\"backward\",\"end\":null,\"target-type\":\"artist\",\"type\":\"composer\"}],\"type\":null,\"disambiguation\":\"\",\"iswcs\":[],\"id\":\"068d2903-4b33-3fc0-96f2-69bc7d3df3b9\",\"language\":\"zxx\",\"type-id\":null,\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"152-3364-2\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"languages\":[\"zxx\"]}"
+}

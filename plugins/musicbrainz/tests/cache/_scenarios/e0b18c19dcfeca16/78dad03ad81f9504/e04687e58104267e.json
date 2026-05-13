@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/c21ea589-0e1a-49d4-b4ab-757eb8c1f98b?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"relations\":[{\"type\":\"composer\",\"artist\":{\"name\":\"武田祐介\",\"type\":\"Person\",\"id\":\"a67614ed-ff05-472d-b0c2-edfcd4113dd8\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"disambiguation\":\"\",\"sort-name\":\"Takeda, Yūsuke\"},\"target-type\":\"artist\",\"source-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"attribute-ids\":{},\"attributes\":[],\"attribute-values\":{},\"ended\":false,\"end\":null,\"direction\":\"backward\",\"begin\":null}],\"disambiguation\":\"\",\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"729-2241-9\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"title\":\"気象神社\",\"iswcs\":[],\"type-id\":null,\"languages\":[\"zxx\"],\"id\":\"c21ea589-0e1a-49d4-b4ab-757eb8c1f98b\",\"type\":null}"
+}

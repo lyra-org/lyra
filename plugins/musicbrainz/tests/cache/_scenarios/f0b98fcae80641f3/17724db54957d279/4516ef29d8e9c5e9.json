@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/9f5cb45d-a087-4b3a-bc15-c4aabded0c53?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"languages\":[\"zxx\"],\"type-id\":null,\"id\":\"9f5cb45d-a087-4b3a-bc15-c4aabded0c53\",\"type\":null,\"language\":\"zxx\",\"attributes\":[],\"title\":\"はったれ五右衛門\",\"iswcs\":[],\"relations\":[{\"attributes\":[],\"attribute-ids\":{},\"target-credit\":\"\",\"end\":null,\"attribute-values\":{},\"ended\":false,\"source-credit\":\"\",\"target-type\":\"artist\",\"artist\":{\"name\":\"喜多條敦志\",\"type\":\"Person\",\"id\":\"2aaa4d3d-5100-4c03-b464-7ab6af8854e6\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"disambiguation\":\"\",\"sort-name\":\"Kitajoh, Atsushi\"},\"type\":\"composer\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"direction\":\"backward\"}],\"disambiguation\":\"\"}"
+}

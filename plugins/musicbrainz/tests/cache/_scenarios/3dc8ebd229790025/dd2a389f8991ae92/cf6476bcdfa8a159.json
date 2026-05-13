@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/90db5373-433e-484b-a9c6-255104f79c1b?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"進撃の巨人 Season 2\",\"type\":null,\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"228-8376-2\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"id\":\"90db5373-433e-484b-a9c6-255104f79c1b\",\"title\":\"APETITAN\",\"relations\":[{\"attributes\":[],\"artist\":{\"sort-name\":\"Sawano, Hiroyuki\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"name\":\"澤野弘之\",\"country\":\"JP\",\"disambiguation\":\"\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\"},\"end\":null,\"attribute-ids\":{},\"source-credit\":\"\",\"direction\":\"backward\",\"ended\":false,\"target-type\":\"artist\",\"begin\":null,\"target-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"languages\":[\"zxx\"],\"language\":\"zxx\",\"iswcs\":[\"T-922.352.728-4\"],\"type-id\":null}"
+}

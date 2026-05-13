@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/349cd063-629c-3819-90d3-94a3f53d93e4?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"id\":\"349cd063-629c-3819-90d3-94a3f53d93e4\",\"type\":\"Soundtrack\",\"languages\":[\"zxx\"],\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"title\":\"It’s SHOW TIME!\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"152-3366-9\"}],\"iswcs\":[],\"relations\":[{\"ended\":false,\"attribute-values\":{},\"end\":null,\"target-credit\":\"\",\"attribute-ids\":{},\"attributes\":[],\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"artist\":{\"id\":\"2aaa4d3d-5100-4c03-b464-7ab6af8854e6\",\"type\":\"Person\",\"name\":\"喜多條敦志\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"disambiguation\":\"\",\"sort-name\":\"Kitajoh, Atsushi\"},\"type\":\"composer\",\"source-credit\":\"\",\"target-type\":\"artist\",\"direction\":\"backward\",\"begin\":null}],\"disambiguation\":\"\",\"language\":\"zxx\"}"
+}

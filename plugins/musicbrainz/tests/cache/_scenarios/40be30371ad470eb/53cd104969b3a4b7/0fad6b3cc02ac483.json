@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/6b602e5a-0b47-4f6c-ac74-08bf50d858c4?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"attributes\":[{\"type-id\":\"97aac6a3-f2dd-4372-96fe-2462eb4e652a\",\"value\":\"N00118844\",\"type\":\"NexTone ID\"},{\"type\":\"JASRAC ID\",\"value\":\"202-8631-7\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"language\":\"zxx\",\"relations\":[{\"attribute-values\":{},\"type\":\"composer\",\"source-credit\":\"\",\"artist\":{\"name\":\"Giga\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"disambiguation\":\"Japanese producer\",\"id\":\"fc7a99ac-32f0-4e2a-a2eb-03670470003d\",\"sort-name\":\"Giga\",\"country\":\"JP\",\"type\":\"Person\"},\"end\":null,\"begin\":null,\"ended\":false,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"direction\":\"backward\",\"target-type\":\"artist\",\"attribute-ids\":{},\"attributes\":[]}],\"languages\":[\"zxx\"],\"iswcs\":[\"T-919.213.874-2\"],\"type\":\"Song\",\"title\":\"-BWW SCREAM-\",\"disambiguation\":\"\",\"id\":\"6b602e5a-0b47-4f6c-ac74-08bf50d858c4\"}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/artist/343c1314-2e6d-4ec6-a3d9-01679f8ed6db?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":\"5c1375b0-f18d-3db7-a164-a49d7a63773f\",\"isnis\":[],\"area\":null,\"type\":\"Character\",\"life-span\":{\"end\":null,\"begin\":null,\"ended\":false},\"country\":null,\"relations\":[{\"direction\":\"backward\",\"type-id\":\"dd9886f2-1dfe-4270-97db-283f6839a666\",\"target-type\":\"artist\",\"begin\":null,\"attribute-values\":{},\"type\":\"is person\",\"attribute-ids\":{},\"target-credit\":\"\",\"end\":null,\"ended\":false,\"artist\":{\"id\":\"b91fa73a-eb2b-4809-a643-1a5d24d48da2\",\"sort-name\":\"Aokaze, Nana\",\"type-id\":\"5c1375b0-f18d-3db7-a164-a49d7a63773f\",\"country\":null,\"name\":\"蒼風なな\",\"disambiguation\":\"キミとアイドルプリキュア♪\",\"type\":\"Character\"},\"attributes\":[],\"source-credit\":\"\"}],\"gender\":\"Female\",\"disambiguation\":\"キミとアイドルプリキュア♪\",\"end-area\":null,\"id\":\"343c1314-2e6d-4ec6-a3d9-01679f8ed6db\",\"ipis\":[],\"begin-area\":null,\"name\":\"キュアウインク\",\"sort-name\":\"Cure Wink\",\"gender-id\":\"93452b5a-a947-30c8-934f-6a4056b151c2\"}"
+}

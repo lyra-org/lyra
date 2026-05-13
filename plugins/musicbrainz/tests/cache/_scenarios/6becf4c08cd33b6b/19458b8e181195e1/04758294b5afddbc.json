@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/4acb5fc0-a70f-4a85-9c9f-2bfa3dbaaedc?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":null,\"title\":\"夏生の想い\",\"attributes\":[],\"iswcs\":[],\"relations\":[{\"begin\":null,\"direction\":\"backward\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"type\":\"composer\",\"artist\":{\"name\":\"甲田雅人\",\"type\":\"Person\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Kouda, Masato\",\"disambiguation\":\"\"},\"source-credit\":\"\",\"target-type\":\"artist\",\"end\":null,\"ended\":false,\"attribute-values\":{},\"attributes\":[],\"attribute-ids\":{},\"target-credit\":\"\"}],\"disambiguation\":\"\",\"languages\":[],\"type-id\":null,\"id\":\"4acb5fc0-a70f-4a85-9c9f-2bfa3dbaaedc\",\"type\":null}"
+}

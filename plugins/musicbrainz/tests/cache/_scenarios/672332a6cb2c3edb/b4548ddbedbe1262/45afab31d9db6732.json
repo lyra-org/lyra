@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/9589fc0e-c260-42e7-8111-78429ef6313b?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"languages\":[\"zxx\"],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"iswcs\":[\"T-324.036.536-6\"],\"type\":\"Song\",\"disambiguation\":\"\",\"relations\":[{\"target-type\":\"artist\",\"ended\":false,\"direction\":\"backward\",\"attribute-ids\":{},\"source-credit\":\"\",\"end\":null,\"artist\":{\"id\":\"114b26ff-a1fe-41f3-9df8-5c093afe9c56\",\"name\":\"Vaundy\",\"type\":\"Person\",\"country\":\"JP\",\"disambiguation\":\"Japanese singer‐songwriter, producer\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Vaundy\"},\"attributes\":[],\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attribute-values\":{},\"type\":\"composer\",\"target-credit\":\"\",\"begin\":null}],\"title\":\"Audio 006\",\"id\":\"9589fc0e-c260-42e7-8111-78429ef6313b\",\"attributes\":[{\"type\":\"SACEM ID\",\"value\":\"111016037267\",\"type-id\":\"d08147e2-d167-3c2b-bbe4-af6643a194f9\"},{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"775-4872-8\"}]}"
+}

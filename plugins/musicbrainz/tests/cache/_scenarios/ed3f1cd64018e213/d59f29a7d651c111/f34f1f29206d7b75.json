@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/6b790418-ccd1-43cd-8484-c525e0107da4?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"id\":\"6b790418-ccd1-43cd-8484-c525e0107da4\",\"type\":\"Soundtrack\",\"title\":\"ミミズの歴史\",\"iswcs\":[\"T-317.519.091-3\"],\"languages\":[\"zxx\"],\"relations\":[{\"attributes\":[],\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{},\"artist\":{\"country\":\"JP\",\"type\":\"Person\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"disambiguation\":\"\",\"sort-name\":\"Noda, Yōjirō\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"野田洋次郎\"},\"end\":null,\"begin\":null,\"ended\":false,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"source-credit\":\"\"}],\"language\":\"zxx\",\"attributes\":[{\"type-id\":\"97aac6a3-f2dd-4372-96fe-2462eb4e652a\",\"type\":\"NexTone ID\",\"value\":\"N01198197\"},{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"277-7885-1\",\"type\":\"JASRAC ID\"}],\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\"}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/67109dc1-c497-4fa6-8b1b-a40b18beba3c?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"attributes\":[{\"value\":\"194-3632-7\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"language\":null,\"relations\":[{\"ended\":false,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"end\":null,\"artist\":{\"disambiguation\":\"\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\",\"sort-name\":\"Sawano, Hiroyuki\",\"country\":\"JP\",\"type\":\"Person\",\"name\":\"澤野弘之\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"begin\":null,\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"attributes\":[],\"direction\":\"backward\",\"target-type\":\"artist\",\"attribute-ids\":{}}],\"languages\":[],\"iswcs\":[\"T-910.740.776-1\"],\"type\":null,\"title\":\"2chi城\",\"disambiguation\":\"進撃の巨人\",\"id\":\"67109dc1-c497-4fa6-8b1b-a40b18beba3c\"}"
+}
