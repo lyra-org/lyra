@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/77866207-8416-4071-ac3c-bbfbe46f61a9?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"ended\":false,\"target-type\":\"artist\",\"source-credit\":\"\",\"attribute-ids\":{},\"direction\":\"backward\",\"artist\":{\"id\":\"2aaa4d3d-5100-4c03-b464-7ab6af8854e6\",\"country\":\"JP\",\"disambiguation\":\"\",\"name\":\"喜多條敦志\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Kitajoh, Atsushi\"},\"end\":null,\"attributes\":[],\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"type\":\"composer\",\"attribute-values\":{},\"target-credit\":\"\",\"begin\":null}],\"title\":\"プロゴルファー猿田彦\",\"attributes\":[],\"id\":\"77866207-8416-4071-ac3c-bbfbe46f61a9\",\"type\":null,\"disambiguation\":\"\",\"type-id\":null,\"iswcs\":[],\"languages\":[\"zxx\"],\"language\":\"zxx\"}"
+}

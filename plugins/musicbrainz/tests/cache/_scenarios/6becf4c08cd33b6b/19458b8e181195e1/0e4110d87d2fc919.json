@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/1a80692e-7b91-4eb3-a3ab-e14f044a89db?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"languages\":[],\"attributes\":[],\"title\":\"アルのテーマ\",\"relations\":[{\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"target-type\":\"artist\",\"end\":null,\"source-credit\":\"\",\"attribute-values\":{},\"attribute-ids\":{},\"type\":\"composer\",\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"sort-name\":\"Kouda, Masato\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"甲田雅人\"},\"attributes\":[],\"direction\":\"backward\",\"ended\":false}],\"disambiguation\":\"\",\"iswcs\":[],\"language\":null,\"id\":\"1a80692e-7b91-4eb3-a3ab-e14f044a89db\",\"type-id\":null,\"type\":null}"
+}

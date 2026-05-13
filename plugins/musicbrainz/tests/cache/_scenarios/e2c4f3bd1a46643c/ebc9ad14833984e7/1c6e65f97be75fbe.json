@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/ca2fa8c4-3d90-3a51-b220-f2501ad165c9?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"type\":null,\"disambiguation\":\"\",\"iswcs\":[],\"language\":\"zxx\",\"id\":\"ca2fa8c4-3d90-3a51-b220-f2501ad165c9\",\"title\":\"Welcome to the limousine\",\"relations\":[{\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"target-type\":\"artist\",\"type\":\"composer\",\"attribute-ids\":{},\"attribute-values\":{},\"end\":null,\"source-credit\":\"\",\"ended\":false,\"direction\":\"backward\",\"attributes\":[],\"artist\":{\"country\":\"JP\",\"name\":\"目黒将司\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"sort-name\":\"Meguro, Shōji\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"}}],\"languages\":[\"zxx\"],\"attributes\":[{\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"152-3348-1\"}]}"
+}

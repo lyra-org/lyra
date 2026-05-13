@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/b72eda2a-197f-3df9-aea4-5976a28445c1?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"id\":\"b72eda2a-197f-3df9-aea4-5976a28445c1\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"152-3353-7\"}],\"relations\":[{\"target-credit\":\"\",\"begin\":null,\"type\":\"composer\",\"attribute-values\":{},\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attributes\":[],\"end\":null,\"artist\":{\"sort-name\":\"Meguro, Shōji\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"country\":\"JP\",\"name\":\"目黒将司\",\"type\":\"Person\"},\"direction\":\"backward\",\"source-credit\":\"\",\"attribute-ids\":{},\"target-type\":\"artist\",\"ended\":false}],\"title\":\"Like a dream come true\",\"type\":null,\"disambiguation\":\"\",\"iswcs\":[],\"type-id\":null,\"language\":\"zxx\",\"languages\":[\"zxx\"]}"
+}

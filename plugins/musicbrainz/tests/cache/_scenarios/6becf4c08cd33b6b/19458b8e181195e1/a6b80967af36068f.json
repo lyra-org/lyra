@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/42420d30-9743-4a2c-aadb-961f6bf50098?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"type-id\":null,\"iswcs\":[],\"disambiguation\":\"\",\"id\":\"42420d30-9743-4a2c-aadb-961f6bf50098\",\"language\":null,\"relations\":[{\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"target-type\":\"artist\",\"type\":\"composer\",\"attribute-ids\":{},\"attribute-values\":{},\"end\":null,\"source-credit\":\"\",\"ended\":false,\"direction\":\"backward\",\"attributes\":[],\"artist\":{\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"sort-name\":\"Kouda, Masato\",\"disambiguation\":\"\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"name\":\"甲田雅人\"}}],\"title\":\"純喫茶 ラマン\",\"languages\":[],\"attributes\":[]}"
+}

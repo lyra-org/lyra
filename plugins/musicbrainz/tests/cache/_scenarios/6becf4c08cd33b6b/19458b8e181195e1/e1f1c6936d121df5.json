@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/3ff8e77f-c69f-468c-b9a1-dc2bf4e7a7ab?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"languages\":[],\"type\":null,\"id\":\"3ff8e77f-c69f-468c-b9a1-dc2bf4e7a7ab\",\"language\":null,\"disambiguation\":\"\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"source-credit\":\"\",\"type\":\"composer\",\"artist\":{\"disambiguation\":\"\",\"sort-name\":\"Kouda, Masato\",\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"name\":\"甲田雅人\",\"type\":\"Person\"},\"end\":null,\"attribute-values\":{},\"ended\":false,\"attribute-ids\":{},\"attributes\":[],\"target-credit\":\"\",\"begin\":null,\"direction\":\"backward\"}],\"iswcs\":[],\"title\":\"進んでいく時間\",\"attributes\":[]}"
+}

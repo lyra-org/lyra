@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/1b1e731c-8e59-4ccb-bd1d-5f55296e306f?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{},\"attributes\":[],\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"ended\":false,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"end\":null,\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"喜多條敦志\",\"type\":\"Person\",\"country\":\"JP\",\"sort-name\":\"Kitajoh, Atsushi\",\"disambiguation\":\"\",\"id\":\"2aaa4d3d-5100-4c03-b464-7ab6af8854e6\"},\"begin\":null}],\"languages\":[\"zxx\"],\"language\":\"zxx\",\"type-id\":null,\"attributes\":[],\"title\":\"懺悔のお時間\",\"type\":null,\"disambiguation\":\"\",\"id\":\"1b1e731c-8e59-4ccb-bd1d-5f55296e306f\",\"iswcs\":[]}"
+}

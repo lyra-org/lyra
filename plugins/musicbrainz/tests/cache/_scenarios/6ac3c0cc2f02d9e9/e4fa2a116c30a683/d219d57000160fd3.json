@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/ec7fca85-5bea-4a07-9709-f2eb6cf5b72e?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"languages\":[\"zxx\"],\"language\":\"zxx\",\"type-id\":null,\"iswcs\":[\"T-910.740.743-2\"],\"type\":null,\"disambiguation\":\"進撃の巨人\",\"relations\":[{\"attribute-values\":{},\"type\":\"composer\",\"begin\":null,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"end\":null,\"artist\":{\"type\":\"Person\",\"name\":\"澤野弘之\",\"disambiguation\":\"\",\"country\":\"JP\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\",\"sort-name\":\"Sawano, Hiroyuki\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"attributes\":[],\"target-type\":\"artist\",\"ended\":false,\"direction\":\"backward\",\"attribute-ids\":{},\"source-credit\":\"\"}],\"title\":\"cóunter・attàck-mˈænkάɪnd\",\"id\":\"ec7fca85-5bea-4a07-9709-f2eb6cf5b72e\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"194-3615-7\"}]}"
+}

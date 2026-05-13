@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/4d1966e4-6699-407c-a2a2-aacb51936995?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"Mega Man 2\",\"type\":null,\"attributes\":[],\"id\":\"4d1966e4-6699-407c-a2a2-aacb51936995\",\"title\":\"Game Start\",\"relations\":[{\"ended\":false,\"target-type\":\"artist\",\"direction\":\"backward\",\"source-credit\":\"\",\"attribute-ids\":{},\"end\":null,\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Tateishi, Takashi\",\"id\":\"979ae797-6018-49e8-b938-825a5f346c76\",\"type\":\"Person\",\"name\":\"立石孝\",\"disambiguation\":\"\",\"country\":\"JP\"},\"attributes\":[],\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"type\":\"composer\",\"attribute-values\":{},\"target-credit\":\"\",\"begin\":null}],\"language\":\"zxx\",\"languages\":[\"zxx\"],\"iswcs\":[],\"type-id\":null}"
+}

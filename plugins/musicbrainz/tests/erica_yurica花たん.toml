@@ -1,0 +1,205 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "YURiCa／花たん - 2016 - ERiCa [FLAC]/12 ラズベリー_モンスター.flac"
+album = "ERiCa"
+album_artists = ["YURiCa/花たん"]
+artists = ["YURiCa/花たん"]
+title = "ラズベリー*モンスター"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 12
+duration_ms = 175666
+
+[[raw_tags]]
+file_path = "YURiCa／花たん - 2016 - ERiCa [FLAC]/11 Knots Way.flac"
+album = "ERiCa"
+album_artists = ["YURiCa/花たん"]
+artists = ["YURiCa/花たん"]
+title = "Knots Way"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 12
+duration_ms = 279840
+
+[[raw_tags]]
+file_path = "YURiCa／花たん - 2016 - ERiCa [FLAC]/10 胸の箱.flac"
+album = "ERiCa"
+album_artists = ["YURiCa/花たん"]
+artists = ["YURiCa/花たん"]
+title = "胸の箱"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 12
+duration_ms = 275613
+
+[[raw_tags]]
+file_path = "YURiCa／花たん - 2016 - ERiCa [FLAC]/09 pale.flac"
+album = "ERiCa"
+album_artists = ["YURiCa/花たん"]
+artists = ["YURiCa/花たん"]
+title = "pale"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 12
+duration_ms = 278053
+
+[[raw_tags]]
+file_path = "YURiCa／花たん - 2016 - ERiCa [FLAC]/08 凍る花.flac"
+album = "ERiCa"
+album_artists = ["YURiCa/花たん"]
+artists = ["YURiCa/花たん"]
+title = "凍る花"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 12
+duration_ms = 368400
+
+[[raw_tags]]
+file_path = "YURiCa／花たん - 2016 - ERiCa [FLAC]/07 C.flac"
+album = "ERiCa"
+album_artists = ["YURiCa/花たん"]
+artists = ["YURiCa/花たん"]
+title = "C"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 12
+duration_ms = 278280
+
+[[raw_tags]]
+file_path = "YURiCa／花たん - 2016 - ERiCa [FLAC]/06 生花.flac"
+album = "ERiCa"
+album_artists = ["YURiCa/花たん"]
+artists = ["YURiCa/花たん"]
+title = "生花"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 12
+duration_ms = 209293
+
+[[raw_tags]]
+file_path = "YURiCa／花たん - 2016 - ERiCa [FLAC]/05 Out of Reality.flac"
+album = "ERiCa"
+album_artists = ["YURiCa/花たん"]
+artists = ["YURiCa/花たん"]
+title = "Out of Reality"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 12
+duration_ms = 287626
+
+[[raw_tags]]
+file_path = "YURiCa／花たん - 2016 - ERiCa [FLAC]/04 poppin' jumpin'.flac"
+album = "ERiCa"
+album_artists = ["YURiCa/花たん"]
+artists = ["YURiCa/花たん"]
+title = "poppin' jumpin'"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 12
+duration_ms = 255773
+
+[[raw_tags]]
+file_path = "YURiCa／花たん - 2016 - ERiCa [FLAC]/03 カミソリパーティー.flac"
+album = "ERiCa"
+album_artists = ["YURiCa/花たん"]
+artists = ["YURiCa/花たん"]
+title = "カミソリパーティー"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 12
+duration_ms = 230280
+
+[[raw_tags]]
+file_path = "YURiCa／花たん - 2016 - ERiCa [FLAC]/02 栞.flac"
+album = "ERiCa"
+album_artists = ["YURiCa/花たん"]
+artists = ["YURiCa/花たん"]
+title = "栞"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 12
+duration_ms = 262706
+
+[[raw_tags]]
+file_path = "YURiCa／花たん - 2016 - ERiCa [FLAC]/01 ERiCa.flac"
+album = "ERiCa"
+album_artists = ["YURiCa/花たん"]
+artists = ["YURiCa/花たん"]
+title = "ERiCa"
+genre = "Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 12
+duration_ms = 322346
+
+[expect.release]
+ids = { release_group_id = "3e4332e2-1338-4a99-95b6-372d72a365fd", release_id = "643f45fb-0069-48da-9259-e40c98d399f2" }
+fields = { release_title = "ERiCa", release_date = "2016-11-23" }
+
+[expect.artists."d53eb473-7906-47a4-b2cd-33d18b06a0ac"]
+fields = { artist_name = "YURiCa/花たん", sort_name = "YURiCa / Hanatan" }
+
+[expect.tracks."006c8fa1-7824-475e-8efc-b77030d6fbc6"]
+fields = { disc = 1, track = 6, track_title = "生花" }
+
+[expect.tracks."06e0307f-941d-4b1c-a0da-279ed7948beb"]
+fields = { disc = 1, track = 8, track_title = "凍る花" }
+
+[expect.tracks."3a26e6dd-1003-4f76-b61d-227ca1a5bd4c"]
+fields = { disc = 1, track = 1, track_title = "ERiCa" }
+
+[expect.tracks."5d30aeaf-c598-4ffc-842b-a63db78bd50b"]
+fields = { disc = 1, track = 10, track_title = "胸の箱" }
+
+[expect.tracks."9bfae736-f035-4cba-a0d0-7c3724a1b62b"]
+fields = { disc = 1, track = 2, track_title = "栞" }
+
+[expect.tracks."9d11199b-82fa-499a-a259-a637a745d597"]
+fields = { disc = 1, track = 4, track_title = "poppin' jumpin'" }
+
+[expect.tracks."a59efd0e-1ef2-4d2f-836e-1da6542c428e"]
+fields = { disc = 1, track = 12, track_title = "ラズベリー*モンスター" }
+
+[expect.tracks."c3f15aa1-fe6b-4f3b-b400-86227d44f9de"]
+fields = { disc = 1, track = 11, track_title = "Knots Way" }
+
+[expect.tracks."d47ae028-ed49-451c-b7ed-848a15d7c336"]
+fields = { disc = 1, track = 5, track_title = "Out of Reality" }
+
+[expect.tracks."da57a78c-578a-4303-b8d5-4bf109ed35fd"]
+fields = { disc = 1, track = 7, track_title = "C" }
+
+[expect.tracks."dc5b789b-54bb-4649-8744-d3244294a995"]
+fields = { disc = 1, track = 9, track_title = "pale" }
+
+[expect.tracks."eb990af3-fb69-4dc7-806f-53f7703464c2"]
+fields = { disc = 1, track = 3, track_title = "カミソリパーティー" }
