@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/ee64430c-d6fd-47e0-aa1f-46c4eef8a9e8?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"target-type\":\"artist\",\"type\":\"composer\",\"attribute-ids\":{},\"attribute-values\":{},\"source-credit\":\"\",\"end\":null,\"ended\":false,\"direction\":\"backward\",\"attributes\":[],\"artist\":{\"country\":\"JP\",\"name\":\"野田洋次郎\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"disambiguation\":\"\",\"sort-name\":\"Noda, Yōjirō\"}}],\"title\":\"二人の時間\",\"languages\":[\"zxx\"],\"attributes\":[{\"type-id\":\"97aac6a3-f2dd-4372-96fe-2462eb4e652a\",\"type\":\"NexTone ID\",\"value\":\"N01198191\"},{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"277-7886-0\"}],\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"type\":\"Soundtrack\",\"iswcs\":[\"T-317.519.079-7\"],\"disambiguation\":\"\",\"id\":\"ee64430c-d6fd-47e0-aa1f-46c4eef8a9e8\",\"language\":\"zxx\"}"
+}

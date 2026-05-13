@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/5c0f3880-922b-4900-8197-6e113867b09b?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"id\":\"5c0f3880-922b-4900-8197-6e113867b09b\",\"type\":null,\"type-id\":null,\"languages\":[\"zxx\"],\"relations\":[{\"attributes\":[],\"attribute-ids\":{},\"target-credit\":\"\",\"end\":null,\"ended\":false,\"attribute-values\":{},\"artist\":{\"type\":\"Person\",\"name\":\"目黒将司\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Meguro, Shōji\",\"disambiguation\":\"Japanese composer, guitarist & game director\"},\"type\":\"composer\",\"source-credit\":\"\",\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"direction\":\"backward\"}],\"disambiguation\":\"\",\"title\":\"Blood of Villain\",\"attributes\":[],\"iswcs\":[],\"language\":\"zxx\"}"
+}

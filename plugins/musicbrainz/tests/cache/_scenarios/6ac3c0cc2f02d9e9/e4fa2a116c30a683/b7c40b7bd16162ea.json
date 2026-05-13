@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/38953074-1263-4407-bda8-92c0fe364ca8?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":null,\"relations\":[{\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"ended\":false,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"artist\":{\"country\":\"JP\",\"type\":\"Person\",\"disambiguation\":\"\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\",\"sort-name\":\"Sawano, Hiroyuki\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"澤野弘之\"},\"end\":null,\"begin\":null,\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{},\"attributes\":[]}],\"languages\":[],\"type-id\":null,\"attributes\":[{\"value\":\"194-3634-3\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"type\":null,\"title\":\"XL-TT\",\"disambiguation\":\"進撃の巨人\",\"id\":\"38953074-1263-4407-bda8-92c0fe364ca8\",\"iswcs\":[\"T-910.740.779-4\"]}"
+}

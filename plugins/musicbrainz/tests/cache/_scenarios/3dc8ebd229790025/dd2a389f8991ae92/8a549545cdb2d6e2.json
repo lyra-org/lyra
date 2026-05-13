@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/dc6c3cb6-70a0-482f-99b6-c8e379c50cb1?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"source-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"ended\":false,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"end\":null,\"artist\":{\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\",\"disambiguation\":\"\",\"sort-name\":\"Sawano, Hiroyuki\",\"country\":\"JP\",\"type\":\"Person\",\"name\":\"澤野弘之\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"begin\":null,\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{},\"attributes\":[]}],\"languages\":[\"zxx\"],\"language\":\"zxx\",\"attributes\":[{\"value\":\"211-0633-9\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"type-id\":null,\"disambiguation\":\"進撃の巨人 後編〜自由の翼〜\",\"id\":\"dc6c3cb6-70a0-482f-99b6-c8e379c50cb1\",\"title\":\"TheWeightOfLives\",\"type\":null,\"iswcs\":[\"T-917.377.781-6\"]}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/6bb2d3e2-a47e-45e6-9b58-edde745a7e1a?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"languages\":[\"zxx\"],\"language\":\"zxx\",\"iswcs\":[],\"type-id\":null,\"type\":null,\"disambiguation\":\"\",\"id\":\"6bb2d3e2-a47e-45e6-9b58-edde745a7e1a\",\"attributes\":[],\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"begin\":null,\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\",\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"ended\":false,\"attributes\":[],\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Konishi, Toshiki\",\"id\":\"eb18af98-09ff-467c-921e-9db3e0000d48\",\"name\":\"小西利樹\",\"type\":\"Person\",\"disambiguation\":\"\",\"country\":\"JP\"},\"end\":null}],\"title\":\"家電量販店\"}"
+}

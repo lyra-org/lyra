@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/c0c2032e-c08f-4969-8c0b-9d641652c132?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"languages\":[\"zxx\"],\"type-id\":null,\"iswcs\":[],\"disambiguation\":\"\",\"type\":null,\"title\":\"Interlude \\\"Awakening\\\"\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"begin\":null,\"type\":\"composer\",\"attribute-values\":{},\"direction\":\"backward\",\"source-credit\":\"\",\"attribute-ids\":{},\"target-type\":\"artist\",\"ended\":false,\"attributes\":[],\"end\":null,\"artist\":{\"sort-name\":\"Ayase\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"disambiguation\":\"Vocaloid producer, YOASOBI composer\",\"name\":\"Ayase\",\"type\":\"Person\",\"id\":\"4173073b-ae68-476a-a715-e22f1f43046d\"}}],\"attributes\":[],\"id\":\"c0c2032e-c08f-4969-8c0b-9d641652c132\"}"
+}

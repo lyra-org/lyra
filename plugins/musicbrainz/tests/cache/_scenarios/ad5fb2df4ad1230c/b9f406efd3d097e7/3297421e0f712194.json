@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/6ab5999e-89ae-44b5-a211-106842d7bdea?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"ended\":false,\"target-credit\":\"\",\"attribute-ids\":{},\"artist\":{\"type\":\"Person\",\"disambiguation\":\"Japanese composer, arranger & musician\",\"country\":\"JP\",\"id\":\"5ffb73c0-b739-4231-ba22-f8d361be1d45\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"菅野よう子\",\"sort-name\":\"Kanno, Yōko\"},\"attribute-values\":{},\"source-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"type\":\"composer\",\"begin\":null,\"attributes\":[],\"direction\":\"backward\",\"end\":null,\"target-type\":\"artist\"}],\"title\":\"MUSHROOM HUNTING\",\"id\":\"6ab5999e-89ae-44b5-a211-106842d7bdea\",\"language\":\"eng\",\"type\":\"Song\",\"disambiguation\":\"\",\"iswcs\":[\"T-101.490.637-5\"],\"attributes\":[],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"languages\":[\"eng\"]}"
+}

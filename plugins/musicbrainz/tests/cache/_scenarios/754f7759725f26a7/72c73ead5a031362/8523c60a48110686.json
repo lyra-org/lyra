@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/78aa09ab-91ab-372d-a0b5-ff2a2cd5530c?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"disambiguation\":\"\",\"id\":\"78aa09ab-91ab-372d-a0b5-ff2a2cd5530c\",\"title\":\"SMILE\",\"type\":null,\"attributes\":[{\"value\":\"152-3359-6\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"type-id\":null,\"relations\":[{\"attributes\":[],\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{},\"ended\":false,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"end\":null,\"artist\":{\"name\":\"目黒将司\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Meguro, Shōji\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"type\":\"Person\",\"country\":\"JP\"},\"begin\":null,\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{}}],\"languages\":[\"zxx\"],\"language\":\"zxx\"}"
+}

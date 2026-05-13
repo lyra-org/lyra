@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/bc37411e-caa0-46bb-b71b-56647fa73821?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":null,\"relations\":[{\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\",\"begin\":null,\"artist\":{\"country\":\"JP\",\"type\":\"Person\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"disambiguation\":\"\",\"sort-name\":\"Kouda, Masato\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"甲田雅人\"},\"end\":null,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"attributes\":[]}],\"languages\":[],\"attributes\":[],\"type-id\":null,\"id\":\"bc37411e-caa0-46bb-b71b-56647fa73821\",\"disambiguation\":\"\",\"type\":null,\"title\":\"告白 ～瑠衣の想い～\",\"iswcs\":[]}"
+}

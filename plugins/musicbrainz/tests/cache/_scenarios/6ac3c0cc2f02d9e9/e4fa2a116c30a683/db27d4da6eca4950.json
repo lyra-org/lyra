@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/968fba38-6c9d-48a5-92af-ce487621d087?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"disambiguation\":\"進撃の巨人\",\"relations\":[{\"source-credit\":\"\",\"attribute-ids\":{},\"direction\":\"backward\",\"ended\":false,\"target-type\":\"artist\",\"attributes\":[],\"artist\":{\"sort-name\":\"Sawano, Hiroyuki\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"澤野弘之\",\"type\":\"Person\",\"country\":\"JP\",\"disambiguation\":\"\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\"},\"end\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"begin\":null,\"type\":\"composer\",\"attribute-values\":{}}],\"title\":\"eye-water\",\"id\":\"968fba38-6c9d-48a5-92af-ce487621d087\",\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"194-3563-1\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"language\":\"zxx\",\"languages\":[\"zxx\"],\"type-id\":null,\"iswcs\":[\"T-910.740.632-6\"]}"
+}

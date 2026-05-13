@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/artist/d0df5b49-6849-4f8d-b5ed-eed017b622ec?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"id\":\"d0df5b49-6849-4f8d-b5ed-eed017b622ec\",\"isnis\":[],\"relations\":[{\"target-credit\":\"\",\"begin\":null,\"attribute-values\":{},\"type\":\"is person\",\"type-id\":\"dd9886f2-1dfe-4270-97db-283f6839a666\",\"attributes\":[],\"artist\":{\"sort-name\":\"Shigure, Kokoro\",\"type-id\":\"5c1375b0-f18d-3db7-a164-a49d7a63773f\",\"disambiguation\":\"キミとアイドルプリキュア♪\",\"country\":null,\"name\":\"紫雨こころ\",\"type\":\"Character\",\"id\":\"53c32246-7866-4315-bae2-959fe6d36e56\"},\"end\":null,\"attribute-ids\":{},\"source-credit\":\"\",\"direction\":\"backward\",\"target-type\":\"artist\",\"ended\":false}],\"disambiguation\":\"キミとアイドルプリキュア♪\",\"ipis\":[],\"sort-name\":\"Cure Kyun-Kyun\",\"gender-id\":\"93452b5a-a947-30c8-934f-6a4056b151c2\",\"life-span\":{\"end\":null,\"ended\":false,\"begin\":null},\"gender\":\"Female\",\"begin-area\":null,\"country\":null,\"type\":\"Character\",\"name\":\"キュアキュンキュン\",\"area\":null,\"type-id\":\"5c1375b0-f18d-3db7-a164-a49d7a63773f\",\"end-area\":null}"
+}

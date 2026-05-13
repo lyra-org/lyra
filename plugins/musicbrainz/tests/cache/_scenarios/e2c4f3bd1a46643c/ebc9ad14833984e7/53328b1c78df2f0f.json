@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/049de252-345e-3cc8-a1a1-8e63544177fb?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"152-3367-7\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"language\":\"zxx\",\"type\":\"Soundtrack\",\"title\":\"ケロリンMAGIC!\",\"languages\":[\"zxx\"],\"id\":\"049de252-345e-3cc8-a1a1-8e63544177fb\",\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"iswcs\":[],\"relations\":[{\"type\":\"composer\",\"attribute-values\":{},\"attribute-ids\":{},\"begin\":null,\"direction\":\"backward\",\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"source-credit\":\"\",\"ended\":false,\"artist\":{\"sort-name\":\"Kitajoh, Atsushi\",\"id\":\"2aaa4d3d-5100-4c03-b464-7ab6af8854e6\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"喜多條敦志\"},\"attributes\":[],\"end\":null,\"target-credit\":\"\"}],\"disambiguation\":\"\"}"
+}

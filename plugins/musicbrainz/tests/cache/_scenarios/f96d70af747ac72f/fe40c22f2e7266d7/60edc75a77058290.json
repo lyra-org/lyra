@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/d20b349a-164f-4cb3-9c8c-a1e17ca6cf34?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"ended\":false,\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{},\"source-credit\":\"\",\"end\":null,\"artist\":{\"id\":\"e963b252-7f3e-450e-b3d8-85bb495e96c1\",\"disambiguation\":\"\",\"country\":\"JP\",\"type\":\"Person\",\"name\":\"n-buna\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"nabuna\"},\"attributes\":[],\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attribute-values\":{},\"type\":\"composer\",\"begin\":null,\"target-credit\":\"\"}],\"title\":\"音楽泥棒の自白\",\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"256-0466-0\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"id\":\"d20b349a-164f-4cb3-9c8c-a1e17ca6cf34\",\"type\":\"Song\",\"disambiguation\":\"\",\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"iswcs\":[\"T-302.449.512-9\"],\"languages\":[\"zxx\"],\"language\":\"zxx\"}"
+}
