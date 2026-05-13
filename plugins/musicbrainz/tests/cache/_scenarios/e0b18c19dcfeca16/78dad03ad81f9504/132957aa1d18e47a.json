@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/74aea5fd-1691-451d-bf31-cf3a17acde3c?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"title\":\"晴れゆく空\",\"type\":null,\"disambiguation\":\"\",\"id\":\"74aea5fd-1691-451d-bf31-cf3a17acde3c\",\"type-id\":null,\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"729-2239-7\",\"type\":\"JASRAC ID\"}],\"languages\":[\"zxx\"],\"relations\":[{\"direction\":\"backward\",\"target-type\":\"artist\",\"attribute-ids\":{},\"attributes\":[],\"source-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"ended\":false,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"end\":null,\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"野田洋次郎\",\"country\":\"JP\",\"type\":\"Person\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"disambiguation\":\"\",\"sort-name\":\"Noda, Yōjirō\"},\"begin\":null}],\"language\":\"zxx\"}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/a7f87aba-4ec9-419f-89f1-1bae4ea15a7f?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"id\":\"a7f87aba-4ec9-419f-89f1-1bae4ea15a7f\",\"language\":\"zxx\",\"type\":null,\"iswcs\":[],\"disambiguation\":\"\",\"title\":\"傲慢の崩壊\",\"relations\":[{\"begin\":null,\"target-type\":\"artist\",\"end\":null,\"direction\":\"backward\",\"attributes\":[],\"type\":\"composer\",\"attribute-values\":{},\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"source-credit\":\"\",\"target-credit\":\"\",\"attribute-ids\":{},\"ended\":false,\"artist\":{\"country\":\"JP\",\"id\":\"eb18af98-09ff-467c-921e-9db3e0000d48\",\"disambiguation\":\"\",\"type\":\"Person\",\"sort-name\":\"Konishi, Toshiki\",\"name\":\"小西利樹\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"}}],\"languages\":[\"zxx\"],\"attributes\":[],\"type-id\":null}"
+}
