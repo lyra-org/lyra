@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/artist/46019cc1-e98e-43eb-88fe-99993aa0413d?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"life-span\":{\"ended\":false,\"begin\":null,\"end\":null},\"type\":\"Group\",\"area\":{\"type\":null,\"disambiguation\":\"\",\"name\":\"Japan\",\"type-id\":null,\"iso-3166-1-codes\":[\"JP\"],\"sort-name\":\"Japan\",\"id\":\"2db42837-c832-3c27-b4a3-08198f75693c\"},\"isnis\":[],\"type-id\":\"e431f5f6-b5d2-343d-8b36-72607fffb74b\",\"gender-id\":null,\"sort-name\":\"Sweet Bullet\",\"name\":\"スイートバレット\",\"ipis\":[],\"begin-area\":null,\"id\":\"46019cc1-e98e-43eb-88fe-99993aa0413d\",\"end-area\":null,\"relations\":[],\"disambiguation\":\"青春ブタ野郎はバニーガール先輩の夢を見ない\",\"gender\":null,\"country\":\"JP\"}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/1b5fc094-d769-40c2-85f1-f7dcd65cf75c?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[{\"value\":\"729-2254-1\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\"}],\"type-id\":null,\"languages\":[\"zxx\"],\"relations\":[{\"type\":\"composer\",\"end\":null,\"target-type\":\"artist\",\"attributes\":[],\"direction\":\"backward\",\"begin\":null,\"artist\":{\"disambiguation\":\"\",\"type\":\"Person\",\"country\":\"JP\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"name\":\"野田洋次郎\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Noda, Yōjirō\"},\"target-credit\":\"\",\"attribute-ids\":{},\"ended\":false,\"source-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attribute-values\":{}}],\"title\":\"首都危機\",\"id\":\"1b5fc094-d769-40c2-85f1-f7dcd65cf75c\",\"language\":\"zxx\",\"type\":null,\"iswcs\":[],\"disambiguation\":\"\"}"
+}

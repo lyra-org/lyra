@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/b9901415-7048-4367-98e8-3fd9dd0b3c0c?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"title\":\"占秘館へようこそ\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"729-2233-8\",\"type\":\"JASRAC ID\"}],\"iswcs\":[],\"relations\":[{\"begin\":null,\"direction\":\"backward\",\"attributes\":[],\"attribute-ids\":{},\"target-credit\":\"\",\"end\":null,\"ended\":false,\"attribute-values\":{},\"type\":\"composer\",\"artist\":{\"sort-name\":\"Kuwahara, Akira\",\"disambiguation\":\"\",\"name\":\"桑原彰\",\"type\":\"Person\",\"id\":\"3f2b5932-8bc6-4d2e-b2c3-ec53aa242847\",\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"source-credit\":\"\",\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"disambiguation\":\"\",\"languages\":[\"zxx\"],\"type-id\":null,\"id\":\"b9901415-7048-4367-98e8-3fd9dd0b3c0c\",\"type\":null}"
+}

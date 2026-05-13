@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/b50127bf-8fde-42a7-b2b0-ab7a7bd1e655?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"languages\":[\"zxx\"],\"iswcs\":[],\"type-id\":null,\"disambiguation\":\"\",\"type\":null,\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"729-2248-6\"}],\"id\":\"b50127bf-8fde-42a7-b2b0-ab7a7bd1e655\",\"title\":\"花火大会\",\"relations\":[{\"end\":null,\"artist\":{\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"野田洋次郎\",\"type\":\"Person\",\"sort-name\":\"Noda, Yōjirō\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"attributes\":[],\"ended\":false,\"target-type\":\"artist\",\"direction\":\"backward\",\"source-credit\":\"\",\"attribute-ids\":{},\"type\":\"composer\",\"attribute-values\":{},\"target-credit\":\"\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}]}"
+}

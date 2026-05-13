@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/f7dfcd00-fa6a-4e7f-8423-a143ec5d04f2?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"title\":\"Re\",\"relations\":[{\"attribute-ids\":{},\"source-credit\":\"\",\"direction\":\"backward\",\"ended\":false,\"target-type\":\"artist\",\"attributes\":[],\"artist\":{\"sort-name\":\"Yanagi, Nagi\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"やなぎなぎ\",\"type\":\"Person\",\"disambiguation\":\"\",\"country\":\"JP\",\"id\":\"eeacda09-891d-4367-b9cc-c6371c96d4d9\"},\"end\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"target-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\"}],\"id\":\"f7dfcd00-fa6a-4e7f-8423-a143ec5d04f2\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"740-4286-6\",\"type\":\"JASRAC ID\"}],\"disambiguation\":\"\",\"type\":null,\"type-id\":null,\"iswcs\":[\"T-303.004.032-1\"],\"languages\":[\"jpn\"],\"language\":\"jpn\"}"
+}
