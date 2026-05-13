@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/artist/562f98e3-0b76-48e3-a628-fe5938f2a443?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"gender-id\":\"93452b5a-a947-30c8-934f-6a4056b151c2\",\"life-span\":{\"ended\":false,\"end\":null,\"begin\":null},\"sort-name\":\"Ina\",\"ipis\":[],\"disambiguation\":\"Vsinger\",\"isnis\":[],\"relations\":[{\"attribute-ids\":{},\"source-credit\":\"\",\"direction\":\"forward\",\"target-type\":\"artist\",\"ended\":false,\"attributes\":[],\"artist\":{\"id\":\"dcf60a3d-9ebf-421b-9f68-fa70f9dad873\",\"name\":\"Seven Carat\",\"type\":\"Group\",\"country\":\"JP\",\"disambiguation\":\"\",\"sort-name\":\"Seven Carat\",\"type-id\":\"e431f5f6-b5d2-343d-8b36-72607fffb74b\"},\"end\":null,\"type-id\":\"5be4c609-9afa-4ea0-910b-12ffb71e3821\",\"target-credit\":\"\",\"begin\":\"2021-09-10\",\"attribute-values\":{},\"type\":\"member of band\"}],\"id\":\"562f98e3-0b76-48e3-a628-fe5938f2a443\",\"end-area\":null,\"type-id\":\"5c1375b0-f18d-3db7-a164-a49d7a63773f\",\"area\":null,\"name\":\"否\",\"type\":\"Character\",\"begin-area\":null,\"country\":null,\"gender\":\"Female\"}"
+}

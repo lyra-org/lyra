@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/50f4d16c-7e4c-311a-83db-cc1c33e74325?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"title\":\"霧\",\"id\":\"50f4d16c-7e4c-311a-83db-cc1c33e74325\",\"disambiguation\":\"\",\"iswcs\":[],\"languages\":[\"zxx\"],\"relations\":[{\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"begin\":null,\"end\":null,\"artist\":{\"name\":\"目黒将司\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Meguro, Shōji\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"type\":\"Person\",\"country\":\"JP\"},\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"attributes\":[]}],\"language\":\"zxx\",\"type-id\":null,\"attributes\":[{\"value\":\"152-3382-1\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}]}"
+}

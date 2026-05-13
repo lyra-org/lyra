@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/7a164643-7de1-3830-8a25-0d4a8db3c219?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"iswcs\":[],\"languages\":[\"zxx\"],\"language\":\"zxx\",\"title\":\"狂気の境界線\",\"relations\":[{\"type\":\"composer\",\"attribute-values\":{},\"begin\":null,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"end\":null,\"artist\":{\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"name\":\"目黒将司\",\"type\":\"Person\",\"country\":\"JP\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Meguro, Shōji\"},\"attributes\":[],\"target-type\":\"artist\",\"ended\":false,\"direction\":\"backward\",\"source-credit\":\"\",\"attribute-ids\":{}}],\"attributes\":[{\"value\":\"152-3362-6\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"id\":\"7a164643-7de1-3830-8a25-0d4a8db3c219\",\"disambiguation\":\"\",\"type\":null}"
+}

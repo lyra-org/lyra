@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/ad713227-4188-45a6-88f5-28ee73457e55?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"type\":\"Song\",\"title\":\"終点の先が在るとするならば。\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attribute-values\":{},\"type\":\"composer\",\"begin\":null,\"target-credit\":\"\",\"ended\":false,\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{},\"source-credit\":\"\",\"end\":null,\"artist\":{\"sort-name\":\"Pusu\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"id\":\"51f9df8c-abea-4e7d-a3bd-05c3d3196b4d\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"ぷす\",\"type\":\"Person\"},\"attributes\":[]}],\"attributes\":[],\"id\":\"ad713227-4188-45a6-88f5-28ee73457e55\",\"language\":\"jpn\",\"languages\":[\"jpn\"],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"iswcs\":[]}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/4cfc3788-7016-379e-9518-d68041848187?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"152-3365-1\"}],\"language\":\"zxx\",\"relations\":[{\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"attributes\":[],\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\",\"begin\":null,\"artist\":{\"type\":\"Person\",\"country\":\"JP\",\"sort-name\":\"Kitajoh, Atsushi\",\"id\":\"2aaa4d3d-5100-4c03-b464-7ab6af8854e6\",\"disambiguation\":\"\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"喜多條敦志\"},\"end\":null,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false}],\"languages\":[\"zxx\"],\"iswcs\":[],\"type\":\"Soundtrack\",\"title\":\"muscle blues\",\"disambiguation\":\"\",\"id\":\"4cfc3788-7016-379e-9518-d68041848187\"}"
+}

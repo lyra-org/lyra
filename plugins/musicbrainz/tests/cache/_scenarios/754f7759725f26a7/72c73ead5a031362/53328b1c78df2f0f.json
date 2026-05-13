@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/049de252-345e-3cc8-a1a1-8e63544177fb?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"152-3367-7\",\"type\":\"JASRAC ID\"}],\"languages\":[\"zxx\"],\"relations\":[{\"type\":\"composer\",\"end\":null,\"target-type\":\"artist\",\"attributes\":[],\"direction\":\"backward\",\"begin\":null,\"artist\":{\"id\":\"2aaa4d3d-5100-4c03-b464-7ab6af8854e6\",\"country\":\"JP\",\"disambiguation\":\"\",\"type\":\"Person\",\"sort-name\":\"Kitajoh, Atsushi\",\"name\":\"喜多條敦志\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"target-credit\":\"\",\"attribute-ids\":{},\"ended\":false,\"source-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attribute-values\":{}}],\"title\":\"ケロリンMAGIC!\",\"disambiguation\":\"\",\"iswcs\":[],\"type\":\"Soundtrack\",\"language\":\"zxx\",\"id\":\"049de252-345e-3cc8-a1a1-8e63544177fb\"}"
+}

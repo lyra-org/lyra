@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/4d2f7a7a-e393-47eb-888e-4f8ec922563e?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"title\":\"帆高、逃走〜子供達の画策\",\"relations\":[{\"end\":null,\"source-credit\":\"\",\"attribute-values\":{},\"attribute-ids\":{},\"type\":\"composer\",\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"sort-name\":\"Noda, Yōjirō\",\"disambiguation\":\"\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"name\":\"野田洋次郎\",\"country\":\"JP\"},\"attributes\":[],\"direction\":\"backward\",\"ended\":false,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"target-type\":\"artist\"}],\"languages\":[\"zxx\"],\"attributes\":[{\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"729-2237-1\"}],\"type-id\":null,\"type\":null,\"disambiguation\":\"\",\"iswcs\":[],\"language\":\"zxx\",\"id\":\"4d2f7a7a-e393-47eb-888e-4f8ec922563e\"}"
+}
