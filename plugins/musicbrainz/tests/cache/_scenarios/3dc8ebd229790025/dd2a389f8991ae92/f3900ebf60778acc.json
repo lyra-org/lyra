@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/0115dbb0-3ec7-4e9b-905a-dfc3e68cd062?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"id\":\"0115dbb0-3ec7-4e9b-905a-dfc3e68cd062\",\"type-id\":null,\"languages\":[\"zxx\"],\"disambiguation\":\"進撃の巨人 Season 2\",\"relations\":[{\"type\":\"composer\",\"artist\":{\"type\":\"Person\",\"name\":\"澤野弘之\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\",\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"disambiguation\":\"\",\"sort-name\":\"Sawano, Hiroyuki\"},\"source-credit\":\"\",\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"attributes\":[],\"attribute-ids\":{},\"ended\":false,\"attribute-values\":{},\"end\":null,\"direction\":\"backward\",\"begin\":null}],\"iswcs\":[\"T-922.352.739-7\"],\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"228-8390-8\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"title\":\"AOTs2M他4\",\"language\":\"zxx\"}"
+}

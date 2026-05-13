@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/6d29d709-55dc-4c16-9eec-a1bc10226c6b?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"id\":\"6d29d709-55dc-4c16-9eec-a1bc10226c6b\",\"type\":null,\"title\":\"悲しい過去\",\"iswcs\":[],\"relations\":[{\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\",\"end\":null,\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"甲田雅人\",\"country\":\"JP\",\"type\":\"Person\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"disambiguation\":\"\",\"sort-name\":\"Kouda, Masato\"},\"begin\":null,\"ended\":false,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{},\"attributes\":[]}],\"language\":null,\"languages\":[],\"attributes\":[],\"type-id\":null}"
+}

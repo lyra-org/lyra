@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/e24ebcfb-c37c-4458-bda8-b3ab07d03c8e?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"attributes\":[],\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"ended\":false,\"begin\":null,\"end\":null,\"artist\":{\"name\":\"ぷす\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Pusu\",\"disambiguation\":\"\",\"id\":\"51f9df8c-abea-4e7d-a3bd-05c3d3196b4d\",\"type\":\"Person\",\"country\":\"JP\"},\"source-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"attributes\":[],\"attribute-ids\":{},\"target-type\":\"artist\",\"direction\":\"backward\"}],\"language\":\"jpn\",\"languages\":[\"jpn\"],\"iswcs\":[],\"type\":\"Song\",\"title\":\"泥の分際で私だけの大切を奪おうだなんて\",\"id\":\"e24ebcfb-c37c-4458-bda8-b3ab07d03c8e\",\"disambiguation\":\"\"}"
+}

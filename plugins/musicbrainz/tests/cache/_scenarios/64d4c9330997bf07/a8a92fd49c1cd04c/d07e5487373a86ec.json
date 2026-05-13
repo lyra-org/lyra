@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/af5624ec-429a-430b-90ff-4640b3b5d3e1?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"id\":\"af5624ec-429a-430b-90ff-4640b3b5d3e1\",\"title\":\"なんで\",\"type\":\"Song\",\"iswcs\":[],\"relations\":[],\"languages\":[\"jpn\"],\"language\":\"jpn\",\"attributes\":[],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\"}"
+}

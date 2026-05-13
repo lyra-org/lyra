@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/60d68326-bbfa-4f17-afbe-190ece6819ff?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"title\":\"Phantom\",\"attributes\":[],\"disambiguation\":\"\",\"relations\":[{\"direction\":\"backward\",\"begin\":null,\"ended\":false,\"attribute-values\":{},\"end\":null,\"target-credit\":\"\",\"attributes\":[],\"attribute-ids\":{},\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"source-credit\":\"\",\"artist\":{\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"目黒将司\",\"type\":\"Person\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"sort-name\":\"Meguro, Shōji\"},\"type\":\"composer\"}],\"language\":\"zxx\",\"type\":null,\"id\":\"60d68326-bbfa-4f17-afbe-190ece6819ff\",\"languages\":[\"zxx\"],\"type-id\":null}"
+}

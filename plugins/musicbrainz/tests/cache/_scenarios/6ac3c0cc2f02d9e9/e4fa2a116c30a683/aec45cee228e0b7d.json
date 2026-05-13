@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/dc2a5578-0518-4cb0-b320-b353f38a438a?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[\"T-910.740.772-7\"],\"title\":\"巨♀〜9地区\",\"type\":null,\"disambiguation\":\"進撃の巨人\",\"id\":\"dc2a5578-0518-4cb0-b320-b353f38a438a\",\"type-id\":null,\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"194-3629-7\",\"type\":\"JASRAC ID\"}],\"languages\":[\"zxx\"],\"relations\":[{\"attributes\":[],\"attribute-ids\":{},\"target-type\":\"artist\",\"direction\":\"backward\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"ended\":false,\"begin\":null,\"end\":null,\"artist\":{\"name\":\"澤野弘之\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Sawano, Hiroyuki\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\",\"disambiguation\":\"\",\"type\":\"Person\",\"country\":\"JP\"},\"source-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\"}],\"language\":\"zxx\"}"
+}

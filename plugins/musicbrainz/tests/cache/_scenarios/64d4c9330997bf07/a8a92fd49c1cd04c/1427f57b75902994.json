@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/049e2e28-9e81-481f-a498-f061e7e42820?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"source-credit\":\"\",\"attributes\":[],\"artist\":{\"type-id\":null,\"country\":\"JP\",\"name\":\"dezzy\",\"disambiguation\":\"Vocaloid producer\",\"type\":null,\"id\":\"414c4af7-7e5a-462b-8d30-1275af99aadf\",\"sort-name\":\"dezzy\"},\"ended\":false,\"target-credit\":\"\",\"end\":null,\"attribute-ids\":{},\"type\":\"composer\",\"attribute-values\":{},\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"direction\":\"backward\"}],\"disambiguation\":\"\",\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"iswcs\":[],\"id\":\"049e2e28-9e81-481f-a498-f061e7e42820\",\"languages\":[\"jpn\"],\"type\":\"Song\",\"title\":\"メリーメリー\",\"language\":\"jpn\",\"attributes\":[]}"
+}

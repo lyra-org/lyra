@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/0e0aeb60-e3b6-4c42-9a2b-477c0dd68d24?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[{\"value\":\"N01198195\",\"type\":\"NexTone ID\",\"type-id\":\"97aac6a3-f2dd-4372-96fe-2462eb4e652a\"},{\"type\":\"JASRAC ID\",\"value\":\"277-7892-4\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"language\":\"zxx\",\"relations\":[{\"source-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"ended\":false,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"end\":null,\"artist\":{\"disambiguation\":\"\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"sort-name\":\"Noda, Yōjirō\",\"country\":\"JP\",\"type\":\"Person\",\"name\":\"野田洋次郎\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"begin\":null,\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{},\"attributes\":[]}],\"languages\":[\"zxx\"],\"iswcs\":[\"T-317.519.089-9\"],\"id\":\"0e0aeb60-e3b6-4c42-9a2b-477c0dd68d24\",\"disambiguation\":\"\",\"type\":\"Soundtrack\",\"title\":\"戦士の休息\"}"
+}

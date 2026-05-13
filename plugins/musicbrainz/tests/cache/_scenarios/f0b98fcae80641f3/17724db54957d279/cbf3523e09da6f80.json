@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/0075423c-4b1d-4595-b95a-44684de7845f?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"id\":\"0075423c-4b1d-4595-b95a-44684de7845f\",\"type\":\"Soundtrack\",\"title\":\"Recollection & Foreboding\",\"iswcs\":[],\"language\":\"zxx\",\"relations\":[],\"languages\":[\"zxx\"],\"attributes\":[],\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\"}"
+}
