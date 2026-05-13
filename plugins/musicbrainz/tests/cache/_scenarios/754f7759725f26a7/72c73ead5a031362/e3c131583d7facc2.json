@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/631b90cd-b41d-348e-9d55-83fcb0bb01e7?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"type-id\":null,\"disambiguation\":\"\",\"iswcs\":[],\"language\":\"zxx\",\"id\":\"631b90cd-b41d-348e-9d55-83fcb0bb01e7\",\"title\":\"Electronica In Velvet Room\",\"relations\":[{\"target-type\":\"artist\",\"target-credit\":\"\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attributes\":[],\"artist\":{\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Meguro, Shōji\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"name\":\"目黒将司\",\"country\":\"JP\"},\"ended\":false,\"direction\":\"backward\",\"attribute-values\":{},\"attribute-ids\":{},\"end\":null,\"source-credit\":\"\",\"type\":\"composer\"}],\"languages\":[\"zxx\"],\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"152-3397-9\",\"type\":\"JASRAC ID\"}]}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/b73dbef6-f1ba-497e-9cec-352441c34297?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[],\"type-id\":null,\"languages\":[\"zxx\"],\"relations\":[{\"attributes\":[],\"attribute-ids\":{},\"target-type\":\"artist\",\"direction\":\"backward\",\"begin\":null,\"artist\":{\"sort-name\":\"Meguro, Shōji\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"type\":\"Person\",\"country\":\"JP\",\"name\":\"目黒将司\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"end\":null,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\"}],\"language\":\"zxx\",\"iswcs\":[],\"id\":\"b73dbef6-f1ba-497e-9cec-352441c34297\",\"disambiguation\":\"\",\"type\":null,\"title\":\"Life Goes On\"}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/a53baee3-1b86-4435-a9f8-f22749ac4601?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"type\":null,\"id\":\"a53baee3-1b86-4435-a9f8-f22749ac4601\",\"language\":null,\"iswcs\":[\"T-910.740.768-1\"],\"disambiguation\":\"進撃の巨人\",\"relations\":[{\"attributes\":[],\"artist\":{\"name\":\"澤野弘之\",\"country\":\"JP\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"sort-name\":\"Sawano, Hiroyuki\",\"disambiguation\":\"\",\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\"},\"ended\":false,\"direction\":\"backward\",\"attribute-values\":{},\"attribute-ids\":{},\"end\":null,\"source-credit\":\"\",\"type\":\"composer\",\"target-type\":\"artist\",\"target-credit\":\"\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"title\":\"E・M・A\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"194-3627-1\"}],\"languages\":[]}"
+}

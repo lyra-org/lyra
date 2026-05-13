@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/48f26e6b-d766-4434-bf75-b8ff998b615f?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"id\":\"48f26e6b-d766-4434-bf75-b8ff998b615f\",\"languages\":[],\"disambiguation\":\"\",\"relations\":[{\"attribute-ids\":{},\"type\":\"composer\",\"attribute-values\":{},\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"direction\":\"backward\",\"source-credit\":\"\",\"attributes\":[],\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"disambiguation\":\"\",\"name\":\"甲田雅人\",\"type\":\"Person\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"sort-name\":\"Kouda, Masato\"},\"ended\":false,\"target-credit\":\"\",\"end\":null}],\"type-id\":null,\"iswcs\":[],\"language\":null,\"attributes\":[],\"type\":null,\"title\":\"やすらぎ\"}"
+}

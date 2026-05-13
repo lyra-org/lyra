@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/74a178c2-2b04-49b6-b591-19b81218b71c?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"relations\":[],\"iswcs\":[],\"attributes\":[],\"title\":\"リッジでリッジでGO!GO!GO! -GMT mashup-\",\"language\":null,\"type\":null,\"id\":\"74a178c2-2b04-49b6-b591-19b81218b71c\",\"type-id\":null,\"languages\":[]}"
+}

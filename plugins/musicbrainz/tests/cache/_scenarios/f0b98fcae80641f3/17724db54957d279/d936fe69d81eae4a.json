@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/99ace631-dea2-47e0-bc50-30a120cdc075?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"languages\":[\"zxx\"],\"id\":\"99ace631-dea2-47e0-bc50-30a120cdc075\",\"iswcs\":[],\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"relations\":[],\"disambiguation\":\"\",\"attributes\":[],\"language\":\"zxx\",\"title\":\"Escape\",\"type\":\"Soundtrack\"}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/108e42be-030c-408a-89c2-6028b7b3db72?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"languages\":[\"zxx\"],\"type-id\":null,\"iswcs\":[],\"type\":null,\"disambiguation\":\"\",\"relations\":[],\"title\":\"Mystery\",\"id\":\"108e42be-030c-408a-89c2-6028b7b3db72\",\"attributes\":[]}"
+}

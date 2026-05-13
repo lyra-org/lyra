@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/5221e716-139c-465a-9203-0151ce9ac718?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"title\":\"Paddling Blue\",\"type\":\"Song\",\"id\":\"5221e716-139c-465a-9203-0151ce9ac718\",\"disambiguation\":\"\",\"iswcs\":[],\"relations\":[],\"languages\":[\"jpn\"],\"language\":\"jpn\",\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"attributes\":[]}"
+}

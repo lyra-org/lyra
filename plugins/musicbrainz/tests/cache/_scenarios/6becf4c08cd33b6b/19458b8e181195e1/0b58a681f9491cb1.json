@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/1b158940-dd07-423e-b594-dc053de672c7?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"attributes\":[],\"relations\":[{\"ended\":false,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"end\":null,\"artist\":{\"sort-name\":\"Kouda, Masato\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"disambiguation\":\"\",\"type\":\"Person\",\"country\":\"JP\",\"name\":\"甲田雅人\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"begin\":null,\"source-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"attributes\":[],\"direction\":\"backward\",\"target-type\":\"artist\",\"attribute-ids\":{}}],\"languages\":[],\"language\":null,\"iswcs\":[],\"title\":\"戻ってきて\",\"type\":null,\"id\":\"1b158940-dd07-423e-b594-dc053de672c7\",\"disambiguation\":\"\"}"
+}
