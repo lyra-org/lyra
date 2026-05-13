@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/b618d6a1-4833-4254-8b01-588f4bd12ac1?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"attributes\":[{\"type-id\":\"97aac6a3-f2dd-4372-96fe-2462eb4e652a\",\"type\":\"NexTone ID\",\"value\":\"N01198183\"},{\"value\":\"277-7876-2\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"relations\":[{\"begin\":null,\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"野田洋次郎\",\"type\":\"Person\",\"country\":\"JP\",\"sort-name\":\"Noda, Yōjirō\",\"disambiguation\":\"\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\"},\"end\":null,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\",\"attributes\":[],\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\"}],\"languages\":[\"zxx\"],\"language\":\"zxx\",\"iswcs\":[\"T-317.519.097-9\"],\"type\":\"Soundtrack\",\"title\":\"二人の出逢い\",\"disambiguation\":\"\",\"id\":\"b618d6a1-4833-4254-8b01-588f4bd12ac1\"}"
+}

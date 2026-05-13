@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/b07d7b50-9446-338c-ad27-c9e0912b818e?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"relations\":[{\"target-type\":\"artist\",\"source-credit\":\"\",\"artist\":{\"sort-name\":\"Meguro, Shōji\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"type\":\"Person\",\"name\":\"目黒将司\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\"},\"type\":\"composer\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"attribute-ids\":{},\"attributes\":[],\"ended\":false,\"attribute-values\":{},\"end\":null,\"direction\":\"backward\",\"begin\":null}],\"iswcs\":[],\"title\":\"specialist\",\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"152-3374-0\",\"type\":\"JASRAC ID\"}],\"language\":\"zxx\",\"type\":null,\"id\":\"b07d7b50-9446-338c-ad27-c9e0912b818e\",\"type-id\":null,\"languages\":[\"zxx\"]}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/507ba5e2-850d-4a39-9ab1-d1dd26332e9f?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"end\":null,\"target-credit\":\"\",\"artist\":{\"sort-name\":\"Kouda, Masato\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"country\":\"JP\",\"disambiguation\":\"\",\"name\":\"甲田雅人\"},\"attributes\":[],\"ended\":false,\"source-credit\":\"\",\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"direction\":\"backward\",\"begin\":null,\"attribute-ids\":{},\"type\":\"composer\",\"attribute-values\":{}}],\"disambiguation\":\"\",\"iswcs\":[],\"type-id\":null,\"id\":\"507ba5e2-850d-4a39-9ab1-d1dd26332e9f\",\"languages\":[],\"title\":\"ふたりの距離感\",\"type\":null,\"language\":null,\"attributes\":[]}"
+}

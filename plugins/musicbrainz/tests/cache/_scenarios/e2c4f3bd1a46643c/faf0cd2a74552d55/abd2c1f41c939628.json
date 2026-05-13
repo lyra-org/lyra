@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/26fa7e30-697d-3c97-abe8-1d8cb6bea415?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"152-3387-1\"}],\"languages\":[\"zxx\"],\"title\":\"How much?\",\"relations\":[{\"type\":\"composer\",\"attribute-values\":{},\"attribute-ids\":{},\"end\":null,\"source-credit\":\"\",\"ended\":false,\"direction\":\"backward\",\"attributes\":[],\"artist\":{\"country\":\"JP\",\"name\":\"目黒将司\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"sort-name\":\"Meguro, Shōji\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\"},\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"target-type\":\"artist\"}],\"language\":\"zxx\",\"id\":\"26fa7e30-697d-3c97-abe8-1d8cb6bea415\",\"disambiguation\":\"\",\"iswcs\":[],\"type\":null,\"type-id\":null}"
+}

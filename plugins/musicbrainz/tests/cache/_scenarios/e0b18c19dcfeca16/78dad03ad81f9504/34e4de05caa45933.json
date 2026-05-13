@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/cc3bf997-68b6-4fac-82f5-40f7e3ffa945?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"languages\":[\"zxx\"],\"relations\":[{\"ended\":false,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"artist\":{\"country\":\"JP\",\"type\":\"Person\",\"disambiguation\":\"\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"sort-name\":\"Noda, Yōjirō\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"野田洋次郎\"},\"end\":null,\"begin\":null,\"source-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"attributes\":[],\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{}}],\"language\":\"zxx\",\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"729-1371-1\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"type-id\":null,\"disambiguation\":\"\",\"id\":\"cc3bf997-68b6-4fac-82f5-40f7e3ffa945\",\"title\":\"K&A初訪問\",\"type\":null,\"iswcs\":[]}"
+}

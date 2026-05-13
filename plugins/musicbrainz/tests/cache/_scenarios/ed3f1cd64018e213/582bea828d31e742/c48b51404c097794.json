@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/80771af3-bac4-47f2-ad9f-65c8ae65157a?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"iswcs\":[],\"languages\":[\"zxx\"],\"language\":\"zxx\",\"title\":\"丘上の要石\",\"relations\":[{\"begin\":null,\"target-credit\":\"\",\"type\":\"composer\",\"attribute-values\":{},\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attributes\":[],\"end\":null,\"artist\":{\"sort-name\":\"Jinnouchi, Kazuma\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"disambiguation\":\"\",\"country\":\"JP\",\"type\":\"Person\",\"name\":\"陣内一真\",\"id\":\"c9c59c75-f51b-4e38-bc15-b3a036f4d0ad\"},\"direction\":\"backward\",\"source-credit\":\"\",\"attribute-ids\":{},\"target-type\":\"artist\",\"ended\":false}],\"id\":\"80771af3-bac4-47f2-ad9f-65c8ae65157a\",\"attributes\":[{\"type-id\":\"97aac6a3-f2dd-4372-96fe-2462eb4e652a\",\"value\":\"N01198232\",\"type\":\"NexTone ID\"},{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"278-2732-1\",\"type\":\"JASRAC ID\"}],\"disambiguation\":\"\",\"type\":\"Soundtrack\"}"
+}

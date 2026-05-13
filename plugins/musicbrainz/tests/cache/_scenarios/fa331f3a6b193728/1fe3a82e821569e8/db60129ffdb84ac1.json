@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/6e8edf2e-b6c0-4b34-957e-87327a976945?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"id\":\"6e8edf2e-b6c0-4b34-957e-87327a976945\",\"languages\":[],\"relations\":[],\"disambiguation\":\"\",\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"iswcs\":[],\"language\":null,\"attributes\":[],\"type\":\"Song\",\"title\":\"Lost\"}"
+}

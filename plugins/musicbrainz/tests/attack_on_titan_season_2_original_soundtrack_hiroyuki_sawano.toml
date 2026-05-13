@@ -1,0 +1,405 @@
+plugin = "musicbrainz"
+
+[library]
+directory = "."
+language = "jpn"
+country = "JP"
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 2/17 - AOTs2M他4.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "AOTs2M他4"
+disc = 2
+disc_total = 2
+track = 17
+track_total = 17
+duration_ms = 243586
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 2/16 - AOTs2M他3.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "AOTs2M他3"
+disc = 2
+disc_total = 2
+track = 16
+track_total = 17
+duration_ms = 205826
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 2/15 - AOTs2M他2.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "AOTs2M他2"
+disc = 2
+disc_total = 2
+track = 15
+track_total = 17
+duration_ms = 129333
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 2/14 - AOTs2M他1.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "AOTs2M他1"
+disc = 2
+disc_total = 2
+track = 14
+track_total = 17
+duration_ms = 250666
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 2/13 - YAMANAIAME [FMv].flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "YAMANAIAME <FMv>"
+disc = 2
+disc_total = 2
+track = 13
+track_total = 17
+duration_ms = 267240
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 2/12 - TheWeightOfLives.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "TheWeightOfLives"
+disc = 2
+disc_total = 2
+track = 12
+track_total = 17
+duration_ms = 438146
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 2/11 - 進撃vc-pf20130218巨人.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "進撃vc-pf20130218巨人"
+disc = 2
+disc_total = 2
+track = 11
+track_total = 17
+duration_ms = 371933
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 2/10 - 進撃pf-adlib-b20130218巨人.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "進撃pf-adlib-b20130218巨人"
+disc = 2
+disc_total = 2
+track = 10
+track_total = 17
+duration_ms = 171186
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 2/09 - 進撃pf-adlib-c20130218巨人.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "進撃pf-adlib-c20130218巨人"
+disc = 2
+disc_total = 2
+track = 9
+track_total = 17
+duration_ms = 231106
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 2/08 - ymniam-MKorch.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "ymniam-MKorch"
+disc = 2
+disc_total = 2
+track = 8
+track_total = 17
+duration_ms = 154840
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 2/07 - 進撃vn-pf20130524巨人.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "進撃vn-pf20130524巨人"
+disc = 2
+disc_total = 2
+track = 7
+track_total = 17
+duration_ms = 201960
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 2/06 - 進撃st20130629巨人.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "進撃st20130629巨人"
+disc = 2
+disc_total = 2
+track = 6
+track_total = 17
+duration_ms = 324253
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 2/05 - TWO-lives.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "TWO-lives"
+disc = 2
+disc_total = 2
+track = 5
+track_total = 17
+duration_ms = 293253
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 2/04 - 進撃gt20130218巨人.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "進撃gt20130218巨人"
+disc = 2
+disc_total = 2
+track = 4
+track_total = 17
+duration_ms = 151400
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 2/03 - 進撃pf20130218巨人.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "進撃pf20130218巨人"
+disc = 2
+disc_total = 2
+track = 3
+track_total = 17
+duration_ms = 281133
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 2/02 - EMAymniam.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "EMAymniam"
+disc = 2
+disc_total = 2
+track = 2
+track_total = 17
+duration_ms = 330640
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 2/01 - 進撃pf-medley20130629巨人.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "進撃pf-medley20130629巨人"
+disc = 2
+disc_total = 2
+track = 1
+track_total = 17
+duration_ms = 306173
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 1/16 - theDOGS.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "theDOGS"
+disc = 1
+disc_total = 2
+track = 16
+track_total = 16
+duration_ms = 275280
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 1/15 - 進撃st-hrn-gt20130629巨人.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "進撃st-hrn-gt20130629巨人"
+disc = 1
+disc_total = 2
+track = 15
+track_total = 16
+duration_ms = 252040
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 1/14 - The Reluctant Heroes [MODv].flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "The Reluctant Heroes <MODv>"
+disc = 1
+disc_total = 2
+track = 14
+track_total = 16
+duration_ms = 269160
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 1/13 - ymniam-orch.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "ymniam-orch"
+disc = 1
+disc_total = 2
+track = 13
+track_total = 16
+duration_ms = 189253
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 1/12 - 進撃st-hrn-gt-pf20130629巨人.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "進撃st-hrn-gt-pf20130629巨人"
+disc = 1
+disc_total = 2
+track = 12
+track_total = 16
+duration_ms = 276320
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 1/11 - So Ist Es Immer.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "So Ist Es Immer"
+disc = 1
+disc_total = 2
+track = 11
+track_total = 16
+duration_ms = 289680
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 1/10 - 進撃st-hrn-egt20130629巨人.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "進撃st-hrn-egt20130629巨人"
+disc = 1
+disc_total = 2
+track = 10
+track_total = 16
+duration_ms = 301600
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 1/09 - 2Volt.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "2Volt"
+disc = 1
+disc_total = 2
+track = 9
+track_total = 16
+duration_ms = 401333
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 1/08 - YAMANAIAME.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "YAMANAIAME"
+disc = 1
+disc_total = 2
+track = 8
+track_total = 16
+duration_ms = 266173
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 1/07 - attack音D.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "attack音D"
+disc = 1
+disc_total = 2
+track = 7
+track_total = 16
+duration_ms = 284333
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 1/06 - ERENthe標.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "ERENthe標"
+disc = 1
+disc_total = 2
+track = 6
+track_total = 16
+duration_ms = 383120
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 1/05 - Call Of Silence.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "Call Of Silence"
+disc = 1
+disc_total = 2
+track = 5
+track_total = 16
+duration_ms = 178213
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 1/04 - son2seaVer.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "son2seaVer"
+disc = 1
+disc_total = 2
+track = 4
+track_total = 16
+duration_ms = 321813
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 1/03 - YouSeeBIGGIRL,T-T.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "YouSeeBIGGIRL/T:T"
+disc = 1
+disc_total = 2
+track = 3
+track_total = 16
+duration_ms = 359346
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 1/02 - APETITAN.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "APETITAN"
+disc = 1
+disc_total = 2
+track = 2
+track_total = 16
+duration_ms = 331653
+
+[[raw_tags]]
+file_path = "Hiroyuki Sawano - Attack on Titan S2 OST [FLAC] (PCCG1615)/Disc 1/01 - Barricades.flac"
+album = "'Attack On Titan' Season 2 Original Soundtrack"
+album_artists = ["Hiroyuki Sawano"]
+artists = ["Hiroyuki Sawano"]
+title = "Barricades"
+disc = 1
+disc_total = 2
+track = 1
+track_total = 16
+duration_ms = 221426
+
+[expect.release]
+ids = { release_id = ["fbc0e528-d695-4f9d-8a85-c30c1b6eb292", "09f193b3-72ee-4066-8c2d-2817ec086fa5"] }

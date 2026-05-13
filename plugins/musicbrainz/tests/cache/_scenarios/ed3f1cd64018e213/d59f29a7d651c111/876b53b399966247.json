@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/8f495159-7dd6-45c3-89bf-d2e82f6e1590?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[\"T-317.519.072-0\"],\"type\":\"Soundtrack\",\"title\":\"東京上空\",\"id\":\"8f495159-7dd6-45c3-89bf-d2e82f6e1590\",\"disambiguation\":\"\",\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"attributes\":[{\"type-id\":\"97aac6a3-f2dd-4372-96fe-2462eb4e652a\",\"value\":\"N01198199\",\"type\":\"NexTone ID\"},{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"277-7887-8\",\"type\":\"JASRAC ID\"}],\"relations\":[{\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\",\"begin\":null,\"end\":null,\"artist\":{\"name\":\"野田洋次郎\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"disambiguation\":\"\",\"sort-name\":\"Noda, Yōjirō\",\"country\":\"JP\",\"type\":\"Person\"},\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"attribute-ids\":{},\"target-type\":\"artist\",\"direction\":\"backward\",\"attributes\":[]}],\"languages\":[\"zxx\"],\"language\":\"zxx\"}"
+}
