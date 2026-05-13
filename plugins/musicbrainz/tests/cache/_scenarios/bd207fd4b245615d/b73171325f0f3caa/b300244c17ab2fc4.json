@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/64207a5a-17d6-49d4-bd91-69641c059d4a?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[],\"languages\":[\"eng\"],\"title\":\"NAPALM JAZZ\",\"relations\":[{\"begin\":null,\"type-id\":\"3e48faba-ec01-47fd-8e89-30e81161661c\",\"target-credit\":\"\",\"target-type\":\"artist\",\"type\":\"lyricist\",\"attribute-values\":{},\"attribute-ids\":{},\"source-credit\":\"\",\"end\":null,\"ended\":false,\"direction\":\"backward\",\"attributes\":[],\"artist\":{\"id\":\"a7d907e9-adbd-4070-b5dc-fcd1fe30159e\",\"disambiguation\":\"lyricist, SOUND HOLIC\",\"sort-name\":\"Blue E\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"country\":\"JP\",\"name\":\"Blue E\"}}],\"language\":\"eng\",\"id\":\"64207a5a-17d6-49d4-bd91-69641c059d4a\",\"disambiguation\":\"\",\"iswcs\":[],\"type\":\"Song\",\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\"}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/941c9fb6-4e6e-4a40-abb1-d4b9994ee3bd?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[{\"value\":\"248-0473-8\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"relations\":[{\"attributes\":[],\"attribute-ids\":{},\"direction\":\"backward\",\"target-type\":\"artist\",\"begin\":null,\"end\":null,\"artist\":{\"type\":\"Person\",\"country\":\"JP\",\"sort-name\":\"nabuna\",\"disambiguation\":\"\",\"id\":\"e963b252-7f3e-450e-b3d8-85bb495e96c1\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"n-buna\"},\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\"}],\"languages\":[\"zxx\"],\"language\":\"zxx\",\"iswcs\":[\"T-930.336.362-4\"],\"disambiguation\":\"\",\"id\":\"941c9fb6-4e6e-4a40-abb1-d4b9994ee3bd\",\"type\":\"Song\",\"title\":\"海底、月明かり\"}"
+}

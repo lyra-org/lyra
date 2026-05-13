@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/d98afcd5-92c0-4b38-ae5c-e8703312496a?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"languages\":[\"zxx\"],\"id\":\"d98afcd5-92c0-4b38-ae5c-e8703312496a\",\"iswcs\":[\"T-317.519.082-2\"],\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"relations\":[{\"end\":null,\"target-credit\":\"\",\"ended\":false,\"attributes\":[],\"artist\":{\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"sort-name\":\"Noda, Yōjirō\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"野田洋次郎\",\"type\":\"Person\"},\"source-credit\":\"\",\"direction\":\"backward\",\"target-type\":\"artist\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null,\"type\":\"composer\",\"attribute-values\":{},\"attribute-ids\":{}}],\"disambiguation\":\"\",\"attributes\":[{\"type-id\":\"97aac6a3-f2dd-4372-96fe-2462eb4e652a\",\"type\":\"NexTone ID\",\"value\":\"N01198208\"},{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"277-7897-5\",\"type\":\"JASRAC ID\"}],\"language\":\"zxx\",\"title\":\"夢じゃなかった\",\"type\":\"Soundtrack\"}"
+}

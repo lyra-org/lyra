@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/76303226-d921-4021-99fa-3ae8cca29673?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"type-id\":null,\"languages\":[\"zxx\"],\"language\":\"zxx\",\"attributes\":[],\"id\":\"76303226-d921-4021-99fa-3ae8cca29673\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"begin\":null,\"attribute-values\":{},\"type\":\"composer\",\"attribute-ids\":{},\"source-credit\":\"\",\"direction\":\"backward\",\"ended\":false,\"target-type\":\"artist\",\"attributes\":[],\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Meguro, Shōji\",\"name\":\"目黒将司\",\"type\":\"Person\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"country\":\"JP\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\"},\"end\":null}],\"title\":\"メメントス\",\"type\":null,\"disambiguation\":\"\"}"
+}

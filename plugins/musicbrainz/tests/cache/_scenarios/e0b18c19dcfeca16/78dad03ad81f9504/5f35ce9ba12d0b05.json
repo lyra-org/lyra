@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/5681fa15-8d51-427d-b546-cb6204af8ab5?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"id\":\"5681fa15-8d51-427d-b546-cb6204af8ab5\",\"languages\":[\"zxx\"],\"type-id\":null,\"iswcs\":[],\"title\":\"K&A入社式\",\"attributes\":[{\"value\":\"729-2212-5\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"disambiguation\":\"\",\"relations\":[{\"direction\":\"backward\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-type\":\"artist\",\"source-credit\":\"\",\"type\":\"composer\",\"artist\":{\"sort-name\":\"Noda, Yōjirō\",\"disambiguation\":\"\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"type\":\"Person\",\"name\":\"野田洋次郎\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\"},\"attribute-values\":{},\"ended\":false,\"end\":null,\"target-credit\":\"\",\"attribute-ids\":{},\"attributes\":[]}],\"language\":\"zxx\"}"
+}

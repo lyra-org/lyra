@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/d66089fd-c6a5-4d46-b53a-2265316d5006?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"relations\":[{\"direction\":\"backward\",\"target-type\":\"artist\",\"attribute-ids\":{},\"attributes\":[],\"attribute-values\":{},\"type\":\"composer\",\"source-credit\":\"\",\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"野田洋次郎\",\"type\":\"Person\",\"country\":\"JP\",\"sort-name\":\"Noda, Yōjirō\",\"disambiguation\":\"\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\"},\"end\":null,\"begin\":null,\"ended\":false,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\"}],\"languages\":[\"zxx\"],\"type-id\":null,\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"729-2236-2\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"type\":null,\"title\":\"家族の時間\",\"disambiguation\":\"\",\"id\":\"d66089fd-c6a5-4d46-b53a-2265316d5006\",\"iswcs\":[]}"
+}

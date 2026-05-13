@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/3571d9cf-e71e-4f64-9aa2-2c59cadfb1dc?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"relations\":[{\"attribute-ids\":{},\"target-credit\":\"\",\"ended\":false,\"artist\":{\"sort-name\":\"Jinnouchi, Kazuma\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"陣内一真\",\"country\":\"JP\",\"id\":\"c9c59c75-f51b-4e38-bc15-b3a036f4d0ad\",\"type\":\"Person\",\"disambiguation\":\"\"},\"attribute-values\":{},\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"source-credit\":\"\",\"type\":\"composer\",\"begin\":null,\"target-type\":\"artist\",\"end\":null,\"direction\":\"backward\",\"attributes\":[]}],\"title\":\"新幹線の旅\",\"disambiguation\":\"\",\"iswcs\":[],\"type\":\"Soundtrack\",\"language\":\"zxx\",\"id\":\"3571d9cf-e71e-4f64-9aa2-2c59cadfb1dc\",\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"attributes\":[{\"type\":\"NexTone ID\",\"value\":\"N01198196\",\"type-id\":\"97aac6a3-f2dd-4372-96fe-2462eb4e652a\"},{\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"278-2725-9\"}],\"languages\":[\"zxx\"]}"
+}

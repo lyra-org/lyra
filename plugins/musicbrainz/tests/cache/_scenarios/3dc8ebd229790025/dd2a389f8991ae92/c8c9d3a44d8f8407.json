@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/c50741ee-be1e-4366-94c8-be467b9746ce?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[\"T-913.274.744-5\"],\"type-id\":null,\"languages\":[\"zxx\"],\"language\":\"zxx\",\"id\":\"c50741ee-be1e-4366-94c8-be467b9746ce\",\"attributes\":[{\"type\":\"JASRAC ID\",\"value\":\"195-7831-8\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"title\":\"進撃 pf-adlib-b20130218 巨人\",\"relations\":[{\"target-type\":\"artist\",\"ended\":false,\"direction\":\"backward\",\"attribute-ids\":{},\"source-credit\":\"\",\"end\":null,\"artist\":{\"id\":\"60d2ea34-1912-425f-bf9c-fc544e4448cd\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"澤野弘之\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Sawano, Hiroyuki\"},\"attributes\":[],\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attribute-values\":{},\"type\":\"composer\",\"target-credit\":\"\",\"begin\":null}],\"disambiguation\":\"進撃の巨人\",\"type\":null}"
+}

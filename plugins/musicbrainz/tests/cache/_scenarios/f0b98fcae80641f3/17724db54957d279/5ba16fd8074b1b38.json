@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/388eb16b-6e01-49e4-88a8-22ebf217d488?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"id\":\"388eb16b-6e01-49e4-88a8-22ebf217d488\",\"disambiguation\":\"\",\"title\":\"垢太郎鉄道\",\"type\":null,\"attributes\":[],\"type-id\":null,\"language\":\"zxx\",\"relations\":[{\"attributes\":[],\"target-type\":\"artist\",\"direction\":\"backward\",\"attribute-ids\":{},\"artist\":{\"country\":\"JP\",\"type\":\"Person\",\"disambiguation\":\"\",\"id\":\"2aaa4d3d-5100-4c03-b464-7ab6af8854e6\",\"sort-name\":\"Kitajoh, Atsushi\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"name\":\"喜多條敦志\"},\"end\":null,\"begin\":null,\"ended\":false,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\"}],\"languages\":[\"zxx\"]}"
+}

@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/e18bc395-c8e7-455a-93ef-afab8a349431?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"zxx\",\"languages\":[\"zxx\"],\"type-id\":\"66d7962b-6377-364f-a0b4-b200febc510e\",\"iswcs\":[\"T-317.519.106-3\"],\"disambiguation\":\"\",\"type\":\"Soundtrack\",\"title\":\"手当て\",\"relations\":[{\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"type\":\"composer\",\"attribute-values\":{},\"begin\":null,\"target-credit\":\"\",\"target-type\":\"artist\",\"ended\":false,\"direction\":\"backward\",\"source-credit\":\"\",\"attribute-ids\":{},\"end\":null,\"artist\":{\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"野田洋次郎\",\"type\":\"Person\",\"sort-name\":\"Noda, Yōjirō\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"attributes\":[]}],\"attributes\":[{\"type-id\":\"97aac6a3-f2dd-4372-96fe-2462eb4e652a\",\"value\":\"N01198185\",\"type\":\"NexTone ID\"},{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"277-7879-7\"}],\"id\":\"e18bc395-c8e7-455a-93ef-afab8a349431\"}"
+}

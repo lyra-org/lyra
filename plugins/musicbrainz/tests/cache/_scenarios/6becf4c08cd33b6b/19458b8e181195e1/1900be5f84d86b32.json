@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/d6cf9f9b-3c5f-4a30-940c-622bc30361b9?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"languages\":[],\"language\":null,\"iswcs\":[],\"type-id\":null,\"type\":null,\"disambiguation\":\"\",\"attributes\":[],\"id\":\"d6cf9f9b-3c5f-4a30-940c-622bc30361b9\",\"relations\":[{\"artist\":{\"name\":\"甲田雅人\",\"type\":\"Person\",\"country\":\"JP\",\"disambiguation\":\"\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"sort-name\":\"Kouda, Masato\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"end\":null,\"attributes\":[],\"target-type\":\"artist\",\"ended\":false,\"attribute-ids\":{},\"source-credit\":\"\",\"direction\":\"backward\",\"attribute-values\":{},\"type\":\"composer\",\"target-credit\":\"\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"title\":\"夏生の決心\"}"
+}
