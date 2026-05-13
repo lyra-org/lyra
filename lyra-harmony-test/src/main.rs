@@ -424,6 +424,7 @@ async fn main() -> anyhow::Result<()> {
     let mut passed = 0usize;
     let mut failed = 0usize;
     let mut pruned_scenarios = 0usize;
+    let mut pruned_responses = 0usize;
     let mut results = Vec::new();
     let mut executions = Vec::with_capacity(loaded_tests.len());
     for test in &loaded_tests {
@@ -455,6 +456,9 @@ async fn main() -> anyhow::Result<()> {
             loaded_tests.iter().map(|test| test.name.clone()).collect();
         pruned_scenarios += cached_http::prune_stale_scenarios(&cache_dir, &active_test_names)?;
     }
+    if args.prune {
+        pruned_responses += cached_http::prune_unreferenced_responses(&cache_dir)?;
+    }
 
     for execution in executions {
         record_fixture_result(execution, &mut passed, &mut failed, &mut results);
@@ -462,6 +466,9 @@ async fn main() -> anyhow::Result<()> {
 
     if args.prune && pruned_scenarios > 0 {
         println!("Pruned {pruned_scenarios} stale scenario entries");
+    }
+    if args.prune && pruned_responses > 0 {
+        println!("Pruned {pruned_responses} unreferenced response entries");
     }
 
     // --record: update [expect] sections
