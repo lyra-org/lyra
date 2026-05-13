@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/3744f900-20fe-44b9-a54d-08b9214245ab?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"disambiguation\":\"\",\"type\":null,\"language\":\"zxx\",\"id\":\"3744f900-20fe-44b9-a54d-08b9214245ab\",\"title\":\"Keeper of Lust\",\"relations\":[{\"source-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"attribute-values\":{},\"artist\":{\"disambiguation\":\"Japanese composer, guitarist & game director\",\"type\":\"Person\",\"country\":\"JP\",\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"name\":\"目黒将司\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Meguro, Shōji\"},\"ended\":false,\"target-credit\":\"\",\"attribute-ids\":{},\"attributes\":[],\"direction\":\"backward\",\"end\":null,\"target-type\":\"artist\",\"begin\":null,\"type\":\"composer\"}],\"languages\":[\"zxx\"],\"type-id\":null,\"attributes\":[]}"
+}
