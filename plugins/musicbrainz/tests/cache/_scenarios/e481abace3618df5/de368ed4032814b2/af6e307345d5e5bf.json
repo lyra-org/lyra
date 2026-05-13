@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/3c85cdb1-a4f1-4479-a456-72d28dd8e8ed?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"iswcs\":[],\"id\":\"3c85cdb1-a4f1-4479-a456-72d28dd8e8ed\",\"disambiguation\":\"\",\"title\":\"Ambitions –Introduction–\",\"type\":\"Song\",\"attributes\":[],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"languages\":[\"zxx\"],\"relations\":[{\"attributes\":[],\"attribute-ids\":{},\"target-type\":\"artist\",\"direction\":\"backward\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"ended\":false,\"begin\":null,\"end\":null,\"artist\":{\"name\":\"Colin Brittain\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Brittain, Colin\",\"disambiguation\":\"songwriter/producer Colin Cunningham\",\"id\":\"3b49abe4-6b0e-47f8-a8db-1bdc538f6ca7\",\"type\":\"Person\",\"country\":\"US\"},\"source-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\"}],\"language\":\"zxx\"}"
+}

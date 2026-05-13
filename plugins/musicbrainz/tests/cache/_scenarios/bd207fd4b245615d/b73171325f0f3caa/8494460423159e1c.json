@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/4a40d142-1d96-46a2-92cf-29cb7a2f9204?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"iswcs\":[],\"language\":\"jpn\",\"id\":\"4a40d142-1d96-46a2-92cf-29cb7a2f9204\",\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"type\":\"Song\",\"languages\":[\"jpn\"],\"attributes\":[],\"title\":\"Flash in the Dark\",\"relations\":[{\"ended\":false,\"direction\":\"backward\",\"attributes\":[],\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"id\":\"a7d907e9-adbd-4070-b5dc-fcd1fe30159e\",\"sort-name\":\"Blue E\",\"disambiguation\":\"lyricist, SOUND HOLIC\",\"country\":\"JP\",\"name\":\"Blue E\"},\"type\":\"lyricist\",\"attribute-ids\":{},\"attribute-values\":{},\"end\":null,\"source-credit\":\"\",\"target-type\":\"artist\",\"begin\":null,\"type-id\":\"3e48faba-ec01-47fd-8e89-30e81161661c\",\"target-credit\":\"\"}]}"
+}

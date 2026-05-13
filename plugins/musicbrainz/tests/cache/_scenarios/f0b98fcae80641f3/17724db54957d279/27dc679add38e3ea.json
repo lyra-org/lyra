@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/3005f882-c110-4fd2-9062-0b12499f0ff0?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"title\":\"王と王妃と奴隷\",\"type\":\"Song\",\"disambiguation\":\"\",\"id\":\"3005f882-c110-4fd2-9062-0b12499f0ff0\",\"iswcs\":[],\"languages\":[\"zxx\"],\"relations\":[{\"attributes\":[],\"direction\":\"backward\",\"target-type\":\"artist\",\"attribute-ids\":{},\"end\":null,\"artist\":{\"id\":\"1f456d75-4d69-4bf8-9c49-cb23d758b4a4\",\"disambiguation\":\"Japanese composer, guitarist & game director\",\"sort-name\":\"Meguro, Shōji\",\"country\":\"JP\",\"type\":\"Person\",\"name\":\"目黒将司\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"begin\":null,\"ended\":false,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"source-credit\":\"\"}],\"language\":\"zxx\",\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"attributes\":[]}"
+}

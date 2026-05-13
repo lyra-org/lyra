@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/e5b265a4-386f-4aff-8ba4-97922ab268e7?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":\"3cd7c402-444a-3d04-a154-4fa7d13e4ec6\",\"iswcs\":[\"T-909.670.360-5\"],\"language\":\"zxx\",\"languages\":[\"zxx\"],\"title\":\"Quartet Theme\",\"relations\":[{\"artist\":{\"country\":\"JP\",\"disambiguation\":\"\",\"type\":\"Person\",\"name\":\"林克洋\",\"id\":\"5f4053da-1734-4b82-9868-ccb80d6fa432\",\"sort-name\":\"Hayashi, Katsuhiro\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"end\":null,\"attributes\":[],\"target-type\":\"artist\",\"ended\":false,\"source-credit\":\"\",\"attribute-ids\":{},\"direction\":\"backward\",\"type\":\"composer\",\"attribute-values\":{},\"begin\":null,\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"id\":\"e5b265a4-386f-4aff-8ba4-97922ab268e7\",\"attributes\":[{\"value\":\"088-7924-9\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"disambiguation\":\"Quartet\",\"type\":\"Incidental music\"}"
+}

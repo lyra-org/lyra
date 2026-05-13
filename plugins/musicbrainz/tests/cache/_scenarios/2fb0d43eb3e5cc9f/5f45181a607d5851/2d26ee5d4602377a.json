@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/45d991b1-ac56-4f80-8216-0801d8991880?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"attributes\":[{\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"275-1288-6\"}],\"languages\":[\"jpn\"],\"relations\":[{\"attributes\":[],\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"type\":\"Person\",\"id\":\"5ceac59e-4512-49b3-8736-6dd1b84c6f67\",\"sort-name\":\"とうかさ\",\"disambiguation\":\"\",\"country\":\"JP\",\"name\":\"とうかさ\"},\"ended\":false,\"direction\":\"backward\",\"attribute-ids\":{},\"attribute-values\":{},\"end\":null,\"source-credit\":\"\",\"type\":\"composer\",\"target-type\":\"artist\",\"target-credit\":\"\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"title\":\"廻想\",\"id\":\"45d991b1-ac56-4f80-8216-0801d8991880\",\"language\":\"jpn\",\"iswcs\":[\"T-313.458.638-8\"],\"disambiguation\":\"\",\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\",\"type\":\"Song\"}"
+}
