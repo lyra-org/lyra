@@ -357,7 +357,14 @@ fn apply_to_artist(artist: &mut Artist, merged: &MergedMetadata) -> bool {
     if let Some(at_str) = merged.fields.get("artist_type").and_then(|v| v.as_str()) {
         match crate::db::ArtistType::from_db_str(at_str) {
             Ok(at) => {
-                if artist.artist_type != Some(at) {
+                if artist.artist_type.is_some_and(|existing| existing != at) {
+                    tracing::warn!(
+                        artist_id = artist.id,
+                        existing_artist_type = ?artist.artist_type,
+                        incoming_artist_type = %at,
+                        "ignoring merged artist_type that conflicts with existing artist type"
+                    );
+                } else if artist.artist_type != Some(at) {
                     artist.artist_type = Some(at);
                     changed = true;
                 }

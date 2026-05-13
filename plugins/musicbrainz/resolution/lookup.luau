@@ -1369,6 +1369,61 @@ local function link_artist_credits_from_relations(track_db_id: number, relations
 	end
 end
 
+local function joinphrase_opens_character_voice(joinphrase: string?): boolean
+	if joinphrase == nil then
+		return false
+	end
+	local trimmed = string.gsub(joinphrase, "^%s+", "")
+	return string.find(trimmed, "^%([cC][vV][:%.%s]") ~= nil
+		or string.find(trimmed, "^（[cC][vV]：") ~= nil
+end
+
+local function joinphrase_closes_credit_group(joinphrase: string?): boolean
+	if joinphrase == nil then
+		return false
+	end
+	return string.find(joinphrase, ")", 1, true) ~= nil or string.find(joinphrase, "）", 1, true) ~= nil
+end
+
+local function link_character_voice_credits_from_track_artist_credits(
+	track_db_id: number,
+	credits: { ReleaseArtistCredit }
+): { [string]: boolean }
+	local current_provider = provider
+	local linked_mb_artist_ids: { [string]: boolean } = {}
+	if current_provider == nil then
+		return linked_mb_artist_ids
+	end
+
+	local in_character_voice_credit = false
+	for _, credit: ReleaseArtistCredit in credits do
+		local artist = credit.artist
+		if in_character_voice_credit and artist and artist.id and artist.name then
+			local artist_id = ensure_artist_entity(artist)
+			if artist_id then
+				pcall(
+					current_provider.link_credit,
+					current_provider,
+					track_db_id,
+					artist_id,
+					CreditType.Vocalist,
+					"character voice"
+				)
+				linked_mb_artist_ids[artist.id] = true
+			end
+		end
+
+		local joinphrase = credit.joinphrase
+		if artist and artist["type"] == "Character" and joinphrase_opens_character_voice(joinphrase) then
+			in_character_voice_credit = true
+		elseif in_character_voice_credit and joinphrase_closes_credit_group(joinphrase) then
+			in_character_voice_credit = false
+		end
+	end
+
+	return linked_mb_artist_ids
+end
+
 local function titles_match_search(candidate_title: string?, search_title: string?): boolean
 	local norm_candidate = normalize_title(candidate_title)
 	local norm_search = normalize_title(search_title)
@@ -1475,20 +1530,6 @@ local function match_credit(
 		if #local_name_lower > #prefix and string.sub(local_name_lower, 1, #prefix) == prefix then
 			local rest = string.gsub(string.sub(local_name_lower, #prefix + 1), "^%s+", "")
 			if string.sub(rest, 1, 1) == "(" or string.sub(rest, 1, 3) == "（" then
-				return credit.artist
-			end
-		end
-	end
-	if #local_name_lower >= 2 then
-		for _, credit: ReleaseArtistCredit in credits do
-			if not credit.artist or not credit.name then
-				continue
-			end
-			local credit_name = string.lower(credit.name)
-			if
-				string.find(credit_name, local_name_lower, 1, true)
-				or string.find(local_name_lower, credit_name, 1, true)
-			then
 				return credit.artist
 			end
 		end
@@ -1791,6 +1832,11 @@ local function process_release(
 					local mb_credit_list = mb_track.artist_credits
 					local mb_artist_by_name = build_credit_lookup(mb_credit_list)
 					local matched_mb_artist_ids: { [string]: boolean } = {}
+					local character_voice_artist_ids =
+						link_character_voice_credits_from_track_artist_credits(local_track.db_id, mb_credit_list)
+					for mb_artist_id in character_voice_artist_ids do
+						matched_mb_artist_ids[mb_artist_id] = true
+					end
 					local unmatched_local_artists: { LocalArtist } = {}
 
 					for _, track_artist: LocalArtist in local_track.artists do
@@ -2184,6 +2230,9 @@ local function prefer_official_single_track_edition(
 	if not best or best.status ~= "Promotion" then
 		return best
 	end
+	if local_tracks ~= nil and max_declared_track_total(local_tracks) > #local_tracks then
+		return best
+	end
 	if not local_tracks or #local_tracks ~= 1 then
 		return best
 	end
@@ -2222,6 +2271,81 @@ local function prefer_official_single_track_edition(
 	return preferred or best
 end
 
+local function select_partial_release_candidate(
+	candidates: { Release },
+	local_tracks: { LocalTrack }?,
+	track_count: number?,
+	search_title: string?,
+	artist_ids: ArtistIdSet?,
+	selected_release: Release?,
+	preferred_country: string?
+): Release?
+	if local_tracks == nil or #local_tracks == 0 then
+		return nil
+	end
+	local local_track_count = #local_tracks
+	local declared_track_total = max_declared_track_total(local_tracks)
+	if declared_track_total <= local_track_count then
+		return nil
+	end
+	if track_count ~= nil and track_count ~= local_track_count then
+		return nil
+	end
+
+	local best: Release? = nil
+	local best_score = -math.huge
+	for _, candidate: Release in candidates do
+		if candidate.status ~= "Promotion" then
+			continue
+		end
+		if compute_track_count(candidate) ~= local_track_count then
+			continue
+		end
+		if
+			search_title
+			and normalize_title(search_title) ~= ""
+			and not titles_match_search(candidate.title, search_title)
+		then
+			continue
+		end
+		if artist_ids and not release_matches_artist_ids(candidate, artist_ids) then
+			continue
+		end
+		if count_track_title_overlap(local_tracks, candidate) < local_track_count then
+			continue
+		end
+		if not validate_release_durations(local_tracks, candidate) then
+			continue
+		end
+
+		local score = 0
+		if selected_release and candidate.id == selected_release.id then
+			score += 20
+		end
+		if preferred_country and candidate.country == preferred_country then
+			score += 5
+		end
+		if normalize_title(candidate.title) == normalize_title(search_title) then
+			score += 5
+		end
+		if release_has_barcode(candidate) then
+			score += 1
+		end
+		if score > best_score then
+			best_score = score
+			best = candidate
+		elseif score == best_score and best then
+			local candidate_date = candidate.date or ""
+			local best_date = best.date or ""
+			if candidate_date ~= "" and best_date ~= "" and candidate_date < best_date then
+				best = candidate
+			end
+		end
+	end
+
+	return best
+end
+
 local function release_from_candidates(candidates: { Release }?, release_id: string?, fallback: Release?): Release?
 	if candidates == nil or release_id == nil then
 		return fallback
@@ -2247,6 +2371,18 @@ local function select_release_group_candidate(
 ): Release?
 	if not candidates or #candidates == 0 then
 		return nil
+	end
+	local partial_release = select_partial_release_candidate(
+		candidates,
+		local_tracks,
+		track_count,
+		search_title,
+		artist_ids,
+		selected_release,
+		preferred_country
+	)
+	if partial_release then
+		return partial_release
 	end
 	local best_edition = select_best_release(
 		candidates,
@@ -2541,75 +2677,6 @@ local function select_artist_country_hint(local_name: string, candidates: { Rele
 	return best_country, best_score
 end
 
-local function apply_artist_fallback_updates(
-	release_context: ReleaseContext,
-	candidates: { ReleaseArtist },
-	preferred_country: string?
-): number
-	if not release_context or not candidates or #candidates == 0 then
-		return 0
-	end
-	local artists_to_check: { LocalArtist } = {}
-	local seen_artist_ids: { [number]: boolean } = {}
-	local fetched_relations_for: { [string]: boolean } = {}
-	local function queue_local_artist(artist: LocalArtist)
-		if not artist or not artist.db_id then
-			return
-		end
-		if seen_artist_ids[artist.db_id] then
-			return
-		end
-		if is_generic_artist(artist.artist_name) then
-			return
-		end
-		seen_artist_ids[artist.db_id] = true
-		table.insert(artists_to_check, artist)
-	end
-	for_each_local_artist(release_context, queue_local_artist)
-	local updated = 0
-	for _, local_artist in artists_to_check do
-		local name = local_artist.artist_name
-		if name == nil or name == "" then
-			continue
-		end
-		local matched: ReleaseArtist? = nil
-		local matched_score = -1
-		for _, candidate: ReleaseArtist in candidates do
-			local score = score_artist_candidate_match(name, candidate, preferred_country)
-			if score > matched_score then
-				matched = candidate
-				matched_score = score
-			end
-		end
-		if not matched and contains_multibyte(name) then
-			local best_score = -1
-			for _, candidate: ReleaseArtist in candidates do
-				if candidate.id and candidate.score and candidate.score >= 99 then
-					local score = candidate.score
-					if preferred_country and candidate.country == preferred_country then
-						score += 25
-					end
-					if score > best_score then
-						best_score = score
-						matched = candidate
-					end
-				end
-			end
-		end
-		if matched and matched.id then
-			local local_artist_db_id = local_artist.db_id
-			if local_artist_db_id and set_artist_metadata(local_artist_db_id, matched) then
-				if not fetched_relations_for[matched.id] then
-					fetched_relations_for[matched.id] = true
-					fetch_and_link_artist_relations(local_artist_db_id, matched.id, matched["type"])
-				end
-				updated += 1
-			end
-		end
-	end
-	return updated
-end
-
 local function search_and_fetch_release(
 	artist_name: string?,
 	release_title: string?,
@@ -2635,13 +2702,15 @@ local function search_and_fetch_release(
 				end,
 			}
 		end,
+		mark_unmatched = function(_, db_id: number, id_types: { string })
+			current_provider:mark_unmatched(db_id, id_types)
+		end,
 	}
 
 	local deps: SearchDeps = {
 		is_blank_text = is_blank_text,
 		is_generic_artist = is_generic_artist,
 		clean_release_title = clean_release_title,
-		apply_artist_fallback_updates = apply_artist_fallback_updates,
 		contains_multibyte = contains_multibyte,
 		infer_lookup_hints = infer_lookup_hints,
 		sort_tracks_for_refresh = sort_tracks_for_refresh,
@@ -2750,10 +2819,7 @@ function module.register_refresh(provider_instance: Provider, acoustid_config: A
 				return nil
 			end
 
-			local release_layer = provider_instance:layer(release_db_id)
-			release_layer:set_id("release_id", "")
-			release_layer:set_id("release_group_id", "")
-			release_layer:save()
+			provider_instance:mark_unmatched(release_db_id, { "release_id", "release_group_id" })
 		end
 
 		return nil

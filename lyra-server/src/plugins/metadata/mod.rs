@@ -15,7 +15,10 @@ mod lyrics;
 pub(crate) use layers::Layer;
 
 use std::{
-    collections::HashMap,
+    collections::{
+        HashMap,
+        HashSet,
+    },
     sync::Arc,
 };
 
@@ -361,6 +364,20 @@ fn parse_entity_type(s: &str) -> Result<EntityType> {
             "entity_type must be one of: release, artist, track (got '{s}')"
         ))),
     }
+}
+
+fn entity_type_for_node(db: &agdb::DbAny, node_id: DbId) -> anyhow::Result<Option<EntityType>> {
+    if db::releases::get_by_id(db, node_id)?.is_some() {
+        return Ok(Some(EntityType::Release));
+    }
+    if db::artists::get_by_id(db, node_id)?.is_some() {
+        return Ok(Some(EntityType::Artist));
+    }
+    if db::tracks::get_by_id(db, node_id)?.is_some() {
+        return Ok(Some(EntityType::Track));
+    }
+
+    Ok(None)
 }
 
 fn parse_id_spec(spec: Table) -> Result<ProviderIdSpec> {
@@ -775,6 +792,85 @@ impl Provider {
         })
     }
 
+    /// Marks registered provider IDs as known-unmatched for an entity.
+    #[harmony(args(node_id: NodeId, id_types: Vec<String>))]
+    pub(crate) async fn mark_unmatched(
+        &self,
+        plugin_id: Option<Arc<str>>,
+        node_id: NodeId,
+        id_types: Vec<String>,
+    ) -> Result<()> {
+        let plugin_id = plugin_id
+            .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
+            .transpose()?;
+        self.ensure_owner(plugin_id.as_ref())?;
+        let method = "provider:mark_unmatched";
+
+        let mut seen = HashSet::new();
+        let mut normalized_id_types = Vec::new();
+        for raw_id_type in id_types {
+            let id_type = raw_id_type.trim().to_string();
+            if id_type.is_empty() {
+                return Err(mlua::Error::runtime(format!(
+                    "{method}: id_types must contain non-empty strings"
+                )));
+            }
+            if seen.insert(id_type.clone()) {
+                normalized_id_types.push(id_type);
+            }
+        }
+        if normalized_id_types.is_empty() {
+            return Err(mlua::Error::runtime(format!(
+                "{method}: id_types must contain at least one id type"
+            )));
+        }
+
+        let entity_db_id: DbId = node_id.into();
+        let entity_type = {
+            let db_read = STATE.db.read().await;
+            entity_type_for_node(&db_read, entity_db_id)
+                .into_lua_err()?
+                .ok_or_else(|| {
+                    mlua::Error::runtime(format!(
+                        "{method}: node_id {} does not reference a release, artist, or track",
+                        entity_db_id.0
+                    ))
+                })?
+        };
+
+        {
+            let registry = PROVIDER_REGISTRY.read().await;
+            for id_type in &normalized_id_types {
+                if !registry.id_spec_matches_entity(&self.id, id_type, entity_type) {
+                    return Err(mlua::Error::runtime(format!(
+                        "{method}: id_type '{id_type}' is not registered for {entity_type} on provider '{}'",
+                        self.id
+                    )));
+                }
+            }
+        }
+
+        let external_ids = normalized_id_types
+            .into_iter()
+            .map(|id_type| (id_type, String::new()))
+            .collect();
+        let fields = HashMap::new();
+        let custom_fields = HashMap::new();
+        let remove_custom_field_versions = HashSet::new();
+
+        let mut db_write = STATE.db.write().await;
+        save_provider_layer(
+            &mut db_write,
+            entity_db_id,
+            &self.id,
+            &fields,
+            &external_ids,
+            &custom_fields,
+            &remove_custom_field_versions,
+        )
+        .into_lua_err()
+    }
+
     /// Ensures an artist exists for this provider id mapping.
     #[harmony(args(request: ensure::EnsureArtistRequest))]
     pub(crate) async fn ensure_artist(
@@ -816,38 +912,20 @@ impl Provider {
         let mut db_write = STATE.db.write().await;
         let mut resolved_artist_id: Option<DbId> = None;
 
-        let external_id_rows: Vec<db::external_ids::ExternalId> = db_write
-            .exec(
-                QueryBuilder::select()
-                    .elements::<db::external_ids::ExternalId>()
-                    .search()
-                    .from("external_ids")
-                    .where_()
-                    .key("provider_id")
-                    .value(self.id.as_str())
-                    .and()
-                    .key("id_type")
-                    .value(id_type.as_str())
-                    .and()
-                    .key("id_value")
-                    .value(id_value.as_str())
-                    .query(),
-            )
-            .into_lua_err()?
-            .try_into()
-            .into_lua_err()?;
-
-        for external_id in external_id_rows {
-            let Some(external_id_db_id) = external_id.db_id.map(DbId::from) else {
-                continue;
-            };
-            let artists = db::artists::get(&db_write, external_id_db_id).into_lua_err()?;
-            if let Some(artist_id) = artists
-                .into_iter()
-                .find_map(|artist| artist.db_id.map(DbId::from))
-            {
-                resolved_artist_id = Some(artist_id);
-                break;
+        if let Some(owner_id) =
+            db::external_ids::get_owner(&db_write, &self.id, &id_type, &id_value, Some("Artist"))
+                .into_lua_err()?
+        {
+            if let Some(artist) = db::artists::get_by_id(&db_write, owner_id).into_lua_err()? {
+                if let (Some(existing_type), Some(incoming_type)) =
+                    (artist.artist_type, artist_type)
+                    && existing_type != incoming_type
+                {
+                    return Err(mlua::Error::runtime(format!(
+                        "{method}: {id_type} '{id_value}' is already attached to artist type '{existing_type}', not '{incoming_type}'"
+                    )));
+                }
+                resolved_artist_id = Some(owner_id);
             }
         }
 
@@ -872,6 +950,12 @@ impl Provider {
                     continue;
                 };
                 if candidate_artist.scan_name != scan_name {
+                    continue;
+                }
+                if let (Some(existing_type), Some(incoming_type)) =
+                    (candidate_artist.artist_type, artist_type)
+                    && existing_type != incoming_type
+                {
                     continue;
                 }
 
@@ -1487,6 +1571,35 @@ mod tests {
         Ok(release_db_id)
     }
 
+    fn insert_artist(
+        db: &mut agdb::DbAny,
+        name: &str,
+        artist_type: Option<db::ArtistType>,
+    ) -> anyhow::Result<DbId> {
+        let artist = db::Artist {
+            db_id: None,
+            id: nanoid!(),
+            artist_name: name.to_string(),
+            scan_name: name.to_string(),
+            sort_name: None,
+            artist_type,
+            description: None,
+            verified: false,
+            locked: None,
+            created_at: None,
+        };
+        let qr = db.exec_mut(QueryBuilder::insert().element(&artist).query())?;
+        let artist_db_id = qr.elements[0].id;
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from("artists")
+                .to(artist_db_id)
+                .query(),
+        )?;
+        Ok(artist_db_id)
+    }
+
     fn first_result_title(results: Value) -> anyhow::Result<String> {
         let table = match results {
             Value::Table(table) => table,
@@ -1606,6 +1719,169 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn provider_layer_save_skips_artist_identity_on_type_conflict() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let provider_id = next_provider_id("artist-type-conflict");
+        let lua_provider_id = provider_id.clone();
+        let artist_db_id = {
+            let mut db = STATE.db.write().await;
+            insert_artist(&mut db, "Local Character", Some(db::ArtistType::Character))?
+        };
+        let artist_id = artist_db_id.0;
+
+        setup_metadata_module(STATE.lua.get().as_ref())?;
+
+        let save_fn = STATE
+            .lua
+            .get()
+            .load(chunk! {
+                local provider = metadata.Provider.new($lua_provider_id)
+                local layer = provider:layer($artist_id)
+                layer:set_field("artist_name", "Remote Person")
+                layer:set_field("sort_name", "Person, Remote")
+                layer:set_field("artist_type", "person")
+                layer:set_id("artist_id", "remote-person-1")
+                layer:save()
+            })
+            .set_name(&harmony_core::format_plugin_chunk_name("test", "init"))
+            .into_function()?;
+        save_fn.call_async::<()>(()).await?;
+
+        let db = STATE.db.read().await;
+        assert_eq!(metadata_layer_count_for_entity(&db, artist_db_id)?, 0);
+        let artist = db::artists::get_by_id(&db, artist_db_id)?
+            .ok_or_else(|| anyhow!("artist not found after layer save"))?;
+        assert_eq!(artist.artist_name, "Local Character");
+        assert_eq!(artist.artist_type, Some(db::ArtistType::Character));
+
+        let external_ids = db::external_ids::get_for_entity(&db, artist_db_id)?;
+        assert!(
+            external_ids
+                .into_iter()
+                .all(|id| id.provider_id != provider_id || id.id_type != "artist_id"),
+            "conflicting artist_id should not be written"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn provider_mark_unmatched_writes_empty_registered_ids() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let provider_id = next_provider_id("mark-unmatched");
+        let lua_provider_id = provider_id.clone();
+        let (release_db_id, artist_db_id, track_db_id) = {
+            let mut db = STATE.db.write().await;
+            (
+                insert_release(&mut db, "Unmatched Release", false)?,
+                insert_artist(&mut db, "Unmatched Artist", None)?,
+                insert_track(&mut db, "Unmatched Track", false)?,
+            )
+        };
+        let release_id = release_db_id.0;
+        let artist_id = artist_db_id.0;
+        let track_id = track_db_id.0;
+
+        setup_metadata_module(STATE.lua.get().as_ref())?;
+
+        let mark_fn = STATE
+            .lua
+            .get()
+            .load(chunk! {
+                local provider = metadata.Provider.new($lua_provider_id)
+                provider:id({ id = "release_id", entity = "release" })
+                provider:id({ id = "release_group_id", entity = "release" })
+                provider:id({ id = "artist_id", entity = "artist" })
+                provider:id({ id = "recording_id", entity = "track" })
+                provider:id({ id = "acoustid_track_id", entity = "track" })
+
+                provider:mark_unmatched($release_id, { "release_id", "release_group_id" })
+                provider:mark_unmatched($artist_id, { "artist_id" })
+                provider:mark_unmatched($track_id, { "recording_id" })
+            })
+            .set_name(&harmony_core::format_plugin_chunk_name("test", "init"))
+            .into_function()?;
+        mark_fn.call_async::<()>(()).await?;
+
+        let db = STATE.db.read().await;
+        let release_ids = db::external_ids::get_for_entity(&db, release_db_id)?;
+        assert!(
+            release_ids.iter().any(|id| {
+                id.provider_id == provider_id && id.id_type == "release_id" && id.id_value == ""
+            }),
+            "release_id should be marked unmatched"
+        );
+        assert!(
+            release_ids.iter().any(|id| {
+                id.provider_id == provider_id
+                    && id.id_type == "release_group_id"
+                    && id.id_value == ""
+            }),
+            "release_group_id should be marked unmatched"
+        );
+
+        let artist_ids = db::external_ids::get_for_entity(&db, artist_db_id)?;
+        assert!(
+            artist_ids.iter().any(|id| {
+                id.provider_id == provider_id && id.id_type == "artist_id" && id.id_value == ""
+            }),
+            "artist_id should be marked unmatched"
+        );
+
+        let track_ids = db::external_ids::get_for_entity(&db, track_db_id)?;
+        assert!(
+            track_ids.iter().any(|id| {
+                id.provider_id == provider_id && id.id_type == "recording_id" && id.id_value == ""
+            }),
+            "recording_id should be marked unmatched"
+        );
+        assert!(
+            track_ids
+                .iter()
+                .all(|id| id.provider_id != provider_id || id.id_type != "acoustid_track_id"),
+            "marking recording_id unmatched should not touch acoustid_track_id"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn provider_mark_unmatched_requires_matching_id_registration() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let provider_id = next_provider_id("mark-unmatched-wrong-entity");
+        let lua_provider_id = provider_id.clone();
+        let track_db_id = {
+            let mut db = STATE.db.write().await;
+            insert_track(&mut db, "Wrong Entity Track", false)?
+        };
+        let track_id = track_db_id.0;
+
+        setup_metadata_module(STATE.lua.get().as_ref())?;
+
+        let mark_fn = STATE
+            .lua
+            .get()
+            .load(chunk! {
+                local provider = metadata.Provider.new($lua_provider_id)
+                provider:id({ id = "release_id", entity = "release" })
+                provider:mark_unmatched($track_id, { "release_id" })
+            })
+            .set_name(&harmony_core::format_plugin_chunk_name("test", "init"))
+            .into_function()?;
+        let err = mark_fn
+            .call_async::<()>(())
+            .await
+            .expect_err("expected wrong-entity id type to fail");
+        assert!(
+            err.to_string()
+                .contains("id_type 'release_id' is not registered for track"),
+            "unexpected mark_unmatched error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn ensure_artist_creates_and_reuses_by_registered_external_id() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         let provider_id = next_provider_id("ensure-artist");
@@ -1659,6 +1935,104 @@ mod tests {
             .find(|id| id.provider_id == provider_id && id.id_type == "artist_id")
             .ok_or_else(|| anyhow!("artist_id row missing"))?;
         assert_eq!(artist_id_row.id_value, "mb-artist-1");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn ensure_artist_does_not_reuse_scan_name_on_type_conflict() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let provider_id = next_provider_id("ensure-artist-type-conflict");
+        let lua_provider_id = provider_id.clone();
+        let existing_artist_id = {
+            let mut db = STATE.db.write().await;
+            insert_artist(&mut db, "Shared Name", Some(db::ArtistType::Character))?
+        };
+
+        setup_metadata_module(STATE.lua.get().as_ref())?;
+
+        let ensure_fn = STATE
+            .lua
+            .get()
+            .load(chunk! {
+                local provider = metadata.Provider.new($lua_provider_id)
+                provider:id({
+                    id = "artist_id",
+                    entity = "artist",
+                })
+                return provider:ensure_artist({
+                    id_type = "artist_id",
+                    id_value = "person-artist-1",
+                    artist_name = "Shared Name",
+                    artist_type = "person",
+                })
+            })
+            .set_name(&harmony_core::format_plugin_chunk_name("test", "init"))
+            .into_function()?;
+        let ensured_id = DbId(ensure_fn.call_async::<i64>(()).await?);
+        assert_ne!(ensured_id, existing_artist_id);
+
+        let db = STATE.db.read().await;
+        let existing_artist = db::artists::get_by_id(&db, existing_artist_id)?
+            .ok_or_else(|| anyhow!("existing artist missing"))?;
+        assert_eq!(existing_artist.artist_type, Some(db::ArtistType::Character));
+
+        let ensured_artist = db::artists::get_by_id(&db, ensured_id)?
+            .ok_or_else(|| anyhow!("ensured artist missing"))?;
+        assert_eq!(ensured_artist.artist_name, "Shared Name");
+        assert_eq!(ensured_artist.artist_type, Some(db::ArtistType::Person));
+
+        let existing_external_ids = db::external_ids::get_for_entity(&db, existing_artist_id)?;
+        assert!(
+            existing_external_ids
+                .into_iter()
+                .all(|id| id.provider_id != provider_id || id.id_type != "artist_id"),
+            "conflicting provider id should not attach to existing artist"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn ensure_artist_rejects_external_id_type_conflict() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let provider_id = next_provider_id("ensure-artist-id-type-conflict");
+        let lua_provider_id = provider_id.clone();
+
+        setup_metadata_module(STATE.lua.get().as_ref())?;
+
+        let ensure_fn = STATE
+            .lua
+            .get()
+            .load(chunk! {
+                local provider = metadata.Provider.new($lua_provider_id)
+                provider:id({
+                    id = "artist_id",
+                    entity = "artist",
+                })
+                provider:ensure_artist({
+                    id_type = "artist_id",
+                    id_value = "shared-artist-1",
+                    artist_name = "Shared Artist",
+                    artist_type = "character",
+                })
+                return provider:ensure_artist({
+                    id_type = "artist_id",
+                    id_value = "shared-artist-1",
+                    artist_name = "Shared Artist",
+                    artist_type = "person",
+                })
+            })
+            .set_name(&harmony_core::format_plugin_chunk_name("test", "init"))
+            .into_function()?;
+        let err = ensure_fn
+            .call_async::<i64>(())
+            .await
+            .expect_err("expected conflicting provider id to fail");
+        assert!(
+            err.to_string().contains("already attached to artist type"),
+            "unexpected ensure_artist error: {err}"
+        );
 
         Ok(())
     }
