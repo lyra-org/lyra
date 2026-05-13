@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/60646bef-c4a7-440e-8781-1904a40ddeab?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"id\":\"60646bef-c4a7-440e-8781-1904a40ddeab\",\"language\":\"zxx\",\"type\":\"Song\",\"disambiguation\":\"\",\"iswcs\":[\"T-930.336.354-4\"],\"title\":\"湖の街\",\"relations\":[{\"begin\":null,\"attributes\":[],\"direction\":\"backward\",\"end\":null,\"target-type\":\"artist\",\"type\":\"composer\",\"attribute-values\":{},\"source-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"ended\":false,\"attribute-ids\":{},\"target-credit\":\"\",\"artist\":{\"sort-name\":\"nabuna\",\"name\":\"n-buna\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"country\":\"JP\",\"id\":\"e963b252-7f3e-450e-b3d8-85bb495e96c1\",\"disambiguation\":\"\",\"type\":\"Person\"}}],\"languages\":[\"zxx\"],\"attributes\":[{\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"value\":\"248-0465-7\"}],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\"}"
+}

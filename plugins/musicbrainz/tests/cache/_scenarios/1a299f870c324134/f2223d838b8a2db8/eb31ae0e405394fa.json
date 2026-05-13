@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/68b36ec3-aec3-4a5c-937f-c9688db46c4b?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type-id\":null,\"type\":null,\"iswcs\":[\"T-931.465.671-8\"],\"disambiguation\":\"\",\"id\":\"68b36ec3-aec3-4a5c-937f-c9688db46c4b\",\"language\":\"zxx\",\"relations\":[{\"artist\":{\"name\":\"藤原聡\",\"country\":\"JP\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Fujihara, Satoshi\",\"disambiguation\":\"\",\"id\":\"a1cdb603-3cbe-456b-b160-38c1f6bf46ee\"},\"attributes\":[],\"direction\":\"backward\",\"ended\":false,\"end\":null,\"source-credit\":\"\",\"attribute-values\":{},\"attribute-ids\":{},\"type\":\"composer\",\"target-type\":\"artist\",\"target-credit\":\"\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"begin\":null}],\"title\":\"052519\",\"languages\":[\"zxx\"],\"attributes\":[{\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\",\"type\":\"JASRAC ID\",\"value\":\"249-4881-1\"}]}"
+}

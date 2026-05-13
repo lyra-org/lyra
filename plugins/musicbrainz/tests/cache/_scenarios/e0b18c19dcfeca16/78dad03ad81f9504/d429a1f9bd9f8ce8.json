@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/432c5790-9d5e-4b33-8e3b-52a7bf5a2f2b?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"disambiguation\":\"\",\"id\":\"432c5790-9d5e-4b33-8e3b-52a7bf5a2f2b\",\"title\":\"消えゆく陽菜\",\"type\":null,\"iswcs\":[],\"language\":\"zxx\",\"relations\":[{\"artist\":{\"sort-name\":\"Noda, Yōjirō\",\"disambiguation\":\"\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"type\":\"Person\",\"country\":\"JP\",\"name\":\"野田洋次郎\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"end\":null,\"begin\":null,\"ended\":false,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\",\"target-credit\":\"\",\"attribute-values\":{},\"type\":\"composer\",\"source-credit\":\"\",\"attributes\":[],\"direction\":\"backward\",\"target-type\":\"artist\",\"attribute-ids\":{}}],\"languages\":[\"zxx\"],\"attributes\":[{\"value\":\"729-2244-3\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"type-id\":null}"
+}

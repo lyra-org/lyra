@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/5b57c818-bcd6-4c82-9394-bebb53cce69f?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"language\":\"jpn\",\"attributes\":[],\"title\":\"We're The Robots\",\"type\":\"Song\",\"id\":\"5b57c818-bcd6-4c82-9394-bebb53cce69f\",\"languages\":[\"jpn\"],\"relations\":[{\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"disambiguation\":\"ZYTOKINE/CYTOKINE\",\"country\":\"JP\",\"name\":\"隣人\",\"type\":\"Person\",\"id\":\"5ffda9e0-d2b8-4273-9af2-a74edb1790b1\",\"sort-name\":\"LinJin\"},\"attributes\":[],\"ended\":false,\"source-credit\":\"\",\"end\":null,\"target-credit\":\"\",\"begin\":null,\"attribute-ids\":{},\"type\":\"lyricist\",\"attribute-values\":{},\"target-type\":\"artist\",\"type-id\":\"3e48faba-ec01-47fd-8e89-30e81161661c\",\"direction\":\"backward\"}],\"disambiguation\":\"\",\"iswcs\":[],\"type-id\":\"f061270a-2fd6-32f1-a641-f0f8676d14e6\"}"
+}

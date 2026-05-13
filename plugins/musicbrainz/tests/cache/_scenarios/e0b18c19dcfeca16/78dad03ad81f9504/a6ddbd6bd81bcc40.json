@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/f43e46aa-5166-4f68-87a8-7891062cc5cc?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"title\":\"天気の力\",\"relations\":[{\"attributes\":[],\"artist\":{\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\",\"sort-name\":\"Noda, Yōjirō\",\"id\":\"0a5c4b33-b2a8-4127-a3b5-f4f8b9a14d85\",\"name\":\"野田洋次郎\",\"type\":\"Person\",\"country\":\"JP\",\"disambiguation\":\"\"},\"end\":null,\"attribute-ids\":{},\"source-credit\":\"\",\"direction\":\"backward\",\"ended\":false,\"target-type\":\"artist\",\"target-credit\":\"\",\"begin\":null,\"attribute-values\":{},\"type\":\"composer\",\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"id\":\"f43e46aa-5166-4f68-87a8-7891062cc5cc\",\"attributes\":[{\"value\":\"729-2235-4\",\"type\":\"JASRAC ID\",\"type-id\":\"31048fcc-3dbb-3979-8f85-805afb933e0c\"}],\"disambiguation\":\"\",\"type\":null,\"type-id\":null,\"iswcs\":[\"T-929.884.137-9\"],\"language\":\"zxx\",\"languages\":[\"zxx\"]}"
+}

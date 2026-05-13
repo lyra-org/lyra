@@ -1,0 +1,5 @@
+{
+  "url": "https://musicbrainz.org/ws/2/work/49d5ae83-064b-42ac-a1f2-bf22f9d9faa9?inc=artist-rels",
+  "status_code": 200,
+  "body": "{\"type\":null,\"type-id\":null,\"id\":\"49d5ae83-064b-42ac-a1f2-bf22f9d9faa9\",\"language\":null,\"iswcs\":[],\"disambiguation\":\"\",\"relations\":[{\"attributes\":[],\"artist\":{\"name\":\"甲田雅人\",\"country\":\"JP\",\"disambiguation\":\"\",\"sort-name\":\"Kouda, Masato\",\"id\":\"0bcd2a74-cf0b-4956-84ee-c9cdb1010cad\",\"type\":\"Person\",\"type-id\":\"b6e035f4-3ce9-331c-97df-83397230b0df\"},\"ended\":false,\"direction\":\"backward\",\"attribute-values\":{},\"attribute-ids\":{},\"end\":null,\"source-credit\":\"\",\"type\":\"composer\",\"target-type\":\"artist\",\"target-credit\":\"\",\"begin\":null,\"type-id\":\"d59d99ea-23d4-4a80-b066-edca32ee158f\"}],\"title\":\"すれ違うふたり\",\"attributes\":[],\"languages\":[]}"
+}
