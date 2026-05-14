@@ -1,0 +1,30 @@
+{
+  "test_name": "magic_ado",
+  "scenario_id": "7abe82dd03435339",
+  "responses": [
+    {
+      "cache_key": "044b6623c4c172dc",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=db9458dc-42ef-4df6-a00d-a0a38654c931&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "0c0cd04ee2393142"
+    },
+    {
+      "cache_key": "88b99e8f7d785e82",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Ae134b52f-2e9e-4734-9bc3-bea9648d1fa1%20AND%20(release%3AMAGIC%20OR%20recording%3AMAGIC)&limit=100",
+      "status_code": 200,
+      "body_hash": "d88b82ca82458832"
+    },
+    {
+      "cache_key": "9540247bcbf53f6b",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Ado",
+      "status_code": 200,
+      "body_hash": "6e14a9e1a016f8c6"
+    },
+    {
+      "cache_key": "e8db0a63d6882e3c",
+      "url": "https://musicbrainz.org/ws/2/work/1fa1574e-1df6-4e58-a67e-f784b0cc437c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "69ca5801149d36f7"
+    }
+  ]
+}
