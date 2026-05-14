@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+mod fft;
 mod fingerprint;
 
 use std::{
@@ -21,10 +22,6 @@ use base64::{
 use lyra_ffmpeg::{
     FfmpegContext,
     Output,
-};
-use rustfft::{
-    FftPlanner,
-    num_complex::Complex,
 };
 use thiserror::Error;
 
@@ -95,30 +92,27 @@ pub fn compute_fingerprint_from_samples(samples: &[i16], duration_secs: Option<u
 
     let hop = WINDOW_SIZE / 3;
     let hamming = &*HAMMING;
-    let mut fft_frame = [0.0f32; FFT_FRAME_SIZE];
-    let mut buffer = vec![Complex::new(0.0f32, 0.0f32); WINDOW_SIZE];
-
-    let mut planner = FftPlanner::new();
-    let fft = planner.plan_fft_forward(WINDOW_SIZE);
+    let mut chroma_frame = [0.0f32; BANDS_LEN];
+    let mut fft_real = [0.0f32; fft::WORK_LEN];
+    let mut fft_imag = [0.0f32; fft::WORK_LEN];
+    let fft = &*fft::FFT;
+    let chroma_notes = fingerprint::chroma_notes();
 
     let mut chroma = Chroma::new();
     let mut calculator = FingerprintCalculator::new();
 
     let mut offset = 0;
     while offset + WINDOW_SIZE <= samples.len() {
-        for i in 0..WINDOW_SIZE {
-            buffer[i].re = (samples[offset + i] as f32 / 32768.0) * hamming[i];
-            buffer[i].im = 0.0;
-        }
+        fft.chroma_power_spectrum(
+            &samples[offset..offset + WINDOW_SIZE],
+            hamming,
+            chroma_notes,
+            &mut fft_real,
+            &mut fft_imag,
+            &mut chroma_frame,
+        );
 
-        fft.process(&mut buffer);
-
-        for i in 0..FFT_FRAME_SIZE {
-            let c = buffer[i];
-            fft_frame[i] = c.re * c.re + c.im * c.im;
-        }
-
-        if let Some(features) = chroma.filter(&fft_frame) {
+        if let Some(features) = chroma.filter_bands(&chroma_frame) {
             calculator.add_features(features);
         }
 
@@ -172,4 +166,78 @@ fn pcm_bytes_to_i16(bytes: &[u8]) -> Vec<i16> {
         samples.push(i16::from_le_bytes([chunk[0], chunk[1]]));
     }
     samples
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fingerprints_deterministic_samples() {
+        let samples = synthetic_samples(30);
+        let fingerprint = compute_fingerprint_from_samples(&samples, Some(30));
+
+        assert_eq!(fingerprint.len(), 221);
+        assert_eq!(fingerprint_checksum(&fingerprint), 0xb03797b3012bf8aa);
+    }
+
+    #[test]
+    fn fft_matches_direct_dft_for_selected_bins() {
+        let samples = synthetic_samples(1);
+        let hamming = &*HAMMING;
+        let mut powers = [0.0f32; FFT_FRAME_SIZE];
+        let mut real = [0.0f32; fft::WORK_LEN];
+        let mut imag = [0.0f32; fft::WORK_LEN];
+
+        fft::FFT.power_spectrum(
+            &samples[..WINDOW_SIZE],
+            hamming,
+            &mut real,
+            &mut imag,
+            &mut powers,
+        );
+
+        for bin in [0, 1, 10, 257, 1024, 1307] {
+            let expected = direct_power(&samples[..WINDOW_SIZE], hamming, bin);
+            let actual = powers[bin];
+            let relative_error = ((actual - expected).abs() / expected.max(1.0)).abs();
+            assert!(
+                relative_error < 0.001,
+                "bin {bin}: actual={actual} expected={expected} relative_error={relative_error}",
+            );
+        }
+    }
+
+    fn synthetic_samples(duration_secs: u32) -> Vec<i16> {
+        let len = SAMPLE_RATE as usize * duration_secs as usize;
+        (0..len)
+            .map(|i| {
+                let a = (i as f32 * 0.011).sin() * 16_000.0;
+                let b = (i as f32 * 0.037).sin() * 8_000.0;
+                (a + b).clamp(i16::MIN as f32, i16::MAX as f32) as i16
+            })
+            .collect()
+    }
+
+    fn fingerprint_checksum(fingerprint: &[u32]) -> u64 {
+        fingerprint
+            .iter()
+            .fold(0xcbf29ce484222325u64, |hash, value| {
+                (hash ^ *value as u64).wrapping_mul(0x100000001b3)
+            })
+    }
+
+    fn direct_power(samples: &[i16], hamming: &[f32; WINDOW_SIZE], bin: usize) -> f32 {
+        let mut re = 0.0f32;
+        let mut im = 0.0f32;
+        for i in 0..WINDOW_SIZE {
+            let value = (samples[i] as f32 / 32768.0) * hamming[i];
+            let angle =
+                -2.0 * std::f32::consts::PI * (bin as f32) * (i as f32) / (WINDOW_SIZE as f32);
+            let (sin, cos) = angle.sin_cos();
+            re += value * cos;
+            im += value * sin;
+        }
+        re * re + im * im
+    }
 }

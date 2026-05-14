@@ -15,8 +15,14 @@ pub const BANDS_LEN: usize = 12;
 
 const BUFFER_ROWS: usize = 8;
 const COEFFICIENTS: [Float; 5] = [0.25, 0.75, 1.0, 0.75, 0.25];
-const MIN_FREQ: f64 = 28.0;
-const MAX_FREQ: f64 = 3520.0;
+const MIN_FREQ_HZ: usize = 28;
+const MAX_FREQ_HZ: usize = 3520;
+const MIN_FREQ: f64 = MIN_FREQ_HZ as f64;
+const MAX_FREQ: f64 = MAX_FREQ_HZ as f64;
+pub(crate) const CHROMA_MIN_INDEX: usize =
+    (WINDOW_SIZE * MIN_FREQ_HZ + (SAMPLE_RATE as usize / 2)) / SAMPLE_RATE as usize;
+pub(crate) const CHROMA_MAX_INDEX: usize =
+    (WINDOW_SIZE * MAX_FREQ_HZ + (SAMPLE_RATE as usize / 2)) / SAMPLE_RATE as usize;
 
 pub static HAMMING: LazyLock<[Float; WINDOW_SIZE]> = LazyLock::new(|| {
     let mut result = [0.0; WINDOW_SIZE];
@@ -37,6 +43,8 @@ struct ChromaTable {
 static CHROMA_TABLE: LazyLock<ChromaTable> = LazyLock::new(|| {
     let min_index = freq_to_index(MIN_FREQ).max(1);
     let max_index = (WINDOW_SIZE / 2).min(freq_to_index(MAX_FREQ));
+    debug_assert_eq!(min_index, CHROMA_MIN_INDEX);
+    debug_assert_eq!(max_index, CHROMA_MAX_INDEX);
     let mut notes = [0u8; WINDOW_SIZE];
 
     for (i, note_slot) in notes.iter_mut().enumerate().take(max_index).skip(min_index) {
@@ -52,6 +60,10 @@ static CHROMA_TABLE: LazyLock<ChromaTable> = LazyLock::new(|| {
         notes,
     }
 });
+
+pub(crate) fn chroma_notes() -> &'static [u8; WINDOW_SIZE] {
+    &CHROMA_TABLE.notes
+}
 
 pub struct Chroma {
     buffer_len: usize,
@@ -72,20 +84,26 @@ impl Chroma {
 
     pub fn filter(&mut self, fft_frame: &[Float; FFT_FRAME_SIZE]) -> Option<&[Float; BANDS_LEN]> {
         let table = &*CHROMA_TABLE;
+        let mut bands = [0.0; BANDS_LEN];
+        for (&note, &energy) in table.notes[table.min_index..table.max_index]
+            .iter()
+            .zip(fft_frame[table.min_index..table.max_index].iter())
         {
-            let buf = &mut self.buffer[self.buffer_i];
-            buf.fill(0.0);
-            for (&note, &energy) in table.notes[table.min_index..table.max_index]
-                .iter()
-                .zip(fft_frame[table.min_index..table.max_index].iter())
-            {
-                debug_assert!(energy.is_finite());
-                let idx = note as usize;
-                buf[idx] += energy;
-                debug_assert!(buf[idx].is_finite());
-            }
-            self.buffer_i = (self.buffer_i + 1) % BUFFER_ROWS;
+            debug_assert!(energy.is_finite());
+            let idx = note as usize;
+            bands[idx] += energy;
+            debug_assert!(bands[idx].is_finite());
         }
+
+        self.filter_bands(&bands)
+    }
+
+    pub(crate) fn filter_bands(
+        &mut self,
+        bands: &[Float; BANDS_LEN],
+    ) -> Option<&[Float; BANDS_LEN]> {
+        self.buffer[self.buffer_i] = *bands;
+        self.buffer_i = (self.buffer_i + 1) % BUFFER_ROWS;
 
         if self.buffer_len >= COEFFICIENTS.len() {
             let offset = (self.buffer_i + BUFFER_ROWS - COEFFICIENTS.len()) % BUFFER_ROWS;
