@@ -1,0 +1,36 @@
+{
+  "test_name": "信仰と存在_feat_否_他人事",
+  "scenario_id": "3f3626fed0c0895f",
+  "responses": [
+    {
+      "cache_key": "18a62457938219e7",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=f06bb81b-447f-40b7-9e1f-e0ae9af69d9e&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "b0a6e6aefac916b8"
+    },
+    {
+      "cache_key": "3f12d706960064c3",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E4%BB%96%E4%BA%BA%E4%BA%8B",
+      "status_code": 200,
+      "body_hash": "f114d5810524d235"
+    },
+    {
+      "cache_key": "446c1e7307b8be6d",
+      "url": "https://musicbrainz.org/ws/2/artist/6f2e0553-7053-4f2b-89b3-40c0abfb31bc?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "57a2d6255658f89e"
+    },
+    {
+      "cache_key": "5e60574833b67a54",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E4%BF%A1%E4%BB%B0%E3%81%A8%E5%AD%98%E5%9C%A8%20%5C(feat.%20%E5%90%A6%5C)&limit=100",
+      "status_code": 200,
+      "body_hash": "8a876a8014581da9"
+    },
+    {
+      "cache_key": "ac3d299674190022",
+      "url": "https://musicbrainz.org/ws/2/artist/562f98e3-0b76-48e3-a628-fe5938f2a443?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5943ee24631868d5"
+    }
+  ]
+}
