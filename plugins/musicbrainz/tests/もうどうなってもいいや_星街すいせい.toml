@@ -1,0 +1,26 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "星街すいせい - もうどうなってもいいや (2025-04-10) [WEB FLAC]/1.01. もうどうなってもいいや.flac"
+album = "もうどうなってもいいや"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "もうどうなってもいいや"
+disc = 1
+track = 1
+duration_ms = 203066
+
+[expect.release]
+ids = { release_group_id = "f9dd9f33-8c94-4b9f-948e-d0870146ceca", release_id = "aefef54d-461d-439a-8908-6a3c294e5f31" }
+fields = { release_title = "もうどうなってもいいや", release_date = "2025-04-10" }
+
+[expect.artists."8eeb59f4-0071-4261-b1f8-91d8294622d2"]
+fields = { artist_name = "星街すいせい", sort_name = "Hoshimachi, Suisei" }
+
+[expect.tracks."2a3ffbfe-fb43-492f-9090-a6b2e158c894"]
+fields = { disc = 1, track = 1, track_title = "もうどうなってもいいや" }
