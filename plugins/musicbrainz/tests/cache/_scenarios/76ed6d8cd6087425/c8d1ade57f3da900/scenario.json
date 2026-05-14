@@ -1,0 +1,42 @@
+{
+  "test_name": "pale_blue_米津玄師",
+  "scenario_id": "c8d1ade57f3da900",
+  "responses": [
+    {
+      "cache_key": "0b7cb1ad51cd231d",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3APale%20Blue&limit=100",
+      "status_code": 200,
+      "body_hash": "79972afc106296d7"
+    },
+    {
+      "cache_key": "35c24f1f8b66c830",
+      "url": "https://musicbrainz.org/ws/2/work/92519c84-0559-422e-b039-98e8d039aec6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "aea54bdf53db1fdc"
+    },
+    {
+      "cache_key": "6560ebd428c480e6",
+      "url": "https://musicbrainz.org/ws/2/work/048c04e6-46d2-4f48-826b-00e26f5cd59f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b2324188aa6f5a06"
+    },
+    {
+      "cache_key": "8cc8305b7ca15e51",
+      "url": "https://musicbrainz.org/ws/2/work/9e91d37d-604f-406b-ba0c-ae6cab8bfba5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "421ea6cb24170e09"
+    },
+    {
+      "cache_key": "e4e1d482d3625ce7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%B1%B3%E6%B4%A5%E7%8E%84%E5%B8%AB",
+      "status_code": 200,
+      "body_hash": "e3be91fb3d6fb424"
+    },
+    {
+      "cache_key": "f6894dc869d1ba3f",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=cedbb601-1520-4d4b-a056-7bdab9732a54&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "8662230d30e69e94"
+    }
+  ]
+}
