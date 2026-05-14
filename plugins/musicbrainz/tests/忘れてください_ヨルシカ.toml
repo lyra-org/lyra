@@ -1,0 +1,28 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ヨルシカ - 忘れてください (2024) [WEB-FLAC]/01. 忘れてください.flac"
+album = "忘れてください"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "忘れてください"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 218834
+
+[expect.release]
+ids = { release_group_id = "418c1f40-d567-4d5a-b8ee-6e8fc5bd7362", release_id = ["6b7bbe4d-22e3-4b53-b853-6979084ef632", "0300b6b2-899c-4540-8a25-1323e0764694", "c9af3da5-43e9-4513-ada6-40ac7269254d"] }
+fields = { release_title = "忘れてください", release_date = "2024-07-13" }
+
+[expect.artists."dfc6a151-3792-4695-8fda-f64723eaa788"]
+fields = { artist_name = "ヨルシカ", sort_name = "Yorushika" }
+
+[expect.tracks."c8172818-073d-478d-96b8-f40c92e623e6"]
+fields = { disc = 1, track = 1, track_title = "忘れてください" }

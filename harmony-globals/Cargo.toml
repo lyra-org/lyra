@@ -1,0 +1,11 @@
+[package]
+name = "harmony-globals"
+version = "0.0.1"
+edition = "2024"
+license-file = "../LICENSE"
+
+[dependencies]
+harmony-core = { path = "../harmony-core" }
+harmony-luau = { path = "../harmony-luau" }
+mlua = { workspace = true, features = ["luau", "anyhow", "send", "macros"] }
+tracing = { workspace = true }
