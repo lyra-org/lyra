@@ -1,0 +1,156 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ロス - 夜の悉 (2024-12-25) [WEB FLAC]/1.11. 自主.flac"
+album = "夜の悉"
+album_artists = ["ロス"]
+artists = ["ロス"]
+title = "自主"
+disc = 1
+track = 11
+duration_ms = 186176
+
+[[raw_tags]]
+file_path = "ロス - 夜の悉 (2024-12-25) [WEB FLAC]/1.10. いざなゐ.flac"
+album = "夜の悉"
+album_artists = ["ロス"]
+artists = ["ロス"]
+title = "いざなゐ"
+disc = 1
+track = 10
+duration_ms = 178274
+
+[[raw_tags]]
+file_path = "ロス - 夜の悉 (2024-12-25) [WEB FLAC]/1.09. 白昼夢.flac"
+album = "夜の悉"
+album_artists = ["ロス"]
+artists = ["ロス"]
+title = "白昼夢"
+disc = 1
+track = 9
+duration_ms = 179076
+
+[[raw_tags]]
+file_path = "ロス - 夜の悉 (2024-12-25) [WEB FLAC]/1.08. Follow.flac"
+album = "夜の悉"
+album_artists = ["ロス"]
+artists = ["ロス"]
+title = "Follow"
+disc = 1
+track = 8
+duration_ms = 137648
+
+[[raw_tags]]
+file_path = "ロス - 夜の悉 (2024-12-25) [WEB FLAC]/1.07. Bitter.flac"
+album = "夜の悉"
+album_artists = ["ロス"]
+artists = ["ロス"]
+title = "Bitter"
+disc = 1
+track = 7
+duration_ms = 182822
+
+[[raw_tags]]
+file_path = "ロス - 夜の悉 (2024-12-25) [WEB FLAC]/1.06. 神などおらぬ.flac"
+album = "夜の悉"
+album_artists = ["ロス"]
+artists = ["ロス"]
+title = "神などおらぬ"
+disc = 1
+track = 6
+duration_ms = 177692
+
+[[raw_tags]]
+file_path = "ロス - 夜の悉 (2024-12-25) [WEB FLAC]/1.05. 一匹狼.flac"
+album = "夜の悉"
+album_artists = ["ロス"]
+artists = ["ロス"]
+title = "一匹狼"
+disc = 1
+track = 5
+duration_ms = 144800
+
+[[raw_tags]]
+file_path = "ロス - 夜の悉 (2024-12-25) [WEB FLAC]/1.04. クズ教室.flac"
+album = "夜の悉"
+album_artists = ["ロス"]
+artists = ["ロス"]
+title = "クズ教室"
+disc = 1
+track = 4
+duration_ms = 164690
+
+[[raw_tags]]
+file_path = "ロス - 夜の悉 (2024-12-25) [WEB FLAC]/1.03. 浮気.flac"
+album = "夜の悉"
+album_artists = ["ロス"]
+artists = ["ロス"]
+title = "浮気??"
+disc = 1
+track = 3
+duration_ms = 130518
+
+[[raw_tags]]
+file_path = "ロス - 夜の悉 (2024-12-25) [WEB FLAC]/1.02. 女狐.flac"
+album = "夜の悉"
+album_artists = ["ロス"]
+artists = ["ロス"]
+title = "女狐"
+disc = 1
+track = 2
+duration_ms = 183750
+
+[[raw_tags]]
+file_path = "ロス - 夜の悉 (2024-12-25) [WEB FLAC]/1.01. 身売り.flac"
+album = "夜の悉"
+album_artists = ["ロス"]
+artists = ["ロス"]
+title = "身売り"
+disc = 1
+track = 1
+duration_ms = 155433
+
+[expect.release]
+ids = { release_group_id = "d3b655ef-0949-4f41-8e5c-213abae74991", release_id = ["2b4a0423-60d6-4875-a7a1-62e722e4714e", "790f2884-1c49-44d1-93fa-d6f3c99fa774"] }
+fields = { release_title = "夜の悉", release_date = "2024-12-25" }
+
+[expect.artists."ff0dae91-7b66-4986-8b7b-595e340c2935"]
+fields = { artist_name = "ロス", sort_name = "Rosu" }
+
+[expect.tracks."01a3fdc2-195c-40fe-a762-7aa627936142"]
+fields = { disc = 1, track = 2, track_title = "女狐" }
+
+[expect.tracks."08ccb255-1688-49ba-bffc-b5fa2dc62ab0"]
+fields = { disc = 1, track = 8, track_title = "Follow" }
+
+[expect.tracks."38b48470-062e-44ae-8444-b4b882e77067"]
+fields = { disc = 1, track = 1, track_title = "身売り" }
+
+[expect.tracks."3ead994f-4040-467d-88b5-11b8b622dd37"]
+fields = { disc = 1, track = 11, track_title = "自主" }
+
+[expect.tracks."41a14159-e257-4408-b587-ce2f54de10cd"]
+fields = { disc = 1, track = 9, track_title = "白昼夢" }
+
+[expect.tracks."50c8b6f0-eb31-4f5b-b398-aab9fb548c11"]
+fields = { disc = 1, track = 10, track_title = "いざなゐ" }
+
+[expect.tracks."5e4b632b-8281-43bf-ab15-43e288b968a6"]
+fields = { disc = 1, track = 3, track_title = "浮気??" }
+
+[expect.tracks."8045aa3f-67af-46f5-b09a-eb125074682d"]
+fields = { disc = 1, track = 6, track_title = "神などおらぬ" }
+
+[expect.tracks."a10b69ee-4564-41d0-b93c-f183877fd4a4"]
+fields = { disc = 1, track = 4, track_title = "クズ教室" }
+
+[expect.tracks."b5ef448c-61dc-40c4-9a1f-46e95925444b"]
+fields = { disc = 1, track = 5, track_title = "一匹狼" }
+
+[expect.tracks."d16bf0e6-9402-497c-bf6a-be861ed6e9ff"]
+fields = { disc = 1, track = 7, track_title = "Bitter" }

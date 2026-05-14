@@ -1,0 +1,426 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/52 - Electronica In Velvet Room.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Electronica In Velvet Room"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 281430
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/51 - Never More.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Never More"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 392260
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/50 - I'll Face Myself -Another Version-.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "I'll Face Myself -Another Version-"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 100900
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/49 - The Genesis.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "The Genesis"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 465890
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/48 - The Almighty.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "The Almighty"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 275870
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/47 - Corridor.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Corridor"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 136710
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/46 -Omen.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Omen"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 50050
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/45 - Long Way.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Long Way"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 140000
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/44 - Deduction -Another Version-.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Deduction -Another Version-"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 40340
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/43 - Alone.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Alone"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 116710
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/42 - Heaven.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Heaven"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 175930
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/41 - Secret Base.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Secret Base"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 147050
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/40 - How Much.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "How Much?"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 77140
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/39 - Traumerei.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Traumerei"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 139140
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/38 - The Path Is Open (P4ver.).flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "The Path Is Open (P4ver.)"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 107170
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/37 - Strength Of Heart (P4ver.).flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Strength Of Heart (P4ver.)"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 115420
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/36 - Junes Theme.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Junes Theme"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 95960
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/35 - Period.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Period"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 56950
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/34 - The Fog.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "The Fog"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 231680
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/33 - A New World Fool.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "A New World Fool"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 254090
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/32 - Zone Time.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Zone Time"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 90190
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/31 - Game.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Game"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 155330
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/30 - Youthful Lunch.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Youthful Lunch"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 98700
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/29 - Heartbeat, Heartbreak.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Heartbeat, Heartbreak"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 132310
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/28 - Theater.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Theater"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 109390
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/27 - Specialist.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Specialist"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 129710
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/26 - Reach Out To The Truth -Inst Version-.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Reach Out To The Truth -Inst Version-"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 89350
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/25 - Reach Out To The Truth.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Reach Out To The Truth"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 165300
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/24 - Awakening.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Awakening"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 80450
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/23 - Sauna.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Sauna"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 120020
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/22 - Quelorie Magic!.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Quelorie Magic!"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 60290
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/21 - Someone Else's Man.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Someone Else's Man"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 96820
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/20 - It's Show Time!.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "It's Show Time!"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 48440
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/19 - Muscle Blues.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Muscle Blues"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 86550
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/18 - I'll Face Myself.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "I'll Face Myself"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 157490
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/17 - I'll Face Myself -Battle-.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "I'll Face Myself -Battle-"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 175880
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/16 - Border Of Insanity.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Border Of Insanity"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 135810
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/15 - Castle.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Castle"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 155420
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/14 - Deduction.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Deduction"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 198840
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/13 - Backside Of The TV.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Backside Of The TV"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 172660
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/12 - Smile.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Smile"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 200980
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/11 - Reach Out To The Truth -First Battle-.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Reach Out To The Truth -First Battle-"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 174390
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/10 - Who's There.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Who's There?"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 109370
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/09 - Like A Dream Come True.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Like A Dream Come True"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 154070
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/08 - Your Affection.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Your Affection"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 169070
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/07 - Midnight Channel.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Midnight Channel"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 74670
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/06 - Signs Of Love.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Signs Of Love"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 177580
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/05 - New Days.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "New Days"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 134860
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/04 - Aria Of The Soul.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Aria Of The Soul"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 334160
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/03 - Welcome To The Limousine.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Welcome To The Limousine"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 23840
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/02 - Glimpse Of A Memory.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Glimpse Of A Memory"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 67370
+
+[[raw_tags]]
+file_path = "Various Artists - Persona 4 Vinyl Soundtrack [2022] (Vinyl - FLAC - Lossless)/01 - Pursuing My True Self.flac"
+album = "Persona 4 Vinyl Soundtrack"
+artists = ["Shoji Meguro , Atlus Sound Team"]
+title = "Pursuing My True Self"
+genre = "Electronic, Pop, Stage & Screen"
+duration_ms = 81990
+
+[expect.release]
+ids = { release_group_id = "a7ed4623-300c-35c2-8fc3-71b335b9b716", release_id = "0641bd58-6c96-4c03-83a1-5977b459fdcc" }
+fields = { release_title = "Persona 4 Vinyl Soundtrack", release_date = "2022-10-01" }
