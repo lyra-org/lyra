@@ -3,13 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use aide::axum::{
-    ApiRouter,
-    routing::{
-        get_with,
-        post_with,
-    },
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
     Json,
@@ -19,7 +13,13 @@ use axum::{
     },
     response::IntoResponse,
 };
-use schemars::JsonSchema;
+use axum::{
+    Router,
+    routing::{
+        get,
+        post,
+    },
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -50,7 +50,8 @@ use crate::{
     },
 };
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize)]
 struct MetadataMappingResponse {
     version: u64,
     rules: Vec<MetadataMappingRule>,
@@ -61,7 +62,8 @@ struct MetadataMappingResponse {
     reingest_in_progress: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct MetadataMappingRule {
     source_key: String,
     destination: FieldName,
@@ -85,7 +87,8 @@ impl From<MetadataMappingRule> for MappingRule {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Deserialize)]
 struct PutMetadataMappingRequest {
     rules: Vec<MetadataMappingRule>,
     /// Opt-in to replace even if the dry-run reports file read
@@ -94,7 +97,8 @@ struct PutMetadataMappingRequest {
     force_partial: bool,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Deserialize)]
 struct PreviewMetadataMappingRequest {
     rules: Vec<MetadataMappingRule>,
 }
@@ -102,7 +106,8 @@ struct PreviewMetadataMappingRequest {
 /// The write is async: the commit + reingest run in a background
 /// task and the client polls `GET /api/metadata/mapping` to observe
 /// `reingest_in_progress` and the post-commit `version`.
-#[derive(Debug, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize)]
 struct PutMetadataMappingResponse {
     accepted: bool,
     rules_accepted: usize,
@@ -135,6 +140,7 @@ async fn get_metadata_mapping(
     }))
 }
 
+#[cfg(feature = "docgen")]
 fn get_metadata_mapping_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get metadata mapping configuration")
         .description(
@@ -189,6 +195,7 @@ async fn put_metadata_mapping(
         .into_response())
 }
 
+#[cfg(feature = "docgen")]
 fn put_metadata_mapping_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Replace metadata mapping configuration")
         .description(
@@ -212,6 +219,7 @@ async fn preview_metadata_mapping(
     Ok(Json(report))
 }
 
+#[cfg(feature = "docgen")]
 fn preview_metadata_mapping_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Preview metadata mapping configuration")
         .description(
@@ -236,8 +244,23 @@ fn build_candidate(rules: Vec<MetadataMappingRule>) -> Result<MetadataMappingCon
     })
 }
 
-pub fn metadata_routes() -> ApiRouter {
-    ApiRouter::new()
+pub fn metadata_routes() -> Router {
+    Router::new()
+        .route(
+            "/mapping",
+            get(get_metadata_mapping).put(put_metadata_mapping),
+        )
+        .route("/mapping/preview", post(preview_metadata_mapping))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn metadata_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::{
+        get_with,
+        post_with,
+    };
+
+    aide::axum::ApiRouter::new()
         .api_route(
             "/mapping",
             get_with(get_metadata_mapping, get_metadata_mapping_docs)

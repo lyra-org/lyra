@@ -19,6 +19,11 @@ use std::{
     },
 };
 
+use crate::{
+    routes,
+    services::remote::messages::WsApiSpec,
+};
+
 use super::{
     lyra_doc_source_ids,
     render_lyra_doc_source,
@@ -26,8 +31,11 @@ use super::{
 
 pub(crate) const DEFAULT_SETUP_DOCS_OUT_DIR: &str = ".lyra/luau";
 pub(crate) const DEFAULT_SETUP_DEFS_DIR: &str = ".lyra/defs";
+pub(crate) const DEFAULT_SETUP_API_DOCS_DIR: &str = ".lyra/api";
 pub(crate) const GLOBALS_DEFINITIONS_FILENAME: &str = "globals.d.luau";
 
+const OPENAPI_FILENAME: &str = "openapi.json";
+const ASYNCAPI_FILENAME: &str = "asyncapi.json";
 const LUAURC_FILENAME: &str = ".luaurc";
 const LUAUCONFIG_FILENAME: &str = ".config.luau";
 const GITIGNORE_FILENAME: &str = ".gitignore";
@@ -79,6 +87,7 @@ pub(crate) fn generate_docs(out_dir: &Path) -> Result<()> {
     let globals_path = out_dir.join(GLOBALS_DEFINITIONS_FILENAME);
     write_globals_definition(&globals_path)?;
     println!("{}", globals_path.display());
+    write_api_docs(&out_dir.join("api"), true)?;
     Ok(())
 }
 
@@ -97,6 +106,8 @@ pub(crate) fn setup_docs(project_root: &Path) -> Result<()> {
     let defs_dir = project_root.join(DEFAULT_SETUP_DEFS_DIR);
     let globals_path = defs_dir.join(GLOBALS_DEFINITIONS_FILENAME);
     write_globals_definition(&globals_path)?;
+
+    write_api_docs(&project_root.join(DEFAULT_SETUP_API_DOCS_DIR), false)?;
 
     let luaurc_path = project_root.join(LUAURC_FILENAME);
     let mut luaurc = read_or_create_luaurc(&luaurc_path)?;
@@ -150,7 +161,35 @@ pub(crate) fn run_command(args: &[String]) -> Result<()> {
 }
 
 fn docs_command_usage() -> &'static str {
-    "usage:\n  lyra docs list\n  lyra docs print <source>\n  lyra docs generate --out-dir <dir>\n  lyra docs setup"
+    "usage:\n  lyra-docs list\n  lyra-docs print <source>\n  lyra-docs generate --out-dir <dir>\n  lyra-docs setup"
+}
+
+fn write_api_docs(out_dir: &Path, print_paths: bool) -> Result<()> {
+    fs::create_dir_all(out_dir)
+        .with_context(|| format!("create API docs output directory {}", out_dir.display()))?;
+
+    let openapi_path = out_dir.join(OPENAPI_FILENAME);
+    let openapi = routes::build_openapi_spec();
+    write_pretty_json(&openapi_path, &openapi)?;
+    if print_paths {
+        println!("{}", openapi_path.display());
+    }
+
+    let asyncapi_path = out_dir.join(ASYNCAPI_FILENAME);
+    let asyncapi = WsApiSpec::asyncapi_spec();
+    write_pretty_json(&asyncapi_path, &asyncapi)?;
+    if print_paths {
+        println!("{}", asyncapi_path.display());
+    }
+
+    Ok(())
+}
+
+fn write_pretty_json(path: &Path, value: &impl serde::Serialize) -> Result<()> {
+    let contents = serde_json::to_string_pretty(value)
+        .with_context(|| format!("serialize {}", path.display()))?;
+    fs::write(path, format!("{contents}\n"))
+        .with_context(|| format!("write API docs output {}", path.display()))
 }
 
 fn generate_setup_docs(out_dir: &Path) -> Result<()> {

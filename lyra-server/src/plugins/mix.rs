@@ -19,19 +19,22 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeInterface,
     DescribeModule,
     DescribeUserData,
     FieldDescriptor,
-    FunctionParameter,
-    LuauType,
-    LuauTypeInfo,
     ModuleDescriptor,
     ModuleFunctionDescriptor,
     ParameterDescriptor,
     TypeAliasDescriptor,
     render_definition_file_with_support,
+};
+use harmony_luau::{
+    FunctionParameter,
+    LuauType,
+    LuauTypeInfo,
 };
 use nanoid::nanoid;
 
@@ -651,6 +654,7 @@ fn tracks_to_luau(tracks: Option<Vec<Track>>) -> luau::runtime::Result<luau::Val
     harmony_luau::serializable_to_luau_owned(tracks)
 }
 
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -660,10 +664,12 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
+#[cfg(feature = "docgen")]
 fn id_param() -> ParameterDescriptor {
     param("id", f64::luau_type())
 }
 
+#[cfg(feature = "docgen")]
 fn opts_param() -> ParameterDescriptor {
     ParameterDescriptor {
         name: "opts",
@@ -673,6 +679,7 @@ fn opts_param() -> ParameterDescriptor {
     }
 }
 
+#[cfg(feature = "docgen")]
 impl DescribeModule for MixModule {
     fn module_descriptor() -> ModuleDescriptor {
         let mut descriptor = ModuleDescriptor::new("Mix", "mix", None);
@@ -736,6 +743,7 @@ impl DescribeModule for MixModule {
     }
 }
 
+#[cfg(feature = "docgen")]
 fn support_aliases() -> Vec<TypeAliasDescriptor> {
     vec![
         TypeAliasDescriptor {
@@ -758,6 +766,7 @@ fn support_aliases() -> Vec<TypeAliasDescriptor> {
     ]
 }
 
+#[cfg(feature = "docgen")]
 fn track_type() -> LuauType {
     LuauType::object(vec![
         FieldDescriptor {
@@ -848,6 +857,7 @@ fn track_type() -> LuauType {
     ])
 }
 
+#[cfg(feature = "docgen")]
 fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
     vec![
         OptionConfig::interface_descriptor(),
@@ -951,6 +961,7 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
     ]
 }
 
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &MixModule::module_descriptor(),

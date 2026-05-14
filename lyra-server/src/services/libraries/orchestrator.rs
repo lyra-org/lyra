@@ -24,7 +24,6 @@ use std::{
 };
 
 use agdb::DbId;
-use schemars::JsonSchema;
 use serde::Serialize;
 use std::sync::LazyLock;
 use tokio::sync::RwLock;
@@ -46,7 +45,8 @@ use super::sync::{
 
 const MAX_ACTIVE_SYNC_ITEMS: usize = 8;
 
-#[derive(Clone, Copy, Debug, Serialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LibrarySyncRunStatus {
     Idle,
@@ -55,7 +55,8 @@ pub(crate) enum LibrarySyncRunStatus {
     Failed,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, JsonSchema, PartialEq, Eq)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LibrarySyncPhase {
     FullSync,
@@ -65,7 +66,8 @@ pub(crate) enum LibrarySyncPhase {
     Complete,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LibrarySyncStage {
     Discovering,
@@ -97,7 +99,8 @@ impl LibrarySyncStage {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct LibrarySyncCounters {
     pub(crate) entry_groups: usize,
     pub(crate) entries_added: usize,
@@ -114,7 +117,8 @@ pub(crate) struct LibrarySyncCounters {
     pub(crate) provider_covers: usize,
 }
 
-#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct LibrarySyncActiveItem {
     pub(crate) group_id: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -129,7 +133,8 @@ pub(crate) struct LibrarySyncActiveItem {
     pub(crate) stage_started_at: u64,
 }
 
-#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct LibrarySyncStatus {
     pub(crate) run: LibrarySyncRun,
     pub(crate) progress: LibrarySyncStatusProgress,
@@ -138,30 +143,42 @@ pub(crate) struct LibrarySyncStatus {
     pub(crate) active: Vec<LibrarySyncActiveWork>,
 }
 
-#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct LibrarySyncRun {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) id: Option<u64>,
     pub(crate) status: LibrarySyncRunStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(description = "Run start time as an RFC3339 timestamp.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Run start time as an RFC3339 timestamp.")
+    )]
     pub(crate) started_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(description = "Most recent run status update time as an RFC3339 timestamp.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Most recent run status update time as an RFC3339 timestamp.")
+    )]
     pub(crate) updated_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(description = "Run completion time as an RFC3339 timestamp.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Run completion time as an RFC3339 timestamp.")
+    )]
     pub(crate) finished_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) error: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct LibrarySyncStatusProgress {
     pub(crate) work: LibrarySyncWorkProgress,
 }
 
-#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct LibrarySyncWorkProgress {
     pub(crate) total: usize,
     pub(crate) pending: usize,
@@ -172,7 +189,8 @@ pub(crate) struct LibrarySyncWorkProgress {
     pub(crate) active_by_stage: BTreeMap<String, usize>,
 }
 
-#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct LibrarySyncChanges {
     pub(crate) entries: LibrarySyncEntryChanges,
     pub(crate) library: LibrarySyncLibraryChanges,
@@ -180,32 +198,37 @@ pub(crate) struct LibrarySyncChanges {
     pub(crate) covers: LibrarySyncCoverChanges,
 }
 
-#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct LibrarySyncEntryChanges {
     pub(crate) added: usize,
     pub(crate) updated: usize,
     pub(crate) deleted: usize,
 }
 
-#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct LibrarySyncLibraryChanges {
     pub(crate) releases: usize,
     pub(crate) tracks: usize,
 }
 
-#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct LibrarySyncProviderChanges {
     pub(crate) metadata_refreshes: usize,
     pub(crate) lyrics_tracks: usize,
 }
 
-#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct LibrarySyncCoverChanges {
     pub(crate) hashed: usize,
     pub(crate) synced: usize,
 }
 
-#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct LibrarySyncActiveWork {
     pub(crate) stage: LibrarySyncStage,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -214,11 +237,15 @@ pub(crate) struct LibrarySyncActiveWork {
     pub(crate) release_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) provider_id: Option<String>,
-    #[schemars(description = "Active work stage start time as an RFC3339 timestamp.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Active work stage start time as an RFC3339 timestamp.")
+    )]
     pub(crate) stage_started_at: String,
 }
 
-#[derive(Clone, Debug, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct LibrarySyncState {
     pub(crate) library_db_id: i64,
     #[serde(skip_serializing_if = "Option::is_none")]

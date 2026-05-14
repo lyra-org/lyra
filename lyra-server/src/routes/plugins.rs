@@ -9,15 +9,7 @@ use agdb::{
     DbAny,
     DbId,
 };
-use aide::axum::{
-    ApiRouter,
-    routing::{
-        delete_with,
-        get_with,
-        patch_with,
-        post_with,
-    },
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
     Json,
@@ -27,7 +19,15 @@ use axum::{
         StatusCode,
     },
 };
-use schemars::JsonSchema;
+use axum::{
+    Router,
+    routing::{
+        delete,
+        get,
+        patch,
+        post,
+    },
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -80,7 +80,8 @@ fn map_plugin_restart_error(error: PluginRestartError) -> AppError {
     }
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct PluginManifestResponse {
     schema_version: u32,
     id: String,
@@ -90,7 +91,8 @@ struct PluginManifestResponse {
     entrypoint: String,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct ChoiceOptionResponse {
     value: String,
     label: String,
@@ -98,7 +100,8 @@ struct ChoiceOptionResponse {
     description: Option<String>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct FieldPropsResponse {
     label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -106,7 +109,8 @@ struct FieldPropsResponse {
     required: bool,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 #[serde(tag = "type")]
 enum FieldResponse {
     #[serde(rename = "string")]
@@ -144,20 +148,23 @@ enum FieldResponse {
     },
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct GroupResponse {
     id: String,
     label: String,
     fields: Vec<FieldResponse>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct PluginSettingsResponse {
     plugin_id: String,
     groups: Vec<GroupResponse>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 enum PluginSettingsEntry {
     Ready {
@@ -176,12 +183,14 @@ enum PluginSettingsEntry {
     },
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct PluginSettingsListResponse {
     entries: Vec<PluginSettingsEntry>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct UpdateSettingsRequest {
     values: HashMap<String, serde_json::Value>,
 }
@@ -567,62 +576,90 @@ async fn delete_user_settings(
     Ok(())
 }
 
+#[cfg(feature = "docgen")]
 fn get_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get plugin settings")
         .description("Returns the settings schema and current values for a plugin.")
 }
 
+#[cfg(feature = "docgen")]
 fn list_plugins_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List plugins")
         .description("Returns the loaded plugin manifests discovered at startup.")
 }
 
+#[cfg(feature = "docgen")]
 fn list_all_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List all plugin settings").description(
         "Returns the global settings schema and current values for every loaded plugin in a single response. Each entry carries a `status` field: `ready`, `initializing` (registry not yet frozen), `not_declared` (plugin did not declare this scope), or `invalid` (stored state is stale or malformed).",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn list_all_user_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List all user plugin settings").description(
         "Returns the user-scoped settings schema and the authenticated user's current values for every loaded plugin in a single response. Per-entry `status` mirrors the admin list endpoint.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn restart_plugin_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Restart plugin").description(
         "Tears down the plugin's current runtime registrations, re-runs its entrypoint, and activates its routes.",
     ).response::<204, ()>()
 }
 
+#[cfg(feature = "docgen")]
 fn update_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update plugin settings")
         .description("Updates setting values for a plugin and returns the updated schema.")
 }
 
+#[cfg(feature = "docgen")]
 fn delete_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Delete plugin settings")
         .description("Deletes all stored settings for a plugin. Use this to clear stale plugin settings after a schema change.")
 }
 
+#[cfg(feature = "docgen")]
 fn get_user_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get user plugin settings").description(
         "Returns the user-scoped settings schema and the authenticated user's current values.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn update_user_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update user plugin settings")
         .description("Updates user-scoped setting values for the authenticated user.")
 }
 
+#[cfg(feature = "docgen")]
 fn delete_user_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Delete user plugin settings")
         .description("Deletes all user-scoped settings for the authenticated user.")
 }
 
-pub fn plugin_routes() -> ApiRouter {
-    ApiRouter::new()
+pub fn plugin_routes() -> Router {
+    Router::new()
+        .route("/", get(list_plugins))
+        .route("/settings", get(list_all_settings))
+        .route("/{plugin_id}/restart", post(restart_plugin))
+        .route("/{plugin_id}/settings", get(get_settings))
+        .route("/{plugin_id}/settings", patch(update_settings))
+        .route("/{plugin_id}/settings", delete(delete_settings))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn plugin_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::{
+        delete_with,
+        get_with,
+        patch_with,
+        post_with,
+    };
+
+    aide::axum::ApiRouter::new()
         .api_route("/", get_with(list_plugins, list_plugins_docs))
         .api_route(
             "/settings",
@@ -646,8 +683,23 @@ pub fn plugin_routes() -> ApiRouter {
         )
 }
 
-pub(super) fn me_plugin_settings_routes() -> ApiRouter {
-    ApiRouter::new()
+pub(super) fn me_plugin_settings_routes() -> Router {
+    Router::new()
+        .route("/settings", get(list_all_user_settings))
+        .route("/{plugin_id}/settings", get(get_user_settings))
+        .route("/{plugin_id}/settings", patch(update_user_settings))
+        .route("/{plugin_id}/settings", delete(delete_user_settings))
+}
+
+#[cfg(feature = "docgen")]
+pub(super) fn me_plugin_settings_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::{
+        delete_with,
+        get_with,
+        patch_with,
+    };
+
+    aide::axum::ApiRouter::new()
         .api_route(
             "/settings",
             get_with(list_all_user_settings, list_all_user_settings_docs),

@@ -19,6 +19,7 @@ pub(crate) mod chromaprint;
 pub(crate) mod covers;
 pub(crate) mod datastore;
 pub(crate) mod db;
+#[cfg(feature = "docgen")]
 pub(crate) mod docs;
 pub(crate) mod entities;
 pub(crate) mod entries;
@@ -46,11 +47,14 @@ pub(crate) mod tags;
 pub(crate) mod track_sources;
 pub(crate) mod tracks;
 pub(crate) mod users;
+#[cfg(feature = "docgen")]
 pub(crate) use surfaces::{
     lyra_doc_source_ids,
+    render_lyra_doc_source,
+};
+pub(crate) use surfaces::{
     module_scope_ids,
     module_specs,
-    render_lyra_doc_source,
 };
 
 pub(crate) fn set_owned_db_id_key(

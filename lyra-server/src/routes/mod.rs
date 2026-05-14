@@ -31,7 +31,6 @@ mod tracks;
 mod users;
 mod websocket;
 
-use schemars::JsonSchema;
 use serde::{
     Deserialize,
     Deserializer,
@@ -93,6 +92,9 @@ pub use users::{
 };
 pub(crate) use websocket::install as install_websocket;
 
+#[cfg(feature = "docgen")]
+pub(crate) use app::build_openapi_spec;
+
 const DEFAULT_PAGE_LIMIT: u64 = 100;
 pub(crate) const PAGE_HARD_LIMIT: u64 = 500;
 const PAGE_CURSOR_VERSION: u8 = 1;
@@ -101,12 +103,19 @@ const PAGE_CURSOR_BYTES_LEN: usize = 1 + PAGE_CURSOR_NONCE_LEN + size_of::<u64>(
 const PAGE_CURSOR_MAX_LEN: usize = 32;
 const PAGE_CURSOR_MASK_SEED: u64 = 0;
 
-#[derive(Clone, Deserialize, JsonSchema, Default)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Deserialize, Default)]
 pub(crate) struct PageQuery {
-    #[schemars(description = "Page size. Default 100, cap 500.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Page size. Default 100, cap 500.")
+    )]
     #[serde(default, deserialize_with = "deserialize_optional_u64")]
     limit: Option<u64>,
-    #[schemars(description = "Opaque cursor from the previous page's `next_cursor`.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Opaque cursor from the previous page's `next_cursor`.")
+    )]
     cursor: Option<String>,
 }
 

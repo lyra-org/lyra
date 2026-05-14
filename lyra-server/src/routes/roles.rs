@@ -8,13 +8,7 @@ use std::ops::{
     DerefMut,
 };
 
-use aide::axum::{
-    ApiRouter,
-    routing::{
-        get_with,
-        patch_with,
-    },
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::Json;
 use axum::extract::Path;
@@ -22,8 +16,14 @@ use axum::http::{
     HeaderMap,
     StatusCode,
 };
+use axum::{
+    Router,
+    routing::{
+        get,
+        patch,
+    },
+};
 use nanoid::nanoid;
-use schemars::JsonSchema;
 use serde::{
     Deserialize,
     Serialize,
@@ -43,7 +43,8 @@ use crate::{
     },
 };
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize)]
 struct RoleResponse {
     id: String,
     name: String,
@@ -51,19 +52,33 @@ struct RoleResponse {
     builtin: bool,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct RoleRequest {
-    #[schemars(description = "Role name. ASCII, no spaces.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Role name. ASCII, no spaces.")
+    )]
     name: String,
-    #[schemars(description = "Permissions granted to the role.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Permissions granted to the role.")
+    )]
     permissions: Vec<Permission>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct UpdateRoleDefinitionRequest {
-    #[schemars(description = "Updated role name. ASCII, no spaces.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Updated role name. ASCII, no spaces.")
+    )]
     name: Option<String>,
-    #[schemars(description = "Updated permission set for the role.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Updated permission set for the role.")
+    )]
     permissions: Option<Vec<Permission>>,
 }
 
@@ -306,11 +321,13 @@ async fn delete_role_definition(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[cfg(feature = "docgen")]
 fn list_roles_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List roles")
         .description("Returns all roles. Requires ManageRoles permission.")
 }
 
+#[cfg(feature = "docgen")]
 fn create_role_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create role").description(
         "Creates a custom role. Built-in role names are reserved. Creating admin-capable roles requires Admin permission.",
@@ -318,20 +335,37 @@ fn create_role_docs(op: TransformOperation) -> TransformOperation {
     .response::<201, Json<RoleResponse>>()
 }
 
+#[cfg(feature = "docgen")]
 fn update_role_definition_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update role").description(
         "Updates a custom role's name and/or permissions. Built-in roles are immutable. Editing admin-capable roles requires Admin permission.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn delete_role_definition_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Delete role").description(
         "Deletes a custom role when it is not assigned to any users. Built-in roles are immutable. Deleting admin-capable roles requires Admin permission.",
     ).response::<204, ()>()
 }
 
-pub fn role_routes() -> ApiRouter {
-    ApiRouter::new()
+pub fn role_routes() -> Router {
+    Router::new()
+        .route("/", get(list_roles).post(create_role))
+        .route(
+            "/{role_id}",
+            patch(update_role_definition).delete(delete_role_definition),
+        )
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn role_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::{
+        get_with,
+        patch_with,
+    };
+
+    aide::axum::ApiRouter::new()
         .api_route(
             "/",
             get_with(list_roles, list_roles_docs).post_with(create_role, create_role_docs),

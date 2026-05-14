@@ -3,15 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use aide::axum::{
-    ApiRouter,
-    routing::{
-        delete_with,
-        get_with,
-        patch_with,
-        post_with,
-    },
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
     Json,
@@ -24,11 +16,19 @@ use axum::{
         StatusCode,
     },
 };
+use axum::{
+    Router,
+    routing::{
+        delete,
+        get,
+        patch,
+        post,
+    },
+};
 use base64::{
     Engine,
     engine::general_purpose::URL_SAFE_NO_PAD,
 };
-use schemars::JsonSchema;
 use serde::{
     Deserialize,
     Serialize,
@@ -59,7 +59,8 @@ const DEFAULT_LIST_LIMIT: u64 = 100;
 const LIST_CURSOR_BASE64_LEN: usize = 22; // base64 of (i64, i64) = 16 bytes
 const TARGET_CURSOR_BASE64_LEN: usize = 11; // base64 of (i64) = 8 bytes
 
-#[derive(Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum TagColor {
     Red,
@@ -87,27 +88,42 @@ impl TagColor {
     }
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct CreateTagRequest {
-    #[schemars(description = "Tag name. Normalized server-side; see endpoint description.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Tag name. Normalized server-side; see endpoint description.")
+    )]
     tag: String,
-    #[schemars(
-        description = "Tag color. Used only on create; ignored on reuse (PATCH to recolor)."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Tag color. Used only on create; ignored on reuse (PATCH to recolor)."
+        )
     )]
     color: TagColor,
-    #[schemars(description = "Track, release, artist, or playlist ID to attach.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Track, release, artist, or playlist ID to attach.")
+    )]
     target_id: String,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct UpdateTagRequest {
-    #[schemars(description = "New tag name. Normalized server-side; returns 409 on collision.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "New tag name. Normalized server-side; returns 409 on collision.")
+    )]
     tag: Option<String>,
-    #[schemars(description = "New tag color.")]
+    #[cfg_attr(feature = "docgen", schemars(description = "New tag color."))]
     color: Option<TagColor>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct TagResponse {
     id: String,
     tag: String,
@@ -124,31 +140,50 @@ fn tag_to_response(tag: db::Tag) -> TagResponse {
     }
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct ListQuery {
-    #[schemars(description = "Page size. Default 100, cap 500.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Page size. Default 100, cap 500.")
+    )]
     limit: Option<u64>,
-    #[schemars(description = "Opaque cursor from the previous page's `next_cursor`.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Opaque cursor from the previous page's `next_cursor`.")
+    )]
     cursor: Option<String>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct TagListResponse {
     items: Vec<TagResponse>,
-    #[schemars(description = "Opaque cursor; `null` on the last page. Sole termination signal.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Opaque cursor; `null` on the last page. Sole termination signal.")
+    )]
     next_cursor: Option<String>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct TargetListResponse {
     target_ids: Vec<String>,
-    #[schemars(description = "Opaque cursor; `null` on the last page. Sole termination signal.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Opaque cursor; `null` on the last page. Sole termination signal.")
+    )]
     next_cursor: Option<String>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct TargetStateResponse {
-    #[schemars(description = "Whether this target is attached to the tag.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Whether this target is attached to the tag.")
+    )]
     tagged: bool,
 }
 
@@ -401,6 +436,7 @@ async fn delete_tag_target(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[cfg(feature = "docgen")]
 fn create_tag_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Attach tag to target")
         .description(
@@ -415,6 +451,7 @@ fn create_tag_docs(op: TransformOperation) -> TransformOperation {
         .response::<204, ()>()
 }
 
+#[cfg(feature = "docgen")]
 fn list_tags_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tags").description(
         "Returns the authenticated user's tags, paginated by creation time descending with \
@@ -423,11 +460,13 @@ fn list_tags_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
+#[cfg(feature = "docgen")]
 fn get_tag_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get tag")
         .description("Returns one of the authenticated user's tags. Returns 404 if not found or owned by another user.")
 }
 
+#[cfg(feature = "docgen")]
 fn list_tag_targets_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tag targets").description(
         "Returns paginated public target IDs in a stable cursor order. Non-visible targets are \
@@ -436,6 +475,7 @@ fn list_tag_targets_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
+#[cfg(feature = "docgen")]
 fn get_tag_target_state_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Check tag target state").description(
         "Returns `{ tagged: bool }`. Returns `false` for missing, unsupported, or \
@@ -443,15 +483,18 @@ fn get_tag_target_state_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
+#[cfg(feature = "docgen")]
 fn update_tag_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update tag")
         .description("Renames and/or recolors one of the authenticated user's tags. Request body: `{tag?, color?}`; at least one field is required. Returns 409 on rename collisions.")
 }
 
+#[cfg(feature = "docgen")]
 fn delete_tag_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Delete tag").response::<204, ()>()
 }
 
+#[cfg(feature = "docgen")]
 fn delete_tag_target_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Detach tag from target")
         .description(
@@ -462,8 +505,28 @@ fn delete_tag_target_docs(op: TransformOperation) -> TransformOperation {
         .response::<204, ()>()
 }
 
-pub fn tag_routes() -> ApiRouter {
-    ApiRouter::new()
+pub fn tag_routes() -> Router {
+    Router::new()
+        .route("/", post(create_tag))
+        .route("/", get(list_tags))
+        .route("/{id}", get(get_tag))
+        .route("/{id}", patch(update_tag))
+        .route("/{id}", delete(delete_tag))
+        .route("/{id}/targets", get(list_tag_targets))
+        .route("/{id}/targets/{target_id}", get(get_tag_target_state))
+        .route("/{id}/targets/{target_id}", delete(delete_tag_target))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn tag_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::{
+        delete_with,
+        get_with,
+        patch_with,
+        post_with,
+    };
+
+    aide::axum::ApiRouter::new()
         .api_route("/", post_with(create_tag, create_tag_docs))
         .api_route("/", get_with(list_tags, list_tags_docs))
         .api_route("/{id}", get_with(get_tag, get_tag_docs))

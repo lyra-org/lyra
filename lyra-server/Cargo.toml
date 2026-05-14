@@ -9,6 +9,13 @@ license-file = "../LICENSE"
 name = "lyra"
 path = "src/main.rs"
 
+[features]
+docgen = [
+	"dep:aide",
+	"dep:asyncapi-rust",
+	"dep:schemars",
+]
+
 [dependencies]
 harmony-core = { path = "../harmony-core" }
 harmony-crypt = { path = "../harmony-crypt" }
@@ -36,7 +43,7 @@ blurhash = "0.2.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-schemars = { version = "1.2.1", features = ["derive"] }
+schemars = { version = "1.2.1", features = ["derive"], optional = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal"] }
 tokio-stream = { version = "0.1", default-features = false }
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
@@ -52,8 +59,8 @@ walkdir = "2"
 # async-ffmpeg-sidecar = "0.0"
 blake3 = { workspace = true }
 xxh3 = { workspace = true }
-aide = { version = "0.16.0-alpha.2", features = ["axum", "axum-json", "axum-query"] }
-asyncapi-rust = "0.2.0"
+aide = { version = "0.16.0-alpha.2", features = ["axum", "axum-json", "axum-query"], optional = true }
+asyncapi-rust = { version = "0.2.0", optional = true }
 lofty = "=0.24.0"
 lyra-chromaprint = { path = "../lyra-chromaprint" }
 lyra-ffmpeg = { path = "../lyra-ffmpeg" }

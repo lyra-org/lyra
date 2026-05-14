@@ -17,7 +17,6 @@ use agdb::{
 
 use super::super::DbAccess;
 use nanoid::nanoid;
-use schemars::JsonSchema;
 use serde::{
     Deserialize,
     Serialize,
@@ -25,7 +24,8 @@ use serde::{
 
 use super::super::NodeId;
 
-#[derive(DbElement, Serialize, Clone, Debug, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(DbElement, Serialize, Clone, Debug)]
 pub(crate) struct ExternalId {
     #[serde(skip)]
     pub(crate) db_id: Option<NodeId>,
@@ -36,7 +36,8 @@ pub(crate) struct ExternalId {
     pub(crate) source: IdSource,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, DbTypeMarker)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, DbTypeMarker)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum IdSource {
     Plugin,

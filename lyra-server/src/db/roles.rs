@@ -14,15 +14,13 @@ use agdb::{
     QueryBuilder,
 };
 use nanoid::nanoid;
-use schemars::JsonSchema;
 use serde::{
     Deserialize,
     Serialize,
 };
 
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, DbTypeMarker,
-)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, DbTypeMarker)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Permission {
     Admin,

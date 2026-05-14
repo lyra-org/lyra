@@ -8,15 +8,7 @@ use std::ops::{
     DerefMut,
 };
 
-use aide::axum::{
-    ApiRouter,
-    routing::{
-        delete_with,
-        get_with,
-        post_with,
-        put_with,
-    },
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use argon2::{
     Argon2,
@@ -41,8 +33,16 @@ use axum::http::{
         USER_AGENT,
     },
 };
+use axum::{
+    Router,
+    routing::{
+        delete,
+        get,
+        post,
+        put,
+    },
+};
 use nanoid::nanoid;
-use schemars::JsonSchema;
 use serde::{
     Deserialize,
     Serialize,
@@ -78,61 +78,95 @@ use crate::{
     },
 };
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct LoginResponse {
     token: String,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize)]
 struct ApiKeyResponse {
     id: String,
     name: String,
-    #[schemars(description = "API key creation time as an RFC3339 timestamp.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "API key creation time as an RFC3339 timestamp.")
+    )]
     created_at: String,
-    #[schemars(description = "Most recent API key use time as an RFC3339 timestamp.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Most recent API key use time as an RFC3339 timestamp.")
+    )]
     last_used_at: Option<String>,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize)]
 struct CreatedApiKeyResponse {
     id: String,
     name: String,
     key: String,
-    #[schemars(description = "API key creation time as an RFC3339 timestamp.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "API key creation time as an RFC3339 timestamp.")
+    )]
     created_at: String,
-    #[schemars(description = "Most recent API key use time as an RFC3339 timestamp.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Most recent API key use time as an RFC3339 timestamp.")
+    )]
     last_used_at: Option<String>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct UserRequest {
-    #[schemars(description = "ASCII username, minimum 3 characters.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "ASCII username, minimum 3 characters.")
+    )]
     username: String,
-    #[schemars(description = "ASCII password, minimum 8 characters.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "ASCII password, minimum 8 characters.")
+    )]
     password: String,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct LoginRequest {
-    #[schemars(description = "ASCII username, minimum 3 characters.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "ASCII username, minimum 3 characters.")
+    )]
     username: String,
-    #[schemars(description = "ASCII password, minimum 8 characters.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "ASCII password, minimum 8 characters.")
+    )]
     password: String,
-    #[schemars(
-        description = "Optional human-readable client label stored with the session (e.g. \"Lyra Desktop 1.2\")."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional human-readable client label stored with the session (e.g. \"Lyra Desktop 1.2\")."
+        )
     )]
     #[serde(default)]
     client_name: Option<String>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct PublicUser {
     id: String,
     username: String,
     role: Option<String>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct MeResponse {
     id: String,
     username: String,
@@ -141,35 +175,55 @@ struct MeResponse {
     permissions: Option<Vec<Permission>>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct UpdatePasswordRequest {
-    #[schemars(description = "New password, minimum 8 ASCII characters.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "New password, minimum 8 ASCII characters.")
+    )]
     password: String,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct UpdateRoleRequest {
-    #[schemars(description = "Role name to assign.")]
+    #[cfg_attr(feature = "docgen", schemars(description = "Role name to assign."))]
     role: String,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct UpdateMeRequest {
-    #[schemars(description = "Current password, required when changing password.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Current password, required when changing password.")
+    )]
     current_password: Option<String>,
-    #[schemars(description = "New password, minimum 8 ASCII characters.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "New password, minimum 8 ASCII characters.")
+    )]
     new_password: Option<String>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct CreateApiKeyRequest {
-    #[schemars(description = "Human-readable API key name.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Human-readable API key name.")
+    )]
     name: String,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct MeQuery {
-    #[schemars(description = "Comma-separated or repeated values: permissions.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Comma-separated or repeated values: permissions.")
+    )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     inc: Option<Vec<String>>,
 }
@@ -638,6 +692,7 @@ async fn delete_api_key(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[cfg(feature = "docgen")]
 fn create_user_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create user")
         .description(
@@ -648,11 +703,13 @@ fn create_user_docs(op: TransformOperation) -> TransformOperation {
         .response::<201, Json<PublicUser>>()
 }
 
+#[cfg(feature = "docgen")]
 fn list_users_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List users")
         .description("Returns all users. Requires ManageUsers permission.")
 }
 
+#[cfg(feature = "docgen")]
 fn delete_user_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Delete user")
         .description(
@@ -662,6 +719,7 @@ fn delete_user_docs(op: TransformOperation) -> TransformOperation {
         .response::<204, ()>()
 }
 
+#[cfg(feature = "docgen")]
 fn update_password_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update user password")
         .description(
@@ -671,6 +729,7 @@ fn update_password_docs(op: TransformOperation) -> TransformOperation {
         .response::<204, ()>()
 }
 
+#[cfg(feature = "docgen")]
 fn update_role_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update user role")
         .description(
@@ -680,6 +739,7 @@ fn update_role_docs(op: TransformOperation) -> TransformOperation {
         .response::<204, ()>()
 }
 
+#[cfg(feature = "docgen")]
 fn update_me_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update current user")
         .description(
@@ -689,23 +749,27 @@ fn update_me_docs(op: TransformOperation) -> TransformOperation {
         .response::<204, ()>()
 }
 
+#[cfg(feature = "docgen")]
 fn get_me_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get current user").description(
         "Returns the authenticated user's account information. Use `inc=permissions` to include the resolved effective permissions.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn login_user_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Login user")
         .description("Validates credentials and returns a session token.")
 }
 
+#[cfg(feature = "docgen")]
 fn logout_user_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Logout user")
         .description("Revokes the current bearer session token when it is a session token.")
         .response::<204, ()>()
 }
 
+#[cfg(feature = "docgen")]
 fn create_api_key_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create API key")
         .description(
@@ -714,19 +778,40 @@ fn create_api_key_docs(op: TransformOperation) -> TransformOperation {
         .response::<201, Json<CreatedApiKeyResponse>>()
 }
 
+#[cfg(feature = "docgen")]
 fn list_api_keys_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List API keys")
         .description("Returns metadata for the authenticated user's API keys.")
 }
 
+#[cfg(feature = "docgen")]
 fn delete_api_key_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Delete API key")
         .description("Deletes one of the authenticated user's API keys.")
         .response::<204, ()>()
 }
 
-pub fn user_routes() -> ApiRouter {
-    ApiRouter::new()
+pub fn user_routes() -> Router {
+    Router::new()
+        .route("/", post(create_user))
+        .route("/", get(list_users))
+        .route("/{user_id}", delete(delete_user))
+        .route("/{user_id}/password", put(update_password))
+        .route("/{user_id}/role", put(update_role))
+        .route("/login", post(login_user))
+        .route("/logout", post(logout_user))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn user_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::{
+        delete_with,
+        get_with,
+        post_with,
+        put_with,
+    };
+
+    aide::axum::ApiRouter::new()
         .api_route("/", post_with(create_user, create_user_docs))
         .api_route("/", get_with(list_users, list_users_docs))
         .api_route("/{user_id}", delete_with(delete_user, delete_user_docs))
@@ -739,8 +824,23 @@ pub fn user_routes() -> ApiRouter {
         .api_route("/logout", post_with(logout_user, logout_user_docs))
 }
 
-pub fn me_routes() -> ApiRouter {
-    ApiRouter::new()
+pub fn me_routes() -> Router {
+    Router::new()
+        .route("/", get(get_me).patch(update_me))
+        .route("/api-keys", get(list_api_keys).post(create_api_key))
+        .route("/api-keys/{api_key_id}", delete(delete_api_key))
+        .route("/listens", get(super::listens::get_me_listens))
+        .nest("/plugins", super::plugins::me_plugin_settings_routes())
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn me_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::{
+        delete_with,
+        get_with,
+    };
+
+    aide::axum::ApiRouter::new()
         .api_route(
             "/",
             get_with(get_me, get_me_docs).patch_with(update_me, update_me_docs),
@@ -761,7 +861,10 @@ pub fn me_routes() -> ApiRouter {
                 super::listens::get_me_listens_docs,
             ),
         )
-        .nest("/plugins", super::plugins::me_plugin_settings_routes())
+        .nest(
+            "/plugins",
+            super::plugins::me_plugin_settings_openapi_routes(),
+        )
 }
 
 #[cfg(test)]

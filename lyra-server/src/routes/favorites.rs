@@ -3,15 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use aide::axum::{
-    ApiRouter,
-    routing::{
-        delete_with,
-        get_with,
-        post_with,
-        put_with,
-    },
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
     Json,
@@ -24,11 +16,19 @@ use axum::{
         StatusCode,
     },
 };
+use axum::{
+    Router,
+    routing::{
+        delete,
+        get,
+        post,
+        put,
+    },
+};
 use base64::{
     Engine,
     engine::general_purpose::URL_SAFE_NO_PAD,
 };
-use schemars::JsonSchema;
 use serde::{
     Deserialize,
     Serialize,
@@ -52,7 +52,8 @@ use crate::{
 const DEFAULT_LIST_LIMIT: u64 = 100;
 const CHECK_HARD_CAP: usize = 500;
 
-#[derive(Clone, Copy, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum EntityParam {
     Track,
@@ -72,48 +73,76 @@ impl From<EntityParam> for FavoriteKind {
     }
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct FavoriteStateResponseQuery {}
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct FavoriteStateResponse {
-    #[schemars(description = "Whether this target is favorited by the authenticated user.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Whether this target is favorited by the authenticated user.")
+    )]
     favorited: bool,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct CheckRequest {
-    #[schemars(description = "Target IDs to check. Maximum 500.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Target IDs to check. Maximum 500.")
+    )]
     target_ids: Vec<String>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct CheckResponse {
-    #[schemars(
-        description = "Dense `{ [id]: bool }`. Missing and non-visible IDs map to `false`; \
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Dense `{ [id]: bool }`. Missing and non-visible IDs map to `false`; \
                        validate client-side if you need to distinguish typos."
+        )
     )]
     favorited: HashMap<String, bool>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct ListQuery {
-    #[schemars(description = "Entity kind to filter on. Required.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Entity kind to filter on. Required.")
+    )]
     entity: EntityParam,
-    #[schemars(description = "Page size. Default 100, cap 500.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Page size. Default 100, cap 500.")
+    )]
     limit: Option<u64>,
-    #[schemars(description = "Opaque cursor from the previous page's `next_cursor`.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Opaque cursor from the previous page's `next_cursor`.")
+    )]
     cursor: Option<String>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct ListResponse {
     items: Vec<FavoriteItem>,
-    #[schemars(description = "Opaque cursor; `null` on the last page. Sole termination signal.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Opaque cursor; `null` on the last page. Sole termination signal.")
+    )]
     next_cursor: Option<String>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct FavoriteItem {
     target_id: String,
     entity: String,
@@ -274,6 +303,7 @@ fn decode_cursor(raw: &str) -> Result<Cursor, AppError> {
     })
 }
 
+#[cfg(feature = "docgen")]
 fn put_favorite_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Mark a target as favorited")
         .description(
@@ -286,6 +316,7 @@ fn put_favorite_docs(op: TransformOperation) -> TransformOperation {
         .response::<204, ()>()
 }
 
+#[cfg(feature = "docgen")]
 fn delete_favorite_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Unmark a target as favorited")
         .description(
@@ -296,6 +327,7 @@ fn delete_favorite_docs(op: TransformOperation) -> TransformOperation {
         .response::<204, ()>()
 }
 
+#[cfg(feature = "docgen")]
 fn get_favorite_state_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Check target favorite state").description(
         "Returns `{ favorited: bool }`. Returns `false` for missing, unsupported, or \
@@ -303,6 +335,7 @@ fn get_favorite_state_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
+#[cfg(feature = "docgen")]
 fn check_favorites_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Check target favorite states").description(
         "Checks up to 500 target IDs and returns `{ [id]: bool }`. Missing, unsupported, and \
@@ -311,6 +344,7 @@ fn check_favorites_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
+#[cfg(feature = "docgen")]
 fn list_favorites_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List favorites").description(
         "Returns favorites for one entity kind, paginated by creation time descending \
@@ -319,14 +353,30 @@ fn list_favorites_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
-pub fn favorite_routes() -> ApiRouter {
-    ApiRouter::new()
+pub fn favorite_routes() -> Router {
+    Router::new()
+        .route("/", get(list_favorites))
+        .route("/check", post(check_favorites))
+        .route("/{target_id}", put(put_favorite))
+        .route("/{target_id}", delete(delete_favorite))
+        .route("/{target_id}", get(get_favorite_state))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn favorite_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::{
+        get_with,
+        post_with,
+        put_with,
+    };
+
+    aide::axum::ApiRouter::new()
         .api_route("/", get_with(list_favorites, list_favorites_docs))
         .api_route("/check", post_with(check_favorites, check_favorites_docs))
         .api_route("/{target_id}", put_with(put_favorite, put_favorite_docs))
         .api_route(
             "/{target_id}",
-            delete_with(delete_favorite, delete_favorite_docs),
+            aide::axum::routing::delete_with(delete_favorite, delete_favorite_docs),
         )
         .api_route(
             "/{target_id}",

@@ -3,17 +3,17 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use aide::axum::{
-    ApiRouter,
-    routing::get_with,
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
     Json,
     extract::Path,
     http::HeaderMap,
 };
-use schemars::JsonSchema;
+use axum::{
+    Router,
+    routing::get,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -33,7 +33,8 @@ use crate::{
     services::auth::require_authenticated,
 };
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct GenreResponse {
     id: String,
     name: String,
@@ -43,15 +44,20 @@ struct GenreResponse {
     children: Option<Vec<GenreSummary>>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct GenreSummary {
     id: String,
     name: String,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct GenreQuery {
-    #[schemars(description = "Comma-separated or repeated values: parents, children.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Comma-separated or repeated values: parents, children.")
+    )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     inc: Option<Vec<String>>,
 }
@@ -147,17 +153,28 @@ async fn get_genre(
     }))
 }
 
+#[cfg(feature = "docgen")]
 fn list_genres_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List genres").description("Returns all genres.")
 }
 
+#[cfg(feature = "docgen")]
 fn get_genre_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get genre by ID")
         .description("Returns a single genre. Use `inc=parents,children` to include hierarchy.")
 }
 
-pub fn genre_routes() -> ApiRouter {
-    ApiRouter::new()
+pub fn genre_routes() -> Router {
+    Router::new()
+        .route("/", get(list_genres))
+        .route("/{id}", get(get_genre))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn genre_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::get_with;
+
+    aide::axum::ApiRouter::new()
         .api_route("/", get_with(list_genres, list_genres_docs))
         .api_route("/{id}", get_with(get_genre, get_genre_docs))
 }

@@ -21,7 +21,6 @@ use agdb::{
     QueryId,
 };
 use anyhow::anyhow;
-use schemars::JsonSchema;
 use serde::{
     Deserialize,
     Serialize,
@@ -30,18 +29,9 @@ use serde::{
 use super::NodeId;
 
 #[harmony_macros::userdata(name = "ArtistType")]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    Hash,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    DbTypeMarker,
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, DbTypeMarker,
 )]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum ArtistType {
@@ -115,7 +105,8 @@ use super::{
     compare_option,
 };
 
-#[derive(DbElement, Serialize, Deserialize, Clone, Debug, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(DbElement, Serialize, Deserialize, Clone, Debug)]
 pub(crate) struct Artist {
     pub(crate) db_id: Option<NodeId>,
     pub(crate) id: String,

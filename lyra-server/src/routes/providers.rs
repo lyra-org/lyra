@@ -5,8 +5,9 @@
 
 use std::collections::HashMap;
 
-use aide::axum::ApiRouter;
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
+use axum::Router;
 use axum::{
     Json,
     extract::{
@@ -15,7 +16,6 @@ use axum::{
     },
     http::HeaderMap,
 };
-use schemars::JsonSchema;
 use serde::{
     Deserialize,
     Serialize,
@@ -57,7 +57,8 @@ use crate::{
     },
 };
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 #[non_exhaustive]
 pub struct OptionResponse {
     pub name: String,
@@ -70,7 +71,8 @@ pub struct OptionResponse {
     pub unavailable_reason: Option<String>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 #[non_exhaustive]
 pub struct ProviderResponse {
     pub provider_id: String,
@@ -91,7 +93,8 @@ impl From<EntityExternalIdRecord> for ExternalIdResponse {
     }
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 #[serde(tag = "entity_type", rename_all = "lowercase")]
 pub enum SearchResult {
     #[serde(rename = "release")]
@@ -102,7 +105,8 @@ pub enum SearchResult {
     Track(TrackSearchResult),
 }
 
-#[derive(Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchEntityType {
     Release,
@@ -120,7 +124,8 @@ impl From<SearchEntityType> for EntityType {
     }
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 #[non_exhaustive]
 pub struct ReleaseSearchResult {
     pub title: String,
@@ -128,7 +133,10 @@ pub struct ReleaseSearchResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artist_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(description = "Release date as YYYY, YYYY-MM, or YYYY-MM-DD.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Release date as YYYY, YYYY-MM, or YYYY-MM-DD.")
+    )]
     pub release_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub genres: Option<Vec<String>>,
@@ -146,7 +154,8 @@ pub struct ReleaseSearchResult {
     pub raw: Value,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub struct TrackSearchResult {
     pub title: String,
     pub redirect_url: String,
@@ -175,7 +184,8 @@ pub struct TrackSearchResult {
     pub raw: Value,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 #[non_exhaustive]
 pub struct ArtistSearchResult {
     pub title: String,
@@ -263,34 +273,44 @@ impl From<NormalizedProviderTrackSearchResult> for TrackSearchResult {
     }
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 #[non_exhaustive]
 pub struct SearchQuery {
     #[serde(rename = "type")]
     pub entity_type: SearchEntityType,
     pub q: String,
     #[serde(default)]
-    #[schemars(
-        description = "Resolve provider cover URLs for release or artist search results using provider cover handlers."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Resolve provider cover URLs for release or artist search results using provider cover handlers."
+        )
     )]
     pub include_cover_urls: bool,
     #[serde(default)]
-    #[schemars(description = "Bypass cached provider cover resolution and refresh it.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Bypass cached provider cover resolution and refresh it.")
+    )]
     pub force_refresh: bool,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 pub struct UpdatePriorityRequest {
     pub priority: u32,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 #[non_exhaustive]
 pub struct SetExternalIdRequest {
     pub id_value: String,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 #[non_exhaustive]
 pub struct ExternalIdResponse {
     pub provider_id: String,
@@ -526,7 +546,8 @@ async fn unlock_entity(
     Ok(Json(serde_json::json!({ "locked": false })))
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 #[non_exhaustive]
 pub struct RefreshResponse {
     pub refreshed: bool,
@@ -534,18 +555,25 @@ pub struct RefreshResponse {
     pub providers_called: Vec<String>,
 }
 
-#[derive(Deserialize, JsonSchema, Default)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize, Default)]
 pub struct RefreshEntityQuery {
     #[serde(default)]
-    #[schemars(
-        description = "Replace existing cover image with provider results for release or artist entity refresh."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Replace existing cover image with provider results for release or artist entity refresh."
+        )
     )]
     pub replace_cover: bool,
     #[serde(default)]
-    #[schemars(description = "Bypass cached provider cover resolution and refresh it.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Bypass cached provider cover resolution and refresh it.")
+    )]
     pub force_refresh: bool,
     #[serde(flatten)]
-    #[schemars(skip)]
+    #[cfg_attr(feature = "docgen", schemars(skip))]
     pub extra: HashMap<String, String>,
 }
 
@@ -576,12 +604,14 @@ async fn refresh_entity(
     }))
 }
 
+#[cfg(feature = "docgen")]
 fn list_providers_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List providers").description(
         "Returns all registered metadata providers with their priorities and option availability. Requires ManageMetadata permission.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn search_provider_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Search provider").description(
         "Invokes a provider's search handler for a given entity type and query.\n\n\
@@ -591,34 +621,40 @@ fn search_provider_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
+#[cfg(feature = "docgen")]
 fn update_priority_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update provider priority").description(
         "Updates the priority of a metadata provider. Higher priority providers take precedence. Requires ManageProviders permission.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn get_external_ids_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get entity external IDs").description(
         "Returns all external IDs associated with an entity. Requires ManageMetadata permission.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn set_external_id_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Set entity external ID").description(
         "Creates or replaces one external ID on an entity, keyed by `provider_id` and `id_type` in the path. User-set IDs take priority over plugin-set IDs. Requires ManageMetadata permission.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn lock_entity_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Lock entity")
         .description("Locks an entity to prevent automatic metadata updates from providers. Requires ManageMetadata permission.")
 }
 
+#[cfg(feature = "docgen")]
 fn unlock_entity_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Unlock entity")
         .description("Unlocks an entity to allow automatic metadata updates from providers. Requires ManageMetadata permission.")
 }
 
+#[cfg(feature = "docgen")]
 fn refresh_entity_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Refresh entity metadata").description(
         "Triggers a metadata refresh for an entity from all enabled providers.\n\n\
@@ -627,7 +663,8 @@ fn refresh_entity_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub struct SyncResponse {
     pub started: bool,
     pub provider_id: String,
@@ -647,20 +684,36 @@ async fn sync_provider(
     }))
 }
 
+#[cfg(feature = "docgen")]
 fn sync_provider_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Sync provider").description(
         "Triggers a full sync for a provider. Requires SyncMetadata permission. Returns 409 if a sync is already running.",
     )
 }
 
-pub fn provider_routes() -> ApiRouter {
+pub fn provider_routes() -> Router {
+    use axum::routing::{
+        get,
+        post,
+        put,
+    };
+
+    Router::new()
+        .route("/", get(list_providers))
+        .route("/{id}/search", post(search_provider))
+        .route("/{id}/priority", put(update_provider_priority))
+        .route("/{id}/sync", post(sync_provider))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn provider_openapi_routes() -> aide::axum::ApiRouter {
     use aide::axum::routing::{
         get_with,
         post_with,
         put_with,
     };
 
-    ApiRouter::new()
+    aide::axum::ApiRouter::new()
         .api_route("/", get_with(list_providers, list_providers_docs))
         .api_route(
             "/{id}/search",
@@ -673,7 +726,27 @@ pub fn provider_routes() -> ApiRouter {
         .api_route("/{id}/sync", post_with(sync_provider, sync_provider_docs))
 }
 
-pub fn entity_routes() -> ApiRouter {
+pub fn entity_routes() -> Router {
+    use axum::routing::{
+        delete,
+        get,
+        post,
+        put,
+    };
+
+    Router::new()
+        .route("/{id}/external-ids", get(get_entity_external_ids))
+        .route(
+            "/{id}/external-ids/{provider_id}/{id_type}",
+            put(set_entity_external_id),
+        )
+        .route("/{id}/lock", put(lock_entity))
+        .route("/{id}/lock", delete(unlock_entity))
+        .route("/{id}/refresh", post(refresh_entity))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn entity_openapi_routes() -> aide::axum::ApiRouter {
     use aide::axum::routing::{
         delete_with,
         get_with,
@@ -681,7 +754,7 @@ pub fn entity_routes() -> ApiRouter {
         put_with,
     };
 
-    ApiRouter::new()
+    aide::axum::ApiRouter::new()
         .api_route(
             "/{id}/external-ids",
             get_with(get_entity_external_ids, get_external_ids_docs),

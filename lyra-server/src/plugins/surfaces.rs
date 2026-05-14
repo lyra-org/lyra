@@ -8,6 +8,7 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(feature = "docgen")]
 use anyhow::Result;
 use harmony_core::ModuleSpec;
 
@@ -42,26 +43,33 @@ use crate::plugins::{
     users,
 };
 
+#[cfg(feature = "docgen")]
 type RenderDocsFn = fn() -> Result<String>;
 
 struct Surface {
+    #[cfg(feature = "docgen")]
     id: &'static str,
+    #[cfg(feature = "docgen")]
     render_docs: RenderDocsFn,
 }
 
 macro_rules! surface {
     ($id:literal, $module:path, $render:path) => {
         Surface {
+            #[cfg(feature = "docgen")]
             id: $id,
+            #[cfg(feature = "docgen")]
             render_docs: || $render().map_err(anyhow::Error::from),
         }
     };
 }
 
+#[cfg(feature = "docgen")]
 pub(crate) fn lyra_doc_source_ids() -> impl Iterator<Item = &'static str> {
     surfaces().iter().map(|surface| surface.id)
 }
 
+#[cfg(feature = "docgen")]
 pub(crate) fn render_lyra_doc_source(id: &str) -> Result<Option<String>> {
     surfaces()
         .iter()
@@ -116,6 +124,7 @@ pub(crate) fn module_scope_ids() -> HashSet<Arc<str>> {
         .collect()
 }
 
+#[cfg(feature = "docgen")]
 fn surfaces() -> &'static [Surface] {
     &[
         surface!(

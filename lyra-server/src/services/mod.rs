@@ -5,11 +5,11 @@
 
 use std::fmt;
 
-use schemars::JsonSchema;
 use serde::Serialize;
 
 #[harmony_macros::userdata(name = "EntityType")]
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, JsonSchema, Serialize)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum EntityType {
     Release,

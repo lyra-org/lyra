@@ -11,6 +11,7 @@ members = [
 	"lyra-ffmpeg",
 	"lyra-harmony-test",
 	"lyra-metadata",
+	"lyra-docs",
 	"lyra-server",
 	"harmony-task",
 	"harmony-net",

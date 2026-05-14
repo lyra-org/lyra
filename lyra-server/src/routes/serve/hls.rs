@@ -3,11 +3,12 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use aide::axum::{
-    ApiRouter,
-    routing::get_with,
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
+use axum::{
+    Router,
+    routing::get,
+};
 use axum::{
     body::Body,
     extract::{
@@ -20,7 +21,6 @@ use axum::{
         header,
     },
 };
-use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
     fmt::Write as _,
@@ -73,29 +73,51 @@ const HLS_PLAYLIST_VERSION_MPEGTS: u32 = 6;
 const HLS_PLAYLIST_VERSION_FMP4: u32 = 7;
 const HLS_DURATION_MISMATCH_WARN_THRESHOLD_MS: u64 = 10;
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct HlsQuery {
-    #[schemars(
-        description = "Scoped media token returned by `POST /api/tracks/{id}/playback-url`."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Scoped media token returned by `POST /api/tracks/{id}/playback-url`."
+        )
     )]
     media_token: Option<String>,
-    #[schemars(
-        description = "Optional ordered HLS audio codec preferences (for example: copy,aac or aac,flac)."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional ordered HLS audio codec preferences (for example: copy,aac or aac,flac)."
+        )
     )]
     codec: Option<String>,
-    #[schemars(
-        description = "Target bitrate cap in bits per second. Applied for lossy outputs when below the source bitrate; ignored for lossless codecs or when above source."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Target bitrate cap in bits per second. Applied for lossy outputs when below the source bitrate; ignored for lossless codecs or when above source."
+        )
     )]
     bitrate_bps: Option<u32>,
-    #[schemars(description = "Target sample rate in Hz. Triggers transcoding when supplied.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Target sample rate in Hz. Triggers transcoding when supplied.")
+    )]
     sample_rate_hz: Option<u32>,
-    #[schemars(description = "Target channel count. Triggers transcoding when supplied.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Target channel count. Triggers transcoding when supplied.")
+    )]
     channels: Option<u32>,
-    #[schemars(
-        description = "Prefer VBR for lossy HLS transcodes when the selected encoder supports it."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Prefer VBR for lossy HLS transcodes when the selected encoder supports it."
+        )
     )]
     prefer_vbr: Option<bool>,
-    #[schemars(description = "Per-request playback start offset in milliseconds.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Per-request playback start offset in milliseconds.")
+    )]
     start_offset_ms: Option<u64>,
 }
 
@@ -553,6 +575,7 @@ async fn get_hls_segment(
     .await
 }
 
+#[cfg(feature = "docgen")]
 fn hls_playlist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create HLS playlist")
         .description(
@@ -560,14 +583,24 @@ fn hls_playlist_docs(op: TransformOperation) -> TransformOperation {
         )
 }
 
+#[cfg(feature = "docgen")]
 fn hls_segment_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get HLS segment").description(
         "Serves a public HLS segment generated from `/api/stream/{track_id}/hls.m3u8`.",
     )
 }
 
-pub(crate) fn hls_routes() -> ApiRouter {
-    ApiRouter::new()
+pub(crate) fn hls_routes() -> Router {
+    Router::new()
+        .route("/{track_id}/hls.m3u8", get(get_hls_playlist))
+        .route("/hls/{session_id}/{segment}", get(get_hls_segment))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn hls_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::get_with;
+
+    aide::axum::ApiRouter::new()
         .api_route(
             "/{track_id}/hls.m3u8",
             get_with(get_hls_playlist, hls_playlist_docs),

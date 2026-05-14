@@ -121,25 +121,15 @@ async fn ws_upgrade(
         }))
 }
 
-async fn asyncapi_spec() -> axum::Json<asyncapi_rust::AsyncApiSpec> {
-    use crate::services::remote::messages::WsApiSpec;
-    axum::Json(WsApiSpec::asyncapi_spec())
-}
-
 fn ws_route() -> Router {
-    Router::new()
-        .route("/ws", get(ws_upgrade))
-        .route("/api/asyncapi.json", get(asyncapi_spec))
+    Router::new().route("/ws", get(ws_upgrade))
 }
 
 pub(crate) fn install(app: Router) -> (Router, HashSet<route_registry::RouteKey>) {
     let app = app.merge(ws_route());
-    let reserved: HashSet<route_registry::RouteKey> = [
-        route_registry::RouteKey::new("GET", "/ws").expect("core ws route key"),
-        route_registry::RouteKey::new("GET", "/api/asyncapi.json")
-            .expect("core asyncapi route key"),
-    ]
-    .into_iter()
-    .collect();
+    let reserved: HashSet<route_registry::RouteKey> =
+        [route_registry::RouteKey::new("GET", "/ws").expect("core ws route key")]
+            .into_iter()
+            .collect();
     (app, reserved)
 }
