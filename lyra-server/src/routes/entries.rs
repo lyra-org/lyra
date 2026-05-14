@@ -3,10 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use aide::axum::{
-    ApiRouter,
-    routing::get_with,
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
     Json,
@@ -16,7 +13,10 @@ use axum::{
     },
     http::HeaderMap,
 };
-use schemars::JsonSchema;
+use axum::{
+    Router,
+    routing::get,
+};
 use serde::Deserialize;
 
 use crate::{
@@ -45,9 +45,13 @@ use crate::{
     },
 };
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct EntryQuery {
-    #[schemars(description = "Comma-separated or repeated values: tracks, releases, artists.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Comma-separated or repeated values: tracks, releases, artists.")
+    )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     inc: Option<Vec<String>>,
 }
@@ -137,20 +141,31 @@ async fn get_entry(
     )?))
 }
 
+#[cfg(feature = "docgen")]
 fn list_entries_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List entries").description(
         "Returns entries. `full_path` is included only for authenticated users with ManageLibraries permission. Use `inc` to include tracks, releases, and/or artists.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn get_entry_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get entry by ID").description(
         "Returns a single entry. `full_path` is included only for authenticated users with ManageLibraries permission. 404 if not found. Use `inc` to include tracks, releases, and/or artists.",
     )
 }
 
-pub fn entry_routes() -> ApiRouter {
-    ApiRouter::new()
+pub fn entry_routes() -> Router {
+    Router::new()
+        .route("/", get(get_entries))
+        .route("/{id}", get(get_entry))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn entry_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::get_with;
+
+    aide::axum::ApiRouter::new()
         .api_route("/", get_with(get_entries, list_entries_docs))
         .api_route("/{id}", get_with(get_entry, get_entry_docs))
 }

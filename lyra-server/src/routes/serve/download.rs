@@ -3,11 +3,12 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use aide::axum::{
-    ApiRouter,
-    routing::get_with,
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
+use axum::{
+    Router,
+    routing::get,
+};
 use axum::{
     body::Body,
     extract::{
@@ -24,7 +25,6 @@ use lyra_ffmpeg::{
     FfmpegContext,
     Output,
 };
-use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::routes::{
@@ -45,33 +45,58 @@ use super::{
     validate_request,
 };
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct DownloadQuery {
-    #[schemars(
-        description = "Scoped download token returned by `POST /api/tracks/{id}/playback-url`."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Scoped download token returned by `POST /api/tracks/{id}/playback-url`."
+        )
     )]
     media_token: Option<String>,
-    #[schemars(
-        description = "Optional output format (e.g. mp3, flac, wav, ogg, webm, m4a, alac)."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional output format (e.g. mp3, flac, wav, ogg, webm, m4a, alac)."
+        )
     )]
     format: Option<String>,
-    #[schemars(
-        description = "Optional ordered audio codec preferences (e.g. opus,aac or pcm_s24be,pcm_s16be)."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional ordered audio codec preferences (e.g. opus,aac or pcm_s24be,pcm_s16be)."
+        )
     )]
     codec: Option<String>,
-    #[schemars(
-        description = "Target bitrate cap in bits per second. Applied for lossy outputs when below the source bitrate; ignored for lossless codecs or when above source."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Target bitrate cap in bits per second. Applied for lossy outputs when below the source bitrate; ignored for lossless codecs or when above source."
+        )
     )]
     bitrate_bps: Option<u32>,
-    #[schemars(description = "Target sample rate in Hz. Triggers transcoding when supplied.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Target sample rate in Hz. Triggers transcoding when supplied.")
+    )]
     sample_rate_hz: Option<u32>,
-    #[schemars(description = "Target channel count. Triggers transcoding when supplied.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Target channel count. Triggers transcoding when supplied.")
+    )]
     channels: Option<u32>,
-    #[schemars(
-        description = "Prefer VBR for lossy transcodes when the selected encoder supports it."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Prefer VBR for lossy transcodes when the selected encoder supports it."
+        )
     )]
     prefer_vbr: Option<bool>,
-    #[schemars(description = "Per-request playback start offset in milliseconds.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Per-request playback start offset in milliseconds.")
+    )]
     start_offset_ms: Option<u64>,
 }
 
@@ -227,6 +252,7 @@ pub(crate) async fn download_track_response(
     response
 }
 
+#[cfg(feature = "docgen")]
 fn download_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Download audio")
         .description(
@@ -234,6 +260,13 @@ fn download_docs(op: TransformOperation) -> TransformOperation {
         )
 }
 
-pub fn download_routes() -> ApiRouter {
-    ApiRouter::new().api_route("/{track_id}", get_with(get_download, download_docs))
+pub fn download_routes() -> Router {
+    Router::new().route("/{track_id}", get(get_download))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn download_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::get_with;
+
+    aide::axum::ApiRouter::new().api_route("/{track_id}", get_with(get_download, download_docs))
 }

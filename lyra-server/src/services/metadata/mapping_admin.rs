@@ -31,7 +31,8 @@ use crate::{
 /// Caps response size on libraries with widespread breakage.
 const DRY_RUN_SAMPLE_LIMIT: usize = 10;
 
-#[derive(Debug, Clone, Default, serde::Serialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub(crate) struct DryRunReport {
     pub total_files: usize,
     pub would_reject: usize,
@@ -40,13 +41,15 @@ pub(crate) struct DryRunReport {
     pub read_failure_samples: Vec<ReadFailureSample>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct RejectedSample {
     pub path: String,
     pub missing: Vec<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct ReadFailureSample {
     pub path: String,
     pub error: String,

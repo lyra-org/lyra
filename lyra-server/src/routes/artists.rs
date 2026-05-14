@@ -3,14 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use aide::axum::{
-    ApiRouter,
-    routing::{
-        get_with,
-        patch_with,
-        post_with,
-    },
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
     Json,
@@ -20,7 +13,14 @@ use axum::{
     },
     http::HeaderMap,
 };
-use schemars::JsonSchema;
+use axum::{
+    Router,
+    routing::{
+        get,
+        patch,
+        post,
+    },
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -58,41 +58,63 @@ use crate::{
     },
 };
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct ArtistQuery {
-    #[schemars(
-        description = "Comma-separated or repeated values: releases, tracks, relations, covers."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Comma-separated or repeated values: releases, tracks, relations, covers."
+        )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     inc: Option<Vec<String>>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct ArtistListQuery {
-    #[schemars(
-        description = "Comma-separated or repeated values: releases, tracks, relations, covers."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Comma-separated or repeated values: releases, tracks, relations, covers."
+        )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     inc: Option<Vec<String>>,
-    #[schemars(description = "Optional fuzzy text query matched against artist names.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Optional fuzzy text query matched against artist names.")
+    )]
     query: Option<String>,
-    #[schemars(description = "Optional public library ID to scope returned artists.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Optional public library ID to scope returned artists.")
+    )]
     library_id: Option<String>,
     #[serde(flatten)]
     page: super::PageQuery,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct ArtistUpdateRequest {
-    #[schemars(description = "Updated artist name.")]
+    #[cfg_attr(feature = "docgen", schemars(description = "Updated artist name."))]
     name: Option<String>,
-    #[schemars(description = "Updated sort name; set to null to clear.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Updated sort name; set to null to clear.")
+    )]
     sort_name: Option<Option<String>>,
-    #[schemars(description = "Updated description; set to null to clear.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Updated description; set to null to clear.")
+    )]
     description: Option<Option<String>>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 #[non_exhaustive]
 pub struct ArtistCoverSearchResponse {
     pub artist_id: String,
@@ -388,18 +410,21 @@ async fn update_artist(
     }))
 }
 
+#[cfg(feature = "docgen")]
 fn list_artists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List artists").description(
         "Returns artists as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `limit`, `cursor`. `library_id` scopes results to artists credited by releases or tracks belonging to that public library ID. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against artist names. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, cover metadata includes a public image URL. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn get_artist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get artist by ID").description(
         "Returns a single artist. 404 if not found. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, cover metadata includes a public image URL. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn search_artist_covers_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Search artist cover candidates").description(
         "Returns provider cover candidates for an artist. Request body (JSON): `{ provider?, force_refresh? }`; \
@@ -408,13 +433,29 @@ fn search_artist_covers_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
+#[cfg(feature = "docgen")]
 fn update_artist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update artist")
         .description("Updates artist name, sort name, and description. Set sort_name or description to null to clear.")
 }
 
-pub fn artist_routes() -> ApiRouter {
-    ApiRouter::new()
+pub fn artist_routes() -> Router {
+    Router::new()
+        .route("/", get(get_artists))
+        .route("/{id}", get(get_artist))
+        .route("/{id}/covers/search", post(search_artist_covers))
+        .route("/{id}", patch(update_artist))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn artist_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::{
+        get_with,
+        patch_with,
+        post_with,
+    };
+
+    aide::axum::ApiRouter::new()
         .api_route("/", get_with(get_artists, list_artists_docs))
         .api_route("/{id}", get_with(get_artist, get_artist_docs))
         .api_route(

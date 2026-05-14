@@ -3,17 +3,17 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use aide::axum::{
-    ApiRouter,
-    routing::get_with,
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
     Json,
     extract::Path,
     http::HeaderMap,
 };
-use schemars::JsonSchema;
+use axum::{
+    Router,
+    routing::get,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -34,7 +34,8 @@ use crate::{
     services::auth::require_authenticated,
 };
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct LabelResponse {
     id: String,
     name: String,
@@ -42,16 +43,21 @@ struct LabelResponse {
     releases: Option<Vec<LabelReleaseSummary>>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct LabelReleaseSummary {
     id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     catalog_number: Option<String>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct LabelQuery {
-    #[schemars(description = "Comma-separated or repeated values: releases.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Comma-separated or repeated values: releases.")
+    )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     inc: Option<Vec<String>>,
 }
@@ -151,19 +157,30 @@ async fn get_label(
     }))
 }
 
+#[cfg(feature = "docgen")]
 fn list_labels_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List labels")
         .description("Returns all record labels.")
 }
 
+#[cfg(feature = "docgen")]
 fn get_label_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get label by ID").description(
         "Returns a single record label. Use `inc=releases` to include the releases linked to the label (with catalog numbers).",
     )
 }
 
-pub fn label_routes() -> ApiRouter {
-    ApiRouter::new()
+pub fn label_routes() -> Router {
+    Router::new()
+        .route("/", get(list_labels))
+        .route("/{id}", get(get_label))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn label_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::get_with;
+
+    aide::axum::ApiRouter::new()
         .api_route("/", get_with(list_labels, list_labels_docs))
         .api_route("/{id}", get_with(get_label, get_label_docs))
 }

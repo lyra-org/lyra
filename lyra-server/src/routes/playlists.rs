@@ -7,15 +7,7 @@ use agdb::{
     DbId,
     QueryId,
 };
-use aide::axum::{
-    ApiRouter,
-    routing::{
-        delete_with,
-        get_with,
-        patch_with,
-        post_with,
-    },
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
     Json,
@@ -26,7 +18,15 @@ use axum::{
         StatusCode,
     },
 };
-use schemars::JsonSchema;
+use axum::{
+    Router,
+    routing::{
+        delete,
+        get,
+        patch,
+        post,
+    },
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -62,36 +62,42 @@ use crate::{
     },
 };
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct CreatePlaylistRequest {
     name: String,
     description: Option<String>,
     is_public: Option<bool>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct UpdatePlaylistRequest {
     name: Option<String>,
     description: Option<Option<String>>,
     is_public: Option<bool>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct AddPlaylistTracksRequest {
     track_ids: Vec<String>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct RemovePlaylistTracksRequest {
     entry_ids: Vec<String>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct MovePlaylistTrackRequest {
     new_position: u64,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct PlaylistResponse {
     id: String,
     name: String,
@@ -103,14 +109,21 @@ struct PlaylistResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     owner_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(description = "Playlist creation time as an RFC3339 timestamp.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Playlist creation time as an RFC3339 timestamp.")
+    )]
     created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(description = "Playlist update time as an RFC3339 timestamp.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Playlist update time as an RFC3339 timestamp.")
+    )]
     updated_at: Option<String>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct PlaylistTrackResponse {
     entry_id: String,
     track: TrackResponse,
@@ -121,9 +134,13 @@ struct PlaylistTrackResponse {
     position: u64,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct PlaylistQuery {
-    #[schemars(description = "Comma-separated or repeated values: tracks, artists, releases.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Comma-separated or repeated values: tracks, artists, releases.")
+    )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     inc: Option<Vec<String>>,
 }
@@ -624,55 +641,85 @@ async fn move_playlist_track(
     Ok(Json(items))
 }
 
+#[cfg(feature = "docgen")]
 fn create_playlist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create playlist")
         .description("Creates a new playlist owned by the authenticated user.")
         .response::<201, Json<PlaylistResponse>>()
 }
 
+#[cfg(feature = "docgen")]
 fn list_playlists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List playlists")
         .description("Returns playlists owned by the authenticated user. Use `inc` to include tracks, artists, releases.")
 }
 
+#[cfg(feature = "docgen")]
 fn get_playlist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get playlist by ID")
         .description("Returns a single playlist. Use `inc=tracks,artists,releases` to include track details. 404 if not found or not accessible.")
 }
 
+#[cfg(feature = "docgen")]
 fn update_playlist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update playlist")
         .description("Updates playlist metadata. Only the playlist owner can update.")
 }
 
+#[cfg(feature = "docgen")]
 fn delete_playlist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Delete playlist")
         .description("Deletes a playlist. Only the playlist owner can delete.")
         .response::<204, ()>()
 }
 
+#[cfg(feature = "docgen")]
 fn add_tracks_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Add tracks to playlist")
         .description("Adds one or more tracks to the end of the playlist. Returns the added items without artists or release details.")
 }
 
+#[cfg(feature = "docgen")]
 fn remove_tracks_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Remove tracks from playlist")
         .description("Removes one or more tracks by their entry IDs. Returns the removed items.")
 }
 
+#[cfg(feature = "docgen")]
 fn delete_track_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Remove track from playlist")
         .description("Removes one playlist track entry by ID. Returns the removed item.")
 }
 
+#[cfg(feature = "docgen")]
 fn move_track_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Move track within playlist")
         .description("Moves a playlist track entry to a new position. Returns the full updated item list without artists or release details.")
 }
 
-pub fn playlist_routes() -> ApiRouter {
-    ApiRouter::new()
+pub fn playlist_routes() -> Router {
+    Router::new()
+        .route("/", post(create_playlist))
+        .route("/", get(get_playlists))
+        .route("/{id}", get(get_playlist))
+        .route("/{id}", patch(update_playlist))
+        .route("/{id}", delete(delete_playlist))
+        .route("/{id}/tracks", post(add_playlist_tracks))
+        .route("/{id}/tracks/remove", post(remove_playlist_tracks))
+        .route("/{id}/tracks/{entry_id}", delete(delete_playlist_track))
+        .route("/{id}/tracks/{entry_id}", patch(move_playlist_track))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn playlist_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::{
+        delete_with,
+        get_with,
+        patch_with,
+        post_with,
+    };
+
+    aide::axum::ApiRouter::new()
         .api_route("/", post_with(create_playlist, create_playlist_docs))
         .api_route("/", get_with(get_playlists, list_playlists_docs))
         .api_route("/{id}", get_with(get_playlist, get_playlist_docs))

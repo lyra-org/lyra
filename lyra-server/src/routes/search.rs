@@ -3,17 +3,17 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use aide::axum::{
-    ApiRouter,
-    routing::get_with,
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
     Json,
     extract::Query,
     http::HeaderMap,
 };
-use schemars::JsonSchema;
+use axum::{
+    Router,
+    routing::get,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -30,30 +30,40 @@ use crate::{
 
 const MAX_QUERY_LEN: usize = 256;
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct SearchQuery {
-    #[schemars(
-        description = "Fuzzy text query matched against tracks, artists, and releases. \
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Fuzzy text query matched against tracks, artists, and releases. \
         Required, 1-256 characters after trimming."
+        )
     )]
     query: String,
-    #[schemars(description = "Optional per-entity result cap. Defaults to 20, capped at 50.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Optional per-entity result cap. Defaults to 20, capped at 50.")
+    )]
     limit: Option<u64>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub struct SearchTitleHit {
     pub id: String,
     pub title: String,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub struct SearchArtistHit {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub struct SearchResponse {
     pub tracks: Vec<SearchTitleHit>,
     pub artists: Vec<SearchArtistHit>,
@@ -114,6 +124,7 @@ async fn search(
     }))
 }
 
+#[cfg(feature = "docgen")]
 fn search_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Cross-entity fuzzy search").description(
         "Returns up to `limit` matching tracks, artists, and releases for `query`. Each branch \
@@ -125,6 +136,13 @@ fn search_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
-pub fn search_routes() -> ApiRouter {
-    ApiRouter::new().api_route("/", get_with(search, search_docs))
+pub fn search_routes() -> Router {
+    Router::new().route("/", get(search))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn search_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::get_with;
+
+    aide::axum::ApiRouter::new().api_route("/", get_with(search, search_docs))
 }

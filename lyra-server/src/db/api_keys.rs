@@ -11,14 +11,14 @@ use agdb::{
     QueryBuilder,
 };
 use nanoid::nanoid;
-use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::NodeId;
 
 pub(crate) const MAX_NAME_LEN: usize = 128;
 
-#[derive(Clone, Debug, DbElement, JsonSchema, Serialize)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, DbElement, Serialize)]
 pub(crate) struct ApiKey {
     #[serde(skip)]
     pub(crate) db_id: Option<NodeId>,

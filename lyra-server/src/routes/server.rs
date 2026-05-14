@@ -3,13 +3,13 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use aide::axum::{
-    ApiRouter,
-    routing::get_with,
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::Json;
-use schemars::JsonSchema;
+use axum::{
+    Router,
+    routing::get,
+};
 use serde::Serialize;
 
 use crate::{
@@ -19,7 +19,8 @@ use crate::{
 
 use super::AppError;
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct ServerInfoResponse {
     server_id: String,
     version: String,
@@ -44,11 +45,20 @@ async fn get_server_info() -> Result<Json<ServerInfoResponse>, AppError> {
     }))
 }
 
+#[cfg(feature = "docgen")]
 fn get_server_info_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get public server info")
         .description("Returns server identity and setup status.")
 }
 
-pub fn server_routes() -> ApiRouter {
-    ApiRouter::new().api_route("/public", get_with(get_server_info, get_server_info_docs))
+pub fn server_routes() -> Router {
+    Router::new().route("/public", get(get_server_info))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn server_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::get_with;
+
+    aide::axum::ApiRouter::new()
+        .api_route("/public", get_with(get_server_info, get_server_info_docs))
 }

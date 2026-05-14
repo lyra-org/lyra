@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+#[cfg(feature = "docgen")]
 use std::borrow::Cow;
 
 use agdb::{
@@ -12,11 +13,6 @@ use agdb::{
 use harmony_luau::{
     LuauType,
     LuauTypeInfo,
-};
-use schemars::{
-    JsonSchema,
-    Schema,
-    SchemaGenerator,
 };
 use serde::{
     Deserialize,
@@ -45,13 +41,14 @@ impl From<NodeId> for QueryId {
     }
 }
 
-impl JsonSchema for NodeId {
+#[cfg(feature = "docgen")]
+impl schemars::JsonSchema for NodeId {
     fn schema_name() -> Cow<'static, str> {
         "NodeId".into()
     }
 
-    fn json_schema(schema_gen: &mut SchemaGenerator) -> Schema {
-        <i64 as JsonSchema>::json_schema(schema_gen)
+    fn json_schema(schema_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <i64 as schemars::JsonSchema>::json_schema(schema_gen)
     }
 }
 

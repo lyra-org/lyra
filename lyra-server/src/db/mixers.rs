@@ -9,12 +9,12 @@ use agdb::{
     DbId,
     QueryBuilder,
 };
-use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::NodeId;
 
-#[derive(DbElement, Serialize, Clone, Debug, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(DbElement, Serialize, Clone, Debug)]
 pub(crate) struct MixerConfig {
     #[serde(skip)]
     pub(crate) db_id: Option<NodeId>,

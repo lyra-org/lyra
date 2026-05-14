@@ -3,7 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::{
@@ -15,41 +14,73 @@ use crate::{
     },
 };
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub(crate) struct PageResponse<T> {
     pub items: Vec<T>,
-    #[schemars(description = "Opaque cursor; `null` on the last page. Sole termination signal.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Opaque cursor; `null` on the last page. Sole termination signal.")
+    )]
     pub next_cursor: Option<String>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub struct LyricsResponse {
-    #[schemars(description = "Provider-supplied stable ID scoped to `(track, provider_id)`.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Provider-supplied stable ID scoped to `(track, provider_id)`.")
+    )]
     pub id: String,
-    #[schemars(
-        description = "Source provider ID. `user` is reserved and paired with `origin=user`; all other values identify an enabled metadata provider."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Source provider ID. `user` is reserved and paired with `origin=user`; all other values identify an enabled metadata provider."
+        )
     )]
     pub provider_id: String,
-    #[schemars(description = "ISO-639-2 language code in lowercase; `und` when unknown.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "ISO-639-2 language code in lowercase; `und` when unknown.")
+    )]
     pub language: String,
     pub origin: LyricsOriginResponse,
-    #[schemars(
-        description = "Provider-supplied plain text. May be empty when the provider only returned synced lines; in that case clients can reconstruct plain text by joining `lines[].text` with newlines, which is what `?format=plain` does."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Provider-supplied plain text. May be empty when the provider only returned synced lines; in that case clients can reconstruct plain text by joining `lines[].text` with newlines, which is what `?format=plain` does."
+        )
     )]
     pub plain_text: String,
-    #[schemars(description = "True when any line carries per-word timing in `words`.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "True when any line carries per-word timing in `words`.")
+    )]
     pub has_word_cues: bool,
-    #[schemars(description = "RFC3339 timestamp; updated only when content changes.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "RFC3339 timestamp; updated only when content changes.")
+    )]
     pub updated_at: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    #[schemars(description = "Synced lines in playback order. Empty for plain-text-only lyrics.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Synced lines in playback order. Empty for plain-text-only lyrics."
+        )
+    )]
     pub lines: Vec<LyricsLineResponse>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
-#[schemars(
-    description = "`user`: hand-authored override, preferred over every provider. `plugin`: written by an enabled metadata provider."
+#[cfg_attr(
+    feature = "docgen",
+    schemars(
+        description = "`user`: hand-authored override, preferred over every provider. `plugin`: written by an enabled metadata provider."
+    )
 )]
 pub enum LyricsOriginResponse {
     User,
@@ -65,30 +96,45 @@ impl From<IdSource> for LyricsOriginResponse {
     }
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub struct LyricsLineResponse {
-    #[schemars(description = "Milliseconds from track start.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Milliseconds from track start.")
+    )]
     pub ts_ms: u64,
     pub text: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub words: Vec<LyricsWordResponse>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub struct LyricsWordResponse {
-    #[schemars(description = "Milliseconds from track start when this word starts.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Milliseconds from track start when this word starts.")
+    )]
     pub ts_ms: u64,
-    #[schemars(
-        description = "Inclusive Unicode-scalar (code point) offset into the containing line's `text` where the word begins. Not a byte offset; stable across UTF-8 encoding."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Inclusive Unicode-scalar (code point) offset into the containing line's `text` where the word begins. Not a byte offset; stable across UTF-8 encoding."
+        )
     )]
     pub char_start: u32,
-    #[schemars(
-        description = "Exclusive Unicode-scalar (code point) offset into the containing line's `text` where the word ends."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Exclusive Unicode-scalar (code point) offset into the containing line's `text` where the word ends."
+        )
     )]
     pub char_end: u32,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub struct ReleaseResponse {
     pub id: String,
     pub title: String,
@@ -101,7 +147,10 @@ pub struct ReleaseResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entries: Option<Vec<EntryResponse>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(description = "Release date as YYYY, YYYY-MM, or YYYY-MM-DD.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Release date as YYYY, YYYY-MM, or YYYY-MM-DD.")
+    )]
     pub release_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub genres: Option<Vec<String>>,
@@ -141,22 +190,30 @@ impl ReleaseResponse {
     }
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub struct CoverResponse {
-    #[schemars(description = "Opaque cover image ID.")]
+    #[cfg_attr(feature = "docgen", schemars(description = "Opaque cover image ID."))]
     pub id: String,
-    #[schemars(
-        description = "Public image URL for browser/native image loading. Treat this as an opaque URL; it includes a cache-version query parameter derived from the cover hash."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Public image URL for browser/native image loading. Treat this as an opaque URL; it includes a cache-version query parameter derived from the cover hash."
+        )
     )]
     pub url: String,
     pub mime_type: String,
-    #[schemars(description = "Content hash used to version the public image URL.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Content hash used to version the public image URL.")
+    )]
     pub hash: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blurhash: Option<String>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub struct TrackResponse {
     pub id: String,
     pub title: String,
@@ -216,7 +273,8 @@ impl TrackResponse {
     }
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub struct ArtistResponse {
     pub id: String,
     pub name: String,
@@ -237,7 +295,8 @@ pub struct ArtistResponse {
     pub cover: Option<Option<CoverResponse>>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub struct ArtistRelationResponse {
     #[serde(rename = "type")]
     pub relation_type: db::ArtistRelationType,
@@ -247,14 +306,16 @@ pub struct ArtistRelationResponse {
     pub artist: RelatedArtistResponse,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RelationDirectionResponse {
     Incoming,
     Outgoing,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub struct RelatedArtistResponse {
     pub id: String,
     pub name: String,
@@ -262,7 +323,8 @@ pub struct RelatedArtistResponse {
     pub artist_type: Option<db::ArtistType>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub struct ArtistCreditResponse {
     #[serde(rename = "type")]
     pub credit_type: db::CreditType,
@@ -271,7 +333,8 @@ pub struct ArtistCreditResponse {
     pub source: ArtistCreditSourceResponse,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ArtistCreditSourceResponse {
     Track,
@@ -333,7 +396,8 @@ impl ArtistResponse {
     }
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub struct EntryResponse {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -345,7 +409,10 @@ pub struct EntryResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hash: Option<String>,
     pub size: u64,
-    #[schemars(description = "Filesystem modification time as an RFC3339 timestamp.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Filesystem modification time as an RFC3339 timestamp.")
+    )]
     pub modified_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tracks: Option<Vec<TrackResponse>>,

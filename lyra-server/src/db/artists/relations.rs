@@ -18,7 +18,6 @@ use agdb::{
     QueryBuilder,
     QueryResult,
 };
-use schemars::JsonSchema;
 use serde::{
     Deserialize,
     Serialize,
@@ -30,18 +29,9 @@ use super::super::{
 };
 
 #[harmony_macros::userdata(name = "ArtistRelationType")]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    Hash,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    DbTypeMarker,
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, DbTypeMarker,
 )]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ArtistRelationType {
@@ -96,7 +86,8 @@ impl TryFrom<DbValue> for ArtistRelationType {
     }
 }
 
-#[derive(DbElement, Serialize, Deserialize, Clone, Debug, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(DbElement, Serialize, Deserialize, Clone, Debug)]
 pub(crate) struct ArtistRelation {
     pub(crate) db_id: Option<NodeId>,
     pub(crate) relation_type: ArtistRelationType,

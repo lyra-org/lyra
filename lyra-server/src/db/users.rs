@@ -22,7 +22,6 @@ use argon2::{
     },
 };
 use nanoid::nanoid;
-use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::NodeId;
@@ -42,7 +41,8 @@ pub(crate) struct User {
     pub(crate) password: String,
 }
 
-#[derive(Serialize, DbElement, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize, DbElement)]
 pub(crate) struct Session {
     #[serde(skip)]
     pub(crate) db_id: Option<NodeId>,

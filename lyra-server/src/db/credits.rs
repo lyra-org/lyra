@@ -9,7 +9,6 @@ use agdb::{
     DbTypeMarker,
     DbValue,
 };
-use schemars::JsonSchema;
 use serde::{
     Deserialize,
     Serialize,
@@ -20,18 +19,9 @@ use super::NodeId;
 pub(crate) const EDGE_ORDER_KEY: &str = "artist_order";
 
 #[harmony_macros::userdata(name = "CreditType")]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    Hash,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    DbTypeMarker,
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, DbTypeMarker,
 )]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum CreditType {
@@ -116,7 +106,8 @@ impl TryFrom<DbValue> for CreditType {
     }
 }
 
-#[derive(DbElement, Serialize, Deserialize, Clone, Debug, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(DbElement, Serialize, Deserialize, Clone, Debug)]
 pub(crate) struct Credit {
     pub(crate) db_id: Option<NodeId>,
     pub(crate) id: String,

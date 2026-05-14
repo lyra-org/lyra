@@ -5,10 +5,7 @@
 
 use std::path::PathBuf;
 
-use aide::axum::{
-    ApiRouter,
-    routing::post_with,
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use anyhow::anyhow;
 use axum::{
@@ -22,8 +19,11 @@ use axum::{
         StatusCode,
     },
 };
+use axum::{
+    Router,
+    routing::post,
+};
 use nanoid::nanoid;
-use schemars::JsonSchema;
 use serde::{
     Deserialize,
     Serialize,
@@ -54,21 +54,35 @@ use crate::{
     },
 };
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct LibraryRequest {
-    #[schemars(description = "Human-friendly library name.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Human-friendly library name.")
+    )]
     #[serde(alias = "_name")]
     name: String,
-    #[schemars(description = "Filesystem path to scan for media.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Filesystem path to scan for media.")
+    )]
     #[serde(alias = "_directory")]
     directory: String,
-    #[schemars(description = "ISO 639 language code (e.g. \"jpn\", \"en\", \"Japanese\").")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "ISO 639 language code (e.g. \"jpn\", \"en\", \"Japanese\").")
+    )]
     language: Option<String>,
-    #[schemars(description = "ISO 3166 country code (e.g. \"JP\", \"US\", \"Japan\").")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "ISO 3166 country code (e.g. \"JP\", \"US\", \"Japan\").")
+    )]
     country: Option<String>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct LibraryResponse {
     id: String,
     name: String,
@@ -92,29 +106,39 @@ impl LibraryResponse {
     }
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct LibraryUpdateRequest {
-    #[schemars(description = "Updated library name.")]
+    #[cfg_attr(feature = "docgen", schemars(description = "Updated library name."))]
     name: Option<String>,
-    #[schemars(description = "Updated language code; set to null to clear.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Updated language code; set to null to clear.")
+    )]
     language: Option<Option<String>>,
-    #[schemars(description = "Updated country code; set to null to clear.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Updated country code; set to null to clear.")
+    )]
     country: Option<Option<String>>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct LibrarySyncStartResponse {
     started: bool,
     run_id: u64,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct LibraryRefreshResponse {
     refreshed_count: usize,
     entity_type: String,
 }
 
-#[derive(Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 enum LibraryAccessKind {
     ReadWrite,
 }
@@ -133,7 +157,8 @@ impl From<LibraryAccessKind> for db::libraries::AccessKind {
     }
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct LibraryAccessResponse {
     id: String,
     username: String,
@@ -141,22 +166,30 @@ struct LibraryAccessResponse {
     kind: LibraryAccessKind,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct LibraryGrantAccessRequest {
     user_id: String,
     #[serde(default)]
     kind: LibraryAccessKind,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct LibraryRefreshQuery {
     #[serde(default)]
-    #[schemars(
-        description = "Replace existing cover images with downloaded provider results when set."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Replace existing cover images with downloaded provider results when set."
+        )
     )]
     replace_cover: bool,
     #[serde(default)]
-    #[schemars(description = "Bypass cached provider cover resolution and refresh it.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Bypass cached provider cover resolution and refresh it.")
+    )]
     force_refresh: bool,
 }
 
@@ -373,6 +406,7 @@ async fn update_library(
     Ok(Json(LibraryResponse::from_library(stored, true)))
 }
 
+#[cfg(feature = "docgen")]
 fn create_library_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create library")
         .description(
@@ -381,6 +415,7 @@ fn create_library_docs(op: TransformOperation) -> TransformOperation {
         .response::<201, Json<LibraryResponse>>()
 }
 
+#[cfg(feature = "docgen")]
 fn update_library_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update library").description(
         "Updates library name, language, and country. Set language or country to null to clear.",
@@ -402,12 +437,14 @@ async fn list_libraries(headers: HeaderMap) -> Result<Json<Vec<LibraryResponse>>
     Ok(Json(response))
 }
 
+#[cfg(feature = "docgen")]
 fn list_libraries_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List libraries").description(
         "Returns libraries visible to the authenticated user. `directory` is included only for users with ManageLibraries permission.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn refresh_library_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Refresh library metadata")
         .description(
@@ -464,12 +501,14 @@ async fn start_library_sync_for_library(
     }
 }
 
+#[cfg(feature = "docgen")]
 fn get_library_sync_status_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get library sync status").description(
         "Returns a compact sync status for a library, including run state, progress counters, and currently active work. Requires ManageLibraries permission.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn start_library_sync_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Start library sync")
         .description("Starts a background library sync. Returns 409 if one is already running.")
@@ -580,29 +619,56 @@ async fn revoke_library_access(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[cfg(feature = "docgen")]
 fn list_library_access_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List library access")
         .description("Returns explicit user grants for a library. Admin bypass is not listed.")
 }
 
+#[cfg(feature = "docgen")]
 fn grant_library_access_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Grant library access")
         .description("Grants a user access to a library.")
 }
 
+#[cfg(feature = "docgen")]
 fn revoke_library_access_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Revoke library access")
         .description("Revokes a user's explicit library access grant.")
 }
 
-pub fn library_routes() -> ApiRouter {
+pub fn library_routes() -> Router {
+    use axum::routing::{
+        delete,
+        get,
+        patch,
+    };
+
+    Router::new()
+        .route("/", get(list_libraries).post(create_library))
+        .route("/{id}", patch(update_library))
+        .route("/{id}/refresh", post(refresh_library))
+        .route(
+            "/{id}/sync",
+            get(get_library_sync_status).post(start_library_sync_for_library),
+        )
+        .route(
+            "/{id}/access",
+            get(list_library_access).post(grant_library_access),
+        )
+        .route("/{id}/access/{user_id}", delete(revoke_library_access))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn library_openapi_routes() -> aide::axum::ApiRouter {
     use aide::axum::routing::{
         delete_with,
         get_with,
         patch_with,
+        post_with,
     };
 
-    ApiRouter::new()
+    aide::axum::ApiRouter::new()
         .api_route(
             "/",
             get_with(list_libraries, list_libraries_docs)

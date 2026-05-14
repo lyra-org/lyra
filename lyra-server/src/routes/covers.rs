@@ -3,14 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use aide::{
-    axum::{
-        ApiRouter,
-        routing::get_with,
-    },
-    transform::TransformOperation,
-};
+#[cfg(feature = "docgen")]
+use aide::transform::TransformOperation;
 use axum::{
+    Router,
     body::Body,
     extract::{
         Path,
@@ -21,8 +17,8 @@ use axum::{
         Response,
         header,
     },
+    routing::get,
 };
-use schemars::JsonSchema;
 use serde::{
     Deserialize,
     Serialize,
@@ -45,7 +41,8 @@ use crate::{
 
 const PUBLIC_COVER_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 #[non_exhaustive]
 pub struct CoverSearchCandidateResponse {
     pub url: String,
@@ -55,7 +52,8 @@ pub struct CoverSearchCandidateResponse {
     pub height: Option<u32>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 #[non_exhaustive]
 pub struct ProviderCoverSearchResponse {
     pub provider_id: String,
@@ -64,24 +62,44 @@ pub struct ProviderCoverSearchResponse {
     pub selected_index: Option<u32>,
 }
 
-#[derive(Deserialize, JsonSchema, Default)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize, Default)]
 pub(crate) struct CoverQuery {
-    #[schemars(description = "Optional output image format (jpg, png, webp).")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Optional output image format (jpg, png, webp).")
+    )]
     pub(crate) format: Option<String>,
-    #[schemars(description = "Optional output quality (0-100).")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Optional output quality (0-100).")
+    )]
     pub(crate) quality: Option<u8>,
-    #[schemars(description = "Optional maximum output width in pixels.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Optional maximum output width in pixels.")
+    )]
     pub(crate) max_width: Option<u32>,
-    #[schemars(description = "Optional maximum output height in pixels.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Optional maximum output height in pixels.")
+    )]
     pub(crate) max_height: Option<u32>,
 }
 
-#[derive(Deserialize, JsonSchema, Default)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize, Default)]
 pub(crate) struct CoverSearchQuery {
-    #[schemars(description = "Optional provider ID to limit cover search results.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Optional provider ID to limit cover search results.")
+    )]
     pub(crate) provider: Option<String>,
     #[serde(default)]
-    #[schemars(description = "Bypass cached provider cover resolution and refresh it.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Bypass cached provider cover resolution and refresh it.")
+    )]
     pub(crate) force_refresh: bool,
 }
 
@@ -226,14 +244,23 @@ async fn get_public_cover(
     serve_public_cover_response(&path, transform_options, &headers).await
 }
 
+#[cfg(feature = "docgen")]
 fn get_public_cover_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get cover image").description(
         "Returns a public cover image by cover ID. Cover metadata returns URLs with a `v` query parameter derived from the cover hash for cache versioning; clients should treat the full URL as opaque. Supports optional transform parameters: `format`, `quality`, `max_width`, and `max_height`.",
     )
 }
 
-pub fn cover_routes() -> ApiRouter {
-    ApiRouter::new().api_route("/{id}", get_with(get_public_cover, get_public_cover_docs))
+pub fn cover_routes() -> Router {
+    Router::new().route("/{id}", get(get_public_cover))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn cover_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::get_with;
+
+    aide::axum::ApiRouter::new()
+        .api_route("/{id}", get_with(get_public_cover, get_public_cover_docs))
 }
 
 #[cfg(test)]

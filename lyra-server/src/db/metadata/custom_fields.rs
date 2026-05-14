@@ -10,7 +10,6 @@ use agdb::{
     QueryBuilder,
 };
 use nanoid::nanoid;
-use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::super::{
@@ -18,7 +17,8 @@ use super::super::{
     NodeId,
 };
 
-#[derive(DbElement, Serialize, Clone, Debug, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(DbElement, Serialize, Clone, Debug)]
 pub(crate) struct ProviderCustomFields {
     #[serde(skip)]
     pub(crate) db_id: Option<NodeId>,

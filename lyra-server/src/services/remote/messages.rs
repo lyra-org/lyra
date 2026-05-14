@@ -3,13 +3,12 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use crate::services::remote::constants::RemoteAction;
+#[cfg(feature = "docgen")]
 use asyncapi_rust::{
     AsyncApi,
     ToAsyncApiMessage,
-    schemars::JsonSchema,
 };
-
-use crate::services::remote::constants::RemoteAction;
 use serde::{
     Deserialize,
     Serialize,
@@ -23,29 +22,37 @@ pub(crate) enum IncomingMessage {
 }
 
 /// Typed command envelope — each action carries its own payload shape.
-#[derive(Debug, Serialize, Deserialize, JsonSchema, ToAsyncApiMessage)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "docgen", derive(ToAsyncApiMessage))]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub(crate) enum ClientCommand {
-    #[asyncapi(summary = "Declare which remote control commands this connection supports")]
+    #[cfg_attr(
+        feature = "docgen",
+        asyncapi(summary = "Declare which remote control commands this connection supports")
+    )]
     DeclareCapabilities {
         id: String,
         commands: Vec<RemoteAction>,
     },
-    #[asyncapi(summary = "Start playback on target")]
+    #[cfg_attr(feature = "docgen", asyncapi(summary = "Start playback on target"))]
     Play(RemoteControlCommand),
-    #[asyncapi(summary = "Pause playback on target")]
+    #[cfg_attr(feature = "docgen", asyncapi(summary = "Pause playback on target"))]
     Pause(RemoteControlCommand),
-    #[asyncapi(summary = "Resume playback on target")]
+    #[cfg_attr(feature = "docgen", asyncapi(summary = "Resume playback on target"))]
     Unpause(RemoteControlCommand),
-    #[asyncapi(summary = "Stop playback on target")]
+    #[cfg_attr(feature = "docgen", asyncapi(summary = "Stop playback on target"))]
     Stop(RemoteControlCommand),
-    #[asyncapi(summary = "Seek to position on target")]
+    #[cfg_attr(feature = "docgen", asyncapi(summary = "Seek to position on target"))]
     Seek(SeekCommand),
-    #[asyncapi(summary = "Skip to next track on target")]
+    #[cfg_attr(feature = "docgen", asyncapi(summary = "Skip to next track on target"))]
     NextTrack(RemoteControlCommand),
-    #[asyncapi(summary = "Go to previous track on target")]
+    #[cfg_attr(
+        feature = "docgen",
+        asyncapi(summary = "Go to previous track on target")
+    )]
     PreviousTrack(RemoteControlCommand),
-    #[asyncapi(summary = "Set volume level on target")]
+    #[cfg_attr(feature = "docgen", asyncapi(summary = "Set volume level on target"))]
     SetVolume(SetVolumeCommand),
 }
 
@@ -93,38 +100,50 @@ impl ClientCommand {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct RemoteControlCommand {
     pub(crate) id: String,
     pub(crate) target: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct SeekCommand {
     pub(crate) id: String,
     pub(crate) target: String,
     pub(crate) position_ms: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct SetVolumeCommand {
     pub(crate) id: String,
     pub(crate) target: String,
     pub(crate) level: f32,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema, ToAsyncApiMessage)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "docgen", derive(ToAsyncApiMessage))]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum OutgoingMessage {
-    #[asyncapi(summary = "Response to a client command")]
+    #[cfg_attr(feature = "docgen", asyncapi(summary = "Response to a client command"))]
     Response(ResponseMessage),
-    #[asyncapi(summary = "Server-initiated playback state event")]
+    #[cfg_attr(
+        feature = "docgen",
+        asyncapi(summary = "Server-initiated playback state event")
+    )]
     Event(EventMessage),
-    #[asyncapi(summary = "Remote control command forwarded from another connection")]
+    #[cfg_attr(
+        feature = "docgen",
+        asyncapi(summary = "Remote control command forwarded from another connection")
+    )]
     Command(ForwardedCommand),
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct ForwardedCommand {
     pub(crate) action: RemoteAction,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -133,7 +152,8 @@ pub(crate) struct ForwardedCommand {
     pub(crate) data: ForwardedCommandData,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub(crate) enum ForwardedCommandData {
     Simple,
@@ -142,7 +162,8 @@ pub(crate) enum ForwardedCommandData {
 }
 
 /// Response to a client command, correlated by `id`.
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct ResponseMessage {
     pub(crate) id: String,
     pub(crate) status: ResponseStatus,
@@ -150,14 +171,16 @@ pub(crate) struct ResponseMessage {
     pub(crate) error: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ResponseStatus {
     Ok,
     Error,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct EventMessage {
     pub(crate) event: String,
     pub(crate) data: Value,
@@ -182,6 +205,7 @@ impl ResponseMessage {
 }
 
 /// AsyncAPI specification for the WebSocket remote control protocol.
+#[cfg(feature = "docgen")]
 #[derive(AsyncApi)]
 #[asyncapi(
     title = "Lyra WebSocket Remote Control",

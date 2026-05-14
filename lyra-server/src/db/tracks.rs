@@ -16,7 +16,6 @@ use agdb::{
     QueryBuilder,
     QueryId,
 };
-use schemars::JsonSchema;
 use serde::{
     Deserialize,
     Serialize,
@@ -32,7 +31,8 @@ use super::{
     compare_option,
 };
 
-#[derive(DbElement, Serialize, Deserialize, Clone, Debug, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(DbElement, Serialize, Deserialize, Clone, Debug)]
 pub(crate) struct Track {
     pub(crate) db_id: Option<NodeId>,
     pub(crate) id: String,

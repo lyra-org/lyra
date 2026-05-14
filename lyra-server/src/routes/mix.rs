@@ -5,17 +5,17 @@
 
 use std::collections::HashMap;
 
-use aide::axum::{
-    ApiRouter,
-    routing::get_with,
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
     Json,
     extract::Query,
     http::HeaderMap,
 };
-use schemars::JsonSchema;
+use axum::{
+    Router,
+    routing::get,
+};
 use serde::Deserialize;
 
 use crate::{
@@ -32,25 +32,47 @@ use crate::{
     },
 };
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct MixQuery {
-    #[schemars(description = "Seed track ID to generate a mix from.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Seed track ID to generate a mix from.")
+    )]
     seed_track: Option<String>,
-    #[schemars(description = "Seed release ID to generate a mix from.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Seed release ID to generate a mix from.")
+    )]
     seed_release: Option<String>,
-    #[schemars(description = "Seed artist ID to generate a mix from.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Seed artist ID to generate a mix from.")
+    )]
     seed_artist: Option<String>,
-    #[schemars(description = "Seed genre ID to generate a mix from.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Seed genre ID to generate a mix from.")
+    )]
     seed_genre: Option<String>,
-    #[schemars(description = "Seed playlist ID to generate a mix from.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Seed playlist ID to generate a mix from.")
+    )]
     seed_playlist: Option<String>,
-    #[schemars(description = "Seed from recent listen history.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Seed from recent listen history.")
+    )]
     #[serde(default)]
     seed_recent: bool,
-    #[schemars(description = "Maximum number of tracks to return (default 200).")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Maximum number of tracks to return (default 200).")
+    )]
     limit: Option<usize>,
     #[serde(flatten)]
-    #[schemars(skip)]
+    #[cfg_attr(feature = "docgen", schemars(skip))]
     extra: HashMap<String, String>,
 }
 
@@ -221,11 +243,19 @@ fn sanitize_extra(mut extra: HashMap<String, String>) -> HashMap<String, String>
     extra
 }
 
+#[cfg(feature = "docgen")]
 fn mix_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Generate mix")
         .description("Returns a shuffled list of tracks that share genres with the seed item. Provide exactly one of seed_track, seed_release, seed_artist, seed_genre, seed_playlist, or seed_recent.")
 }
 
-pub fn mix_routes() -> ApiRouter {
-    ApiRouter::new().api_route("/", get_with(get_mix, mix_docs))
+pub fn mix_routes() -> Router {
+    Router::new().route("/", get(get_mix))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn mix_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::get_with;
+
+    aide::axum::ApiRouter::new().api_route("/", get_with(get_mix, mix_docs))
 }

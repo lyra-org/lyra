@@ -355,6 +355,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),

@@ -7,13 +7,7 @@ use agdb::{
     DbAny,
     DbId,
 };
-use aide::axum::{
-    ApiRouter,
-    routing::{
-        get_with,
-        post_with,
-    },
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
     Json,
@@ -23,7 +17,13 @@ use axum::{
     },
     http::HeaderMap,
 };
-use schemars::JsonSchema;
+use axum::{
+    Router,
+    routing::{
+        get,
+        post,
+    },
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -60,44 +60,71 @@ use crate::{
     },
 };
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 #[non_exhaustive]
 pub struct ReleaseCoverSearchResponse {
     pub release_id: String,
     pub results: Vec<route_covers::ProviderCoverSearchResponse>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 pub(crate) struct ReleaseListQuery {
-    #[schemars(
-        description = "Comma-separated or repeated values: artists, tracks, track_artists, entries, covers, genres."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Comma-separated or repeated values: artists, tracks, track_artists, entries, covers, genres."
+        )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     pub(crate) inc: Option<Vec<String>>,
-    #[schemars(description = "Optional text query matched against release titles.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Optional text query matched against release titles.")
+    )]
     pub(crate) query: Option<String>,
-    #[schemars(description = "Optional exact release year filter derived from `release_date`.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Optional exact release year filter derived from `release_date`.")
+    )]
     pub(crate) year: Option<u32>,
-    #[schemars(description = "Optional public library ID to scope returned releases.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Optional public library ID to scope returned releases.")
+    )]
     pub(crate) library_id: Option<String>,
-    #[schemars(description = "Comma-separated or repeated genre values.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Comma-separated or repeated genre values.")
+    )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     pub(crate) genre: Option<Vec<String>>,
-    #[schemars(
-        description = "Comma-separated or repeated values: sortname, name, datecreated, releasedate, id."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Comma-separated or repeated values: sortname, name, datecreated, releasedate, id."
+        )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     pub(crate) sort_by: Option<Vec<String>>,
-    #[schemars(description = "Sort order for all sort keys: ascending or descending.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Sort order for all sort keys: ascending or descending.")
+    )]
     pub(crate) sort_order: Option<String>,
     #[serde(flatten)]
     pub(crate) page: super::PageQuery,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 pub(crate) struct ReleaseQuery {
-    #[schemars(
-        description = "Comma-separated or repeated values: artists, tracks, entries, covers, genres."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Comma-separated or repeated values: artists, tracks, entries, covers, genres."
+        )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     pub(crate) inc: Option<Vec<String>>,
@@ -442,18 +469,21 @@ async fn search_release_covers(
     }))
 }
 
+#[cfg(feature = "docgen")]
 fn list_releases_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List releases").description(
         "Returns releases as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `year`, `library_id`, `genre`, `sort_by`, `sort_order`, `limit`, `cursor`. `library_id` scopes results to releases belonging to that public library ID. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `inc` values: `artists`, `tracks`, `track_artists`, `entries`, `covers`, `genres`. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits (for example, artist and producer). Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn get_release_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get release by ID").description(
         "Returns a single release. 404 if not found. Use `inc` to include artists, tracks, track_artists, entries, covers, and/or genres. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn search_release_covers_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Search release cover candidates").description(
         "Returns provider cover candidates for a release. Request body (JSON): `{ provider?, force_refresh? }`; \
@@ -462,8 +492,21 @@ fn search_release_covers_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
-pub fn release_routes() -> ApiRouter {
-    ApiRouter::new()
+pub fn release_routes() -> Router {
+    Router::new()
+        .route("/", get(get_releases))
+        .route("/{id}", get(get_release))
+        .route("/{id}/covers/search", post(search_release_covers))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn release_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::{
+        get_with,
+        post_with,
+    };
+
+    aide::axum::ApiRouter::new()
         .api_route("/", get_with(get_releases, list_releases_docs))
         .api_route("/{id}", get_with(get_release, get_release_docs))
         .api_route(

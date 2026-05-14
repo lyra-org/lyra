@@ -12,17 +12,8 @@ pub(crate) const AUTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 pub(crate) const MAX_MESSAGE_SIZE: usize = 64 * 1024;
 pub(crate) const MAX_CONNECTIONS_PER_USER: usize = 8;
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
-)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RemoteAction {
     Play,

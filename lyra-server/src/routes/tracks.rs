@@ -3,15 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use aide::axum::{
-    ApiRouter,
-    routing::{
-        delete_with,
-        get_with,
-        post_with,
-        put_with,
-    },
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
     Json,
@@ -31,7 +23,15 @@ use axum::{
         Response,
     },
 };
-use schemars::JsonSchema;
+use axum::{
+    Router,
+    routing::{
+        delete,
+        get,
+        post,
+        put,
+    },
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -73,21 +73,35 @@ use crate::{
     },
 };
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct TrackQuery {
-    #[schemars(description = "Comma-separated or repeated values: releases, artists.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Comma-separated or repeated values: releases, artists.")
+    )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     inc: Option<Vec<String>>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct TrackListQuery {
-    #[schemars(description = "Comma-separated or repeated values: releases, artists.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Comma-separated or repeated values: releases, artists.")
+    )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     inc: Option<Vec<String>>,
-    #[schemars(description = "Optional fuzzy text query matched against track titles.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Optional fuzzy text query matched against track titles.")
+    )]
     query: Option<String>,
-    #[schemars(description = "Optional public library ID to scope returned tracks.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Optional public library ID to scope returned tracks.")
+    )]
     library_id: Option<String>,
     #[serde(flatten)]
     page: super::PageQuery,
@@ -388,75 +402,117 @@ async fn get_track(
     Ok(Json(get_track_response(&principal, id, query.inc).await?))
 }
 
+#[cfg(feature = "docgen")]
 fn list_tracks_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tracks").description(
         "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `limit`, `cursor`. `library_id` scopes results to tracks belonging to that public library ID. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles. Use `inc` to include releases and/or artists. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn get_track_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get track by ID").description(
         "Returns a single track. 404 if not found. Use `inc` to include releases and/or artists. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct LyricsQuery {
-    #[schemars(
-        description = "Output format: `json` (default), `plain`, or `lrc`. `lrc` returns 406 when no stored candidate has synced content meeting the selector's coverage threshold, even if `json`/`plain` would succeed for the same track."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Output format: `json` (default), `plain`, or `lrc`. `lrc` returns 406 when no stored candidate has synced content meeting the selector's coverage threshold, even if `json`/`plain` would succeed for the same track."
+        )
     )]
     format: Option<String>,
-    #[schemars(
-        description = "Preferred language as ISO-639-2 (e.g. 'eng', 'jpn'). When no stored lyric matches this language, the server falls back to the best available lyric regardless of language; inspect `language` on the response to tell whether the preference was honoured."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Preferred language as ISO-639-2 (e.g. 'eng', 'jpn'). When no stored lyric matches this language, the server falls back to the best available lyric regardless of language; inspect `language` on the response to tell whether the preference was honoured."
+        )
     )]
     language: Option<String>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct LyricsWriteQuery {
-    #[schemars(description = "Language for raw LRC and plain text uploads. Defaults to `und`.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Language for raw LRC and plain text uploads. Defaults to `und`.")
+    )]
     language: Option<String>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct PlaybackUrlQuery {
-    #[schemars(
-        description = "Optional stream output format (e.g. mp3, flac, wav, ogg, webm, aac, opus)."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional stream output format (e.g. mp3, flac, wav, ogg, webm, aac, opus)."
+        )
     )]
     format: Option<String>,
-    #[schemars(
-        description = "Optional ordered stream codec preferences (e.g. opus,aac or pcm_s24le,pcm_s16le)."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional ordered stream codec preferences (e.g. opus,aac or pcm_s24le,pcm_s16le)."
+        )
     )]
     codec: Option<String>,
-    #[schemars(
-        description = "Optional ordered HLS codec preferences for `hls_url` (for example: copy,aac or aac,flac)."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional ordered HLS codec preferences for `hls_url` (for example: copy,aac or aac,flac)."
+        )
     )]
     hls_codec: Option<String>,
-    #[schemars(
-        description = "Target bitrate cap in bits per second. Applied to generated stream, HLS, and download URLs."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Target bitrate cap in bits per second. Applied to generated stream, HLS, and download URLs."
+        )
     )]
     bitrate_bps: Option<u32>,
-    #[schemars(description = "Target sample rate in Hz.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Target sample rate in Hz.")
+    )]
     sample_rate_hz: Option<u32>,
-    #[schemars(description = "Target channel count.")]
+    #[cfg_attr(feature = "docgen", schemars(description = "Target channel count."))]
     channels: Option<u32>,
-    #[schemars(
-        description = "Prefer VBR for lossy transcodes when the selected encoder supports it."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Prefer VBR for lossy transcodes when the selected encoder supports it."
+        )
     )]
     prefer_vbr: Option<bool>,
-    #[schemars(description = "Per-request playback start offset in milliseconds.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Per-request playback start offset in milliseconds.")
+    )]
     start_offset_ms: Option<u64>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct PlaybackUrlResponse {
     stream_url: String,
     hls_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     download_url: Option<String>,
-    #[schemars(description = "Absolute media-token expiration as an RFC3339 timestamp.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Absolute media-token expiration as an RFC3339 timestamp.")
+    )]
     expires_at: String,
-    #[schemars(description = "Media tokens also expire after this many seconds without use.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Media tokens also expire after this many seconds without use.")
+    )]
     idle_expires_after_seconds: u64,
 }
 
@@ -685,6 +741,7 @@ fn plain_text_response(content_type: &'static str, body: String) -> Response {
     response
 }
 
+#[cfg(feature = "docgen")]
 fn get_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get track lyrics").description(
         "Returns the best-matching lyrics for a track, selected from all stored providers. \
@@ -698,6 +755,7 @@ fn get_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
+#[cfg(feature = "docgen")]
 fn put_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Write track lyrics").description(
         "Creates or replaces the authenticated user's global lyrics override for a track. \
@@ -709,6 +767,7 @@ fn put_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
+#[cfg(feature = "docgen")]
 fn delete_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Delete user track lyrics").description(
         "Deletes the user-authored lyrics override for a track. Plugin/provider lyrics are left \
@@ -717,6 +776,7 @@ fn delete_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
     ).response::<204, ()>()
 }
 
+#[cfg(feature = "docgen")]
 fn refresh_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Refresh track lyrics")
         .description(
@@ -728,6 +788,7 @@ fn refresh_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
         .response::<204, ()>()
 }
 
+#[cfg(feature = "docgen")]
 fn create_track_playback_url_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create playable track URLs").description(
         "Returns browser-friendly stream and HLS URLs containing scoped media tokens for the track. \
@@ -738,8 +799,27 @@ fn create_track_playback_url_docs(op: TransformOperation) -> TransformOperation 
     )
 }
 
-pub fn track_routes() -> ApiRouter {
-    ApiRouter::new()
+pub fn track_routes() -> Router {
+    Router::new()
+        .route("/", get(get_tracks))
+        .route("/{id}", get(get_track))
+        .route("/{id}/playback-url", post(create_track_playback_url))
+        .route("/{id}/lyrics", get(get_track_lyrics))
+        .route("/{id}/lyrics", put(put_track_lyrics))
+        .route("/{id}/lyrics", delete(delete_track_lyrics))
+        .route("/{id}/lyrics/refresh", post(refresh_track_lyrics))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn track_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::{
+        delete_with,
+        get_with,
+        post_with,
+        put_with,
+    };
+
+    aide::axum::ApiRouter::new()
         .api_route("/", get_with(get_tracks, list_tracks_docs))
         .api_route("/{id}", get_with(get_track, get_track_docs))
         .api_route(

@@ -14,7 +14,7 @@ pub(crate) use hls::serve_hls_playlist_for_track;
 pub(crate) use ranged_file::build_ranged_file_body;
 pub(crate) use stream::stream_track_response;
 
-use aide::axum::ApiRouter;
+use axum::Router;
 
 use agdb::DbId;
 use axum::{
@@ -653,8 +653,18 @@ pub async fn temp_file_response(
     .await
 }
 
-pub fn stream_routes() -> ApiRouter {
+pub fn stream_routes() -> Router {
     stream::stream_routes().merge(hls::hls_routes())
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn stream_openapi_routes() -> aide::axum::ApiRouter {
+    stream::stream_openapi_routes().merge(hls::hls_openapi_routes())
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn download_openapi_routes() -> aide::axum::ApiRouter {
+    download::download_openapi_routes()
 }
 
 #[cfg(test)]

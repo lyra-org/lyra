@@ -27,7 +27,6 @@ use agdb::{
     QueryId,
     QueryIds,
 };
-use schemars::JsonSchema;
 use serde::{
     Deserialize,
     Serialize,
@@ -43,18 +42,9 @@ use super::{
     compare_option,
 };
 
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    Hash,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    DbTypeMarker,
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, DbTypeMarker,
 )]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum ReleaseType {
@@ -151,7 +141,8 @@ impl_luau_enum_userdata!(
     ]
 );
 
-#[derive(DbElement, Serialize, Deserialize, Clone, Debug, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(DbElement, Serialize, Deserialize, Clone, Debug)]
 pub(crate) struct Release {
     pub(crate) db_id: Option<NodeId>,
     pub(crate) id: String,

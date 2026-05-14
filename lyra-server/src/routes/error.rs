@@ -3,12 +3,15 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+#[cfg(feature = "docgen")]
 use aide::generate::GenContext;
+#[cfg(feature = "docgen")]
 use aide::openapi::{
     Operation,
     Response as ApiResponse,
     StatusCode as ApiStatusCode,
 };
+#[cfg(feature = "docgen")]
 use aide::operation::OperationOutput;
 use axum::{
     http::StatusCode,
@@ -112,6 +115,7 @@ impl IntoResponse for AppError {
     }
 }
 
+#[cfg(feature = "docgen")]
 impl OperationOutput for AppError {
     type Inner = String;
 

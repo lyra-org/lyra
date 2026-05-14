@@ -4,13 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use agdb::DbId;
-use aide::axum::{
-    ApiRouter,
-    routing::{
-        get_with,
-        post_with,
-    },
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
     Json,
@@ -20,7 +14,13 @@ use axum::{
     },
     http::HeaderMap,
 };
-use schemars::JsonSchema;
+use axum::{
+    Router,
+    routing::{
+        get,
+        post,
+    },
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -58,57 +58,106 @@ use crate::{
 const ACTIVE_PLAYBACK_TIMEOUT_MS: u64 = playbacks::ACTIVE_SESSION_TTL_MS;
 const REST_PLAYBACK_PLUGIN_ID: &str = "rest";
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct PlaybackStartRequest {
-    #[schemars(description = "Track ID for this playback session.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Track ID for this playback session.")
+    )]
     track_id: String,
-    #[schemars(description = "Initial playback position in milliseconds.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Initial playback position in milliseconds.")
+    )]
     #[serde(default)]
     position_ms: Option<u64>,
-    #[schemars(description = "Track duration in milliseconds, if known.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Track duration in milliseconds, if known.")
+    )]
     duration_ms: Option<u64>,
-    #[schemars(
-        description = "Initial playback state: playing, paused, stopped, buffering, completed."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Initial playback state: playing, paused, stopped, buffering, completed."
+        )
     )]
     state: Option<PlaybackState>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct PlaybackListQuery {
-    #[schemars(description = "When true, returns only active, non-stale playback sessions.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "When true, returns only active, non-stale playback sessions.")
+    )]
     active: Option<bool>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct PlaybackProgressRequest {
-    #[schemars(description = "Playback position in milliseconds.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Playback position in milliseconds.")
+    )]
     position_ms: Option<u64>,
-    #[schemars(description = "Track duration in milliseconds, if known.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Track duration in milliseconds, if known.")
+    )]
     duration_ms: Option<u64>,
-    #[schemars(description = "Playback state: playing, paused, stopped, buffering, completed.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Playback state: playing, paused, stopped, buffering, completed.")
+    )]
     state: Option<PlaybackState>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct PlaybackResponse {
-    #[schemars(description = "Playback session ID.")]
+    #[cfg_attr(feature = "docgen", schemars(description = "Playback session ID."))]
     playback_session_id: String,
-    #[schemars(description = "Track ID associated with this playback.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Track ID associated with this playback.")
+    )]
     track_id: String,
-    #[schemars(description = "User ID who owns this playback.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "User ID who owns this playback.")
+    )]
     user_id: String,
-    #[schemars(description = "Playback position in milliseconds.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Playback position in milliseconds.")
+    )]
     position_ms: u64,
-    #[schemars(description = "Track duration in milliseconds, if known.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Track duration in milliseconds, if known.")
+    )]
     duration_ms: Option<u64>,
-    #[schemars(description = "Playback state.")]
+    #[cfg_attr(feature = "docgen", schemars(description = "Playback state."))]
     state: PlaybackState,
-    #[schemars(description = "Accumulated effective listening activity in milliseconds.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Accumulated effective listening activity in milliseconds.")
+    )]
     activity_ms: u64,
-    #[schemars(description = "Last report timestamp as an RFC 3339 UTC timestamp.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Last report timestamp as an RFC 3339 UTC timestamp.")
+    )]
     updated_at: String,
-    #[schemars(
-        description = "Server-time playback position in milliseconds extrapolated from last update while playing."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Server-time playback position in milliseconds extrapolated from last update while playing."
+        )
     )]
     effective_position_ms: u64,
 }
@@ -345,21 +394,39 @@ async fn report_playback_progress(
     Ok(Json(response))
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct ActiveSessionResponse {
-    #[schemars(description = "Playback session details.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Playback session details.")
+    )]
     #[serde(flatten)]
     playback: PlaybackResponse,
-    #[schemars(description = "Opaque connection token for the controlling connection, if any.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Opaque connection token for the controlling connection, if any.")
+    )]
     connection_token: Option<String>,
-    #[schemars(description = "Client-provided session key of the controlling connection, if any.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Client-provided session key of the controlling connection, if any."
+        )
+    )]
     connection_session_key: Option<String>,
-    #[schemars(
-        description = "Remote control commands supported by the controlling connection, if any."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Remote control commands supported by the controlling connection, if any."
+        )
     )]
     supported_commands: Vec<crate::services::remote::constants::RemoteAction>,
-    #[schemars(
-        description = "Whether remote control is degraded (command dispatched but no state update received within timeout)."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Whether remote control is degraded (command dispatched but no state update received within timeout)."
+        )
     )]
     remote_control_degraded: bool,
 }
@@ -437,18 +504,21 @@ async fn get_active_sessions(
     Ok(Json(response))
 }
 
+#[cfg(feature = "docgen")]
 fn start_playback_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create playback session").description(
         "Starts or resumes session-scoped playback and returns its playback session ID.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn report_playback_progress_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Report playback progress").description(
         "Updates the latest position and state for one of the authenticated user's playback session IDs.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn list_playbacks_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List playback sessions")
         .description(
@@ -456,6 +526,7 @@ fn list_playbacks_docs(op: TransformOperation) -> TransformOperation {
         )
 }
 
+#[cfg(feature = "docgen")]
 fn active_sessions_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List active playback sessions")
         .description(
@@ -463,8 +534,24 @@ fn active_sessions_docs(op: TransformOperation) -> TransformOperation {
         )
 }
 
-pub fn playback_session_routes() -> ApiRouter {
-    ApiRouter::new()
+pub fn playback_session_routes() -> Router {
+    Router::new()
+        .route("/", get(get_playbacks).post(start_playback))
+        .route("/active", get(get_active_sessions))
+        .route(
+            "/{playback_session_id}/progress",
+            post(report_playback_progress),
+        )
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn playback_session_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::{
+        get_with,
+        post_with,
+    };
+
+    aide::axum::ApiRouter::new()
         .api_route(
             "/",
             get_with(get_playbacks, list_playbacks_docs)

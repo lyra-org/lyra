@@ -4,17 +4,17 @@
 // www.meshiplaw.com/lyra.
 
 use agdb::DbId;
-use aide::axum::{
-    ApiRouter,
-    routing::get_with,
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
     Json,
     extract::Query,
     http::HeaderMap,
 };
-use schemars::JsonSchema;
+use axum::{
+    Router,
+    routing::get,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -50,65 +50,117 @@ use crate::{
     },
 };
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 pub(super) struct MeListenQuery {
-    #[schemars(description = "Optional track ID to narrow the summary to one track.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Optional track ID to narrow the summary to one track.")
+    )]
     track_id: Option<String>,
     #[serde(flatten)]
     page: routes::PageQuery,
-    #[schemars(
-        description = "Comma-separated or repeated values: listen_count, count, last_played_at, last_played, track_id, id."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Comma-separated or repeated values: listen_count, count, last_played_at, last_played, track_id, id."
+        )
     )]
     #[serde(default, deserialize_with = "routes::deserialize_inc")]
     sort_by: Option<Vec<String>>,
-    #[schemars(description = "Sort order for all sort keys: ascending or descending.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Sort order for all sort keys: ascending or descending.")
+    )]
     sort_order: Option<String>,
-    #[schemars(
-        description = "When `track_id` is supplied, also counts listens for tracks that share a provider-declared unique track external ID."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "When `track_id` is supplied, also counts listens for tracks that share a provider-declared unique track external ID."
+        )
     )]
     merge_unique_external_ids: Option<bool>,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct ListenQuery {
-    #[schemars(description = "Optional user ID to narrow the summaries to one user.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Optional user ID to narrow the summaries to one user.")
+    )]
     user_id: Option<String>,
-    #[schemars(description = "Optional track ID to narrow the summary to one track.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Optional track ID to narrow the summary to one track.")
+    )]
     track_id: Option<String>,
     #[serde(flatten)]
     page: routes::PageQuery,
-    #[schemars(
-        description = "Comma-separated or repeated values: listen_count, count, last_played_at, last_played, user_id, track_id, id."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Comma-separated or repeated values: listen_count, count, last_played_at, last_played, user_id, track_id, id."
+        )
     )]
     #[serde(default, deserialize_with = "routes::deserialize_inc")]
     sort_by: Option<Vec<String>>,
-    #[schemars(description = "Sort order for all sort keys: ascending or descending.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Sort order for all sort keys: ascending or descending.")
+    )]
     sort_order: Option<String>,
-    #[schemars(
-        description = "When `track_id` is supplied, also counts listens for tracks that share a provider-declared unique track external ID."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "When `track_id` is supplied, also counts listens for tracks that share a provider-declared unique track external ID."
+        )
     )]
     merge_unique_external_ids: Option<bool>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 pub(super) struct MeListenResponse {
-    #[schemars(description = "Track ID represented by this summary.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Track ID represented by this summary.")
+    )]
     track_id: String,
-    #[schemars(description = "Number of listens for the authenticated user and track.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Number of listens for the authenticated user and track.")
+    )]
     listen_count: u64,
-    #[schemars(description = "Most recent listen time for the authenticated user and track.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Most recent listen time for the authenticated user and track.")
+    )]
     last_played_at: Option<String>,
 }
 
-#[derive(Serialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
 struct ListenResponse {
-    #[schemars(description = "User ID represented by this summary.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "User ID represented by this summary.")
+    )]
     user_id: String,
-    #[schemars(description = "Track ID represented by this summary.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Track ID represented by this summary.")
+    )]
     track_id: String,
-    #[schemars(description = "Number of listens for this user and track.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Number of listens for this user and track.")
+    )]
     listen_count: u64,
-    #[schemars(description = "Most recent listen time for this user and track.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Most recent listen time for this user and track.")
+    )]
     last_played_at: Option<String>,
 }
 
@@ -524,20 +576,29 @@ async fn get_listens(
     Ok(Json(PageResponse { items, next_cursor }))
 }
 
+#[cfg(feature = "docgen")]
 pub(super) fn get_me_listens_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List my listen summaries").description(
         "Returns authenticated user-scoped per-track listen summaries. Defaults to listen_count descending, then last_played_at descending.",
     )
 }
 
+#[cfg(feature = "docgen")]
 fn get_listens_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List listen summaries").description(
         "Requires ManageLibraries or Admin. Returns per-user per-track listen summaries for visible library content.",
     )
 }
 
-pub fn listen_routes() -> ApiRouter {
-    ApiRouter::new().api_route("/", get_with(get_listens, get_listens_docs))
+pub fn listen_routes() -> Router {
+    Router::new().route("/", get(get_listens))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn listen_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::get_with;
+
+    aide::axum::ApiRouter::new().api_route("/", get_with(get_listens, get_listens_docs))
 }
 
 #[cfg(test)]

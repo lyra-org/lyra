@@ -31,9 +31,8 @@ const MIN_ACTIVITY_MS: u64 = 30_000;
 const SHORT_TRACK_MS: u64 = 180_000;
 const SHORT_TRACK_ACTIVITY_PERCENT: u64 = 20;
 
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, DbTypeMarker,
-)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, DbTypeMarker)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum PlaybackState {
     Playing,

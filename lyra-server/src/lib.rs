@@ -178,6 +178,7 @@ pub async fn run_server(capture_path: Option<String>) -> Result<()> {
     services::startup::run_server(capture_path, listener).await
 }
 
+#[cfg(feature = "docgen")]
 pub fn run_docs_command(args: &[String]) -> Result<()> {
     plugins::docs::run_command(args)
 }

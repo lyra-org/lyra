@@ -3,12 +3,13 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use aide::axum::{
-    ApiRouter,
-    routing::get_with,
-};
+#[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use anyhow::anyhow;
+use axum::{
+    Router,
+    routing::get,
+};
 use axum::{
     body::Body,
     extract::{
@@ -30,7 +31,6 @@ use lyra_ffmpeg::{
     SeekResult,
     WriteResult,
 };
-use schemars::JsonSchema;
 use serde::Deserialize;
 use std::sync::mpsc as std_mpsc;
 use std::sync::mpsc::RecvTimeoutError;
@@ -68,33 +68,58 @@ struct StreamChannelError {
     message: String,
 }
 
-#[derive(Deserialize, JsonSchema)]
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct StreamQuery {
-    #[schemars(
-        description = "Scoped media token returned by `POST /api/tracks/{id}/playback-url`."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Scoped media token returned by `POST /api/tracks/{id}/playback-url`."
+        )
     )]
     media_token: Option<String>,
-    #[schemars(
-        description = "Optional output format (e.g. mp3, flac, wav, ogg, webm, aac, opus)."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional output format (e.g. mp3, flac, wav, ogg, webm, aac, opus)."
+        )
     )]
     format: Option<String>,
-    #[schemars(
-        description = "Optional ordered audio codec preferences (e.g. opus,aac or pcm_s24le,pcm_s16le)."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional ordered audio codec preferences (e.g. opus,aac or pcm_s24le,pcm_s16le)."
+        )
     )]
     codec: Option<String>,
-    #[schemars(
-        description = "Target bitrate cap in bits per second. Applied for lossy outputs when below the source bitrate; ignored for lossless codecs or when above source."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Target bitrate cap in bits per second. Applied for lossy outputs when below the source bitrate; ignored for lossless codecs or when above source."
+        )
     )]
     bitrate_bps: Option<u32>,
-    #[schemars(description = "Target sample rate in Hz. Triggers transcoding when supplied.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Target sample rate in Hz. Triggers transcoding when supplied.")
+    )]
     sample_rate_hz: Option<u32>,
-    #[schemars(description = "Target channel count. Triggers transcoding when supplied.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Target channel count. Triggers transcoding when supplied.")
+    )]
     channels: Option<u32>,
-    #[schemars(
-        description = "Prefer VBR for lossy transcodes when the selected encoder supports it."
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Prefer VBR for lossy transcodes when the selected encoder supports it."
+        )
     )]
     prefer_vbr: Option<bool>,
-    #[schemars(description = "Per-request playback start offset in milliseconds.")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Per-request playback start offset in milliseconds.")
+    )]
     start_offset_ms: Option<u64>,
 }
 
@@ -364,6 +389,7 @@ pub(crate) async fn stream_track_response(
     Ok(response)
 }
 
+#[cfg(feature = "docgen")]
 fn stream_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Stream audio")
         .description(
@@ -371,6 +397,13 @@ fn stream_docs(op: TransformOperation) -> TransformOperation {
         )
 }
 
-pub fn stream_routes() -> ApiRouter {
-    ApiRouter::new().api_route("/{track_id}", get_with(get_stream, stream_docs))
+pub fn stream_routes() -> Router {
+    Router::new().route("/{track_id}", get(get_stream))
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn stream_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::get_with;
+
+    aide::axum::ApiRouter::new().api_route("/{track_id}", get_with(get_stream, stream_docs))
 }
