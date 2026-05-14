@@ -1,0 +1,30 @@
+{
+  "test_name": "fiction_feat_dannie_may_缶缶",
+  "scenario_id": "9ff981c6ef5405c8",
+  "responses": [
+    {
+      "cache_key": "34667eec132216f6",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=fc06b4e2-0563-43c2-8f17-72af1f7a0b79&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "2382a0ae26425cfc"
+    },
+    {
+      "cache_key": "431e53be61239215",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A2c495ed2-6497-4306-8f75-f84c779e98d4%20AND%20(release%3AFiction%20%5C(feat.%20Dannie%20May%5C)%20OR%20recording%3AFiction%20%5C(feat.%20Dannie%20May%5C))&limit=100",
+      "status_code": 200,
+      "body_hash": "3dd71b9abb19783a"
+    },
+    {
+      "cache_key": "85fce92a594af898",
+      "url": "https://musicbrainz.org/ws/2/artist/ee42cce6-43dd-4903-8122-e3b91b531cb9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6d66ceb1600696ee"
+    },
+    {
+      "cache_key": "d9db5dec6afbe6b2",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%BC%B6%E7%BC%B6",
+      "status_code": 200,
+      "body_hash": "600589bdc03fd01e"
+    }
+  ]
+}
