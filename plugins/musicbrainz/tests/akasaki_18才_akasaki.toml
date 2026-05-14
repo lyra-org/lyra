@@ -1,0 +1,251 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "AKASAKI – 18才 (2025) [FLAC]/14 - 薔薇と散る.flac"
+album = "AKASAKI – 18才"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "薔薇と散る"
+copyright = "A uDiscover Music Release; ℗ 2025 UMG Recordings, Inc."
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 14
+duration_ms = 185900
+
+[[raw_tags]]
+file_path = "AKASAKI – 18才 (2025) [FLAC]/13 - あどけ泣く.flac"
+album = "AKASAKI – 18才"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "あどけ泣く"
+copyright = "A uDiscover Music Release; ℗ 2025 UMG Recordings, Inc."
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 14
+duration_ms = 136073
+
+[[raw_tags]]
+file_path = "AKASAKI – 18才 (2025) [FLAC]/12 - 今夜は君と.flac"
+album = "AKASAKI – 18才"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "今夜は君と"
+copyright = "A uDiscover Music Release; ℗ 2025 UMG Recordings, Inc."
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 14
+duration_ms = 232134
+
+[[raw_tags]]
+file_path = "AKASAKI – 18才 (2025) [FLAC]/11 - 波まかせ.flac"
+album = "AKASAKI – 18才"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "波まかせ"
+copyright = "A uDiscover Music Release; ℗ 2025 UMG Recordings, Inc."
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 14
+duration_ms = 208773
+
+[[raw_tags]]
+file_path = "AKASAKI – 18才 (2025) [FLAC]/10 - 全身前礼.flac"
+album = "AKASAKI – 18才"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "全身前礼"
+copyright = "A uDiscover Music Release; ℗ 2025 UMG Recordings, Inc."
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 14
+duration_ms = 173133
+
+[[raw_tags]]
+file_path = "AKASAKI – 18才 (2025) [FLAC]/09 - プレデター.flac"
+album = "AKASAKI – 18才"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "プレデター"
+copyright = "A uDiscover Music Release; ℗ 2025 UMG Recordings, Inc."
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 14
+duration_ms = 216120
+
+[[raw_tags]]
+file_path = "AKASAKI – 18才 (2025) [FLAC]/08 - 弾きこもり.flac"
+album = "AKASAKI – 18才"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "弾きこもり"
+copyright = "A uDiscover Music Release; ℗ 2025 UMG Recordings, Inc."
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 14
+duration_ms = 179493
+
+[[raw_tags]]
+file_path = "AKASAKI – 18才 (2025) [FLAC]/07 - ルーツ.flac"
+album = "AKASAKI – 18才"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "ルーツ"
+copyright = "A uDiscover Music Release; ℗ 2025 UMG Recordings, Inc."
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 14
+duration_ms = 195640
+
+[[raw_tags]]
+file_path = "AKASAKI – 18才 (2025) [FLAC]/06 - 爆速論理ness.flac"
+album = "AKASAKI – 18才"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "爆速論理ness"
+copyright = "A uDiscover Music Release; ℗ 2025 UMG Recordings, Inc."
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 14
+duration_ms = 152871
+
+[[raw_tags]]
+file_path = "AKASAKI – 18才 (2025) [FLAC]/05 - 夏実.flac"
+album = "AKASAKI – 18才"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "夏実"
+copyright = "A uDiscover Music Release; ℗ 2025 UMG Recordings, Inc."
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 14
+duration_ms = 307220
+
+[[raw_tags]]
+file_path = "AKASAKI – 18才 (2025) [FLAC]/04 - 徘徊.flac"
+album = "AKASAKI – 18才"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "徘徊"
+copyright = "A uDiscover Music Release; ℗ 2025 UMG Recordings, Inc."
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 14
+duration_ms = 191075
+
+[[raw_tags]]
+file_path = "AKASAKI – 18才 (2025) [FLAC]/03 - 四季回生.flac"
+album = "AKASAKI – 18才"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "四季回生"
+copyright = "A uDiscover Music Release; ℗ 2025 UMG Recordings, Inc."
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 14
+duration_ms = 146624
+
+[[raw_tags]]
+file_path = "AKASAKI – 18才 (2025) [FLAC]/02 - Bunny Girl.flac"
+album = "AKASAKI – 18才"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "Bunny Girl"
+copyright = "A uDiscover Music Release; ℗ 2025 UMG Recordings, Inc."
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 14
+duration_ms = 217492
+
+[[raw_tags]]
+file_path = "AKASAKI – 18才 (2025) [FLAC]/01 - とろい.flac"
+album = "AKASAKI – 18才"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "とろい"
+copyright = "A uDiscover Music Release; ℗ 2025 UMG Recordings, Inc."
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 14
+duration_ms = 240893
+
+[expect.release]
+ids = { release_group_id = "4cee8630-c15c-4ac7-97a7-94e46655fb2c", release_id = "619561df-e7b9-4790-ade2-7cabdcb27da5" }
+fields = { release_title = "18才", release_date = "2025-07-27" }
+
+[expect.artists."7d915528-c29f-4cec-9575-37212e4936ad"]
+fields = { artist_name = "AKASAKI", sort_name = "AKASAKI" }
+
+[expect.tracks."4e98ef2b-e244-4972-87e0-040dfdd1e98a"]
+fields = { disc = 1, track = 5, track_title = "夏実" }
+
+[expect.tracks."6c99e02c-1f11-43c6-b281-6c36b35f8dc5"]
+fields = { disc = 1, track = 13, track_title = "あどけ泣く" }
+
+[expect.tracks."78288dce-3c60-47c8-a425-ef3337fa1faa"]
+fields = { disc = 1, track = 2, track_title = "Bunny Girl" }
+
+[expect.tracks."799ecbe9-6e83-4b3d-a9a0-02118683a6cc"]
+fields = { disc = 1, track = 12, track_title = "今夜は君と" }
+
+[expect.tracks."922ed21c-b442-499b-8868-e054056e1980"]
+fields = { disc = 1, track = 6, track_title = "爆速論理ness" }
+
+[expect.tracks."9ed44c2c-d160-4b02-b7d7-6f8bc8f9d546"]
+fields = { disc = 1, track = 11, track_title = "波まかせ" }
+
+[expect.tracks."c18edb47-5cc0-48fa-aa87-59260e6c3d45"]
+fields = { disc = 1, track = 9, track_title = "プレデター" }
+
+[expect.tracks."c1a6246e-cafa-413c-ab07-a1275d78b1c4"]
+fields = { disc = 1, track = 10, track_title = "全身前礼" }
+
+[expect.tracks."ca589f68-94bc-45a8-8b1f-35b829876fcc"]
+fields = { disc = 1, track = 14, track_title = "薔薇と散る" }
+
+[expect.tracks."d90b31d6-da83-4b58-85f4-d66bf7f96f70"]
+fields = { disc = 1, track = 4, track_title = "徘徊" }
+
+[expect.tracks."dd2a03ed-23e5-454e-a96c-a4629cffd57b"]
+fields = { disc = 1, track = 1, track_title = "とろい" }
+
+[expect.tracks."dd8295d1-dddf-43e9-9904-d0a2a64de327"]
+fields = { disc = 1, track = 8, track_title = "弾きこもり" }
+
+[expect.tracks."e5d0e9d0-0e6d-47c6-9bc8-947d036d16c0"]
+fields = { disc = 1, track = 7, track_title = "ルーツ" }
+
+[expect.tracks."f2d6e891-7756-4273-bf4a-cccc098160c4"]
+fields = { disc = 1, track = 3, track_title = "四季回生" }

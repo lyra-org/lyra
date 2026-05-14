@@ -1,0 +1,173 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Penthouse - Balcony (2023-03-29) [WEB FLAC]/1.10. 閃光花.flac"
+album = "Balcony"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "閃光花"
+copyright = "℗ 2023 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 10
+duration_ms = 202853
+
+[[raw_tags]]
+file_path = "Penthouse - Balcony (2023-03-29) [WEB FLAC]/1.09. Take Me Maybe.flac"
+album = "Balcony"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "Take Me Maybe"
+copyright = "℗ 2023 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 10
+duration_ms = 205693
+
+[[raw_tags]]
+file_path = "Penthouse - Balcony (2023-03-29) [WEB FLAC]/1.08. Something Stupid.flac"
+album = "Balcony"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "Something Stupid"
+copyright = "℗ 2023 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 10
+duration_ms = 272666
+
+[[raw_tags]]
+file_path = "Penthouse - Balcony (2023-03-29) [WEB FLAC]/1.07. 単焦点.flac"
+album = "Balcony"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "単焦点"
+copyright = "℗ 2023 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 10
+duration_ms = 181786
+
+[[raw_tags]]
+file_path = "Penthouse - Balcony (2023-03-29) [WEB FLAC]/1.06. 雨宿り.flac"
+album = "Balcony"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "雨宿り"
+copyright = "℗ 2023 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 10
+duration_ms = 270653
+
+[[raw_tags]]
+file_path = "Penthouse - Balcony (2023-03-29) [WEB FLAC]/1.05. Slow & Easy!.flac"
+album = "Balcony"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "Slow & Easy!"
+copyright = "℗ 2023 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 10
+duration_ms = 168560
+
+[[raw_tags]]
+file_path = "Penthouse - Balcony (2023-03-29) [WEB FLAC]/1.04. 恋標.flac"
+album = "Balcony"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "恋標"
+copyright = "℗ 2023 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 10
+duration_ms = 211000
+
+[[raw_tags]]
+file_path = "Penthouse - Balcony (2023-03-29) [WEB FLAC]/1.03. Live in This Way.flac"
+album = "Balcony"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "Live in This Way"
+copyright = "℗ 2023 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 10
+duration_ms = 211000
+
+[[raw_tags]]
+file_path = "Penthouse - Balcony (2023-03-29) [WEB FLAC]/1.02. 流星群.flac"
+album = "Balcony"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "流星群"
+copyright = "℗ 2023 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 10
+duration_ms = 188186
+
+[[raw_tags]]
+file_path = "Penthouse - Balcony (2023-03-29) [WEB FLAC]/1.01. 蜘蛛ノ糸.flac"
+album = "Balcony"
+album_artists = ["Penthouse"]
+artists = ["Penthouse"]
+title = "蜘蛛ノ糸"
+copyright = "℗ 2023 Victor Entertainment"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 10
+duration_ms = 211746
+
+[expect.release]
+ids = { release_group_id = "43fae8cb-803f-4c59-bda7-fefc4498e36b", release_id = "c1a07c0b-dcbb-4c22-bb64-f7ba21dec3bf" }
+fields = { release_title = "Balcony", release_date = "2023-03-29" }
+
+[expect.artists."9604bb00-65c5-4b67-a174-c46c063ba794"]
+fields = { artist_name = "Penthouse", sort_name = "Penthouse" }
+
+[expect.tracks."0d3f3869-3be9-4fd9-9e5c-8f15929e4c3a"]
+fields = { disc = 1, track = 2, track_title = "流星群" }
+
+[expect.tracks."145617c2-b9c8-4abc-9ec1-16da0917057e"]
+fields = { disc = 1, track = 3, track_title = "Live in This Way" }
+
+[expect.tracks."40dd8b87-b233-471d-9d65-5239f3e71b79"]
+fields = { disc = 1, track = 10, track_title = "閃光花" }
+
+[expect.tracks."48b70d8c-32fa-4d8f-9d84-782e0bf7d8c9"]
+fields = { disc = 1, track = 5, track_title = "Slow & Easy!" }
+
+[expect.tracks."4c27aa6b-b305-4d39-93dd-f48d967da401"]
+fields = { disc = 1, track = 7, track_title = "単焦点" }
+
+[expect.tracks."600b858b-daee-422c-b9ad-761d1590596e"]
+fields = { disc = 1, track = 1, track_title = "蜘蛛ノ糸" }
+
+[expect.tracks."790bff6d-697e-4325-8c53-95c2178338a5"]
+fields = { disc = 1, track = 4, track_title = "恋標" }
+
+[expect.tracks."8e0ac952-ba84-4bb8-abe6-860ad0aeda51"]
+fields = { disc = 1, track = 9, track_title = "Take Me Maybe" }
+
+[expect.tracks."f0e18f02-cf25-415b-b2c2-08287df1125e"]
+fields = { disc = 1, track = 6, track_title = "雨宿り" }
+
+[expect.tracks."fdfa9bb2-4fa8-4f12-80c3-a211bafe28ca"]
+fields = { disc = 1, track = 8, track_title = "Something Stupid" }
