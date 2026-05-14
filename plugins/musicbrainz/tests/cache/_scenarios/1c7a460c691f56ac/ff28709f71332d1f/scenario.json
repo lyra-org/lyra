@@ -1,0 +1,30 @@
+{
+  "test_name": "escalate_ep_48_24_aimer",
+  "scenario_id": "ff28709f71332d1f",
+  "responses": [
+    {
+      "cache_key": "5349bcc1a8622725",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Aimer",
+      "status_code": 200,
+      "body_hash": "5e2235a338c13c9b"
+    },
+    {
+      "cache_key": "71ddbf9c59d57e05",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3Aescalate&limit=100",
+      "status_code": 200,
+      "body_hash": "497af08a3ebe8b24"
+    },
+    {
+      "cache_key": "bca20c55d856bf9a",
+      "url": "https://musicbrainz.org/ws/2/work/869841e1-466a-4c94-a4fa-437dee3b8a6f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "05b40ef53f499862"
+    },
+    {
+      "cache_key": "e38ba2bbf7204632",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=b00ffb1b-3f6d-4bd8-847f-1ede337cc66c&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "1b605ccace4c5e3a"
+    }
+  ]
+}
