@@ -1,0 +1,42 @@
+{
+  "test_name": "strike_the_blood_op_single_strike_the_blood_kisida_kyodan",
+  "scenario_id": "86de413c63a3d8fd",
+  "responses": [
+    {
+      "cache_key": "3ad191516d5789ff",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=fd8291a5-4bea-465b-9d56-3f0749b19aa9&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "c89132bbba58763b"
+    },
+    {
+      "cache_key": "925ad7cb13e6d27e",
+      "url": "https://musicbrainz.org/ws/2/artist?query=KISIDA%20KYODAN%20%26%20THE%20AKEBOSI%20ROCKETS",
+      "status_code": 200,
+      "body_hash": "202abe255db5f3b6"
+    },
+    {
+      "cache_key": "bb4f088d70c5c5e5",
+      "url": "https://musicbrainz.org/ws/2/work/52fef411-971c-4774-ba0f-4f99880c41cd?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "986868c34e7d89c5"
+    },
+    {
+      "cache_key": "c069ce0a111e8480",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AStrike%20the%20Blood%20OP%20Single%20%5C-%20Strike%20the%20Blood&limit=100",
+      "status_code": 200,
+      "body_hash": "b5414c226c62de27"
+    },
+    {
+      "cache_key": "dedc1f861dd52d61",
+      "url": "https://musicbrainz.org/ws/2/artist/1ff9b05a-d340-4a46-ac64-5aa8924e1e46?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cd227e0d9b128a7b"
+    },
+    {
+      "cache_key": "df4a116cf77d05a2",
+      "url": "https://musicbrainz.org/ws/2/work/90ce7c8f-a677-45a9-8234-c17a945a6634?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2f95d6e1197f84a4"
+    }
+  ]
+}

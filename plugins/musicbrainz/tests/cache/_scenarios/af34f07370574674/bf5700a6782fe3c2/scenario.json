@@ -1,0 +1,48 @@
+{
+  "test_name": "the_world_ruler_ナイトメア",
+  "scenario_id": "bf5700a6782fe3c2",
+  "responses": [
+    {
+      "cache_key": "26ace3c4e1319367",
+      "url": "https://musicbrainz.org/ws/2/work/3a469dac-1193-4dfc-bbdd-f4888f9331b3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9958fb607975d735"
+    },
+    {
+      "cache_key": "66ae1128a5e064e7",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=975cf2d7-254a-3fdd-9bbd-729e95de3ef2&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "8243962a09f2778d"
+    },
+    {
+      "cache_key": "9c44d8d859f60332",
+      "url": "https://musicbrainz.org/ws/2/work/dd4f37da-ed84-4ce7-9b34-fd24d9623643?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "acf4070630a2a299"
+    },
+    {
+      "cache_key": "b95f52c1f31fccb4",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%8A%E3%82%A4%E3%83%88%E3%83%A1%E3%82%A2",
+      "status_code": 200,
+      "body_hash": "5730f120ca155a77"
+    },
+    {
+      "cache_key": "cd213e2e31bf977a",
+      "url": "https://musicbrainz.org/ws/2/work/a1bcb774-06c6-3c15-9a53-06834fd71824?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1cfde6a5de2c3fb1"
+    },
+    {
+      "cache_key": "cefbafa8229d0906",
+      "url": "https://musicbrainz.org/ws/2/artist/61ac244d-3201-4c43-a234-f99d7166400e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a1cdcbc40047a22a"
+    },
+    {
+      "cache_key": "e793d44fbc8f5d97",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3Athe%20WORLD%20Ruler&limit=100",
+      "status_code": 200,
+      "body_hash": "db9b5b3bc62c012a"
+    }
+  ]
+}

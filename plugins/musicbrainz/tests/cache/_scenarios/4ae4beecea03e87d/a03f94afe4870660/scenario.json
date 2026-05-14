@@ -1,0 +1,30 @@
+{
+  "test_name": "feelin_good_藤井_風",
+  "scenario_id": "a03f94afe4870660",
+  "responses": [
+    {
+      "cache_key": "00d0207045923325",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=fcbfd8fd-5361-4db8-9c74-1bcebcd66519&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "961be4932b449199"
+    },
+    {
+      "cache_key": "107bac57ccf99d5a",
+      "url": "https://musicbrainz.org/ws/2/work/7972c937-f838-40e5-8607-407ab8489b14?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "086581116c9bd248"
+    },
+    {
+      "cache_key": "1c97b647319c3596",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E8%97%A4%E4%BA%95%20%E9%A2%A8",
+      "status_code": 200,
+      "body_hash": "b4c59c37a6f84b30"
+    },
+    {
+      "cache_key": "a43633868e10d9f8",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AFeelin%E2%80%99%20Go%5C(o%5C)d&limit=100",
+      "status_code": 200,
+      "body_hash": "5c7a56b3813ef6e3"
+    }
+  ]
+}
