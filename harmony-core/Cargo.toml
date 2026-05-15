@@ -1,0 +1,15 @@
+[package]
+name = "harmony-core"
+version = "0.0.1"
+edition = "2024"
+license-file = "../LICENSE"
+
+[dependencies]
+anyhow = { workspace = true }
+harmony-luau = { path = "../harmony-luau" }
+mlua = { workspace = true, features = ["luau", "anyhow", "send"] }
+mlua_scheduler = { workspace = true, features = ["send"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+json5 = { workspace = true }
+tracing = { workspace = true }
