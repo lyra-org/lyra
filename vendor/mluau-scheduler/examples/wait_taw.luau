@@ -1,0 +1,5 @@
+task.spawn(function() 
+	print("Spawned")
+	print(_TEST_ASYNC_WORK(20))
+end) 
+return _TEST_ASYNC_WORK(10)
