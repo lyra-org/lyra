@@ -1,0 +1,30 @@
+{
+  "test_name": "ダンボールの色_feat_4na_もっさ_maisondes",
+  "scenario_id": "7623b1c5e909881d",
+  "responses": [
+    {
+      "cache_key": "3fe27bdaf123a299",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%83%80%E3%83%B3%E3%83%9C%E3%83%BC%E3%83%AB%E3%81%AE%E8%89%B2%20%5C(feat.%204na%20%26%20%E3%82%82%E3%81%A3%E3%81%95%5C)&limit=100",
+      "status_code": 200,
+      "body_hash": "5e752e51829f8dbf"
+    },
+    {
+      "cache_key": "5081658924dc1f2d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=MAISONdes",
+      "status_code": 200,
+      "body_hash": "c039dffc927966cf"
+    },
+    {
+      "cache_key": "a8a24279ab4fb420",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=7f21de5d-b23f-45cb-871b-51c6ef566711&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "46cbc971b353fb82"
+    },
+    {
+      "cache_key": "c2b4d7b77c7023a5",
+      "url": "https://musicbrainz.org/ws/2/artist/5005beb6-9da2-48ba-bfd9-aa8ddc6d0117?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ce48d9fb2e73de12"
+    }
+  ]
+}

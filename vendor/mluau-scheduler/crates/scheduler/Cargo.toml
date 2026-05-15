@@ -1,0 +1,18 @@
+[package]
+name = "mlua_scheduler"
+version = "1.0.0"
+edition = "2024"
+
+[dependencies]
+mluau = { git = "https://github.com/mluau/mluau", features = ["luau"] }
+tokio = { version = "1", features = ["rt", "macros", "fs", "time", "sync"] }
+log = "0.4"
+futures-util = "0.3.31"
+tokio-util = { version = "0.7", features = ["time", "rt"] }
+flume = { version = "0.11", optional = true }
+rustc-hash = "2"
+
+[features]
+default = []
+v2_taskmgr_flume = ["dep:flume"]
+send = ["mluau/send"]
