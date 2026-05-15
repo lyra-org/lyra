@@ -1,0 +1,16 @@
+[package]
+name = "module_loader"
+version = "0.0.0"
+authors = ["Aleksandr Orlenko <zxteam@pm.me>"]
+edition = "2021"
+
+[features]
+lua54 = ["mluau/lua54"]
+lua53 = ["mluau/lua53"]
+lua52 = ["mluau/lua52"]
+lua51 = ["mluau/lua51"]
+luajit = ["mluau/luajit"]
+vendored = ["mluau/vendored"]
+
+[dependencies]
+mluau = { path = "../../..", default-features = false }
