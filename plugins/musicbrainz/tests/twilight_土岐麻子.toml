@@ -1,0 +1,173 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "土岐麻子 - Twilight (2021-11-24) [WEB FLAC]/1.10. 眠れぬ羊 (with TENDRE).flac"
+album = "Twilight"
+album_artists = ["土岐麻子"]
+artists = ["土岐麻子"]
+title = "眠れぬ羊 (with TENDRE)"
+copyright = "℗ (C)2021 avex entertainment inc./Sony Music Artists Inc."
+disc = 1
+disc_total = 1
+track = 10
+track_total = 10
+duration_ms = 233946
+
+[[raw_tags]]
+file_path = "土岐麻子 - Twilight (2021-11-24) [WEB FLAC]/1.09. Apple pie in the sky.flac"
+album = "Twilight"
+album_artists = ["土岐麻子"]
+artists = ["土岐麻子"]
+title = "Apple pie in the sky"
+copyright = "℗ (C)2021 avex entertainment inc./Sony Music Artists Inc."
+disc = 1
+disc_total = 1
+track = 9
+track_total = 10
+duration_ms = 222960
+
+[[raw_tags]]
+file_path = "土岐麻子 - Twilight (2021-11-24) [WEB FLAC]/1.08. birthday song.flac"
+album = "Twilight"
+album_artists = ["土岐麻子"]
+artists = ["土岐麻子"]
+title = "birthday song"
+copyright = "℗ (C)2021 avex entertainment inc./Sony Music Artists Inc."
+disc = 1
+disc_total = 1
+track = 8
+track_total = 10
+duration_ms = 266133
+
+[[raw_tags]]
+file_path = "土岐麻子 - Twilight (2021-11-24) [WEB FLAC]/1.07. Calling.flac"
+album = "Twilight"
+album_artists = ["土岐麻子"]
+artists = ["土岐麻子"]
+title = "Calling"
+copyright = "℗ (C)2021 avex entertainment inc./Sony Music Artists Inc."
+disc = 1
+disc_total = 1
+track = 7
+track_total = 10
+duration_ms = 226040
+
+[[raw_tags]]
+file_path = "土岐麻子 - Twilight (2021-11-24) [WEB FLAC]/1.06. Mirrors.flac"
+album = "Twilight"
+album_artists = ["土岐麻子"]
+artists = ["土岐麻子"]
+title = "Mirrors"
+copyright = "℗ (C)2021 avex entertainment inc./Sony Music Artists Inc."
+disc = 1
+disc_total = 1
+track = 6
+track_total = 10
+duration_ms = 270133
+
+[[raw_tags]]
+file_path = "土岐麻子 - Twilight (2021-11-24) [WEB FLAC]/1.05. NEON FISH.flac"
+album = "Twilight"
+album_artists = ["土岐麻子"]
+artists = ["土岐麻子"]
+title = "NEON FISH"
+copyright = "℗ (C)2021 avex entertainment inc./Sony Music Artists Inc."
+disc = 1
+disc_total = 1
+track = 5
+track_total = 10
+duration_ms = 200666
+
+[[raw_tags]]
+file_path = "土岐麻子 - Twilight (2021-11-24) [WEB FLAC]/1.04. ドア.flac"
+album = "Twilight"
+album_artists = ["土岐麻子"]
+artists = ["土岐麻子"]
+title = "ドア"
+copyright = "℗ (C)2021 avex entertainment inc./Sony Music Artists Inc."
+disc = 1
+disc_total = 1
+track = 4
+track_total = 10
+duration_ms = 292026
+
+[[raw_tags]]
+file_path = "土岐麻子 - Twilight (2021-11-24) [WEB FLAC]/1.03. travellers.flac"
+album = "Twilight"
+album_artists = ["土岐麻子"]
+artists = ["土岐麻子"]
+title = "travellers"
+copyright = "℗ (C)2021 avex entertainment inc./Sony Music Artists Inc."
+disc = 1
+disc_total = 1
+track = 3
+track_total = 10
+duration_ms = 178866
+
+[[raw_tags]]
+file_path = "土岐麻子 - Twilight (2021-11-24) [WEB FLAC]/1.02. close to you.flac"
+album = "Twilight"
+album_artists = ["土岐麻子"]
+artists = ["土岐麻子"]
+title = "close to you"
+copyright = "℗ (C)2021 avex entertainment inc./Sony Music Artists Inc."
+disc = 1
+disc_total = 1
+track = 2
+track_total = 10
+duration_ms = 238933
+
+[[raw_tags]]
+file_path = "土岐麻子 - Twilight (2021-11-24) [WEB FLAC]/1.01. ソルレム.flac"
+album = "Twilight"
+album_artists = ["土岐麻子"]
+artists = ["土岐麻子"]
+title = "ソルレム"
+copyright = "℗ (C)2021 avex entertainment inc./Sony Music Artists Inc."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 10
+duration_ms = 197000
+
+[expect.release]
+ids = { release_id = "d91d4ebd-0ba0-4be5-8e50-a22024752703" }
+fields = { release_title = "Twilight", release_date = "2021-11-24" }
+
+[expect.artists."0412cd16-5507-4474-86e2-3c94dd1428f2"]
+fields = { artist_name = "土岐麻子", sort_name = "Toki, Asako" }
+
+[expect.tracks."2072742f-11b9-4fc7-a82b-57f7607fe4e0"]
+fields = { disc = 1, track = 3, track_title = "travellers" }
+
+[expect.tracks."3316b18a-abea-41f8-836c-c1be6f46f3aa"]
+fields = { disc = 1, track = 4, track_title = "ドア" }
+
+[expect.tracks."36a9bd36-5a1d-41ce-9e5c-8da6207da582"]
+fields = { disc = 1, track = 7, track_title = "Calling" }
+
+[expect.tracks."3fb195f5-0684-48f4-a1da-39d53176038d"]
+fields = { disc = 1, track = 6, track_title = "Mirrors" }
+
+[expect.tracks."4f4bd5c0-a11c-4743-857d-ebb345b75a79"]
+fields = { disc = 1, track = 9, track_title = "Apple pie in the sky" }
+
+[expect.tracks."7f034946-96f1-4794-877b-9b18087a9fa8"]
+fields = { disc = 1, track = 10, track_title = "眠れぬ羊" }
+
+[expect.tracks."863a4318-78ae-45af-8b36-05029b2958a3"]
+fields = { disc = 1, track = 2, track_title = "close to you" }
+
+[expect.tracks."a8fe94dc-db70-44e4-829a-1f3a41405149"]
+fields = { disc = 1, track = 8, track_title = "birthday song" }
+
+[expect.tracks."aa8b51a8-1dc7-4ecd-8b2b-00e19af09b02"]
+fields = { disc = 1, track = 1, track_title = "ソルレム" }
+
+[expect.tracks."ee176bd7-fbe0-4d1a-ab66-ef4fbc844f2f"]
+fields = { disc = 1, track = 5, track_title = "NEON FISH" }
