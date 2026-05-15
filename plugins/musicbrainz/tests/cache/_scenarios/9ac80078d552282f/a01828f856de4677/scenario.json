@@ -1,0 +1,36 @@
+{
+  "test_name": "灼熱にて純情wii_wii_woo_星街すいせい",
+  "scenario_id": "a01828f856de4677",
+  "responses": [
+    {
+      "cache_key": "3ee072c4bf7e2322",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%98%9F%E8%A1%97%E3%81%99%E3%81%84%E3%81%9B%E3%81%84",
+      "status_code": 200,
+      "body_hash": "683ecdeb8b3dfb46"
+    },
+    {
+      "cache_key": "43f3268bb3e5b92e",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%81%BC%E7%86%B1%E3%81%AB%E3%81%A6%E7%B4%94%E6%83%85&limit=100",
+      "status_code": 200,
+      "body_hash": "a556d9d7f63a7504"
+    },
+    {
+      "cache_key": "8b954c45229a4ae1",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=f7efd882-1ae5-4ac5-bd66-02ba7e17f8fb&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "41faeb9f7d4b224f"
+    },
+    {
+      "cache_key": "cfbaf84da135f9eb",
+      "url": "https://musicbrainz.org/ws/2/artist/8eeb59f4-0071-4261-b1f8-91d8294622d2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b9bf461a42ae1b2d"
+    },
+    {
+      "cache_key": "fc97641d6a359d64",
+      "url": "https://musicbrainz.org/ws/2/work/8fed340c-b660-4318-a464-e48e270a5cf9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cf5ab242f68173ad"
+    }
+  ]
+}
