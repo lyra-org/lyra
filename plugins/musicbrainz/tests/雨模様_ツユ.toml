@@ -1,0 +1,29 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ツユ - 雨模様 (2022-09-28) [WEB FLAC]/1.01. 雨模様.flac"
+album = "雨模様"
+album_artists = ["ツユ"]
+artists = ["ツユ"]
+title = "雨模様"
+copyright = "℗ 2022 TUYU Records / PONY CANYON"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 162750
+
+[expect.release]
+ids = { release_group_id = "2f7ef48d-9403-4859-8439-6d872bf6365c", release_id = "219434db-85fb-431b-9e65-d3529350c6df" }
+fields = { release_title = "雨模様", release_date = "2022-09-28" }
+
+[expect.artists."2b0a8be6-bfb8-4f62-b21d-f47a3104157e"]
+fields = { artist_name = "ツユ", sort_name = "TUYU" }
+
+[expect.tracks."cb08df0f-87cc-4101-99ff-17b7c1c8f0ab"]
+fields = { disc = 1, track = 1, track_title = "雨模様" }
