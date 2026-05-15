@@ -1,0 +1,36 @@
+{
+  "test_name": "オトノケ_otonoke_creepy_nuts",
+  "scenario_id": "9a299b7f402b92ee",
+  "responses": [
+    {
+      "cache_key": "1ccb9cffa71b45b7",
+      "url": "https://musicbrainz.org/ws/2/work/485654e4-493f-447e-b096-bdc1c76d8536?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "894ba7537bb24853"
+    },
+    {
+      "cache_key": "4e003dfe0a2a37ad",
+      "url": "https://musicbrainz.org/ws/2/artist/e5e045da-59a3-4b65-8bb4-3c7f3ac9a529?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a4ffe37ad61feded"
+    },
+    {
+      "cache_key": "70bec6db18237005",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=2955111b-9fdb-42c8-bf69-7edfdb34076f&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "b16d24b8d9cd738f"
+    },
+    {
+      "cache_key": "7ca743343a202f87",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Creepy%20Nuts",
+      "status_code": 200,
+      "body_hash": "a91d256ba46ff618"
+    },
+    {
+      "cache_key": "9480dd79531adb95",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%AA%E3%83%88%E3%83%8E%E3%82%B1%20%5C-%20Otonoke&limit=100",
+      "status_code": 200,
+      "body_hash": "64accb3b783f23af"
+    }
+  ]
+}
