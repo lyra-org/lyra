@@ -1,0 +1,42 @@
+{
+  "test_name": "弐_優里",
+  "scenario_id": "14a433825f53120c",
+  "responses": [
+    {
+      "cache_key": "1448fd2ac40bb7c4",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=984d1b12-c334-454e-b122-bef27108afe8&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "551acf7d9a63a836"
+    },
+    {
+      "cache_key": "5062003bb06d0ef8",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%BC%90&limit=100",
+      "status_code": 200,
+      "body_hash": "e5eaac1624c9147e"
+    },
+    {
+      "cache_key": "535f8ba596a3c459",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E5%84%AA%E9%87%8C",
+      "status_code": 200,
+      "body_hash": "f07cc96c81250ac2"
+    },
+    {
+      "cache_key": "a7a1402099efa42a",
+      "url": "https://musicbrainz.org/ws/2/work/a1ede2e4-b343-4e8a-8649-1196e55858b7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cf64b6d734ea6f10"
+    },
+    {
+      "cache_key": "ab45b65bbed27c36",
+      "url": "https://musicbrainz.org/ws/2/work/9e55bd51-c114-4cbb-b4e3-1bbe259e3c1f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "48337f22355881a0"
+    },
+    {
+      "cache_key": "d57950d30e077ea6",
+      "url": "https://musicbrainz.org/ws/2/work/d539a970-7b0e-4261-9f65-9c16762b5367?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "094b88a3ba7424f7"
+    }
+  ]
+}
