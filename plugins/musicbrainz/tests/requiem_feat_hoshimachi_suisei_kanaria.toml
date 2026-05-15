@@ -1,0 +1,22 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Kanaria - Requiem (feat. Hoshimachi Suisei) (2023) [FLAC] [16B-44.1kHz]/01. Kanaria - Requiem (feat. Hoshimachi Suisei).flac"
+album = "Requiem (feat. Hoshimachi Suisei)"
+album_artists = ["Kanaria"]
+artists = ["Kanaria"]
+title = "Requiem (feat. Hoshimachi Suisei)"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 157161
+
+[expect.release]
+ids = { release_group_id = "7b0e05f9-1aa5-4981-b289-273011d40ecc", release_id = "381a40f1-efdb-4f10-9324-cdcdbfef573e" }
