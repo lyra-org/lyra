@@ -1,0 +1,165 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "松原みき - Pocket Park (1980)/12 - 真夜中のドア - Stay With Me (Original club mix Mixed by D.O.I.).flac"
+album = "Pocket Park"
+album_artists = ["????"]
+artists = ["松原みき"]
+title = "真夜中のドア / Stay With Me (Original club mix Mixed by D.O.I.)"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 12
+duration_ms = 346093
+
+[[raw_tags]]
+file_path = "松原みき - Pocket Park (1980)/11 - 偽りのない日々.flac"
+album = "Pocket Park"
+album_artists = ["????"]
+artists = ["松原みき"]
+title = "偽りのない日々"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 12
+duration_ms = 234933
+
+[[raw_tags]]
+file_path = "松原みき - Pocket Park (1980)/10 - Mind Game.flac"
+album = "Pocket Park"
+album_artists = ["????"]
+artists = ["松原みき"]
+title = "Mind Game"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 12
+duration_ms = 238546
+
+[[raw_tags]]
+file_path = "松原みき - Pocket Park (1980)/09 - Trouble Maker.flac"
+album = "Pocket Park"
+album_artists = ["????"]
+artists = ["松原みき"]
+title = "Trouble Maker"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 12
+duration_ms = 273653
+
+[[raw_tags]]
+file_path = "松原みき - Pocket Park (1980)/08 - そうして私が.flac"
+album = "Pocket Park"
+album_artists = ["????"]
+artists = ["松原みき"]
+title = "そうして私が"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 12
+duration_ms = 256093
+
+[[raw_tags]]
+file_path = "松原みき - Pocket Park (1980)/07 - 愛はエネルギー.flac"
+album = "Pocket Park"
+album_artists = ["????"]
+artists = ["松原みき"]
+title = "愛はエネルギー"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 12
+duration_ms = 216893
+
+[[raw_tags]]
+file_path = "松原みき - Pocket Park (1980)/06 - Manhattan Wind.flac"
+album = "Pocket Park"
+album_artists = ["????"]
+artists = ["松原みき"]
+title = "Manhattan Wind"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 12
+duration_ms = 209746
+
+[[raw_tags]]
+file_path = "松原みき - Pocket Park (1980)/05 - His Woman.flac"
+album = "Pocket Park"
+album_artists = ["????"]
+artists = ["松原みき"]
+title = "His Woman"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 12
+duration_ms = 247066
+
+[[raw_tags]]
+file_path = "松原みき - Pocket Park (1980)/04 - That's All.flac"
+album = "Pocket Park"
+album_artists = ["????"]
+artists = ["松原みき"]
+title = "That's All"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 12
+duration_ms = 242453
+
+[[raw_tags]]
+file_path = "松原みき - Pocket Park (1980)/03 - Cryin'.flac"
+album = "Pocket Park"
+album_artists = ["????"]
+artists = ["松原みき"]
+title = "Cryin'"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 12
+duration_ms = 236933
+
+[[raw_tags]]
+file_path = "松原みき - Pocket Park (1980)/02 - It's So Creamy.flac"
+album = "Pocket Park"
+album_artists = ["????"]
+artists = ["松原みき"]
+title = "It's So Creamy"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 12
+duration_ms = 222880
+
+[[raw_tags]]
+file_path = "松原みき - Pocket Park (1980)/01 - 真夜中のドア - Stay With Me.flac"
+album = "Pocket Park"
+album_artists = ["????"]
+artists = ["松原みき"]
+title = "真夜中のドア / Stay With Me"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 12
+duration_ms = 311720
+
+[expect.release]
+ids = { release_group_id = "eb4c739a-f1da-470e-86f3-4640b0f66243" }

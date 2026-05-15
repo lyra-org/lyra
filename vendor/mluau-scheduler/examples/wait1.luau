@@ -1,0 +1,1 @@
+print(_TEST_ASYNC_WORK(1))
