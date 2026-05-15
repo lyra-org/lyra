@@ -1,0 +1,30 @@
+{
+  "test_name": "cinnamon_キタニタツヤ",
+  "scenario_id": "f2b667e1be43f838",
+  "responses": [
+    {
+      "cache_key": "29c845360e280a56",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=97eb764f-9e00-4857-bf57-c4517b7337bc&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "41dd65ad9ae2715b"
+    },
+    {
+      "cache_key": "3050f22e1ed92ecb",
+      "url": "https://musicbrainz.org/ws/2/work/a56db8f7-6c1f-4742-9869-b5c7675bdd48?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "87baa549e81e81d6"
+    },
+    {
+      "cache_key": "979397e7e56e9f9c",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A80b3cb83-b7a3-4f79-ad42-8325cefb3626%20AND%20(release%3ACinnamon%20OR%20recording%3ACinnamon)&limit=100",
+      "status_code": 200,
+      "body_hash": "306d64921d5d90d6"
+    },
+    {
+      "cache_key": "d5c10760f4493df0",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%82%AD%E3%82%BF%E3%83%8B%E3%82%BF%E3%83%84%E3%83%A4",
+      "status_code": 200,
+      "body_hash": "12e8c5fb0a8c6f39"
+    }
+  ]
+}
