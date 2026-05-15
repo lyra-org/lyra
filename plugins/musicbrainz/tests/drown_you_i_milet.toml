@@ -1,0 +1,57 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "milet - 2019-11-06 - Drown - You & I - flac/1.04. Imaginary Love.flac"
+album = "Drown / You & I"
+album_artists = ["milet"]
+artists = ["milet"]
+title = "Imaginary Love"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 231133
+
+[[raw_tags]]
+file_path = "milet - 2019-11-06 - Drown - You & I - flac/1.03. Fine Line.flac"
+album = "Drown / You & I"
+album_artists = ["milet"]
+artists = ["milet"]
+title = "Fine Line"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 201506
+
+[[raw_tags]]
+file_path = "milet - 2019-11-06 - Drown - You & I - flac/1.02. You & I.flac"
+album = "Drown / You & I"
+album_artists = ["milet"]
+artists = ["milet"]
+title = "You & I"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 230746
+
+[[raw_tags]]
+file_path = "milet - 2019-11-06 - Drown - You & I - flac/1.01. Drown.flac"
+album = "Drown / You & I"
+album_artists = ["milet"]
+artists = ["milet"]
+title = "Drown"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 213800
+
+[expect.release]
+ids = { release_id = ["d7d0ca0d-ec28-46b6-b896-e14e6d5e79ee", "0de8dbdc-5aa5-47d8-975c-f25b682692eb", "be536b50-df53-41ce-a233-949139a95d09"] }
