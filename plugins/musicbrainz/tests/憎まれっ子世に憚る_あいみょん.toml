@@ -1,0 +1,104 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2015.12.02] 憎まれっ子世に憚る/07. ほろ酔い.flac"
+album = "憎まれっ子世に憚る"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "ほろ酔い"
+track = 7
+track_total = 7
+duration_ms = 351866
+
+[[raw_tags]]
+file_path = "[2015.12.02] 憎まれっ子世に憚る/06. 私に彼氏ができない理由.flac"
+album = "憎まれっ子世に憚る"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "私に彼氏ができない理由"
+track = 6
+track_total = 7
+duration_ms = 220266
+
+[[raw_tags]]
+file_path = "[2015.12.02] 憎まれっ子世に憚る/05. おっぱい.flac"
+album = "憎まれっ子世に憚る"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "おっぱい"
+track = 5
+track_total = 7
+duration_ms = 324400
+
+[[raw_tags]]
+file_path = "[2015.12.02] 憎まれっ子世に憚る/04. 泥だんごの天才いたよね.flac"
+album = "憎まれっ子世に憚る"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "泥だんごの天才いたよね"
+track = 4
+track_total = 7
+duration_ms = 255333
+
+[[raw_tags]]
+file_path = "[2015.12.02] 憎まれっ子世に憚る/03. 好きって言ってよ.flac"
+album = "憎まれっ子世に憚る"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "好きって言ってよ"
+track = 3
+track_total = 7
+duration_ms = 223533
+
+[[raw_tags]]
+file_path = "[2015.12.02] 憎まれっ子世に憚る/02. 19歳になりたくない.flac"
+album = "憎まれっ子世に憚る"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "19歳になりたくない"
+track = 2
+track_total = 7
+duration_ms = 288933
+
+[[raw_tags]]
+file_path = "[2015.12.02] 憎まれっ子世に憚る/01. どうせ死ぬなら.flac"
+album = "憎まれっ子世に憚る"
+album_artists = ["あいみょん"]
+artists = ["あいみょん"]
+title = "どうせ死ぬなら"
+track = 1
+track_total = 7
+duration_ms = 307533
+
+[expect.release]
+ids = { release_group_id = "dda838e9-2ea4-45b4-81ef-60dce220e3fc", release_id = "37d79c2c-0941-4caa-ba1c-5a8f0ecba978" }
+fields = { release_title = "憎まれっ子世に憚る", release_date = "2015-12-02" }
+
+[expect.artists."908d9ac2-5187-4b9e-b281-601c6afb0791"]
+fields = { artist_name = "あいみょん", sort_name = "Aimyon" }
+
+[expect.tracks."386c4d8e-a226-42f7-9895-875e35f947ea"]
+fields = { disc = 1, track = 6, track_title = "私に彼氏ができない理由" }
+
+[expect.tracks."7055c82c-6f6f-4637-9ceb-fe8f4fe87c71"]
+fields = { disc = 1, track = 4, track_title = "泥だんごの天才いたよね" }
+
+[expect.tracks."7114e541-b0f1-426d-8ac8-31481d4cbb81"]
+fields = { disc = 1, track = 5, track_title = "おっぱい" }
+
+[expect.tracks."b18ce4a4-e83f-4a57-8c0a-cfd3b0db8ff8"]
+fields = { disc = 1, track = 1, track_title = "どうせ死ぬなら" }
+
+[expect.tracks."b62546c4-1d2e-4364-9f1f-5cfced6d8607"]
+fields = { disc = 1, track = 7, track_title = "ほろ酔い" }
+
+[expect.tracks."e644e124-d17f-4fe3-afe9-3545894186a1"]
+fields = { disc = 1, track = 3, track_title = "好きって言ってよ" }
+
+[expect.tracks."eba971ef-20a1-4e9b-b18d-3b8c3c75cf6d"]
+fields = { disc = 1, track = 2, track_title = "19歳になりたくない" }
