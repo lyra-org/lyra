@@ -1110,7 +1110,7 @@ end
 type ArtistRelationType = metadata.ArtistRelationType
 local ArtistRelationType = metadata.ArtistRelationType
 
-local MB_ARTIST_RELATION_MAP: { [string]: ArtistRelationType } = {
+local MB_ARTIST_RELATION_MAP: { [string]: ArtistRelationType? } = {
 	["voice actor"] = ArtistRelationType.VoiceActor,
 	["member of band"] = ArtistRelationType.MemberOf,
 }
@@ -1303,7 +1303,7 @@ end
 type CreditType = metadata.CreditType
 local CreditType = metadata.CreditType
 
-local MB_RELATION_TO_CREDIT: { [string]: { type: CreditType, detail: string? } } = {
+local MB_RELATION_TO_CREDIT: { [string]: { type: CreditType, detail: string? }? } = {
 	-- performance
 	vocal = { type = CreditType.Vocalist },
 	instrument = { type = CreditType.Instrumentalist },
@@ -1374,8 +1374,7 @@ local function joinphrase_opens_character_voice(joinphrase: string?): boolean
 		return false
 	end
 	local trimmed = string.gsub(joinphrase, "^%s+", "")
-	return string.find(trimmed, "^%([cC][vV][:%.%s]") ~= nil
-		or string.find(trimmed, "^（[cC][vV]：") ~= nil
+	return string.find(trimmed, "^%([cC][vV][:%.%s]") ~= nil or string.find(trimmed, "^（[cC][vV]：") ~= nil
 end
 
 local function joinphrase_closes_credit_group(joinphrase: string?): boolean

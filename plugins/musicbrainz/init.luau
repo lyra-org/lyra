@@ -56,7 +56,7 @@ type CoverCacheEntry = {
 
 type ProviderIdSpec = {
 	id_type: string,
-	entity: string,
+	entity: metadata.EntityType,
 	unique: boolean?,
 }
 
