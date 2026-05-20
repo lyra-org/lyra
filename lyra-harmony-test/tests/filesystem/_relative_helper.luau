@@ -1,0 +1,4 @@
+return {
+	value = 42,
+}
+
