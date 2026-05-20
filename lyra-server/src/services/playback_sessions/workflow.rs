@@ -1111,15 +1111,6 @@ pub(crate) fn report_playback_session(
     Ok(playback)
 }
 
-pub(crate) fn clear_playback_session(plugin_id: &str, user_db_id: DbId, session_key: &str) {
-    let scope = PlaybackScopeKey {
-        plugin_id,
-        user_db_id,
-        session_key,
-    };
-    clear_playback_session_scope(&scope);
-}
-
 pub(crate) fn reset_scopes_for_test() {
     sessions::clear_all_scopes_for_test();
 }

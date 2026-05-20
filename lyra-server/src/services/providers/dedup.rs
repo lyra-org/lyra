@@ -102,7 +102,7 @@ fn merge_release_into(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Resu
         .try_into()?;
 
     // Read loser→credit edge order values before removing edges.
-    let loser_edge_orders = db::artists::artist_edge_orders_raw(db, loser)?;
+    let loser_edge_orders = db::artists::credit_edge_orders_from_owner(db, loser)?;
 
     for credit in &loser_credits {
         let Some(credit_db_id) = credit.db_id.clone().map(agdb::DbId::from) else {

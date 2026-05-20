@@ -4,10 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
-    collections::{
-        BTreeMap,
-        HashMap,
-    },
+    collections::HashMap,
     sync::{
         Arc,
         LazyLock,
@@ -16,23 +13,24 @@ use std::{
     time::Instant,
 };
 
-use mlua::LuaSerdeExt;
+use harmony_luau::{
+    DescribeInterface,
+    FieldDescriptor,
+    InterfaceDescriptor,
+    LuauType,
+    LuauTypeInfo,
+};
 use serde::{
     Deserialize,
     Serialize,
 };
-use tokio::{
-    spawn,
-    sync::{
-        RwLock,
-        broadcast,
-    },
+use tokio::sync::{
+    RwLock,
+    broadcast,
 };
 
 use crate::db::PlaybackState;
-use crate::plugins::LUA_SERIALIZE_OPTIONS;
 use crate::plugins::lifecycle::{
-    PluginFunctionHandle,
     PluginId,
     PluginScopedInner,
     ScopedRegistry,
@@ -88,38 +86,19 @@ pub(crate) fn subscribe_playback_events() -> broadcast::Receiver<PlaybackUpdateP
 /// plugin. `BTreeMap` for stable dispatch order — don't let hash order become
 /// an implicit API.
 #[derive(Default)]
-pub(crate) struct PlaybackCallbackRegistry {
-    update_handlers: BTreeMap<PluginId, Vec<PluginFunctionHandle>>,
-}
+pub(crate) struct PlaybackCallbackRegistry;
 
 impl PlaybackCallbackRegistry {
     pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    pub(crate) fn add_update_handler(&mut self, handle: PluginFunctionHandle) {
-        let plugin_id = handle.plugin_id().clone();
-        self.update_handlers
-            .entry(plugin_id)
-            .or_default()
-            .push(handle);
-    }
-
-    pub(crate) fn snapshot_handlers(&self) -> Vec<PluginFunctionHandle> {
-        self.update_handlers
-            .values()
-            .flat_map(|handles| handles.iter().cloned())
-            .collect()
-    }
-
-    pub(crate) fn clear_all_handlers(&mut self) {
-        self.update_handlers.clear();
-    }
+    pub(crate) fn clear_all_handlers(&mut self) {}
 }
 
 impl PluginScopedInner for PlaybackCallbackRegistry {
     fn clear_bucket(&mut self, plugin_id: &PluginId) {
-        self.update_handlers.remove(plugin_id);
+        let _ = plugin_id;
     }
 
     fn rebuild_derived(&mut self) {
@@ -141,7 +120,6 @@ pub(crate) async fn teardown_plugin_callbacks(plugin_id: &PluginId) {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[harmony_macros::interface]
 pub(crate) struct PlaybackUpdatePayload {
     pub event: String,
     pub state: PlaybackState,
@@ -154,6 +132,39 @@ pub(crate) struct PlaybackUpdatePayload {
     pub activity_ms: u64,
     pub qualifies_single_listen: bool,
     pub updated_at_ms: u64,
+}
+
+impl LuauTypeInfo for PlaybackUpdatePayload {
+    fn luau_type() -> LuauType {
+        LuauType::literal("PlaybackUpdatePayload")
+    }
+}
+
+impl DescribeInterface for PlaybackUpdatePayload {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let field = |name: &'static str, ty: LuauType| FieldDescriptor {
+            name,
+            ty,
+            description: None,
+        };
+        InterfaceDescriptor {
+            name: "PlaybackUpdatePayload",
+            description: None,
+            fields: vec![
+                field("event", String::luau_type()),
+                field("state", PlaybackState::luau_type()),
+                field("playback_session_public_id", String::luau_type()),
+                field("track_public_id", String::luau_type()),
+                field("user_public_id", String::luau_type()),
+                field("library_public_id", Option::<String>::luau_type()),
+                field("position_ms", u64::luau_type()),
+                field("duration_ms", Option::<u64>::luau_type()),
+                field("activity_ms", u64::luau_type()),
+                field("qualifies_single_listen", bool::luau_type()),
+                field("updated_at_ms", u64::luau_type()),
+            ],
+        }
+    }
 }
 
 pub(crate) fn playback_to_payload(
@@ -224,41 +235,18 @@ pub(crate) fn dispatch_update_for_caller(
     // Fan out to WS broadcast (best-effort, dropped if no subscribers or lagging).
     let _ = EVENT_BROADCAST.send(payload.clone());
 
-    spawn(async move {
-        let handlers: Vec<PluginFunctionHandle> = {
-            let registry = PLAYBACK_CALLBACK_REGISTRY.read().await;
-            registry.snapshot_handlers()
-        };
-
-        if handlers.is_empty() {
-            return;
-        }
-
-        let lua = crate::STATE.lua.get();
-        for handler in handlers {
-            let lua_payload = match lua.to_value_with(&payload, LUA_SERIALIZE_OPTIONS) {
-                Ok(value) => value,
-                Err(error) => {
-                    tracing::warn!(
-                        playback_session_public_id = %payload.playback_session_public_id,
-                        event = %payload.event,
-                        error = %error,
-                        "failed to convert playback update payload to lua value"
-                    );
-                    continue;
-                }
-            };
-            if let Err(error) = handler.call_async::<_, ()>(lua_payload).await {
+    {
+        if let Some(crate::plugins::bootstrap::PluginRuntime::Executor(runtime)) =
+            crate::STATE.plugin_runtime.get()
+        {
+            if let Err(error) = runtime.dispatch_playback_update(payload) {
                 tracing::warn!(
-                    playback_session_public_id = %payload.playback_session_public_id,
-                    event = %payload.event,
-                    plugin_id = %handler.plugin_id(),
                     error = %error,
-                    "playback on_update callback failed"
+                    "failed to enqueue plugin playback on_update dispatch"
                 );
             }
         }
-    });
+    }
 }
 
 fn dispatch_allowed(caller: &str) -> bool {
