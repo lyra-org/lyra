@@ -1,7 +1,12 @@
 {
   "test_name": "ambitions_one_ok_rock",
   "scenario_id": "5d336d90a2d86345",
-  "cache_keys": [
-    "f4a59130cb3d94c5"
+  "responses": [
+    {
+      "cache_key": "f4a59130cb3d94c5",
+      "url": "https://www.theaudiodb.com/api/v1/json/123/searchalbum.php?a=Ambitions&s=ONE%20OK%20ROCK",
+      "status_code": 200,
+      "body_hash": "a2dd15c28ffa3b31"
+    }
   ]
 }

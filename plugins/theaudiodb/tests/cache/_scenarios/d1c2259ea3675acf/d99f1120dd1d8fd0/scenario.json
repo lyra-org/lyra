@@ -1,7 +1,12 @@
 {
   "test_name": "pretender_official髭男dism",
   "scenario_id": "d99f1120dd1d8fd0",
-  "cache_keys": [
-    "2bed0f0998f60a6d"
+  "responses": [
+    {
+      "cache_key": "2bed0f0998f60a6d",
+      "url": "https://www.theaudiodb.com/api/v1/json/123/searchalbum.php?a=Pretender&s=Official%E9%AB%AD%E7%94%B7dism",
+      "status_code": 200,
+      "body_hash": "e87cb7f92f06203e"
+    }
   ]
 }

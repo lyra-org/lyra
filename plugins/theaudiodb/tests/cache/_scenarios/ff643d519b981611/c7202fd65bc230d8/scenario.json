@@ -1,7 +1,12 @@
 {
   "test_name": "yellow_dancer_星野源",
   "scenario_id": "c7202fd65bc230d8",
-  "cache_keys": [
-    "474a681b95c5e3a0"
+  "responses": [
+    {
+      "cache_key": "474a681b95c5e3a0",
+      "url": "https://www.theaudiodb.com/api/v1/json/123/searchalbum.php?a=YELLOW%20DANCER&s=%E6%98%9F%E9%87%8E%E6%BA%90",
+      "status_code": 200,
+      "body_hash": "58505a36f4c75a97"
+    }
   ]
 }
