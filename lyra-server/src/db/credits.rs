@@ -33,7 +33,6 @@ pub(crate) const EDGE_ORDER_KEY: &str = "artist_order";
     DbTypeMarker,
 )]
 #[serde(rename_all = "lowercase")]
-#[harmony_macros::enumeration]
 pub(crate) enum CreditType {
     #[default]
     Artist,
@@ -116,13 +115,41 @@ impl TryFrom<DbValue> for CreditType {
     }
 }
 
-harmony_macros::compile!(type_path = CreditType, variants = true);
+impl_luau_enum_userdata!(
+    CreditType,
+    "CreditType",
+    [
+        Artist,
+        Vocalist,
+        Instrumentalist,
+        Composer,
+        Lyricist,
+        Arranger,
+        Writer,
+        Producer,
+        Conductor,
+        Engineer,
+        Mixer,
+        Remixer,
+    ]
+);
 
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug, JsonSchema)]
-#[harmony_macros::structure]
 pub(crate) struct Credit {
     pub(crate) db_id: Option<NodeId>,
     pub(crate) id: String,
     pub(crate) credit_type: CreditType,
     pub(crate) detail: Option<String>,
 }
+
+impl_luau_record_userdata!(
+    Credit,
+    "Credit",
+    fields {
+        db_id: Option<NodeId> as "db_id",
+        id: String as "id",
+        credit_type: CreditType as "credit_type",
+        detail: Option<String> as "detail",
+    },
+    methods {}
+);

@@ -43,7 +43,6 @@ use super::NodeId;
     DbTypeMarker,
 )]
 #[serde(rename_all = "lowercase")]
-#[harmony_macros::enumeration]
 pub(crate) enum ArtistType {
     #[default]
     Person,
@@ -105,7 +104,11 @@ impl TryFrom<DbValue> for ArtistType {
     }
 }
 
-harmony_macros::compile!(type_path = ArtistType, variants = true);
+impl_luau_enum_userdata!(
+    ArtistType,
+    "ArtistType",
+    [Person, Group, Character, Orchestra, Choir]
+);
 use super::{
     Credit,
     ListOptions,
@@ -117,7 +120,6 @@ use super::{
 };
 
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug, JsonSchema)]
-#[harmony_macros::structure]
 pub(crate) struct Artist {
     pub(crate) db_id: Option<NodeId>,
     pub(crate) id: String,
@@ -137,7 +139,6 @@ pub(crate) struct CreditedArtist {
     pub(crate) credit: Credit,
 }
 
-#[harmony_macros::implementation]
 impl Artist {
     pub(crate) fn set_artist_name(&mut self, artist_name: String) {
         self.artist_name = artist_name;
@@ -160,7 +161,29 @@ impl Artist {
     }
 }
 
-harmony_macros::compile!(type_path = Artist, fields = true, methods = true);
+impl_luau_record_userdata!(
+    Artist,
+    "Artist",
+    fields {
+        db_id: Option<NodeId> as "db_id",
+        id: String as "id",
+        artist_name: String as "artist_name",
+        scan_name: String as "scan_name",
+        sort_name: Option<String> as "sort_name",
+        artist_type: Option<ArtistType> as "artist_type",
+        description: Option<String> as "description",
+        verified: bool as "verified",
+        locked: Option<bool> as "locked",
+        created_at: Option<u64> as "created_at",
+    },
+    methods {
+        set_artist_name(artist_name: String),
+        set_sort_name(sort_name: String),
+        set_artist_type(artist_type: ArtistType),
+        set_description(description: String),
+        set_verified(verified: bool),
+    }
+);
 
 pub(crate) fn get(
     db: &impl super::DbAccess,
@@ -465,7 +488,7 @@ fn artist_edge_orders(
 }
 
 // Maps Credit node DbId to its owner edge order.
-pub(crate) fn artist_edge_orders_raw(
+pub(crate) fn credit_edge_orders_from_owner(
     db: &impl super::DbAccess,
     owner_db_id: DbId,
 ) -> anyhow::Result<HashMap<DbId, u64>> {
