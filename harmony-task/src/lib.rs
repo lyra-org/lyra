@@ -3,12 +3,14 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
+use std::time::Duration;
 
 use harmony_core::{
-    Module,
-    ensure_scheduler,
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
 };
+use harmony_luau as luau;
 use harmony_luau::{
     DescribeModule,
     LuauType,
@@ -18,25 +20,201 @@ use harmony_luau::{
     ParameterDescriptor,
     render_definition_file,
 };
-use mlua::Lua;
-use mlua_scheduler::userdata::task_lib;
-
-type LuaScheduler = mlua_scheduler::schedulers::rodan::CoreScheduler;
 
 struct TaskModuleDocs;
+struct TaskModule;
+struct TaskLike;
+struct TaskThread;
+struct TaskArg;
 
-pub fn get_module() -> Module {
-    Module {
-        path: "harmony/task".into(),
-        setup: Arc::new(|lua: &Lua| -> anyhow::Result<mlua::Table> {
-            ensure_scheduler(lua)?;
-            Ok(task_lib::<LuaScheduler>(lua)?)
-        }),
-        scope: harmony_core::Scope {
-            id: "harmony.task".into(),
-            description: "Schedule tasks and sleep on the Lua scheduler.",
-            danger: harmony_core::Danger::Low,
+pub fn module_spec() -> ModuleSpec {
+    ModuleSpec::new("harmony/task")
+        .capability("harmony.task")
+        .function(defer_spec())
+        .function(delay_spec())
+        .function(noop_spec("desynchronize"))
+        .function(noop_spec("synchronize"))
+        .function(wait_spec())
+        .function(cancel_spec())
+        .function(spawn_spec())
+        .install(|_| Ok(ModuleExport::new(TaskModule)))
+}
+
+fn defer_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("defer")
+        .arg_name("task")
+        .args::<TaskLike>()
+        .variadic_args::<TaskArg>()
+        .returns::<TaskThread>();
+    spec.call(defer_callback)
+}
+
+fn delay_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("delay")
+        .arg_name("time")
+        .arg_name("task")
+        .args::<f64>()
+        .args::<TaskLike>()
+        .variadic_args::<TaskArg>()
+        .returns::<TaskThread>();
+    spec.call(delay_callback)
+}
+
+fn cancel_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("cancel")
+        .arg_name("thread")
+        .args::<TaskThread>();
+    spec.call(cancel_callback)
+}
+
+fn wait_spec() -> FunctionSpec {
+    let spec = FunctionSpec::async_fn("wait")
+        .arg_name("time")
+        .args::<Option<f64>>()
+        .returns::<f64>();
+    spec.call(wait_callback)
+}
+
+fn spawn_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("spawn")
+        .arg_name("task")
+        .args::<TaskLike>()
+        .variadic_args::<TaskArg>()
+        .returns::<TaskThread>();
+    spec.call(spawn_callback)
+}
+
+fn noop_spec(name: &'static str) -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn(name);
+    spec.call(noop_callback)
+}
+
+fn noop_callback(_frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    Ok(())
+}
+
+enum TaskTarget {
+    Function(luau::Function),
+    Thread(luau::Thread),
+}
+
+impl<'vm> luau::FromLuau<'vm> for TaskTarget {
+    fn read(reader: &mut luau::ArgReader<'vm>) -> luau::runtime::Result<Self> {
+        match reader.read::<luau::Value>()? {
+            luau::Value::Function(function) => Ok(Self::Function(function)),
+            luau::Value::Thread(thread) => Ok(Self::Thread(thread)),
+            other => Err(luau::Error::ArgumentType {
+                name: std::sync::Arc::from("task"),
+                expected: "function or thread",
+                actual: other.type_name(),
+            }),
+        }
+    }
+}
+
+fn defer_callback(frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    schedule_task(frame, None)
+}
+
+fn spawn_callback(frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    schedule_task(frame, None)
+}
+
+fn delay_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let seconds: f64 = frame.args.read_named("time")?;
+    let delay = Duration::try_from_secs_f64(seconds).map_err(|error| {
+        luau::Error::Runtime(format!(
+            "task.delay time must be finite and non-negative: {error}"
+        ))
+    })?;
+    schedule_task(frame, Some(delay))
+}
+
+fn schedule_task(
+    mut frame: luau::CallFrame<'_>,
+    delay: Option<Duration>,
+) -> luau::runtime::Result<()> {
+    let task: TaskTarget = frame.args.read_named("task")?;
+    let args = frame.args.drain_remaining();
+    let scheduler = frame.vm.data().get::<harmony_core::LocalScheduler>()?;
+    let thread = match task {
+        TaskTarget::Function(function) => frame.vm.create_thread(&function)?,
+        TaskTarget::Thread(thread) => thread,
+    };
+    if thread.vm_id() != frame.vm.id() {
+        return Err(luau::Error::VmMismatch {
+            reference_vm: thread.vm_id(),
+            actual_vm: frame.vm.id(),
+        });
+    }
+
+    let context = scheduler_context(&frame.context);
+    if let Some(delay) = delay {
+        let _ = scheduler.spawn_luau_thread_after(
+            context,
+            delay,
+            frame.vm.clone(),
+            thread.clone(),
+            args,
+        );
+    } else {
+        scheduler.schedule_luau_thread(context, frame.vm.clone(), thread.clone(), args);
+    };
+    frame.returns.write(thread)?;
+    Ok(())
+}
+
+fn cancel_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let thread: luau::Thread = frame.args.read_named("thread")?;
+    let scheduler = frame.vm.data().get::<harmony_core::LocalScheduler>()?;
+    scheduler.cancel_luau_thread(&thread);
+    Ok(())
+}
+
+fn wait_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let seconds = frame
+        .args
+        .read_optional_named::<f64>("time")?
+        .unwrap_or(0.0);
+    let delay = Duration::try_from_secs_f64(seconds).map_err(|error| {
+        luau::Error::Runtime(format!(
+            "task.wait time must be finite and non-negative: {error}"
+        ))
+    })?;
+    let scheduler = frame.vm.data().get::<harmony_core::LocalScheduler>()?;
+    scheduler.park_luau_thread(&frame.thread);
+    scheduler.schedule_luau_thread_after(
+        scheduler_context(&frame.context),
+        delay,
+        frame.vm.clone(),
+        frame.thread.clone(),
+        vec![luau::Value::Number(seconds)],
+    );
+    frame.yield_now();
+    Ok(())
+}
+
+fn scheduler_context(context: &luau::CallContext) -> harmony_core::CallContext {
+    let mut caller = harmony_core::ContextBag::default();
+    for (type_id, value) in context.caller.cloned_entries() {
+        caller.insert_shared(type_id, value);
+    }
+    harmony_core::CallContext {
+        origin: harmony_core::ChunkOrigin {
+            module: context
+                .origin
+                .module
+                .as_ref()
+                .map(|module| harmony_core::ModuleId(module.0.clone())),
+            plugin: context.origin.plugin.clone(),
+            path: context.origin.path.clone(),
         },
+        capability: context
+            .capability
+            .as_ref()
+            .map(|capability| harmony_core::CapabilityId(capability.0.clone())),
+        caller,
+        task_group: harmony_core::TaskGroupId(context.task_group.0),
     }
 }
 
@@ -62,6 +240,7 @@ impl DescribeModule for TaskModuleDocs {
             description: Some(
                 "Task scheduling primitives backed by the Harmony scheduler.\nAlso patches coroutine.resume and coroutine.wrap to resume scheduled threads correctly.",
             ),
+            fields: Vec::new(),
             functions: vec![
                 ModuleFunctionDescriptor {
                     path: vec!["defer"],
@@ -186,7 +365,10 @@ impl DescribeModule for TaskModuleDocs {
 
 #[cfg(test)]
 mod tests {
-    use super::render_luau_definition;
+    use super::{
+        module_spec,
+        render_luau_definition,
+    };
 
     #[test]
     fn renders_task_module_definition() {
@@ -207,5 +389,89 @@ mod tests {
             rendered
                 .contains("function task.spawn(task: ((...any) -> ()) | thread, ...: any): thread")
         );
+    }
+
+    #[test]
+    fn exposes_handwritten_module_spec() {
+        let spec = module_spec();
+
+        assert_eq!(spec.id.0.as_ref(), "harmony/task");
+        assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "harmony.task");
+        assert_eq!(spec.functions.len(), 7);
+        assert_eq!(spec.functions[0].name.as_ref(), "defer");
+        assert!(spec.functions[0].variadic);
+        assert_eq!(spec.functions[1].name.as_ref(), "delay");
+        assert!(spec.functions[1].variadic);
+        assert!(spec.functions.iter().any(|function| function.yields));
+        assert_eq!(
+            spec.functions
+                .iter()
+                .find(|function| function.name.as_ref() == "wait")
+                .expect("wait spec")
+                .return_types
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn luau_module_schedules_spawn_and_cancel() -> harmony_luau::runtime::Result<()> {
+        let vm = harmony_luau::Vm::new()?;
+        vm.open_standard_libraries(harmony_luau::StandardLibraries {
+            base: true,
+            ..harmony_luau::StandardLibraries::none()
+        })?;
+        vm.data().insert(harmony_core::LocalScheduler::new())?;
+        let scheduler = vm.data().get::<harmony_core::LocalScheduler>()?;
+        let spec = module_spec();
+        let table =
+            harmony_core::install_luau_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
+        vm.set_global_table("task", &table)?;
+
+        let values = vm.eval(
+            std::sync::Arc::<[u8]>::from(
+                &br#"
+                    task.desynchronize()
+                    task.synchronize()
+                    local spawned = task.spawn(function(lhs, rhs)
+                        spawned_total = lhs + rhs
+                    end, 20, 22)
+                    local cancelled = task.spawn(function()
+                        cancelled_total = 1
+                    end)
+                    task.cancel(cancelled)
+                    local waited = task.spawn(function()
+                        waited_elapsed = task.wait(0)
+                    end)
+                    return type(spawned), type(waited), type(task.wait)
+                "#[..],
+            ),
+            harmony_luau::ChunkOrigin::default(),
+        )?;
+
+        assert_eq!(
+            values,
+            vec![
+                harmony_luau::Value::String(b"thread".to_vec()),
+                harmony_luau::Value::String(b"thread".to_vec()),
+                harmony_luau::Value::String(b"function".to_vec())
+            ]
+        );
+        assert_eq!(scheduler.poll_ready(), 2);
+        assert_eq!(scheduler.poll_ready(), 1);
+        assert_eq!(
+            vm.eval(
+                std::sync::Arc::<[u8]>::from(
+                    &b"return spawned_total, cancelled_total, waited_elapsed"[..]
+                ),
+                harmony_luau::ChunkOrigin::default(),
+            )?,
+            vec![
+                harmony_luau::Value::Number(42.0),
+                harmony_luau::Value::Nil,
+                harmony_luau::Value::Number(0.0)
+            ]
+        );
+        Ok(())
     }
 }

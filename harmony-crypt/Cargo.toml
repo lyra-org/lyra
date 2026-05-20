@@ -8,7 +8,6 @@ license-file = "../LICENSE"
 harmony-core = { path = "../harmony-core" }
 harmony-luau = { path = "../harmony-luau" }
 anyhow = { workspace = true }
-mlua = { workspace = true, features = ["luau", "anyhow"] }
 base64 = { workspace = true }
 md5 = "0.8"
 sha1 = "0.10"
