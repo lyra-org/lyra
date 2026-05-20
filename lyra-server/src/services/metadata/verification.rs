@@ -87,7 +87,7 @@ pub(crate) fn recompute_artist_verified(
     };
 
     if artist.verified != verified {
-        artist.verified = verified;
+        artist.set_verified(verified);
         db::artists::update(db, &artist)?;
     }
 

@@ -1025,6 +1025,7 @@ pub(crate) async fn sync_and_persist_covers_for_library(
     provider_filter: Option<&str>,
     scope: CoverScope,
 ) -> Result<usize> {
+    let scope_name = scope.as_str();
     let _synced =
         sync_covers_for_library_scope(scope, db, paths, library_id, options, provider_filter)
             .await?;
@@ -1037,7 +1038,14 @@ pub(crate) async fn sync_and_persist_covers_for_library(
         return Ok(0);
     }
 
-    sync_cover_metadata_for_scope(scope, db, &resolved).await
+    let persisted = sync_cover_metadata_for_scope(scope, db, &resolved).await?;
+    tracing::debug!(
+        library_id = library_id.0,
+        scope = scope_name,
+        persisted,
+        "synced library cover metadata"
+    );
+    Ok(persisted)
 }
 
 #[cfg(test)]
