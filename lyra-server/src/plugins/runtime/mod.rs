@@ -16,33 +16,30 @@ use std::{
 };
 
 use harmony_core::{
-    LuaAsyncExt,
-    LuaFunctionAsyncExt,
-    LuaUserDataAsyncExt,
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
+    UserDataSpec,
 };
+use harmony_luau as luau;
 use harmony_luau::{
     ClassDescriptor,
+    DescribeInterface,
     DescribeTypeAlias,
     DescribeUserData,
+    FieldDescriptor,
     FunctionParameter,
+    InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
     MethodDescriptor,
     MethodKind,
+    ModuleDescriptor,
+    ModuleFunctionDescriptor,
     ParameterDescriptor,
     TypeAliasDescriptor,
+    render_definition_file_with_support,
 };
-use mlua::{
-    Function,
-    Lua,
-    LuaSerdeExt,
-    Result,
-    Table,
-    UserData,
-    UserDataMethods,
-    Value,
-};
-use serde::Serialize;
 
 mod settings;
 
@@ -61,12 +58,8 @@ pub(crate) use self::settings::{
     teardown_plugin_settings,
     unfreeze_plugin_settings,
 };
-
-use crate::{
-    STATE,
-    plugins::require_non_empty_string,
-    services::plugin_settings as plugin_settings_service,
-};
+use crate::plugins::db::DbAsync;
+use crate::services::plugin_settings as plugin_settings_service;
 
 struct SettingsConfig;
 
@@ -118,116 +111,48 @@ impl DescribeTypeAlias for SettingsCallback {
     }
 }
 
-#[derive(Clone)]
-struct UserSettingsAccessor {
-    plugin_id: PluginId,
-    schema: Schema,
+struct UserSettingsAccessor;
+
+impl LuauTypeInfo for UserSettingsAccessor {
+    fn luau_type() -> LuauType {
+        LuauType::literal("UserSettingsAccessor")
+    }
 }
 
-impl UserSettingsAccessor {
-    fn ensure_owner(&self, caller: Option<&PluginId>) -> Result<()> {
-        match caller {
-            Some(id) if id == &self.plugin_id => Ok(()),
-            _ => Err(mlua::Error::runtime(format!(
-                "user settings accessor for plugin '{}' must be used by the owning plugin",
-                self.plugin_id
-            ))),
+impl DescribeUserData for UserSettingsAccessor {
+    fn class_descriptor() -> ClassDescriptor {
+        ClassDescriptor {
+            name: "UserSettingsAccessor",
+            description: None,
+            fields: vec![],
+            methods: vec![MethodDescriptor {
+                name: "get",
+                description: None,
+                params: vec![ParameterDescriptor {
+                    name: "user_id",
+                    ty: i64::luau_type(),
+                    description: None,
+                    variadic: false,
+                }],
+                returns: vec![SettingsConfig::luau_type()],
+                yields: true,
+                kind: MethodKind::Instance,
+            }],
         }
     }
 }
 
-#[harmony_macros::implementation(plugin_scoped)]
-impl UserSettingsAccessor {
-    #[harmony(returns(SettingsConfig))]
-    pub(crate) async fn get(&self, plugin_id: Option<Arc<str>>, user_id: i64) -> Result<Table> {
-        let plugin_id = plugin_id
-            .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
-            .transpose()?;
-        self.ensure_owner(plugin_id.as_ref())?;
-        let user_db_id = crate::plugins::require_positive_id(user_id, "user_id")?;
+struct PluginManifest;
 
-        let stored = plugin_settings_service::load_validated_user_stored_values(
-            &*STATE.db.read().await,
-            user_db_id,
-            self.plugin_id.as_str(),
-            &self.schema,
-        )
-        .map_err(mlua::Error::external)?;
+struct SettingsChoiceOption;
 
-        let lua = STATE.lua.get();
-        let config = lua.create_table()?;
-        for group in &self.schema.groups {
-            for field in &group.fields {
-                let key = field.key();
-                let stored_value = stored.get(key);
-                let default = &field.props().default_value;
-                let value = resolve_value_with_lua(&lua, stored_value, default)?;
-                config.set(key, value)?;
-            }
-        }
+struct SettingsStringProps;
 
-        Ok(config)
-    }
-}
+struct SettingsNumberProps;
 
-harmony_macros::compile!(
-    type_path = UserSettingsAccessor,
-    fields = false,
-    methods = true
-);
+struct SettingsBoolProps;
 
-#[harmony_macros::interface]
-#[derive(Clone, Debug, Serialize)]
-struct PluginManifest {
-    schema_version: u32,
-    id: String,
-    name: String,
-    version: String,
-    description: String,
-    entrypoint: String,
-}
-
-#[harmony_macros::interface]
-struct SettingsChoiceOption {
-    value: String,
-    label: String,
-    description: Option<String>,
-}
-
-#[harmony_macros::interface]
-struct SettingsStringProps {
-    label: String,
-    description: Option<String>,
-    default: Option<String>,
-    required: Option<bool>,
-}
-
-#[harmony_macros::interface]
-struct SettingsNumberProps {
-    label: String,
-    description: Option<String>,
-    default: Option<f64>,
-    min: Option<f64>,
-    max: Option<f64>,
-    required: Option<bool>,
-}
-
-#[harmony_macros::interface]
-struct SettingsBoolProps {
-    label: String,
-    description: Option<String>,
-    default: Option<bool>,
-    required: Option<bool>,
-}
-
-#[harmony_macros::interface]
-struct SettingsChoiceProps {
-    label: String,
-    description: Option<String>,
-    default: Option<String>,
-    options: Vec<SettingsChoiceOption>,
-    required: Option<bool>,
-}
+struct SettingsChoiceProps;
 
 impl DescribeUserData for SettingsBuilder {
     fn class_descriptor() -> ClassDescriptor {
@@ -352,739 +277,1072 @@ struct SettingsBuilder {
     stored_values: Arc<HashMap<String, serde_json::Value>>,
 }
 
-impl SettingsBuilder {
-    fn new(stored_values: HashMap<String, serde_json::Value>) -> Self {
-        Self {
-            groups: Arc::new(Mutex::new(Vec::new())),
-            stored_values: Arc::new(stored_values),
-        }
+#[derive(Clone, Default)]
+pub(crate) struct PluginManifestModuleStore {
+    manifests: Arc<[harmony_core::PluginManifest]>,
+}
+impl PluginManifestModuleStore {
+    pub(crate) fn new(manifests: Arc<[harmony_core::PluginManifest]>) -> Self {
+        Self { manifests }
     }
 
-    fn register_key(&self, key: String) -> Result<String> {
-        let key = require_non_empty_string(key, "key")?;
-
-        if self
-            .groups
-            .lock()
-            .unwrap()
-            .iter()
-            .flat_map(|group| group.fields.iter())
-            .any(|field| field.key() == key.as_str())
-        {
-            return Err(mlua::Error::runtime(format!(
-                "setting key '{key}' is already declared"
-            )));
-        }
-
-        Ok(key)
+    fn iter(&self) -> impl Iterator<Item = &harmony_core::PluginManifest> {
+        self.manifests.iter()
     }
 
-    fn push_group(&self, id: String, label: String) -> Result<()> {
-        let id = require_non_empty_string(id, "id")?;
-        let label = require_non_empty_string(label, "label")?;
-
-        let mut groups = self.groups.lock().unwrap();
-        if let Some(previous) = groups.last()
-            && previous.fields.is_empty()
-        {
-            return Err(mlua::Error::runtime(format!(
-                "settings group '{}' must declare at least one setting",
-                previous.id
-            )));
-        }
-        if groups.iter().any(|group| group.id == id) {
-            return Err(mlua::Error::runtime(format!(
-                "settings group '{id}' is already declared"
-            )));
-        }
-
-        groups.push(FieldGroupDefinition {
-            id,
-            label,
-            fields: Vec::new(),
-        });
-        Ok(())
+    fn find(&self, id: &str) -> Option<&harmony_core::PluginManifest> {
+        self.manifests.iter().find(|manifest| manifest.id == id)
+    }
+}
+#[derive(Clone, Default)]
+pub(crate) struct PluginSettingsModuleStore {
+    db: Option<DbAsync>,
+}
+impl PluginSettingsModuleStore {
+    pub(crate) fn empty() -> Self {
+        Self { db: None }
     }
 
-    fn push_field(&self, field: FieldDefinition) -> Result<()> {
-        let mut groups = self.groups.lock().unwrap();
-        let Some(group) = groups.last_mut() else {
-            return Err(mlua::Error::runtime(
-                "declare a group before adding settings",
-            ));
+    pub(crate) fn with_db(db: DbAsync) -> Self {
+        Self { db: Some(db) }
+    }
+
+    fn load_stored_values(
+        &self,
+        plugin_id: &PluginId,
+    ) -> luau::runtime::Result<HashMap<String, serde_json::Value>> {
+        let Some(db) = &self.db else {
+            return Ok(HashMap::new());
         };
-
-        group.fields.push(field);
-        Ok(())
+        let db = futures::executor::block_on(db.read());
+        plugin_settings_service::load_stored_values(&db, plugin_id.as_str())
+            .map_err(crate::plugins::runtime_error)
     }
 
-    fn current_value(&self, key: &str) -> Option<&serde_json::Value> {
-        self.stored_values.get(key)
-    }
-
-    fn stored_values(&self) -> &HashMap<String, serde_json::Value> {
-        &self.stored_values
-    }
-
-    fn take_groups(&self) -> Result<Vec<FieldGroupDefinition>> {
-        let mut groups = self.groups.lock().unwrap();
-        if let Some(last) = groups.last()
-            && last.fields.is_empty()
-        {
-            return Err(mlua::Error::runtime(format!(
-                "settings group '{}' must declare at least one setting",
-                last.id
-            )));
-        }
-
-        Ok(std::mem::take(&mut *groups))
+    fn load_user_stored_values(
+        &self,
+        user_db_id: agdb::DbId,
+        plugin_id: &PluginId,
+        schema: &Schema,
+    ) -> luau::runtime::Result<HashMap<String, serde_json::Value>> {
+        let db = self.db.as_ref().ok_or_else(|| {
+            luau::Error::Runtime("plugin settings database is unavailable".into())
+        })?;
+        let db = futures::executor::block_on(db.read());
+        plugin_settings_service::load_validated_user_stored_values(
+            &db,
+            user_db_id,
+            plugin_id.as_str(),
+            schema,
+        )
+        .map_err(crate::plugins::runtime_error)
     }
 }
+fn declare_settings_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let plugin_id = current_plugin_id(&frame.context)?;
+    let callback: luau::Function = frame.args.read_named("callback")?;
+    let store = frame
+        .vm
+        .data()
+        .get::<PluginSettingsModuleStore>()?
+        .as_ref()
+        .clone();
+    let stored_values = store.load_stored_values(&plugin_id)?;
+    let builder = settings_builder(stored_values);
+    let builder_table = settings_builder_table(frame.context.origin.clone(), builder.clone());
 
-fn parse_field_metadata(props: &Table) -> Result<(String, Option<String>, bool)> {
-    Ok((
-        require_non_empty_string(props.get::<String>("label")?, "label")?,
-        props.get::<Option<String>>("description")?,
-        props.get::<Option<bool>>("required")?.unwrap_or(false),
-    ))
+    callback.call(frame.vm, &[luau::Value::TableData(builder_table)])?;
+
+    let groups = take_groups(&builder)?;
+    let schema = Schema { groups };
+    plugin_settings_service::validate_stored_values(
+        plugin_id.as_str(),
+        &schema,
+        &builder.stored_values,
+    )
+    .map_err(crate::plugins::runtime_error)?;
+    let config = build_config_table(&schema.groups, &builder)?;
+
+    futures::executor::block_on(REGISTRY.write())
+        .register_schema(plugin_id, SettingsScope::Global, schema)
+        .map_err(crate::plugins::runtime_error)?;
+
+    frame.returns.write(config)?;
+    Ok(())
 }
+fn declare_user_settings_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let plugin_id = current_plugin_id(&frame.context)?;
+    let callback: luau::Function = frame.args.read_named("callback")?;
+    let store = frame
+        .vm
+        .data()
+        .get::<PluginSettingsModuleStore>()?
+        .as_ref()
+        .clone();
+    let builder = settings_builder(HashMap::new());
+    let builder_table = settings_builder_table(frame.context.origin.clone(), builder.clone());
 
-fn build_field_props(
-    props: &Table,
-    default_value: Option<serde_json::Value>,
-) -> Result<FieldProps> {
-    let (label, description, required) = parse_field_metadata(props)?;
-    Ok(FieldProps {
+    callback.call(frame.vm, &[luau::Value::TableData(builder_table)])?;
+
+    let groups = take_groups(&builder)?;
+    let schema = Schema { groups };
+
+    futures::executor::block_on(REGISTRY.write())
+        .register_schema(plugin_id.clone(), SettingsScope::User, schema.clone())
+        .map_err(crate::plugins::runtime_error)?;
+
+    frame.returns.write(user_settings_accessor_table(
+        frame.context.origin.clone(),
+        store,
+        plugin_id,
+        schema,
+    ))?;
+    Ok(())
+}
+fn settings_builder(stored_values: HashMap<String, serde_json::Value>) -> SettingsBuilder {
+    SettingsBuilder {
+        groups: Arc::new(Mutex::new(Vec::new())),
+        stored_values: Arc::new(stored_values),
+    }
+}
+fn current_plugin_id(context: &luau::CallContext) -> luau::runtime::Result<PluginId> {
+    let Some(plugin_id) = context.origin.plugin.as_ref() else {
+        return Err(luau::Error::Runtime(
+            "plugins.* must be called from plugin Lua code".to_string(),
+        ));
+    };
+    PluginId::new(plugin_id.clone()).map_err(crate::plugins::runtime_error)
+}
+fn settings_builder_table(origin: luau::ChunkOrigin, builder: SettingsBuilder) -> luau::OwnedTable {
+    let mut table = luau::OwnedTable::with_capacity(0, 5);
+    table.set_field(
+        "group",
+        settings_method(&origin, "SettingsBuilder.group", ["self", "id", "label"], {
+            let builder = builder.clone();
+            move |mut frame| {
+                read_self(&mut frame.args)?;
+                let id: String = frame.args.read_named("id")?;
+                let label: String = frame.args.read_named("label")?;
+                push_group(&builder, id, label)
+            }
+        }),
+    );
+    table.set_field(
+        "string",
+        settings_method(
+            &origin,
+            "SettingsBuilder.string",
+            ["self", "key", "props"],
+            {
+                let builder = builder.clone();
+                move |mut frame| {
+                    read_self(&mut frame.args)?;
+                    let key = register_key(&builder, frame.args.read_named("key")?)?;
+                    let props: luau::Table = frame.args.read_named("props")?;
+                    let field = FieldDefinition::String {
+                        key,
+                        props: build_field_props(
+                            frame.vm,
+                            &props,
+                            parse_string_default(frame.vm, &props)?,
+                        )?,
+                    };
+                    let value =
+                        primitive_value_for_field(&field, builder.stored_values.get(field.key()))?;
+                    push_field(&builder, field)?;
+                    frame.returns.write(value)
+                }
+            },
+        ),
+    );
+    table.set_field(
+        "number",
+        settings_method(
+            &origin,
+            "SettingsBuilder.number",
+            ["self", "key", "props"],
+            {
+                let builder = builder.clone();
+                move |mut frame| {
+                    read_self(&mut frame.args)?;
+                    let key = register_key(&builder, frame.args.read_named("key")?)?;
+                    let props: luau::Table = frame.args.read_named("props")?;
+                    let min = optional_number(frame.vm, &props, "min")?;
+                    let max = optional_number(frame.vm, &props, "max")?;
+                    if let (Some(min), Some(max)) = (min, max)
+                        && min > max
+                    {
+                        return Err(luau::Error::Runtime(
+                            "min must be less than or equal to max".to_string(),
+                        ));
+                    }
+                    let default_value = parse_number_default(frame.vm, &props)?;
+                    if let Some(default) = default_value.as_ref().and_then(|value| value.as_f64()) {
+                        if let Some(min) = min
+                            && default < min
+                        {
+                            return Err(luau::Error::Runtime(
+                                "default value must be greater than or equal to min".to_string(),
+                            ));
+                        }
+                        if let Some(max) = max
+                            && default > max
+                        {
+                            return Err(luau::Error::Runtime(
+                                "default value must be less than or equal to max".to_string(),
+                            ));
+                        }
+                    }
+                    let field = FieldDefinition::Number {
+                        key,
+                        props: build_field_props(frame.vm, &props, default_value)?,
+                        min,
+                        max,
+                    };
+                    let value =
+                        primitive_value_for_field(&field, builder.stored_values.get(field.key()))?;
+                    push_field(&builder, field)?;
+                    frame.returns.write(value)
+                }
+            },
+        ),
+    );
+    table.set_field(
+        "bool",
+        settings_method(&origin, "SettingsBuilder.bool", ["self", "key", "props"], {
+            let builder = builder.clone();
+            move |mut frame| {
+                read_self(&mut frame.args)?;
+                let key = register_key(&builder, frame.args.read_named("key")?)?;
+                let props: luau::Table = frame.args.read_named("props")?;
+                let field = FieldDefinition::Bool {
+                    key,
+                    props: build_field_props(
+                        frame.vm,
+                        &props,
+                        parse_bool_default(frame.vm, &props)?,
+                    )?,
+                };
+                let value =
+                    primitive_value_for_field(&field, builder.stored_values.get(field.key()))?;
+                push_field(&builder, field)?;
+                frame.returns.write(value)
+            }
+        }),
+    );
+    table.set_field(
+        "choice",
+        settings_method(
+            &origin,
+            "SettingsBuilder.choice",
+            ["self", "key", "props"],
+            {
+                let builder = builder.clone();
+                move |mut frame| {
+                    read_self(&mut frame.args)?;
+                    let key = register_key(&builder, frame.args.read_named("key")?)?;
+                    let props: luau::Table = frame.args.read_named("props")?;
+                    let options = parse_choice_options(frame.vm, &props)?;
+                    let default_value = parse_choice_default(frame.vm, &props, &options)?;
+                    let field = FieldDefinition::Choice {
+                        key,
+                        props: build_field_props(frame.vm, &props, default_value)?,
+                        options,
+                    };
+                    let value =
+                        primitive_value_for_field(&field, builder.stored_values.get(field.key()))?;
+                    push_field(&builder, field)?;
+                    frame.returns.write(value)
+                }
+            },
+        ),
+    );
+    table
+}
+fn user_settings_accessor_table(
+    origin: luau::ChunkOrigin,
+    store: PluginSettingsModuleStore,
+    plugin_id: PluginId,
+    schema: Schema,
+) -> luau::OwnedTable {
+    let mut table = luau::OwnedTable::with_capacity(0, 1);
+    table.set_field(
+        "get",
+        settings_method(
+            &origin,
+            "UserSettingsAccessor.get",
+            ["self", "user_id"],
+            move |mut frame| {
+                read_self(&mut frame.args)?;
+                let caller = current_plugin_id(&frame.context)?;
+                if caller != plugin_id {
+                    return Err(luau::Error::Runtime(format!(
+                        "user settings accessor for plugin '{}' must be used by the owning plugin",
+                        plugin_id
+                    )));
+                }
+                let user_id: i64 = frame.args.read_named("user_id")?;
+                if user_id <= 0 {
+                    return Err(luau::Error::Runtime("user_id must be positive".to_string()));
+                }
+                let stored =
+                    store.load_user_stored_values(agdb::DbId(user_id), &plugin_id, &schema)?;
+                let builder = settings_builder(stored);
+                let config = build_config_table(&schema.groups, &builder)?;
+                frame.returns.write(config)
+            },
+        ),
+    );
+    table
+}
+fn settings_method(
+    origin: &luau::ChunkOrigin,
+    name: &'static str,
+    args: impl IntoIterator<Item = &'static str>,
+    callback: impl for<'vm> Fn(luau::CallFrame<'vm>) -> luau::runtime::Result<()>
+    + Send
+    + Sync
+    + 'static,
+) -> luau::Value {
+    let options = luau::NativeFunctionOptions::new(origin.clone())
+        .function_name(name)
+        .argument_names(args.into_iter().map(Arc::<str>::from));
+    luau::Value::NativeFunction(luau::NativeFunctionValue::new(options, Arc::new(callback)))
+}
+fn read_self(args: &mut luau::ArgReader<'_>) -> luau::runtime::Result<()> {
+    let _: luau::Table = args.read_named("self")?;
+    Ok(())
+}
+fn register_key(builder: &SettingsBuilder, key: String) -> luau::runtime::Result<String> {
+    let key = require_non_empty_string(key, "key")?;
+    if builder
+        .groups
+        .lock()
+        .unwrap()
+        .iter()
+        .flat_map(|group| group.fields.iter())
+        .any(|field| field.key() == key.as_str())
+    {
+        return Err(luau::Error::Runtime(format!(
+            "setting key '{key}' is already declared"
+        )));
+    }
+    Ok(key)
+}
+fn push_group(builder: &SettingsBuilder, id: String, label: String) -> luau::runtime::Result<()> {
+    let id = require_non_empty_string(id, "id")?;
+    let label = require_non_empty_string(label, "label")?;
+    let mut groups = builder.groups.lock().unwrap();
+    if let Some(previous) = groups.last()
+        && previous.fields.is_empty()
+    {
+        return Err(luau::Error::Runtime(format!(
+            "settings group '{}' must declare at least one setting",
+            previous.id
+        )));
+    }
+    if groups.iter().any(|group| group.id == id) {
+        return Err(luau::Error::Runtime(format!(
+            "settings group '{id}' is already declared"
+        )));
+    }
+    groups.push(FieldGroupDefinition {
+        id,
         label,
-        description,
-        required,
+        fields: Vec::new(),
+    });
+    Ok(())
+}
+fn push_field(builder: &SettingsBuilder, field: FieldDefinition) -> luau::runtime::Result<()> {
+    let mut groups = builder.groups.lock().unwrap();
+    let Some(group) = groups.last_mut() else {
+        return Err(luau::Error::Runtime(
+            "declare a group before adding settings".to_string(),
+        ));
+    };
+    group.fields.push(field);
+    Ok(())
+}
+fn take_groups(builder: &SettingsBuilder) -> luau::runtime::Result<Vec<FieldGroupDefinition>> {
+    let mut groups = builder.groups.lock().unwrap();
+    if let Some(last) = groups.last()
+        && last.fields.is_empty()
+    {
+        return Err(luau::Error::Runtime(format!(
+            "settings group '{}' must declare at least one setting",
+            last.id
+        )));
+    }
+    Ok(std::mem::take(&mut *groups))
+}
+fn require_non_empty_string(value: String, field_name: &str) -> luau::runtime::Result<String> {
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        return Err(luau::Error::Runtime(format!(
+            "{field_name} must not be empty"
+        )));
+    }
+    Ok(value)
+}
+fn build_field_props(
+    vm: &luau::Vm,
+    props: &luau::Table,
+    default_value: Option<serde_json::Value>,
+) -> luau::runtime::Result<FieldProps> {
+    Ok(FieldProps {
+        label: require_non_empty_string(required_string(vm, props, "label")?, "label")?,
+        description: optional_string(vm, props, "description")?,
+        required: optional_bool(vm, props, "required")?.unwrap_or(false),
         default_value,
     })
 }
-
-fn parse_string_default(props: &Table) -> Result<Option<serde_json::Value>> {
-    let value: Value = props.get("default")?;
-    match value {
-        Value::Nil => Ok(None),
-        Value::String(s) => Ok(Some(serde_json::Value::String(s.to_str()?.to_string()))),
-        _ => Err(mlua::Error::runtime(
-            "default value must be a string or nil",
+fn required_string(vm: &luau::Vm, table: &luau::Table, key: &str) -> luau::runtime::Result<String> {
+    match table.get_raw(vm, key)? {
+        luau::Value::String(value) => {
+            String::from_utf8(value).map_err(crate::plugins::runtime_error)
+        }
+        other => Err(luau::Error::Runtime(format!(
+            "{key} must be a string, got {}",
+            other.type_name()
+        ))),
+    }
+}
+fn optional_string(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &str,
+) -> luau::runtime::Result<Option<String>> {
+    match table.get_raw(vm, key)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::String(value) => String::from_utf8(value)
+            .map(Some)
+            .map_err(crate::plugins::runtime_error),
+        other => Err(luau::Error::Runtime(format!(
+            "{key} must be a string or nil, got {}",
+            other.type_name()
+        ))),
+    }
+}
+fn optional_bool(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &str,
+) -> luau::runtime::Result<Option<bool>> {
+    match table.get_raw(vm, key)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::Boolean(value) => Ok(Some(value)),
+        other => Err(luau::Error::Runtime(format!(
+            "{key} must be a boolean or nil, got {}",
+            other.type_name()
+        ))),
+    }
+}
+fn optional_number(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &str,
+) -> luau::runtime::Result<Option<f64>> {
+    match table.get_raw(vm, key)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::Integer(value) => Ok(Some(value as f64)),
+        luau::Value::Number(value) => Ok(Some(value)),
+        other => Err(luau::Error::Runtime(format!(
+            "{key} must be a number or nil, got {}",
+            other.type_name()
+        ))),
+    }
+}
+fn parse_string_default(
+    vm: &luau::Vm,
+    props: &luau::Table,
+) -> luau::runtime::Result<Option<serde_json::Value>> {
+    match props.get_raw(vm, "default")? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::String(value) => String::from_utf8(value)
+            .map(serde_json::Value::String)
+            .map(Some)
+            .map_err(crate::plugins::runtime_error),
+        _ => Err(luau::Error::Runtime(
+            "default value must be a string or nil".to_string(),
         )),
     }
 }
-
-fn parse_number_default(props: &Table) -> Result<Option<serde_json::Value>> {
-    let value: Value = props.get("default")?;
-    match value {
-        Value::Nil => Ok(None),
-        Value::Integer(i) => Ok(Some(serde_json::json!(i))),
-        Value::Number(n) => Ok(Some(serde_json::json!(n))),
-        _ => Err(mlua::Error::runtime(
-            "default value must be a number or nil",
+fn parse_number_default(
+    vm: &luau::Vm,
+    props: &luau::Table,
+) -> luau::runtime::Result<Option<serde_json::Value>> {
+    match props.get_raw(vm, "default")? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::Integer(value) => Ok(Some(serde_json::json!(value))),
+        luau::Value::Number(value) => Ok(Some(serde_json::json!(value))),
+        _ => Err(luau::Error::Runtime(
+            "default value must be a number or nil".to_string(),
         )),
     }
 }
-
-fn parse_bool_default(props: &Table) -> Result<Option<serde_json::Value>> {
-    let value: Value = props.get("default")?;
-    match value {
-        Value::Nil => Ok(None),
-        Value::Boolean(b) => Ok(Some(serde_json::Value::Bool(b))),
-        _ => Err(mlua::Error::runtime(
-            "default value must be a boolean or nil",
+fn parse_bool_default(
+    vm: &luau::Vm,
+    props: &luau::Table,
+) -> luau::runtime::Result<Option<serde_json::Value>> {
+    match props.get_raw(vm, "default")? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::Boolean(value) => Ok(Some(serde_json::Value::Bool(value))),
+        _ => Err(luau::Error::Runtime(
+            "default value must be a boolean or nil".to_string(),
         )),
     }
 }
+fn parse_choice_options(
+    vm: &luau::Vm,
+    props: &luau::Table,
+) -> luau::runtime::Result<Vec<ChoiceOption>> {
+    let luau::Value::Table(options_table) = props.get_raw(vm, "options")? else {
+        return Err(luau::Error::Runtime(
+            "choice settings require an options array".to_string(),
+        ));
+    };
+    let mut entries = options_table
+        .pairs_raw(vm)?
+        .into_iter()
+        .filter_map(|(key, value)| Some((sequence_index(key)?, value)))
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|(index, _)| *index);
 
-fn parse_choice_options(props: &Table) -> Result<Vec<ChoiceOption>> {
-    let options_table: Table = props.get("options")?;
-    let mut options = Vec::new();
+    let mut options = Vec::with_capacity(entries.len());
     let mut seen_values = HashSet::new();
-
-    for entry in options_table.sequence_values::<Table>() {
-        let entry = entry?;
-        let value = require_non_empty_string(entry.get::<String>("value")?, "value")?;
-        let label = require_non_empty_string(entry.get::<String>("label")?, "label")?;
+    for (_, value) in entries {
+        let luau::Value::Table(option_table) = value else {
+            return Err(luau::Error::Runtime(
+                "choice options must be tables".to_string(),
+            ));
+        };
+        let value =
+            require_non_empty_string(required_string(vm, &option_table, "value")?, "value")?;
+        let label =
+            require_non_empty_string(required_string(vm, &option_table, "label")?, "label")?;
         if !seen_values.insert(value.clone()) {
-            return Err(mlua::Error::runtime(format!(
+            return Err(luau::Error::Runtime(format!(
                 "choice option value '{value}' is already declared"
             )));
         }
-
         options.push(ChoiceOption {
             value,
             label,
-            description: entry.get::<Option<String>>("description")?,
+            description: optional_string(vm, &option_table, "description")?,
         });
     }
 
     if options.is_empty() {
-        return Err(mlua::Error::runtime(
-            "choice settings require at least one option",
+        return Err(luau::Error::Runtime(
+            "choice settings require at least one option".to_string(),
         ));
     }
-
     Ok(options)
 }
-
 fn parse_choice_default(
-    props: &Table,
+    vm: &luau::Vm,
+    props: &luau::Table,
     options: &[ChoiceOption],
-) -> Result<Option<serde_json::Value>> {
-    let value: Value = props.get("default")?;
-    match value {
-        Value::Nil => Ok(None),
-        Value::String(s) => {
-            let value = s.to_str()?.to_string();
+) -> luau::runtime::Result<Option<serde_json::Value>> {
+    match props.get_raw(vm, "default")? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::String(value) => {
+            let value = String::from_utf8(value).map_err(crate::plugins::runtime_error)?;
             if !options.iter().any(|option| option.value == value) {
-                return Err(mlua::Error::runtime(
-                    "default value must match one of the declared choice options",
+                return Err(luau::Error::Runtime(
+                    "default value must match one of the declared choice options".to_string(),
                 ));
             }
             Ok(Some(serde_json::Value::String(value)))
         }
-        _ => Err(mlua::Error::runtime(
-            "default value must be a string or nil",
+        _ => Err(luau::Error::Runtime(
+            "default value must be a string or nil".to_string(),
         )),
     }
 }
-
-fn resolve_value_with_lua(
-    lua: &Lua,
+fn primitive_value_for_field(
+    field: &FieldDefinition,
+    stored: Option<&serde_json::Value>,
+) -> luau::runtime::Result<luau::Value> {
+    if let Some(stored) = stored {
+        field
+            .validate_value(stored)
+            .map_err(crate::plugins::runtime_error)?;
+    }
+    Ok(resolve_settings_value(stored, &field.props().default_value))
+}
+fn resolve_settings_value(
     stored: Option<&serde_json::Value>,
     default: &Option<serde_json::Value>,
-) -> Result<Value> {
+) -> luau::Value {
     let value = stored
         .filter(|value| !value.is_null())
         .or_else(|| default.as_ref().filter(|value| !value.is_null()));
 
     match value {
-        Some(serde_json::Value::Bool(b)) => Ok(Value::Boolean(*b)),
-        Some(serde_json::Value::Number(n)) => {
-            if let Some(i) = n.as_i64() {
-                Ok(Value::Integer(i))
-            } else if let Some(f) = n.as_f64() {
-                Ok(Value::Number(f))
+        Some(serde_json::Value::Bool(value)) => luau::Value::Boolean(*value),
+        Some(serde_json::Value::Number(value)) => {
+            if let Some(value) = value.as_i64() {
+                luau::Value::Integer(value)
+            } else if let Some(value) = value.as_f64() {
+                luau::Value::Number(value)
             } else {
-                Ok(Value::Nil)
+                luau::Value::Nil
             }
         }
-        Some(serde_json::Value::String(s)) => Ok(Value::String(lua.create_string(s)?)),
-        _ => Ok(Value::Nil),
+        Some(serde_json::Value::String(value)) => luau::Value::String(value.clone().into_bytes()),
+        _ => luau::Value::Nil,
     }
 }
-
-fn validate_stored_field_value(
-    field: &FieldDefinition,
-    stored: Option<&serde_json::Value>,
-) -> Result<()> {
-    if let Some(stored) = stored {
-        field
-            .validate_value(stored)
-            .map_err(|error| mlua::Error::runtime(error.to_string()))?;
-    }
-    Ok(())
-}
-
-fn primitive_value_for_field(
-    lua: &Lua,
-    field: &FieldDefinition,
-    stored: Option<&serde_json::Value>,
-) -> Result<Value> {
-    validate_stored_field_value(field, stored)?;
-    let default = &field.props().default_value;
-    resolve_value_with_lua(lua, stored, default)
-}
-
-impl UserData for SettingsBuilder {
-    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("group", |_, this, (id, label): (String, String)| {
-            this.push_group(id, label)
-        });
-
-        methods.add_method("string", |lua, this, (key, props): (String, Table)| {
-            let key = this.register_key(key)?;
-            let field = FieldDefinition::String {
-                key,
-                props: build_field_props(&props, parse_string_default(&props)?)?,
-            };
-            let stored = this.current_value(field.key());
-            let value = primitive_value_for_field(lua, &field, stored)?;
-            this.push_field(field)?;
-            Ok(value)
-        });
-
-        methods.add_method("number", |lua, this, (key, props): (String, Table)| {
-            let key = this.register_key(key)?;
-            let min = props.get::<Option<f64>>("min")?;
-            let max = props.get::<Option<f64>>("max")?;
-            if let (Some(min), Some(max)) = (min, max)
-                && min > max
-            {
-                return Err(mlua::Error::runtime(
-                    "min must be less than or equal to max",
-                ));
-            }
-
-            let default_value = parse_number_default(&props)?;
-            if let Some(default) = default_value.as_ref().and_then(|value| value.as_f64()) {
-                if let Some(min) = min
-                    && default < min
-                {
-                    return Err(mlua::Error::runtime(
-                        "default value must be greater than or equal to min",
-                    ));
-                }
-                if let Some(max) = max
-                    && default > max
-                {
-                    return Err(mlua::Error::runtime(
-                        "default value must be less than or equal to max",
-                    ));
-                }
-            }
-
-            let field = FieldDefinition::Number {
-                key,
-                props: build_field_props(&props, default_value)?,
-                min,
-                max,
-            };
-            let stored = this.current_value(field.key());
-            let value = primitive_value_for_field(lua, &field, stored)?;
-            this.push_field(field)?;
-            Ok(value)
-        });
-
-        methods.add_method("bool", |lua, this, (key, props): (String, Table)| {
-            let key = this.register_key(key)?;
-            let field = FieldDefinition::Bool {
-                key,
-                props: build_field_props(&props, parse_bool_default(&props)?)?,
-            };
-            let stored = this.current_value(field.key());
-            let value = primitive_value_for_field(lua, &field, stored)?;
-            this.push_field(field)?;
-            Ok(value)
-        });
-
-        methods.add_method("choice", |lua, this, (key, props): (String, Table)| {
-            let key = this.register_key(key)?;
-            let options = parse_choice_options(&props)?;
-            let field = FieldDefinition::Choice {
-                key,
-                props: build_field_props(&props, parse_choice_default(&props, &options)?)?,
-                options,
-            };
-            let stored = this.current_value(field.key());
-            let value = primitive_value_for_field(lua, &field, stored)?;
-            this.push_field(field)?;
-            Ok(value)
-        });
-    }
-}
-
 fn build_config_table(
-    lua: &Lua,
     groups: &[FieldGroupDefinition],
     builder: &SettingsBuilder,
-) -> Result<Table> {
-    let config = lua.create_table()?;
-
+) -> luau::runtime::Result<luau::OwnedTable> {
+    let mut config = luau::OwnedTable::new();
     for group in groups {
         for field in &group.fields {
-            let key = field.key();
-            let stored = builder.current_value(key);
-            let value = primitive_value_for_field(lua, field, stored)?;
-            config.set(key, value)?;
+            let value = primitive_value_for_field(field, builder.stored_values.get(field.key()))?;
+            config.set_field(field.key(), value);
         }
     }
-
     Ok(config)
 }
-
-fn project_plugin_manifest(manifest: &harmony_core::PluginManifest) -> PluginManifest {
-    PluginManifest {
-        schema_version: manifest.schema_version,
-        id: manifest.id.clone(),
-        name: manifest.name.clone(),
-        version: manifest.version.clone(),
-        description: manifest.description.clone(),
-        entrypoint: manifest.entrypoint.clone(),
+fn sequence_index(value: luau::Value) -> Option<i64> {
+    match value {
+        luau::Value::Integer(value) if value > 0 => Some(value),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
+            Some(value as i64)
+        }
+        _ => None,
     }
-}
-
-pub(crate) fn current_plugin_id(lua: &Lua) -> Result<PluginId> {
-    crate::plugins::lifecycle::resolve_caller_plugin_id(lua)
-        .ok_or_else(|| mlua::Error::runtime("plugins.* must be called from plugin Lua code"))
-}
-
-fn current_plugin_manifest(lua: &Lua) -> Result<PluginManifest> {
-    let plugin_id = current_plugin_id(lua)?;
-    let manifests = STATE.plugin_manifests.get();
-    manifests
-        .iter()
-        .find(|manifest| manifest.id == plugin_id.as_str())
-        .map(project_plugin_manifest)
-        .ok_or_else(|| mlua::Error::runtime(format!("plugin manifest not found: {plugin_id}")))
-}
-
-async fn declare_settings_impl(plugin_id: PluginId, callback: Function) -> Result<Table> {
-    let _registration = STATE
-        .plugin_registries
-        .ensure_registrations_open(&plugin_id)
-        .await?;
-
-    let stored_values =
-        plugin_settings_service::load_stored_values(&*STATE.db.read().await, plugin_id.as_str())
-            .map_err(mlua::Error::external)?;
-
-    let builder = SettingsBuilder::new(stored_values);
-    let builder_ref = builder.clone();
-
-    callback.call_async::<()>(builder_ref).await?;
-
-    let groups = builder.take_groups()?;
-    let schema = Schema { groups };
-    plugin_settings_service::validate_stored_values(
-        plugin_id.as_str(),
-        &schema,
-        builder.stored_values(),
-    )
-    .map_err(mlua::Error::external)?;
-
-    let lua = STATE.lua.get();
-    let config = build_config_table(&lua, &schema.groups, &builder)?;
-
-    REGISTRY
-        .write()
-        .await
-        .register_schema(plugin_id, settings::SettingsScope::Global, schema)
-        .map_err(mlua::Error::external)?;
-
-    Ok(config)
-}
-
-async fn declare_user_settings_impl(
-    plugin_id: PluginId,
-    callback: Function,
-) -> Result<UserSettingsAccessor> {
-    let _registration = STATE
-        .plugin_registries
-        .ensure_registrations_open(&plugin_id)
-        .await?;
-
-    let builder = SettingsBuilder::new(HashMap::new());
-    let builder_ref = builder.clone();
-
-    callback.call_async::<()>(builder_ref).await?;
-
-    let groups = builder.take_groups()?;
-    let schema = Schema { groups };
-
-    REGISTRY
-        .write()
-        .await
-        .register_schema(
-            plugin_id.clone(),
-            settings::SettingsScope::User,
-            schema.clone(),
-        )
-        .map_err(mlua::Error::external)?;
-
-    Ok(UserSettingsAccessor { plugin_id, schema })
 }
 
 struct PluginsModule;
 
-#[harmony_macros::module(
-    plugin_scoped,
-    name = "Plugins",
-    local = "plugins",
-    path = "lyra/plugins",
-    aliases(SettingsConfig, SettingsCallback),
-    interfaces(
-        PluginManifest,
-        SettingsChoiceOption,
-        SettingsStringProps,
-        SettingsNumberProps,
-        SettingsBoolProps,
-        SettingsChoiceProps
-    ),
-    classes(SettingsBuilder, UserSettingsAccessor)
-)]
-impl PluginsModule {
-    #[harmony(args(callback: SettingsCallback), returns(SettingsConfig))]
-    pub(crate) async fn declare_settings(
-        plugin_id: Option<Arc<str>>,
-        callback: Function,
-    ) -> Result<Table> {
-        let plugin_id = plugin_id
-            .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
-            .transpose()?;
-        let plugin_id = plugin_id.ok_or_else(|| {
-            mlua::Error::runtime("plugins.declare_settings must be called from plugin Lua code")
-        })?;
-        declare_settings_impl(plugin_id, callback).await
+impl PluginsModule {}
+
+pub(crate) fn module_spec() -> ModuleSpec {
+    let spec = ModuleSpec::new("lyra/plugins")
+        .capability("lyra.plugins")
+        .function(plugin_id_spec())
+        .function(plugin_manifest_spec())
+        .function(plugin_list_spec())
+        .function(plugin_get_spec())
+        .install(|_| Ok(ModuleExport::new(PluginsModule)));
+    let spec = spec
+        .function(declare_settings_spec())
+        .function(declare_user_settings_spec())
+        .userdata(
+            UserDataSpec::new("UserSettingsAccessor").method(user_settings_accessor_get_spec()),
+        );
+    spec
+}
+fn declare_settings_spec() -> FunctionSpec {
+    let spec = FunctionSpec::async_fn("declare_settings")
+        .context::<Option<Arc<str>>>()
+        .named_arg::<SettingsCallback>("callback")
+        .returns::<SettingsConfig>();
+    spec.call(declare_settings_callback)
+}
+fn declare_user_settings_spec() -> FunctionSpec {
+    let spec = FunctionSpec::async_fn("declare_user_settings")
+        .context::<Option<Arc<str>>>()
+        .named_arg::<SettingsCallback>("callback")
+        .returns::<UserSettingsAccessor>();
+    spec.call(declare_user_settings_callback)
+}
+fn user_settings_accessor_get_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get")
+        .context::<Option<Arc<str>>>()
+        .arg_name("user_id")
+        .args::<i64>()
+        .returns::<SettingsConfig>()
+}
+
+fn plugin_id_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("id").returns::<String>();
+    spec.call(plugin_id_callback)
+}
+fn plugin_id_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let Some(plugin_id) = frame.context.origin.plugin.as_deref() else {
+        return Err(luau::Error::Runtime(
+            "plugins.id must be called from plugin Lua code".to_string(),
+        ));
+    };
+    frame.returns.write(plugin_id)?;
+    Ok(())
+}
+
+fn plugin_manifest_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("manifest").returns::<PluginManifest>();
+    spec.call(plugin_manifest_callback)
+}
+
+fn plugin_list_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("list").returns::<Vec<PluginManifest>>();
+    spec.call(plugin_list_callback)
+}
+
+fn plugin_get_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("get")
+        .arg_name("id")
+        .args::<String>()
+        .returns::<Option<PluginManifest>>();
+    spec.call(plugin_get_callback)
+}
+fn plugin_manifest_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let Some(plugin_id) = frame.context.origin.plugin.as_deref() else {
+        return Err(luau::Error::Runtime(
+            "plugins.manifest must be called from plugin Lua code".to_string(),
+        ));
+    };
+    let manifests = frame.vm.data().get::<PluginManifestModuleStore>()?;
+    let Some(manifest) = manifests.find(plugin_id) else {
+        return Err(luau::Error::Runtime(format!(
+            "plugin manifest not found: {plugin_id}"
+        )));
+    };
+    frame.returns.write(manifest_table(manifest))?;
+    Ok(())
+}
+fn plugin_list_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let manifests = frame.vm.data().get::<PluginManifestModuleStore>()?;
+    let mut table = luau::OwnedTable::with_capacity(manifests.manifests.len(), 0);
+    for manifest in manifests.iter() {
+        table.push_array(luau::Value::TableData(manifest_table(manifest)));
+    }
+    frame.returns.write(table)?;
+    Ok(())
+}
+fn plugin_get_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let id: String = frame.args.read_named("id")?;
+    let id = id.trim();
+    if id.is_empty() {
+        return Err(luau::Error::Runtime("id must not be empty".to_string()));
     }
 
-    #[harmony(args(callback: SettingsCallback), returns(UserSettingsAccessor))]
-    pub(crate) async fn declare_user_settings(
-        plugin_id: Option<Arc<str>>,
-        callback: Function,
-    ) -> Result<UserSettingsAccessor> {
-        let plugin_id = plugin_id
-            .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
-            .transpose()?;
-        let plugin_id = plugin_id.ok_or_else(|| {
-            mlua::Error::runtime(
-                "plugins.declare_user_settings must be called from plugin Lua code",
-            )
-        })?;
-        declare_user_settings_impl(plugin_id, callback).await
+    let manifests = frame.vm.data().get::<PluginManifestModuleStore>()?;
+    match manifests.find(id) {
+        Some(manifest) => frame.returns.write(manifest_table(manifest))?,
+        None => frame.returns.write(luau::Value::Nil)?,
     }
+    Ok(())
+}
+fn manifest_table(manifest: &harmony_core::PluginManifest) -> luau::OwnedTable {
+    let mut table = luau::OwnedTable::with_capacity(0, 6);
+    table.set_field(
+        "schema_version",
+        luau::Value::Integer(i64::from(manifest.schema_version)),
+    );
+    table.set_field("id", luau::Value::String(manifest.id.clone().into_bytes()));
+    table.set_field(
+        "name",
+        luau::Value::String(manifest.name.clone().into_bytes()),
+    );
+    table.set_field(
+        "version",
+        luau::Value::String(manifest.version.clone().into_bytes()),
+    );
+    table.set_field(
+        "description",
+        luau::Value::String(manifest.description.clone().into_bytes()),
+    );
+    table.set_field(
+        "entrypoint",
+        luau::Value::String(manifest.entrypoint.clone().into_bytes()),
+    );
+    table
+}
 
-    pub(crate) fn id(lua: &Lua, _: ()) -> Result<String> {
-        Ok(current_plugin_id(&lua)?.to_string())
-    }
-
-    #[harmony(returns(PluginManifest))]
-    pub(crate) fn manifest(lua: &Lua, _: ()) -> Result<Value> {
-        let manifest = current_plugin_manifest(lua)?;
-        lua.to_value_with(&manifest, crate::plugins::LUA_SERIALIZE_OPTIONS)
-    }
-
-    #[harmony(returns(Vec<PluginManifest>))]
-    pub(crate) fn list(lua: &Lua, _: ()) -> Result<Value> {
-        let manifests = STATE.plugin_manifests.get();
-        let manifests = manifests
-            .iter()
-            .map(project_plugin_manifest)
-            .collect::<Vec<_>>();
-        lua.to_value_with(&manifests, crate::plugins::LUA_SERIALIZE_OPTIONS)
-    }
-
-    #[harmony(returns(Option<PluginManifest>))]
-    pub(crate) fn get(lua: &Lua, id: String) -> Result<Value> {
-        let id = require_non_empty_string(id, "id")?;
-        let manifests = STATE.plugin_manifests.get();
-        let manifest = manifests
-            .iter()
-            .find(|manifest| manifest.id == id)
-            .map(project_plugin_manifest);
-
-        match manifest {
-            Some(manifest) => lua.to_value_with(&manifest, crate::plugins::LUA_SERIALIZE_OPTIONS),
-            None => Ok(Value::Nil),
-        }
+impl LuauTypeInfo for PluginManifest {
+    fn luau_type() -> LuauType {
+        LuauType::literal("PluginManifest")
     }
 }
 
-crate::plugins::plugin_surface_exports!(
-    PluginsModule,
-    "lyra.plugins",
-    "Manage installed plugins (list, install, restart, uninstall).",
-    High
-);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_choice_options_reads_named_fields() -> anyhow::Result<()> {
-        let lua = Lua::new();
-        let props = lua.create_table()?;
-        let options = lua.create_table()?;
-        let option = lua.create_table()?;
-        option.set("value", "spotify")?;
-        option.set("label", "Spotify")?;
-        option.set("description", "Streaming service")?;
-        options.set(1, option)?;
-        props.set("options", options)?;
-
-        let parsed = parse_choice_options(&props)?;
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].value, "spotify");
-        assert_eq!(parsed[0].label, "Spotify");
-        assert_eq!(parsed[0].description.as_deref(), Some("Streaming service"));
-
-        Ok(())
-    }
-
-    #[test]
-    fn parse_number_default_rejects_non_numbers() -> anyhow::Result<()> {
-        let lua = Lua::new();
-        let props = lua.create_table()?;
-        props.set("default", "loud")?;
-
-        let error = parse_number_default(&props).unwrap_err();
-        assert!(error.to_string().contains("number or nil"));
-
-        Ok(())
-    }
-
-    #[test]
-    fn parse_choice_default_requires_declared_option() -> anyhow::Result<()> {
-        let lua = Lua::new();
-        let props = lua.create_table()?;
-        props.set("default", "maybe")?;
-
-        let error = parse_choice_default(
-            &props,
-            &[ChoiceOption {
-                value: "yes".to_string(),
-                label: "Yes".to_string(),
+impl DescribeInterface for PluginManifest {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("PluginManifest", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "schema_version",
+                ty: u32::luau_type(),
                 description: None,
-            }],
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("declared choice options"));
-
-        Ok(())
-    }
-
-    #[test]
-    fn register_key_rejects_duplicate_setting_keys() -> anyhow::Result<()> {
-        let builder = SettingsBuilder::new(HashMap::new());
-        builder.push_group("credentials".to_string(), "Credentials".to_string())?;
-        builder.push_field(FieldDefinition::String {
-            key: "token".to_string(),
-            props: FieldProps {
-                label: "Token".to_string(),
-                description: None,
-                required: false,
-                default_value: None,
             },
-        })?;
-
-        let error = builder.register_key("token".to_string()).unwrap_err();
-        assert!(error.to_string().contains("already declared"));
-
-        Ok(())
+            FieldDescriptor {
+                name: "id",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "name",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "version",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "description",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "entrypoint",
+                ty: String::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
     }
+}
 
-    #[test]
-    fn push_field_requires_group() {
-        let builder = SettingsBuilder::new(HashMap::new());
-
-        let error = builder
-            .push_field(FieldDefinition::String {
-                key: "token".to_string(),
-                props: FieldProps {
-                    label: "Token".to_string(),
-                    description: None,
-                    required: false,
-                    default_value: None,
-                },
-            })
-            .unwrap_err();
-        assert!(error.to_string().contains("declare a group"));
+impl LuauTypeInfo for SettingsChoiceOption {
+    fn luau_type() -> LuauType {
+        LuauType::literal("SettingsChoiceOption")
     }
+}
 
-    #[test]
-    fn push_group_rejects_empty_previous_group() -> anyhow::Result<()> {
-        let builder = SettingsBuilder::new(HashMap::new());
-        builder.push_group("credentials".to_string(), "Credentials".to_string())?;
-
-        let error = builder
-            .push_group("advanced".to_string(), "Advanced".to_string())
-            .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("must declare at least one setting")
-        );
-
-        Ok(())
+impl DescribeInterface for SettingsChoiceOption {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("SettingsChoiceOption", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "value",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "label",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "description",
+                ty: Option::<String>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
     }
+}
 
-    #[test]
-    fn build_config_table_keeps_missing_bool_as_nil() -> anyhow::Result<()> {
-        let lua = Lua::new();
-        let builder = SettingsBuilder::new(HashMap::new());
-        let groups = vec![FieldGroupDefinition {
-            id: "general".to_string(),
-            label: "General".to_string(),
-            fields: vec![FieldDefinition::Bool {
-                key: "enabled".to_string(),
-                props: FieldProps {
-                    label: "Enabled".to_string(),
-                    description: None,
-                    required: false,
-                    default_value: None,
-                },
-            }],
-        }];
+fn settings_common_fields() -> Vec<FieldDescriptor> {
+    vec![
+        FieldDescriptor {
+            name: "label",
+            ty: String::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "description",
+            ty: Option::<String>::luau_type(),
+            description: None,
+        },
+    ]
+}
 
-        let config = build_config_table(&lua, &groups, &builder)?;
-        let value: Value = config.get("enabled")?;
-        assert!(matches!(value, Value::Nil));
-
-        Ok(())
+impl LuauTypeInfo for SettingsStringProps {
+    fn luau_type() -> LuauType {
+        LuauType::literal("SettingsStringProps")
     }
+}
 
-    #[test]
-    fn build_config_table_uses_default_when_stored_value_is_null() -> anyhow::Result<()> {
-        let lua = Lua::new();
-        let builder = SettingsBuilder::new(HashMap::from([(
-            "token".to_string(),
-            serde_json::Value::Null,
-        )]));
-        let groups = vec![FieldGroupDefinition {
-            id: "credentials".to_string(),
-            label: "Credentials".to_string(),
-            fields: vec![FieldDefinition::String {
-                key: "token".to_string(),
-                props: FieldProps {
-                    label: "Token".to_string(),
-                    description: None,
-                    required: false,
-                    default_value: Some(serde_json::json!("fallback")),
-                },
-            }],
-        }];
-
-        let config = build_config_table(&lua, &groups, &builder)?;
-        let value: String = config.get("token")?;
-        assert_eq!(value, "fallback");
-
-        Ok(())
+impl DescribeInterface for SettingsStringProps {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("SettingsStringProps", None);
+        descriptor.fields.extend(settings_common_fields());
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "default",
+                ty: Option::<String>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "required",
+                ty: Option::<bool>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
     }
+}
 
-    #[test]
-    fn current_plugin_id_reads_calling_plugin_source() -> anyhow::Result<()> {
-        let lua = Lua::new();
-        let plugin_id = lua.create_function(|lua, ()| Ok(current_plugin_id(lua)?.to_string()))?;
-        lua.globals().set("plugin_id", plugin_id)?;
-
-        let current: String = lua
-            .load("return plugin_id()")
-            .set_name(&harmony_core::format_plugin_chunk_name("demo", "init"))
-            .eval()?;
-
-        assert_eq!(current, "demo");
-
-        Ok(())
+impl LuauTypeInfo for SettingsNumberProps {
+    fn luau_type() -> LuauType {
+        LuauType::literal("SettingsNumberProps")
     }
+}
 
-    #[test]
-    fn current_plugin_id_rejects_non_plugin_callers() -> anyhow::Result<()> {
-        let lua = Lua::new();
-        let plugin_id = lua.create_function(|lua, ()| Ok(current_plugin_id(lua)?.to_string()))?;
-        lua.globals().set("plugin_id", plugin_id)?;
-
-        let error = lua
-            .load("return plugin_id()")
-            .set_name("scratch")
-            .eval::<String>()
-            .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("must be called from plugin Lua code")
-        );
-
-        Ok(())
+impl DescribeInterface for SettingsNumberProps {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("SettingsNumberProps", None);
+        descriptor.fields.extend(settings_common_fields());
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "default",
+                ty: Option::<f64>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "min",
+                ty: Option::<f64>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "max",
+                ty: Option::<f64>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "required",
+                ty: Option::<bool>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
     }
+}
+
+impl LuauTypeInfo for SettingsBoolProps {
+    fn luau_type() -> LuauType {
+        LuauType::literal("SettingsBoolProps")
+    }
+}
+
+impl DescribeInterface for SettingsBoolProps {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("SettingsBoolProps", None);
+        descriptor.fields.extend(settings_common_fields());
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "default",
+                ty: Option::<bool>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "required",
+                ty: Option::<bool>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for SettingsChoiceProps {
+    fn luau_type() -> LuauType {
+        LuauType::literal("SettingsChoiceProps")
+    }
+}
+
+impl DescribeInterface for SettingsChoiceProps {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("SettingsChoiceProps", None);
+        descriptor.fields.extend(settings_common_fields());
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "default",
+                ty: Option::<String>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "options",
+                ty: Vec::<SettingsChoiceOption>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "required",
+                ty: Option::<bool>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
+    ParameterDescriptor {
+        name,
+        ty,
+        description: None,
+        variadic: false,
+    }
+}
+
+fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        name: "Plugins",
+        local_name: "plugins",
+        description: None,
+        fields: Vec::new(),
+        functions: vec![
+            ModuleFunctionDescriptor {
+                path: vec!["declare_settings"],
+                description: None,
+                params: vec![param("callback", SettingsCallback::luau_type())],
+                returns: vec![SettingsConfig::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["declare_user_settings"],
+                description: None,
+                params: vec![param("callback", SettingsCallback::luau_type())],
+                returns: vec![UserSettingsAccessor::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["id"],
+                description: None,
+                params: vec![],
+                returns: vec![String::luau_type()],
+                yields: false,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["manifest"],
+                description: None,
+                params: vec![],
+                returns: vec![PluginManifest::luau_type()],
+                yields: false,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["list"],
+                description: None,
+                params: vec![],
+                returns: vec![Vec::<PluginManifest>::luau_type()],
+                yields: false,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get"],
+                description: None,
+                params: vec![param("id", String::luau_type())],
+                returns: vec![Option::<PluginManifest>::luau_type()],
+                yields: false,
+            },
+        ],
+    }
+}
+
+pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
+    render_definition_file_with_support(
+        &module_descriptor(),
+        &[
+            SettingsConfig::type_alias_descriptor(),
+            SettingsCallback::type_alias_descriptor(),
+        ],
+        &[
+            PluginManifest::interface_descriptor(),
+            SettingsChoiceOption::interface_descriptor(),
+            SettingsStringProps::interface_descriptor(),
+            SettingsNumberProps::interface_descriptor(),
+            SettingsBoolProps::interface_descriptor(),
+            SettingsChoiceProps::interface_descriptor(),
+        ],
+        &[
+            SettingsBuilder::class_descriptor(),
+            UserSettingsAccessor::class_descriptor(),
+        ],
+    )
 }

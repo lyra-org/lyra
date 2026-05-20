@@ -3,172 +3,450 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::{
+    collections::HashSet,
+    sync::Arc,
+};
+
 use agdb::DbId;
-use harmony_core::LuaAsyncExt;
-use mlua::{
-    ExternalResult,
-    Lua,
-    Result,
-    Table,
+use harmony_core::{
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
+};
+use harmony_luau as luau;
+use harmony_luau::{
+    LuauType,
+    LuauTypeInfo,
+    ModuleDescriptor,
+    ModuleFunctionDescriptor,
+    ParameterDescriptor,
+    render_definition_file_with_support,
 };
 
 use crate::{
-    STATE,
     plugins::db::{
         self,
-        NodeId,
+        DbAsync,
         favorites::FavoriteKind,
     },
-    plugins::{
-        caller::RequestCaller,
-        parse_ids,
+    services::{
+        auth::Principal,
+        favorites as favorite_service,
     },
-    services::favorites as favorite_service,
 };
 
-/// `lyra/favorites` plugin bindings. Plugins are fully trusted — callers must scope to the
-/// request principal; the host does not verify `user_id`.
-struct FavoritesModule;
-
-fn parse_kind(value: &str) -> Result<FavoriteKind> {
-    FavoriteKind::try_from(value).map_err(|err| mlua::Error::runtime(err.to_string()))
+#[derive(Clone, Default)]
+pub(crate) struct FavoritesModuleStore {
+    db: Option<DbAsync>,
 }
 
-#[harmony_macros::module(
-    plugin_scoped,
-    name = "Favorites",
-    local = "favorites",
-    path = "lyra/favorites"
-)]
-impl FavoritesModule {
-    pub(crate) async fn add(
-        #[harmony_context] caller: RequestCaller,
-        user_id: NodeId,
-        target_id: NodeId,
-    ) -> Result<bool> {
-        if DbId::from(user_id) != caller.principal.user_db_id {
-            return Ok(false);
-        }
-        let target_db_id: DbId = target_id.into();
+impl FavoritesModuleStore {
+    pub(crate) fn empty() -> Self {
+        Self { db: None }
+    }
 
-        let mut db = STATE.db.write().await;
+    pub(crate) fn with_db(db: DbAsync) -> Self {
+        Self { db: Some(db) }
+    }
+
+    fn db(&self) -> luau::runtime::Result<DbAsync> {
+        self.db.clone().ok_or_else(|| {
+            crate::plugins::runtime_error(
+                "lyra/favorites requires a database-backed plugin executor",
+            )
+        })
+    }
+}
+
+struct FavoritesModule;
+
+pub(crate) fn module_spec() -> ModuleSpec {
+    ModuleSpec::new("lyra/favorites")
+        .capability("lyra.favorites")
+        .function(add_spec())
+        .function(remove_spec())
+        .function(has_spec())
+        .function(has_many_spec())
+        .function(list_ids_spec())
+        .install(|_| Ok(ModuleExport::new(FavoritesModule)))
+}
+
+fn add_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("add")
+        .context::<Principal>()
+        .arg_name("user_id")
+        .args::<i64>()
+        .arg_name("target_id")
+        .args::<i64>()
+        .returns::<bool>()
+        .call_async_native(Arc::new(add_callback))
+}
+
+fn remove_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("remove")
+        .context::<Principal>()
+        .arg_name("user_id")
+        .args::<i64>()
+        .arg_name("target_id")
+        .args::<i64>()
+        .returns::<bool>()
+        .call_async_native(Arc::new(remove_callback))
+}
+
+fn has_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("has")
+        .context::<Principal>()
+        .arg_name("user_id")
+        .args::<i64>()
+        .arg_name("target_id")
+        .args::<i64>()
+        .returns::<bool>()
+        .call_async_native(Arc::new(has_callback))
+}
+
+fn has_many_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("has_many")
+        .context::<Principal>()
+        .arg_name("user_id")
+        .args::<i64>()
+        .arg_name("target_ids")
+        .args::<luau::Table>()
+        .returns::<luau::Table>()
+        .call_async_native(Arc::new(has_many_callback))
+}
+
+fn list_ids_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("list_ids")
+        .context::<Principal>()
+        .arg_name("user_id")
+        .args::<i64>()
+        .arg_name("entity")
+        .args::<String>()
+        .returns::<luau::Table>()
+        .call_async_native(Arc::new(list_ids_callback))
+}
+
+fn add_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let user_id = DbId(frame.args.read_named::<i64>("user_id")?);
+    let target_id = DbId(frame.args.read_named::<i64>("target_id")?);
+    let store = frame
+        .vm
+        .data()
+        .get::<FavoritesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(Box::pin(async move {
+        if user_id != principal.user_db_id {
+            return Ok(vec![luau::Value::Boolean(false)]);
+        }
+
+        let mut db = db.write().await;
         let Some(target_public_id) =
-            db::lookup::find_id_by_db_id(&*db, target_db_id).into_lua_err()?
+            db::lookup::find_id_by_db_id(&*db, target_id).map_err(crate::plugins::runtime_error)?
         else {
-            return Ok(false);
+            return Ok(vec![luau::Value::Boolean(false)]);
         };
-        let outcome =
-            favorite_service::add_for_principal(&mut db, &caller.principal, &target_public_id)
-                .into_lua_err()?;
-        Ok(matches!(
+        let outcome = favorite_service::add_for_principal(&mut db, &principal, &target_public_id)
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(vec![luau::Value::Boolean(matches!(
             outcome,
             favorite_service::MutationOutcome::Applied(_)
-        ))
-    }
+        ))])
+    }))
+}
 
-    pub(crate) async fn remove(
-        #[harmony_context] caller: RequestCaller,
-        user_id: NodeId,
-        target_id: NodeId,
-    ) -> Result<bool> {
-        if DbId::from(user_id) != caller.principal.user_db_id {
-            return Ok(false);
+fn remove_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let user_id = DbId(frame.args.read_named::<i64>("user_id")?);
+    let target_id = DbId(frame.args.read_named::<i64>("target_id")?);
+    let store = frame
+        .vm
+        .data()
+        .get::<FavoritesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(Box::pin(async move {
+        if user_id != principal.user_db_id {
+            return Ok(vec![luau::Value::Boolean(false)]);
         }
-        let target_db_id: DbId = target_id.into();
 
-        let mut db = STATE.db.write().await;
-        let outcome =
-            favorite_service::remove_by_db_id(&mut db, caller.principal.user_db_id, target_db_id)
-                .into_lua_err()?;
-        Ok(matches!(
+        let mut db = db.write().await;
+        let outcome = favorite_service::remove_by_db_id(&mut db, principal.user_db_id, target_id)
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(vec![luau::Value::Boolean(matches!(
             outcome,
             favorite_service::MutationOutcome::Applied(_)
-        ))
-    }
+        ))])
+    }))
+}
 
-    pub(crate) async fn has(
-        #[harmony_context] caller: RequestCaller,
-        user_id: NodeId,
-        target_id: NodeId,
-    ) -> Result<bool> {
-        if DbId::from(user_id) != caller.principal.user_db_id {
-            return Ok(false);
+fn has_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let user_id = DbId(frame.args.read_named::<i64>("user_id")?);
+    let target_id = DbId(frame.args.read_named::<i64>("target_id")?);
+    let store = frame
+        .vm
+        .data()
+        .get::<FavoritesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(Box::pin(async move {
+        if user_id != principal.user_db_id {
+            return Ok(vec![luau::Value::Boolean(false)]);
         }
-        let target_db_id: DbId = target_id.into();
 
-        let db = STATE.db.read().await;
+        let db = db.read().await;
         let Some(target_public_id) =
-            db::lookup::find_id_by_db_id(&*db, target_db_id).into_lua_err()?
+            db::lookup::find_id_by_db_id(&*db, target_id).map_err(crate::plugins::runtime_error)?
         else {
-            return Ok(false);
+            return Ok(vec![luau::Value::Boolean(false)]);
         };
-        favorite_service::has_for_principal(&db, &caller.principal, &target_public_id)
-            .into_lua_err()
-    }
+        let favored = favorite_service::has_for_principal(&db, &principal, &target_public_id)
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(vec![luau::Value::Boolean(favored)])
+    }))
+}
 
-    /// Batch check. Cap 1024.
-    #[harmony(args(user_id: u64, target_ids: Vec<u64>), returns(std::collections::BTreeMap<u64, bool>))]
-    pub(crate) async fn has_many(
-        lua: Lua,
-        #[harmony_context] caller: RequestCaller,
-        user_id: NodeId,
-        target_ids: Table,
-    ) -> Result<Table> {
-        let ids = parse_ids(target_ids)?;
-        let db = STATE.db.read().await;
-        let result = if DbId::from(user_id) == caller.principal.user_db_id {
-            let public_ids_by_db_id = db::lookup::find_ids_by_db_ids(&*db, &ids).into_lua_err()?;
-            let public_ids = ids
+fn has_many_callback(
+    mut frame: luau::CallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let user_id = DbId(frame.args.read_named::<i64>("user_id")?);
+    let target_ids: luau::Table = frame.args.read_named("target_ids")?;
+    let target_ids = parse_db_ids(frame.vm, &target_ids)?;
+    let store = frame
+        .vm
+        .data()
+        .get::<FavoritesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(Box::pin(async move {
+        let db = db.read().await;
+        let result = if user_id == principal.user_db_id {
+            let public_ids_by_db_id = db::lookup::find_ids_by_db_ids(&*db, &target_ids)
+                .map_err(crate::plugins::runtime_error)?;
+            let public_ids = target_ids
                 .iter()
                 .filter_map(|id| public_ids_by_db_id.get(id).cloned())
                 .collect::<Vec<_>>();
-            favorite_service::has_many_for_principal(&db, &caller.principal, &public_ids)
-                .into_lua_err()?
+            favorite_service::has_many_for_principal(&db, &principal, &public_ids)
+                .map_err(crate::plugins::runtime_error)?
         } else {
             std::collections::HashMap::new()
         };
 
-        let table = lua.create_table()?;
-        for id in ids {
+        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, target_ids.len());
+        for id in target_ids {
             let favored = db::lookup::find_id_by_db_id(&*db, id)
-                .into_lua_err()?
+                .map_err(crate::plugins::runtime_error)?
                 .and_then(|public_id| result.get(&public_id).copied())
                 .unwrap_or(false);
-            table.set(id.0, favored)?;
+            let value = luau::Value::Boolean(favored);
+            table.set_key(luau::Value::Integer(id.0), value.clone());
+            table.set_key(luau::Value::Number(id.0 as f64), value);
         }
-        Ok(table)
-    }
+        Ok(vec![luau::Value::TableData(table)])
+    }))
+}
 
-    /// Errs above the server cap.
-    pub(crate) async fn list_ids(
-        #[harmony_context] caller: RequestCaller,
-        user_id: NodeId,
-        entity: String,
-    ) -> Result<Vec<NodeId>> {
-        if DbId::from(user_id) != caller.principal.user_db_id {
-            return Ok(Vec::new());
+fn list_ids_callback(
+    mut frame: luau::CallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let user_id = DbId(frame.args.read_named::<i64>("user_id")?);
+    let entity: String = frame.args.read_named("entity")?;
+    let kind = parse_kind(&entity)?;
+    let store = frame
+        .vm
+        .data()
+        .get::<FavoritesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(Box::pin(async move {
+        if user_id != principal.user_db_id {
+            return Ok(vec![luau::Value::TableData(db_id_array(Vec::new()))]);
         }
-        let kind = parse_kind(&entity)?;
 
-        let db = STATE.db.read().await;
-        let ids =
-            favorite_service::list_ids(&db, caller.principal.user_db_id, kind).into_lua_err()?;
+        let db = db.read().await;
+        let ids = favorite_service::list_ids(&db, principal.user_db_id, kind)
+            .map_err(crate::plugins::runtime_error)?;
         let mut visible_ids = Vec::new();
         for id in ids {
             if kind == FavoriteKind::Playlist
-                || crate::routes::entity_accessible_to_principal(&db, &caller.principal, id)
-                    .into_lua_err()?
+                || crate::routes::entity_accessible_to_principal(&db, &principal, id)
+                    .map_err(crate::plugins::runtime_error)?
             {
-                visible_ids.push(id.into());
+                visible_ids.push(id);
             }
         }
-        Ok(visible_ids)
+        Ok(vec![luau::Value::TableData(db_id_array(visible_ids))])
+    }))
+}
+
+fn parse_kind(value: &str) -> luau::runtime::Result<FavoriteKind> {
+    FavoriteKind::try_from(value).map_err(crate::plugins::runtime_error)
+}
+
+fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
+    let mut values = Vec::new();
+    for (key, value) in table.pairs_raw(vm)? {
+        let Some(index) = array_index(key) else {
+            continue;
+        };
+        let Some(id) = db_id_value(value)? else {
+            continue;
+        };
+        values.push((index, id));
+    }
+    values.sort_by_key(|(index, _)| *index);
+
+    let mut ids = Vec::new();
+    let mut seen = HashSet::new();
+    for (_, id) in values {
+        if seen.insert(id) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+fn array_index(value: luau::Value) -> Option<i64> {
+    match value {
+        luau::Value::Integer(value) if value > 0 => Some(value),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
+            Some(value as i64)
+        }
+        _ => None,
     }
 }
 
-crate::plugins::plugin_surface_exports!(
-    FavoritesModule,
-    "lyra.favorites",
-    "Read and modify the current user's favorited items.",
-    Medium
-);
+fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
+    match value {
+        luau::Value::Integer(value) if value > 0 => Ok(Some(DbId(value))),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
+            Ok(Some(DbId(value as i64)))
+        }
+        luau::Value::Integer(_) | luau::Value::Number(_) => Ok(None),
+        other => Err(crate::plugins::runtime_error(format!(
+            "id entries must be positive integers, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn db_id_array(ids: Vec<DbId>) -> luau::OwnedTable {
+    let mut table = luau::OwnedTable::with_capacity(ids.len(), 0);
+    for id in ids {
+        table.push_array(luau::Value::Integer(id.0));
+    }
+    table
+}
+
+fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
+    ParameterDescriptor {
+        name,
+        ty,
+        description: None,
+        variadic: false,
+    }
+}
+
+fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        name: "Favorites",
+        local_name: "favorites",
+        description: None,
+        fields: Vec::new(),
+        functions: vec![
+            ModuleFunctionDescriptor {
+                path: vec!["add"],
+                description: None,
+                params: vec![
+                    param("user_id", i64::luau_type()),
+                    param("target_id", i64::luau_type()),
+                ],
+                returns: vec![bool::luau_type()],
+                yields: false,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["remove"],
+                description: None,
+                params: vec![
+                    param("user_id", i64::luau_type()),
+                    param("target_id", i64::luau_type()),
+                ],
+                returns: vec![bool::luau_type()],
+                yields: false,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["has"],
+                description: None,
+                params: vec![
+                    param("user_id", i64::luau_type()),
+                    param("target_id", i64::luau_type()),
+                ],
+                returns: vec![bool::luau_type()],
+                yields: false,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["has_many"],
+                description: None,
+                params: vec![
+                    param("user_id", i64::luau_type()),
+                    param("target_ids", Vec::<u64>::luau_type()),
+                ],
+                returns: vec![LuauType::map(u64::luau_type(), bool::luau_type())],
+                yields: false,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["list_ids"],
+                description: None,
+                params: vec![
+                    param("user_id", i64::luau_type()),
+                    param("entity", String::luau_type()),
+                ],
+                returns: vec![Vec::<i64>::luau_type()],
+                yields: false,
+            },
+        ],
+    }
+}
+
+pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
+    render_definition_file_with_support(&module_descriptor(), &[], &[], &[])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renders_favorites_module_definition() {
+        let rendered = render_luau_definition().expect("render lyra/favorites docs");
+
+        assert!(rendered.contains("@class Favorites"));
+        assert!(
+            rendered
+                .contains("function favorites.add(user_id: number, target_id: number): boolean")
+        );
+        assert!(rendered.contains(
+            "function favorites.has_many(user_id: number, target_ids: {number}): { [number]: boolean }"
+        ));
+        assert!(
+            rendered
+                .contains("function favorites.list_ids(user_id: number, entity: string): {number}")
+        );
+    }
+}

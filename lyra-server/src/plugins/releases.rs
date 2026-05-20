@@ -3,187 +3,629 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use harmony_core::LuaAsyncExt;
-use mlua::{
-    ExternalResult,
-    Lua,
-    Result,
-    Table,
+use std::collections::HashSet;
+
+use agdb::DbId;
+use harmony_core::{
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
+};
+use harmony_luau as luau;
+use harmony_luau::{
+    FieldDescriptor,
+    InterfaceDescriptor,
+    LuauType,
+    LuauTypeInfo,
+    ModuleDescriptor,
+    ModuleFunctionDescriptor,
+    ParameterDescriptor,
+    TypeAliasDescriptor,
+    render_definition_file_with_support,
 };
 
 use crate::{
-    STATE,
-    plugins::db::Release,
-    plugins::db::ReleaseType,
-    plugins::db::ResolveId,
-    plugins::{
-        PluginSortOrder,
-        caller::RequestCaller,
-        paged_result_to_table,
-        parse_ids,
-        parse_list_options,
+    plugins::db::{
+        self,
+        DbAsync,
+        ListOptions,
+        Release,
+        ResolveId,
+        parse_sort_direction,
+        parse_sort_specs_tokens,
     },
     services::releases as release_service,
 };
 
-#[harmony_macros::interface]
-struct ReleaseQueryOptions {
-    scope: Option<ResolveId>,
-    artist_ids: Option<Vec<u64>>,
-    sort_by: Option<Vec<String>>,
-    sort_order: Option<PluginSortOrder>,
-    offset: Option<u64>,
-    limit: Option<u64>,
-    search_term: Option<String>,
+#[derive(Clone, Default)]
+pub(crate) struct ReleasesModuleStore {
+    db: Option<DbAsync>,
 }
 
-#[harmony_macros::interface]
-struct ReleaseQueryResult {
-    entities: Vec<Release>,
-    total_count: u64,
-    offset: u64,
+impl ReleasesModuleStore {
+    pub(crate) fn empty() -> Self {
+        Self { db: None }
+    }
+
+    pub(crate) fn with_db(db: DbAsync) -> Self {
+        Self { db: Some(db) }
+    }
+
+    fn db(&self) -> luau::runtime::Result<DbAsync> {
+        self.db.clone().ok_or_else(|| {
+            crate::plugins::runtime_error(
+                "lyra/releases requires a database-backed plugin executor",
+            )
+        })
+    }
 }
 
 struct ReleasesModule;
 
-#[harmony_macros::module(
-    plugin_scoped,
-    name = "Releases",
-    local = "releases",
-    path = "lyra/releases",
-    interfaces(ReleaseQueryOptions, ReleaseQueryResult),
-    classes(Release, ReleaseType)
-)]
-impl ReleasesModule {
-    /// Lists releases related to the given scope, or all releases by default.
-    pub(crate) async fn list(
-        #[harmony_context] caller: RequestCaller,
-        scope: Option<ResolveId>,
-    ) -> Result<Vec<Release>> {
-        let db = STATE.db.read().await;
-        let query_id = match scope {
-            Some(id) => id.to_query_id(&db).into_lua_err()?,
-            None => None,
-        };
-        let mut releases = release_service::get(&db, query_id).into_lua_err()?;
-        retain_accessible_releases(&db, &caller.principal, &mut releases).into_lua_err()?;
+pub(crate) fn module_spec() -> ModuleSpec {
+    ModuleSpec::new("lyra/releases")
+        .capability("lyra.releases")
+        .function(list_spec())
+        .function(query_spec())
+        .function(get_by_artist_spec())
+        .function(get_appearances_spec())
+        .function(list_many_spec())
+        .install(|_| Ok(ModuleExport::new(ReleasesModule)))
+}
 
-        Ok(releases)
-    }
+fn list_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("list")
+        .arg_name("scope")
+        .args::<Option<ResolveId>>()
+        .returns::<Vec<Release>>()
+        .call_async_native(std::sync::Arc::new(list_callback))
+}
 
-    /// Queries releases with pagination, sorting, and optional artist filters.
-    #[harmony(args(opts: ReleaseQueryOptions), returns(ReleaseQueryResult))]
-    pub(crate) async fn query(
-        lua: Lua,
-        #[harmony_context] caller: RequestCaller,
-        opts: Table,
-    ) -> Result<Table> {
-        let scope: Option<ResolveId> = opts.get("scope")?;
-        let artist_ids: Option<Table> = opts.get("artist_ids")?;
-        let list_options = parse_list_options(&opts)?;
+fn query_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("query")
+        .arg_name("opts")
+        .args::<luau::Table>()
+        .returns::<luau::Value>()
+        .call_async_native(std::sync::Arc::new(query_callback))
+}
 
-        let db = STATE.db.read().await;
-        let scope = match scope {
-            Some(id) => id.to_query_id(&db).into_lua_err()?,
-            None => None,
-        };
-        let result = if let Some(artist_ids) = artist_ids {
-            let artist_ids = parse_ids(artist_ids)?;
-            if artist_ids.is_empty() {
-                release_service::query(&db, scope, &list_options).into_lua_err()?
-            } else {
-                release_service::query_by_artists(&db, &artist_ids, scope, &list_options)
-                    .into_lua_err()?
-            }
+fn get_by_artist_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get_by_artist")
+        .arg_name("artist_id")
+        .args::<i64>()
+        .returns::<Vec<Release>>()
+        .call_async_native(std::sync::Arc::new(get_by_artist_callback))
+}
+
+fn get_appearances_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get_appearances")
+        .arg_name("artist_id")
+        .args::<i64>()
+        .returns::<Vec<Release>>()
+        .call_async_native(std::sync::Arc::new(get_appearances_callback))
+}
+
+fn list_many_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("list_many")
+        .arg_name("ids")
+        .args::<Vec<u64>>()
+        .returns::<luau::Table>()
+        .call_async_native(std::sync::Arc::new(list_many_callback))
+}
+
+fn list_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let scope = frame
+        .args
+        .read_optional_named::<luau::Value>("scope")?
+        .map(parse_resolve_id)
+        .transpose()?;
+    let store = frame
+        .vm
+        .data()
+        .get::<ReleasesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+
+    Ok(Box::pin(async move {
+        let db = db.read().await;
+        let query_id = scope
+            .map(|id| id.to_query_id(&db).map_err(crate::plugins::runtime_error))
+            .transpose()?
+            .flatten();
+        let releases =
+            release_service::get(&db, query_id).map_err(crate::plugins::runtime_error)?;
+        Ok(vec![crate::plugins::serializable_to_luau_owned(releases)?])
+    }))
+}
+
+fn query_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let opts: luau::Table = frame.args.read_named("opts")?;
+    let request = parse_query_options(frame.vm, &opts)?;
+    let store = frame
+        .vm
+        .data()
+        .get::<ReleasesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+
+    Ok(Box::pin(async move {
+        let db = db.read().await;
+        let scope = request
+            .scope
+            .map(|id| id.to_query_id(&db).map_err(crate::plugins::runtime_error))
+            .transpose()?
+            .flatten();
+        let result = if request.artist_ids.is_empty() {
+            release_service::query(&db, scope, &request.list_options)
+                .map_err(crate::plugins::runtime_error)
         } else {
-            release_service::query(&db, scope, &list_options).into_lua_err()?
-        };
-        let mut entries = result.entries;
-        retain_accessible_releases(&db, &caller.principal, &mut entries).into_lua_err()?;
-        paged_result_to_table(
-            &lua,
-            crate::plugins::db::PagedResult {
-                total_count: entries.len() as u64,
-                offset: result.offset,
-                entries,
-            },
-        )
-    }
+            release_service::query_by_artists(
+                &db,
+                &request.artist_ids,
+                scope,
+                &request.list_options,
+            )
+            .map_err(crate::plugins::runtime_error)
+        }?;
+        crate::plugins::luau_returns(query_result_table(
+            result.entries,
+            result.total_count,
+            result.offset,
+        )?)
+    }))
+}
 
-    pub(crate) async fn get_by_artist(
-        #[harmony_context] caller: RequestCaller,
-        artist_id: crate::plugins::db::NodeId,
-    ) -> Result<Vec<Release>> {
-        let db = STATE.db.read().await;
-        let artist_db_id = agdb::DbId::from(artist_id);
-        if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, artist_db_id)
-            .into_lua_err()?
-        {
-            return Ok(Vec::new());
-        }
-        let mut releases =
-            crate::plugins::db::releases::get_by_artist(&db, artist_db_id).into_lua_err()?;
-        retain_accessible_releases(&db, &caller.principal, &mut releases).into_lua_err()?;
-        Ok(releases)
-    }
+fn get_by_artist_callback(
+    mut frame: luau::CallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let artist_id: i64 = frame.args.read_named("artist_id")?;
+    let store = frame
+        .vm
+        .data()
+        .get::<ReleasesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
 
-    pub(crate) async fn get_appearances(
-        #[harmony_context] caller: RequestCaller,
-        artist_id: crate::plugins::db::NodeId,
-    ) -> Result<Vec<Release>> {
-        let db = STATE.db.read().await;
-        let artist_db_id = agdb::DbId::from(artist_id);
-        if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, artist_db_id)
-            .into_lua_err()?
-        {
-            return Ok(Vec::new());
-        }
-        let mut releases = release_service::get_appearances(&db, artist_db_id).into_lua_err()?;
-        retain_accessible_releases(&db, &caller.principal, &mut releases).into_lua_err()?;
-        Ok(releases)
-    }
+    Ok(Box::pin(async move {
+        let db = db.read().await;
+        let releases = db::releases::get_by_artist(&db, DbId(artist_id))
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(vec![crate::plugins::serializable_to_luau_owned(releases)?])
+    }))
+}
 
-    /// Lists related releases for each owner id.
-    #[harmony(args(ids: Vec<u64>), returns(std::collections::BTreeMap<u64, Vec<Release>>))]
-    pub(crate) async fn list_many(
-        lua: Lua,
-        #[harmony_context] caller: RequestCaller,
-        ids: Table,
-    ) -> Result<Table> {
-        let ids = parse_ids(ids)?;
-        let db = STATE.db.read().await;
-        let related = release_service::get_many_by_track(&db, &ids).into_lua_err()?;
-        let table = lua.create_table()?;
+fn get_appearances_callback(
+    mut frame: luau::CallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let artist_id: i64 = frame.args.read_named("artist_id")?;
+    let store = frame
+        .vm
+        .data()
+        .get::<ReleasesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+
+    Ok(Box::pin(async move {
+        let db = db.read().await;
+        let releases = release_service::get_appearances(&db, DbId(artist_id))
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(vec![crate::plugins::serializable_to_luau_owned(releases)?])
+    }))
+}
+
+fn list_many_callback(
+    mut frame: luau::CallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let ids_table: luau::Table = frame.args.read_named("ids")?;
+    let ids = parse_db_ids(frame.vm, &ids_table)?;
+    let store = frame
+        .vm
+        .data()
+        .get::<ReleasesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+
+    Ok(Box::pin(async move {
+        let db = db.read().await;
+        let related =
+            release_service::get_many_by_track(&db, &ids).map_err(crate::plugins::runtime_error)?;
+
+        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, ids.len());
         for id in ids {
-            let mut releases = related.get(&id).cloned().unwrap_or_default();
-            retain_accessible_releases(&db, &caller.principal, &mut releases).into_lua_err()?;
-            table.set(id.0, releases)?;
+            let releases = related.get(&id).cloned().unwrap_or_default();
+            crate::plugins::set_owned_db_id_key(
+                &mut table,
+                id,
+                crate::plugins::serializable_to_luau_owned(releases)?,
+            );
         }
-        Ok(table)
+        crate::plugins::luau_returns(table)
+    }))
+}
+
+struct ReleaseQueryRequest {
+    scope: Option<ResolveId>,
+    artist_ids: Vec<DbId>,
+    list_options: ListOptions,
+}
+
+fn parse_query_options(
+    vm: &luau::Vm,
+    opts: &luau::Table,
+) -> luau::runtime::Result<ReleaseQueryRequest> {
+    let scope = match opts.get_raw(vm, "scope")? {
+        luau::Value::Nil => None,
+        value => Some(parse_resolve_id(value)?),
+    };
+    let artist_ids = parse_optional_db_ids(vm, opts, "artist_ids")?;
+    let list_options = parse_list_options(vm, opts)?;
+
+    Ok(ReleaseQueryRequest {
+        scope,
+        artist_ids,
+        list_options,
+    })
+}
+
+fn parse_list_options(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<ListOptions> {
+    let sort_by = match table.get_raw(vm, "sort_by")? {
+        luau::Value::Nil => None,
+        luau::Value::Table(table) => {
+            let mut values = Vec::new();
+            for (_, value) in table.pairs_raw(vm)? {
+                let luau::Value::String(bytes) = value else {
+                    return Err(crate::plugins::runtime_error(
+                        "sort_by entries must be strings",
+                    ));
+                };
+                values.push(String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?);
+            }
+            Some(values)
+        }
+        other => {
+            return Err(crate::plugins::runtime_error(format!(
+                "sort_by must be an array of strings, got {}",
+                other.type_name()
+            )));
+        }
+    };
+    let sort_order = match table.get_raw(vm, "sort_order")? {
+        luau::Value::Nil => None,
+        luau::Value::String(bytes) => {
+            Some(String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?)
+        }
+        other => {
+            return Err(crate::plugins::runtime_error(format!(
+                "sort_order must be a string, got {}",
+                other.type_name()
+            )));
+        }
+    };
+    let direction =
+        parse_sort_direction(sort_order, true).map_err(crate::plugins::runtime_error)?;
+    let sort = parse_sort_specs_tokens(sort_by, direction, |_| true, false)
+        .map_err(crate::plugins::runtime_error)?;
+    let offset = parse_optional_u64(vm, table, "offset")?;
+    let limit = parse_optional_u64(vm, table, "limit")?;
+    let search_term = match table.get_raw(vm, "search_term")? {
+        luau::Value::Nil => None,
+        luau::Value::String(bytes) => {
+            Some(String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?)
+        }
+        other => {
+            return Err(crate::plugins::runtime_error(format!(
+                "search_term must be a string, got {}",
+                other.type_name()
+            )));
+        }
+    };
+
+    Ok(ListOptions {
+        sort,
+        offset,
+        limit,
+        search_term,
+    })
+}
+
+fn parse_optional_db_ids(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &str,
+) -> luau::runtime::Result<Vec<DbId>> {
+    match table.get_raw(vm, key)? {
+        luau::Value::Nil => Ok(Vec::new()),
+        luau::Value::Table(table) => parse_db_ids(vm, &table),
+        other => Err(crate::plugins::runtime_error(format!(
+            "{key} must be an array of positive integer ids, got {}",
+            other.type_name()
+        ))),
     }
 }
 
-fn retain_accessible_releases(
-    db: &agdb::DbAny,
-    principal: &crate::services::auth::Principal,
-    releases: &mut Vec<Release>,
-) -> anyhow::Result<()> {
-    let mut retained = Vec::with_capacity(releases.len());
-    for release in releases.drain(..) {
-        let Some(release_db_id) = release.db_id.clone().map(agdb::DbId::from) else {
+fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
+    let mut values = Vec::new();
+    for (key, value) in table.pairs_raw(vm)? {
+        let Some(index) = array_index(key) else {
             continue;
         };
-        if crate::routes::entity_accessible_to_principal(db, principal, release_db_id)? {
-            retained.push(release);
+        let Some(id) = db_id_value(value)? else {
+            continue;
+        };
+        values.push((index, id));
+    }
+    values.sort_by_key(|(index, _)| *index);
+
+    let mut ids = Vec::new();
+    let mut seen = HashSet::new();
+    for (_, id) in values {
+        if seen.insert(id) {
+            ids.push(id);
         }
     }
-    *releases = retained;
-    Ok(())
+    Ok(ids)
 }
 
-crate::plugins::plugin_surface_exports!(
-    ReleasesModule,
-    "lyra.releases",
-    "Read and modify album releases.",
-    Medium
-);
+fn array_index(value: luau::Value) -> Option<i64> {
+    match value {
+        luau::Value::Integer(value) if value > 0 => Some(value),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
+            Some(value as i64)
+        }
+        _ => None,
+    }
+}
+
+fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
+    match value {
+        luau::Value::Integer(value) if value > 0 => Ok(Some(DbId(value))),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
+            Ok(Some(DbId(value as i64)))
+        }
+        luau::Value::Integer(_) | luau::Value::Number(_) => Ok(None),
+        other => Err(crate::plugins::runtime_error(format!(
+            "id entries must be positive integers, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn parse_resolve_id(value: luau::Value) -> luau::runtime::Result<ResolveId> {
+    match value {
+        luau::Value::Integer(value) => Ok(ResolveId::DbId(DbId(value))),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
+            Ok(ResolveId::DbId(DbId(value as i64)))
+        }
+        luau::Value::String(bytes) => {
+            let text = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
+            if db::ROOT_COLLECTION_ALIASES.contains(&text.as_str()) {
+                Ok(ResolveId::Alias(text))
+            } else {
+                Ok(ResolveId::Nanoid(text))
+            }
+        }
+        other => Err(crate::plugins::runtime_error(format!(
+            "expected integer or string id, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn parse_optional_u64(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &str,
+) -> luau::runtime::Result<Option<u64>> {
+    match table.get_raw(vm, key)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::Integer(value) if value >= 0 => Ok(Some(value as u64)),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value >= 0.0 => {
+            Ok(Some(value as u64))
+        }
+        _ => Err(crate::plugins::runtime_error(format!(
+            "{key} must be a non-negative integer when provided"
+        ))),
+    }
+}
+
+fn query_result_table(
+    entries: Vec<Release>,
+    total_count: u64,
+    offset: u64,
+) -> luau::runtime::Result<luau::OwnedTable> {
+    let mut table = luau::OwnedTable::with_capacity(0, 3);
+    table.set_field(
+        "entities",
+        crate::plugins::serializable_to_luau_owned(entries)?,
+    );
+    table.set_field("total_count", luau::Value::Integer(total_count as i64));
+    table.set_field("offset", luau::Value::Integer(offset as i64));
+    Ok(table)
+}
+
+fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
+    ParameterDescriptor {
+        name,
+        ty,
+        description: None,
+        variadic: false,
+    }
+}
+
+fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
+    FieldDescriptor {
+        name,
+        ty,
+        description: None,
+    }
+}
+
+fn resolve_id_type() -> LuauType {
+    LuauType::union(vec![i64::luau_type(), String::luau_type()])
+}
+
+fn sort_order_type() -> LuauType {
+    LuauType::union(vec![
+        LuauType::string_literal("ascending"),
+        LuauType::string_literal("descending"),
+    ])
+}
+
+fn string_enum(values: impl IntoIterator<Item = &'static str>) -> LuauType {
+    LuauType::union(values.into_iter().map(LuauType::string_literal).collect())
+}
+
+fn release_type() -> LuauType {
+    LuauType::object(vec![
+        field("db_id", Option::<i64>::luau_type()),
+        field("id", String::luau_type()),
+        field("release_title", String::luau_type()),
+        field("sort_title", Option::<String>::luau_type()),
+        field(
+            "release_type",
+            LuauType::optional(LuauType::named("ReleaseType")),
+        ),
+        field("release_date", Option::<String>::luau_type()),
+        field("locked", Option::<bool>::luau_type()),
+        field("created_at", Option::<u64>::luau_type()),
+        field("ctime", Option::<u64>::luau_type()),
+    ])
+}
+
+fn release_type_aliases() -> Vec<TypeAliasDescriptor> {
+    vec![
+        TypeAliasDescriptor::new(
+            "ReleaseType",
+            string_enum([
+                "album",
+                "single",
+                "ep",
+                "compilation",
+                "soundtrack",
+                "live",
+                "remix",
+                "broadcast",
+                "other",
+                "unknown",
+            ]),
+            None,
+        ),
+        TypeAliasDescriptor::new("Release", release_type(), None),
+        TypeAliasDescriptor::new(
+            "ReleaseQueryResult",
+            LuauType::object(vec![
+                field("entities", LuauType::array(LuauType::named("Release"))),
+                field("total_count", i64::luau_type()),
+                field("offset", i64::luau_type()),
+            ]),
+            None,
+        ),
+    ]
+}
+
+fn release_query_options() -> InterfaceDescriptor {
+    let mut descriptor = InterfaceDescriptor::new("ReleaseQueryOptions", None);
+    descriptor.fields.extend([
+        field("scope", LuauType::optional(resolve_id_type())),
+        field("artist_ids", Option::<Vec<u64>>::luau_type()),
+        field("sort_by", Option::<Vec<String>>::luau_type()),
+        field("sort_order", LuauType::optional(sort_order_type())),
+        field("offset", Option::<i64>::luau_type()),
+        field("limit", Option::<i64>::luau_type()),
+        field("search_term", Option::<String>::luau_type()),
+    ]);
+    descriptor
+}
+
+fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        name: "Releases",
+        local_name: "releases",
+        description: None,
+        fields: Vec::new(),
+        functions: vec![
+            ModuleFunctionDescriptor {
+                path: vec!["list"],
+                description: None,
+                params: vec![param("scope", LuauType::optional(resolve_id_type()))],
+                returns: vec![LuauType::array(LuauType::named("Release"))],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["query"],
+                description: None,
+                params: vec![param("opts", LuauType::named("ReleaseQueryOptions"))],
+                returns: vec![LuauType::named("ReleaseQueryResult")],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get_by_artist"],
+                description: None,
+                params: vec![param("artist_id", i64::luau_type())],
+                returns: vec![LuauType::array(LuauType::named("Release"))],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get_appearances"],
+                description: None,
+                params: vec![param("artist_id", i64::luau_type())],
+                returns: vec![LuauType::array(LuauType::named("Release"))],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["list_many"],
+                description: None,
+                params: vec![param("ids", Vec::<u64>::luau_type())],
+                returns: vec![LuauType::map(
+                    u64::luau_type(),
+                    LuauType::array(LuauType::named("Release")),
+                )],
+                yields: true,
+            },
+        ],
+    }
+}
+
+pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
+    render_definition_file_with_support(
+        &module_descriptor(),
+        &release_type_aliases(),
+        &[release_query_options()],
+        &[],
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renders_releases_module_definition() {
+        let rendered = render_luau_definition().expect("render lyra/releases docs");
+
+        assert!(rendered.contains("export type ReleaseType = \"album\" | \"single\" | \"ep\""));
+        assert!(
+            rendered.contains(
+                "export type Release = { db_id: number?, id: string, release_title: string"
+            )
+        );
+        assert!(rendered.contains("@interface ReleaseQueryOptions"));
+        assert!(rendered.contains("sort_order: (\"ascending\" | \"descending\")?"));
+        assert!(rendered.contains(
+            "export type ReleaseQueryResult = { entities: {Release}, total_count: number, offset: number }"
+        ));
+        assert!(
+            rendered
+                .contains("function releases.query(opts: ReleaseQueryOptions): ReleaseQueryResult")
+        );
+        assert!(
+            rendered
+                .contains("function releases.list_many(ids: {number}): { [number]: {Release} }")
+        );
+    }
+}

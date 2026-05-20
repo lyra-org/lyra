@@ -3,44 +3,66 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::{
+    collections::{
+        HashMap,
+        HashSet,
+    },
+    sync::Arc,
+};
+
 use agdb::{
     DbAny,
     DbId,
     QueryId,
 };
-use harmony_core::LuaAsyncExt;
-use mlua::{
-    ExternalResult,
-    Lua,
-    Result,
-    Table,
-    Value,
+use harmony_core::{
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
 };
-use std::collections::{
-    HashMap,
-    HashSet,
+use harmony_luau as luau;
+use harmony_luau::{
+    DescribeInterface,
+    FieldDescriptor,
+    InterfaceDescriptor,
+    LuauType,
+    LuauTypeInfo,
+    ModuleDescriptor,
+    ModuleFunctionDescriptor,
+    ParameterDescriptor,
+    render_definition_file_with_support,
 };
 
 use crate::{
-    STATE,
-    plugins::db::ResolveId,
     plugins::db::{
         self,
         Cover,
+        DbAsync,
+        ResolveId,
     },
-    plugins::{
-        caller::RequestCaller,
-        parse_ids,
-    },
+    services::auth::Principal,
 };
 
-#[harmony_macros::interface]
-struct CoverInfo {
-    path: String,
-    mime_type: String,
-    hash: String,
-    blurhash: Option<String>,
-    release_id: u64,
+#[derive(Clone, Default)]
+pub(crate) struct CoversModuleStore {
+    db: Option<DbAsync>,
+}
+
+impl CoversModuleStore {
+    pub(crate) fn empty() -> Self {
+        Self { db: None }
+    }
+
+    pub(crate) fn with_db(db: DbAsync) -> Self {
+        Self { db: Some(db) }
+    }
+
+    fn db(&self) -> luau::runtime::Result<DbAsync> {
+        self.db.clone().ok_or_else(|| {
+            crate::plugins::runtime_error("lyra/covers requires a database-backed plugin executor")
+        })
+    }
 }
 
 enum CoverValidity {
@@ -49,10 +71,124 @@ enum CoverValidity {
     Unavailable,
 }
 
+struct CoversModule;
+
+struct CoverInfo;
+
+pub(crate) fn module_spec() -> ModuleSpec {
+    ModuleSpec::new("lyra/covers")
+        .capability("lyra.covers")
+        .function(get_spec())
+        .function(get_many_spec())
+        .install(|_| Ok(ModuleExport::new(CoversModule)))
+}
+
+fn get_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get")
+        .context::<Principal>()
+        .arg_name("id")
+        .args::<ResolveId>()
+        .returns::<Option<luau::Table>>()
+        .call_async_native(Arc::new(get_callback))
+}
+
+fn get_many_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get_many")
+        .context::<Principal>()
+        .arg_name("ids")
+        .args::<luau::Table>()
+        .returns::<luau::Table>()
+        .call_async_native(Arc::new(get_many_callback))
+}
+
+fn get_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let id = parse_resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
+    let store = frame.vm.data().get::<CoversModuleStore>()?.as_ref().clone();
+    let db = store.db()?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(Box::pin(async move {
+        let (resolved_cover, stale_owners) = {
+            let db_read = db.read().await;
+            let Some(QueryId::Id(item_id)) = id
+                .to_query_id(&db_read)
+                .map_err(crate::plugins::runtime_error)?
+            else {
+                return Ok(vec![luau::Value::Nil]);
+            };
+            if !crate::routes::entity_accessible_to_principal(&*db_read, &principal, item_id)
+                .map_err(crate::plugins::runtime_error)?
+            {
+                return Ok(vec![luau::Value::Nil]);
+            }
+            let mut stale_owners = Vec::new();
+            let result = resolve_persisted_cover(&db_read, item_id, &mut stale_owners)
+                .map_err(crate::plugins::runtime_error)?;
+            (result, stale_owners)
+        };
+
+        if !stale_owners.is_empty() {
+            remove_still_stale_covers(db.clone(), stale_owners).await?;
+        }
+
+        let Some((owner_id, cover)) = resolved_cover else {
+            return Ok(vec![luau::Value::Nil]);
+        };
+        Ok(vec![luau::Value::TableData(cover_to_table(
+            owner_id, cover,
+        ))])
+    }))
+}
+
+fn get_many_callback(
+    mut frame: luau::CallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let ids: luau::Table = frame.args.read_named("ids")?;
+    let item_ids = parse_db_ids(frame.vm, &ids)?;
+    let store = frame.vm.data().get::<CoversModuleStore>()?.as_ref().clone();
+    let db = store.db()?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(Box::pin(async move {
+        let (resolved, stale_owners) = {
+            let db_read = db.read().await;
+            let mut stale_owners = Vec::new();
+            let mut accessible_ids = Vec::new();
+            for item_id in &item_ids {
+                if crate::routes::entity_accessible_to_principal(&*db_read, &principal, *item_id)
+                    .map_err(crate::plugins::runtime_error)?
+                {
+                    accessible_ids.push(*item_id);
+                }
+            }
+            let result = resolve_persisted_covers(&db_read, &accessible_ids, &mut stale_owners)
+                .map_err(crate::plugins::runtime_error)?;
+            (result, stale_owners)
+        };
+
+        if !stale_owners.is_empty() {
+            remove_still_stale_covers(db.clone(), stale_owners).await?;
+        }
+
+        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, item_ids.len());
+        for item_id in item_ids {
+            let value = resolved
+                .get(&item_id)
+                .cloned()
+                .map(|(owner_id, cover)| luau::Value::TableData(cover_to_table(owner_id, cover)))
+                .unwrap_or(luau::Value::Nil);
+            table.set_key(luau::Value::Integer(item_id.0), value.clone());
+            table.set_key(luau::Value::Number(item_id.0 as f64), value);
+        }
+
+        Ok(vec![luau::Value::TableData(table)])
+    }))
+}
+
 fn check_cover_validity(cover: Cover) -> CoverValidity {
     match std::fs::metadata(&cover.path) {
         Ok(meta) if meta.is_file() => CoverValidity::Valid(cover),
-        Ok(_) => CoverValidity::NotFound, // exists but not a regular file
+        Ok(_) => CoverValidity::NotFound,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => CoverValidity::NotFound,
         Err(_) => CoverValidity::Unavailable,
     }
@@ -79,6 +215,9 @@ fn resolve_persisted_covers(
             continue;
         }
         if seen.insert(*item_id) {
+            if db::entities::get_element_type(db, *item_id)?.is_none() {
+                continue;
+            }
             unique_ids.push(*item_id);
         }
     }
@@ -149,10 +288,12 @@ fn resolve_persisted_covers(
     Ok(resolved)
 }
 
-/// Re-validates under write lock to avoid racing with concurrent upserts.
-async fn remove_still_stale_covers(stale_owners: Vec<DbId>) {
+async fn remove_still_stale_covers(
+    db: DbAsync,
+    stale_owners: Vec<DbId>,
+) -> luau::runtime::Result<()> {
     let mut seen = HashSet::new();
-    let mut db_write = STATE.db.write().await;
+    let mut db_write = db.write().await;
     for owner_id in stale_owners {
         if !seen.insert(owner_id) {
             continue;
@@ -164,153 +305,201 @@ async fn remove_still_stale_covers(stale_owners: Vec<DbId>) {
             let _ = db::covers::remove(&mut *db_write, owner_id);
         }
     }
+    Ok(())
 }
 
-fn cover_to_lua(lua: &Lua, owner_db_id: DbId, cover: Cover) -> Result<Value> {
-    let table = lua.create_table()?;
-    table.set("path", cover.path)?;
-    table.set("mime_type", cover.mime_type)?;
-    table.set("hash", cover.hash)?;
-    table.set("blurhash", cover.blurhash)?;
-    table.set("release_id", owner_db_id.0)?;
-    Ok(Value::Table(table))
+fn cover_to_table(owner_db_id: DbId, cover: Cover) -> luau::OwnedTable {
+    let mut table = luau::OwnedTable::with_capacity(0, 5);
+    table.set_field("path", luau::Value::String(cover.path.into_bytes()));
+    table.set_field(
+        "mime_type",
+        luau::Value::String(cover.mime_type.into_bytes()),
+    );
+    table.set_field("hash", luau::Value::String(cover.hash.into_bytes()));
+    table.set_field(
+        "blurhash",
+        cover
+            .blurhash
+            .map(|value| luau::Value::String(value.into_bytes()))
+            .unwrap_or(luau::Value::Nil),
+    );
+    table.set_field("release_id", luau::Value::Integer(owner_db_id.0));
+    table
 }
 
-struct CoversModule;
-
-#[harmony_macros::module(
-    plugin_scoped,
-    name = "Covers",
-    local = "covers",
-    path = "lyra/covers",
-    interfaces(CoverInfo)
-)]
-impl CoversModule {
-    /// Returns a resolved cover for an entity.
-    #[harmony(returns(Option<CoverInfo>))]
-    pub(crate) async fn get(
-        lua: Lua,
-        #[harmony_context] caller: RequestCaller,
-        id: ResolveId,
-    ) -> Result<Value> {
-        let (resolved_cover, stale_owners) = {
-            let db = STATE.db.read().await;
-            let query_id = id.to_query_id(&db).into_lua_err()?;
-            let Some(QueryId::Id(item_id)) = query_id else {
-                return Ok(Value::Nil);
-            };
-            if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, item_id)
-                .into_lua_err()?
-            {
-                return Ok(Value::Nil);
+fn parse_resolve_id(value: luau::Value) -> luau::runtime::Result<ResolveId> {
+    match value {
+        luau::Value::Integer(value) => Ok(ResolveId::DbId(DbId(value))),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
+            Ok(ResolveId::DbId(DbId(value as i64)))
+        }
+        luau::Value::String(bytes) => {
+            let text = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
+            if db::ROOT_COLLECTION_ALIASES.contains(&text.as_str()) {
+                Ok(ResolveId::Alias(text))
+            } else {
+                Ok(ResolveId::Nanoid(text))
             }
-            let mut stale_owners = Vec::new();
-            let result = resolve_persisted_cover(&db, item_id, &mut stale_owners).into_lua_err()?;
-            (result, stale_owners)
-        };
-
-        if !stale_owners.is_empty() {
-            remove_still_stale_covers(stale_owners).await;
         }
-
-        let Some((release_id, cover)) = resolved_cover else {
-            return Ok(Value::Nil);
-        };
-
-        cover_to_lua(&lua, release_id, cover)
-    }
-
-    /// Returns resolved covers for many entities.
-    #[harmony(args(ids: Vec<u64>), returns(std::collections::BTreeMap<u64, Option<CoverInfo>>))]
-    pub(crate) async fn get_many(
-        lua: Lua,
-        #[harmony_context] caller: RequestCaller,
-        ids: Table,
-    ) -> Result<Table> {
-        let item_ids = parse_ids(ids)?;
-        let (resolved, stale_owners) = {
-            let db = STATE.db.read().await;
-            let mut stale_owners = Vec::new();
-            let mut accessible_ids = Vec::new();
-            for item_id in &item_ids {
-                if crate::routes::entity_accessible_to_principal(&db, &caller.principal, *item_id)
-                    .into_lua_err()?
-                {
-                    accessible_ids.push(*item_id);
-                }
-            }
-            let result =
-                resolve_persisted_covers(&db, &accessible_ids, &mut stale_owners).into_lua_err()?;
-            (result, stale_owners)
-        };
-
-        if !stale_owners.is_empty() {
-            remove_still_stale_covers(stale_owners).await;
-        }
-
-        let table = lua.create_table()?;
-        for item_id in item_ids {
-            let Some((owner_id, cover)) = resolved.get(&item_id).cloned() else {
-                table.set(item_id.0, Value::Nil)?;
-                continue;
-            };
-            table.set(item_id.0, cover_to_lua(&lua, owner_id, cover)?)?;
-        }
-
-        Ok(table)
+        other => Err(crate::plugins::runtime_error(format!(
+            "expected integer or string id, got {}",
+            other.type_name()
+        ))),
     }
 }
 
-crate::plugins::plugin_surface_exports!(
-    CoversModule,
-    "lyra.covers",
-    "Read and modify cover art.",
-    Low
-);
+fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
+    let mut values = Vec::new();
+    for (key, value) in table.pairs_raw(vm)? {
+        let Some(index) = array_index(key) else {
+            continue;
+        };
+        let Some(id) = db_id_value(value)? else {
+            continue;
+        };
+        values.push((index, id));
+    }
+    values.sort_by_key(|(index, _)| *index);
+
+    let mut ids = Vec::new();
+    let mut seen = HashSet::new();
+    for (_, id) in values {
+        if seen.insert(id) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+fn array_index(value: luau::Value) -> Option<i64> {
+    match value {
+        luau::Value::Integer(value) if value > 0 => Some(value),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
+            Some(value as i64)
+        }
+        _ => None,
+    }
+}
+
+fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
+    match value {
+        luau::Value::Integer(value) if value > 0 => Ok(Some(DbId(value))),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
+            Ok(Some(DbId(value as i64)))
+        }
+        luau::Value::Integer(_) | luau::Value::Number(_) => Ok(None),
+        other => Err(crate::plugins::runtime_error(format!(
+            "id entries must be positive integers, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+impl LuauTypeInfo for CoverInfo {
+    fn luau_type() -> LuauType {
+        LuauType::named("CoverInfo")
+    }
+}
+
+impl DescribeInterface for CoverInfo {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("CoverInfo", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "path",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "mime_type",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "hash",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "blurhash",
+                ty: Option::<String>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "release_id",
+                ty: i64::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
+    ParameterDescriptor {
+        name,
+        ty,
+        description: None,
+        variadic: false,
+    }
+}
+
+fn resolve_id_type() -> LuauType {
+    LuauType::union(vec![i64::luau_type(), String::luau_type()])
+}
+
+fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        name: "Covers",
+        local_name: "covers",
+        description: None,
+        fields: Vec::new(),
+        functions: vec![
+            ModuleFunctionDescriptor {
+                path: vec!["get"],
+                description: None,
+                params: vec![param("id", resolve_id_type())],
+                returns: vec![Option::<CoverInfo>::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get_many"],
+                description: None,
+                params: vec![param("ids", Vec::<u64>::luau_type())],
+                returns: vec![LuauType::map(
+                    u64::luau_type(),
+                    Option::<CoverInfo>::luau_type(),
+                )],
+                yields: true,
+            },
+        ],
+    }
+}
+
+pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
+    render_definition_file_with_support(
+        &module_descriptor(),
+        &[],
+        &[CoverInfo::interface_descriptor()],
+        &[],
+    )
+}
 
 #[cfg(test)]
 mod tests {
-    use super::cover_to_lua;
-    use crate::{
-        plugins::db::Cover,
-        plugins::parse_ids,
-    };
-    use agdb::DbId;
-    use mlua::Value;
+    use super::*;
 
     #[test]
-    fn parse_ids_deduplicates_positive_ids_for_cover_queries() {
-        let lua = mlua::Lua::new();
-        let ids = lua.create_table().unwrap();
-        ids.set(1, 4).unwrap();
-        ids.set(2, 0).unwrap();
-        ids.set(3, 4).unwrap();
-        ids.set(4, 9).unwrap();
+    fn renders_covers_module_definition() {
+        let rendered = render_luau_definition().expect("render lyra/covers docs");
 
-        assert_eq!(parse_ids(ids).unwrap(), vec![DbId(4), DbId(9)]);
-    }
-
-    #[test]
-    fn cover_to_lua_sets_release_owner_id() {
-        let lua = mlua::Lua::new();
-        let value = cover_to_lua(
-            &lua,
-            DbId(12),
-            Cover {
-                db_id: None,
-                id: "cover-1".to_string(),
-                path: "cover.jpg".to_string(),
-                mime_type: "image/jpeg".to_string(),
-                hash: "abc123".to_string(),
-                blurhash: Some("blurhash".to_string()),
-            },
-        )
-        .unwrap();
-
-        let Value::Table(table) = value else {
-            panic!("cover_to_lua did not return a table");
-        };
-        assert_eq!(table.get::<i64>("release_id").unwrap(), 12);
-        assert_eq!(table.get::<String>("path").unwrap(), "cover.jpg");
+        assert!(rendered.contains("@interface CoverInfo"));
+        assert!(rendered.contains("blurhash: string?"));
+        assert!(rendered.contains("@class Covers"));
+        assert!(rendered.contains("@yields"));
+        assert!(rendered.contains("function covers.get(id: number | string): CoverInfo?"));
+        assert!(
+            rendered.contains("function covers.get_many(ids: {number}): { [number]: CoverInfo? }")
+        );
     }
 }

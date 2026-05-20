@@ -4,3 +4,6 @@
 // www.meshiplaw.com/lyra.
 
 pub(crate) use crate::db::plugin::*;
+
+#[cfg(test)]
+pub(crate) use crate::db::test_db;

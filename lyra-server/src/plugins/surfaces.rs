@@ -4,7 +4,6 @@
 // www.meshiplaw.com/lyra.
 
 use anyhow::Result;
-use harmony_core::Module;
 
 use crate::plugins::{
     api,
@@ -41,7 +40,6 @@ type RenderDocsFn = fn() -> Result<String>;
 
 struct Surface {
     id: &'static str,
-    module: fn() -> Module,
     render_docs: RenderDocsFn,
 }
 
@@ -49,17 +47,9 @@ macro_rules! surface {
     ($id:literal, $module:path, $render:path) => {
         Surface {
             id: $id,
-            module: $module,
             render_docs: || $render().map_err(anyhow::Error::from),
         }
     };
-}
-
-pub(crate) fn lyra_modules() -> Vec<Module> {
-    surfaces()
-        .iter()
-        .map(|surface| (surface.module)())
-        .collect()
 }
 
 pub(crate) fn lyra_doc_source_ids() -> impl Iterator<Item = &'static str> {
@@ -104,11 +94,6 @@ fn surfaces() -> &'static [Surface] {
             genres::get_module,
             genres::render_luau_definition
         ),
-        surface!(
-            "lyra/labels",
-            labels::get_module,
-            labels::render_luau_definition
-        ),
         surface!("lyra/tags", tags::get_module, tags::render_luau_definition),
         surface!(
             "lyra/favorites",
@@ -135,6 +120,11 @@ fn surfaces() -> &'static [Surface] {
             "lyra/images",
             images::get_module,
             images::render_luau_definition
+        ),
+        surface!(
+            "lyra/labels",
+            labels::module_spec,
+            labels::render_luau_definition
         ),
         surface!(
             "lyra/entries",

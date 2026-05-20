@@ -3,32 +3,164 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::collections::HashSet;
+
 use agdb::DbId;
-use harmony_core::LuaAsyncExt;
-use mlua::{
-    ExternalResult,
-    Lua,
-    Result,
-    Table,
-    Value,
+use harmony_core::{
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
+};
+use harmony_luau as luau;
+use harmony_luau::{
+    LuauType,
+    LuauTypeInfo,
+    ModuleDescriptor,
+    ModuleFunctionDescriptor,
+    ParameterDescriptor,
+    render_definition_file_with_support,
 };
 
-use crate::{
-    STATE,
-    plugins::db,
-    plugins::{
-        caller::RequestCaller,
-        parse_ids,
-    },
+use crate::plugins::db::{
+    self,
+    DbAsync,
 };
 
-fn resolve_container(entry: &db::Entry) -> Option<String> {
-    entry
-        .full_path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.trim().to_ascii_lowercase())
-        .filter(|ext| !ext.is_empty())
+#[derive(Clone, Default)]
+pub(crate) struct TrackSourcesModuleStore {
+    db: Option<DbAsync>,
+}
+
+impl TrackSourcesModuleStore {
+    pub(crate) fn empty() -> Self {
+        Self { db: None }
+    }
+
+    pub(crate) fn with_db(db: DbAsync) -> Self {
+        Self { db: Some(db) }
+    }
+
+    fn db(&self) -> luau::runtime::Result<DbAsync> {
+        self.db.clone().ok_or_else(|| {
+            crate::plugins::runtime_error(
+                "lyra/track_sources requires a database-backed plugin executor",
+            )
+        })
+    }
+}
+
+struct TrackSourcesModule;
+
+pub(crate) fn module_spec() -> ModuleSpec {
+    ModuleSpec::new("lyra/track_sources")
+        .capability("lyra.track_sources")
+        .function(get_primary_source_key_spec())
+        .function(get_primary_container_spec())
+        .function(get_primary_containers_spec())
+        .install(|_| Ok(ModuleExport::new(TrackSourcesModule)))
+}
+
+fn get_primary_source_key_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get_primary_source_key")
+        .arg_name("track_id")
+        .args::<i64>()
+        .returns::<Option<String>>()
+        .call_async_native(std::sync::Arc::new(get_primary_source_key_callback))
+}
+
+fn get_primary_container_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get_primary_container")
+        .arg_name("track_id")
+        .args::<i64>()
+        .returns::<Option<String>>()
+        .call_async_native(std::sync::Arc::new(get_primary_container_callback))
+}
+
+fn get_primary_containers_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get_primary_containers")
+        .arg_name("track_ids")
+        .args::<Vec<u64>>()
+        .returns::<luau::Table>()
+        .call_async_native(std::sync::Arc::new(get_primary_containers_callback))
+}
+
+fn get_primary_source_key_callback(
+    mut frame: luau::CallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let track_id: i64 = frame.args.read_named("track_id")?;
+    if track_id <= 0 {
+        return Ok(Box::pin(async { Ok(vec![luau::Value::Nil]) }));
+    }
+
+    let store = frame
+        .vm
+        .data()
+        .get::<TrackSourcesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+
+    Ok(Box::pin(async move {
+        let db = db.read().await;
+        let source = db::track_sources::get_primary_by_track(&db, DbId(track_id))
+            .map_err(crate::plugins::runtime_error)?;
+        let source_key = source
+            .map(|source| source.source_key)
+            .filter(|value| !value.trim().is_empty());
+        crate::plugins::luau_returns(source_key)
+    }))
+}
+
+fn get_primary_container_callback(
+    mut frame: luau::CallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let track_id: i64 = frame.args.read_named("track_id")?;
+    if track_id <= 0 {
+        return Ok(Box::pin(async { Ok(vec![luau::Value::Nil]) }));
+    }
+
+    let store = frame
+        .vm
+        .data()
+        .get::<TrackSourcesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+
+    Ok(Box::pin(async move {
+        let db = db.read().await;
+        let container = resolve_primary_container(&db, DbId(track_id))
+            .map_err(crate::plugins::runtime_error)?;
+        crate::plugins::luau_returns(container)
+    }))
+}
+
+fn get_primary_containers_callback(
+    mut frame: luau::CallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let ids_table: luau::Table = frame.args.read_named("track_ids")?;
+    let ids = parse_db_ids(frame.vm, &ids_table)?;
+    let store = frame
+        .vm
+        .data()
+        .get::<TrackSourcesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+
+    Ok(Box::pin(async move {
+        let db = db.read().await;
+        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, ids.len());
+        for id in &ids {
+            let container =
+                resolve_primary_container(&db, *id).map_err(crate::plugins::runtime_error)?;
+            let value = container
+                .map(|value| luau::Value::String(value.into_bytes()))
+                .unwrap_or(luau::Value::Nil);
+            crate::plugins::set_owned_db_id_key(&mut table, *id, value);
+        }
+        Ok(vec![luau::Value::TableData(table)])
+    }))
 }
 
 fn resolve_primary_container(
@@ -47,139 +179,130 @@ fn resolve_primary_container(
     let Some(entry) = db::entries::get_by_id(db, entry_db_id)? else {
         return Ok(None);
     };
-    Ok(resolve_container(&entry))
+    Ok(entry
+        .full_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.trim().to_ascii_lowercase())
+        .filter(|ext| !ext.is_empty()))
 }
 
-struct TrackSourcesModule;
-
-#[harmony_macros::module(
-    plugin_scoped,
-    name = "TrackSources",
-    local = "track_sources",
-    path = "lyra/track_sources"
-)]
-impl TrackSourcesModule {
-    /// Returns the primary source key for a track.
-    pub(crate) async fn get_primary_source_key(
-        #[harmony_context] caller: RequestCaller,
-        track_id: i64,
-    ) -> Result<Option<String>> {
-        if track_id <= 0 {
-            return Ok(None);
-        }
-
-        let db = STATE.db.read().await;
-        if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, DbId(track_id))
-            .into_lua_err()?
-        {
-            return Ok(None);
-        }
-        let Some(source) =
-            db::track_sources::get_primary_by_track(&db, DbId(track_id)).into_lua_err()?
-        else {
-            return Ok(None);
+fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
+    let mut values = Vec::new();
+    for (key, value) in table.pairs_raw(vm)? {
+        let Some(index) = array_index(key) else {
+            continue;
         };
-
-        Ok(Some(source.source_key).filter(|value| !value.trim().is_empty()))
+        let Some(id) = db_id_value(value)? else {
+            continue;
+        };
+        values.push((index, id));
     }
+    values.sort_by_key(|(index, _)| *index);
 
-    /// Returns the primary container for a track.
-    pub(crate) async fn get_primary_container(
-        #[harmony_context] caller: RequestCaller,
-        track_id: i64,
-    ) -> Result<Option<String>> {
-        if track_id <= 0 {
-            return Ok(None);
+    let mut ids = Vec::new();
+    let mut seen = HashSet::new();
+    for (_, id) in values {
+        if seen.insert(id) {
+            ids.push(id);
         }
-
-        let db = STATE.db.read().await;
-        if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, DbId(track_id))
-            .into_lua_err()?
-        {
-            return Ok(None);
-        }
-        let container = resolve_primary_container(&db, DbId(track_id)).into_lua_err()?;
-        Ok(container)
     }
+    Ok(ids)
+}
 
-    /// Returns primary containers for many tracks.
-    #[harmony(args(track_ids: Vec<u64>), returns(std::collections::BTreeMap<u64, Option<String>>))]
-    pub(crate) async fn get_primary_containers(
-        lua: Lua,
-        #[harmony_context] caller: RequestCaller,
-        track_ids: Table,
-    ) -> Result<Table> {
-        let track_ids = parse_ids(track_ids)?;
-        let db = STATE.db.read().await;
-
-        let table = lua.create_table()?;
-        for track_id in track_ids {
-            if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, track_id)
-                .into_lua_err()?
-            {
-                table.set(track_id.0, Value::Nil)?;
-                continue;
-            }
-            let container = resolve_primary_container(&db, track_id).into_lua_err()?;
-            if let Some(container) = container {
-                table.set(track_id.0, container)?;
-            } else {
-                table.set(track_id.0, Value::Nil)?;
-            }
+fn array_index(value: luau::Value) -> Option<i64> {
+    match value {
+        luau::Value::Integer(value) if value > 0 => Some(value),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
+            Some(value as i64)
         }
-
-        Ok(table)
+        _ => None,
     }
 }
 
-crate::plugins::plugin_surface_exports!(
-    TrackSourcesModule,
-    "lyra.track_sources",
-    "Read and modify the source files backing tracks.",
-    Medium
-);
+fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
+    match value {
+        luau::Value::Integer(value) if value > 0 => Ok(Some(DbId(value))),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
+            Ok(Some(DbId(value as i64)))
+        }
+        luau::Value::Integer(_) | luau::Value::Number(_) => Ok(None),
+        other => Err(crate::plugins::runtime_error(format!(
+            "id entries must be positive integers, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
+    ParameterDescriptor {
+        name,
+        ty,
+        description: None,
+        variadic: false,
+    }
+}
+
+fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        name: "TrackSources",
+        local_name: "track_sources",
+        description: None,
+        fields: Vec::new(),
+        functions: vec![
+            ModuleFunctionDescriptor {
+                path: vec!["get_primary_source_key"],
+                description: None,
+                params: vec![param("track_id", i64::luau_type())],
+                returns: vec![Option::<String>::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get_primary_container"],
+                description: None,
+                params: vec![param("track_id", i64::luau_type())],
+                returns: vec![Option::<String>::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get_primary_containers"],
+                description: None,
+                params: vec![param("track_ids", Vec::<u64>::luau_type())],
+                returns: vec![LuauType::map(
+                    u64::luau_type(),
+                    Option::<String>::luau_type(),
+                )],
+                yields: true,
+            },
+        ],
+    }
+}
+
+pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
+    render_definition_file_with_support(&module_descriptor(), &[], &[], &[])
+}
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
-    use super::resolve_container;
-    use crate::plugins::db::Entry;
-    use crate::plugins::db::entries::EntryKind;
+    use super::*;
 
     #[test]
-    fn resolve_container_normalizes_extensions() {
-        let entry = Entry {
-            db_id: None,
-            id: "entry-1".to_string(),
-            full_path: PathBuf::from("/tmp/Track.FLAC"),
-            kind: EntryKind::File,
-            file_kind: Some("audio".to_string()),
-            name: "Track.FLAC".to_string(),
-            hash: None,
-            size: 0,
-            mtime: 0,
-            ctime: 0,
-        };
+    fn renders_track_sources_module_definition() {
+        let rendered = render_luau_definition().expect("render lyra/track_sources docs");
 
-        assert_eq!(resolve_container(&entry).as_deref(), Some("flac"));
-    }
-
-    #[test]
-    fn resolve_container_ignores_missing_extensions() {
-        let entry = Entry {
-            db_id: None,
-            id: "entry-2".to_string(),
-            full_path: PathBuf::from("/tmp/track"),
-            kind: EntryKind::File,
-            file_kind: Some("audio".to_string()),
-            name: "track".to_string(),
-            hash: None,
-            size: 0,
-            mtime: 0,
-            ctime: 0,
-        };
-
-        assert_eq!(resolve_container(&entry), None);
+        assert!(rendered.contains("@class TrackSources"));
+        assert!(
+            rendered.contains(
+                "function track_sources.get_primary_source_key(track_id: number): string?"
+            )
+        );
+        assert!(
+            rendered.contains(
+                "function track_sources.get_primary_container(track_id: number): string?"
+            )
+        );
+        assert!(rendered.contains(
+            "function track_sources.get_primary_containers(track_ids: {number}): { [number]: string? }"
+        ));
     }
 }
