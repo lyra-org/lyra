@@ -898,6 +898,7 @@ mod tests {
     #[tokio::test]
     async fn load_registered_schema_returns_service_unavailable_while_registry_populates() {
         let _guard = REGISTRY_TEST_GUARD.lock().await;
+        let _runtime_guard = runtime_test_lock().await;
         runtime::initialize_registry().await;
 
         let response = load_registered_schema("demo", SettingsScope::Global)
@@ -911,6 +912,7 @@ mod tests {
     #[tokio::test]
     async fn load_registered_schema_returns_not_found_after_registry_freezes() {
         let _guard = REGISTRY_TEST_GUARD.lock().await;
+        let _runtime_guard = runtime_test_lock().await;
         runtime::initialize_registry().await;
         runtime::freeze_registry().await;
 
@@ -920,6 +922,7 @@ mod tests {
             .into_response();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        runtime::initialize_registry().await;
     }
 
     fn empty_schema() -> Schema {
