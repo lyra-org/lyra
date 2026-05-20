@@ -36,7 +36,10 @@ use axum::extract::{
 use axum::http::{
     HeaderMap,
     StatusCode,
-    header::USER_AGENT,
+    header::{
+        AUTHORIZATION,
+        USER_AGENT,
+    },
 };
 use nanoid::nanoid;
 use schemars::JsonSchema;
@@ -62,6 +65,7 @@ use crate::{
         ResolvedAuth,
         api_keys,
         login_with_password,
+        logout_with_token,
         require_auth,
         require_manage_roles,
         require_manage_users,
@@ -588,6 +592,23 @@ async fn login_user(
     }))
 }
 
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    let header = headers.get(AUTHORIZATION)?.to_str().ok()?;
+    let mut parts = header.splitn(2, char::is_whitespace);
+    let scheme = parts.next()?;
+    let token = parts.next()?;
+    if scheme.eq_ignore_ascii_case("bearer") {
+        Some(token.trim())
+    } else {
+        None
+    }
+}
+
+async fn logout_user(headers: HeaderMap) -> Result<StatusCode, AppError> {
+    logout_with_token(bearer_token(&headers)).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn create_api_key(
     headers: HeaderMap,
     Json(body): Json<CreateApiKeyRequest>,
@@ -679,6 +700,12 @@ fn login_user_docs(op: TransformOperation) -> TransformOperation {
         .description("Validates credentials and returns a session token.")
 }
 
+fn logout_user_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Logout user")
+        .description("Revokes the current bearer session token when it is a session token.")
+        .response::<204, ()>()
+}
+
 fn create_api_key_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create API key")
         .description(
@@ -709,6 +736,7 @@ pub fn user_routes() -> ApiRouter {
         )
         .api_route("/{user_id}/role", put_with(update_role, update_role_docs))
         .api_route("/login", post_with(login_user, login_user_docs))
+        .api_route("/logout", post_with(logout_user, logout_user_docs))
 }
 
 pub fn me_routes() -> ApiRouter {
