@@ -123,6 +123,81 @@ pub fn luau_to_json(
     }
 }
 
+pub fn optional_string_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &str,
+) -> luau::runtime::Result<Option<String>> {
+    match table.get_raw(vm, key)? {
+        luau::Value::String(value) => String::from_utf8(value)
+            .map(Some)
+            .map_err(|error| luau::Error::Runtime(format!("{key} must be valid UTF-8: {error}"))),
+        luau::Value::Nil => Ok(None),
+        other => Err(luau::Error::Runtime(format!(
+            "{key} must be a string or nil, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+pub fn optional_i64_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &str,
+) -> luau::runtime::Result<Option<i64>> {
+    match table.get_raw(vm, key)? {
+        luau::Value::Integer(value) => Ok(Some(value)),
+        luau::Value::Number(value) => Ok(Some(value as i64)),
+        luau::Value::Nil => Ok(None),
+        other => Err(luau::Error::Runtime(format!(
+            "{key} must be a number or nil, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+pub fn optional_json_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &str,
+) -> luau::runtime::Result<Option<serde_json::Value>> {
+    let value = table.get_raw(vm, key)?;
+    if matches!(value, luau::Value::Nil) {
+        Ok(None)
+    } else {
+        luau_to_json(vm, &value, 0).map(Some)
+    }
+}
+
+pub fn optional_string_pairs_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &str,
+) -> luau::runtime::Result<Vec<(String, String)>> {
+    let pairs = match table.get_raw(vm, key)? {
+        luau::Value::Table(pairs) => pairs,
+        luau::Value::Nil => return Ok(Vec::new()),
+        other => {
+            return Err(luau::Error::Runtime(format!(
+                "{key} must be a table or nil, got {}",
+                other.type_name()
+            )));
+        }
+    };
+    let mut result = Vec::new();
+    for (key, value) in pairs.pairs_raw(vm)? {
+        let (luau::Value::String(key), luau::Value::String(value)) = (key, value) else {
+            continue;
+        };
+        let key = String::from_utf8(key)
+            .map_err(|error| runtime_error("table keys must be valid UTF-8", error))?;
+        let value = String::from_utf8(value)
+            .map_err(|error| runtime_error("table values must be valid UTF-8", error))?;
+        result.push((key, value));
+    }
+    Ok(result)
+}
+
 fn json_number_from_f64(value: f64) -> Option<serde_json::Number> {
     if !value.is_finite() {
         return None;
