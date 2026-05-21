@@ -407,6 +407,19 @@ impl Scheduler {
         self.wake_queue.wait(timeout);
     }
 
+    pub fn remove(&mut self, id: TaskId) -> bool {
+        let Some(task) = self.tasks.remove(&id) else {
+            return false;
+        };
+
+        if let Some(group_tasks) = self.groups.get_mut(&task.context.task_group) {
+            group_tasks.remove(&id);
+        }
+        self.ready.retain(|ready_id| *ready_id != id);
+        self.sleeping.retain(|(_, sleeping_id)| *sleeping_id != id);
+        true
+    }
+
     pub fn snapshot(&self, id: TaskId) -> Option<TaskSnapshot> {
         let task = self.tasks.get(&id)?;
         Some(TaskSnapshot {
@@ -448,19 +461,17 @@ impl Scheduler {
         let finished: Vec<_> = self
             .tasks
             .iter()
-            .filter_map(|(id, task)| {
-                (task.state != TaskState::Pending).then_some((*id, task.context.task_group))
-            })
+            .filter_map(|(id, task)| (task.state != TaskState::Pending).then_some(*id))
             .collect();
 
-        for (id, group) in &finished {
-            self.tasks.remove(id);
-            if let Some(group_tasks) = self.groups.get_mut(group) {
-                group_tasks.remove(id);
+        let mut removed = 0;
+        for id in finished {
+            if self.remove(id) {
+                removed += 1;
             }
         }
 
-        finished.len()
+        removed
     }
 }
 
@@ -664,6 +675,13 @@ impl LocalScheduler {
         self.cancel(handle.id())
     }
 
+    pub fn remove(&self, id: TaskId) -> bool {
+        self.thread_tasks
+            .borrow_mut()
+            .retain(|_, handle| handle.id() != id);
+        self.scheduler.borrow_mut().remove(id)
+    }
+
     pub fn park_luau_thread(&self, thread: &luau::Thread) {
         self.parked_threads
             .borrow_mut()
@@ -725,6 +743,20 @@ impl LocalScheduler {
     }
 
     pub fn remove_finished(&self) -> usize {
+        let finished_ids = self
+            .scheduler
+            .borrow()
+            .snapshots()
+            .into_iter()
+            .filter_map(|snapshot| (snapshot.state != TaskState::Pending).then_some(snapshot.id))
+            .collect::<HashSet<_>>();
+        if finished_ids.is_empty() {
+            return 0;
+        }
+
+        self.thread_tasks
+            .borrow_mut()
+            .retain(|_, handle| !finished_ids.contains(&handle.id()));
         self.scheduler.borrow_mut().remove_finished()
     }
 
@@ -925,6 +957,21 @@ mod tests {
         assert_eq!(snapshot.state, TaskState::Completed);
         assert_eq!(snapshot.group, group);
         assert_eq!(snapshot.origin.plugin.as_deref(), Some("demo"));
+    }
+
+    #[test]
+    fn removing_one_finished_task_preserves_other_finished_tasks() {
+        let mut scheduler = Scheduler::new();
+        let first = scheduler.spawn(CallContext::default(), async { Ok(()) });
+        let second = scheduler.spawn(CallContext::default(), async { Ok(()) });
+
+        assert_eq!(scheduler.poll_ready(), 2);
+        assert!(scheduler.remove(first.id()));
+        assert!(scheduler.snapshot(first.id()).is_none());
+        assert_eq!(
+            scheduler.snapshot(second.id()).expect("second task").state,
+            TaskState::Completed
+        );
     }
 
     #[test]
