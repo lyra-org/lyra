@@ -10,4 +10,3 @@ task.wait(0)
 total += 1
 
 assert(total == 42)
-
