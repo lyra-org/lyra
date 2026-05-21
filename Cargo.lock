@@ -802,6 +802,7 @@ dependencies = [
  "json5",
  "serde",
  "serde_json",
+ "tokio",
  "tracing",
 ]
 

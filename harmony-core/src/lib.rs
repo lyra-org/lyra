@@ -7,6 +7,7 @@ mod luaurc;
 mod modules;
 mod plugin;
 mod scheduler;
+mod tokio_runtime;
 
 pub use luaurc::LuaurcConfig;
 pub use modules::{
@@ -40,6 +41,7 @@ pub use modules::{
 };
 pub use plugin::{
     LoadedPlugin,
+    ManifestCapabilityPolicy,
     PluginLoadError,
     PluginManager,
     PluginManifest,
@@ -59,3 +61,4 @@ pub use scheduler::{
     TaskSnapshot,
     TaskState,
 };
+pub use tokio_runtime::TokioRuntimeContext;
