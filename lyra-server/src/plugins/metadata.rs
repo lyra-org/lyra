@@ -2093,7 +2093,7 @@ fn provider_class() -> ClassDescriptor {
                 param("entity", ty("EntityType")),
                 param(
                     "handler",
-                    LuauType::function(vec![vararg(any())], vec![any()]),
+                    LuauType::function(vec![fn_param("query", string())], vec![any()]),
                 ),
             ],
             vec![],
@@ -2216,14 +2216,6 @@ fn fn_param(name: &'static str, ty: LuauType) -> FunctionParameter {
         name: Some(name),
         ty,
         variadic: false,
-    }
-}
-
-fn vararg(ty: LuauType) -> FunctionParameter {
-    FunctionParameter {
-        name: None,
-        ty,
-        variadic: true,
     }
 }
 

@@ -309,12 +309,8 @@ pub(crate) async fn search_provider(
     let provider_id = request.provider_id.to_string();
     let entity_type = request.entity_type;
     let include_cover_urls = request.include_cover_urls;
-    let context = serde_json::json!({
-        "entity_type": request.entity_type.as_str(),
-        "query": request.query,
-        "include_cover_urls": request.include_cover_urls,
-        "force_refresh": request.force_refresh,
-    });
+    let force_refresh = request.force_refresh;
+    let query = request.query.to_string();
 
     let result = with_provider_call(
         &provider_id.clone(),
@@ -329,7 +325,7 @@ pub(crate) async fn search_provider(
                 runtime
                     .dispatch_metadata_refresh(MetadataRefreshRequest {
                         handler_id,
-                        context,
+                        context: serde_json::Value::String(query),
                     })
                     .await
                     .with_context(|| format!("provider search handler failed for '{provider_id}'"))
@@ -339,10 +335,43 @@ pub(crate) async fn search_provider(
     .await?;
 
     let values = flatten_search_values(result.values);
-    Ok(values
-        .into_iter()
-        .map(|value| normalize_provider_search_result(entity_type, value, include_cover_urls, None))
-        .collect())
+    let mut normalized = Vec::with_capacity(values.len());
+    for value in values {
+        let resolved_cover_url = if include_cover_urls {
+            let ids = as_ids(&value).unwrap_or_default();
+            if ids.is_empty() {
+                None
+            } else {
+                match resolve_provider_cover_url(
+                    &provider_id,
+                    entity_type,
+                    &serde_json::json!({ "ids": ids }),
+                    force_refresh,
+                )
+                .await
+                {
+                    Ok(url) => url,
+                    Err(err) => {
+                        tracing::warn!(
+                            provider = provider_id,
+                            error = %err,
+                            "provider cover URL lookup failed during search response build"
+                        );
+                        None
+                    }
+                }
+            }
+        } else {
+            None
+        };
+        normalized.push(normalize_provider_search_result(
+            entity_type,
+            value,
+            include_cover_urls,
+            resolved_cover_url,
+        ));
+    }
+    Ok(normalized)
 }
 
 fn flatten_search_values(values: Vec<Value>) -> Vec<Value> {
@@ -932,6 +961,112 @@ mod tests {
     use nanoid::nanoid;
     use serde_json::json;
     use std::path::PathBuf;
+    use std::time::{
+        SystemTime,
+        UNIX_EPOCH,
+    };
+
+    struct TempSearchPluginDir {
+        plugins_dir: PathBuf,
+    }
+
+    impl TempSearchPluginDir {
+        fn new() -> anyhow::Result<Self> {
+            let root = std::env::temp_dir().join(format!(
+                "lyra-search-plugin-test-{}-{}",
+                std::process::id(),
+                SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+            ));
+            let plugin_dir = root.join("searchtest");
+            std::fs::create_dir_all(&plugin_dir)?;
+            std::fs::write(
+                plugin_dir.join("plugin.json"),
+                r#"{
+                    "schema_version": 1,
+                    "id": "searchtest",
+                    "name": "Search Test",
+                    "version": "1.0.0",
+                    "description": "Search callback contract test",
+                    "entrypoint": "init.luau",
+                    "scopes": ["lyra.metadata"]
+                }"#,
+            )?;
+            std::fs::write(
+                plugin_dir.join("init.luau"),
+                r#"
+                    local metadata = require("@lyra/metadata")
+                    local provider = metadata.Provider.new("searchtest")
+
+                    provider:search(metadata.EntityType.Release, function(query)
+                        if type(query) ~= "string" then
+                            error("expected string query, got " .. type(query))
+                        end
+                        return {
+                            {
+                                title = "Search: " .. query,
+                                redirect_url = "https://example.test/releases/" .. query,
+                                ids = {
+                                    release_id = query,
+                                },
+                            },
+                        }
+                    end)
+                "#,
+            )?;
+            Ok(Self { plugins_dir: root })
+        }
+    }
+
+    impl Drop for TempSearchPluginDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.plugins_dir);
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_search_dispatches_query_string_to_handler() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
+            directory: std::env::temp_dir(),
+            language: None,
+            country: None,
+        })
+        .await?;
+        let plugins = TempSearchPluginDir::new()?;
+        let server_info = crate::plugins::server::load_server_info().await?;
+        let (runtime, errors) =
+            crate::plugins::executor::PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
+                plugins.plugins_dir.clone(),
+                server_info,
+                STATE.db.get(),
+                Vec::new(),
+            )?;
+        assert!(errors.is_empty(), "{errors:?}");
+        runtime.exec_plugin("searchtest").await?;
+        crate::plugins::bootstrap::publish_runtime(runtime.clone());
+
+        let results = search_provider(ProviderSearchRequest {
+            provider_id: "searchtest",
+            entity_type: EntityType::Release,
+            query: "loveless",
+            include_cover_urls: false,
+            force_refresh: false,
+        })
+        .await?;
+
+        assert_eq!(results.len(), 1);
+        let NormalizedProviderSearchResult::Release(result) = &results[0] else {
+            panic!("expected release search result");
+        };
+        assert_eq!(result.title, "Search: loveless");
+        assert_eq!(
+            result.ids.as_ref().and_then(|ids| ids.get("release_id")),
+            Some(&"loveless".to_string())
+        );
+
+        crate::STATE.plugin_runtime.replace(None);
+        Ok(())
+    }
 
     #[test]
     fn cover_requirements_match_handles_all_of_and_any_of() {
