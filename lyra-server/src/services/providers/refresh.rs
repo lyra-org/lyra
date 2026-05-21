@@ -655,16 +655,13 @@ async fn dispatch_refresh_callback(
                     return Err(anyhow::anyhow!("plugin runtime is not initialized"));
                 }
             };
-            tokio::task::spawn_blocking(move || {
-                runtime
-                    .dispatch_metadata_refresh(MetadataRefreshRequest {
-                        handler_id,
-                        context,
-                    })
-                    .map(|_| ())
-            })
-            .await
-            .context("join metadata refresh callback dispatch")?
+            runtime
+                .dispatch_metadata_refresh(MetadataRefreshRequest {
+                    handler_id,
+                    context,
+                })
+                .await
+                .map(|_| ())
         },
     )
     .await
@@ -684,14 +681,12 @@ async fn dispatch_sync_filter_callback(
                 .plugin_runtime
                 .get()
                 .context("plugin runtime is not initialized")?;
-            let result = tokio::task::spawn_blocking(move || {
-                runtime.dispatch_metadata_refresh(MetadataRefreshRequest {
+            let result = runtime
+                .dispatch_metadata_refresh(MetadataRefreshRequest {
                     handler_id,
                     context,
                 })
-            })
-            .await
-            .context("join metadata sync filter callback dispatch")??;
+                .await?;
             Ok(result
                 .values
                 .first()

@@ -660,9 +660,7 @@ async fn dispatch_registered_route(
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
 
-    let Some(crate::plugins::bootstrap::PluginRuntime::Executor(runtime)) =
-        crate::STATE.plugin_runtime.get()
-    else {
+    let Some(runtime) = crate::STATE.plugin_runtime.get() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "plugin runtime is not ready",
@@ -683,20 +681,7 @@ async fn dispatch_registered_route(
         auth,
     };
 
-    let join = tokio::task::spawn_blocking(move || runtime.dispatch_api_handler(request)).await;
-    let result = match join {
-        Ok(result) => result,
-        Err(err) => {
-            tracing::error!(
-                plugin_id = %route.plugin_id,
-                method = %route.key.method,
-                path = %route.key.path,
-                error = %err,
-                "plugin route dispatch task failed"
-            );
-            return (StatusCode::INTERNAL_SERVER_ERROR, "internal server error").into_response();
-        }
-    };
+    let result = runtime.dispatch_api_handler(request).await;
 
     match result {
         Ok(response) => match plugin_api_response_to_axum(response, &request_headers).await {

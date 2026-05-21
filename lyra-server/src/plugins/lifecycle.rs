@@ -170,17 +170,17 @@ impl PluginRegistries {
         }
 
         crate::plugins::api::refreeze_plugin_routes(plugin_id).await;
-        crate::plugins::runtime::refreeze_plugin_settings(plugin_id).await;
+        crate::plugins::settings::refreeze_plugin_settings(plugin_id).await;
 
         crate::plugins::api::teardown_plugin_routes(plugin_id).await;
         crate::services::providers::teardown_plugin_providers(plugin_id).await;
         crate::services::mix::teardown_plugin_mixers(plugin_id).await;
         crate::services::playback_sessions::teardown_plugin_callbacks(plugin_id).await;
-        crate::plugins::runtime::teardown_plugin_settings(plugin_id).await;
+        crate::plugins::settings::teardown_plugin_settings(plugin_id).await;
 
         if reopen_registrations {
             crate::plugins::api::unfreeze_plugin_routes(plugin_id.clone()).await;
-            crate::plugins::runtime::unfreeze_plugin_settings(plugin_id.clone()).await;
+            crate::plugins::settings::unfreeze_plugin_settings(plugin_id.clone()).await;
         }
 
         self.teardown_in_progress.write().await.remove(plugin_id);
@@ -193,23 +193,25 @@ impl PluginRegistries {
     ) -> std::result::Result<(), PluginRestartError> {
         let _restart = self.restart_lock.lock().await;
 
-        let has_plugin =
-            runtime
-                .has_plugin(plugin_id.as_str())
-                .map_err(|err| PluginRestartError::Failed {
-                    plugin_id: plugin_id.clone(),
-                    source: err.context("failed to query plugin runtime"),
-                })?;
+        let has_plugin = runtime
+            .has_plugin(plugin_id.as_str())
+            .await
+            .map_err(|err| PluginRestartError::Failed {
+                plugin_id: plugin_id.clone(),
+                source: err.context("failed to query plugin runtime"),
+            })?;
         if !has_plugin {
             return Err(PluginRestartError::NotFound(plugin_id.clone()));
         }
 
-        let manifests = runtime
-            .plugin_manifests()
-            .map_err(|err| PluginRestartError::Failed {
-                plugin_id: plugin_id.clone(),
-                source: err.context("failed to read plugin manifests"),
-            })?;
+        let manifests =
+            runtime
+                .plugin_manifests()
+                .await
+                .map_err(|err| PluginRestartError::Failed {
+                    plugin_id: plugin_id.clone(),
+                    source: err.context("failed to read plugin manifests"),
+                })?;
         crate::STATE.plugin_manifests.replace(Arc::from(manifests));
 
         self.teardown_plugin(plugin_id, true).await;
@@ -240,7 +242,7 @@ impl PluginRegistries {
 
 async fn refreeze_plugin_registration_exemptions(plugin_id: &PluginId) {
     crate::plugins::api::refreeze_plugin_routes(plugin_id).await;
-    crate::plugins::runtime::refreeze_plugin_settings(plugin_id).await;
+    crate::plugins::settings::refreeze_plugin_settings(plugin_id).await;
 }
 
 #[cfg(test)]

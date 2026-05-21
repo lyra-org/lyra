@@ -420,13 +420,8 @@ async fn run_callback_with_timeout(
         recent_track_ids: recent_track_ids.into_iter().map(|id| id.0).collect(),
         options: coerced_extra_options(mixer_id, &options.extra).await?,
     };
-    match tokio::time::timeout(
-        timeout,
-        tokio::task::spawn_blocking(move || runtime.dispatch_mix_handler(request)),
-    )
-    .await
-    {
-        Ok(Ok(Ok(result))) => {
+    match tokio::time::timeout(timeout, runtime.dispatch_mix_handler(request)).await {
+        Ok(Ok(result)) => {
             let tracks = tracks_from_mixer_result_ids(result.track_ids).await?;
             if tracks.is_empty() {
                 tracing::debug!(mixer = %mixer_id, "mixer returned empty, trying next");
@@ -435,12 +430,8 @@ async fn run_callback_with_timeout(
                 Ok(HandlerOutcome::Tracks(tracks))
             }
         }
-        Ok(Ok(Err(err))) => {
-            tracing::warn!(mixer = %mixer_id, error = %err, "mixer handler crashed, trying next");
-            Ok(HandlerOutcome::FellThrough)
-        }
         Ok(Err(err)) => {
-            tracing::warn!(mixer = %mixer_id, error = %err, "mixer handler join failed, trying next");
+            tracing::warn!(mixer = %mixer_id, error = %err, "mixer handler crashed, trying next");
             Ok(HandlerOutcome::FellThrough)
         }
         Err(_) => {

@@ -32,14 +32,15 @@ pub(crate) mod libraries;
 pub(crate) mod lifecycle;
 pub(crate) mod listens;
 pub(crate) mod lyrics;
+pub(crate) mod manifests;
 pub(crate) mod metadata;
 pub(crate) mod mix;
 pub(crate) mod playback_sessions;
 pub(crate) mod playback_sources;
 pub(crate) mod playlists;
 pub(crate) mod releases;
-pub(crate) mod runtime;
 pub(crate) mod server;
+pub(crate) mod settings;
 mod surfaces;
 pub(crate) mod tags;
 pub(crate) mod track_sources;
@@ -47,6 +48,8 @@ pub(crate) mod tracks;
 pub(crate) mod users;
 pub(crate) use surfaces::{
     lyra_doc_source_ids,
+    module_scope_ids,
+    module_specs,
     render_lyra_doc_source,
 };
 

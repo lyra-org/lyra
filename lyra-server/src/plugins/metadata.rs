@@ -521,15 +521,12 @@ fn lyrics_callback(
                 .get()
                 .context("plugin runtime is not initialized")?;
             let context = lyrics_dispatcher::track_context_to_json(&context);
-            let result: crate::plugins::executor::MetadataRefreshResult =
-                tokio::task::spawn_blocking(move || {
-                    runtime.dispatch_metadata_refresh(MetadataRefreshRequest {
-                        handler_id,
-                        context,
-                    })
+            let result = runtime
+                .dispatch_metadata_refresh(MetadataRefreshRequest {
+                    handler_id,
+                    context,
                 })
                 .await
-                .context("join lyrics callback dispatch")?
                 .with_context(|| format!("provider lyrics handler failed for '{provider_id}'"))?;
             let value = result
                 .values

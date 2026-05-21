@@ -236,9 +236,7 @@ pub(crate) fn dispatch_update_for_caller(
     let _ = EVENT_BROADCAST.send(payload.clone());
 
     {
-        if let Some(crate::plugins::bootstrap::PluginRuntime::Executor(runtime)) =
-            crate::STATE.plugin_runtime.get()
-        {
+        if let Some(runtime) = crate::STATE.plugin_runtime.get() {
             if let Err(error) = runtime.dispatch_playback_update(payload) {
                 tracing::warn!(
                     error = %error,

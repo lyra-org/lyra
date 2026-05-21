@@ -3,7 +3,13 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::{
+    collections::HashSet,
+    sync::Arc,
+};
+
 use anyhow::Result;
+use harmony_core::ModuleSpec;
 
 use crate::plugins::{
     api,
@@ -22,13 +28,13 @@ use crate::plugins::{
     libraries,
     listens,
     lyrics,
+    manifests,
     metadata,
     mix,
     playback_sessions,
     playback_sources,
     playlists,
     releases,
-    runtime,
     server,
     tags,
     track_sources,
@@ -63,6 +69,51 @@ pub(crate) fn render_lyra_doc_source(id: &str) -> Result<Option<String>> {
         .map(|surface| (surface.render_docs)().map(Some))
         .transpose()
         .map(Option::flatten)
+}
+
+pub(crate) fn module_specs() -> Vec<ModuleSpec> {
+    vec![
+        api::module_spec(),
+        artists::module_spec(),
+        auth::module_spec(),
+        chromaprint::module_spec(),
+        covers::module_spec(),
+        harmony_crypt::module_spec(),
+        datastore::module_spec(),
+        entities::module_spec(),
+        entries::module_spec(),
+        favorites::module_spec(),
+        genres::module_spec(),
+        harmony_http::module_spec(),
+        ids::module_spec(),
+        images::module_spec(),
+        labels::module_spec(),
+        libraries::module_spec(),
+        listens::module_spec(),
+        harmony_json::module_spec(),
+        lyrics::module_spec(),
+        metadata::module_spec(),
+        mix::module_spec(),
+        harmony_net::module_spec(),
+        playback_sessions::module_spec(),
+        playback_sources::module_spec(),
+        playlists::module_spec(),
+        releases::module_spec(),
+        server::module_spec(),
+        harmony_task::module_spec(),
+        tags::module_spec(),
+        track_sources::module_spec(),
+        tracks::module_spec(),
+        users::module_spec(),
+        manifests::module_spec(),
+    ]
+}
+
+pub(crate) fn module_scope_ids() -> HashSet<Arc<str>> {
+    module_specs()
+        .into_iter()
+        .filter_map(|spec| spec.capability.map(|capability| capability.0))
+        .collect()
 }
 
 fn surfaces() -> &'static [Surface] {
@@ -184,8 +235,8 @@ fn surfaces() -> &'static [Surface] {
         ),
         surface!(
             "lyra/plugins",
-            runtime::get_module,
-            runtime::render_luau_definition
+            manifests::module_spec,
+            manifests::render_luau_definition
         ),
     ]
 }

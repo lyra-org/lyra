@@ -135,7 +135,7 @@ pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Resul
 }
 
 async fn reset_runtime_state() -> anyhow::Result<()> {
-    crate::plugins::runtime::initialize_registry().await;
+    crate::plugins::settings::initialize_registry().await;
     STATE
         .plugin_manifests
         .replace(Arc::from(Vec::<harmony_core::PluginManifest>::new()));
@@ -294,11 +294,9 @@ pub async fn exec_plugins(
 
     STATE
         .plugin_manifests
-        .replace(Arc::from(runtime.plugin_manifests()?));
-    crate::plugins::bootstrap::publish_runtime(crate::plugins::bootstrap::PluginRuntime::Executor(
-        runtime.clone(),
-    ));
-    runtime.exec_all()?;
+        .replace(Arc::from(runtime.plugin_manifests().await?));
+    crate::plugins::bootstrap::publish_runtime(runtime.clone());
+    runtime.exec_all().await?;
 
     let mut db = STATE.db.write().await;
     for mut provider in db::providers::get(&db)? {

@@ -326,15 +326,13 @@ pub(crate) async fn search_provider(
                     .plugin_runtime
                     .get()
                     .context("plugin runtime is not initialized")?;
-                tokio::task::spawn_blocking(move || {
-                    runtime.dispatch_metadata_refresh(MetadataRefreshRequest {
+                runtime
+                    .dispatch_metadata_refresh(MetadataRefreshRequest {
                         handler_id,
                         context,
                     })
-                })
-                .await
-                .context("join provider search callback dispatch")?
-                .with_context(|| format!("provider search handler failed for '{provider_id}'"))
+                    .await
+                    .with_context(|| format!("provider search handler failed for '{provider_id}'"))
             }
         },
     )
@@ -760,14 +758,12 @@ async fn search_provider_cover(
                     .get()
                     .context("plugin runtime is not initialized")?;
                 tokio::time::timeout(timeout, async move {
-                    tokio::task::spawn_blocking(move || {
-                        runtime.dispatch_metadata_refresh(MetadataRefreshRequest {
+                    runtime
+                        .dispatch_metadata_refresh(MetadataRefreshRequest {
                             handler_id,
                             context: handler_context,
                         })
-                    })
-                    .await
-                    .context("join provider cover callback dispatch")?
+                        .await
                 })
                 .await
                 .with_context(|| {

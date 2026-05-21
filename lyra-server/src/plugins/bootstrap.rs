@@ -8,65 +8,18 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Context;
-use anyhow::Result;
-use harmony_core::PluginManifest;
-
 use crate::plugins::api as plugin_api;
 use crate::{
     STATE,
     plugins::lifecycle::PluginId,
     services,
 };
+use anyhow::{
+    Context,
+    Result,
+};
 
-#[derive(Clone)]
-pub(crate) enum PluginRuntime {
-    Executor(crate::plugins::executor::PluginExecutorHandle),
-}
-
-impl PluginRuntime {
-    pub(crate) fn plugin_manifests(&self) -> Result<Vec<PluginManifest>> {
-        match self {
-            Self::Executor(runtime) => runtime.plugin_manifests(),
-        }
-    }
-
-    pub(crate) fn has_plugin(&self, plugin_id: &str) -> Result<bool> {
-        match self {
-            Self::Executor(runtime) => runtime.has_plugin(plugin_id),
-        }
-    }
-
-    pub(crate) async fn exec_all(&self) -> Result<()> {
-        match self {
-            Self::Executor(runtime) => runtime.exec_all(),
-        }
-    }
-
-    pub(crate) async fn exec_plugin(&self, plugin_id: &str) -> Result<()> {
-        match self {
-            Self::Executor(runtime) => runtime.exec_plugin(plugin_id),
-        }
-    }
-
-    pub(crate) fn dispatch_mix_handler(
-        &self,
-        request: crate::plugins::executor::MixHandlerRequest,
-    ) -> Result<crate::plugins::executor::MixHandlerResult> {
-        match self {
-            Self::Executor(runtime) => runtime.dispatch_mix_handler(request),
-        }
-    }
-
-    pub(crate) fn dispatch_metadata_refresh(
-        &self,
-        request: crate::plugins::executor::MetadataRefreshRequest,
-    ) -> Result<crate::plugins::executor::MetadataRefreshResult> {
-        match self {
-            Self::Executor(runtime) => runtime.dispatch_metadata_refresh(request),
-        }
-    }
-}
+pub(crate) type PluginRuntime = crate::plugins::executor::PluginExecutorHandle;
 
 pub(crate) async fn initialize_harmony() -> Result<PluginRuntime> {
     let plugins_dir = std::env::var_os("LYRA_PLUGINS_DIR")
@@ -78,19 +31,18 @@ pub(crate) async fn initialize_harmony() -> Result<PluginRuntime> {
         let server_info = crate::plugins::server::load_server_info()
             .await
             .context("build server info for plugin executor")?;
-        let (runtime, errors) =
-            crate::plugins::executor::PluginExecutorHandle::discover_from_plugins_dir_with_db(
-                plugins_dir,
-                server_info,
-                STATE.db.get(),
-            )?;
+        let (runtime, errors) = crate::plugins::executor::PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
+            plugins_dir,
+            server_info,
+            STATE.db.get(),
+            Vec::new(),
+        )?;
         for error in errors {
             tracing::warn!(error = %error, "plugin discovery error");
         }
-        let runtime = PluginRuntime::Executor(runtime);
         STATE
             .plugin_manifests
-            .replace(Arc::from(runtime.plugin_manifests()?));
+            .replace(Arc::from(runtime.plugin_manifests().await?));
         Ok(runtime)
     }
 }
@@ -107,7 +59,7 @@ pub(crate) async fn exec_for_capture(runtime: PluginRuntime) -> Result<()> {
 
 pub(crate) async fn finalize_startup() -> Result<()> {
     deduplicate_artists_after_plugin_init().await;
-    crate::plugins::runtime::freeze_registry().await;
+    crate::plugins::settings::freeze_registry().await;
     services::clear_cover_search_cache().await;
 
     plugin_api::finalize().await?;

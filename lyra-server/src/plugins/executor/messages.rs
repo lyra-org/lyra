@@ -5,13 +5,13 @@
 
 use std::{
     collections::HashMap,
+    fmt,
     sync::{
         Arc,
         atomic::{
             AtomicBool,
             Ordering,
         },
-        mpsc,
     },
 };
 
@@ -53,31 +53,31 @@ impl WebSocketState {
 }
 
 pub(super) enum PluginExecutorCommand {
-    PluginManifests(mpsc::Sender<Result<Vec<PluginManifest>>>),
+    PluginManifests(tokio::sync::oneshot::Sender<Result<Vec<PluginManifest>>>),
     HasPlugin {
         plugin_id: String,
-        reply: mpsc::Sender<Result<bool>>,
+        reply: tokio::sync::oneshot::Sender<Result<bool>>,
     },
     ExecPlugin {
         plugin_id: String,
-        reply: mpsc::Sender<Result<()>>,
+        reply: tokio::sync::oneshot::Sender<Result<()>>,
     },
-    ExecAll(mpsc::Sender<Result<()>>),
+    ExecAll(tokio::sync::oneshot::Sender<Result<()>>),
     MixHandler {
         request: MixHandlerRequest,
-        reply: mpsc::Sender<Result<MixHandlerResult>>,
+        reply: tokio::sync::oneshot::Sender<Result<MixHandlerResult>>,
     },
     MetadataRefresh {
         request: MetadataRefreshRequest,
-        reply: mpsc::Sender<Result<MetadataRefreshResult>>,
+        reply: tokio::sync::oneshot::Sender<Result<MetadataRefreshResult>>,
     },
     ApiHandler {
         request: ApiHandlerRequest,
-        reply: mpsc::Sender<Result<ApiHandlerResponse>>,
+        reply: tokio::sync::oneshot::Sender<Result<ApiHandlerResponse>>,
     },
     StartWebSocket {
         request: WebSocketStartRequest,
-        reply: mpsc::Sender<Result<()>>,
+        reply: tokio::sync::oneshot::Sender<Result<()>>,
     },
     PlaybackUpdate(crate::services::playback_sessions::PlaybackUpdatePayload),
 }
@@ -127,9 +127,59 @@ pub(crate) enum ApiResponseBody {
     Bytes(Vec<u8>),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ApiResponseKind {
+    Json,
+    Empty,
+    Text,
+    Bytes,
+    Redirect,
+    File,
+    StreamTrack,
+    DownloadTrack,
+    HlsPlaylist,
+}
+
+impl ApiResponseKind {
+    pub(crate) fn parse(raw: &str) -> Option<Self> {
+        Some(match raw {
+            "json" => Self::Json,
+            "empty" => Self::Empty,
+            "text" => Self::Text,
+            "bytes" => Self::Bytes,
+            "redirect" => Self::Redirect,
+            "file" => Self::File,
+            "stream_track" => Self::StreamTrack,
+            "download_track" => Self::DownloadTrack,
+            "hls_playlist" => Self::HlsPlaylist,
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Empty => "empty",
+            Self::Text => "text",
+            Self::Bytes => "bytes",
+            Self::Redirect => "redirect",
+            Self::File => "file",
+            Self::StreamTrack => "stream_track",
+            Self::DownloadTrack => "download_track",
+            Self::HlsPlaylist => "hls_playlist",
+        }
+    }
+}
+
+impl fmt::Display for ApiResponseKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct ApiHandlerResponse {
-    pub(crate) kind: String,
+    pub(crate) kind: ApiResponseKind,
     pub(crate) status: u16,
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) body: Option<ApiResponseBody>,

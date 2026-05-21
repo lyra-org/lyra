@@ -16,7 +16,7 @@ use anyhow::{
 
 use crate::{
     db,
-    plugins::runtime::{
+    plugins::settings::{
         FieldDefinition,
         Schema,
     },
@@ -378,7 +378,7 @@ mod tests {
             self,
             test_db::new_test_db,
         },
-        plugins::runtime::{
+        plugins::settings::{
             ChoiceOption,
             FieldGroupDefinition,
             FieldProps,

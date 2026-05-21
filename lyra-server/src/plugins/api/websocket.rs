@@ -33,9 +33,7 @@ pub(super) async fn dispatch_websocket_route(
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
 
-    let Some(crate::plugins::bootstrap::PluginRuntime::Executor(runtime)) =
-        crate::STATE.plugin_runtime.get()
-    else {
+    let Some(runtime) = crate::STATE.plugin_runtime.get() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "plugin runtime is not ready",
@@ -76,25 +74,16 @@ pub(super) async fn run_plugin_websocket(
         state: state.clone(),
     };
 
-    let start = tokio::task::spawn_blocking(move || runtime.start_websocket(request)).await;
-    match start {
-        Ok(Ok(())) => {
+    match runtime.start_websocket(request).await {
+        Ok(()) => {
             run_plugin_websocket_driver(socket, inbound_tx, outbound_rx, state).await;
-        }
-        Ok(Err(err)) => {
-            tracing::warn!(
-                plugin_id = %route.plugin_id,
-                path = %route.key.path,
-                error = %err,
-                "failed to start plugin websocket"
-            );
         }
         Err(err) => {
             tracing::warn!(
                 plugin_id = %route.plugin_id,
                 path = %route.key.path,
                 error = %err,
-                "plugin websocket start task failed"
+                "failed to start plugin websocket"
             );
         }
     }

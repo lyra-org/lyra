@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use super::*;
+use crate::plugins::executor::ApiResponseKind;
 
 pub(super) fn header_pairs(headers: &HeaderMap) -> Vec<(String, String)> {
     headers
@@ -20,8 +21,8 @@ pub(super) async fn plugin_api_response_to_axum(
 ) -> Result<Response> {
     let mut status =
         StatusCode::from_u16(response.status).context("invalid response status code")?;
-    match response.kind.as_str() {
-        "stream_track" => {
+    match response.kind {
+        ApiResponseKind::StreamTrack => {
             let track_id = response
                 .track_id
                 .ok_or_else(|| anyhow::anyhow!("stream_track response requires track_id"))?;
@@ -45,7 +46,7 @@ pub(super) async fn plugin_api_response_to_axum(
                 },
             );
         }
-        "download_track" => {
+        ApiResponseKind::DownloadTrack => {
             let track_id = response
                 .track_id
                 .ok_or_else(|| anyhow::anyhow!("download_track response requires track_id"))?;
@@ -70,7 +71,7 @@ pub(super) async fn plugin_api_response_to_axum(
                 },
             );
         }
-        "hls_playlist" => {
+        ApiResponseKind::HlsPlaylist => {
             let track_id = response
                 .track_id
                 .ok_or_else(|| anyhow::anyhow!("hls_playlist response requires track_id"))?;
@@ -92,8 +93,12 @@ pub(super) async fn plugin_api_response_to_axum(
                 },
             );
         }
-        "json" | "empty" | "text" | "bytes" | "redirect" | "file" => {}
-        other => bail!("unsupported response kind: {other}"),
+        ApiResponseKind::Json
+        | ApiResponseKind::Empty
+        | ApiResponseKind::Text
+        | ApiResponseKind::Bytes
+        | ApiResponseKind::Redirect
+        | ApiResponseKind::File => {}
     }
 
     let mut content_type = None::<HeaderValue>;
@@ -102,7 +107,7 @@ pub(super) async fn plugin_api_response_to_axum(
     let mut accept_ranges = None::<HeaderValue>;
 
     let body = if let Some(path) = response.path {
-        if response.kind != "file" {
+        if response.kind != ApiResponseKind::File {
             bail!("{} response cannot include path", response.kind);
         }
         let trimmed = path.trim();
