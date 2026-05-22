@@ -1,0 +1,36 @@
+{
+  "test_name": "ないものねだり_revenge_the_first_take_もっさ",
+  "scenario_id": "285418ff35a4a549",
+  "responses": [
+    {
+      "cache_key": "2f0fd1a9ffa9ad64",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=d0cd1fab-823e-4f78-a663-a5d4bd577e7d&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "bfaa18f195fa8c68"
+    },
+    {
+      "cache_key": "364f23fb7e4c2b3c",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%AA%E3%81%84%E3%82%82%E3%81%AE%E3%81%AD%E3%81%A0%E3%82%8A%20%5C-%20Revenge%20THE%20FIRST%20TAKE&limit=100",
+      "status_code": 200,
+      "body_hash": "c94f4673c8911daa"
+    },
+    {
+      "cache_key": "bb548f095ef3dc30",
+      "url": "https://musicbrainz.org/ws/2/artist/33ff8a92-2f3b-4cac-8ea0-5eebfa995626?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "570b94c479b68a51"
+    },
+    {
+      "cache_key": "ece7ab6381b45d7c",
+      "url": "https://musicbrainz.org/ws/2/work/822c270c-03a2-43d4-85dd-f0f3806779ba?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2e63a0904a3c621f"
+    },
+    {
+      "cache_key": "f36f49885ea9ea04",
+      "url": "https://musicbrainz.org/ws/2/artist?query=KANA-BOON",
+      "status_code": 200,
+      "body_hash": "6b3973583c296051"
+    }
+  ]
+}
