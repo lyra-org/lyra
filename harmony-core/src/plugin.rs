@@ -16,6 +16,14 @@ use std::path::{
 };
 use std::sync::Arc;
 
+use crate::{
+    modules::CapabilityPolicy,
+    scheduler::{
+        CapabilityId,
+        ChunkOrigin,
+    },
+};
+
 pub(crate) const PLUGIN_CONFIG_FILENAME: &str = "plugin.json";
 pub(crate) const PLUGIN_SCHEMA_VERSION: u32 = 1;
 
@@ -82,6 +90,39 @@ pub struct LoadedPlugin {
     /// so the runtime gate can share allocations across lookups.
     pub declared_scopes: HashSet<Arc<str>>,
     pub dependencies: Vec<NormalizedDependency>,
+}
+
+pub struct ManifestCapabilityPolicy {
+    scopes_by_plugin: HashMap<Arc<str>, HashSet<Arc<str>>>,
+}
+
+impl ManifestCapabilityPolicy {
+    pub fn from_manifests(manifests: Arc<[PluginManifest]>) -> Self {
+        let scopes_by_plugin = manifests
+            .iter()
+            .map(|manifest| {
+                let scopes = manifest
+                    .scopes
+                    .iter()
+                    .map(|scope| Arc::<str>::from(scope.as_str()))
+                    .collect::<HashSet<_>>();
+                (Arc::<str>::from(manifest.id.as_str()), scopes)
+            })
+            .collect();
+
+        Self { scopes_by_plugin }
+    }
+}
+
+impl CapabilityPolicy for ManifestCapabilityPolicy {
+    fn is_allowed(&self, origin: &ChunkOrigin, capability: &CapabilityId) -> bool {
+        let Some(plugin_id) = origin.plugin.as_ref() else {
+            return false;
+        };
+        self.scopes_by_plugin
+            .get(plugin_id)
+            .is_some_and(|scopes| scopes.contains(&capability.0))
+    }
 }
 
 #[derive(Debug)]

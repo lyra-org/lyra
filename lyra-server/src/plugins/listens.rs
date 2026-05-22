@@ -3,24 +3,34 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::DbId;
-use harmony_core::LuaAsyncExt;
-use mlua::{
-    Lua,
-    Result,
-    Table,
+use std::{
+    collections::{
+        HashMap,
+        HashSet,
+    },
+    sync::Arc,
 };
-use std::collections::{
-    HashMap,
-    HashSet,
+
+use agdb::DbId;
+use harmony_core::{
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
+};
+use harmony_luau as luau;
+use harmony_luau::{
+    LuauType,
+    LuauTypeInfo,
+    ModuleDescriptor,
+    ModuleFunctionDescriptor,
+    ParameterDescriptor,
+    render_definition_file_with_support,
 };
 
 use crate::{
-    STATE,
-    plugins::db,
-    plugins::{
-        caller::RequestCaller,
-        parse_ids,
+    plugins::db::{
+        self,
+        DbAsync,
     },
     services::{
         auth::Principal,
@@ -29,18 +39,180 @@ use crate::{
     },
 };
 
+#[derive(Clone, Default)]
+pub(crate) struct ListensModuleStore {
+    db: Option<DbAsync>,
+}
+
+impl ListensModuleStore {
+    pub(crate) fn empty() -> Self {
+        Self { db: None }
+    }
+
+    pub(crate) fn with_db(db: DbAsync) -> Self {
+        Self { db: Some(db) }
+    }
+
+    fn db(&self) -> luau::runtime::Result<DbAsync> {
+        self.db.clone().ok_or_else(|| {
+            crate::plugins::runtime_error("lyra/listens requires a database-backed plugin executor")
+        })
+    }
+}
+
+struct ListensModule;
+
 struct ResolvedStats {
     counts: HashMap<DbId, u64>,
     last_played: HashMap<DbId, u64>,
 }
 
+pub(crate) fn module_spec() -> ModuleSpec {
+    ModuleSpec::new("lyra/listens")
+        .capability("lyra.listens")
+        .function(get_count_spec())
+        .function(get_counts_spec())
+        .function(get_stats_spec())
+        .install(|_| Ok(ModuleExport::new(ListensModule)))
+}
+
+fn get_count_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get_count")
+        .context::<Principal>()
+        .arg_name("track_id")
+        .args::<i64>()
+        .arg_name("user_id")
+        .args::<Option<i64>>()
+        .arg_name("merge_unique_external_ids")
+        .args::<Option<bool>>()
+        .returns::<u64>()
+        .call_async(Arc::new(get_count_callback))
+}
+
+fn get_counts_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get_counts")
+        .context::<Principal>()
+        .arg_name("track_ids")
+        .args::<luau::Table>()
+        .arg_name("user_id")
+        .args::<Option<i64>>()
+        .arg_name("merge_unique_external_ids")
+        .args::<Option<bool>>()
+        .returns::<luau::Table>()
+        .call_async(Arc::new(get_counts_callback))
+}
+
+fn get_stats_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get_stats")
+        .context::<Principal>()
+        .arg_name("track_ids")
+        .args::<luau::Table>()
+        .arg_name("user_id")
+        .args::<Option<i64>>()
+        .arg_name("merge_unique_external_ids")
+        .args::<Option<bool>>()
+        .returns::<luau::Table>()
+        .call_async(Arc::new(get_stats_callback))
+}
+
+fn get_count_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let track_id: i64 = frame.args.read_named("track_id")?;
+    if track_id <= 0 {
+        return Err(crate::plugins::runtime_error(
+            "track_id must be a positive id",
+        ));
+    }
+    let user_db_id = frame.args.read_optional_named::<i64>("user_id")?.map(DbId);
+    let merge = frame
+        .args
+        .read_optional_named::<bool>("merge_unique_external_ids")?
+        .unwrap_or(false);
+    let store = frame
+        .vm
+        .data()
+        .get::<ListensModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let track_db_id = DbId(track_id);
+        let stats = resolve_stats(db, &[track_db_id], &principal, user_db_id, merge).await?;
+        let count = stats.counts.get(&track_db_id).copied().unwrap_or(0);
+        Ok(luau::Value::Integer(saturating_i64(count)))
+    }))
+}
+
+fn get_counts_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let track_ids: luau::Table = frame.args.read_named("track_ids")?;
+    let track_ids = parse_db_ids(frame.vm, &track_ids)?;
+    let user_db_id = frame.args.read_optional_named::<i64>("user_id")?.map(DbId);
+    let merge = frame
+        .args
+        .read_optional_named::<bool>("merge_unique_external_ids")?
+        .unwrap_or(false);
+    let store = frame
+        .vm
+        .data()
+        .get::<ListensModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let stats = resolve_stats(db, &track_ids, &principal, user_db_id, merge).await?;
+        Ok(luau::Value::TableData(dbid_map_to_table(&stats.counts)))
+    }))
+}
+
+fn get_stats_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let track_ids: luau::Table = frame.args.read_named("track_ids")?;
+    let track_ids = parse_db_ids(frame.vm, &track_ids)?;
+    let user_db_id = frame.args.read_optional_named::<i64>("user_id")?.map(DbId);
+    let merge = frame
+        .args
+        .read_optional_named::<bool>("merge_unique_external_ids")?
+        .unwrap_or(false);
+    let store = frame
+        .vm
+        .data()
+        .get::<ListensModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let stats = resolve_stats(db, &track_ids, &principal, user_db_id, merge).await?;
+        let mut table = luau::OwnedTable::with_capacity(0, 2);
+        table.set_field(
+            "counts",
+            luau::Value::TableData(dbid_map_to_table(&stats.counts)),
+        );
+        table.set_field(
+            "last_played",
+            luau::Value::TableData(dbid_map_to_table(&stats.last_played)),
+        );
+        Ok(luau::Value::TableData(table))
+    }))
+}
+
 async fn resolve_stats(
+    db: DbAsync,
     track_ids: &[DbId],
     principal: &Principal,
     user_db_id: Option<DbId>,
     merge_unique_external_ids: bool,
-) -> Result<ResolvedStats> {
-    let db = STATE.db.read().await;
+) -> luau::runtime::Result<ResolvedStats> {
+    let db = db.read().await;
 
     if !merge_unique_external_ids {
         let mut counts = HashMap::new();
@@ -49,18 +221,18 @@ async fn resolve_stats(
         for track_id in track_ids {
             counts.insert(*track_id, 0);
             if crate::routes::entity_accessible_to_principal(&db, principal, *track_id)
-                .map_err(mlua::Error::external)?
+                .map_err(crate::plugins::runtime_error)?
             {
                 accessible_track_ids.push(*track_id);
             }
         }
 
         let stats = db::listens::get_stats(&db, &accessible_track_ids, user_db_id)
-            .map_err(mlua::Error::external)?;
-        for s in stats {
-            counts.insert(s.db_id, s.count);
-            if let Some(lp) = s.last_played {
-                last_played.insert(s.db_id, lp);
+            .map_err(crate::plugins::runtime_error)?;
+        for stat in stats {
+            counts.insert(stat.db_id, stat.count);
+            if let Some(last) = stat.last_played {
+                last_played.insert(stat.db_id, last);
             }
         }
         return Ok(ResolvedStats {
@@ -74,14 +246,14 @@ async fn resolve_stats(
         registry.unique_track_id_pairs()
     };
 
-    let mut requested_merged_ids: Vec<(DbId, Vec<DbId>)> = Vec::new();
+    let mut requested_merged_ids = Vec::new();
     let mut merged_unique_ids = HashSet::new();
     let mut counts = HashMap::new();
 
     for track_id in track_ids {
         counts.insert(*track_id, 0);
         if !crate::routes::entity_accessible_to_principal(&db, principal, *track_id)
-            .map_err(mlua::Error::external)?
+            .map_err(crate::plugins::runtime_error)?
         {
             continue;
         }
@@ -90,11 +262,11 @@ async fn resolve_stats(
             *track_id,
             &unique_track_id_pairs,
         )
-        .map_err(mlua::Error::external)?;
+        .map_err(crate::plugins::runtime_error)?;
         let mut accessible_merged_ids = Vec::new();
         for merged_id in merged_ids {
             if crate::routes::entity_accessible_to_principal(&db, principal, merged_id)
-                .map_err(mlua::Error::external)?
+                .map_err(crate::plugins::runtime_error)?
             {
                 merged_unique_ids.insert(merged_id);
                 accessible_merged_ids.push(merged_id);
@@ -105,27 +277,27 @@ async fn resolve_stats(
 
     let merged_track_ids = merged_unique_ids.into_iter().collect::<Vec<_>>();
     let merged_stats = db::listens::get_stats(&db, &merged_track_ids, user_db_id)
-        .map_err(mlua::Error::external)?;
+        .map_err(crate::plugins::runtime_error)?;
     let merged_by_id: HashMap<DbId, &db::listens::ListenStats> =
-        merged_stats.iter().map(|s| (s.db_id, s)).collect();
+        merged_stats.iter().map(|stat| (stat.db_id, stat)).collect();
 
     let mut last_played = HashMap::new();
     for (requested_id, merged_ids) in requested_merged_ids {
         let mut total_count = 0u64;
         let mut max_last_played: Option<u64> = None;
         for merged_id in merged_ids {
-            if let Some(s) = merged_by_id.get(&merged_id) {
-                total_count = total_count.saturating_add(s.count);
-                if let Some(lp) = s.last_played {
-                    if lp > max_last_played.unwrap_or(0) {
-                        max_last_played = Some(lp);
-                    }
+            if let Some(stat) = merged_by_id.get(&merged_id) {
+                total_count = total_count.saturating_add(stat.count);
+                if let Some(last) = stat.last_played
+                    && last > max_last_played.unwrap_or(0)
+                {
+                    max_last_played = Some(last);
                 }
             }
         }
         counts.insert(requested_id, total_count);
-        if let Some(lp) = max_last_played {
-            last_played.insert(requested_id, lp);
+        if let Some(last) = max_last_played {
+            last_played.insert(requested_id, last);
         }
     }
 
@@ -135,82 +307,144 @@ async fn resolve_stats(
     })
 }
 
-fn dbid_map_to_table(lua: &Lua, map: &HashMap<DbId, u64>) -> Result<Table> {
-    let table = lua.create_table()?;
-    for (id, value) in map {
-        table.set(id.0, *value)?;
+fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
+    let mut values = Vec::new();
+    for (key, value) in table.pairs_raw(vm)? {
+        let Some(index) = array_index(key) else {
+            continue;
+        };
+        let Some(id) = db_id_value(value)? else {
+            continue;
+        };
+        values.push((index, id));
     }
-    Ok(table)
-}
+    values.sort_by_key(|(index, _)| *index);
 
-struct ListensModule;
-
-#[harmony_macros::module(
-    plugin_scoped,
-    name = "Listens",
-    local = "listens",
-    path = "lyra/listens"
-)]
-impl ListensModule {
-    /// Returns the listen count for a track.
-    pub(crate) async fn get_count(
-        #[harmony_context] caller: RequestCaller,
-        track_id: i64,
-        user_id: Option<i64>,
-        merge_unique_external_ids: Option<bool>,
-    ) -> Result<u64> {
-        if track_id <= 0 {
-            return Err(mlua::Error::runtime("track_id must be a positive id"));
+    let mut ids = Vec::new();
+    let mut seen = HashSet::new();
+    for (_, id) in values {
+        if seen.insert(id) {
+            ids.push(id);
         }
-
-        let user_db_id = user_id.map(DbId);
-        let merge = merge_unique_external_ids.unwrap_or(false);
-        let track_db_id = DbId(track_id);
-        let stats = resolve_stats(&[track_db_id], &caller.principal, user_db_id, merge).await?;
-        Ok(*stats.counts.get(&track_db_id).unwrap_or(&0))
     }
+    Ok(ids)
+}
 
-    /// Returns listen counts for many tracks.
-    #[harmony(args(track_ids: Vec<u64>, user_id: Option<i64>, merge_unique_external_ids: Option<bool>), returns(std::collections::BTreeMap<u64, u64>))]
-    pub(crate) async fn get_counts(
-        lua: Lua,
-        #[harmony_context] caller: RequestCaller,
-        track_ids: Table,
-        user_id: Option<i64>,
-        merge_unique_external_ids: Option<bool>,
-    ) -> Result<Table> {
-        let track_ids = parse_ids(track_ids)?;
-        let user_db_id = user_id.map(DbId);
-        let merge = merge_unique_external_ids.unwrap_or(false);
-        let stats = resolve_stats(&track_ids, &caller.principal, user_db_id, merge).await?;
-        dbid_map_to_table(&lua, &stats.counts)
-    }
-
-    /// Returns both counts and last-played timestamps in a single scan.
-    #[harmony(args(track_ids: Vec<u64>, user_id: Option<i64>, merge_unique_external_ids: Option<bool>), returns(std::collections::BTreeMap<String, std::collections::BTreeMap<u64, u64>>))]
-    pub(crate) async fn get_stats(
-        lua: Lua,
-        #[harmony_context] caller: RequestCaller,
-        track_ids: Table,
-        user_id: Option<i64>,
-        merge_unique_external_ids: Option<bool>,
-    ) -> Result<Table> {
-        let track_ids = parse_ids(track_ids)?;
-        let user_db_id = user_id.map(DbId);
-        let merge = merge_unique_external_ids.unwrap_or(false);
-        let stats = resolve_stats(&track_ids, &caller.principal, user_db_id, merge).await?;
-        let counts = dbid_map_to_table(&lua, &stats.counts)?;
-        let last_played = dbid_map_to_table(&lua, &stats.last_played)?;
-        let result = lua.create_table()?;
-        result.set("counts", counts)?;
-        result.set("last_played", last_played)?;
-        Ok(result)
+fn array_index(value: luau::Value) -> Option<i64> {
+    match value {
+        luau::Value::Integer(value) if value > 0 => Some(value),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
+            Some(value as i64)
+        }
+        _ => None,
     }
 }
 
-crate::plugins::plugin_surface_exports!(
-    ListensModule,
-    "lyra.listens",
-    "Read and record listen history.",
-    Medium
-);
+fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
+    match value {
+        luau::Value::Integer(value) if value > 0 => Ok(Some(DbId(value))),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
+            Ok(Some(DbId(value as i64)))
+        }
+        luau::Value::Integer(_) | luau::Value::Number(_) => Ok(None),
+        other => Err(crate::plugins::runtime_error(format!(
+            "id entries must be positive integers, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn dbid_map_to_table(map: &HashMap<DbId, u64>) -> luau::OwnedTable {
+    let mut table = luau::OwnedTable::with_entry_capacity(0, 0, map.len());
+    for (id, value) in map {
+        let value = luau::Value::Integer(saturating_i64(*value));
+        table.set_key(luau::Value::Integer(id.0), value.clone());
+        table.set_key(luau::Value::Number(id.0 as f64), value);
+    }
+    table
+}
+
+fn saturating_i64(value: u64) -> i64 {
+    value.min(i64::MAX as u64) as i64
+}
+
+fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
+    ParameterDescriptor {
+        name,
+        ty,
+        description: None,
+        variadic: false,
+    }
+}
+
+fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        name: "Listens",
+        local_name: "listens",
+        description: None,
+        fields: Vec::new(),
+        functions: vec![
+            ModuleFunctionDescriptor {
+                path: vec!["get_count"],
+                description: None,
+                params: vec![
+                    param("track_id", i64::luau_type()),
+                    param("user_id", Option::<i64>::luau_type()),
+                    param("merge_unique_external_ids", Option::<bool>::luau_type()),
+                ],
+                returns: vec![u64::luau_type()],
+                yields: false,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get_counts"],
+                description: None,
+                params: vec![
+                    param("track_ids", Vec::<u64>::luau_type()),
+                    param("user_id", Option::<i64>::luau_type()),
+                    param("merge_unique_external_ids", Option::<bool>::luau_type()),
+                ],
+                returns: vec![LuauType::map(u64::luau_type(), u64::luau_type())],
+                yields: false,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get_stats"],
+                description: None,
+                params: vec![
+                    param("track_ids", Vec::<u64>::luau_type()),
+                    param("user_id", Option::<i64>::luau_type()),
+                    param("merge_unique_external_ids", Option::<bool>::luau_type()),
+                ],
+                returns: vec![LuauType::map(
+                    String::luau_type(),
+                    LuauType::map(u64::luau_type(), u64::luau_type()),
+                )],
+                yields: false,
+            },
+        ],
+    }
+}
+
+pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
+    render_definition_file_with_support(&module_descriptor(), &[], &[], &[])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renders_listens_module_definition() {
+        let rendered = render_luau_definition().expect("render lyra/listens docs");
+
+        assert!(rendered.contains("@class Listens"));
+        assert!(rendered.contains(
+            "function listens.get_count(track_id: number, user_id: number?, merge_unique_external_ids: boolean?): number"
+        ));
+        assert!(rendered.contains(
+            "function listens.get_counts(track_ids: {number}, user_id: number?, merge_unique_external_ids: boolean?): { [number]: number }"
+        ));
+        assert!(rendered.contains(
+            "function listens.get_stats(track_ids: {number}, user_id: number?, merge_unique_external_ids: boolean?): { [string]: { [number]: number } }"
+        ));
+    }
+}

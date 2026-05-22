@@ -263,7 +263,7 @@ pub(crate) fn get_by_id(db: &impl DbAccess, tag_id: DbId) -> anyhow::Result<Opti
     super::graph::fetch_typed_by_id(db, tag_id, "Tag")
 }
 
-fn tag_node_id_raw(tag: &Tag) -> i64 {
+fn tag_node_id_value(tag: &Tag) -> i64 {
     tag.db_id
         .as_ref()
         .map(|id| DbId::from(id.clone()).0)
@@ -352,7 +352,7 @@ fn sort_tags(tags: &mut [Tag]) {
     tags.sort_by(|a, b| {
         b.created_at_ms
             .cmp(&a.created_at_ms)
-            .then_with(|| tag_node_id_raw(a).cmp(&tag_node_id_raw(b)))
+            .then_with(|| tag_node_id_value(a).cmp(&tag_node_id_value(b)))
     });
 }
 
@@ -586,7 +586,7 @@ pub(crate) fn list_for_user(
 
     if let Some(cursor) = cursor {
         tags.retain(|tag| {
-            let tag_id = tag_node_id_raw(tag);
+            let tag_id = tag_node_id_value(tag);
             match tag.created_at_ms.cmp(&cursor.created_at_ms) {
                 std::cmp::Ordering::Less => true,
                 std::cmp::Ordering::Equal => tag_id > cursor.tag_db_id,
@@ -601,7 +601,7 @@ pub(crate) fn list_for_user(
         if let Some(last) = tags.last() {
             next_cursor = Some(TagListCursor {
                 created_at_ms: last.created_at_ms,
-                tag_db_id: tag_node_id_raw(last),
+                tag_db_id: tag_node_id_value(last),
             });
         }
     }

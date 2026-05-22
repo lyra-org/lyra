@@ -15,11 +15,10 @@ harmony-crypt = { path = "../harmony-crypt" }
 harmony-globals = { path = "../harmony-globals" }
 harmony-json = { path = "../harmony-json" }
 harmony-http = { path = "../harmony-http" }
-harmony-luau = { path = "../harmony-luau" }
+harmony-luau = { path = "../harmony-luau", features = ["serde"] }
 harmony-macros = { path = "../harmony-macros" }
 harmony-task = { path = "../harmony-task" }
 harmony-net = { path = "../harmony-net" }
-mlua = { workspace = true, features = ["send", "serialize"] }
 agdb = { git = "https://github.com/agnesoft/agdb.git", features = ["serde"] }
 anyhow = { workspace = true }
 argon2 = { version = "0.5", features = ["std", "password-hash"] }
@@ -41,7 +40,7 @@ schemars = { version = "1.2.1", features = ["derive"] }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal"] }
 tokio-stream = { version = "0.1", default-features = false }
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
-futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+futures = { version = "0.3", default-features = false, features = ["std", "async-await", "executor"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["trace", "fs", "cors"] }
 tracing = { workspace = true }

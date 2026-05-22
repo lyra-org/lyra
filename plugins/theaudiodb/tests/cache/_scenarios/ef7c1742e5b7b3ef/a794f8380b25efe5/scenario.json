@@ -1,7 +1,12 @@
 {
   "test_name": "leo_nine_lisa",
   "scenario_id": "a794f8380b25efe5",
-  "cache_keys": [
-    "4c3a503ac2a4c093"
+  "responses": [
+    {
+      "cache_key": "4c3a503ac2a4c093",
+      "url": "https://www.theaudiodb.com/api/v1/json/123/searchalbum.php?a=LEO-NiNE&s=LiSA",
+      "status_code": 200,
+      "body_hash": "ff7ccbbf5f8b4f51"
+    }
   ]
 }

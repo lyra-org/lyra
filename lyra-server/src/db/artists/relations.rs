@@ -29,6 +29,7 @@ use super::super::{
     NodeId,
 };
 
+#[harmony_macros::userdata(name = "ArtistRelationType")]
 #[derive(
     Clone,
     Copy,
@@ -43,7 +44,6 @@ use super::super::{
     DbTypeMarker,
 )]
 #[serde(rename_all = "snake_case")]
-#[harmony_macros::enumeration]
 pub(crate) enum ArtistRelationType {
     #[default]
     VoiceActor,
@@ -96,15 +96,23 @@ impl TryFrom<DbValue> for ArtistRelationType {
     }
 }
 
-harmony_macros::compile!(type_path = ArtistRelationType, variants = true);
-
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug, JsonSchema)]
-#[harmony_macros::structure]
 pub(crate) struct ArtistRelation {
     pub(crate) db_id: Option<NodeId>,
     pub(crate) relation_type: ArtistRelationType,
     pub(crate) attributes: Option<String>,
 }
+
+impl_luau_record_userdata!(
+    ArtistRelation,
+    "ArtistRelation",
+    fields {
+        db_id: Option<NodeId> as "db_id",
+        relation_type: ArtistRelationType as "relation_type",
+        attributes: Option<String> as "attributes",
+    },
+    methods {}
+);
 
 pub(crate) fn link(
     db: &mut DbAny,

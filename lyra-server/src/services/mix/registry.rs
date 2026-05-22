@@ -19,7 +19,6 @@ use tokio::sync::RwLock;
 
 use super::super::options::OptionDeclaration;
 use crate::plugins::lifecycle::{
-    PluginFunctionHandle,
     PluginId,
     PluginScopedInner,
     ScopedRegistry,
@@ -49,7 +48,7 @@ pub(crate) struct MixRegistry {
 
 #[derive(Default)]
 struct MixProviderState {
-    handlers: HashMap<MixSeedType, PluginFunctionHandle>,
+    handlers: HashMap<MixSeedType, u64>,
     options: Vec<OptionDeclaration>,
 }
 
@@ -86,24 +85,25 @@ impl MixRegistry {
         self.providers.get_mut(&plugin_id)?.get_mut(provider_id)
     }
 
-    pub(crate) fn set_handler(
+    pub(crate) fn set_seed_callback(
         &mut self,
         provider_id: &str,
         seed_type: MixSeedType,
-        handler: PluginFunctionHandle,
+        handler_id: u64,
     ) {
         if let Some(provider) = self.state_mut(provider_id) {
-            provider.handlers.insert(seed_type, handler);
+            provider.handlers.insert(seed_type, handler_id);
         }
     }
 
-    pub(crate) fn get_handler(
+    pub(crate) fn get_seed_callback(
         &self,
         provider_id: &str,
         seed_type: MixSeedType,
-    ) -> Option<&PluginFunctionHandle> {
+    ) -> Option<u64> {
         self.state(provider_id)
             .and_then(|p| p.handlers.get(&seed_type))
+            .copied()
     }
 
     pub(crate) fn has_handler(&self, provider_id: &str, seed_type: MixSeedType) -> bool {

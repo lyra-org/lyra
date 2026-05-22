@@ -85,9 +85,7 @@ pub(crate) fn extract_raw_tags_from_lofty(
     mapping::apply_mapping(tag, tagged_file, file_path, config)
 }
 
-/// Payloads are read only via `Debug` for tracing — hence `dead_code`.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(crate) enum SkipReason {
     ReadFailed(String),
     TaskFailed(String),
@@ -122,7 +120,7 @@ pub(crate) fn log_skip_summary(skipped: &[SkipRecord]) {
             format!(
                 "{} ({})",
                 record.path.display(),
-                skip_reason_tag(&record.reason),
+                skip_reason_summary(&record.reason),
             )
         })
         .collect();
@@ -133,13 +131,15 @@ pub(crate) fn log_skip_summary(skipped: &[SkipRecord]) {
     );
 }
 
-fn skip_reason_tag(reason: &SkipReason) -> &'static str {
+fn skip_reason_summary(reason: &SkipReason) -> String {
     match reason {
-        SkipReason::ReadFailed(_) => "read_failed",
-        SkipReason::TaskFailed(_) => "task_failed",
-        SkipReason::RequiredFieldEmpty(_) => "required_field_empty",
-        SkipReason::CueAlreadyClaimed => "cue_already_claimed",
-        SkipReason::CueParseFailed(_) => "cue_parse_failed",
+        SkipReason::ReadFailed(error) => format!("read_failed: {error}"),
+        SkipReason::TaskFailed(error) => format!("task_failed: {error}"),
+        SkipReason::RequiredFieldEmpty(missing) => {
+            format!("required_field_empty: {} missing fields", missing.len())
+        }
+        SkipReason::CueAlreadyClaimed => "cue_already_claimed".to_string(),
+        SkipReason::CueParseFailed(error) => format!("cue_parse_failed: {error}"),
     }
 }
 

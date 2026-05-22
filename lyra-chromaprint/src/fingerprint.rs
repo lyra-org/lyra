@@ -3,8 +3,6 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-#![allow(dead_code)]
-
 use std::f64::consts::PI;
 use std::sync::LazyLock;
 
