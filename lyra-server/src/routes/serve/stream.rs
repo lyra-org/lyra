@@ -23,14 +23,12 @@ use axum::{
 };
 use bytes::Bytes;
 use lyra_ffmpeg::{
-    AVERROR,
-    AVERROR_EOF,
-    AVSEEK_SIZE,
     AudioCodec,
-    ENOSYS,
-    ESPIPE,
     FfmpegContext,
     Output,
+    SeekRequest,
+    SeekResult,
+    WriteResult,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -225,24 +223,24 @@ pub(crate) async fn stream_track_response(
     let write_callback = {
         let sync_tx = sync_tx.clone();
         let shutdown = shutdown.clone();
-        move |buf: &[u8]| -> i32 {
+        move |buf: &[u8]| -> WriteResult {
             if shutdown.is_cancelled() {
-                return AVERROR_EOF;
+                return WriteResult::Finished;
             }
             let bytes = buf.to_vec();
-            let len = bytes.len() as i32;
+            let len = bytes.len();
             match sync_tx.send(bytes) {
-                Ok(()) => len,
-                Err(_) => AVERROR_EOF,
+                Ok(()) => WriteResult::Wrote(len),
+                Err(_) => WriteResult::Finished,
             }
         }
     };
 
-    let seek_callback = move |_offset: i64, whence: i32| -> i64 {
-        if whence == AVSEEK_SIZE {
-            return AVERROR(ENOSYS) as i64;
+    let seek_callback = move |request: SeekRequest| -> SeekResult {
+        if matches!(request, SeekRequest::Size) {
+            return SeekResult::Unsupported;
         }
-        AVERROR(ESPIPE) as i64
+        SeekResult::Unseekable
     };
 
     let output = Output::with_callback(write_callback)
@@ -312,11 +310,8 @@ pub(crate) async fn stream_track_response(
         );
         match result {
             Err(e) => {
-                let msg = e.to_string();
-                let eof_str = AVERROR_EOF.to_string();
                 if client_disconnected_for_worker.load(Ordering::Relaxed)
-                    || msg.contains("End of file")
-                    || msg.contains(&eof_str)
+                    || matches!(e, lyra_ffmpeg::Error::OutputStopped)
                 {
                     tracing::debug!("stream ended (client disconnected)");
                 } else {

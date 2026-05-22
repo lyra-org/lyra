@@ -7,4 +7,3 @@ license-file = "../LICENSE"
 [dependencies]
 ffmpeg-sys-next = { workspace = true }
 thiserror = { workspace = true }
-scopeguard = "1"

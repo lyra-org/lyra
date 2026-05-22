@@ -6,6 +6,7 @@
 use lyra_ffmpeg::{
     AudioCodec,
     AudioVbrMode,
+    HlsSegmentType,
     Output,
 };
 use std::path::Path as FsPath;
@@ -19,9 +20,8 @@ pub(crate) const HLS_START_NUMBER: u32 = 0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct HlsCodecProfile {
     pub(crate) codec: AudioCodec,
-    pub(crate) ffmpeg_codec_str: &'static str,
     pub(crate) is_copy: bool,
-    pub(crate) segment_type: &'static str,
+    pub(crate) segment_type: HlsSegmentType,
     pub(crate) segment_extension: &'static str,
     pub(crate) init_filename: Option<&'static str>,
 }
@@ -58,25 +58,22 @@ impl HlsCodecProfile {
         match codec.unwrap_or(AudioCodec::Aac) {
             AudioCodec::Aac => Ok(Self {
                 codec: AudioCodec::Aac,
-                ffmpeg_codec_str: AudioCodec::Aac.ffmpeg_encoder().expect("aac has encoder"),
                 is_copy: false,
-                segment_type: "mpegts",
+                segment_type: HlsSegmentType::MpegTs,
                 segment_extension: "ts",
                 init_filename: None,
             }),
             AudioCodec::Alac => Ok(Self {
                 codec: AudioCodec::Alac,
-                ffmpeg_codec_str: AudioCodec::Alac.ffmpeg_encoder().expect("alac has encoder"),
                 is_copy: false,
-                segment_type: "fmp4",
+                segment_type: HlsSegmentType::FragmentedMp4,
                 segment_extension: "m4s",
                 init_filename: Some("init.mp4"),
             }),
             AudioCodec::Flac => Ok(Self {
                 codec: AudioCodec::Flac,
-                ffmpeg_codec_str: AudioCodec::Flac.ffmpeg_encoder().expect("flac has encoder"),
                 is_copy: false,
-                segment_type: "fmp4",
+                segment_type: HlsSegmentType::FragmentedMp4,
                 segment_extension: "m4s",
                 init_filename: Some("init.mp4"),
             }),
@@ -88,25 +85,22 @@ impl HlsCodecProfile {
         match codec {
             AudioCodec::Aac => Ok(Self {
                 codec: AudioCodec::Aac,
-                ffmpeg_codec_str: "copy",
                 is_copy: true,
-                segment_type: "mpegts",
+                segment_type: HlsSegmentType::MpegTs,
                 segment_extension: "ts",
                 init_filename: None,
             }),
             AudioCodec::Alac => Ok(Self {
                 codec: AudioCodec::Alac,
-                ffmpeg_codec_str: "copy",
                 is_copy: true,
-                segment_type: "fmp4",
+                segment_type: HlsSegmentType::FragmentedMp4,
                 segment_extension: "m4s",
                 init_filename: Some("init.mp4"),
             }),
             AudioCodec::Flac => Ok(Self {
                 codec: AudioCodec::Flac,
-                ffmpeg_codec_str: "copy",
                 is_copy: true,
-                segment_type: "fmp4",
+                segment_type: HlsSegmentType::FragmentedMp4,
                 segment_extension: "m4s",
                 init_filename: Some("init.mp4"),
             }),
@@ -144,14 +138,12 @@ fn apply_hls_rate_control(output: Output, config: HlsOutputConfig) -> Output {
         )
     {
         return match mode {
-            AudioVbrMode::Quality(quality) => output.set_audio_global_quality(quality),
-            AudioVbrMode::Abr => output
-                .set_audio_codec_opt("abr", "1")
-                .set_audio_codec_opt("b", format!("{audio_bitrate_kbps}k")),
+            AudioVbrMode::Quality(quality) => output.audio_global_quality(quality),
+            AudioVbrMode::Abr => output.audio_abr_bitrate_kbps(audio_bitrate_kbps),
         };
     }
 
-    output.set_audio_codec_opt("b", format!("{audio_bitrate_kbps}k"))
+    output.audio_bitrate_kbps(audio_bitrate_kbps)
 }
 
 pub(crate) fn build_hls_output(
@@ -159,34 +151,34 @@ pub(crate) fn build_hls_output(
     segment_pattern: &FsPath,
     config: HlsOutputConfig,
 ) -> Output {
-    let mut output = Output::new(playlist_path.to_string_lossy().into_owned())
-        .set_format("hls")
-        .set_audio_codec(config.profile.ffmpeg_codec_str)
-        .set_format_opt("hls_time", HLS_SEGMENT_TIME_SECONDS.to_string())
-        .set_format_opt("hls_playlist_type", "vod")
-        .set_format_opt("hls_list_size", "0")
-        .set_format_opt("start_number", HLS_START_NUMBER.to_string())
-        .set_format_opt("hls_flags", "independent_segments+temp_file")
-        .set_format_opt("hls_segment_type", config.profile.segment_type)
-        .set_format_opt(
-            "hls_segment_filename",
-            segment_pattern.to_string_lossy().into_owned(),
-        );
+    let output_codec = if config.profile.is_copy {
+        AudioCodec::Copy
+    } else {
+        config.profile.codec
+    };
+    let mut output = Output::hls_vod(
+        playlist_path,
+        segment_pattern,
+        config.profile.segment_type,
+        HLS_SEGMENT_TIME_SECONDS,
+        HLS_START_NUMBER,
+    )
+    .codec(output_codec);
 
     if !config.profile.is_copy {
         output = apply_hls_rate_control(output, config);
     }
 
     if let Some(sample_rate_hz) = config.sample_rate_hz {
-        output = output.set_audio_sample_rate(sample_rate_hz as i32);
+        output = output.sample_rate_hz(sample_rate_hz);
     }
 
     if let Some(channels) = config.channels {
-        output = output.set_audio_channels(channels as i32);
+        output = output.channels(channels);
     }
 
     if let Some(init_filename) = config.profile.init_filename {
-        output = output.set_format_opt("hls_fmp4_init_filename", init_filename);
+        output = output.hls_fmp4_init_filename(init_filename);
     }
 
     output
@@ -211,7 +203,7 @@ mod tests {
         let profile = HlsCodecProfile::from_requested_codecs(&[]).expect("default codec profile");
         assert!(matches!(profile.codec, AudioCodec::Aac));
         assert!(!profile.is_copy);
-        assert_eq!(profile.segment_type, "mpegts");
+        assert_eq!(profile.segment_type, HlsSegmentType::MpegTs);
         assert_eq!(profile.segment_extension, "ts");
         assert!(profile.init_filename.is_none());
     }
@@ -220,13 +212,13 @@ mod tests {
     fn codec_profile_supports_fmp4_codecs() {
         let alac =
             HlsCodecProfile::from_requested_codecs(&[AudioCodec::Alac]).expect("alac profile");
-        assert_eq!(alac.segment_type, "fmp4");
+        assert_eq!(alac.segment_type, HlsSegmentType::FragmentedMp4);
         assert_eq!(alac.segment_extension, "m4s");
         assert_eq!(alac.init_filename, Some("init.mp4"));
 
         let flac =
             HlsCodecProfile::from_requested_codecs(&[AudioCodec::Flac]).expect("flac profile");
-        assert_eq!(flac.segment_type, "fmp4");
+        assert_eq!(flac.segment_type, HlsSegmentType::FragmentedMp4);
         assert_eq!(flac.segment_extension, "m4s");
         assert_eq!(flac.init_filename, Some("init.mp4"));
     }
@@ -266,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn hls_output_uses_vod_playlists_for_stored_audio() {
+    fn hls_output_applies_default_bitrate_for_stored_audio() {
         let profile =
             HlsCodecProfile::from_requested_codecs(&[AudioCodec::Aac]).expect("aac profile");
         let output = build_hls_output(
@@ -275,24 +267,7 @@ mod tests {
             HlsOutputConfig::new(profile, Some(HLS_AUDIO_BITRATE_KBPS), None, None, false),
         );
 
-        assert_eq!(
-            output
-                .get_format_opts()
-                .get("hls_playlist_type")
-                .map(String::as_str),
-            Some("vod")
-        );
-        assert_eq!(
-            output
-                .get_format_opts()
-                .get("start_number")
-                .map(String::as_str),
-            Some("0")
-        );
-        assert_eq!(
-            output.get_audio_codec_opts().get("b").map(String::as_str),
-            Some("192k")
-        );
+        assert_eq!(output.configured_audio_bitrate_kbps(), Some(192));
     }
 
     #[test]
@@ -305,19 +280,15 @@ mod tests {
             HlsOutputConfig::new(profile, Some(96), Some(44_100), Some(2), false),
         );
 
-        assert_eq!(
-            output.get_audio_codec_opts().get("b").map(String::as_str),
-            Some("96k")
-        );
-        assert_eq!(output.get_audio_sample_rate(), Some(44_100));
-        assert_eq!(output.get_audio_channels(), Some(2));
+        assert_eq!(output.configured_audio_bitrate_kbps(), Some(96));
+        assert_eq!(output.configured_sample_rate_hz(), Some(44_100));
+        assert_eq!(output.configured_channels(), Some(2));
     }
 
     #[test]
     fn codec_profile_supports_copy_for_hls_compatible_sources() {
         let aac = HlsCodecProfile::for_copy_source(AudioCodec::Aac).expect("aac copy profile");
         assert!(aac.is_copy);
-        assert_eq!(aac.ffmpeg_codec_str, "copy");
         assert_eq!(aac.segment_extension, "ts");
 
         let flac = HlsCodecProfile::for_copy_source(AudioCodec::Flac).expect("flac copy profile");
@@ -336,7 +307,7 @@ mod tests {
             HlsOutputConfig::new(profile, Some(128), None, Some(2), true),
         );
 
-        assert_eq!(output.get_audio_global_quality(), Some(4));
-        assert!(output.get_audio_codec_opts().get("b").is_none());
+        assert_eq!(output.configured_audio_global_quality(), Some(4));
+        assert_eq!(output.configured_audio_bitrate_kbps(), None);
     }
 }
