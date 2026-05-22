@@ -1,0 +1,369 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/30. the city mouse and the country mouse.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "the city mouse and the country mouse"
+disc = 1
+disc_total = 1
+track = 30
+track_total = 30
+duration_ms = 158720
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/29. the secret.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "the secret"
+disc = 1
+disc_total = 1
+track = 29
+track_total = 30
+duration_ms = 79346
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/28. Reze.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "Reze"
+disc = 1
+disc_total = 1
+track = 28
+track_total = 30
+duration_ms = 74760
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/27. in the sea.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "in the sea"
+disc = 1
+disc_total = 1
+track = 27
+track_total = 30
+duration_ms = 66253
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/26. dance with chainsaw.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "dance with chainsaw"
+disc = 1
+disc_total = 1
+track = 26
+track_total = 30
+duration_ms = 49773
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/25. Bomb.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "Bomb"
+disc = 1
+disc_total = 1
+track = 25
+track_total = 30
+duration_ms = 82200
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/24. edge of chainsaw (typhoon version).flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "edge of chainsaw (typhoon version)"
+disc = 1
+disc_total = 1
+track = 24
+track_total = 30
+duration_ms = 75346
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/23. eye of the typhoon.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "eye of the typhoon"
+disc = 1
+disc_total = 1
+track = 23
+track_total = 30
+duration_ms = 62600
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/22. Typhoon Devil.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "Typhoon Devil"
+disc = 1
+disc_total = 1
+track = 22
+track_total = 30
+duration_ms = 137426
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/21. ride the storm.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "ride the storm"
+disc = 1
+disc_total = 1
+track = 21
+track_total = 30
+duration_ms = 117640
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/20. stroke of genius.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "stroke of genius"
+disc = 1
+disc_total = 1
+track = 20
+track_total = 30
+duration_ms = 47093
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/19. sword battle.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "sword battle"
+disc = 1
+disc_total = 1
+track = 19
+track_total = 30
+duration_ms = 53200
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/18. leave the lights.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "leave the lights"
+disc = 1
+disc_total = 1
+track = 18
+track_total = 30
+duration_ms = 53093
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/17. flashforward.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "flashforward"
+disc = 1
+disc_total = 1
+track = 17
+track_total = 30
+duration_ms = 45586
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/16. her strike.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "her strike"
+disc = 1
+disc_total = 1
+track = 16
+track_total = 30
+duration_ms = 67920
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/15. she is coming.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "she is coming"
+disc = 1
+disc_total = 1
+track = 15
+track_total = 30
+duration_ms = 69080
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/14. sweet danger.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "sweet danger"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 30
+duration_ms = 201626
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/13. slow summer eve.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "slow summer eve"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 30
+duration_ms = 89893
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/12. ジェーンは教会で眠った.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["上田麗奈"]
+title = "ジェーンは教会で眠った"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 30
+duration_ms = 83026
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/11. two storms.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "two storms"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 30
+duration_ms = 105280
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/10. fable.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "fable"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 30
+duration_ms = 70333
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/09. in the pool.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "in the pool"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 30
+duration_ms = 245346
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/08. the skin.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "the skin"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 30
+duration_ms = 112066
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/07. parallel lines.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "parallel lines"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 30
+duration_ms = 28520
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/06. past.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "past"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 30
+duration_ms = 73173
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/05. daydream.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "daydream"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 30
+duration_ms = 24840
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/04. first glance.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "first glance"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 30
+duration_ms = 74186
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/03. silly walk.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "silly walk"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 30
+duration_ms = 114986
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/02. our film.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "our film"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 30
+duration_ms = 69680
+
+[[raw_tags]]
+file_path = "牛尾憲輔 - CHAINSAW MAN THE MOVIE： REZE ARC original soundtrack -summer's end- (2025) {mappa records, IXCL-10001, CD} [FLAC]/01. from below with love.flac"
+album = "CHAINSAW MAN THE MOVIE: REZE ARC original soundtrack -summer's end-"
+album_artists = ["牛尾憲輔"]
+artists = ["牛尾憲輔"]
+title = "from below with love"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 30
+duration_ms = 67613
+
+[expect.release]
+ids = { release_group_id = "bc0bfa64-a0da-47a2-8ef5-2f1e499e6ed5" }
