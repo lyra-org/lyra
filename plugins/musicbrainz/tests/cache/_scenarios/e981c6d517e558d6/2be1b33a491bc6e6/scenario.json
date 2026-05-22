@@ -1,0 +1,78 @@
+{
+  "test_name": "不可思議のカルテ_桜島麻衣古賀朋絵双葉理央豊浜のどか梓川かえで牧之原翔子cv瀬戸麻沙美東山奈央種﨑敦美内田真礼久保ユリカ水瀬いのり",
+  "scenario_id": "2be1b33a491bc6e6",
+  "responses": [
+    {
+      "cache_key": "364569aa96993d39",
+      "url": "https://musicbrainz.org/ws/2/work/2f05cdca-935d-45f5-b1b7-2cc0c3e5084e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c6d1e31110406dbf"
+    },
+    {
+      "cache_key": "4f1eac332bc794eb",
+      "url": "https://musicbrainz.org/ws/2/work/2eb7655d-d7fb-42f6-ab44-7c33dcc21c04?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cfb09bac23734e11"
+    },
+    {
+      "cache_key": "5f3f8214e03eeaaf",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E4%B8%8D%E5%8F%AF%E6%80%9D%E8%AD%B0%E3%81%AE%E3%82%AB%E3%83%AB%E3%83%86&limit=100",
+      "status_code": 200,
+      "body_hash": "170ab715046b3030"
+    },
+    {
+      "cache_key": "6812e195b956ad21",
+      "url": "https://musicbrainz.org/ws/2/artist/3e67bf58-ebcf-4dc8-a029-d210e7b26f25?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "bd4831856e678ecd"
+    },
+    {
+      "cache_key": "a3ebf092203671db",
+      "url": "https://musicbrainz.org/ws/2/artist/2354b9b5-32ca-4f57-8cba-4c3fe528f95b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "314f4a9de56c2683"
+    },
+    {
+      "cache_key": "b6c8a368cce1b0b2",
+      "url": "https://musicbrainz.org/ws/2/artist/f1cd2745-fbcb-456f-8d39-7cafc4d4605f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "bd9b1bd3da92bfc2"
+    },
+    {
+      "cache_key": "c278ba21419bbac4",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=e88c7d3c-20ee-4a2e-b6b1-9ece0514a5fd&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "accbc6b4477ea167"
+    },
+    {
+      "cache_key": "c732c191038fea9d",
+      "url": "https://musicbrainz.org/ws/2/artist/46019cc1-e98e-43eb-88fe-99993aa0413d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "72549d3be9d9d1a9"
+    },
+    {
+      "cache_key": "cc2892e4564f3e55",
+      "url": "https://musicbrainz.org/ws/2/artist/8b845230-334e-46bd-bce0-238119d4d9d7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6aee10ad38875afa"
+    },
+    {
+      "cache_key": "d652a14ff9cd9883",
+      "url": "https://musicbrainz.org/ws/2/artist/3e16f7ba-517d-4bd5-8777-dc427e3c501d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b09c8881a6950bd9"
+    },
+    {
+      "cache_key": "dc08fdbb74c6243c",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%A1%9C%E5%B3%B6%E9%BA%BB%E8%A1%A3",
+      "status_code": 200,
+      "body_hash": "6c2fcfb0e9806415"
+    },
+    {
+      "cache_key": "f42666fffe82edef",
+      "url": "https://musicbrainz.org/ws/2/artist/8153df53-41f3-4fa8-91c6-340ade834387?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9f753157caded044"
+    }
+  ]
+}
