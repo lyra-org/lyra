@@ -706,19 +706,19 @@ end
 
 provider:id({
 	id = "artist_id",
-	entity = "artist",
+	entity = ET.Artist,
 	unique = true,
 }, redirect_url_generator("artist"))
 
 provider:id({
 	id = "album_id",
-	entity = "release",
+	entity = ET.Release,
 	unique = true,
 }, redirect_url_generator("album"))
 
 provider:id({
 	id = "track_id",
-	entity = "track",
+	entity = ET.Track,
 	unique = true,
 }, redirect_url_generator("track"))
 

@@ -352,10 +352,10 @@ local function single_cover_candidates_payload(url: string): ProviderCoverResult
 end
 
 local id_specs: { ProviderIdSpec } = {
-	{ id_type = "release", entity = "release", unique = true },
-	{ id_type = "release-group", entity = "release" },
-	{ id_type = "artist", entity = "artist" },
-	{ id_type = "recording", entity = "track", unique = true },
+	{ id_type = "release", entity = ET.Release, unique = true },
+	{ id_type = "release-group", entity = ET.Release },
+	{ id_type = "artist", entity = ET.Artist },
+	{ id_type = "recording", entity = ET.Track, unique = true },
 }
 
 for _, id_spec in id_specs do
@@ -498,7 +498,7 @@ local acoustid_deps: acoustid.ResolveDeps = {
 
 provider:id({
 	id = "acoustid_track_id",
-	entity = "track",
+	entity = ET.Track,
 }, "https://acoustid.org/track/{id}")
 
 provider:declare_option({
