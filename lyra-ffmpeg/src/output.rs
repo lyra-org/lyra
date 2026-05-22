@@ -1,0 +1,387 @@
+// This Source Code Form is subject to the terms of the Lyra Public License,
+// v1.0. If a copy of the Lyra Public License was not distributed with this file,
+// You can obtain one here:
+// www.meshiplaw.com/lyra.
+
+use std::collections::HashMap;
+
+use crate::audio::{
+    AudioCodec,
+    AudioFormat,
+};
+use ffmpeg_sys_next::AVSampleFormat;
+
+pub(crate) type WriteCallback = Box<dyn FnMut(&[u8]) -> WriteResult + Send>;
+pub(crate) type SeekCallback = Box<dyn FnMut(SeekRequest) -> SeekResult + Send>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SampleFormat {
+    U8,
+    S16,
+    S32,
+    Flt,
+    Dbl,
+    U8P,
+    S16P,
+    S32P,
+    FltP,
+    DblP,
+    S64,
+    S64P,
+}
+
+impl SampleFormat {
+    pub(crate) fn as_ffmpeg(self) -> AVSampleFormat {
+        match self {
+            Self::U8 => AVSampleFormat::AV_SAMPLE_FMT_U8,
+            Self::S16 => AVSampleFormat::AV_SAMPLE_FMT_S16,
+            Self::S32 => AVSampleFormat::AV_SAMPLE_FMT_S32,
+            Self::Flt => AVSampleFormat::AV_SAMPLE_FMT_FLT,
+            Self::Dbl => AVSampleFormat::AV_SAMPLE_FMT_DBL,
+            Self::U8P => AVSampleFormat::AV_SAMPLE_FMT_U8P,
+            Self::S16P => AVSampleFormat::AV_SAMPLE_FMT_S16P,
+            Self::S32P => AVSampleFormat::AV_SAMPLE_FMT_S32P,
+            Self::FltP => AVSampleFormat::AV_SAMPLE_FMT_FLTP,
+            Self::DblP => AVSampleFormat::AV_SAMPLE_FMT_DBLP,
+            Self::S64 => AVSampleFormat::AV_SAMPLE_FMT_S64,
+            Self::S64P => AVSampleFormat::AV_SAMPLE_FMT_S64P,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WriteResult {
+    Wrote(usize),
+    Finished,
+    Error(String),
+}
+
+impl WriteResult {
+    pub fn error(message: impl Into<String>) -> Self {
+        Self::Error(message.into())
+    }
+}
+
+impl From<usize> for WriteResult {
+    fn from(value: usize) -> Self {
+        Self::Wrote(value)
+    }
+}
+
+impl From<std::io::Result<usize>> for WriteResult {
+    fn from(value: std::io::Result<usize>) -> Self {
+        match value {
+            Ok(bytes) => Self::Wrote(bytes),
+            Err(err) => Self::Error(err.to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeekRequest {
+    Start(i64),
+    Current(i64),
+    End(i64),
+    Size,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SeekResult {
+    Position(i64),
+    Unseekable,
+    Unsupported,
+    Error(String),
+}
+
+impl SeekResult {
+    pub fn error(message: impl Into<String>) -> Self {
+        Self::Error(message.into())
+    }
+}
+
+impl From<i64> for SeekResult {
+    fn from(value: i64) -> Self {
+        Self::Position(value)
+    }
+}
+
+impl From<std::io::Result<u64>> for SeekResult {
+    fn from(value: std::io::Result<u64>) -> Self {
+        match value {
+            Ok(position) if position <= i64::MAX as u64 => Self::Position(position as i64),
+            Ok(_) => Self::Error("seek position exceeds i64::MAX".to_string()),
+            Err(err) => Self::Error(err.to_string()),
+        }
+    }
+}
+
+pub struct Output {
+    pub(crate) url: Option<String>,
+    pub(crate) write_callback: Option<WriteCallback>,
+    pub(crate) seek_callback: Option<SeekCallback>,
+    pub(crate) format: Option<String>,
+    pub(crate) format_kind: Option<AudioFormat>,
+    pub(crate) audio_codec: Option<String>,
+    pub(crate) audio_codec_kind: Option<AudioCodec>,
+    pub(crate) audio_codec_opts: HashMap<String, String>,
+    pub(crate) audio_global_quality: Option<i32>,
+    pub(crate) format_opts: HashMap<String, String>,
+    pub(crate) swr_opts: HashMap<String, String>,
+    pub(crate) audio_sample_rate: Option<i32>,
+    pub(crate) audio_channels: Option<i32>,
+    pub(crate) audio_sample_fmt: Option<SampleFormat>,
+    pub(crate) is_streaming: bool,
+}
+
+impl Output {
+    pub fn new(url: impl Into<String>) -> Self {
+        Self {
+            url: Some(url.into()),
+            write_callback: None,
+            seek_callback: None,
+            format: None,
+            format_kind: None,
+            audio_codec: None,
+            audio_codec_kind: None,
+            audio_codec_opts: HashMap::new(),
+            audio_global_quality: None,
+            format_opts: HashMap::new(),
+            swr_opts: HashMap::new(),
+            audio_sample_rate: None,
+            audio_channels: None,
+            audio_sample_fmt: None,
+            is_streaming: false,
+        }
+    }
+
+    pub fn with_callback<F, R>(mut write_callback: F) -> Self
+    where
+        F: FnMut(&[u8]) -> R + Send + 'static,
+        R: Into<WriteResult> + 'static,
+    {
+        Self {
+            url: None,
+            write_callback: Some(Box::new(move |buf| write_callback(buf).into())),
+            seek_callback: None,
+            format: None,
+            format_kind: None,
+            audio_codec: None,
+            audio_codec_kind: None,
+            audio_codec_opts: HashMap::new(),
+            audio_global_quality: None,
+            format_opts: HashMap::new(),
+            swr_opts: HashMap::new(),
+            audio_sample_rate: None,
+            audio_channels: None,
+            audio_sample_fmt: None,
+            is_streaming: false,
+        }
+    }
+
+    pub fn set_seek_callback<F, R>(mut self, mut seek_callback: F) -> Self
+    where
+        F: FnMut(SeekRequest) -> R + Send + 'static,
+        R: Into<SeekResult> + 'static,
+    {
+        self.seek_callback = Some(Box::new(move |request| seek_callback(request).into()));
+        self
+    }
+
+    pub fn set_raw_format(mut self, format: impl Into<String>) -> Self {
+        self.format = Some(format.into());
+        self.format_kind = None;
+        self
+    }
+
+    pub fn set_raw_audio_codec(mut self, codec: impl Into<String>) -> Self {
+        let codec = codec.into();
+        if codec == "copy" {
+            self.audio_codec = None;
+            self.audio_codec_kind = Some(AudioCodec::Copy);
+        } else {
+            self.audio_codec = Some(codec);
+            self.audio_codec_kind = None;
+        }
+        self
+    }
+
+    pub fn set_raw_audio_codec_opt(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
+        self.audio_codec_opts.insert(key.into(), value.into());
+        self
+    }
+
+    pub fn set_audio_global_quality(mut self, quality: i32) -> Self {
+        self.audio_global_quality = Some(quality);
+        self
+    }
+
+    pub fn set_audio_sample_rate(mut self, sample_rate: i32) -> Self {
+        self.audio_sample_rate = Some(sample_rate);
+        self
+    }
+
+    pub fn set_audio_channels(mut self, channels: i32) -> Self {
+        self.audio_channels = Some(channels);
+        self
+    }
+
+    pub fn set_audio_sample_format(mut self, sample_fmt: SampleFormat) -> Self {
+        self.audio_sample_fmt = Some(sample_fmt);
+        self
+    }
+
+    pub fn set_raw_format_opt(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.format_opts.insert(key.into(), value.into());
+        self
+    }
+
+    pub fn set_raw_swr_opt(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.swr_opts.insert(key.into(), value.into());
+        self
+    }
+
+    pub fn audio_format(mut self, format: AudioFormat) -> Self {
+        let muxer = format.muxer(self.is_streaming);
+        self.format = Some(muxer.to_string());
+        self.format_kind = Some(format);
+
+        if self.audio_codec.is_none() {
+            let default_codec = format.default_codec();
+            self.audio_codec_kind = Some(default_codec);
+            if let Some(encoder) = default_codec.ffmpeg_encoder() {
+                self.audio_codec = Some(encoder.to_string());
+            }
+        }
+        self
+    }
+
+    pub fn codec(mut self, codec: AudioCodec) -> Self {
+        if let Some(encoder) = codec.ffmpeg_encoder() {
+            self.audio_codec = Some(encoder.to_string());
+        } else {
+            self.audio_codec = None;
+        }
+        self.audio_codec_kind = Some(codec);
+        self
+    }
+
+    pub fn bitrate(mut self, kbps: u32) -> Self {
+        self.audio_codec_opts
+            .insert("b".to_string(), format!("{}k", kbps));
+        self
+    }
+
+    pub fn streaming(mut self) -> Self {
+        self.is_streaming = true;
+        self
+    }
+
+    pub fn get_audio_codec_opts(&self) -> &HashMap<String, String> {
+        &self.audio_codec_opts
+    }
+
+    pub fn get_audio_global_quality(&self) -> Option<i32> {
+        self.audio_global_quality
+    }
+
+    pub fn get_format_opts(&self) -> &HashMap<String, String> {
+        &self.format_opts
+    }
+
+    pub fn get_audio_sample_rate(&self) -> Option<i32> {
+        self.audio_sample_rate
+    }
+
+    pub fn get_audio_channels(&self) -> Option<i32> {
+        self.audio_channels
+    }
+
+    pub(crate) fn validate(&self) -> crate::Result<()> {
+        if self.url.is_none() && self.write_callback.is_none() {
+            return Err(crate::Error::InvalidOutputSpec(
+                "output must have a file URL or write callback".to_string(),
+            ));
+        }
+        if self.url.is_some() && self.write_callback.is_some() {
+            return Err(crate::Error::InvalidOutputSpec(
+                "output cannot use both a file URL and write callback".to_string(),
+            ));
+        }
+        if let Some(format) = self.format_kind {
+            if self.is_streaming && !format.supports_streaming() {
+                return Err(crate::Error::InvalidOutputSpec(format!(
+                    "format '{}' does not support streaming",
+                    format.extension()
+                )));
+            }
+            if let Some(codec) = self.audio_codec_kind
+                && !matches!(codec, AudioCodec::Copy)
+                && !format.supports_codec(codec)
+            {
+                return Err(crate::Error::InvalidOutputSpec(format!(
+                    "codec '{}' is not compatible with format '{}'",
+                    codec.as_str(),
+                    format.extension()
+                )));
+            }
+        }
+        if let Some(sample_rate) = self.audio_sample_rate
+            && sample_rate <= 0
+        {
+            return Err(crate::Error::InvalidOutputSpec(
+                "audio sample rate must be greater than zero".to_string(),
+            ));
+        }
+        if let Some(channels) = self.audio_channels
+            && channels <= 0
+        {
+            return Err(crate::Error::InvalidOutputSpec(
+                "audio channel count must be greater than zero".to_string(),
+            ));
+        }
+        validate_no_nul("format name", self.format.as_deref())?;
+        validate_no_nul("output url", self.url.as_deref())?;
+        validate_no_nul("codec name", self.audio_codec.as_deref())?;
+        validate_option_map("codec option", &self.audio_codec_opts)?;
+        validate_option_map("format option", &self.format_opts)?;
+        validate_option_map("swr option", &self.swr_opts)?;
+        Ok(())
+    }
+}
+
+fn validate_no_nul(field: &'static str, value: Option<&str>) -> crate::Result<()> {
+    if value.is_some_and(|value| value.contains('\0')) {
+        return Err(crate::Error::InvalidCString { field });
+    }
+    Ok(())
+}
+
+fn validate_option_map(kind: &'static str, opts: &HashMap<String, String>) -> crate::Result<()> {
+    for (key, value) in opts {
+        if key.contains('\0') {
+            return Err(crate::Error::InvalidCString {
+                field: match kind {
+                    "codec option" => "codec option key",
+                    "format option" => "format option key",
+                    "swr option" => "swr option key",
+                    _ => "option key",
+                },
+            });
+        }
+        if value.contains('\0') {
+            return Err(crate::Error::InvalidCString {
+                field: match kind {
+                    "codec option" => "codec option value",
+                    "format option" => "format option value",
+                    "swr option" => "swr option value",
+                    _ => "option value",
+                },
+            });
+        }
+    }
+    Ok(())
+}
