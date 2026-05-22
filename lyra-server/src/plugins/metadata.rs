@@ -39,9 +39,7 @@ use harmony_luau::{
     MethodDescriptor,
     MethodKind,
     ModuleDescriptor,
-    ModuleFieldDescriptor,
     ModuleFunctionDescriptor,
-    NativeFunctionOptions,
     ParameterDescriptor,
     TypeAliasDescriptor,
     render_definition_file_with_support,
@@ -143,7 +141,12 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .capability("lyra.metadata")
         .function(provider_new_spec())
         .function(ids_for_provider_spec())
-        .initializer(install_metadata_constants)
+        .userdata(EntityType::_harmony_userdata_spec())
+        .userdata(server_db::ArtistType::_harmony_userdata_spec())
+        .userdata(server_db::CreditType::_harmony_userdata_spec())
+        .userdata(server_db::ArtistRelationType::_harmony_userdata_spec())
+        .userdata(MetadataProvider::_harmony_userdata_spec())
+        .userdata(MetadataLayer::_harmony_userdata_spec())
         .install(|_| Ok(ModuleExport::new(MetadataModule)))
 }
 
@@ -153,7 +156,7 @@ fn provider_new_spec() -> FunctionSpec {
     FunctionSpec::sync_fn("Provider.new")
         .arg_name("id")
         .args::<String>()
-        .returns::<luau::Table>()
+        .returns::<MetadataProvider>()
         .call(provider_new_callback)
 }
 
@@ -214,8 +217,16 @@ fn provider_new_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Resul
         Ok::<(), luau::Error>(())
     })?;
 
-    let table = provider_table(frame.vm, plugin_id, provider_id)?;
-    frame.returns.write(table)
+    let provider = MetadataProvider {
+        plugin_id,
+        provider_id,
+    };
+    let provider = MetadataProvider::_harmony_userdata_class().create_value(
+        frame.vm,
+        &frame.context.origin,
+        provider,
+    )?;
+    frame.returns.write(provider)
 }
 
 fn ensure_registration_open(plugin_id: &PluginId) -> luau::runtime::Result<()> {
@@ -240,145 +251,153 @@ fn ids_for_provider_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::R
     }
 }
 
-fn provider_table(
-    vm: &luau::Vm,
+#[harmony_macros::userdata(
+    name = "Provider",
+    description = "Metadata provider registration object."
+)]
+#[derive(Clone)]
+struct MetadataProvider {
     plugin_id: PluginId,
     provider_id: String,
-) -> luau::runtime::Result<luau::Table> {
-    let table = vm.create_table()?;
-    table.set_raw(
-        vm,
-        "__provider_id",
-        luau::Value::String(provider_id.clone().into_bytes()),
-    )?;
-
-    install_provider_method(
-        vm,
-        &table,
-        "id",
-        plugin_id.clone(),
-        provider_id.clone(),
-        provider_id_callback,
-    )?;
-    install_provider_method(
-        vm,
-        &table,
-        "search",
-        plugin_id.clone(),
-        provider_id.clone(),
-        search_callback,
-    )?;
-    install_provider_method(
-        vm,
-        &table,
-        "cover",
-        plugin_id.clone(),
-        provider_id.clone(),
-        cover_callback,
-    )?;
-    install_provider_method(
-        vm,
-        &table,
-        "lyrics",
-        plugin_id.clone(),
-        provider_id.clone(),
-        lyrics_callback,
-    )?;
-    install_provider_method(
-        vm,
-        &table,
-        "refresh",
-        plugin_id.clone(),
-        provider_id.clone(),
-        refresh_callback,
-    )?;
-    install_provider_method(
-        vm,
-        &table,
-        "declare_option",
-        plugin_id.clone(),
-        provider_id.clone(),
-        declare_option_callback,
-    )?;
-    install_provider_method(
-        vm,
-        &table,
-        "ensure_artist",
-        plugin_id.clone(),
-        provider_id.clone(),
-        ensure_artist_callback,
-    )?;
-    install_provider_method(
-        vm,
-        &table,
-        "mark_unmatched",
-        plugin_id.clone(),
-        provider_id.clone(),
-        mark_unmatched_callback,
-    )?;
-    install_provider_method(
-        vm,
-        &table,
-        "link_credit",
-        plugin_id.clone(),
-        provider_id.clone(),
-        link_credit_callback,
-    )?;
-    install_provider_method(
-        vm,
-        &table,
-        "link_artist_relation",
-        plugin_id.clone(),
-        provider_id.clone(),
-        link_artist_relation_callback,
-    )?;
-    install_provider_method(
-        vm,
-        &table,
-        "layer",
-        plugin_id.clone(),
-        provider_id,
-        layer_callback,
-    )?;
-
-    Ok(table)
 }
 
-type ProviderMethod = fn(luau::CallFrame<'_>, PluginId, String) -> luau::runtime::Result<()>;
+#[harmony_macros::userdata_methods]
+impl MetadataProvider {
+    fn id(
+        &self,
+        vm: &luau::Vm,
+        context: &luau::CallContext,
+        spec: luau::Table,
+        generator: Option<luau::Value>,
+    ) -> luau::runtime::Result<()> {
+        provider_id_callback(self, vm, context, spec, generator)
+    }
 
-fn install_provider_method(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    name: &'static str,
-    plugin_id: PluginId,
-    provider_id: String,
-    method: ProviderMethod,
-) -> luau::runtime::Result<()> {
-    let function = vm.create_function_with_options(
-        luau::NativeFunctionOptions::new(luau::ChunkOrigin {
-            module: Some(luau::ModuleId(Arc::from("lyra/metadata"))),
-            plugin: Some(Arc::from(plugin_id.as_ref())),
-            path: None,
-        })
-        .function_name(format!("Provider.{name}"))
-        .argument_names([Arc::from("self")]),
-        Arc::new(move |frame| method(frame, plugin_id.clone(), provider_id.clone())),
-    )?;
-    table.set_function_raw(vm, name, &function)
+    fn search(
+        &self,
+        vm: &luau::Vm,
+        context: &luau::CallContext,
+        entity: EntityType,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        search_callback(self, vm, context, entity, handler)
+    }
+
+    fn cover(
+        &self,
+        vm: &luau::Vm,
+        context: &luau::CallContext,
+        entity: EntityType,
+        config: luau::Table,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        cover_callback(self, vm, context, entity, config, handler)
+    }
+
+    fn lyrics(
+        &self,
+        vm: &luau::Vm,
+        context: &luau::CallContext,
+        config: luau::Table,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        lyrics_callback(self, vm, context, config, handler)
+    }
+
+    fn refresh(
+        &self,
+        vm: &luau::Vm,
+        context: &luau::CallContext,
+        entity: EntityType,
+        handler: luau::Function,
+        filter: Option<luau::Function>,
+    ) -> luau::runtime::Result<()> {
+        refresh_callback(self, vm, context, entity, handler, filter)
+    }
+
+    fn declare_option(
+        &self,
+        vm: &luau::Vm,
+        context: &luau::CallContext,
+        config: luau::Table,
+    ) -> luau::runtime::Result<()> {
+        declare_option_callback(self, vm, context, config)
+    }
+
+    fn ensure_artist(
+        &self,
+        vm: &luau::Vm,
+        context: &luau::CallContext,
+        request: luau::Table,
+    ) -> luau::runtime::Result<i64> {
+        ensure_artist_callback(self, vm, context, request)
+    }
+
+    fn mark_unmatched(
+        &self,
+        vm: &luau::Vm,
+        context: &luau::CallContext,
+        node_id: i64,
+        id_types: luau::Table,
+    ) -> luau::runtime::Result<()> {
+        mark_unmatched_callback(self, vm, context, node_id, id_types)
+    }
+
+    fn link_credit(
+        &self,
+        vm: &luau::Vm,
+        context: &luau::CallContext,
+        owner_id: i64,
+        artist_id: i64,
+        credit_type: Option<server_db::CreditType>,
+        detail: Option<String>,
+    ) -> luau::runtime::Result<()> {
+        link_credit_callback(self, vm, context, owner_id, artist_id, credit_type, detail)
+    }
+
+    fn link_artist_relation(
+        &self,
+        vm: &luau::Vm,
+        context: &luau::CallContext,
+        from_artist_id: i64,
+        to_artist_id: i64,
+        relation_type: server_db::ArtistRelationType,
+        attributes: Option<String>,
+    ) -> luau::runtime::Result<()> {
+        link_artist_relation_callback(
+            self,
+            vm,
+            context,
+            from_artist_id,
+            to_artist_id,
+            relation_type,
+            attributes,
+        )
+    }
+
+    #[harmony(returns(MetadataLayer))]
+    fn layer(
+        &self,
+        vm: &luau::Vm,
+        context: &luau::CallContext,
+        origin: &luau::ChunkOrigin,
+        node_id: i64,
+    ) -> luau::runtime::Result<luau::Value> {
+        layer_callback(self, vm, context, origin, node_id)
+    }
 }
 
 fn provider_id_callback(
-    mut frame: luau::CallFrame<'_>,
-    plugin_id: PluginId,
-    provider_id: String,
+    provider: &MetadataProvider,
+    vm: &luau::Vm,
+    context: &luau::CallContext,
+    spec: luau::Table,
+    generator: Option<luau::Value>,
 ) -> luau::runtime::Result<()> {
-    ensure_provider_owner(&frame, &plugin_id, &provider_id)?;
-    ensure_registration_open(&plugin_id)?;
-    let _self_value: luau::Value = frame.args.read_named("self")?;
-    let spec: luau::Table = frame.args.read_named("spec")?;
-    let generator = frame.args.read_optional_named::<luau::Value>("generator")?;
+    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    ensure_registration_open(&provider.plugin_id)?;
 
-    let id_spec = parse_id_spec(frame.vm, &spec)?;
+    let id_spec = parse_id_spec(vm, &spec)?;
     let generator = match generator {
         Some(luau::Value::String(bytes)) => Some(ProviderIdUrlGenerator::Template(
             parse_id_url_template(bytes)?,
@@ -395,50 +414,47 @@ fn provider_id_callback(
 
     futures::executor::block_on(async {
         let mut registry = PROVIDER_REGISTRY.write().await;
-        registry.set_id_registration(&provider_id, id_spec, generator);
+        registry.set_id_registration(&provider.provider_id, id_spec, generator);
     });
     Ok(())
 }
 
 fn declare_option_callback(
-    mut frame: luau::CallFrame<'_>,
-    plugin_id: PluginId,
-    provider_id: String,
+    provider: &MetadataProvider,
+    vm: &luau::Vm,
+    context: &luau::CallContext,
+    config: luau::Table,
 ) -> luau::runtime::Result<()> {
-    ensure_provider_owner(&frame, &plugin_id, &provider_id)?;
-    ensure_registration_open(&plugin_id)?;
-    let _self_value: luau::Value = frame.args.read_named("self")?;
-    let config: luau::Table = frame.args.read_named("config")?;
-    let option = parse_option_declaration(frame.vm, &config)?;
+    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    ensure_registration_open(&provider.plugin_id)?;
+    let option = parse_option_declaration(vm, &config)?;
 
     futures::executor::block_on(async {
         let mut registry = PROVIDER_REGISTRY.write().await;
         registry
-            .declare_option(&provider_id, option)
+            .declare_option(&provider.provider_id, option)
             .map_err(crate::plugins::runtime_error)
     })?;
     Ok(())
 }
 
 fn search_callback(
-    mut frame: luau::CallFrame<'_>,
-    plugin_id: PluginId,
-    provider_id: String,
+    provider: &MetadataProvider,
+    vm: &luau::Vm,
+    context: &luau::CallContext,
+    entity_type: EntityType,
+    handler: luau::Function,
 ) -> luau::runtime::Result<()> {
-    ensure_provider_owner(&frame, &plugin_id, &provider_id)?;
-    ensure_registration_open(&plugin_id)?;
-    let _self_value: luau::Value = frame.args.read_named("self")?;
-    let entity_type_raw: String = frame.args.read_named("entity")?;
-    let handler: luau::Function = frame.args.read_named("handler")?;
-    let entity_type = parse_entity_type(&entity_type_raw)?;
-    let handlers = frame.vm.data().get::<MetadataCallbackRegistry>()?;
-    let context = core_call_context(&frame.context);
-    let handler_id = handlers.register(provider_id.clone(), entity_type, handler, context);
+    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    ensure_registration_open(&provider.plugin_id)?;
+    let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
+    let context = core_call_context(context);
+    let handler_id = handlers.register(provider.provider_id.clone(), entity_type, handler, context);
 
     futures::executor::block_on(async {
         let mut registry = PROVIDER_REGISTRY.write().await;
         registry.set_search_callback(
-            &provider_id,
+            &provider.provider_id,
             entity_type,
             ProviderCallbackHandle { handler_id },
         );
@@ -447,38 +463,38 @@ fn search_callback(
 }
 
 fn cover_callback(
-    mut frame: luau::CallFrame<'_>,
-    plugin_id: PluginId,
-    provider_id: String,
+    provider: &MetadataProvider,
+    vm: &luau::Vm,
+    context: &luau::CallContext,
+    entity_type: EntityType,
+    config: luau::Table,
+    handler: luau::Function,
 ) -> luau::runtime::Result<()> {
-    ensure_provider_owner(&frame, &plugin_id, &provider_id)?;
-    ensure_registration_open(&plugin_id)?;
-    let _self_value: luau::Value = frame.args.read_named("self")?;
-    let entity_type_raw: String = frame.args.read_named("entity")?;
-    let config: luau::Table = frame.args.read_named("config")?;
-    let handler: luau::Function = frame.args.read_named("handler")?;
-    let entity_type = parse_entity_type(&entity_type_raw)?;
+    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    ensure_registration_open(&provider.plugin_id)?;
     if !matches!(entity_type, EntityType::Release | EntityType::Artist) {
         return Err(crate::plugins::runtime_error(
-            "provider:cover entity_type must be 'release' or 'artist'",
+            "provider:cover entity_type must be EntityType.Release or EntityType.Artist",
         ));
     }
-    if !futures::executor::block_on(harmony_http::has_rate_limit_for_plugin(plugin_id.as_ref())) {
+    if !futures::executor::block_on(harmony_http::has_rate_limit_for_plugin(
+        provider.plugin_id.as_ref(),
+    )) {
         return Err(crate::plugins::runtime_error(format!(
             "provider:cover requires http.set_rate_limit to be configured for at least one domain before registration; call set_rate_limit in plugin init for plugin '{}'",
-            plugin_id
+            provider.plugin_id
         )));
     }
 
-    let (priority, timeout, require) = parse_cover_spec(frame.vm, &config)?;
-    let handlers = frame.vm.data().get::<MetadataCallbackRegistry>()?;
-    let context = core_call_context(&frame.context);
-    let handler_id = handlers.register(provider_id.clone(), entity_type, handler, context);
+    let (priority, timeout, require) = parse_cover_spec(vm, &config)?;
+    let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
+    let context = core_call_context(context);
+    let handler_id = handlers.register(provider.provider_id.clone(), entity_type, handler, context);
 
     futures::executor::block_on(async {
         let mut registry = PROVIDER_REGISTRY.write().await;
         registry.set_cover_handler(
-            &provider_id,
+            &provider.provider_id,
             entity_type,
             ProviderCoverSpec {
                 priority,
@@ -492,27 +508,35 @@ fn cover_callback(
 }
 
 fn lyrics_callback(
-    mut frame: luau::CallFrame<'_>,
-    plugin_id: PluginId,
-    provider_id: String,
+    provider: &MetadataProvider,
+    vm: &luau::Vm,
+    context: &luau::CallContext,
+    config: luau::Table,
+    handler: luau::Function,
 ) -> luau::runtime::Result<()> {
-    ensure_provider_owner(&frame, &plugin_id, &provider_id)?;
-    ensure_registration_open(&plugin_id)?;
-    let _self_value: luau::Value = frame.args.read_named("self")?;
-    let config: luau::Table = frame.args.read_named("config")?;
-    let handler: luau::Function = frame.args.read_named("handler")?;
-    if !futures::executor::block_on(harmony_http::has_rate_limit_for_plugin(plugin_id.as_ref())) {
+    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    ensure_registration_open(&provider.plugin_id)?;
+    if !futures::executor::block_on(harmony_http::has_rate_limit_for_plugin(
+        provider.plugin_id.as_ref(),
+    )) {
         return Err(crate::plugins::runtime_error(format!(
             "provider:lyrics requires http.set_rate_limit to be configured for at least one domain before registration; call set_rate_limit in plugin init for plugin '{}'",
-            plugin_id
+            provider.plugin_id
         )));
     }
 
-    let (priority, timeout, require) = parse_lyrics_spec(frame.vm, &config)?;
-    let handlers = frame.vm.data().get::<MetadataCallbackRegistry>()?;
-    let context = core_call_context(&frame.context);
-    let handler_id = handlers.register(provider_id.clone(), EntityType::Track, handler, context);
+    let (priority, timeout, require) = parse_lyrics_spec(vm, &config)?;
+    let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
+    let context = core_call_context(context);
+    let handler_id = handlers.register(
+        provider.provider_id.clone(),
+        EntityType::Track,
+        handler,
+        context,
+    );
+    let provider_id = provider.provider_id.clone();
     let provider_id_for_handler = provider_id.clone();
+    let plugin_id = provider.plugin_id.clone();
     let handler_fn: lyrics_dispatcher::HandlerFn = Arc::new(move |context| {
         let provider_id = provider_id_for_handler.clone();
         Box::pin(async move {
@@ -554,33 +578,37 @@ fn lyrics_callback(
 }
 
 fn refresh_callback(
-    mut frame: luau::CallFrame<'_>,
-    plugin_id: PluginId,
-    provider_id: String,
+    provider: &MetadataProvider,
+    vm: &luau::Vm,
+    context: &luau::CallContext,
+    entity_type: EntityType,
+    handler: luau::Function,
+    filter: Option<luau::Function>,
 ) -> luau::runtime::Result<()> {
-    ensure_provider_owner(&frame, &plugin_id, &provider_id)?;
-    ensure_registration_open(&plugin_id)?;
-    let _self_value: luau::Value = frame.args.read_named("self")?;
-    let entity_type_raw: String = frame.args.read_named("entity")?;
-    let handler: luau::Function = frame.args.read_named("handler")?;
-    let filter = frame.args.read_optional_named::<luau::Function>("filter")?;
-    let entity_type = parse_entity_type(&entity_type_raw)?;
-    let handlers = frame.vm.data().get::<MetadataCallbackRegistry>()?;
-    let context = core_call_context(&frame.context);
-    let handler_id = handlers.register(provider_id.clone(), entity_type, handler, context.clone());
-    let filter_id =
-        filter.map(|filter| handlers.register(provider_id.clone(), entity_type, filter, context));
+    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    ensure_registration_open(&provider.plugin_id)?;
+    let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
+    let context = core_call_context(context);
+    let handler_id = handlers.register(
+        provider.provider_id.clone(),
+        entity_type,
+        handler,
+        context.clone(),
+    );
+    let filter_id = filter.map(|filter| {
+        handlers.register(provider.provider_id.clone(), entity_type, filter, context)
+    });
 
     futures::executor::block_on(async {
         let mut registry = PROVIDER_REGISTRY.write().await;
         registry.set_refresh_callback(
-            &provider_id,
+            &provider.provider_id,
             entity_type,
             ProviderCallbackHandle { handler_id },
         );
         if let Some(handler_id) = filter_id {
             registry.set_sync_filter_callback(
-                &provider_id,
+                &provider.provider_id,
                 entity_type,
                 ProviderCallbackHandle { handler_id },
             );
@@ -590,29 +618,19 @@ fn refresh_callback(
 }
 
 fn ensure_artist_callback(
-    mut frame: luau::CallFrame<'_>,
-    plugin_id: PluginId,
-    provider_id: String,
-) -> luau::runtime::Result<()> {
-    ensure_provider_owner(&frame, &plugin_id, &provider_id)?;
-    let _self_value: luau::Value = frame.args.read_named("self")?;
-    let request: luau::Table = frame.args.read_named("request")?;
-    let id_type = required_table_string(frame.vm, &request, "id_type", "provider:ensure_artist")?;
-    let id_value = required_table_string(frame.vm, &request, "id_value", "provider:ensure_artist")?;
-    let artist_name =
-        optional_table_string(frame.vm, &request, "artist_name", "provider:ensure_artist")?;
-    let sort_name =
-        optional_table_string(frame.vm, &request, "sort_name", "provider:ensure_artist")?;
-    let artist_type_raw =
-        optional_table_string(frame.vm, &request, "artist_type", "provider:ensure_artist")?;
-    let artist_type = artist_type_raw
-        .as_deref()
-        .map(server_db::ArtistType::from_db_str)
-        .transpose()
-        .map_err(crate::plugins::runtime_error)?;
-    let description =
-        optional_table_string(frame.vm, &request, "description", "provider:ensure_artist")?;
-
+    provider: &MetadataProvider,
+    vm: &luau::Vm,
+    context: &luau::CallContext,
+    request: luau::Table,
+) -> luau::runtime::Result<i64> {
+    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    let id_type = required_table_string(vm, &request, "id_type", "provider:ensure_artist")?;
+    let id_value = required_table_string(vm, &request, "id_value", "provider:ensure_artist")?;
+    let artist_name = optional_table_string(vm, &request, "artist_name", "provider:ensure_artist")?;
+    let sort_name = optional_table_string(vm, &request, "sort_name", "provider:ensure_artist")?;
+    let artist_type = optional_artist_type(vm, &request, "artist_type")?;
+    let description = optional_table_string(vm, &request, "description", "provider:ensure_artist")?;
+    let provider_id = provider.provider_id.clone();
     futures::executor::block_on(async {
         let is_registered_artist_id = {
             let registry = PROVIDER_REGISTRY.read().await;
@@ -624,12 +642,7 @@ fn ensure_artist_callback(
             )));
         }
 
-        let store = frame
-            .vm
-            .data()
-            .get::<MetadataModuleStore>()?
-            .as_ref()
-            .clone();
+        let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
         let Some(db) = store.db else {
             return Err(crate::plugins::runtime_error(
                 "provider:ensure_artist requires a database-backed plugin executor",
@@ -779,21 +792,21 @@ fn ensure_artist_callback(
         )
         .map_err(crate::plugins::runtime_error)?;
 
-        frame.returns.write(artist_db_id.0)?;
-        Ok(())
+        Ok(artist_db_id.0)
     })
 }
 
 fn mark_unmatched_callback(
-    mut frame: luau::CallFrame<'_>,
-    plugin_id: PluginId,
-    provider_id: String,
+    provider: &MetadataProvider,
+    vm: &luau::Vm,
+    context: &luau::CallContext,
+    node_id: i64,
+    id_types_table: luau::Table,
 ) -> luau::runtime::Result<()> {
-    ensure_provider_owner(&frame, &plugin_id, &provider_id)?;
-    let _self_value: luau::Value = frame.args.read_named("self")?;
-    let node_id = require_positive_id(frame.args.read_named("node_id")?, "node_id")?;
-    let id_types_table: luau::Table = frame.args.read_named("id_types")?;
-    let id_types = string_array_from_table(frame.vm, &id_types_table)?;
+    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    let node_id = require_positive_id(node_id, "node_id")?;
+    let id_types = string_array_from_table(vm, &id_types_table)?;
+    let provider_id = provider.provider_id.clone();
     if id_types.is_empty() {
         return Err(crate::plugins::runtime_error(
             "provider:mark_unmatched: id_types must contain at least one id type",
@@ -815,12 +828,7 @@ fn mark_unmatched_callback(
     }
 
     futures::executor::block_on(async {
-        let store = frame
-            .vm
-            .data()
-            .get::<MetadataModuleStore>()?
-            .as_ref()
-            .clone();
+        let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
         let Some(db) = store.db else {
             return Err(crate::plugins::runtime_error(
                 "provider:mark_unmatched requires a database-backed plugin executor",
@@ -865,41 +873,29 @@ fn mark_unmatched_callback(
 }
 
 fn link_credit_callback(
-    mut frame: luau::CallFrame<'_>,
-    plugin_id: PluginId,
-    provider_id: String,
+    provider: &MetadataProvider,
+    vm: &luau::Vm,
+    context: &luau::CallContext,
+    owner_id: i64,
+    artist_id: i64,
+    credit_type: Option<server_db::CreditType>,
+    detail: Option<String>,
 ) -> luau::runtime::Result<()> {
-    ensure_provider_owner(&frame, &plugin_id, &provider_id)?;
-    let _self_value: luau::Value = frame.args.read_named("self")?;
-    let owner_id = require_positive_id(frame.args.read_named("owner_id")?, "owner_id")?;
-    let artist_id = require_positive_id(frame.args.read_named("artist_id")?, "artist_id")?;
-    let credit_type = frame
-        .args
-        .read_optional_named::<String>("credit_type")?
-        .map(|value| {
-            server_db::CreditType::from_db_str(value.trim()).map_err(crate::plugins::runtime_error)
-        })
-        .transpose()?
-        .unwrap_or(server_db::CreditType::Artist);
-    let detail = frame
-        .args
-        .read_optional_named::<String>("detail")?
-        .and_then(|value| {
-            let trimmed = value.trim().to_string();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed)
-            }
-        });
+    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    let owner_id = require_positive_id(owner_id, "owner_id")?;
+    let artist_id = require_positive_id(artist_id, "artist_id")?;
+    let credit_type = credit_type.unwrap_or(server_db::CreditType::Artist);
+    let detail = detail.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
 
     futures::executor::block_on(async {
-        let store = frame
-            .vm
-            .data()
-            .get::<MetadataModuleStore>()?
-            .as_ref()
-            .clone();
+        let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
         let Some(db) = store.db else {
             return Err(crate::plugins::runtime_error(
                 "provider:link_credit requires a database-backed plugin executor",
@@ -998,37 +994,28 @@ fn link_credit_callback(
 }
 
 fn link_artist_relation_callback(
-    mut frame: luau::CallFrame<'_>,
-    plugin_id: PluginId,
-    provider_id: String,
+    provider: &MetadataProvider,
+    vm: &luau::Vm,
+    context: &luau::CallContext,
+    from_artist_id: i64,
+    to_artist_id: i64,
+    relation_type: server_db::ArtistRelationType,
+    attributes: Option<String>,
 ) -> luau::runtime::Result<()> {
-    ensure_provider_owner(&frame, &plugin_id, &provider_id)?;
-    let _self_value: luau::Value = frame.args.read_named("self")?;
-    let from_artist_id =
-        require_positive_id(frame.args.read_named("from_artist_id")?, "from_artist_id")?;
-    let to_artist_id = require_positive_id(frame.args.read_named("to_artist_id")?, "to_artist_id")?;
-    let relation_type_raw: String = frame.args.read_named("relation_type")?;
-    let relation_type = server_db::ArtistRelationType::from_db_str(relation_type_raw.trim())
-        .map_err(crate::plugins::runtime_error)?;
-    let attributes = frame
-        .args
-        .read_optional_named::<String>("attributes")?
-        .and_then(|value| {
-            let trimmed = value.trim().to_string();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed)
-            }
-        });
+    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    let from_artist_id = require_positive_id(from_artist_id, "from_artist_id")?;
+    let to_artist_id = require_positive_id(to_artist_id, "to_artist_id")?;
+    let attributes = attributes.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
 
     futures::executor::block_on(async {
-        let store = frame
-            .vm
-            .data()
-            .get::<MetadataModuleStore>()?
-            .as_ref()
-            .clone();
+        let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
         let Some(db) = store.db else {
             return Err(crate::plugins::runtime_error(
                 "provider:link_artist_relation requires a database-backed plugin executor",
@@ -1066,181 +1053,34 @@ fn link_artist_relation_callback(
 }
 
 fn layer_callback(
-    mut frame: luau::CallFrame<'_>,
-    plugin_id: PluginId,
-    provider_id: String,
-) -> luau::runtime::Result<()> {
-    ensure_provider_owner(&frame, &plugin_id, &provider_id)?;
-    let _self_value: luau::Value = frame.args.read_named("self")?;
-    let node_id = require_positive_id(frame.args.read_named("node_id")?, "node_id")?;
-    let store = frame
-        .vm
-        .data()
-        .get::<MetadataModuleStore>()?
-        .as_ref()
-        .clone();
-    let layer = Arc::new(Mutex::new(LayerBuilderState {
-        node_id,
-        provider_id,
-        fields: HashMap::new(),
-        external_ids: HashMap::new(),
-        custom_fields: HashMap::new(),
-        remove_custom_field_versions: HashSet::new(),
-    }));
-    let table = frame.vm.create_table()?;
-    table.set_function_raw(
-        frame.vm,
-        "set_id",
-        &layer_function(&frame, "set_id", {
-            let layer = layer.clone();
-            move |mut frame| {
-                let _self_value: luau::Value = frame.args.read_named("self")?;
-                let key: String = frame.args.read_named("key")?;
-                let value: String = frame.args.read_named("value")?;
-                if key.trim().is_empty() {
-                    return Err(crate::plugins::runtime_error(
-                        "metadata layer id key must not be empty",
-                    ));
-                }
-                layer
-                    .lock()
-                    .expect("metadata layer mutex poisoned")
-                    .external_ids
-                    .insert(key, value);
-                Ok(())
-            }
-        })?,
-    )?;
-    table.set_function_raw(
-        frame.vm,
-        "set_field",
-        &layer_function(&frame, "set_field", {
-            let layer = layer.clone();
-            move |mut frame| {
-                let _self_value: luau::Value = frame.args.read_named("self")?;
-                let key: String = frame.args.read_named("key")?;
-                let value: luau::Value = frame.args.read_named("value")?;
-                if key.trim().is_empty() {
-                    return Err(crate::plugins::runtime_error(
-                        "metadata layer field key must not be empty",
-                    ));
-                }
-                if key == "duration_ms" {
-                    return Err(crate::plugins::runtime_error(
-                        "duration_ms is read-only and cannot be set by plugins",
-                    ));
-                }
-                let value = harmony_json::luau_to_json(frame.vm, &value, 0)?;
-                layer
-                    .lock()
-                    .expect("metadata layer mutex poisoned")
-                    .fields
-                    .insert(key, value);
-                Ok(())
-            }
-        })?,
-    )?;
-    table.set_function_raw(
-        frame.vm,
-        "save",
-        &layer_function(&frame, "save", {
-            let layer = layer.clone();
-            move |mut frame| {
-                let _self_value: luau::Value = frame.args.read_named("self")?;
-                let Some(db) = store.db.clone() else {
-                    return Err(crate::plugins::runtime_error(
-                        "metadata layer save requires a database-backed plugin executor",
-                    ));
-                };
-                let layer = { layer.lock().expect("metadata layer mutex poisoned").clone() };
-                futures::executor::block_on(async {
-                    let mut db = db.write().await;
-                    crate::services::metadata::layers::save_provider_layer(
-                        &mut db,
-                        layer.node_id,
-                        &layer.provider_id,
-                        &layer.fields,
-                        &layer.external_ids,
-                        &layer.custom_fields,
-                        &layer.remove_custom_field_versions,
-                    )
-                    .map_err(crate::plugins::runtime_error)
-                })?;
-                Ok(())
-            }
-        })?,
-    )?;
-    table.set_function_raw(
-        frame.vm,
-        "set_custom_field",
-        &layer_function(&frame, "set_custom_field", {
-            let layer = layer.clone();
-            move |mut frame| {
-                let _self_value: luau::Value = frame.args.read_named("self")?;
-                let version: String = frame.args.read_named("version")?;
-                let name: String = frame.args.read_named("name")?;
-                let value: luau::Value = frame.args.read_named("value")?;
-                let version = parse_custom_field_version(&version)?;
-                let name = name.trim().to_string();
-                if name.is_empty() {
-                    return Err(crate::plugins::runtime_error(
-                        "custom field name must be a non-empty string",
-                    ));
-                }
-                let value = harmony_json::luau_to_json(frame.vm, &value, 0)?;
-                let mut layer = layer.lock().expect("metadata layer mutex poisoned");
-                layer.remove_custom_field_versions.remove(&version);
-                layer
-                    .custom_fields
-                    .entry(version)
-                    .or_default()
-                    .insert(name, value);
-                Ok(())
-            }
-        })?,
-    )?;
-    table.set_function_raw(
-        frame.vm,
-        "set_custom_fields",
-        &layer_function(&frame, "set_custom_fields", {
-            let layer = layer.clone();
-            move |mut frame| {
-                let _self_value: luau::Value = frame.args.read_named("self")?;
-                let version: String = frame.args.read_named("version")?;
-                let fields: luau::Value = frame.args.read_named("fields")?;
-                let version = parse_custom_field_version(&version)?;
-                let JsonValue::Object(fields) = harmony_json::luau_to_json(frame.vm, &fields, 0)?
-                else {
-                    return Err(crate::plugins::runtime_error(
-                        "custom fields payload must be a JSON object",
-                    ));
-                };
-                let mut layer = layer.lock().expect("metadata layer mutex poisoned");
-                layer.remove_custom_field_versions.remove(&version);
-                layer
-                    .custom_fields
-                    .insert(version, fields.into_iter().collect());
-                Ok(())
-            }
-        })?,
-    )?;
-    table.set_function_raw(
-        frame.vm,
-        "clear_custom_fields",
-        &layer_function(&frame, "clear_custom_fields", {
-            let layer = layer.clone();
-            move |mut frame| {
-                let _self_value: luau::Value = frame.args.read_named("self")?;
-                let version: String = frame.args.read_named("version")?;
-                let version = parse_custom_field_version(&version)?;
-                let mut layer = layer.lock().expect("metadata layer mutex poisoned");
-                layer.custom_fields.remove(&version);
-                layer.remove_custom_field_versions.insert(version);
-                Ok(())
-            }
-        })?,
-    )?;
-    frame.returns.write(table)
+    provider: &MetadataProvider,
+    vm: &luau::Vm,
+    context: &luau::CallContext,
+    origin: &luau::ChunkOrigin,
+    node_id: i64,
+) -> luau::runtime::Result<luau::Value> {
+    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    let node_id = require_positive_id(node_id, "node_id")?;
+    let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
+    let layer = MetadataLayer {
+        store,
+        state: Arc::new(Mutex::new(LayerBuilderState {
+            node_id,
+            provider_id: provider.provider_id.clone(),
+            fields: HashMap::new(),
+            external_ids: HashMap::new(),
+            custom_fields: HashMap::new(),
+            remove_custom_field_versions: HashSet::new(),
+        })),
+    };
+    MetadataLayer::_harmony_userdata_class().create_value(vm, origin, layer)
+}
+
+#[harmony_macros::userdata(name = "Layer", description = "Metadata layer builder.")]
+#[derive(Clone)]
+struct MetadataLayer {
+    store: MetadataModuleStore,
+    state: Arc<Mutex<LayerBuilderState>>,
 }
 
 #[derive(Clone)]
@@ -1253,16 +1093,128 @@ struct LayerBuilderState {
     remove_custom_field_versions: HashSet<u64>,
 }
 
-fn layer_function(
-    frame: &luau::CallFrame<'_>,
-    name: &'static str,
-    callback: impl Fn(luau::CallFrame<'_>) -> luau::runtime::Result<()> + Send + Sync + 'static,
-) -> luau::runtime::Result<luau::Function> {
-    frame.vm.create_function_with_options(
-        NativeFunctionOptions::new(frame.context.origin.clone())
-            .function_name(format!("Layer.{name}")),
-        Arc::new(callback),
-    )
+#[harmony_macros::userdata_methods]
+impl MetadataLayer {
+    fn set_id(&self, id_type: String, id_value: String) -> luau::runtime::Result<()> {
+        if id_type.trim().is_empty() {
+            return Err(crate::plugins::runtime_error(
+                "metadata layer id key must not be empty",
+            ));
+        }
+        self.state
+            .lock()
+            .expect("metadata layer mutex poisoned")
+            .external_ids
+            .insert(id_type, id_value);
+        Ok(())
+    }
+
+    #[harmony(args(name: String, value: luau::JsonValue))]
+    fn set_field(
+        &self,
+        vm: &luau::Vm,
+        name: String,
+        value: luau::Value,
+    ) -> luau::runtime::Result<()> {
+        if name.trim().is_empty() {
+            return Err(crate::plugins::runtime_error(
+                "metadata layer field key must not be empty",
+            ));
+        }
+        if name == "duration_ms" {
+            return Err(crate::plugins::runtime_error(
+                "duration_ms is read-only and cannot be set by plugins",
+            ));
+        }
+        let value = harmony_json::luau_to_json(vm, &value, 0)?;
+        self.state
+            .lock()
+            .expect("metadata layer mutex poisoned")
+            .fields
+            .insert(name, value);
+        Ok(())
+    }
+
+    fn save(&self) -> luau::runtime::Result<()> {
+        let Some(db) = self.store.db.clone() else {
+            return Err(crate::plugins::runtime_error(
+                "metadata layer save requires a database-backed plugin executor",
+            ));
+        };
+        let layer = self
+            .state
+            .lock()
+            .expect("metadata layer mutex poisoned")
+            .clone();
+        futures::executor::block_on(async {
+            let mut db = db.write().await;
+            crate::services::metadata::layers::save_provider_layer(
+                &mut db,
+                layer.node_id,
+                &layer.provider_id,
+                &layer.fields,
+                &layer.external_ids,
+                &layer.custom_fields,
+                &layer.remove_custom_field_versions,
+            )
+            .map_err(crate::plugins::runtime_error)
+        })
+    }
+
+    #[harmony(args(version: String, name: String, value: luau::JsonValue))]
+    fn set_custom_field(
+        &self,
+        vm: &luau::Vm,
+        version: String,
+        name: String,
+        value: luau::Value,
+    ) -> luau::runtime::Result<()> {
+        let version = parse_custom_field_version(&version)?;
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return Err(crate::plugins::runtime_error(
+                "custom field name must be a non-empty string",
+            ));
+        }
+        let value = harmony_json::luau_to_json(vm, &value, 0)?;
+        let mut layer = self.state.lock().expect("metadata layer mutex poisoned");
+        layer.remove_custom_field_versions.remove(&version);
+        layer
+            .custom_fields
+            .entry(version)
+            .or_default()
+            .insert(name, value);
+        Ok(())
+    }
+
+    #[harmony(args(version: String, fields: luau::JsonValue))]
+    fn set_custom_fields(
+        &self,
+        vm: &luau::Vm,
+        version: String,
+        fields: luau::Value,
+    ) -> luau::runtime::Result<()> {
+        let version = parse_custom_field_version(&version)?;
+        let JsonValue::Object(fields) = harmony_json::luau_to_json(vm, &fields, 0)? else {
+            return Err(crate::plugins::runtime_error(
+                "custom fields payload must be a JSON object",
+            ));
+        };
+        let mut layer = self.state.lock().expect("metadata layer mutex poisoned");
+        layer.remove_custom_field_versions.remove(&version);
+        layer
+            .custom_fields
+            .insert(version, fields.into_iter().collect());
+        Ok(())
+    }
+
+    fn clear_custom_fields(&self, version: String) -> luau::runtime::Result<()> {
+        let version = parse_custom_field_version(&version)?;
+        let mut layer = self.state.lock().expect("metadata layer mutex poisoned");
+        layer.custom_fields.remove(&version);
+        layer.remove_custom_field_versions.insert(version);
+        Ok(())
+    }
 }
 
 fn core_call_context(context: &luau::CallContext) -> CallContext {
@@ -1377,11 +1329,11 @@ fn parse_custom_field_version(raw: &str) -> luau::runtime::Result<u64> {
 }
 
 fn ensure_provider_owner(
-    frame: &luau::CallFrame<'_>,
+    context: &luau::CallContext,
     plugin_id: &PluginId,
     provider_id: &str,
 ) -> luau::runtime::Result<()> {
-    let caller = frame.context.origin.plugin.as_deref();
+    let caller = context.origin.plugin.as_deref();
     if caller == Some(plugin_id.as_ref()) {
         return Ok(());
     }
@@ -1393,7 +1345,7 @@ fn ensure_provider_owner(
 
 fn parse_id_spec(vm: &luau::Vm, spec: &luau::Table) -> luau::runtime::Result<ProviderIdSpec> {
     let id = required_string(vm, spec, "id")?;
-    let entity = parse_entity_type(&required_string(vm, spec, "entity")?)?;
+    let entity = required_entity_type(vm, spec, "entity")?;
     let unique = optional_bool(vm, spec, "unique")?.unwrap_or(false);
     Ok(ProviderIdSpec { id, entity, unique })
 }
@@ -1543,17 +1495,6 @@ fn parse_require_paths(
     }
 }
 
-fn parse_entity_type(value: &str) -> luau::runtime::Result<EntityType> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "release" => Ok(EntityType::Release),
-        "artist" => Ok(EntityType::Artist),
-        "track" => Ok(EntityType::Track),
-        other => Err(crate::plugins::runtime_error(format!(
-            "entity_type must be one of: release, artist, track (got '{other}')"
-        ))),
-    }
-}
-
 fn parse_id_url_template(bytes: Vec<u8>) -> luau::runtime::Result<String> {
     let template = String::from_utf8(bytes)
         .map_err(|_| crate::plugins::runtime_error("provider:id URL template must be utf-8"))?
@@ -1643,6 +1584,29 @@ fn required_string(vm: &luau::Vm, table: &luau::Table, key: &str) -> luau::runti
     }
 }
 
+fn required_entity_type(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &'static str,
+) -> luau::runtime::Result<EntityType> {
+    let value = table.get_raw(vm, key)?;
+    EntityType::_harmony_userdata_class().read_value(vm, key, value)
+}
+
+fn optional_artist_type(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &'static str,
+) -> luau::runtime::Result<Option<server_db::ArtistType>> {
+    let value = table.get_raw(vm, key)?;
+    if matches!(value, luau::Value::Nil) {
+        return Ok(None);
+    }
+    server_db::ArtistType::_harmony_userdata_class()
+        .read_value(vm, key, value)
+        .map(Some)
+}
+
 fn optional_bool(
     vm: &luau::Vm,
     table: &luau::Table,
@@ -1674,62 +1638,6 @@ fn string_array_from_table(
     Ok(values)
 }
 
-fn install_metadata_constants(
-    vm: &luau::Vm,
-    _origin: &harmony_core::ChunkOrigin,
-    root: &luau::Table,
-) -> luau::runtime::Result<()> {
-    install_string_table(
-        vm,
-        root,
-        "EntityType",
-        &[
-            ("Release", "release"),
-            ("Artist", "artist"),
-            ("Track", "track"),
-        ],
-    )?;
-    install_string_table(
-        vm,
-        root,
-        "CreditType",
-        &[
-            ("Artist", "artist"),
-            ("Vocalist", "vocalist"),
-            ("Instrumentalist", "instrumentalist"),
-            ("Composer", "composer"),
-            ("Lyricist", "lyricist"),
-            ("Arranger", "arranger"),
-            ("Writer", "writer"),
-            ("Producer", "producer"),
-            ("Conductor", "conductor"),
-            ("Engineer", "engineer"),
-            ("Mixer", "mixer"),
-            ("Remixer", "remixer"),
-        ],
-    )?;
-    install_string_table(
-        vm,
-        root,
-        "ArtistRelationType",
-        &[("VoiceActor", "voice_actor"), ("MemberOf", "member_of")],
-    )
-}
-
-fn install_string_table(
-    vm: &luau::Vm,
-    root: &luau::Table,
-    key: &str,
-    entries: &[(&str, &str)],
-) -> luau::runtime::Result<()> {
-    let table = vm.create_table()?;
-    for (name, value) in entries {
-        table.set_raw(vm, name, luau::Value::String(value.as_bytes().to_vec()))?;
-    }
-    table.set_readonly(vm, true)?;
-    root.set_table_raw(vm, key, &table)
-}
-
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &metadata_module_descriptor(),
@@ -1741,33 +1649,6 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
 
 fn metadata_module_descriptor() -> ModuleDescriptor {
     let mut descriptor = ModuleDescriptor::new("Metadata", "metadata", None);
-    descriptor.fields.extend(
-        [
-            (vec!["EntityType", "Release"], "\"release\""),
-            (vec!["EntityType", "Artist"], "\"artist\""),
-            (vec!["EntityType", "Track"], "\"track\""),
-            (vec!["CreditType", "Artist"], "\"artist\""),
-            (vec!["CreditType", "Vocalist"], "\"vocalist\""),
-            (vec!["CreditType", "Instrumentalist"], "\"instrumentalist\""),
-            (vec!["CreditType", "Composer"], "\"composer\""),
-            (vec!["CreditType", "Lyricist"], "\"lyricist\""),
-            (vec!["CreditType", "Arranger"], "\"arranger\""),
-            (vec!["CreditType", "Writer"], "\"writer\""),
-            (vec!["CreditType", "Producer"], "\"producer\""),
-            (vec!["CreditType", "Conductor"], "\"conductor\""),
-            (vec!["CreditType", "Engineer"], "\"engineer\""),
-            (vec!["CreditType", "Mixer"], "\"mixer\""),
-            (vec!["CreditType", "Remixer"], "\"remixer\""),
-            (vec!["ArtistRelationType", "VoiceActor"], "\"voice_actor\""),
-            (vec!["ArtistRelationType", "MemberOf"], "\"member_of\""),
-        ]
-        .into_iter()
-        .map(|(path, ty)| ModuleFieldDescriptor {
-            path,
-            description: None,
-            ty: LuauType::literal(ty),
-        }),
-    );
     descriptor.functions.extend([
         ModuleFunctionDescriptor {
             path: vec!["Provider", "new"],
@@ -1809,28 +1690,6 @@ fn metadata_type_aliases() -> Vec<TypeAliasDescriptor> {
         alias(
             "CustomFieldsByProvider",
             map(string(), ty("ProviderCustomFieldsByVersion")),
-        ),
-        alias("EntityType", string_enum(&["release", "artist", "track"])),
-        alias(
-            "CreditType",
-            string_enum(&[
-                "artist",
-                "vocalist",
-                "instrumentalist",
-                "composer",
-                "lyricist",
-                "arranger",
-                "writer",
-                "producer",
-                "conductor",
-                "engineer",
-                "mixer",
-                "remixer",
-            ]),
-        ),
-        alias(
-            "ArtistRelationType",
-            string_enum(&["voice_actor", "member_of"]),
         ),
         alias("OptionValue", union([boolean(), string(), number()])),
         alias("ProviderSearchResult", map(string(), ty("JsonValue"))),
@@ -2231,7 +2090,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("id_value", string()),
                 field("artist_name", opt(string())),
                 field("sort_name", opt(string())),
-                field("artist_type", opt(string())),
+                field("artist_type", opt(ty("ArtistType"))),
                 field("description", opt(string())),
             ],
         ),
@@ -2239,7 +2098,14 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
 }
 
 fn metadata_classes() -> Vec<ClassDescriptor> {
-    vec![layer_class(), provider_class()]
+    vec![
+        <EntityType as harmony_luau::DescribeUserData>::class_descriptor(),
+        <server_db::ArtistType as harmony_luau::DescribeUserData>::class_descriptor(),
+        <server_db::CreditType as harmony_luau::DescribeUserData>::class_descriptor(),
+        <server_db::ArtistRelationType as harmony_luau::DescribeUserData>::class_descriptor(),
+        layer_class(),
+        provider_class(),
+    ]
 }
 
 fn layer_class() -> ClassDescriptor {
@@ -2423,15 +2289,6 @@ fn fn_param(name: &'static str, ty: LuauType) -> FunctionParameter {
         ty,
         variadic: false,
     }
-}
-
-fn string_enum(values: &[&'static str]) -> LuauType {
-    LuauType::union(
-        values
-            .iter()
-            .map(|value| LuauType::string_literal(value))
-            .collect(),
-    )
 }
 
 fn boolean() -> LuauType {

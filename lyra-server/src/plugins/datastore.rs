@@ -3,24 +3,18 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
-
 use harmony_core::{
     FunctionSpec,
     ModuleExport,
     ModuleSpec,
-    UserDataSpec,
 };
 use harmony_luau as luau;
 use harmony_luau::{
-    ClassDescriptor,
     DescribeTypeAlias,
     DescribeUserData,
     JsonValue,
     LuauType,
     LuauTypeInfo,
-    MethodDescriptor,
-    MethodKind,
     ModuleDescriptor,
     ModuleFunctionDescriptor,
     ParameterDescriptor,
@@ -34,12 +28,6 @@ use crate::plugins::db::{
 };
 struct PluginCaller;
 
-impl LuauTypeInfo for DataStore {
-    fn luau_type() -> LuauType {
-        LuauType::literal("DataStore")
-    }
-}
-
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -49,126 +37,86 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
-impl DescribeUserData for DataStore {
-    fn class_descriptor() -> ClassDescriptor {
-        let mut descriptor = ClassDescriptor::new("DataStore", None);
-        descriptor.methods.extend([
-            MethodDescriptor {
-                name: "get",
-                description: Some("Gets a JSON value from this store by key."),
-                params: vec![param("key", String::luau_type())],
-                returns: vec![Option::<JsonValue>::luau_type()],
-                yields: true,
-                kind: MethodKind::Instance,
-            },
-            MethodDescriptor {
-                name: "set",
-                description: Some("Sets a JSON value in this store by key."),
-                params: vec![
-                    param("key", String::luau_type()),
-                    param("value", JsonValue::luau_type()),
-                ],
-                returns: vec![],
-                yields: true,
-                kind: MethodKind::Instance,
-            },
-            MethodDescriptor {
-                name: "remove",
-                description: Some(
-                    "Removes an entry from this store by key. Returns whether a value was removed.",
-                ),
-                params: vec![param("key", String::luau_type())],
-                returns: vec![bool::luau_type()],
-                yields: true,
-                kind: MethodKind::Instance,
-            },
-            MethodDescriptor {
-                name: "get_many",
-                description: Some("Gets multiple JSON values from this store under one read lock."),
-                params: vec![param("keys", Vec::<String>::luau_type())],
-                returns: vec![Vec::<Option<JsonValue>>::luau_type()],
-                yields: true,
-                kind: MethodKind::Instance,
-            },
-            MethodDescriptor {
-                name: "set_many",
-                description: Some(
-                    "Writes multiple JSON values to this store under one write lock.",
-                ),
-                params: vec![param(
-                    "entries",
-                    LuauType::map(String::luau_type(), JsonValue::luau_type()),
-                )],
-                returns: vec![],
-                yields: true,
-                kind: MethodKind::Instance,
-            },
-            MethodDescriptor {
-                name: "clear",
-                description: Some(
-                    "Removes every entry from this store. Returns the number removed.",
-                ),
-                params: vec![],
-                returns: vec![u64::luau_type()],
-                yields: true,
-                kind: MethodKind::Instance,
-            },
-        ]);
-        descriptor
-    }
+struct DataStoreModule;
+
+#[harmony_macros::userdata(name = "DataStore", description = "A named persistent JSON store.")]
+#[derive(Clone)]
+struct DataStoreHandle {
+    store: DataStoreModuleStore,
+    datastore_id: agdb::DbId,
 }
 
-struct DataStoreModule;
+#[harmony_macros::userdata_methods]
+impl DataStoreHandle {
+    #[harmony(
+        description = "Gets a JSON value from this store by key.",
+        args(key: String),
+        returns(Option<JsonValue>)
+    )]
+    fn get(&self, vm: &luau::Vm, key: String) -> luau::runtime::Result<luau::Value> {
+        self.store.get(vm, self.datastore_id, key)
+    }
+
+    #[harmony(
+        description = "Sets a JSON value in this store by key.",
+        args(key: String, value: JsonValue)
+    )]
+    fn set(&self, vm: &luau::Vm, key: String, value: luau::Value) -> luau::runtime::Result<()> {
+        let json = harmony_json::luau_to_json(vm, &value, 0)?;
+        self.store.set(self.datastore_id, key, json)
+    }
+
+    #[harmony(
+        description = "Removes an entry from this store by key. Returns whether a value was removed."
+    )]
+    fn remove(&self, key: String) -> luau::runtime::Result<bool> {
+        self.store.remove(self.datastore_id, key)
+    }
+
+    #[harmony(
+        description = "Gets multiple JSON values from this store under one read lock.",
+        args(keys: Vec<String>),
+        returns(Vec<Option<JsonValue>>)
+    )]
+    fn get_many(
+        &self,
+        vm: &luau::Vm,
+        keys: luau::Table,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let keys = read_string_array(vm, &keys)?;
+        self.store.get_many(vm, self.datastore_id, keys)
+    }
+
+    #[harmony(
+        description = "Writes multiple JSON values to this store under one write lock.",
+        args(entries: std::collections::BTreeMap<String, JsonValue>)
+    )]
+    fn set_many(&self, vm: &luau::Vm, entries: luau::Table) -> luau::runtime::Result<()> {
+        let entries = read_json_entries(vm, &entries)?;
+        self.store.set_many(self.datastore_id, entries)
+    }
+
+    #[harmony(description = "Removes every entry from this store. Returns the number removed.")]
+    fn clear(&self) -> luau::runtime::Result<i64> {
+        self.store
+            .clear(self.datastore_id)
+            .map(|removed| removed as i64)
+    }
+}
 
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/datastore")
         .capability("lyra.datastore")
         .function(get_or_create_spec())
-        .userdata(
-            UserDataSpec::new("DataStore")
-                .method(
-                    FunctionSpec::async_fn("get")
-                        .context::<PluginCaller>()
-                        .args::<String>()
-                        .returns::<Option<JsonValue>>(),
-                )
-                .method(
-                    FunctionSpec::async_fn("set")
-                        .context::<PluginCaller>()
-                        .args::<String>()
-                        .args::<JsonValue>(),
-                )
-                .method(
-                    FunctionSpec::async_fn("remove")
-                        .context::<PluginCaller>()
-                        .args::<String>()
-                        .returns::<bool>(),
-                )
-                .method(
-                    FunctionSpec::async_fn("get_many")
-                        .context::<PluginCaller>()
-                        .args::<Vec<String>>()
-                        .returns::<Vec<Option<JsonValue>>>(),
-                )
-                .method(
-                    FunctionSpec::async_fn("set_many")
-                        .context::<PluginCaller>()
-                        .args::<std::collections::BTreeMap<String, JsonValue>>(),
-                )
-                .method(
-                    FunctionSpec::async_fn("clear")
-                        .context::<PluginCaller>()
-                        .returns::<u64>(),
-                ),
-        )
+        .userdata(DataStoreHandle::_harmony_userdata_spec())
         .install(|_| Ok(ModuleExport::new(DataStoreModule)))
 }
 
 fn get_or_create_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("get_or_create")
+    let spec = FunctionSpec::sync_fn("get_or_create")
         .context::<PluginCaller>()
         .named_arg::<String>("name")
-        .returns::<DataStore>();
+        .returns::<DataStoreHandle>();
     spec.call(get_or_create_callback)
 }
 
@@ -181,10 +129,18 @@ fn get_or_create_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Resu
         .as_ref()
         .clone();
     let datastore_id = store.get_or_create(name)?;
-    let table = datastore_table(frame.context.origin.clone(), store, datastore_id);
-    frame.returns.write(table)?;
+    let userdata = DataStoreHandle::_harmony_userdata_class().create(
+        frame.vm,
+        &frame.context.origin,
+        DataStoreHandle {
+            store,
+            datastore_id,
+        },
+    )?;
+    frame.returns.write(userdata)?;
     Ok(())
 }
+
 #[derive(Clone, Default)]
 pub(crate) struct DataStoreModuleStore {
     db: Option<DbAsync>,
@@ -334,112 +290,11 @@ fn datastore_db_id(datastore: DataStore) -> luau::runtime::Result<agdb::DbId> {
         .map(Into::into)
         .ok_or_else(|| luau::Error::Runtime("datastore missing db_id".to_string()))
 }
-fn datastore_table(
-    origin: luau::ChunkOrigin,
-    store: DataStoreModuleStore,
-    datastore_id: agdb::DbId,
-) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_capacity(0, 6);
-    table.set_field(
-        "get",
-        datastore_method_callback(&origin, "get", ["self", "key"], {
-            let store = store.clone();
-            move |mut frame| {
-                read_self(&mut frame.args)?;
-                let key: String = frame.args.read_named("key")?;
-                let value = store.get(frame.vm, datastore_id, key)?;
-                frame.returns.write(value)
-            }
-        }),
-    );
-    table.set_field(
-        "set",
-        datastore_method_callback(&origin, "set", ["self", "key", "value"], {
-            let store = store.clone();
-            move |mut frame| {
-                read_self(&mut frame.args)?;
-                let key: String = frame.args.read_named("key")?;
-                let value: luau::Value = frame.args.read_named("value")?;
-                let json = harmony_json::luau_to_json(frame.vm, &value, 0)?;
-                store.set(datastore_id, key, json)?;
-                Ok(())
-            }
-        }),
-    );
-    table.set_field(
-        "remove",
-        datastore_method_callback(&origin, "remove", ["self", "key"], {
-            let store = store.clone();
-            move |mut frame| {
-                read_self(&mut frame.args)?;
-                let key: String = frame.args.read_named("key")?;
-                frame.returns.write(store.remove(datastore_id, key)?)
-            }
-        }),
-    );
-    table.set_field(
-        "get_many",
-        datastore_method_callback(&origin, "get_many", ["self", "keys"], {
-            let store = store.clone();
-            move |mut frame| {
-                read_self(&mut frame.args)?;
-                let keys: luau::Table = frame.args.read_named("keys")?;
-                let keys = read_string_array(frame.vm, &keys)?;
-                let values = store.get_many(frame.vm, datastore_id, keys)?;
-                frame.returns.write(values)
-            }
-        }),
-    );
-    table.set_field(
-        "set_many",
-        datastore_method_callback(&origin, "set_many", ["self", "entries"], {
-            let store = store.clone();
-            move |mut frame| {
-                read_self(&mut frame.args)?;
-                let entries: luau::Table = frame.args.read_named("entries")?;
-                let entries = read_json_entries(frame.vm, &entries)?;
-                store.set_many(datastore_id, entries)?;
-                Ok(())
-            }
-        }),
-    );
-    table.set_field(
-        "clear",
-        datastore_method_callback(&origin, "clear", ["self"], move |mut frame| {
-            read_self(&mut frame.args)?;
-            frame.returns.write(store.clear(datastore_id)? as i64)
-        }),
-    );
-    table
-}
-fn datastore_method_callback(
-    origin: &luau::ChunkOrigin,
-    name: &'static str,
-    args: impl IntoIterator<Item = &'static str>,
-    callback: impl for<'vm> Fn(luau::CallFrame<'vm>) -> luau::runtime::Result<()>
-    + Send
-    + Sync
-    + 'static,
-) -> luau::Value {
-    let options = luau::NativeFunctionOptions::new(origin.clone())
-        .function_name(format!("DataStore.{name}"))
-        .argument_names(args.into_iter().map(Arc::<str>::from));
-    luau::Value::NativeFunction(luau::NativeFunctionValue::new(options, Arc::new(callback)))
-}
-fn read_self(args: &mut luau::ArgReader<'_>) -> luau::runtime::Result<()> {
-    let _: luau::Table = args.read_named("self")?;
-    Ok(())
-}
-fn read_string_array(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
-    let mut entries = table
-        .pairs_raw(vm)?
-        .into_iter()
-        .filter_map(|(key, value)| Some((sequence_index(key)?, value)))
-        .collect::<Vec<_>>();
-    entries.sort_by_key(|(index, _)| *index);
 
+fn read_string_array(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
+    let entries = table.reader(vm)?.array_values_raw()?;
     let mut values = Vec::with_capacity(entries.len());
-    for (_, value) in entries {
+    for value in entries {
         let luau::Value::String(value) = value else {
             return Err(luau::Error::Runtime(
                 "datastore key arrays must contain only strings".to_string(),
@@ -449,6 +304,7 @@ fn read_string_array(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Resul
     }
     Ok(values)
 }
+
 fn read_json_entries(
     vm: &luau::Vm,
     table: &luau::Table,
@@ -466,16 +322,6 @@ fn read_json_entries(
     }
     Ok(entries)
 }
-fn sequence_index(value: luau::Value) -> Option<i64> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Some(value),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Some(value as i64)
-        }
-        _ => None,
-    }
-}
-
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "DataStore",
@@ -486,8 +332,8 @@ fn module_descriptor() -> ModuleDescriptor {
             path: vec!["get_or_create"],
             description: Some("Returns a named data store, creating it if needed."),
             params: vec![param("name", String::luau_type())],
-            returns: vec![DataStore::luau_type()],
-            yields: true,
+            returns: vec![DataStoreHandle::luau_type()],
+            yields: false,
         }],
     }
 }
@@ -497,7 +343,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &module_descriptor(),
         &[JsonValue::type_alias_descriptor()],
         &[],
-        &[DataStore::class_descriptor()],
+        &[DataStoreHandle::class_descriptor()],
     )
 }
 
@@ -506,7 +352,7 @@ mod spec_tests {
     use super::*;
 
     #[test]
-    fn exposes_handwritten_module_spec_with_userdata() {
+    fn exposes_module_spec_with_userdata() {
         let spec = module_spec();
 
         assert_eq!(spec.id.0.as_ref(), "lyra/datastore");
@@ -524,7 +370,7 @@ mod spec_tests {
         assert_eq!(spec.userdata.len(), 1);
         assert_eq!(spec.userdata[0].name.as_ref(), "DataStore");
         assert_eq!(spec.userdata[0].methods.len(), 6);
-        assert!(spec.userdata[0].methods.iter().all(|method| method.yields));
+        assert!(spec.userdata[0].methods.iter().all(|method| !method.yields));
     }
 
     #[test]

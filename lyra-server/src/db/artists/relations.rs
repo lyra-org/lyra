@@ -29,6 +29,7 @@ use super::super::{
     NodeId,
 };
 
+#[harmony_macros::userdata(name = "ArtistRelationType")]
 #[derive(
     Clone,
     Copy,
@@ -94,12 +95,6 @@ impl TryFrom<DbValue> for ArtistRelationType {
         Self::from_db_str(value.string()?)
     }
 }
-
-impl_luau_enum_userdata!(
-    ArtistRelationType,
-    "ArtistRelationType",
-    [VoiceActor, MemberOf]
-);
 
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub(crate) struct ArtistRelation {

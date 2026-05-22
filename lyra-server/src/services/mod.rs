@@ -5,55 +5,16 @@
 
 use std::fmt;
 
-use harmony_luau::{
-    ClassDescriptor,
-    DescribeUserData,
-    FieldDescriptor,
-    LuauType,
-    LuauTypeInfo,
-};
 use schemars::JsonSchema;
 use serde::Serialize;
 
+#[harmony_macros::userdata(name = "EntityType")]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, JsonSchema, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum EntityType {
     Release,
     Artist,
     Track,
-}
-
-impl LuauTypeInfo for EntityType {
-    fn luau_type() -> LuauType {
-        LuauType::literal("EntityType")
-    }
-}
-
-impl DescribeUserData for EntityType {
-    fn class_descriptor() -> ClassDescriptor {
-        ClassDescriptor {
-            name: "EntityType",
-            description: None,
-            fields: vec![
-                FieldDescriptor {
-                    name: "Release",
-                    ty: EntityType::luau_type(),
-                    description: None,
-                },
-                FieldDescriptor {
-                    name: "Artist",
-                    ty: EntityType::luau_type(),
-                    description: None,
-                },
-                FieldDescriptor {
-                    name: "Track",
-                    ty: EntityType::luau_type(),
-                    description: None,
-                },
-            ],
-            methods: vec![],
-        }
-    }
 }
 
 impl EntityType {

@@ -15,7 +15,7 @@ pub(crate) use self::luau::{
     PluginSettingsModuleStore,
     declare_settings_spec,
     declare_user_settings_spec,
-    user_settings_accessor_get_spec,
+    user_settings_accessor_spec,
 };
 pub(crate) use self::registry::{
     REGISTRY,

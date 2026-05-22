@@ -13,14 +13,15 @@ use harmony_luau::{
     InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
-    MethodDescriptor,
-    MethodKind,
     ModuleFunctionDescriptor,
     ParameterDescriptor,
     TypeAliasDescriptor,
 };
 
-use super::luau::SettingsBuilder;
+use super::luau::{
+    SettingsBuilder,
+    UserSettingsAccessor,
+};
 
 pub(super) struct SettingsConfig;
 
@@ -72,163 +73,15 @@ impl DescribeTypeAlias for SettingsCallback {
     }
 }
 
-pub(super) struct UserSettingsAccessor;
+pub(super) struct SettingsChoiceOption;
 
-impl LuauTypeInfo for UserSettingsAccessor {
-    fn luau_type() -> LuauType {
-        LuauType::literal("UserSettingsAccessor")
-    }
-}
+pub(super) struct SettingsStringProps;
 
-impl DescribeUserData for UserSettingsAccessor {
-    fn class_descriptor() -> ClassDescriptor {
-        ClassDescriptor {
-            name: "UserSettingsAccessor",
-            description: None,
-            fields: vec![],
-            methods: vec![MethodDescriptor {
-                name: "get",
-                description: None,
-                params: vec![ParameterDescriptor {
-                    name: "user_id",
-                    ty: i64::luau_type(),
-                    description: None,
-                    variadic: false,
-                }],
-                returns: vec![SettingsConfig::luau_type()],
-                yields: true,
-                kind: MethodKind::Instance,
-            }],
-        }
-    }
-}
+pub(super) struct SettingsNumberProps;
 
-struct SettingsChoiceOption;
+pub(super) struct SettingsBoolProps;
 
-struct SettingsStringProps;
-
-struct SettingsNumberProps;
-
-struct SettingsBoolProps;
-
-struct SettingsChoiceProps;
-
-impl DescribeUserData for SettingsBuilder {
-    fn class_descriptor() -> ClassDescriptor {
-        ClassDescriptor {
-            name: "SettingsBuilder",
-            description: Some("Builder for declaring plugin settings."),
-            fields: vec![],
-            methods: vec![
-                MethodDescriptor {
-                    name: "group",
-                    description: Some("Starts a settings group."),
-                    params: vec![
-                        ParameterDescriptor {
-                            name: "id",
-                            ty: String::luau_type(),
-                            description: Some("Stable group identifier."),
-                            variadic: false,
-                        },
-                        ParameterDescriptor {
-                            name: "label",
-                            ty: String::luau_type(),
-                            description: Some("Group heading text."),
-                            variadic: false,
-                        },
-                    ],
-                    returns: vec![],
-                    yields: false,
-                    kind: MethodKind::Instance,
-                },
-                MethodDescriptor {
-                    name: "string",
-                    description: Some("Declares a string setting."),
-                    params: vec![
-                        ParameterDescriptor {
-                            name: "key",
-                            ty: String::luau_type(),
-                            description: Some("Unique setting key."),
-                            variadic: false,
-                        },
-                        ParameterDescriptor {
-                            name: "props",
-                            ty: SettingsStringProps::luau_type(),
-                            description: Some("Setting properties."),
-                            variadic: false,
-                        },
-                    ],
-                    returns: vec![<Option<String> as LuauTypeInfo>::luau_type()],
-                    yields: false,
-                    kind: MethodKind::Instance,
-                },
-                MethodDescriptor {
-                    name: "number",
-                    description: Some("Declares a number setting."),
-                    params: vec![
-                        ParameterDescriptor {
-                            name: "key",
-                            ty: String::luau_type(),
-                            description: Some("Unique setting key."),
-                            variadic: false,
-                        },
-                        ParameterDescriptor {
-                            name: "props",
-                            ty: SettingsNumberProps::luau_type(),
-                            description: Some("Setting properties."),
-                            variadic: false,
-                        },
-                    ],
-                    returns: vec![<Option<f64> as LuauTypeInfo>::luau_type()],
-                    yields: false,
-                    kind: MethodKind::Instance,
-                },
-                MethodDescriptor {
-                    name: "bool",
-                    description: Some("Declares a boolean setting."),
-                    params: vec![
-                        ParameterDescriptor {
-                            name: "key",
-                            ty: String::luau_type(),
-                            description: Some("Unique setting key."),
-                            variadic: false,
-                        },
-                        ParameterDescriptor {
-                            name: "props",
-                            ty: SettingsBoolProps::luau_type(),
-                            description: Some("Setting properties."),
-                            variadic: false,
-                        },
-                    ],
-                    returns: vec![<Option<bool> as LuauTypeInfo>::luau_type()],
-                    yields: false,
-                    kind: MethodKind::Instance,
-                },
-                MethodDescriptor {
-                    name: "choice",
-                    description: Some("Declares a single-choice setting."),
-                    params: vec![
-                        ParameterDescriptor {
-                            name: "key",
-                            ty: String::luau_type(),
-                            description: Some("Unique setting key."),
-                            variadic: false,
-                        },
-                        ParameterDescriptor {
-                            name: "props",
-                            ty: SettingsChoiceProps::luau_type(),
-                            description: Some("Setting properties."),
-                            variadic: false,
-                        },
-                    ],
-                    returns: vec![<Option<String> as LuauTypeInfo>::luau_type()],
-                    yields: false,
-                    kind: MethodKind::Instance,
-                },
-            ],
-        }
-    }
-}
+pub(super) struct SettingsChoiceProps;
 
 impl LuauTypeInfo for SettingsChoiceOption {
     fn luau_type() -> LuauType {
@@ -400,7 +253,7 @@ pub(crate) fn declare_settings_descriptor() -> ModuleFunctionDescriptor {
         description: None,
         params: vec![param("callback", SettingsCallback::luau_type())],
         returns: vec![SettingsConfig::luau_type()],
-        yields: true,
+        yields: false,
     }
 }
 
@@ -410,7 +263,7 @@ pub(crate) fn declare_user_settings_descriptor() -> ModuleFunctionDescriptor {
         description: None,
         params: vec![param("callback", SettingsCallback::luau_type())],
         returns: vec![UserSettingsAccessor::luau_type()],
-        yields: true,
+        yields: false,
     }
 }
 

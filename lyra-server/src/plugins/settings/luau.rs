@@ -27,18 +27,190 @@ use super::{
     Schema,
     SettingsScope,
     descriptors::{
+        SettingsBoolProps,
         SettingsCallback,
+        SettingsChoiceProps,
         SettingsConfig,
-        UserSettingsAccessor,
+        SettingsNumberProps,
+        SettingsStringProps,
     },
 };
 use crate::plugins::db::DbAsync;
 use crate::services::plugin_settings as plugin_settings_service;
 
+#[harmony_macros::userdata(
+    name = "SettingsBuilder",
+    description = "Builder for declaring plugin settings."
+)]
 #[derive(Clone)]
 pub(super) struct SettingsBuilder {
     groups: Arc<Mutex<Vec<FieldGroupDefinition>>>,
     stored_values: Arc<HashMap<String, serde_json::Value>>,
+}
+
+#[harmony_macros::userdata_methods]
+impl SettingsBuilder {
+    #[harmony(
+        description = "Starts a settings group.",
+        args(id: String, label: String)
+    )]
+    fn group(&self, id: String, label: String) -> luau::runtime::Result<()> {
+        push_group(self, id, label)
+    }
+
+    #[harmony(
+        description = "Declares a string setting.",
+        args(key: String, props: SettingsStringProps),
+        returns(Option<String>)
+    )]
+    fn string(
+        &self,
+        vm: &luau::Vm,
+        key: String,
+        props: luau::Table,
+    ) -> luau::runtime::Result<luau::Value> {
+        let key = register_key(self, key)?;
+        let field = FieldDefinition::String {
+            key,
+            props: build_field_props(vm, &props, parse_string_default(vm, &props)?)?,
+        };
+        let value = primitive_value_for_field(&field, self.stored_values.get(field.key()))?;
+        push_field(self, field)?;
+        Ok(value)
+    }
+
+    #[harmony(
+        description = "Declares a number setting.",
+        args(key: String, props: SettingsNumberProps),
+        returns(Option<f64>)
+    )]
+    fn number(
+        &self,
+        vm: &luau::Vm,
+        key: String,
+        props: luau::Table,
+    ) -> luau::runtime::Result<luau::Value> {
+        let key = register_key(self, key)?;
+        let min = optional_number(vm, &props, "min")?;
+        let max = optional_number(vm, &props, "max")?;
+        if let (Some(min), Some(max)) = (min, max)
+            && min > max
+        {
+            return Err(luau::Error::Runtime(
+                "min must be less than or equal to max".to_string(),
+            ));
+        }
+        let default_value = parse_number_default(vm, &props)?;
+        if let Some(default) = default_value.as_ref().and_then(|value| value.as_f64()) {
+            if let Some(min) = min
+                && default < min
+            {
+                return Err(luau::Error::Runtime(
+                    "default value must be greater than or equal to min".to_string(),
+                ));
+            }
+            if let Some(max) = max
+                && default > max
+            {
+                return Err(luau::Error::Runtime(
+                    "default value must be less than or equal to max".to_string(),
+                ));
+            }
+        }
+        let field = FieldDefinition::Number {
+            key,
+            props: build_field_props(vm, &props, default_value)?,
+            min,
+            max,
+        };
+        let value = primitive_value_for_field(&field, self.stored_values.get(field.key()))?;
+        push_field(self, field)?;
+        Ok(value)
+    }
+
+    #[harmony(
+        description = "Declares a boolean setting.",
+        args(key: String, props: SettingsBoolProps),
+        returns(Option<bool>)
+    )]
+    fn bool(
+        &self,
+        vm: &luau::Vm,
+        key: String,
+        props: luau::Table,
+    ) -> luau::runtime::Result<luau::Value> {
+        let key = register_key(self, key)?;
+        let field = FieldDefinition::Bool {
+            key,
+            props: build_field_props(vm, &props, parse_bool_default(vm, &props)?)?,
+        };
+        let value = primitive_value_for_field(&field, self.stored_values.get(field.key()))?;
+        push_field(self, field)?;
+        Ok(value)
+    }
+
+    #[harmony(
+        description = "Declares a single-choice setting.",
+        args(key: String, props: SettingsChoiceProps),
+        returns(Option<String>)
+    )]
+    fn choice(
+        &self,
+        vm: &luau::Vm,
+        key: String,
+        props: luau::Table,
+    ) -> luau::runtime::Result<luau::Value> {
+        let key = register_key(self, key)?;
+        let options = parse_choice_options(vm, &props)?;
+        let default_value = parse_choice_default(vm, &props, &options)?;
+        let field = FieldDefinition::Choice {
+            key,
+            props: build_field_props(vm, &props, default_value)?,
+            options,
+        };
+        let value = primitive_value_for_field(&field, self.stored_values.get(field.key()))?;
+        push_field(self, field)?;
+        Ok(value)
+    }
+}
+
+#[harmony_macros::userdata(name = "UserSettingsAccessor")]
+#[derive(Clone)]
+pub(super) struct UserSettingsAccessor {
+    store: PluginSettingsModuleStore,
+    plugin_id: PluginId,
+    schema: Schema,
+}
+
+#[harmony_macros::userdata_methods]
+impl UserSettingsAccessor {
+    #[harmony(
+        description = "Returns validated settings for a user.",
+        returns(SettingsConfig)
+    )]
+    fn get(
+        &self,
+        context: &luau::CallContext,
+        user_id: i64,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let caller = current_plugin_id(context)?;
+        if caller != self.plugin_id {
+            return Err(luau::Error::Runtime(format!(
+                "user settings accessor for plugin '{}' must be used by the owning plugin",
+                self.plugin_id
+            )));
+        }
+        if user_id <= 0 {
+            return Err(luau::Error::Runtime("user_id must be positive".to_string()));
+        }
+        let stored = self.store.load_user_stored_values(
+            agdb::DbId(user_id),
+            &self.plugin_id,
+            &self.schema,
+        )?;
+        let builder = settings_builder(stored);
+        build_config_table(&self.schema.groups, &builder)
+    }
 }
 
 #[derive(Clone, Default)]
@@ -98,9 +270,13 @@ fn declare_settings_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::R
         .clone();
     let stored_values = store.load_stored_values(&plugin_id)?;
     let builder = settings_builder(stored_values);
-    let builder_table = settings_builder_table(frame.context.origin.clone(), builder.clone());
+    let builder_value = SettingsBuilder::_harmony_userdata_class().create_value(
+        frame.vm,
+        &frame.context.origin,
+        builder.clone(),
+    )?;
 
-    callback.call(frame.vm, &[luau::Value::TableData(builder_table)])?;
+    callback.call(frame.vm, &[builder_value])?;
 
     let groups = take_groups(&builder)?;
     let schema = Schema { groups };
@@ -130,9 +306,13 @@ fn declare_user_settings_callback(mut frame: luau::CallFrame<'_>) -> luau::runti
         .as_ref()
         .clone();
     let builder = settings_builder(HashMap::new());
-    let builder_table = settings_builder_table(frame.context.origin.clone(), builder.clone());
+    let builder_value = SettingsBuilder::_harmony_userdata_class().create_value(
+        frame.vm,
+        &frame.context.origin,
+        builder.clone(),
+    )?;
 
-    callback.call(frame.vm, &[luau::Value::TableData(builder_table)])?;
+    callback.call(frame.vm, &[builder_value])?;
 
     let groups = take_groups(&builder)?;
     let schema = Schema { groups };
@@ -141,12 +321,17 @@ fn declare_user_settings_callback(mut frame: luau::CallFrame<'_>) -> luau::runti
         .register_schema(plugin_id.clone(), SettingsScope::User, schema.clone())
         .map_err(crate::plugins::runtime_error)?;
 
-    frame.returns.write(user_settings_accessor_table(
-        frame.context.origin.clone(),
-        store,
-        plugin_id,
-        schema,
-    ))?;
+    frame
+        .returns
+        .write(UserSettingsAccessor::_harmony_userdata_class().create(
+            frame.vm,
+            &frame.context.origin,
+            UserSettingsAccessor {
+                store,
+                plugin_id,
+                schema,
+            },
+        )?)?;
     Ok(())
 }
 
@@ -164,210 +349,6 @@ fn current_plugin_id(context: &luau::CallContext) -> luau::runtime::Result<Plugi
         ));
     };
     PluginId::new(plugin_id.clone()).map_err(crate::plugins::runtime_error)
-}
-
-fn settings_builder_table(origin: luau::ChunkOrigin, builder: SettingsBuilder) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_capacity(0, 5);
-    table.set_field(
-        "group",
-        settings_method(&origin, "SettingsBuilder.group", ["self", "id", "label"], {
-            let builder = builder.clone();
-            move |mut frame| {
-                read_self(&mut frame.args)?;
-                let id: String = frame.args.read_named("id")?;
-                let label: String = frame.args.read_named("label")?;
-                push_group(&builder, id, label)
-            }
-        }),
-    );
-    table.set_field(
-        "string",
-        settings_method(
-            &origin,
-            "SettingsBuilder.string",
-            ["self", "key", "props"],
-            {
-                let builder = builder.clone();
-                move |mut frame| {
-                    read_self(&mut frame.args)?;
-                    let key = register_key(&builder, frame.args.read_named("key")?)?;
-                    let props: luau::Table = frame.args.read_named("props")?;
-                    let field = FieldDefinition::String {
-                        key,
-                        props: build_field_props(
-                            frame.vm,
-                            &props,
-                            parse_string_default(frame.vm, &props)?,
-                        )?,
-                    };
-                    let value =
-                        primitive_value_for_field(&field, builder.stored_values.get(field.key()))?;
-                    push_field(&builder, field)?;
-                    frame.returns.write(value)
-                }
-            },
-        ),
-    );
-    table.set_field(
-        "number",
-        settings_method(
-            &origin,
-            "SettingsBuilder.number",
-            ["self", "key", "props"],
-            {
-                let builder = builder.clone();
-                move |mut frame| {
-                    read_self(&mut frame.args)?;
-                    let key = register_key(&builder, frame.args.read_named("key")?)?;
-                    let props: luau::Table = frame.args.read_named("props")?;
-                    let min = optional_number(frame.vm, &props, "min")?;
-                    let max = optional_number(frame.vm, &props, "max")?;
-                    if let (Some(min), Some(max)) = (min, max)
-                        && min > max
-                    {
-                        return Err(luau::Error::Runtime(
-                            "min must be less than or equal to max".to_string(),
-                        ));
-                    }
-                    let default_value = parse_number_default(frame.vm, &props)?;
-                    if let Some(default) = default_value.as_ref().and_then(|value| value.as_f64()) {
-                        if let Some(min) = min
-                            && default < min
-                        {
-                            return Err(luau::Error::Runtime(
-                                "default value must be greater than or equal to min".to_string(),
-                            ));
-                        }
-                        if let Some(max) = max
-                            && default > max
-                        {
-                            return Err(luau::Error::Runtime(
-                                "default value must be less than or equal to max".to_string(),
-                            ));
-                        }
-                    }
-                    let field = FieldDefinition::Number {
-                        key,
-                        props: build_field_props(frame.vm, &props, default_value)?,
-                        min,
-                        max,
-                    };
-                    let value =
-                        primitive_value_for_field(&field, builder.stored_values.get(field.key()))?;
-                    push_field(&builder, field)?;
-                    frame.returns.write(value)
-                }
-            },
-        ),
-    );
-    table.set_field(
-        "bool",
-        settings_method(&origin, "SettingsBuilder.bool", ["self", "key", "props"], {
-            let builder = builder.clone();
-            move |mut frame| {
-                read_self(&mut frame.args)?;
-                let key = register_key(&builder, frame.args.read_named("key")?)?;
-                let props: luau::Table = frame.args.read_named("props")?;
-                let field = FieldDefinition::Bool {
-                    key,
-                    props: build_field_props(
-                        frame.vm,
-                        &props,
-                        parse_bool_default(frame.vm, &props)?,
-                    )?,
-                };
-                let value =
-                    primitive_value_for_field(&field, builder.stored_values.get(field.key()))?;
-                push_field(&builder, field)?;
-                frame.returns.write(value)
-            }
-        }),
-    );
-    table.set_field(
-        "choice",
-        settings_method(
-            &origin,
-            "SettingsBuilder.choice",
-            ["self", "key", "props"],
-            {
-                let builder = builder.clone();
-                move |mut frame| {
-                    read_self(&mut frame.args)?;
-                    let key = register_key(&builder, frame.args.read_named("key")?)?;
-                    let props: luau::Table = frame.args.read_named("props")?;
-                    let options = parse_choice_options(frame.vm, &props)?;
-                    let default_value = parse_choice_default(frame.vm, &props, &options)?;
-                    let field = FieldDefinition::Choice {
-                        key,
-                        props: build_field_props(frame.vm, &props, default_value)?,
-                        options,
-                    };
-                    let value =
-                        primitive_value_for_field(&field, builder.stored_values.get(field.key()))?;
-                    push_field(&builder, field)?;
-                    frame.returns.write(value)
-                }
-            },
-        ),
-    );
-    table
-}
-
-fn user_settings_accessor_table(
-    origin: luau::ChunkOrigin,
-    store: PluginSettingsModuleStore,
-    plugin_id: PluginId,
-    schema: Schema,
-) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_capacity(0, 1);
-    table.set_field(
-        "get",
-        settings_method(
-            &origin,
-            "UserSettingsAccessor.get",
-            ["self", "user_id"],
-            move |mut frame| {
-                read_self(&mut frame.args)?;
-                let caller = current_plugin_id(&frame.context)?;
-                if caller != plugin_id {
-                    return Err(luau::Error::Runtime(format!(
-                        "user settings accessor for plugin '{}' must be used by the owning plugin",
-                        plugin_id
-                    )));
-                }
-                let user_id: i64 = frame.args.read_named("user_id")?;
-                if user_id <= 0 {
-                    return Err(luau::Error::Runtime("user_id must be positive".to_string()));
-                }
-                let stored =
-                    store.load_user_stored_values(agdb::DbId(user_id), &plugin_id, &schema)?;
-                let builder = settings_builder(stored);
-                let config = build_config_table(&schema.groups, &builder)?;
-                frame.returns.write(config)
-            },
-        ),
-    );
-    table
-}
-
-fn settings_method(
-    origin: &luau::ChunkOrigin,
-    name: &'static str,
-    args: impl IntoIterator<Item = &'static str>,
-    callback: impl for<'vm> Fn(luau::CallFrame<'vm>) -> luau::runtime::Result<()>
-    + Send
-    + Sync
-    + 'static,
-) -> luau::Value {
-    let options = luau::NativeFunctionOptions::new(origin.clone())
-        .function_name(name)
-        .argument_names(args.into_iter().map(Arc::<str>::from));
-    luau::Value::NativeFunction(luau::NativeFunctionValue::new(options, Arc::new(callback)))
-}
-
-fn read_self(args: &mut luau::ArgReader<'_>) -> luau::runtime::Result<()> {
-    let _: luau::Table = args.read_named("self")?;
-    Ok(())
 }
 
 fn register_key(builder: &SettingsBuilder, key: String) -> luau::runtime::Result<String> {
@@ -693,7 +674,7 @@ fn sequence_index(value: luau::Value) -> Option<i64> {
 }
 
 pub(crate) fn declare_settings_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("declare_settings")
+    let spec = FunctionSpec::sync_fn("declare_settings")
         .context::<Option<Arc<str>>>()
         .named_arg::<SettingsCallback>("callback")
         .returns::<SettingsConfig>();
@@ -701,17 +682,13 @@ pub(crate) fn declare_settings_spec() -> FunctionSpec {
 }
 
 pub(crate) fn declare_user_settings_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("declare_user_settings")
+    let spec = FunctionSpec::sync_fn("declare_user_settings")
         .context::<Option<Arc<str>>>()
         .named_arg::<SettingsCallback>("callback")
         .returns::<UserSettingsAccessor>();
     spec.call(declare_user_settings_callback)
 }
 
-pub(crate) fn user_settings_accessor_get_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get")
-        .context::<Option<Arc<str>>>()
-        .arg_name("user_id")
-        .args::<i64>()
-        .returns::<SettingsConfig>()
+pub(crate) fn user_settings_accessor_spec() -> harmony_core::UserDataSpec {
+    UserSettingsAccessor::_harmony_userdata_spec()
 }

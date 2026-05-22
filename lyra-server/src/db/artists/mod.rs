@@ -29,6 +29,7 @@ use serde::{
 
 use super::NodeId;
 
+#[harmony_macros::userdata(name = "ArtistType")]
 #[derive(
     Clone,
     Copy,
@@ -104,11 +105,6 @@ impl TryFrom<DbValue> for ArtistType {
     }
 }
 
-impl_luau_enum_userdata!(
-    ArtistType,
-    "ArtistType",
-    [Person, Group, Character, Orchestra, Choir]
-);
 use super::{
     Credit,
     ListOptions,

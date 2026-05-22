@@ -9,7 +9,6 @@ use harmony_core::{
     FunctionSpec,
     ModuleExport,
     ModuleSpec,
-    UserDataSpec,
 };
 use harmony_luau as luau;
 
@@ -91,10 +90,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .install(|_| Ok(module_export()));
     spec.function(crate::plugins::settings::declare_settings_spec())
         .function(crate::plugins::settings::declare_user_settings_spec())
-        .userdata(
-            UserDataSpec::new("UserSettingsAccessor")
-                .method(crate::plugins::settings::user_settings_accessor_get_spec()),
-        )
+        .userdata(crate::plugins::settings::user_settings_accessor_spec())
 }
 
 fn plugin_manifest_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {

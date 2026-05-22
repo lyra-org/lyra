@@ -19,6 +19,7 @@ use super::NodeId;
 
 pub(crate) const EDGE_ORDER_KEY: &str = "artist_order";
 
+#[harmony_macros::userdata(name = "CreditType")]
 #[derive(
     Clone,
     Copy,
@@ -114,25 +115,6 @@ impl TryFrom<DbValue> for CreditType {
         Self::from_db_str(value.string()?)
     }
 }
-
-impl_luau_enum_userdata!(
-    CreditType,
-    "CreditType",
-    [
-        Artist,
-        Vocalist,
-        Instrumentalist,
-        Composer,
-        Lyricist,
-        Arranger,
-        Writer,
-        Producer,
-        Conductor,
-        Engineer,
-        Mixer,
-        Remixer,
-    ]
-);
 
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub(crate) struct Credit {

@@ -7,7 +7,6 @@ use std::collections::HashSet;
 
 use agdb::DbId;
 use harmony_core::{
-    ChunkOrigin,
     FunctionSpec,
     ModuleExport,
     ModuleSpec,
@@ -20,7 +19,6 @@ use harmony_luau::{
     LuauType,
     LuauTypeInfo,
     ModuleDescriptor,
-    ModuleFieldDescriptor,
     ModuleFunctionDescriptor,
     ParameterDescriptor,
     TypeAliasDescriptor,
@@ -80,7 +78,9 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(list_by_library_spec())
         .function(list_many_spec())
         .function(list_relations_many_spec())
-        .initializer(install_enum_tables)
+        .userdata(ArtistType::_harmony_userdata_spec())
+        .userdata(ArtistRelationType::_harmony_userdata_spec())
+        .userdata(CreditType::_harmony_userdata_spec())
         .install(|_| Ok(ModuleExport::new(ArtistsModule)))
 }
 
@@ -465,19 +465,13 @@ fn parse_optional_artist_type(
     table: &luau::Table,
     key: &str,
 ) -> luau::runtime::Result<Option<ArtistType>> {
-    match table.get_raw(vm, key)? {
-        luau::Value::Nil => Ok(None),
-        luau::Value::String(bytes) => {
-            let value = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
-            ArtistType::from_db_str(&value)
-                .map(Some)
-                .map_err(crate::plugins::runtime_error)
-        }
-        other => Err(crate::plugins::runtime_error(format!(
-            "{key} must be an artist type string, got {}",
-            other.type_name()
-        ))),
+    let value = table.get_raw(vm, key)?;
+    if matches!(value, luau::Value::Nil) {
+        return Ok(None);
     }
+    ArtistType::_harmony_userdata_class()
+        .read_value(vm, key, value)
+        .map(Some)
 }
 
 fn parse_optional_credit_types(
@@ -489,23 +483,16 @@ fn parse_optional_credit_types(
         luau::Value::Nil => Ok(None),
         luau::Value::Table(table) => {
             let mut values = Vec::new();
-            for (key, value) in table.pairs_raw(vm)? {
-                if array_index(key).is_none() {
+            for (entry_key, value) in table.pairs_raw(vm)? {
+                if array_index(entry_key).is_none() {
                     continue;
                 }
-                let luau::Value::String(bytes) = value else {
-                    return Err(crate::plugins::runtime_error(
-                        "credit type entries must be strings",
-                    ));
-                };
-                let value = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
-                values
-                    .push(CreditType::from_db_str(&value).map_err(crate::plugins::runtime_error)?);
+                values.push(CreditType::_harmony_userdata_class().read_value(vm, key, value)?);
             }
             Ok(Some(values))
         }
         other => Err(crate::plugins::runtime_error(format!(
-            "{key} must be an array of credit type strings, got {}",
+            "{key} must be an array of CreditType values, got {}",
             other.type_name()
         ))),
     }
@@ -596,60 +583,6 @@ fn parse_optional_u64(
     }
 }
 
-fn install_enum_tables(
-    vm: &luau::Vm,
-    _origin: &ChunkOrigin,
-    table: &luau::Table,
-) -> luau::runtime::Result<()> {
-    let artist_type = enum_table(
-        vm,
-        &[
-            ("Person", "person"),
-            ("Group", "group"),
-            ("Character", "character"),
-            ("Orchestra", "orchestra"),
-            ("Choir", "choir"),
-        ],
-    )?;
-    table.set_table_raw(vm, "ArtistType", &artist_type)?;
-
-    let relation_type = enum_table(
-        vm,
-        &[("VoiceActor", "voice_actor"), ("MemberOf", "member_of")],
-    )?;
-    table.set_table_raw(vm, "ArtistRelationType", &relation_type)?;
-
-    let credit_type = enum_table(
-        vm,
-        &[
-            ("Artist", "artist"),
-            ("Vocalist", "vocalist"),
-            ("Instrumentalist", "instrumentalist"),
-            ("Composer", "composer"),
-            ("Lyricist", "lyricist"),
-            ("Arranger", "arranger"),
-            ("Writer", "writer"),
-            ("Producer", "producer"),
-            ("Conductor", "conductor"),
-            ("Engineer", "engineer"),
-            ("Mixer", "mixer"),
-            ("Remixer", "remixer"),
-        ],
-    )?;
-    table.set_table_raw(vm, "CreditType", &credit_type)?;
-
-    Ok(())
-}
-
-fn enum_table(vm: &luau::Vm, values: &[(&str, &str)]) -> luau::runtime::Result<luau::Table> {
-    let table = vm.create_table_with_capacity(0, values.len() as i32)?;
-    for (name, value) in values {
-        table.set_raw(vm, name, luau::Value::String(value.as_bytes().to_vec()))?;
-    }
-    table.set_readonly(vm, true)?;
-    Ok(table)
-}
-
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -678,15 +611,6 @@ fn sort_order_type() -> LuauType {
     ])
 }
 
-fn string_literal_object(fields: &[(&'static str, &'static str)]) -> LuauType {
-    LuauType::object(
-        fields
-            .iter()
-            .map(|(name, value)| field(name, LuauType::string_literal(value)))
-            .collect(),
-    )
-}
-
 fn string_enum(values: impl IntoIterator<Item = &'static str>) -> LuauType {
     LuauType::union(values.into_iter().map(LuauType::string_literal).collect())
 }
@@ -700,7 +624,13 @@ fn artist_type() -> LuauType {
         field("sort_name", Option::<String>::luau_type()),
         field(
             "artist_type",
-            LuauType::optional(LuauType::named("ArtistType")),
+            LuauType::optional(string_enum([
+                "person",
+                "group",
+                "character",
+                "orchestra",
+                "choir",
+            ])),
         ),
         field("description", Option::<String>::luau_type()),
         field("verified", bool::luau_type()),
@@ -711,42 +641,17 @@ fn artist_type() -> LuauType {
 
 fn artist_type_aliases() -> Vec<TypeAliasDescriptor> {
     vec![
-        TypeAliasDescriptor::new(
-            "ArtistType",
-            string_enum(["person", "group", "character", "orchestra", "choir"]),
-            None,
-        ),
-        TypeAliasDescriptor::new(
-            "ArtistRelationType",
-            string_enum(["voice_actor", "member_of"]),
-            None,
-        ),
-        TypeAliasDescriptor::new(
-            "CreditType",
-            string_enum([
-                "artist",
-                "vocalist",
-                "instrumentalist",
-                "composer",
-                "lyricist",
-                "arranger",
-                "writer",
-                "producer",
-                "conductor",
-                "engineer",
-                "mixer",
-                "remixer",
-            ]),
-            None,
-        ),
         TypeAliasDescriptor::new("Artist", artist_type(), None),
         TypeAliasDescriptor::new(
             "CreditedArtistQueryOptions",
             LuauType::intersection(vec![
                 LuauType::named("ArtistQueryOptions"),
                 LuauType::object(vec![
-                    field("credit_types", Option::<Vec<String>>::luau_type()),
-                    field("exclude_credit_types", Option::<Vec<String>>::luau_type()),
+                    field("credit_types", Option::<Vec<CreditType>>::luau_type()),
+                    field(
+                        "exclude_credit_types",
+                        Option::<Vec<CreditType>>::luau_type(),
+                    ),
                 ]),
             ]),
             None,
@@ -766,7 +671,7 @@ fn artist_type_aliases() -> Vec<TypeAliasDescriptor> {
 fn artist_interfaces() -> Vec<InterfaceDescriptor> {
     let mut relation = InterfaceDescriptor::new("ArtistRelationInfo", None);
     relation.fields.extend([
-        field("relation_type", String::luau_type()),
+        field("relation_type", string_enum(["voice_actor", "member_of"])),
         field(
             "direction",
             LuauType::union(vec![
@@ -786,7 +691,7 @@ fn artist_interfaces() -> Vec<InterfaceDescriptor> {
         field("offset", Option::<i64>::luau_type()),
         field("limit", Option::<i64>::luau_type()),
         field("search_term", Option::<String>::luau_type()),
-        field("artist_type", Option::<String>::luau_type()),
+        field("artist_type", Option::<ArtistType>::luau_type()),
     ]);
 
     vec![relation, query_options]
@@ -797,45 +702,7 @@ fn module_descriptor() -> ModuleDescriptor {
         name: "Artists",
         local_name: "artists",
         description: None,
-        fields: vec![
-            ModuleFieldDescriptor {
-                path: vec!["ArtistType"],
-                description: None,
-                ty: string_literal_object(&[
-                    ("Person", "person"),
-                    ("Group", "group"),
-                    ("Character", "character"),
-                    ("Orchestra", "orchestra"),
-                    ("Choir", "choir"),
-                ]),
-            },
-            ModuleFieldDescriptor {
-                path: vec!["ArtistRelationType"],
-                description: None,
-                ty: string_literal_object(&[
-                    ("VoiceActor", "voice_actor"),
-                    ("MemberOf", "member_of"),
-                ]),
-            },
-            ModuleFieldDescriptor {
-                path: vec!["CreditType"],
-                description: None,
-                ty: string_literal_object(&[
-                    ("Artist", "artist"),
-                    ("Vocalist", "vocalist"),
-                    ("Instrumentalist", "instrumentalist"),
-                    ("Composer", "composer"),
-                    ("Lyricist", "lyricist"),
-                    ("Arranger", "arranger"),
-                    ("Writer", "writer"),
-                    ("Producer", "producer"),
-                    ("Conductor", "conductor"),
-                    ("Engineer", "engineer"),
-                    ("Mixer", "mixer"),
-                    ("Remixer", "remixer"),
-                ]),
-            },
-        ],
+        fields: Vec::new(),
         functions: vec![
             ModuleFunctionDescriptor {
                 path: vec!["list"],
@@ -894,7 +761,11 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &module_descriptor(),
         &artist_type_aliases(),
         &artist_interfaces(),
-        &[],
+        &[
+            <ArtistType as harmony_luau::DescribeUserData>::class_descriptor(),
+            <ArtistRelationType as harmony_luau::DescribeUserData>::class_descriptor(),
+            <CreditType as harmony_luau::DescribeUserData>::class_descriptor(),
+        ],
     )
 }
 
@@ -906,8 +777,8 @@ mod tests {
     fn renders_artists_module_definition() {
         let rendered = render_luau_definition().expect("render lyra/artists docs");
 
-        assert!(rendered.contains("export type ArtistType = \"person\" | \"group\""));
-        assert!(rendered.contains("export type CreditType = \"artist\" | \"vocalist\""));
+        assert!(rendered.contains("export type ArtistType = {"));
+        assert!(rendered.contains("export type CreditType = {"));
         assert!(
             rendered
                 .contains("export type Artist = { db_id: number?, id: string, artist_name: string")
@@ -917,9 +788,9 @@ mod tests {
         assert!(rendered.contains("@interface ArtistQueryOptions"));
         assert!(rendered.contains("sort_order: (\"ascending\" | \"descending\")?"));
         assert!(rendered.contains(
-            "export type CreditedArtistQueryOptions = ArtistQueryOptions & { credit_types: {string}?, exclude_credit_types: {string}? }"
+            "export type CreditedArtistQueryOptions = ArtistQueryOptions & { credit_types: {CreditType}?, exclude_credit_types: {CreditType}? }"
         ));
-        assert!(rendered.contains("artists.ArtistType = nil :: { Person: \"person\""));
+        assert!(rendered.contains("artists.ArtistType = nil :: ArtistType"));
         assert!(rendered.contains(
             "function artists.query_credited(opts: CreditedArtistQueryOptions): ArtistQueryResult"
         ));

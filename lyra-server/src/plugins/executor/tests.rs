@@ -112,13 +112,14 @@ fn plugin_executor_declares_metadata_provider_ids_and_options() -> Result<()> {
         "#[..],
     )?;
 
-    assert_eq!(
-        values,
-        vec![
-            luau::Value::String(b"release".to_vec()),
-            luau::Value::String(b"abc123".to_vec()),
-        ]
-    );
+    assert_eq!(values.len(), 2);
+    let entity = crate::services::EntityType::_harmony_userdata_class().read_value(
+        &runtime.vm,
+        "entity",
+        values[0].clone(),
+    )?;
+    assert_eq!(entity, crate::services::EntityType::Release);
+    assert_eq!(values[1], luau::Value::String(b"abc123".to_vec()));
 
     let registry =
         futures::executor::block_on(crate::services::providers::PROVIDER_REGISTRY.read());
