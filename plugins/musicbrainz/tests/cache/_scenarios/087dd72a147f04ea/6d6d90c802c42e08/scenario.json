@@ -1,0 +1,30 @@
+{
+  "test_name": "陽炎_サイダーガール",
+  "scenario_id": "6d6d90c802c42e08",
+  "responses": [
+    {
+      "cache_key": "3d537660bdcc98bc",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E9%99%BD%E7%82%8E&limit=100",
+      "status_code": 200,
+      "body_hash": "1f2d4c926f8fb2f4"
+    },
+    {
+      "cache_key": "7790d5f0caac8bc5",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%82%B5%E3%82%A4%E3%83%80%E3%83%BC%E3%82%AC%E3%83%BC%E3%83%AB",
+      "status_code": 200,
+      "body_hash": "18d19005d4674dff"
+    },
+    {
+      "cache_key": "7d39a89050fab340",
+      "url": "https://musicbrainz.org/ws/2/artist/20657a75-9c38-406f-846b-485b4e8e0e30?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "87fb706663b1e056"
+    },
+    {
+      "cache_key": "9f8e684bcdb62361",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=d9c91d26-7525-4d60-a914-9bac7d6ed8e5&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "bf15e32d8fe76708"
+    }
+  ]
+}
