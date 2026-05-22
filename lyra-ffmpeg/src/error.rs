@@ -33,10 +33,28 @@ pub enum Error {
     WriteFrame,
     #[error("failed to allocate avio context")]
     AllocAvio,
+    #[error("invalid output spec: {0}")]
+    InvalidOutputSpec(String),
     #[error("invalid {field}: contains NUL")]
     InvalidCString { field: &'static str },
+    #[error("{operation} failed: {message} ({code})")]
+    FfmpegOperation {
+        operation: &'static str,
+        code: i32,
+        message: String,
+    },
     #[error("ffmpeg error: {0}")]
     Ffmpeg(i32),
+    #[error("output callback stopped writing")]
+    OutputStopped,
+    #[error("output callback failed: {0}")]
+    OutputCallback(String),
+    #[error("output callback panicked")]
+    OutputCallbackPanic,
+    #[error("seek callback failed: {0}")]
+    SeekCallback(String),
+    #[error("seek callback panicked")]
+    SeekCallbackPanic,
     #[error("no audio stream found")]
     NoAudioStream,
     #[error("no streams to process")]
@@ -48,6 +66,14 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+pub fn ffmpeg_operation_error(operation: &'static str, code: i32) -> Error {
+    Error::FfmpegOperation {
+        operation,
+        code,
+        message: av_error_string(code),
+    }
+}
 
 pub fn av_error_string(err: i32) -> String {
     let mut buf = [0i8; 256];

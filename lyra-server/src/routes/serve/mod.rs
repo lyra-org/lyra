@@ -525,14 +525,12 @@ fn apply_lossy_rate_control(
         )
     {
         return match mode {
-            AudioVbrMode::Quality(quality) => output.set_audio_global_quality(quality),
-            AudioVbrMode::Abr => output
-                .set_audio_codec_opt("abr", "1")
-                .set_audio_codec_opt("b", format!("{bitrate_kbps}k")),
+            AudioVbrMode::Quality(quality) => output.audio_global_quality(quality),
+            AudioVbrMode::Abr => output.audio_abr_bitrate_kbps(bitrate_kbps),
         };
     }
 
-    output.set_audio_codec_opt("b", format!("{bitrate_kbps}k"))
+    output.audio_bitrate_kbps(bitrate_kbps)
 }
 
 pub fn configure_output(
@@ -552,10 +550,10 @@ pub fn configure_output(
         );
     }
     if let Some(hz) = policy.sample_rate_hz {
-        output = output.set_audio_sample_rate(hz as i32);
+        output = output.sample_rate_hz(hz);
     }
     if let Some(ch) = policy.channels {
-        output = output.set_audio_channels(ch as i32);
+        output = output.channels(ch);
     }
     output
 }
@@ -883,13 +881,9 @@ mod tests {
             AudioCodec::Mp3,
             &policy_passthrough(None, None, None),
         );
-        assert_eq!(
-            output.get_audio_codec_opts().get("b"),
-            Some(&"192k".to_string()),
-            "default bitrate should be 192 kbps when none is supplied"
-        );
-        assert_eq!(output.get_audio_sample_rate(), None);
-        assert_eq!(output.get_audio_channels(), None);
+        assert_eq!(output.configured_audio_bitrate_kbps(), Some(192));
+        assert_eq!(output.configured_sample_rate_hz(), None);
+        assert_eq!(output.configured_channels(), None);
     }
 
     #[test]
@@ -900,13 +894,9 @@ mod tests {
             AudioCodec::Opus,
             &policy_passthrough(Some(96_000), Some(48_000), Some(2)),
         );
-        assert_eq!(
-            output.get_audio_codec_opts().get("b"),
-            Some(&"96k".to_string()),
-            "96_000 bps should round-trip to 96 kbps"
-        );
-        assert_eq!(output.get_audio_sample_rate(), Some(48_000));
-        assert_eq!(output.get_audio_channels(), Some(2));
+        assert_eq!(output.configured_audio_bitrate_kbps(), Some(96));
+        assert_eq!(output.configured_sample_rate_hz(), Some(48_000));
+        assert_eq!(output.configured_channels(), Some(2));
     }
 
     #[test]
@@ -917,11 +907,7 @@ mod tests {
             AudioCodec::Mp3,
             &policy_passthrough(Some(127_500), None, None),
         );
-        assert_eq!(
-            output.get_audio_codec_opts().get("b"),
-            Some(&"128k".to_string()),
-            "127_500 bps should ceil to 128 kbps"
-        );
+        assert_eq!(output.configured_audio_bitrate_kbps(), Some(128));
     }
 
     #[test]
@@ -937,8 +923,8 @@ mod tests {
                 prefer_vbr: true,
             },
         );
-        assert_eq!(output.get_audio_global_quality(), Some(2));
-        assert!(output.get_audio_codec_opts().get("b").is_none());
+        assert_eq!(output.configured_audio_global_quality(), Some(2));
+        assert_eq!(output.configured_audio_bitrate_kbps(), None);
     }
 
     #[test]

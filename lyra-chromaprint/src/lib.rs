@@ -19,7 +19,6 @@ use base64::{
     engine::general_purpose::URL_SAFE_NO_PAD as BASE64,
 };
 use lyra_ffmpeg::{
-    AVSampleFormat,
     FfmpegContext,
     Output,
 };
@@ -137,23 +136,14 @@ fn decode_pcm_bytes(
     let pcm_bytes: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
     let write_callback = {
         let pcm_bytes = Arc::clone(&pcm_bytes);
-        move |buf: &[u8]| -> i32 {
+        move |buf: &[u8]| -> usize {
             let mut locked = pcm_bytes.lock().unwrap();
             locked.extend_from_slice(buf);
-            buf.len() as i32
+            buf.len()
         }
     };
 
-    let output = Output::with_callback(write_callback)
-        .set_format("s16le")
-        .set_audio_codec("pcm_s16le")
-        .set_audio_sample_rate(SAMPLE_RATE as i32)
-        .set_audio_channels(CHANNELS as i32)
-        .set_audio_sample_fmt(AVSampleFormat::AV_SAMPLE_FMT_S16)
-        .set_swr_opt("filter_size", "16")
-        .set_swr_opt("phase_shift", "8")
-        .set_swr_opt("linear_interp", "1")
-        .set_swr_opt("cutoff", "0.8");
+    let output = Output::pcm_s16le_callback(write_callback, SAMPLE_RATE, CHANNELS as u32);
 
     let context = FfmpegContext::builder()
         .input(path.to_string_lossy().into_owned())
