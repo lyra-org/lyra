@@ -1,0 +1,30 @@
+{
+  "test_name": "happyend_honeycomebear",
+  "scenario_id": "2c6416e120b2edde",
+  "responses": [
+    {
+      "cache_key": "3ce1d2f21c5a57b5",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=d1ce094a-1492-4a47-b1e8-1c6c1466d442&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "d5cc9c2b78f2ee7c"
+    },
+    {
+      "cache_key": "a02f01cf95df07d7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=HoneyComeBear",
+      "status_code": 200,
+      "body_hash": "2961797e4d742ef6"
+    },
+    {
+      "cache_key": "dc1bb1d99c928239",
+      "url": "https://musicbrainz.org/ws/2/artist/85b9d988-53ca-466d-b2d4-a57eb97bc514?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fcf83c38449ef5d9"
+    },
+    {
+      "cache_key": "de6f4b291cf8846f",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AHappyEND&limit=100",
+      "status_code": 200,
+      "body_hash": "bc2f11091f807f38"
+    }
+  ]
+}
