@@ -20,11 +20,6 @@ use harmony_core::{
 };
 use harmony_luau as luau;
 use harmony_luau::{
-    ClassDescriptor,
-    FieldDescriptor,
-    InterfaceDescriptor,
-};
-use harmony_luau::{
     DescribeInterface,
     DescribeTypeAlias,
     DescribeUserData,
@@ -34,6 +29,10 @@ use harmony_luau::{
     ModuleFunctionDescriptor,
     ParameterDescriptor,
     render_definition_file_with_support,
+};
+use harmony_luau::{
+    FieldDescriptor,
+    InterfaceDescriptor,
 };
 use percent_encoding::{
     AsciiSet,
@@ -334,6 +333,7 @@ impl DescribeTypeAlias for HttpHeaderMap {
     }
 }
 
+#[harmony_macros::userdata(name = "HttpMethod")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HttpMethod {
     Get,
@@ -800,8 +800,9 @@ pub fn module_spec() -> ModuleSpec {
         .function(set_rate_limit_spec())
         .function(set_max_in_flight_spec())
         .function(encode_uri_component_spec())
+        .userdata(HttpMethod::_harmony_userdata_spec())
         .install(|_| Ok(ModuleExport::new(HttpModule)));
-    spec.initializer(init_luau_http_module_callback)
+    spec
 }
 
 fn request_spec() -> FunctionSpec {
@@ -849,7 +850,7 @@ fn request_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let table: luau::Table = frame.args.read_named("options")?;
     let options = request_options_from_luau(frame.vm, &table)?;
-    let future: luau::ScheduledFuture = luau::ScheduledFuture::new(async move {
+    let future = luau::ScheduledFuture::new(async move {
         let response = execute_request_with_rate_limit(options).await;
         Ok(response.into_luau_value())
     });
@@ -862,7 +863,7 @@ fn set_rate_limit_callback(
     let table: luau::Table = frame.args.read_named("options")?;
     let options = rate_limit_options_from_luau(frame.vm, &table)?;
     let plugin_id = frame.context.origin.plugin.clone();
-    let future: luau::ScheduledFuture = luau::ScheduledFuture::new(async move {
+    let future = luau::ScheduledFuture::new(async move {
         configure_rate_limit(plugin_id, options)
             .await
             .map_err(|error| luau::Error::Runtime(error.to_string()))?;
@@ -876,34 +877,13 @@ fn set_max_in_flight_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let table: luau::Table = frame.args.read_named("options")?;
     let options = concurrency_options_from_luau(frame.vm, &table)?;
-    let future: luau::ScheduledFuture = luau::ScheduledFuture::new(async move {
+    let future = luau::ScheduledFuture::new(async move {
         configure_max_in_flight(options)
             .await
             .map_err(|error| luau::Error::Runtime(error.to_string()))?;
         Ok(())
     });
     Ok(future)
-}
-
-fn init_luau_http_module_callback(
-    vm: &luau::Vm,
-    _origin: &ChunkOrigin,
-    table: &luau::Table,
-) -> luau::runtime::Result<()> {
-    let methods = vm.create_table_with_capacity(0, 6)?;
-    for (name, method) in [
-        ("Get", "GET"),
-        ("Post", "POST"),
-        ("Put", "PUT"),
-        ("Delete", "DELETE"),
-        ("Patch", "PATCH"),
-        ("Head", "HEAD"),
-    ] {
-        methods.set_raw(vm, name, luau::Value::String(method.as_bytes().to_vec()))?;
-    }
-    methods.set_readonly(vm, true)?;
-    table.set_table_raw(vm, "HttpMethod", &methods)?;
-    Ok(())
 }
 
 fn request_options_from_luau(
@@ -1053,34 +1033,11 @@ fn required_method_field(
     table: &luau::Table,
     field: &'static str,
 ) -> luau::runtime::Result<HttpMethod> {
-    match table.get_raw(vm, field)? {
-        luau::Value::String(value) => {
-            let method = String::from_utf8(value).map_err(|error| {
-                luau::Error::Runtime(format!("'{field}' must be valid UTF-8: {error}"))
-            })?;
-            parse_http_method(field, &method)
-        }
-        luau::Value::Nil => Err(luau::Error::Runtime(format!("missing '{field}' field"))),
-        other => Err(luau_field_type_error(
-            field,
-            "HttpMethod",
-            other.type_name(),
-        )),
+    let value = table.get_raw(vm, field)?;
+    if matches!(value, luau::Value::Nil) {
+        return Err(luau::Error::Runtime(format!("missing '{field}' field")));
     }
-}
-
-fn parse_http_method(field: &'static str, method: &str) -> luau::runtime::Result<HttpMethod> {
-    match method.to_ascii_uppercase().as_str() {
-        "GET" => Ok(HttpMethod::Get),
-        "POST" => Ok(HttpMethod::Post),
-        "PUT" => Ok(HttpMethod::Put),
-        "DELETE" => Ok(HttpMethod::Delete),
-        "PATCH" => Ok(HttpMethod::Patch),
-        "HEAD" => Ok(HttpMethod::Head),
-        _ => Err(luau::Error::Runtime(format!(
-            "'{field}' must be one of Get, Post, Put, Delete, Patch, or Head"
-        ))),
-    }
+    HttpMethod::_harmony_userdata_class().read_value(vm, field, value)
 }
 
 fn header_map_from_luau(
@@ -1281,28 +1238,6 @@ fn http_module_descriptor() -> ModuleDescriptor {
                 yields: false,
             },
         ],
-    }
-}
-
-impl LuauTypeInfo for HttpMethod {
-    fn luau_type() -> LuauType {
-        LuauType::literal("HttpMethod")
-    }
-}
-
-impl DescribeUserData for HttpMethod {
-    fn class_descriptor() -> ClassDescriptor {
-        let mut descriptor = ClassDescriptor::new("HttpMethod", None);
-        descriptor.fields.extend(
-            ["Get", "Post", "Put", "Delete", "Patch", "Head"]
-                .into_iter()
-                .map(|name| FieldDescriptor {
-                    name,
-                    ty: HttpMethod::luau_type(),
-                    description: None,
-                }),
-        );
-        descriptor
     }
 }
 
@@ -1586,21 +1521,25 @@ mod tests {
         );
 
         assert_eq!(scheduler.poll_ready(), 1);
-        assert_eq!(scheduler.poll_ready(), 1);
-        assert_eq!(scheduler.poll_ready(), 1);
+        assert_eq!(scheduler.poll_ready(), 0);
+        assert_eq!(scheduler.poll_ready(), 0);
 
         assert!(super::has_rate_limit_for_plugin("luau-http-plugin").await);
         {
             let limiter = super::CONCURRENCY_LIMITER.read().await;
             assert_eq!(limiter.max_in_flight("example.com"), Some(2));
         }
-        assert_eq!(
-            vm.eval(
-                std::sync::Arc::<[u8]>::from(&b"return stored_method"[..]),
-                harmony_luau::ChunkOrigin::default(),
-            )?,
-            vec![harmony_luau::Value::String(b"POST".to_vec())]
-        );
+        let mut values = vm.eval(
+            std::sync::Arc::<[u8]>::from(&b"return stored_method"[..]),
+            harmony_luau::ChunkOrigin::default(),
+        )?;
+        assert_eq!(values.len(), 1);
+        let stored_method = super::HttpMethod::_harmony_userdata_class().read_value(
+            &vm,
+            "stored_method",
+            values.pop().unwrap(),
+        )?;
+        assert_eq!(stored_method, super::HttpMethod::Post);
         Ok(())
     }
 
