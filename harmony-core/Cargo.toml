@@ -6,9 +6,9 @@ license-file = "../LICENSE"
 
 [dependencies]
 anyhow = { workspace = true }
-mlua = { workspace = true, features = ["luau", "anyhow", "send", "macros"] }
-mlua_scheduler = { workspace = true, features = ["send"] }
+harmony-luau = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 json5 = { workspace = true }
 tracing = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }

@@ -143,7 +143,7 @@ fn set_artist_type_if_missing(
         return Ok(());
     };
     if artist.artist_type.is_none() {
-        artist.artist_type = Some(parsed_artist_type_to_db(artist_type));
+        artist.set_artist_type(parsed_artist_type_to_db(artist_type));
         db::artists::update(db, &artist)?;
     }
     Ok(())
@@ -282,10 +282,14 @@ fn persist_release_inner(
             ctime: earliest_ctime,
         });
         if !release_provider_fields.contains("release_title") {
-            release.release_title = release_title.to_string();
+            release.set_release_title(release_title.to_string());
         }
         if !release_provider_fields.contains("release_date") {
-            release.release_date = release_date;
+            if let Some(release_date) = release_date {
+                release.set_release_date(release_date);
+            } else {
+                release.release_date = None;
+            }
         }
         release.ctime = earliest_ctime;
         db::releases::update(db, &release)?;
@@ -461,28 +465,48 @@ fn persist_release_inner(
                 ctime: entry_ctime,
             });
             if !track_provider_fields.contains("track_title") {
-                existing.track_title = title.unwrap_or_default();
+                existing.set_track_title(title.unwrap_or_default());
             }
             if !track_provider_fields.contains("year") {
-                existing.year = year;
+                if let Some(year) = year {
+                    existing.set_year(year);
+                } else {
+                    existing.year = None;
+                }
             }
             if !track_provider_fields.contains("disc") {
-                existing.disc = disc;
+                if let Some(disc) = disc {
+                    existing.set_disc(disc);
+                } else {
+                    existing.disc = None;
+                }
             }
             if !track_provider_fields.contains("disc_total") {
                 if let Some(explicit_disc_total) = disc_total {
-                    existing.disc_total = Some(explicit_disc_total);
+                    existing.set_disc_total(explicit_disc_total);
                 } else if existing.disc_total.is_none() {
                     existing.disc_total = inferred_disc_total;
                 }
             }
             if !track_provider_fields.contains("track") {
-                existing.track = track_number;
+                if let Some(track_number) = track_number {
+                    existing.set_track(track_number);
+                } else {
+                    existing.track = None;
+                }
             }
             if !track_provider_fields.contains("track_total") {
-                existing.track_total = track_total;
+                if let Some(track_total) = track_total {
+                    existing.set_track_total(track_total);
+                } else {
+                    existing.track_total = None;
+                }
             }
-            existing.duration_ms = duration_ms;
+            if let Some(duration_ms) = duration_ms {
+                existing.set_duration_ms(duration_ms);
+            } else {
+                existing.duration_ms = None;
+            }
             existing.sample_rate_hz = sample_rate_hz;
             existing.channel_count = channel_count;
             existing.bit_depth = bit_depth;

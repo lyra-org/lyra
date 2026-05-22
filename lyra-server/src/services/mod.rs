@@ -8,16 +8,14 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::Serialize;
 
+#[harmony_macros::userdata(name = "EntityType")]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, JsonSchema, Serialize)]
 #[serde(rename_all = "lowercase")]
-#[harmony_macros::enumeration]
 pub(crate) enum EntityType {
     Release,
     Artist,
     Track,
 }
-
-harmony_macros::compile!(type_path = EntityType, variants = true);
 
 impl EntityType {
     pub(crate) const fn as_str(self) -> &'static str {
@@ -94,6 +92,4 @@ pub(crate) use covers::{
     CoverPaths,
     CoverSyncOptions,
     clear_cover_search_cache,
-    upsert_artist_cover_metadata,
-    upsert_release_cover_metadata,
 };

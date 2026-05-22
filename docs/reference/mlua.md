@@ -219,6 +219,14 @@ fn main() -> Result<()> {
 - `Function::bind()` captures arguments as upvalues; binding too many returns `Error::BindError`.
 - `create_c_function` is unsafe; only wrap trusted C APIs.
 
+## Harmony Runtime Naming
+- In Harmony runtime APIs, `raw` is reserved for Lua raw access such as table operations that bypass
+  metamethods.
+- Rust functions installed into Luau modules should use a `*_callback` suffix when they are native
+  callback entrypoints.
+- VM-injected module state should use `*ModuleStore`, not `Raw*Store`, unless it represents genuinely
+  unprocessed input data.
+
 Example:
 ```rust
 use mlua::{Function, Lua, Result, Value, Variadic};
@@ -289,42 +297,10 @@ fn main() -> Result<()> {
 }
 ```
 
-## Harmony macros (`harmony_macros`)
-This repo now uses the local `harmony_macros` crate to generate `UserData` glue and Luau doc metadata
-for Lua-facing types like `Album`, `Artist`, `Track`, and `DataStore`.
-- `#[harmony_macros::structure]` on a struct exposes all named fields (including private ones) as
-  Lua properties with getters and setters. Getters clone the field value, so fields must implement
-  `Clone`.
-- `#[harmony_macros::implementation]` on an `impl` block exposes methods: static functions become
-  `Type.method()` via `add_function`, `&self` methods become `obj:method()` via `add_method`,
-  `&mut self` methods become `obj:method()` via `add_method_mut`, and `async fn` uses `add_async_*`.
-- `harmony_macros::compile!(type_path = ..., fields = ..., methods = ...)` generates the final
-  `impl mlua::UserData` and `impl mlua::FromLua`. `FromLua` clones the underlying userdata and
-  errors if the value is not userdata of the exact Rust type.
-- `#[harmony_macros::module(...)]` additionally generates Luau module descriptors and, when `path =`
-  is provided, the runtime Harmony module wrapper.
-- In this repo, `fields = true, methods = true` is used for `Album`/`Artist`/`Track` so Lua can read
-  and write fields like `track.track_title`, and call setters like `track:set_track_title("...")`.
-  `DataStore`, `Provider`, and `Layer` use `fields = false, methods = true` so only methods are exposed.
-
-Example (from this repo):
-```rust
-#[derive(DbElement, Serialize, Clone, Debug)]
-#[harmony_macros::structure]
-pub(crate) struct Track {
-    pub(crate) db_id: Option<EntityId>,
-    pub(crate) track_title: String,
-}
-
-#[harmony_macros::implementation]
-impl Track {
-    pub(crate) fn set_track_title(&mut self, track_title: String) {
-        self.track_title = track_title;
-    }
-}
-
-harmony_macros::compile!(type_path = Track, fields = true, methods = true);
-```
+## Manual Harmony bindings
+Lua-facing bindings are now handwritten in the crate that owns the exposed type or module.
+The runtime implementation and the Luau documentation descriptor should be updated together so
+`UserData`, `FromLua`, `LuauTypeInfo`, and descriptor behavior stay consistent.
 
 ## Scoped Lifetimes (Lua::scope)
 - Use `Lua::scope` to create callbacks or userdata that are not `'static` or not `Send`.

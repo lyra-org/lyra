@@ -27,7 +27,6 @@ use tokio::sync::RwLock;
 
 use super::super::options::OptionDeclaration;
 use crate::plugins::lifecycle::{
-    PluginFunctionHandle,
     PluginId,
     PluginScopedInner,
     ScopedRegistry,
@@ -114,8 +113,12 @@ pub(crate) struct ProviderIdSpec {
 
 #[derive(Clone)]
 pub(crate) enum ProviderIdUrlGenerator {
-    Callback(PluginFunctionHandle),
     Template(String),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ProviderCallbackHandle {
+    pub(crate) handler_id: u64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -132,7 +135,7 @@ pub(crate) struct ProviderCoverSpec {
     /// so existing plugins that don't pass `timeout_ms` keep working.
     pub(crate) timeout: Duration,
     pub(crate) require: ProviderCoverRequireSpec,
-    pub(crate) handler: PluginFunctionHandle,
+    pub(crate) handler: ProviderCallbackHandle,
 }
 
 impl ProviderRegistry {
@@ -182,11 +185,6 @@ impl ProviderRegistry {
                 .id_specs
                 .insert(id_spec.id.clone(), id_spec.clone());
             match generator {
-                Some(ProviderIdUrlGenerator::Callback(callback)) => {
-                    provider
-                        .id_generators
-                        .insert(id_spec.id, ProviderIdUrlGenerator::Callback(callback));
-                }
                 Some(ProviderIdUrlGenerator::Template(template)) => {
                     provider
                         .id_generators
@@ -199,24 +197,65 @@ impl ProviderRegistry {
         }
     }
 
-    pub(crate) fn set_search_handler(
+    pub(crate) fn set_refresh_callback(
         &mut self,
         provider_id: &str,
         entity_type: EntityType,
-        handler: PluginFunctionHandle,
+        handler: ProviderCallbackHandle,
     ) {
         if let Some(provider) = self.state_mut(provider_id) {
-            provider.search_handlers.insert(entity_type, handler);
+            provider.refresh_callbacks.insert(entity_type, handler);
         }
     }
 
-    pub(crate) fn get_search_handler(
+    pub(crate) fn get_refresh_callback(
         &self,
         provider_id: &str,
         entity_type: EntityType,
-    ) -> Option<&PluginFunctionHandle> {
+    ) -> Option<&ProviderCallbackHandle> {
         self.state(provider_id)
-            .and_then(|provider| provider.search_handlers.get(&entity_type))
+            .and_then(|provider| provider.refresh_callbacks.get(&entity_type))
+    }
+
+    pub(crate) fn providers_with_refresh_handler(&self, entity_type: EntityType) -> Vec<String> {
+        let mut providers = self
+            .iter_states()
+            .filter(|(_, state)| state.refresh_callbacks.contains_key(&entity_type))
+            .map(|(provider_id, _)| provider_id.clone())
+            .collect::<Vec<_>>();
+        providers.sort();
+        providers
+    }
+
+    pub(crate) fn set_sync_filter_callback(
+        &mut self,
+        provider_id: &str,
+        entity_type: EntityType,
+        filter: ProviderCallbackHandle,
+    ) {
+        if let Some(provider) = self.state_mut(provider_id) {
+            provider.sync_filter_callbacks.insert(entity_type, filter);
+        }
+    }
+
+    pub(crate) fn set_search_callback(
+        &mut self,
+        provider_id: &str,
+        entity_type: EntityType,
+        handler: ProviderCallbackHandle,
+    ) {
+        if let Some(provider) = self.state_mut(provider_id) {
+            provider.search_callbacks.insert(entity_type, handler);
+        }
+    }
+
+    pub(crate) fn get_search_callback(
+        &self,
+        provider_id: &str,
+        entity_type: EntityType,
+    ) -> Option<&ProviderCallbackHandle> {
+        self.state(provider_id)
+            .and_then(|provider| provider.search_callbacks.get(&entity_type))
     }
 
     pub(crate) fn set_cover_handler(
@@ -226,68 +265,26 @@ impl ProviderRegistry {
         spec: ProviderCoverSpec,
     ) {
         if let Some(provider) = self.state_mut(provider_id) {
-            let handlers = provider.cover_handlers.entry(entity_type).or_default();
-            handlers.push(spec);
-            handlers.sort_by(|a, b| b.priority.cmp(&a.priority));
+            provider.cover_handlers.insert(entity_type, spec);
         }
     }
 
-    pub(crate) fn get_cover_handlers(
+    pub(crate) fn get_cover_handler(
         &self,
         provider_id: &str,
         entity_type: EntityType,
-    ) -> Vec<ProviderCoverSpec> {
+    ) -> Option<&ProviderCoverSpec> {
         self.state(provider_id)
             .and_then(|provider| provider.cover_handlers.get(&entity_type))
-            .cloned()
-            .unwrap_or_default()
     }
 
-    pub(crate) fn set_refresh_handler(
-        &mut self,
-        provider_id: &str,
-        entity_type: EntityType,
-        handler: PluginFunctionHandle,
-    ) {
-        if let Some(provider) = self.state_mut(provider_id) {
-            provider.refresh_handlers.insert(entity_type, handler);
-        }
-    }
-
-    pub(crate) fn get_refresh_handler(
+    pub(crate) fn get_sync_filter_callback(
         &self,
         provider_id: &str,
         entity_type: EntityType,
-    ) -> Option<&PluginFunctionHandle> {
+    ) -> Option<&ProviderCallbackHandle> {
         self.state(provider_id)
-            .and_then(|provider| provider.refresh_handlers.get(&entity_type))
-    }
-
-    pub(crate) fn set_sync_filter(
-        &mut self,
-        provider_id: &str,
-        entity_type: EntityType,
-        filter: PluginFunctionHandle,
-    ) {
-        if let Some(provider) = self.state_mut(provider_id) {
-            provider.sync_filters.insert(entity_type, filter);
-        }
-    }
-
-    pub(crate) fn get_sync_filter(
-        &self,
-        provider_id: &str,
-        entity_type: EntityType,
-    ) -> Option<&PluginFunctionHandle> {
-        self.state(provider_id)
-            .and_then(|provider| provider.sync_filters.get(&entity_type))
-    }
-
-    pub(crate) fn providers_with_refresh_handler(&self, entity_type: EntityType) -> Vec<String> {
-        self.iter_states()
-            .filter(|(_, state)| state.refresh_handlers.contains_key(&entity_type))
-            .map(|(id, _)| id.clone())
-            .collect()
+            .and_then(|provider| provider.sync_filter_callbacks.get(&entity_type))
     }
 
     pub(crate) fn unique_id_pairs(&self, entity: EntityType) -> HashSet<(String, String)> {
@@ -323,7 +320,6 @@ impl ProviderRegistry {
         let provider = self.state(provider_id)?;
         match provider.id_generators.get(id_type)? {
             ProviderIdUrlGenerator::Template(template) => Some(template.clone()),
-            ProviderIdUrlGenerator::Callback(_) => None,
         }
     }
 
@@ -464,10 +460,10 @@ impl PluginScopedInner for ProviderRegistry {
 struct ProviderState {
     id_generators: HashMap<String, ProviderIdUrlGenerator>,
     id_specs: HashMap<String, ProviderIdSpec>,
-    search_handlers: HashMap<EntityType, PluginFunctionHandle>,
-    cover_handlers: HashMap<EntityType, Vec<ProviderCoverSpec>>,
-    refresh_handlers: HashMap<EntityType, PluginFunctionHandle>,
-    sync_filters: HashMap<EntityType, PluginFunctionHandle>,
+    search_callbacks: HashMap<EntityType, ProviderCallbackHandle>,
+    refresh_callbacks: HashMap<EntityType, ProviderCallbackHandle>,
+    sync_filter_callbacks: HashMap<EntityType, ProviderCallbackHandle>,
+    cover_handlers: HashMap<EntityType, ProviderCoverSpec>,
     options: Vec<OptionDeclaration>,
 }
 

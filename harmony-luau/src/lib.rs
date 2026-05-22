@@ -14,22 +14,85 @@ use std::fmt::{
     Write,
 };
 
+pub mod runtime;
+#[cfg(feature = "serde")]
+mod serde_value;
+
+pub use runtime::{
+    ArgReader,
+    AsyncCallFrame,
+    Buffer,
+    ByteString,
+    CallContext,
+    CallFrame,
+    CapabilityId,
+    Chunk,
+    ChunkOrigin,
+    CompileOptions,
+    ContextBag,
+    Error,
+    FromLuau,
+    Function,
+    InterruptBudgetGuard,
+    IntoLuauReturn,
+    ModuleId,
+    NativeAsyncFn,
+    NativeFn,
+    NativeFunctionOptions,
+    NativeFunctionValue,
+    OwnedTable,
+    RegistryRef,
+    ReturnValues,
+    ReturnWriter,
+    ScheduledFuture,
+    SourceBytes,
+    StandardLibraries,
+    Table,
+    TableReader,
+    TaskGroupId,
+    Thread,
+    ThreadData,
+    ThreadStatus,
+    ToLuau,
+    UserData,
+    UserDataRef,
+    UserDataTag,
+    Value,
+    Vm,
+    VmData,
+    VmOptions,
+};
+#[cfg(feature = "serde")]
+pub use serde_value::serializable_to_luau_owned;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LuauType {
     Literal(&'static str),
+    Named(&'static str),
+    StringLiteral(&'static str),
     Optional(Box<LuauType>),
     Array(Box<LuauType>),
     Map {
         key: Box<LuauType>,
         value: Box<LuauType>,
     },
+    Object(Vec<FieldDescriptor>),
     Function(FunctionType),
     Union(Vec<LuauType>),
+    Intersection(Vec<LuauType>),
 }
 
 impl LuauType {
     pub const fn literal(value: &'static str) -> Self {
         Self::Literal(value)
+    }
+
+    pub const fn named(value: &'static str) -> Self {
+        Self::Named(value)
+    }
+
+    pub const fn string_literal(value: &'static str) -> Self {
+        Self::StringLiteral(value)
     }
 
     pub const fn any() -> Self {
@@ -58,6 +121,10 @@ impl LuauType {
         }
     }
 
+    pub fn object(fields: Vec<FieldDescriptor>) -> Self {
+        Self::Object(fields)
+    }
+
     pub fn function(params: Vec<FunctionParameter>, returns: Vec<LuauType>) -> Self {
         Self::Function(FunctionType { params, returns })
     }
@@ -65,17 +132,20 @@ impl LuauType {
     pub fn union(types: Vec<LuauType>) -> Self {
         Self::Union(types)
     }
+
+    pub fn intersection(types: Vec<LuauType>) -> Self {
+        Self::Intersection(types)
+    }
 }
 
 impl Display for LuauType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Literal(value) => write!(f, "{value}"),
+            Self::Named(value) => write!(f, "{value}"),
+            Self::StringLiteral(value) => render_string_literal(f, value),
             Self::Optional(inner) => {
-                if matches!(
-                    inner.as_ref(),
-                    Self::Literal(_) | Self::Array(_) | Self::Map { .. }
-                ) {
+                if is_suffix_optional_type(inner) {
                     write!(f, "{inner}?")
                 } else {
                     write!(f, "({inner})?")
@@ -83,6 +153,16 @@ impl Display for LuauType {
             }
             Self::Array(inner) => write!(f, "{{{inner}}}"),
             Self::Map { key, value } => write!(f, "{{ [{key}]: {value} }}"),
+            Self::Object(fields) => {
+                f.write_str("{ ")?;
+                for (index, field) in fields.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{}: {}", field.name, field.ty)?;
+                }
+                f.write_str(" }")
+            }
             Self::Function(signature) => write!(f, "{signature}"),
             Self::Union(types) => {
                 for (index, ty) in types.iter().enumerate() {
@@ -90,6 +170,15 @@ impl Display for LuauType {
                         f.write_str(" | ")?;
                     }
                     write!(f, "{}", render_union_member(ty))?;
+                }
+                Ok(())
+            }
+            Self::Intersection(types) => {
+                for (index, ty) in types.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(" & ")?;
+                    }
+                    write!(f, "{}", render_intersection_member(ty))?;
                 }
                 Ok(())
             }
@@ -190,6 +279,13 @@ pub struct ModuleFunctionDescriptor {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModuleFieldDescriptor {
+    pub path: Vec<&'static str>,
+    pub description: Option<&'static str>,
+    pub ty: LuauType,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GlobalFunctionDescriptor {
     pub name: &'static str,
     pub description: Option<&'static str>,
@@ -203,6 +299,7 @@ pub struct ModuleDescriptor {
     pub name: &'static str,
     pub local_name: &'static str,
     pub description: Option<&'static str>,
+    pub fields: Vec<ModuleFieldDescriptor>,
     pub functions: Vec<ModuleFunctionDescriptor>,
 }
 
@@ -216,6 +313,7 @@ impl ModuleDescriptor {
             name,
             local_name,
             description,
+            fields: Vec::new(),
             functions: Vec::new(),
         }
     }
@@ -310,8 +408,8 @@ impl DescribeTypeAlias for JsonValue {
                 LuauType::literal("boolean"),
                 LuauType::literal("number"),
                 LuauType::literal("string"),
-                LuauType::array(LuauType::literal("JsonValue")),
-                LuauType::map(LuauType::literal("string"), LuauType::literal("JsonValue")),
+                LuauType::array(LuauType::named("JsonValue")),
+                LuauType::map(LuauType::literal("string"), LuauType::named("JsonValue")),
             ])),
             Some("JSON-compatible value."),
         )
@@ -366,6 +464,13 @@ impl_literal_types!("number" => u8, u16, u32, u64, u128, usize);
 impl_literal_types!("number" => f32, f64);
 impl_literal_types!("string" => String, &'static str, char);
 impl_literal_types!("string" => std::path::PathBuf);
+impl_literal_types!("string" => ByteString);
+impl_literal_types!("buffer" => Buffer);
+impl_literal_types!("table" => Table, OwnedTable);
+impl_literal_types!("function" => Function, NativeFunctionValue);
+impl_literal_types!("thread" => Thread);
+impl_literal_types!("userdata" => UserData);
+impl_literal_types!("any" => Value, ReturnValues);
 
 impl<T> LuauTypeInfo for Option<T>
 where
@@ -661,7 +766,21 @@ fn render_module_definition(
         }
     }
 
-    if !module.functions.is_empty() {
+    if !module.fields.is_empty() || !module.functions.is_empty() {
+        writeln!(output)?;
+    }
+
+    for field in &module.fields {
+        let mut lines = vec![format!("@within {}", module.name)];
+        push_description(&mut lines, field.description);
+        render_doc_block(output, &lines)?;
+        writeln!(
+            output,
+            "{}.{} = nil :: {}",
+            module.local_name,
+            field.path.join("."),
+            field.ty,
+        )?;
         writeln!(output)?;
     }
 
@@ -770,10 +889,7 @@ fn render_return_annotation(returns: &[LuauType]) -> String {
 }
 
 fn render_variadic_type(ty: &LuauType) -> String {
-    if matches!(
-        ty,
-        LuauType::Literal(_) | LuauType::Array(_) | LuauType::Map { .. }
-    ) {
+    if is_variadic_prefix_type(ty) {
         format!("...{ty}")
     } else {
         format!("...({ty})")
@@ -781,18 +897,74 @@ fn render_variadic_type(ty: &LuauType) -> String {
 }
 
 fn render_union_member(ty: &LuauType) -> String {
-    if matches!(ty, LuauType::Function(_)) {
+    if matches!(ty, LuauType::Function(_) | LuauType::Intersection(_)) {
         format!("({ty})")
     } else {
         ty.to_string()
     }
 }
 
+fn render_intersection_member(ty: &LuauType) -> String {
+    if matches!(ty, LuauType::Function(_) | LuauType::Union(_)) {
+        format!("({ty})")
+    } else {
+        ty.to_string()
+    }
+}
+
+fn is_suffix_optional_type(ty: &LuauType) -> bool {
+    matches!(
+        ty,
+        LuauType::Literal(_)
+            | LuauType::Named(_)
+            | LuauType::StringLiteral(_)
+            | LuauType::Array(_)
+            | LuauType::Map { .. }
+            | LuauType::Object(_)
+    )
+}
+
+fn is_variadic_prefix_type(ty: &LuauType) -> bool {
+    matches!(
+        ty,
+        LuauType::Literal(_)
+            | LuauType::Named(_)
+            | LuauType::StringLiteral(_)
+            | LuauType::Array(_)
+            | LuauType::Map { .. }
+    )
+}
+
+fn render_string_literal(f: &mut fmt::Formatter<'_>, value: &str) -> fmt::Result {
+    f.write_char('"')?;
+    for ch in value.chars() {
+        match ch {
+            '"' => f.write_str("\\\"")?,
+            '\\' => f.write_str("\\\\")?,
+            '\n' => f.write_str("\\n")?,
+            '\r' => f.write_str("\\r")?,
+            '\t' => f.write_str("\\t")?,
+            ch => f.write_char(ch)?,
+        }
+    }
+    f.write_char('"')
+}
+
 fn collect_nested_tables(module: &ModuleDescriptor) -> BTreeSet<Vec<&'static str>> {
     let mut tables = BTreeSet::new();
-    for function in &module.functions {
-        for index in 1..function.path.len() {
-            tables.insert(function.path[..index].to_vec());
+    for path in module
+        .fields
+        .iter()
+        .map(|field| field.path.as_slice())
+        .chain(
+            module
+                .functions
+                .iter()
+                .map(|function| function.path.as_slice()),
+        )
+    {
+        for index in 1..path.len() {
+            tables.insert(path[..index].to_vec());
         }
     }
     tables
@@ -845,6 +1017,7 @@ mod tests {
             name: "Demo",
             local_name: "demo",
             description: Some("Prototype module."),
+            fields: Vec::new(),
             functions: vec![
                 ModuleFunctionDescriptor {
                     path: vec!["make_player"],
@@ -906,6 +1079,44 @@ mod tests {
         assert_eq!(
             LuauType::optional(LuauType::optional(LuauType::literal("boolean"))).to_string(),
             "boolean?"
+        );
+    }
+
+    #[test]
+    fn renders_named_string_literal_object_and_intersection_types() {
+        assert_eq!(LuauType::named("Track").to_string(), "Track");
+        assert_eq!(LuauType::string_literal("track").to_string(), "\"track\"");
+        assert_eq!(
+            LuauType::string_literal("quote\"slash\\").to_string(),
+            "\"quote\\\"slash\\\\\""
+        );
+        assert_eq!(
+            LuauType::object(vec![
+                FieldDescriptor {
+                    name: "id",
+                    ty: LuauType::named("NodeId"),
+                    description: None,
+                },
+                FieldDescriptor {
+                    name: "kind",
+                    ty: LuauType::string_literal("track"),
+                    description: None,
+                },
+            ])
+            .to_string(),
+            "{ id: NodeId, kind: \"track\" }"
+        );
+        assert_eq!(
+            LuauType::intersection(vec![
+                LuauType::named("Base"),
+                LuauType::object(vec![FieldDescriptor {
+                    name: "extra",
+                    ty: LuauType::literal("string"),
+                    description: None,
+                }]),
+            ])
+            .to_string(),
+            "Base & { extra: string }"
         );
     }
 

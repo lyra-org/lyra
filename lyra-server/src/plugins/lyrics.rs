@@ -3,19 +3,33 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use agdb::DbId;
-use harmony_core::LuaAsyncExt;
-use mlua::{
-    ExternalResult,
-    Lua,
-    LuaSerdeExt,
-    Result,
-    Table,
-    Value,
+use harmony_core::{
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
+};
+use harmony_luau as luau;
+use harmony_luau::{
+    ClassDescriptor,
+    DescribeInterface,
+    DescribeUserData,
+    FieldDescriptor,
+    InterfaceDescriptor,
+    LuauType,
+    LuauTypeInfo,
+    ModuleDescriptor,
+    ModuleFunctionDescriptor,
+    ParameterDescriptor,
+    render_definition_file_with_support,
 };
 use serde::{
     Deserialize,
     Serialize,
+    de::DeserializeOwned,
 };
 
 use crate::{
@@ -31,18 +45,14 @@ use crate::{
             WordInput,
         },
     },
-    plugins::{
-        LUA_SERIALIZE_OPTIONS,
-        caller::RequestCaller,
-        from_lua_json_value,
-        parse_ids,
+    services::{
+        auth::Principal,
+        metadata::lyrics as lyrics_service,
     },
-    services::metadata::lyrics as lyrics_service,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[harmony_macros::enumeration]
 enum LyricsOrigin {
     User,
     Plugin,
@@ -57,10 +67,32 @@ impl From<IdSource> for LyricsOrigin {
     }
 }
 
-harmony_macros::compile!(type_path = LyricsOrigin, variants = true);
+impl LuauTypeInfo for LyricsOrigin {
+    fn luau_type() -> LuauType {
+        LuauType::literal("LyricsOrigin")
+    }
+}
+
+impl DescribeUserData for LyricsOrigin {
+    fn class_descriptor() -> ClassDescriptor {
+        let mut descriptor = ClassDescriptor::new("LyricsOrigin", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "User",
+                ty: LyricsOrigin::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "Plugin",
+                ty: LyricsOrigin::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[harmony_macros::interface]
 pub(crate) struct PluginLyricWordInput {
     pub(crate) ts_ms: u64,
     pub(crate) char_start: u32,
@@ -68,7 +100,6 @@ pub(crate) struct PluginLyricWordInput {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[harmony_macros::interface]
 pub(crate) struct PluginLyricLineInput {
     pub(crate) ts_ms: u64,
     pub(crate) text: String,
@@ -77,7 +108,6 @@ pub(crate) struct PluginLyricLineInput {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[harmony_macros::interface]
 pub(crate) struct PluginLyricsInput {
     pub(crate) id: String,
     pub(crate) language: String,
@@ -115,9 +145,9 @@ impl PluginLyricsInput {
 }
 
 impl PluginLyricsInput {
-    pub(crate) fn into_lyrics_input(self, now_ms: u64) -> Result<LyricsInput> {
+    pub(crate) fn into_lyrics_input(self, now_ms: u64) -> anyhow::Result<LyricsInput> {
         if self.id.trim().is_empty() {
-            return Err(mlua::Error::runtime("lyrics id cannot be empty"));
+            anyhow::bail!("lyrics id cannot be empty");
         }
 
         Ok(LyricsInput {
@@ -148,7 +178,6 @@ impl PluginLyricsInput {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[harmony_macros::interface]
 struct UserLyricsUploadInput {
     content_type: String,
     body: String,
@@ -156,7 +185,6 @@ struct UserLyricsUploadInput {
 }
 
 #[derive(Serialize)]
-#[harmony_macros::interface]
 struct LyricsInfo {
     db_id: Option<NodeId>,
     id: String,
@@ -170,7 +198,6 @@ struct LyricsInfo {
 }
 
 #[derive(Serialize)]
-#[harmony_macros::interface]
 struct LyricLineInfo {
     ts_ms: u64,
     text: String,
@@ -178,12 +205,13 @@ struct LyricLineInfo {
 }
 
 #[derive(Serialize)]
-#[harmony_macros::interface]
 struct LyricWordInfo {
     ts_ms: u64,
     char_start: u32,
     char_end: u32,
 }
+
+struct LyricsModule;
 
 fn lyrics_detail_to_info(detail: LyricsDetail) -> LyricsInfo {
     let LyricsDetail { lyrics, lines } = detail;
@@ -215,241 +243,842 @@ fn lyrics_detail_to_info(detail: LyricsDetail) -> LyricsInfo {
     }
 }
 
-fn lyrics_info_to_value(lua: &Lua, info: &LyricsInfo) -> Result<Value> {
-    let value = lua.to_value_with(info, LUA_SERIALIZE_OPTIONS)?;
-    if let Value::Table(table) = &value {
-        table.set("origin", info.origin)?;
-    }
-    Ok(value)
+fn parse_lrc_input(text: String, language: Option<String>) -> anyhow::Result<PluginLyricsInput> {
+    let language = language
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "und".to_string());
+    let now = lyrics_service::now_ms()?;
+    let input = lyrics_service::lrc_to_input(&text, String::new(), language, now)
+        .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+    Ok(PluginLyricsInput::from_lyrics_input(input))
 }
 
-fn lyrics_detail_to_value(lua: &Lua, detail: LyricsDetail) -> Result<Value> {
-    let info = lyrics_detail_to_info(detail);
-    lyrics_info_to_value(lua, &info)
+pub(crate) fn module_spec() -> ModuleSpec {
+    let spec = ModuleSpec::new("lyra/lyrics")
+        .capability("lyra.lyrics")
+        .function(get_spec())
+        .function(parse_lrc_spec())
+        .function(upsert_spec())
+        .function(upsert_user_override_spec())
+        .function(delete_user_override_for_track_spec())
+        .function(delete_for_track_spec())
+        .function(has_spec())
+        .function(has_many_spec())
+        .install(|_| Ok(ModuleExport::new(LyricsModule)));
+    spec
 }
 
-struct LyricsModule;
+fn get_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get")
+        .context::<Principal>()
+        .named_arg::<i64>("track_id")
+        .named_arg::<Option<String>>("language")
+        .named_arg::<Option<bool>>("require_synced")
+        .returns::<Option<LyricsInfo>>()
+        .call_async(Arc::new(get_callback))
+}
 
-#[harmony_macros::module(
-    plugin_scoped,
-    name = "Lyrics",
-    local = "lyrics",
-    path = "lyra/lyrics",
-    interfaces(
-        PluginLyricsInput,
-        PluginLyricLineInput,
-        PluginLyricWordInput,
-        UserLyricsUploadInput,
-        LyricsInfo,
-        LyricLineInfo,
-        LyricWordInfo
-    ),
-    classes(LyricsOrigin)
-)]
-impl LyricsModule {
-    /// Returns the preferred lyrics for a track, or nil when none are available.
-    #[harmony(args(track_id: u64, language: Option<String>, require_synced: Option<bool>), returns(Option<LyricsInfo>))]
-    pub(crate) async fn get(
-        lua: Lua,
-        #[harmony_context] caller: RequestCaller,
-        track_id: NodeId,
-        language: Option<String>,
-        require_synced: Option<bool>,
-    ) -> Result<Value> {
-        let track_db_id = DbId::from(track_id);
+fn parse_lrc_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("parse_lrc")
+        .named_arg::<String>("text")
+        .named_arg::<Option<String>>("language")
+        .returns::<PluginLyricsInput>();
+    spec.call(parse_lrc_callback)
+}
+
+fn upsert_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("upsert")
+        .context::<Principal>()
+        .named_arg::<i64>("track_id")
+        .named_arg::<PluginLyricsInput>("lyrics")
+        .returns::<i64>()
+        .call_async(Arc::new(upsert_callback))
+}
+
+fn upsert_user_override_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("upsert_user_override")
+        .context::<Principal>()
+        .named_arg::<i64>("track_id")
+        .named_arg::<UserLyricsUploadInput>("upload")
+        .returns::<LyricsInfo>()
+        .call_async(Arc::new(upsert_user_override_callback))
+}
+
+fn delete_user_override_for_track_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("delete_user_override_for_track")
+        .context::<Principal>()
+        .arg_name("track_id")
+        .args::<i64>()
+        .returns::<bool>()
+        .call_async(Arc::new(delete_user_override_for_track_callback))
+}
+
+fn delete_for_track_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("delete_for_track")
+        .context::<Principal>()
+        .arg_name("track_id")
+        .args::<i64>()
+        .call_async(Arc::new(delete_for_track_callback))
+}
+
+fn has_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("has")
+        .context::<Principal>()
+        .arg_name("track_id")
+        .args::<i64>()
+        .returns::<bool>()
+        .call_async(Arc::new(has_callback))
+}
+
+fn has_many_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("has_many")
+        .context::<Principal>()
+        .arg_name("track_ids")
+        .args::<Vec<u64>>()
+        .returns::<std::collections::BTreeMap<u64, bool>>()
+        .call_async(Arc::new(has_many_callback))
+}
+
+fn get_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let track_id: i64 = frame.args.read_named("track_id")?;
+    let language: Option<String> = frame.args.read_optional_named("language")?;
+    let require_synced: Option<bool> = frame.args.read_optional_named("require_synced")?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let track_db_id = DbId(track_id);
         if track_db_id.0 <= 0 {
-            return Ok(Value::Nil);
+            return Ok(luau::Value::Nil);
         }
 
         let db = STATE.db.read().await;
-        if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, track_db_id)
-            .into_lua_err()?
+        if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
+            .map_err(crate::plugins::runtime_error)?
         {
-            return Ok(Value::Nil);
+            return Ok(luau::Value::Nil);
         }
         let detail = lyrics_service::get_preferred_detail(
-            &*db,
+            &db,
             track_db_id,
             language.as_deref(),
             require_synced.unwrap_or(false),
         )
-        .into_lua_err()?;
-        match detail {
-            Some(detail) => lyrics_detail_to_value(&lua, detail),
-            None => Ok(Value::Nil),
-        }
-    }
+        .map_err(crate::plugins::runtime_error)?;
 
-    /// Parses an LRC payload (line timestamps + Enhanced-LRC word cues) into a
-    /// [`PluginLyricsInput`]-shaped table. The returned table has an empty `id`;
-    /// the plugin must stamp a provider-namespaced id before passing it to
-    /// [`upsert`], which rejects empty ids loudly. `language` defaults to
-    /// `"und"` when omitted or blank.
-    #[harmony(args(text: String, language: Option<String>), returns(PluginLyricsInput))]
-    pub(crate) fn parse_lrc(lua: &Lua, args: (String, Option<String>)) -> Result<Value> {
-        let (text, language) = args;
-        let language = language
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "und".to_string());
-        let now = lyrics_service::now_ms().into_lua_err()?;
-        let input = lyrics_service::lrc_to_input(&text, String::new(), language, now)
-            .map_err(|err| mlua::Error::runtime(err.to_string()))?;
-        let plugin_input = PluginLyricsInput::from_lyrics_input(input);
-        lua.to_value_with(&plugin_input, LUA_SERIALIZE_OPTIONS)
-    }
+        let value = match detail {
+            Some(detail) => lyrics_detail_to_luau_value(detail)?,
+            None => luau::Value::Nil,
+        };
+        Ok(value)
+    }))
+}
 
-    /// Upserts plugin-provided lyrics for a track. The provider id is always the caller's plugin id.
-    #[harmony(args(track_id: u64, lyrics: PluginLyricsInput), returns(u64))]
-    pub(crate) async fn upsert(
-        lua: Lua,
-        #[harmony_context] caller: RequestCaller,
-        track_id: NodeId,
-        lyrics: Table,
-    ) -> Result<NodeId> {
-        let plugin_id = caller.plugin_id.to_string();
-        let now = lyrics_service::now_ms().into_lua_err()?;
-        let lyrics: PluginLyricsInput = from_lua_json_value(&lua, Value::Table(lyrics))?;
-        let input = lyrics.into_lyrics_input(now)?;
+fn parse_lrc_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let text: String = frame.args.read_named("text")?;
+    let language: Option<String> = frame.args.read_optional_named("language")?;
+    let parsed = parse_lrc_input(text, language).map_err(crate::plugins::runtime_error)?;
+    frame.returns.write(parsed.into_luau_table())?;
+    Ok(())
+}
+
+fn upsert_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let track_id: i64 = frame.args.read_named("track_id")?;
+    let lyrics_value: luau::Value = frame.args.read_named("lyrics")?;
+    let lyrics: PluginLyricsInput = from_luau_json(frame.vm, &lyrics_value)?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
+        luau::Error::Runtime("lyrics.upsert must be called from plugin Luau code".into())
+    })?;
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let now = lyrics_service::now_ms().map_err(crate::plugins::runtime_error)?;
+        let input = lyrics
+            .into_lyrics_input(now)
+            .map_err(crate::plugins::runtime_error)?;
+        let track_db_id = require_positive_id(track_id, "track_id")?;
 
         let mut db = STATE.db.write().await;
-        let track_db_id = DbId::from(track_id);
-        if !crate::routes::entity_accessible_to_principal(&*db, &caller.principal, track_db_id)
-            .into_lua_err()?
+        if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
+            .map_err(crate::plugins::runtime_error)?
         {
-            return Err(mlua::Error::runtime("track not found"));
+            return Err(crate::plugins::runtime_error("track not found"));
         }
-        let lyrics_db_id =
-            lyrics_service::upsert_plugin_lyrics(&mut db, track_db_id, input, plugin_id)
-                .into_lua_err()?;
-        Ok(lyrics_db_id.into())
-    }
+        let lyrics_db_id = lyrics_service::upsert_plugin_lyrics(
+            &mut db,
+            track_db_id,
+            input,
+            plugin_id.to_string(),
+        )
+        .map_err(crate::plugins::runtime_error)?;
+        Ok(luau::Value::Integer(lyrics_db_id.0))
+    }))
+}
 
-    /// Creates or replaces the user-authored lyrics override for a track.
-    #[harmony(args(track_id: u64, upload: UserLyricsUploadInput), returns(LyricsInfo))]
-    pub(crate) async fn upsert_user_override(
-        lua: Lua,
-        #[harmony_context] caller: RequestCaller,
-        track_id: NodeId,
-        upload: Table,
-    ) -> Result<Value> {
-        let track_db_id = DbId::from(track_id);
-        let upload: UserLyricsUploadInput = from_lua_json_value(&lua, Value::Table(upload))?;
+fn upsert_user_override_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let track_id: i64 = frame.args.read_named("track_id")?;
+    let upload_value: luau::Value = frame.args.read_named("upload")?;
+    let upload: UserLyricsUploadInput = from_luau_json(frame.vm, &upload_value)?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let track_db_id = require_positive_id(track_id, "track_id")?;
+        let now = lyrics_service::now_ms().map_err(crate::plugins::runtime_error)?;
         let UserLyricsUploadInput {
             content_type,
             body,
             language,
         } = upload;
-
-        let now = lyrics_service::now_ms().into_lua_err()?;
         let input =
             lyrics_service::input_from_upload(&content_type, body.as_bytes(), language, now)
-                .into_lua_err()?;
+                .map_err(crate::plugins::runtime_error)?;
 
         let mut db = STATE.db.write().await;
-        if !crate::routes::entity_accessible_to_principal(&*db, &caller.principal, track_db_id)
-            .into_lua_err()?
+        if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
+            .map_err(crate::plugins::runtime_error)?
         {
-            return Err(mlua::Error::runtime("track not found"));
+            return Err(crate::plugins::runtime_error("track not found"));
         }
         let detail = lyrics_service::upsert_user_lyrics_by_db_id(&mut db, track_db_id, input)
-            .into_lua_err()?;
-        lyrics_detail_to_value(&lua, detail)
-    }
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(lyrics_detail_to_luau_value(detail)?)
+    }))
+}
 
-    /// Deletes the user-authored lyrics override for a track. Provider lyrics are left intact.
-    pub(crate) async fn delete_user_override_for_track(
-        #[harmony_context] caller: RequestCaller,
-        track_id: NodeId,
-    ) -> Result<bool> {
+fn delete_user_override_for_track_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let track_id: i64 = frame.args.read_named("track_id")?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let track_db_id = require_positive_id(track_id, "track_id")?;
         let mut db = STATE.db.write().await;
-        let track_db_id = DbId::from(track_id);
-        if !crate::routes::entity_accessible_to_principal(&*db, &caller.principal, track_db_id)
-            .into_lua_err()?
+        if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
+            .map_err(crate::plugins::runtime_error)?
         {
-            return Ok(false);
+            return Ok(luau::Value::Boolean(false));
         }
-        lyrics_service::delete_user_lyrics_for_track_by_db_id(&mut db, track_db_id).into_lua_err()
-    }
+        let deleted = lyrics_service::delete_user_lyrics_for_track_by_db_id(&mut db, track_db_id)
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(luau::Value::Boolean(deleted))
+    }))
+}
 
-    /// Deletes every lyrics row for a track. Intended for trusted cleanup workflows.
-    pub(crate) async fn delete_for_track(
-        #[harmony_context] caller: RequestCaller,
-        track_id: NodeId,
-    ) -> Result<()> {
+fn delete_for_track_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let track_id: i64 = frame.args.read_named("track_id")?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let track_db_id = require_positive_id(track_id, "track_id")?;
         let mut db = STATE.db.write().await;
-        let track_db_id = DbId::from(track_id);
-        if !crate::routes::entity_accessible_to_principal(&*db, &caller.principal, track_db_id)
-            .into_lua_err()?
+        if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
+            .map_err(crate::plugins::runtime_error)?
         {
             return Ok(());
         }
-        lyrics_service::delete_all_lyrics_for_track(&mut db, track_db_id).into_lua_err()
-    }
+        lyrics_service::delete_all_lyrics_for_track(&mut db, track_db_id)
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(())
+    }))
+}
 
-    /// Returns true when the track has preferred lyrics available.
-    pub(crate) async fn has(
-        #[harmony_context] caller: RequestCaller,
-        track_id: NodeId,
-    ) -> Result<bool> {
-        let track_db_id = DbId::from(track_id);
+fn has_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let track_id: i64 = frame.args.read_named("track_id")?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let track_db_id = DbId(track_id);
         if track_db_id.0 <= 0 {
-            return Ok(false);
+            return Ok(luau::Value::Boolean(false));
         }
 
         let db = STATE.db.read().await;
-        if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, track_db_id)
-            .into_lua_err()?
+        if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
+            .map_err(crate::plugins::runtime_error)?
         {
-            return Ok(false);
+            return Ok(luau::Value::Boolean(false));
         }
-        let detail =
-            lyrics_service::get_preferred_detail(&*db, track_db_id, None, false).into_lua_err()?;
-        Ok(detail.is_some())
-    }
+        let detail = lyrics_service::get_preferred_detail(&db, track_db_id, None, false)
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(luau::Value::Boolean(detail.is_some()))
+    }))
+}
 
-    /// Returns preferred-lyrics availability for many tracks.
-    #[harmony(args(track_ids: Vec<u64>), returns(std::collections::BTreeMap<u64, bool>))]
-    pub(crate) async fn has_many(
-        lua: Lua,
-        #[harmony_context] caller: RequestCaller,
-        track_ids: Table,
-    ) -> Result<Table> {
-        let track_ids = parse_ids(track_ids)?;
+fn has_many_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let track_ids_table: luau::Table = frame.args.read_named("track_ids")?;
+    let track_ids = parse_db_ids(frame.vm, &track_ids_table)?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(luau::ScheduledFuture::new(async move {
         let db = STATE.db.read().await;
-        let providers = db::providers::get(&*db).into_lua_err()?;
+        let providers = db::providers::get(&db).map_err(crate::plugins::runtime_error)?;
+        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, track_ids.len());
 
-        let table = lua.create_table()?;
         for track_id in track_ids {
-            if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, track_id)
-                .into_lua_err()?
-            {
-                table.set(track_id.0, false)?;
-                continue;
-            }
-            let has_lyrics = match db::tracks::get_by_id(&*db, track_id).into_lua_err()? {
-                Some(track) => {
-                    let candidates = db::lyrics::get_for_track(&*db, track_id).into_lua_err()?;
-                    lyrics_service::pick_preferred(
-                        &candidates,
-                        &providers,
-                        None,
-                        track.duration_ms,
-                        false,
-                    )
-                    .is_some()
-                }
-                None => false,
-            };
-            table.set(track_id.0, has_lyrics)?;
+            let has_lyrics =
+                if !crate::routes::entity_accessible_to_principal(&db, &principal, track_id)
+                    .map_err(crate::plugins::runtime_error)?
+                {
+                    false
+                } else {
+                    match db::tracks::get_by_id(&db, track_id)
+                        .map_err(crate::plugins::runtime_error)?
+                    {
+                        Some(track) => {
+                            let candidates = db::lyrics::get_for_track(&db, track_id)
+                                .map_err(crate::plugins::runtime_error)?;
+                            lyrics_service::pick_preferred(
+                                &candidates,
+                                &providers,
+                                None,
+                                track.duration_ms,
+                                false,
+                            )
+                            .is_some()
+                        }
+                        None => false,
+                    }
+                };
+            table.set_key(
+                luau::Value::Integer(track_id.0),
+                luau::Value::Boolean(has_lyrics),
+            );
         }
-        Ok(table)
+
+        Ok(luau::Value::TableData(table))
+    }))
+}
+impl PluginLyricsInput {
+    fn into_luau_table(self) -> luau::OwnedTable {
+        let mut table = luau::OwnedTable::with_capacity(0, 4);
+        table.set_field("id", luau::Value::String(self.id.into_bytes()));
+        table.set_field("language", luau::Value::String(self.language.into_bytes()));
+        table.set_field(
+            "plain_text",
+            luau::Value::String(self.plain_text.into_bytes()),
+        );
+        table.set_field(
+            "lines",
+            luau::Value::TableData(lyric_lines_table(self.lines)),
+        );
+        table
+    }
+}
+fn lyric_lines_table(lines: Vec<PluginLyricLineInput>) -> luau::OwnedTable {
+    let mut table = luau::OwnedTable::with_capacity(lines.len(), 0);
+    for line in lines {
+        table.push_array(luau::Value::TableData(lyric_line_table(line)));
+    }
+    table
+}
+fn lyric_line_table(line: PluginLyricLineInput) -> luau::OwnedTable {
+    let mut table = luau::OwnedTable::with_capacity(0, 3);
+    table.set_field("ts_ms", luau::Value::Number(line.ts_ms as f64));
+    table.set_field("text", luau::Value::String(line.text.into_bytes()));
+    table.set_field(
+        "words",
+        luau::Value::TableData(lyric_words_table(line.words)),
+    );
+    table
+}
+fn lyric_words_table(words: Vec<PluginLyricWordInput>) -> luau::OwnedTable {
+    let mut table = luau::OwnedTable::with_capacity(words.len(), 0);
+    for word in words {
+        table.push_array(luau::Value::TableData(lyric_word_table(word)));
+    }
+    table
+}
+fn lyric_word_table(word: PluginLyricWordInput) -> luau::OwnedTable {
+    let mut table = luau::OwnedTable::with_capacity(0, 3);
+    table.set_field("ts_ms", luau::Value::Number(word.ts_ms as f64));
+    table.set_field(
+        "char_start",
+        luau::Value::Number(f64::from(word.char_start)),
+    );
+    table.set_field("char_end", luau::Value::Number(f64::from(word.char_end)));
+    table
+}
+
+fn lyrics_detail_to_luau_value(detail: LyricsDetail) -> luau::runtime::Result<luau::Value> {
+    harmony_luau::serializable_to_luau_owned(lyrics_detail_to_info(detail))
+}
+
+fn from_luau_json<T>(vm: &luau::Vm, value: &luau::Value) -> luau::runtime::Result<T>
+where
+    T: DeserializeOwned,
+{
+    serde_json::from_value(harmony_json::luau_to_json(vm, value, 0)?)
+        .map_err(crate::plugins::runtime_error)
+}
+
+fn require_positive_id(value: i64, field_name: &str) -> luau::runtime::Result<DbId> {
+    if value <= 0 {
+        return Err(crate::plugins::runtime_error(format!(
+            "{field_name} must be a positive id"
+        )));
+    }
+    Ok(DbId(value))
+}
+
+fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
+    let mut values = Vec::new();
+    for (key, value) in table.pairs_raw(vm)? {
+        let Some(index) = array_index(key) else {
+            continue;
+        };
+        let Some(id) = db_id_value(value)? else {
+            continue;
+        };
+        values.push((index, id));
+    }
+    values.sort_by_key(|(index, _)| *index);
+
+    let mut ids = Vec::new();
+    let mut seen = HashSet::new();
+    for (_, id) in values {
+        if seen.insert(id) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+fn array_index(value: luau::Value) -> Option<i64> {
+    match value {
+        luau::Value::Integer(index) if index > 0 => Some(index),
+        luau::Value::Number(index) if index.is_finite() && index.fract() == 0.0 && index > 0.0 => {
+            Some(index as i64)
+        }
+        _ => None,
     }
 }
 
-crate::plugins::plugin_surface_exports!(
-    LyricsModule,
-    "lyra.lyrics",
-    "Read and write track lyrics.",
-    High
-);
+fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
+    let id = match value {
+        luau::Value::Integer(id) => id,
+        luau::Value::Number(id) if id.is_finite() && id.fract() == 0.0 => id as i64,
+        luau::Value::Nil => return Ok(None),
+        _ => return Err(crate::plugins::runtime_error("expected numeric id")),
+    };
+
+    if id <= 0 {
+        return Ok(None);
+    }
+    Ok(Some(DbId(id)))
+}
+
+impl LuauTypeInfo for PluginLyricWordInput {
+    fn luau_type() -> LuauType {
+        LuauType::literal("PluginLyricWordInput")
+    }
+}
+
+impl DescribeInterface for PluginLyricWordInput {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("PluginLyricWordInput", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "ts_ms",
+                ty: u64::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "char_start",
+                ty: u32::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "char_end",
+                ty: u32::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for PluginLyricLineInput {
+    fn luau_type() -> LuauType {
+        LuauType::literal("PluginLyricLineInput")
+    }
+}
+
+impl DescribeInterface for PluginLyricLineInput {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("PluginLyricLineInput", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "ts_ms",
+                ty: u64::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "text",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "words",
+                ty: Vec::<PluginLyricWordInput>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for PluginLyricsInput {
+    fn luau_type() -> LuauType {
+        LuauType::literal("PluginLyricsInput")
+    }
+}
+
+impl DescribeInterface for PluginLyricsInput {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("PluginLyricsInput", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "id",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "language",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "plain_text",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "lines",
+                ty: Vec::<PluginLyricLineInput>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for UserLyricsUploadInput {
+    fn luau_type() -> LuauType {
+        LuauType::literal("UserLyricsUploadInput")
+    }
+}
+
+impl DescribeInterface for UserLyricsUploadInput {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("UserLyricsUploadInput", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "content_type",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "body",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "language",
+                ty: Option::<String>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for LyricsInfo {
+    fn luau_type() -> LuauType {
+        LuauType::literal("LyricsInfo")
+    }
+}
+
+impl DescribeInterface for LyricsInfo {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("LyricsInfo", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "db_id",
+                ty: Option::<NodeId>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "id",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "provider_id",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "language",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "origin",
+                ty: LyricsOrigin::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "plain_text",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "has_word_cues",
+                ty: bool::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "updated_at",
+                ty: u64::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "lines",
+                ty: Vec::<LyricLineInfo>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for LyricLineInfo {
+    fn luau_type() -> LuauType {
+        LuauType::literal("LyricLineInfo")
+    }
+}
+
+impl DescribeInterface for LyricLineInfo {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("LyricLineInfo", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "ts_ms",
+                ty: u64::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "text",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "words",
+                ty: Vec::<LyricWordInfo>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for LyricWordInfo {
+    fn luau_type() -> LuauType {
+        LuauType::literal("LyricWordInfo")
+    }
+}
+
+impl DescribeInterface for LyricWordInfo {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("LyricWordInfo", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "ts_ms",
+                ty: u64::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "char_start",
+                ty: u32::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "char_end",
+                ty: u32::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
+    ParameterDescriptor {
+        name,
+        ty,
+        description: None,
+        variadic: false,
+    }
+}
+
+fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        name: "Lyrics",
+        local_name: "lyrics",
+        description: None,
+        fields: Vec::new(),
+        functions: vec![
+            ModuleFunctionDescriptor {
+                path: vec!["get"],
+                description: Some(
+                    "Returns the preferred lyrics for a track, or nil when none are available.",
+                ),
+                params: vec![
+                    param("track_id", NodeId::luau_type()),
+                    param("language", Option::<String>::luau_type()),
+                    param("require_synced", Option::<bool>::luau_type()),
+                ],
+                returns: vec![Option::<LyricsInfo>::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["parse_lrc"],
+                description: Some("Parses an LRC payload into a PluginLyricsInput-shaped table."),
+                params: vec![
+                    param("text", String::luau_type()),
+                    param("language", Option::<String>::luau_type()),
+                ],
+                returns: vec![PluginLyricsInput::luau_type()],
+                yields: false,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["upsert"],
+                description: Some(
+                    "Upserts plugin-provided lyrics for a track. The provider id is always the caller's plugin id.",
+                ),
+                params: vec![
+                    param("track_id", NodeId::luau_type()),
+                    param("lyrics", PluginLyricsInput::luau_type()),
+                ],
+                returns: vec![NodeId::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["upsert_user_override"],
+                description: Some(
+                    "Creates or replaces the user-authored lyrics override for a track.",
+                ),
+                params: vec![
+                    param("track_id", NodeId::luau_type()),
+                    param("upload", UserLyricsUploadInput::luau_type()),
+                ],
+                returns: vec![LyricsInfo::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["delete_user_override_for_track"],
+                description: Some(
+                    "Deletes the user-authored lyrics override for a track. Provider lyrics are left intact.",
+                ),
+                params: vec![param("track_id", NodeId::luau_type())],
+                returns: vec![bool::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["delete_for_track"],
+                description: Some(
+                    "Deletes every lyrics row for a track. Intended for trusted cleanup workflows.",
+                ),
+                params: vec![param("track_id", NodeId::luau_type())],
+                returns: vec![],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["has"],
+                description: Some("Returns true when the track has preferred lyrics available."),
+                params: vec![param("track_id", NodeId::luau_type())],
+                returns: vec![bool::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["has_many"],
+                description: Some("Returns preferred-lyrics availability for many tracks."),
+                params: vec![param("track_ids", Vec::<u64>::luau_type())],
+                returns: vec![LuauType::map(u64::luau_type(), bool::luau_type())],
+                yields: true,
+            },
+        ],
+    }
+}
+
+pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
+    render_definition_file_with_support(
+        &module_descriptor(),
+        &[],
+        &[
+            PluginLyricsInput::interface_descriptor(),
+            PluginLyricLineInput::interface_descriptor(),
+            PluginLyricWordInput::interface_descriptor(),
+            UserLyricsUploadInput::interface_descriptor(),
+            LyricsInfo::interface_descriptor(),
+            LyricLineInfo::interface_descriptor(),
+            LyricWordInfo::interface_descriptor(),
+        ],
+        &[LyricsOrigin::class_descriptor()],
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exposes_handwritten_module_spec() {
+        let spec = module_spec();
+
+        assert_eq!(spec.id.0.as_ref(), "lyra/lyrics");
+        assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "lyra.lyrics");
+        assert_eq!(spec.functions.len(), 8);
+        assert_eq!(
+            spec.functions
+                .iter()
+                .filter(|function| function.yields)
+                .count(),
+            7
+        );
+    }
+
+    #[test]
+    fn renders_lyrics_module_definition() {
+        let rendered = render_luau_definition().expect("render lyra/lyrics docs");
+
+        assert!(rendered.contains("@class Lyrics"));
+        assert!(rendered.contains("@interface PluginLyricsInput"));
+        assert!(rendered.contains("@interface PluginLyricLineInput"));
+        assert!(rendered.contains("@interface PluginLyricWordInput"));
+        assert!(rendered.contains("@interface UserLyricsUploadInput"));
+        assert!(rendered.contains("@interface LyricsInfo"));
+        assert!(rendered.contains("@interface LyricsOrigin"));
+        assert!(rendered.contains("function lyrics.get(track_id: number"));
+        assert!(rendered.contains(
+            "function lyrics.parse_lrc(text: string, language: string?): PluginLyricsInput"
+        ));
+        assert!(
+            rendered
+                .contains("function lyrics.has_many(track_ids: {number}): { [number]: boolean }")
+        );
+    }
+}

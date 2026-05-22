@@ -10,7 +10,6 @@ use std::{
     time::Duration,
 };
 
-use agdb::DbId;
 use anyhow::{
     Context,
     Result,
@@ -19,7 +18,6 @@ use axum::{
     Router,
     extract::DefaultBodyLimit,
 };
-use harmony_core::Harmony;
 use tokio::{
     net::TcpListener,
     sync::Notify,
@@ -32,12 +30,10 @@ use tracing_subscriber::{
     util::SubscriberInitExt,
 };
 
+use crate::plugins::api as plugin_api;
 use crate::{
     STATE,
-    plugins::{
-        api as plugin_api,
-        bootstrap as plugin_bootstrap,
-    },
+    plugins::bootstrap as plugin_bootstrap,
     routes,
     services,
     services::hls::init as hls_init,
@@ -72,24 +68,26 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
         let mut db_write = STATE.db.write().await;
         crate::db::server::ensure(&mut db_write)?;
     }
-    let configured_library =
-        services::libraries::prepare_configured_library(&config, capture_mode).await?;
-    let library_db_id = configured_library
-        .as_ref()
-        .and_then(|library| library.db_id);
 
-    let harmony = plugin_bootstrap::initialize_harmony()?;
+    let plugin_runtime = plugin_bootstrap::initialize_harmony().await?;
 
     if let Some(output_path) = capture_path {
-        let capture_library_db_id = library_db_id.ok_or_else(|| {
-            anyhow::anyhow!("--capture requires a library configured in config.json")
-        })?;
-        run_capture_mode(harmony, capture_library_db_id, &output_path).await?;
-        return Ok(());
+        // sync_library dispatches handlers that resolve STATE.plugin_runtime; publish first.
+        plugin_bootstrap::exec_for_capture(plugin_runtime.clone()).await?;
+        plugin_bootstrap::publish_runtime(plugin_runtime);
+        let configured_library =
+            services::libraries::prepare_configured_library(&config, true).await?;
+        let capture_library_db_id = configured_library
+            .as_ref()
+            .and_then(|library| library.db_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!("--capture requires a library configured in config.json")
+            })?;
+        return services::providers::run_capture(capture_library_db_id, &output_path).await;
     }
 
     let core_api = routes::build_core_api()?;
-    crate::plugins::runtime::initialize_registry().await;
+    crate::plugins::settings::initialize_registry().await;
 
     let app = plugin_api::install(core_api.router, core_api.reservations).await?;
     let app = app.layer(axum::middleware::from_fn(
@@ -99,18 +97,29 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
     let interval_secs = config.sync.interval_secs;
     let shutdown = Arc::new(Notify::new());
     let shutdown_bg = shutdown.clone();
+    let config_for_bg = config.clone();
     let bg_handle = tokio::spawn(async move {
-        if let Err(err) = harmony.exec_all().await {
+        if let Err(err) = plugin_runtime.exec_all().await {
             tracing::error!(error = %err, "plugin initialization failed");
             return;
         }
+
+        // Must precede finalize_startup (activates plugin routes) and the library sync
+        // (dispatches handlers that resolve STATE.plugin_runtime at call time).
+        plugin_bootstrap::publish_runtime(plugin_runtime.clone());
 
         if let Err(err) = plugin_bootstrap::finalize_startup().await {
             tracing::error!(error = %err, "failed to finalize plugin startup");
             return;
         }
 
-        plugin_bootstrap::publish_runtime(harmony.clone());
+        if let Err(err) =
+            services::libraries::prepare_configured_library(&config_for_bg, false).await
+        {
+            tracing::error!(error = %err, "configured library preparation failed");
+            return;
+        }
+
         services::providers::run_provider_sync_loop(interval_secs, shutdown_bg).await;
     });
 
@@ -149,15 +158,6 @@ fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
         .init();
 
     guard
-}
-
-async fn run_capture_mode(
-    harmony: Arc<Harmony>,
-    library_db_id: DbId,
-    output_path: &str,
-) -> Result<()> {
-    plugin_bootstrap::exec_for_capture(harmony).await?;
-    services::providers::run_capture(library_db_id, output_path).await
 }
 
 // Sharply below axum's 2MB default to bound CPU/RAM amplification on auth'd POSTs.

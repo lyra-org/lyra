@@ -13,20 +13,26 @@ use std::time::{
 };
 
 use harmony_core::{
-    LuaAsyncExt,
-    Module,
+    ChunkOrigin,
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
 };
+use harmony_luau as luau;
 use harmony_luau::{
+    DescribeInterface,
     DescribeTypeAlias,
+    DescribeUserData,
     LuauType,
     LuauTypeInfo,
+    ModuleDescriptor,
+    ModuleFunctionDescriptor,
+    ParameterDescriptor,
+    render_definition_file_with_support,
 };
-use mlua::{
-    FromLua,
-    IntoLua,
-    Lua,
-    Table,
-    Value,
+use harmony_luau::{
+    FieldDescriptor,
+    InterfaceDescriptor,
 };
 use percent_encoding::{
     AsciiSet,
@@ -50,20 +56,6 @@ struct LuaBinaryInput(Vec<u8>);
 impl LuauTypeInfo for LuaBinaryInput {
     fn luau_type() -> LuauType {
         LuauType::union(vec![String::luau_type(), LuauType::literal("buffer")])
-    }
-}
-
-impl FromLua for LuaBinaryInput {
-    fn from_lua(value: Value, _lua: &Lua) -> mlua::Result<Self> {
-        match value {
-            Value::String(text) => Ok(Self(text.as_bytes().to_vec())),
-            Value::Buffer(buffer) => Ok(Self(buffer.to_vec())),
-            other => Err(mlua::Error::FromLuaConversionError {
-                from: other.type_name(),
-                to: "(string | buffer)".to_string(),
-                message: Some("expected raw byte payload".to_string()),
-            }),
-        }
     }
 }
 
@@ -325,28 +317,6 @@ impl HttpHeaderMap {
     }
 }
 
-impl FromLua for HttpHeaderMap {
-    fn from_lua(value: Value, lua: &Lua) -> mlua::Result<Self> {
-        let table = Table::from_lua(value, lua)?;
-        let mut map = BTreeMap::new();
-        for pair in table.pairs::<String, String>() {
-            let (key, value) = pair?;
-            map.insert(key, value);
-        }
-        Ok(Self(map))
-    }
-}
-
-impl IntoLua for HttpHeaderMap {
-    fn into_lua(self, lua: &Lua) -> mlua::Result<Value> {
-        let table = lua.create_table()?;
-        for (key, value) in self.0 {
-            table.set(key, value)?;
-        }
-        Ok(Value::Table(table))
-    }
-}
-
 impl LuauTypeInfo for HttpHeaderMap {
     fn luau_type() -> LuauType {
         LuauType::literal("HttpHeaderMap")
@@ -363,8 +333,8 @@ impl DescribeTypeAlias for HttpHeaderMap {
     }
 }
 
+#[harmony_macros::userdata(name = "HttpMethod")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[harmony_macros::enumeration]
 pub enum HttpMethod {
     Get,
     Post,
@@ -374,10 +344,7 @@ pub enum HttpMethod {
     Head,
 }
 
-harmony_macros::compile!(type_path = HttpMethod, variants = true);
-
 #[derive(Clone, Debug)]
-#[harmony_macros::interface]
 struct HttpRequestOptions {
     url: String,
     method: HttpMethod,
@@ -386,33 +353,7 @@ struct HttpRequestOptions {
     cookies: Option<HttpHeaderMap>,
 }
 
-impl FromLua for HttpRequestOptions {
-    fn from_lua(value: Value, lua: &Lua) -> mlua::Result<Self> {
-        let table = Table::from_lua(value, lua)
-            .map_err(|_| mlua::Error::runtime("expected options to be a table"))?;
-
-        Ok(Self {
-            url: table.get("url").map_err(|e| {
-                mlua::Error::runtime(format!("missing or invalid 'url' field: {e}"))
-            })?,
-            method: table.get("method").map_err(|e| {
-                mlua::Error::runtime(format!("missing or invalid 'method' field: {e}"))
-            })?,
-            body: table
-                .get("body")
-                .map_err(|e| mlua::Error::runtime(format!("invalid 'body' field: {e}")))?,
-            headers: table
-                .get("headers")
-                .map_err(|e| mlua::Error::runtime(format!("invalid 'headers' field: {e}")))?,
-            cookies: table
-                .get("cookies")
-                .map_err(|e| mlua::Error::runtime(format!("invalid 'cookies' field: {e}")))?,
-        })
-    }
-}
-
 #[derive(Clone, Debug)]
-#[harmony_macros::interface]
 struct HttpRateLimitOptions {
     domain: String,
     /// Defaults to `1.0`.
@@ -425,7 +366,6 @@ struct HttpRateLimitOptions {
 }
 
 #[derive(Clone, Debug)]
-#[harmony_macros::interface]
 struct HttpConcurrencyOptions {
     /// Host or full URL; only the host portion is keyed, matching the
     /// request-time lookup in [`extract_domain`].
@@ -434,49 +374,7 @@ struct HttpConcurrencyOptions {
     max_in_flight: u32,
 }
 
-impl FromLua for HttpConcurrencyOptions {
-    fn from_lua(value: Value, lua: &Lua) -> mlua::Result<Self> {
-        let table = Table::from_lua(value, lua)
-            .map_err(|_| mlua::Error::runtime("expected options table"))?;
-
-        Ok(Self {
-            host: table
-                .get("host")
-                .map_err(|_| mlua::Error::runtime("missing 'host' field"))?,
-            max_in_flight: table
-                .get("max_in_flight")
-                .map_err(|e| mlua::Error::runtime(format!("invalid 'max_in_flight' field: {e}")))?,
-        })
-    }
-}
-
-impl FromLua for HttpRateLimitOptions {
-    fn from_lua(value: Value, lua: &Lua) -> mlua::Result<Self> {
-        let table = Table::from_lua(value, lua)
-            .map_err(|_| mlua::Error::runtime("expected options table"))?;
-
-        Ok(Self {
-            domain: table
-                .get("domain")
-                .map_err(|_| mlua::Error::runtime("missing 'domain' field"))?,
-            requests_per_second: table.get("requests_per_second").map_err(|e| {
-                mlua::Error::runtime(format!("invalid 'requests_per_second' field: {e}"))
-            })?,
-            retry_on: table
-                .get("retry_on")
-                .map_err(|e| mlua::Error::runtime(format!("invalid 'retry_on' field: {e}")))?,
-            max_retries: table
-                .get("max_retries")
-                .map_err(|e| mlua::Error::runtime(format!("invalid 'max_retries' field: {e}")))?,
-            backoff_ms: table
-                .get("backoff_ms")
-                .map_err(|e| mlua::Error::runtime(format!("invalid 'backoff_ms' field: {e}")))?,
-        })
-    }
-}
-
 #[derive(Clone, Debug)]
-#[harmony_macros::interface]
 struct HttpResponse {
     success: bool,
     status_code: Option<u16>,
@@ -536,38 +434,6 @@ impl HttpResponse {
         self.retries = retries;
         self.rate_limited = rate_limited;
         self
-    }
-
-    fn into_lua_table(self, lua: &Lua) -> anyhow::Result<Table> {
-        let table = lua.create_table()?;
-        table.set("success", self.success)?;
-        table.set("status_message", self.status_message)?;
-
-        if let Some(code) = self.status_code {
-            table.set("status_code", code)?;
-        } else {
-            table.set("status_code", Value::Nil)?;
-        }
-
-        if let Some(kind) = self.error_kind {
-            table.set("error_kind", kind)?;
-        }
-
-        table.set("headers", self.headers.into_lua(lua)?)?;
-        table.set("cookies", self.cookies.into_lua(lua)?)?;
-
-        table.set("body", lua.create_string(&self.body.0)?)?;
-        table.set("retries", self.retries)?;
-        table.set("rate_limited", self.rate_limited)?;
-        Ok(table)
-    }
-}
-
-impl IntoLua for HttpResponse {
-    fn into_lua(self, lua: &Lua) -> mlua::Result<Value> {
-        Ok(Value::Table(
-            self.into_lua_table(lua).map_err(mlua::Error::external)?,
-        ))
     }
 }
 
@@ -882,87 +748,405 @@ fn get_default_user_agent() -> Option<String> {
 
 struct HttpModule;
 
-#[harmony_macros::module(
-    plugin_scoped,
-    name = "Http",
-    local = "http",
-    path = "harmony/http",
-    aliases(HttpHeaderMap),
-    classes(HttpMethod),
-    interfaces(
-        HttpRequestOptions,
-        HttpRateLimitOptions,
-        HttpConcurrencyOptions,
-        HttpResponse,
-    )
-)]
-impl HttpModule {
-    pub async fn request(
-        _plugin_id: Option<Arc<str>>,
-        options: HttpRequestOptions,
-    ) -> mlua::Result<HttpResponse> {
-        Ok(execute_request_with_rate_limit(options).await)
+async fn configure_rate_limit(
+    plugin_id: Option<Arc<str>>,
+    options: HttpRateLimitOptions,
+) -> anyhow::Result<()> {
+    let requests_per_second = options.requests_per_second.unwrap_or(1.0);
+    if !requests_per_second.is_finite() || requests_per_second <= 0.0 {
+        anyhow::bail!("requests_per_second must be a positive number");
     }
 
-    pub async fn set_rate_limit(
-        _lua: Lua,
-        plugin_id: Option<Arc<str>>,
-        options: HttpRateLimitOptions,
-    ) -> mlua::Result<()> {
-        let requests_per_second = options.requests_per_second.unwrap_or(1.0);
-        if !requests_per_second.is_finite() || requests_per_second <= 0.0 {
-            return Err(mlua::Error::runtime(
-                "requests_per_second must be a positive number",
+    // Normalize via extract_domain so callers can pass either a bare host
+    // or a full URL and match the request-time lookup key. `url::Url`
+    // lowercases hosts on parse; lowercase the bare-host fallback too so
+    // `set_rate_limit("EXAMPLE.com", ...)` and a request to
+    // `https://example.com/...` hit the same key.
+    let domain =
+        extract_domain(&options.domain).unwrap_or_else(|| options.domain.to_ascii_lowercase());
+
+    let config = RateLimitConfig {
+        requests_per_second,
+        retry_status_codes: options.retry_on.unwrap_or_else(|| vec![429, 503]),
+        max_retries: options.max_retries.unwrap_or(3),
+        initial_backoff: Duration::from_millis(options.backoff_ms.unwrap_or(1000)),
+    };
+
+    let mut limiter = RATE_LIMITER.write().await;
+    limiter.set_config(domain, config, plugin_id);
+
+    Ok(())
+}
+
+async fn configure_max_in_flight(options: HttpConcurrencyOptions) -> anyhow::Result<()> {
+    if options.max_in_flight == 0 {
+        anyhow::bail!("max_in_flight must be at least 1");
+    }
+
+    // Mirror the set_rate_limit normalization (see above) so registrations
+    // share the host key the request path looks up.
+    let host = extract_domain(&options.host).unwrap_or_else(|| options.host.to_ascii_lowercase());
+
+    let mut limiter = CONCURRENCY_LIMITER.write().await;
+    limiter.set_limit(host, options.max_in_flight as usize);
+
+    Ok(())
+}
+
+pub fn module_spec() -> ModuleSpec {
+    let spec = ModuleSpec::new("harmony/http")
+        .capability("harmony.http")
+        .function(request_spec())
+        .function(set_rate_limit_spec())
+        .function(set_max_in_flight_spec())
+        .function(encode_uri_component_spec())
+        .userdata(HttpMethod::_harmony_userdata_spec())
+        .install(|_| Ok(ModuleExport::new(HttpModule)));
+    spec
+}
+
+fn request_spec() -> FunctionSpec {
+    let spec = FunctionSpec::async_fn("request")
+        .context::<ChunkOrigin>()
+        .arg_name("options")
+        .args::<HttpRequestOptions>()
+        .returns::<HttpResponse>();
+    spec.call_async(Arc::new(request_callback))
+}
+
+fn set_rate_limit_spec() -> FunctionSpec {
+    let spec = FunctionSpec::async_fn("set_rate_limit")
+        .context::<ChunkOrigin>()
+        .arg_name("options")
+        .args::<HttpRateLimitOptions>();
+    spec.call_async(Arc::new(set_rate_limit_callback))
+}
+
+fn set_max_in_flight_spec() -> FunctionSpec {
+    let spec = FunctionSpec::async_fn("set_max_in_flight")
+        .context::<ChunkOrigin>()
+        .arg_name("options")
+        .args::<HttpConcurrencyOptions>();
+    spec.call_async(Arc::new(set_max_in_flight_callback))
+}
+
+fn encode_uri_component_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("encode_uri_component")
+        .named_arg::<String>("input")
+        .returns::<String>();
+    spec.call(encode_uri_component_callback)
+}
+
+fn encode_uri_component_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let input: String = frame.args.read_named("input")?;
+    frame
+        .returns
+        .write(percent_encoding::utf8_percent_encode(&input, URI_COMPONENT_SET).to_string())?;
+    Ok(())
+}
+
+fn request_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let table: luau::Table = frame.args.read_named("options")?;
+    let options = request_options_from_luau(frame.vm, &table)?;
+    let future = luau::ScheduledFuture::new(async move {
+        let response = execute_request_with_rate_limit(options).await;
+        Ok(response.into_luau_value())
+    });
+    Ok(future)
+}
+
+fn set_rate_limit_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let table: luau::Table = frame.args.read_named("options")?;
+    let options = rate_limit_options_from_luau(frame.vm, &table)?;
+    let plugin_id = frame.context.origin.plugin.clone();
+    let future = luau::ScheduledFuture::new(async move {
+        configure_rate_limit(plugin_id, options)
+            .await
+            .map_err(|error| luau::Error::Runtime(error.to_string()))?;
+        Ok(())
+    });
+    Ok(future)
+}
+
+fn set_max_in_flight_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let table: luau::Table = frame.args.read_named("options")?;
+    let options = concurrency_options_from_luau(frame.vm, &table)?;
+    let future = luau::ScheduledFuture::new(async move {
+        configure_max_in_flight(options)
+            .await
+            .map_err(|error| luau::Error::Runtime(error.to_string()))?;
+        Ok(())
+    });
+    Ok(future)
+}
+
+fn request_options_from_luau(
+    vm: &luau::Vm,
+    table: &luau::Table,
+) -> luau::runtime::Result<HttpRequestOptions> {
+    Ok(HttpRequestOptions {
+        url: required_string_field(vm, table, "url")?,
+        method: required_method_field(vm, table, "method")?,
+        body: optional_binary_field(vm, table, "body")?,
+        headers: optional_header_map_field(vm, table, "headers")?,
+        cookies: optional_header_map_field(vm, table, "cookies")?,
+    })
+}
+
+fn rate_limit_options_from_luau(
+    vm: &luau::Vm,
+    table: &luau::Table,
+) -> luau::runtime::Result<HttpRateLimitOptions> {
+    Ok(HttpRateLimitOptions {
+        domain: required_string_field(vm, table, "domain")?,
+        requests_per_second: optional_f64_field(vm, table, "requests_per_second")?,
+        retry_on: optional_u16_array_field(vm, table, "retry_on")?,
+        max_retries: optional_u32_field(vm, table, "max_retries")?,
+        backoff_ms: optional_u64_field(vm, table, "backoff_ms")?,
+    })
+}
+
+fn concurrency_options_from_luau(
+    vm: &luau::Vm,
+    table: &luau::Table,
+) -> luau::runtime::Result<HttpConcurrencyOptions> {
+    Ok(HttpConcurrencyOptions {
+        host: required_string_field(vm, table, "host")?,
+        max_in_flight: required_u32_field(vm, table, "max_in_flight")?,
+    })
+}
+
+fn required_string_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<String> {
+    match table.get_raw(vm, field)? {
+        luau::Value::String(value) => String::from_utf8(value).map_err(|error| {
+            luau::Error::Runtime(format!("'{field}' must be valid UTF-8: {error}"))
+        }),
+        luau::Value::Nil => Err(luau::Error::Runtime(format!("missing '{field}' field"))),
+        other => Err(luau_field_type_error(field, "string", other.type_name())),
+    }
+}
+
+fn optional_f64_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<Option<f64>> {
+    match table.get_raw(vm, field)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::Integer(value) => Ok(Some(value as f64)),
+        luau::Value::Number(value) => Ok(Some(value)),
+        other => Err(luau_field_type_error(field, "number", other.type_name())),
+    }
+}
+
+fn optional_u32_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<Option<u32>> {
+    match table.get_raw(vm, field)? {
+        luau::Value::Nil => Ok(None),
+        value => number_to_u32(field, value).map(Some),
+    }
+}
+
+fn optional_u64_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<Option<u64>> {
+    match table.get_raw(vm, field)? {
+        luau::Value::Nil => Ok(None),
+        value => number_to_u64(field, value).map(Some),
+    }
+}
+
+fn required_u32_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<u32> {
+    match table.get_raw(vm, field)? {
+        luau::Value::Nil => Err(luau::Error::Runtime(format!("missing '{field}' field"))),
+        value => number_to_u32(field, value),
+    }
+}
+
+fn optional_binary_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<Option<LuaBinaryInput>> {
+    match table.get_raw(vm, field)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::String(value) | luau::Value::Buffer(value) => Ok(Some(LuaBinaryInput(value))),
+        other => Err(luau_field_type_error(
+            field,
+            "string or buffer",
+            other.type_name(),
+        )),
+    }
+}
+
+fn optional_header_map_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<Option<HttpHeaderMap>> {
+    match table.get_raw(vm, field)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::Table(value) => header_map_from_luau(vm, &value, field).map(Some),
+        other => Err(luau_field_type_error(field, "table", other.type_name())),
+    }
+}
+
+fn optional_u16_array_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<Option<Vec<u16>>> {
+    match table.get_raw(vm, field)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::Table(value) => {
+            let mut output = Vec::new();
+            for (_key, value) in value.pairs_raw(vm)? {
+                output.push(number_to_u16(field, value)?);
+            }
+            Ok(Some(output))
+        }
+        other => Err(luau_field_type_error(field, "table", other.type_name())),
+    }
+}
+
+fn required_method_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<HttpMethod> {
+    let value = table.get_raw(vm, field)?;
+    if matches!(value, luau::Value::Nil) {
+        return Err(luau::Error::Runtime(format!("missing '{field}' field")));
+    }
+    HttpMethod::_harmony_userdata_class().read_value(vm, field, value)
+}
+
+fn header_map_from_luau(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<HttpHeaderMap> {
+    let mut map = BTreeMap::new();
+    for (key, value) in table.pairs_raw(vm)? {
+        let luau::Value::String(key) = key else {
+            return Err(luau_field_type_error(
+                field,
+                "table<string, string>",
+                key.type_name(),
             ));
-        }
-
-        // Normalize via extract_domain so callers can pass either a bare host
-        // or a full URL and match the request-time lookup key. `url::Url`
-        // lowercases hosts on parse; lowercase the bare-host fallback too so
-        // `set_rate_limit("EXAMPLE.com", ...)` and a request to
-        // `https://example.com/...` hit the same key.
-        let domain =
-            extract_domain(&options.domain).unwrap_or_else(|| options.domain.to_ascii_lowercase());
-
-        let config = RateLimitConfig {
-            requests_per_second,
-            retry_status_codes: options.retry_on.unwrap_or_else(|| vec![429, 503]),
-            max_retries: options.max_retries.unwrap_or(3),
-            initial_backoff: Duration::from_millis(options.backoff_ms.unwrap_or(1000)),
         };
-
-        let mut limiter = RATE_LIMITER.write().await;
-        limiter.set_config(domain, config, plugin_id);
-
-        Ok(())
+        let luau::Value::String(value) = value else {
+            return Err(luau_field_type_error(
+                field,
+                "table<string, string>",
+                value.type_name(),
+            ));
+        };
+        let key = String::from_utf8(key).map_err(|error| {
+            luau::Error::Runtime(format!("'{field}' key must be UTF-8: {error}"))
+        })?;
+        let value = String::from_utf8(value).map_err(|error| {
+            luau::Error::Runtime(format!("'{field}' value must be UTF-8: {error}"))
+        })?;
+        map.insert(key, value);
     }
+    Ok(HttpHeaderMap(map))
+}
 
-    /// Register an in-flight cap for `host`. Tighten-only — see
-    /// [`ConcurrencyLimiter::set_limit`]. Reconfiguring mid-burst briefly
-    /// allows `old_in_flight + new_in_flight` permits while the old
-    /// semaphore drains; avoid live reconfiguration in hot windows.
-    pub async fn set_max_in_flight(
-        _lua: Lua,
-        _plugin_id: Option<Arc<str>>,
-        options: HttpConcurrencyOptions,
-    ) -> mlua::Result<()> {
-        if options.max_in_flight == 0 {
-            return Err(mlua::Error::runtime("max_in_flight must be at least 1"));
+fn number_to_u16(field: &'static str, value: luau::Value) -> luau::runtime::Result<u16> {
+    let value = number_to_u64(field, value)?;
+    u16::try_from(value)
+        .map_err(|_| luau::Error::Runtime(format!("'{field}' value is out of range for u16")))
+}
+
+fn number_to_u32(field: &'static str, value: luau::Value) -> luau::runtime::Result<u32> {
+    let value = number_to_u64(field, value)?;
+    u32::try_from(value)
+        .map_err(|_| luau::Error::Runtime(format!("'{field}' value is out of range for u32")))
+}
+
+fn number_to_u64(field: &'static str, value: luau::Value) -> luau::runtime::Result<u64> {
+    match value {
+        luau::Value::Integer(value) if value >= 0 => Ok(value as u64),
+        luau::Value::Number(value)
+            if value.is_finite()
+                && value >= 0.0
+                && value <= u64::MAX as f64
+                && value.fract() == 0.0 =>
+        {
+            Ok(value as u64)
         }
-
-        // Mirror the set_rate_limit normalization (see above) so registrations
-        // share the host key the request path looks up.
-        let host =
-            extract_domain(&options.host).unwrap_or_else(|| options.host.to_ascii_lowercase());
-
-        let mut limiter = CONCURRENCY_LIMITER.write().await;
-        limiter.set_limit(host, options.max_in_flight as usize);
-
-        Ok(())
+        other => Err(luau_field_type_error(
+            field,
+            "non-negative integer",
+            other.type_name(),
+        )),
     }
+}
 
-    pub fn encode_uri_component(_lua: &Lua, input: String) -> mlua::Result<String> {
-        Ok(percent_encoding::utf8_percent_encode(&input, URI_COMPONENT_SET).to_string())
+fn luau_field_type_error(field: &str, expected: &str, actual: &str) -> luau::Error {
+    luau::Error::Runtime(format!(
+        "invalid '{field}' field: expected {expected}, got {actual}"
+    ))
+}
+
+impl HttpResponse {
+    fn into_luau_value(self) -> luau::Value {
+        let mut table = luau::OwnedTable::with_capacity(0, 9);
+        table.set_field("success", luau::Value::Boolean(self.success));
+        // Luau LUA_TINTEGER and LUA_TNUMBER are distinct types under raw
+        // equality; `Integer(200) == 200` from a script would be false.
+        table.set_field(
+            "status_code",
+            self.status_code
+                .map(|value| luau::Value::Number(f64::from(value)))
+                .unwrap_or(luau::Value::Nil),
+        );
+        table.set_field(
+            "status_message",
+            luau::Value::String(self.status_message.into_bytes()),
+        );
+        table.set_field("headers", self.headers.into_luau_value());
+        table.set_field("cookies", self.cookies.into_luau_value());
+        table.set_field("body", luau::Value::String(self.body.0));
+        table.set_field(
+            "error_kind",
+            self.error_kind
+                .map(|value| luau::Value::String(value.into_bytes()))
+                .unwrap_or(luau::Value::Nil),
+        );
+        table.set_field("retries", luau::Value::Number(f64::from(self.retries)));
+        table.set_field("rate_limited", luau::Value::Boolean(self.rate_limited));
+        luau::Value::TableData(table)
+    }
+}
+
+impl HttpHeaderMap {
+    fn into_luau_value(self) -> luau::Value {
+        let mut table = luau::OwnedTable::with_capacity(0, self.0.len());
+        for (key, value) in self.0 {
+            table.set_field(key, luau::Value::String(value.into_bytes()));
+        }
+        luau::Value::TableData(table)
     }
 }
 
@@ -996,41 +1180,254 @@ pub async fn test_clear_rate_limits_for_plugin(plugin_id: &str) {
         .retain(|_, state| state.set_by.as_deref() != Some(plugin_id));
 }
 
-pub fn get_module() -> Module {
-    Module {
-        path: "harmony/http".into(),
-        setup: std::sync::Arc::new(|lua: &Lua| {
-            let table = HttpModule::_harmony_module_table(lua)?;
-            table.set("HttpMethod", lua.create_proxy::<HttpMethod>()?)?;
-            Ok(table)
-        }),
-        scope: harmony_core::Scope {
-            id: "harmony.http".into(),
-            description: "Make outbound HTTP requests to any server on the internet.",
-            danger: harmony_core::Danger::High,
-        },
+fn http_module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        name: "Http",
+        local_name: "http",
+        description: Some("Outbound HTTP requests, rate limits, and URI encoding."),
+        fields: Vec::new(),
+        functions: vec![
+            ModuleFunctionDescriptor {
+                path: vec!["request"],
+                description: Some("Makes an outbound HTTP request."),
+                params: vec![ParameterDescriptor {
+                    name: "options",
+                    ty: HttpRequestOptions::luau_type(),
+                    description: None,
+                    variadic: false,
+                }],
+                returns: vec![HttpResponse::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["set_rate_limit"],
+                description: Some("Registers retry and pacing policy for a host or URL."),
+                params: vec![ParameterDescriptor {
+                    name: "options",
+                    ty: HttpRateLimitOptions::luau_type(),
+                    description: None,
+                    variadic: false,
+                }],
+                returns: Vec::new(),
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["set_max_in_flight"],
+                description: Some(
+                    "Registers a maximum concurrent request count for a host or URL.",
+                ),
+                params: vec![ParameterDescriptor {
+                    name: "options",
+                    ty: HttpConcurrencyOptions::luau_type(),
+                    description: None,
+                    variadic: false,
+                }],
+                returns: Vec::new(),
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["encode_uri_component"],
+                description: Some("Percent-encodes a string for use in a URI component."),
+                params: vec![ParameterDescriptor {
+                    name: "input",
+                    ty: String::luau_type(),
+                    description: None,
+                    variadic: false,
+                }],
+                returns: vec![String::luau_type()],
+                yields: false,
+            },
+        ],
+    }
+}
+
+impl LuauTypeInfo for HttpRequestOptions {
+    fn luau_type() -> LuauType {
+        LuauType::literal("HttpRequestOptions")
+    }
+}
+
+impl DescribeInterface for HttpRequestOptions {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("HttpRequestOptions", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "url",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "method",
+                ty: HttpMethod::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "body",
+                ty: Option::<LuaBinaryInput>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "headers",
+                ty: Option::<HttpHeaderMap>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "cookies",
+                ty: Option::<HttpHeaderMap>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for HttpRateLimitOptions {
+    fn luau_type() -> LuauType {
+        LuauType::literal("HttpRateLimitOptions")
+    }
+}
+
+impl DescribeInterface for HttpRateLimitOptions {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("HttpRateLimitOptions", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "domain",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "requests_per_second",
+                ty: Option::<f64>::luau_type(),
+                description: Some("Defaults to `1.0`."),
+            },
+            FieldDescriptor {
+                name: "retry_on",
+                ty: Option::<Vec<u16>>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "max_retries",
+                ty: Option::<u32>::luau_type(),
+                description: Some("Defaults to `3`."),
+            },
+            FieldDescriptor {
+                name: "backoff_ms",
+                ty: Option::<u64>::luau_type(),
+                description: Some("Defaults to `1000`."),
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for HttpConcurrencyOptions {
+    fn luau_type() -> LuauType {
+        LuauType::literal("HttpConcurrencyOptions")
+    }
+}
+
+impl DescribeInterface for HttpConcurrencyOptions {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("HttpConcurrencyOptions", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "host",
+                ty: String::luau_type(),
+                description: Some(
+                    "Host or full URL; only the host portion is keyed, matching request-time lookup.",
+                ),
+            },
+            FieldDescriptor {
+                name: "max_in_flight",
+                ty: u32::luau_type(),
+                description: Some("Maximum simultaneous in-flight requests to this host."),
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for HttpResponse {
+    fn luau_type() -> LuauType {
+        LuauType::literal("HttpResponse")
+    }
+}
+
+impl DescribeInterface for HttpResponse {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("HttpResponse", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "success",
+                ty: bool::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "status_code",
+                ty: Option::<u16>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "status_message",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "headers",
+                ty: HttpHeaderMap::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "cookies",
+                ty: HttpHeaderMap::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "body",
+                ty: BodyBytes::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "error_kind",
+                ty: Option::<String>::luau_type(),
+                description: Some("Transport error category when `success` is false."),
+            },
+            FieldDescriptor {
+                name: "retries",
+                ty: u32::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "rate_limited",
+                ty: bool::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
     }
 }
 
 pub fn render_luau_definition() -> Result<String, std::fmt::Error> {
-    HttpModule::render_luau_definition()
+    render_definition_file_with_support(
+        &http_module_descriptor(),
+        &[HttpHeaderMap::type_alias_descriptor()],
+        &[
+            HttpRequestOptions::interface_descriptor(),
+            HttpRateLimitOptions::interface_descriptor(),
+            HttpConcurrencyOptions::interface_descriptor(),
+            HttpResponse::interface_descriptor(),
+        ],
+        &[HttpMethod::class_descriptor()],
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        HttpMethod,
-        HttpRequestOptions,
-        LuaBinaryInput,
         extract_domain,
-        get_module,
+        module_spec,
         render_luau_definition,
-    };
-    use mlua::{
-        FromLua,
-        Function,
-        Lua,
-        Value,
     };
 
     #[test]
@@ -1040,6 +1437,110 @@ mod tests {
             extract_domain("https://example.com/path?q=1").as_deref(),
             Some("example.com"),
         );
+    }
+
+    #[test]
+    fn exposes_handwritten_module_spec() {
+        let spec = module_spec();
+
+        assert_eq!(spec.id.0.as_ref(), "harmony/http");
+        assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "harmony.http");
+        assert_eq!(spec.functions.len(), 4);
+        assert_eq!(spec.functions[0].name.as_ref(), "request");
+        assert!(spec.functions[0].yields);
+        assert!(
+            spec.functions[0]
+                .context_type
+                .is_some_and(|name| name.contains("ChunkOrigin"))
+        );
+        assert_eq!(spec.functions[3].name.as_ref(), "encode_uri_component");
+        assert!(!spec.functions[3].yields);
+    }
+
+    #[test]
+    fn luau_module_registers_encode_uri_component() -> harmony_luau::runtime::Result<()> {
+        let vm = harmony_luau::Vm::new()?;
+        let spec = module_spec();
+        let table =
+            harmony_core::install_luau_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
+        vm.set_global_table("http", &table)?;
+
+        let values = vm.eval(
+            std::sync::Arc::<[u8]>::from(&b"return http.encode_uri_component('a b/c?d=e&x=1')"[..]),
+            harmony_luau::ChunkOrigin::default(),
+        )?;
+
+        assert_eq!(
+            values,
+            vec![harmony_luau::Value::String(
+                b"a%20b%2Fc%3Fd%3De%26x%3D1".to_vec()
+            )]
+        );
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn luau_module_registers_http_methods_and_async_setters()
+    -> harmony_luau::runtime::Result<()> {
+        let vm = harmony_luau::Vm::new()?;
+        vm.data().insert(harmony_core::LocalScheduler::new())?;
+        let scheduler = vm.data().get::<harmony_core::LocalScheduler>()?;
+        let origin = harmony_core::ChunkOrigin {
+            plugin: Some(std::sync::Arc::from("luau-http-plugin")),
+            ..harmony_core::ChunkOrigin::default()
+        };
+        let spec = module_spec();
+        let table = harmony_core::install_luau_module(&vm, &origin, &spec)?;
+        vm.set_global_table("http", &table)?;
+
+        let root = vm.load_chunk(&harmony_luau::Chunk::new(
+            std::sync::Arc::<[u8]>::from(
+                &br#"
+                    http.set_rate_limit({
+                        domain = "Example.com",
+                        requests_per_second = 2,
+                        retry_on = { 429, 503 },
+                        max_retries = 1,
+                        backoff_ms = 10,
+                    })
+                    http.set_max_in_flight({
+                        host = "https://EXAMPLE.com/path",
+                        max_in_flight = 2,
+                    })
+                    stored_method = http.HttpMethod.Post
+                "#[..],
+            ),
+            harmony_luau::ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&root)?;
+        scheduler.spawn_luau_thread(
+            harmony_core::CallContext::default(),
+            vm.clone(),
+            thread,
+            vec![],
+        );
+
+        assert_eq!(scheduler.poll_ready(), 1);
+        assert_eq!(scheduler.poll_ready(), 0);
+        assert_eq!(scheduler.poll_ready(), 0);
+
+        assert!(super::has_rate_limit_for_plugin("luau-http-plugin").await);
+        {
+            let limiter = super::CONCURRENCY_LIMITER.read().await;
+            assert_eq!(limiter.max_in_flight("example.com"), Some(2));
+        }
+        let mut values = vm.eval(
+            std::sync::Arc::<[u8]>::from(&b"return stored_method"[..]),
+            harmony_luau::ChunkOrigin::default(),
+        )?;
+        assert_eq!(values.len(), 1);
+        let stored_method = super::HttpMethod::_harmony_userdata_class().read_value(
+            &vm,
+            "stored_method",
+            values.pop().unwrap(),
+        )?;
+        assert_eq!(stored_method, super::HttpMethod::Post);
+        Ok(())
     }
 
     #[test]
@@ -1066,23 +1567,38 @@ mod tests {
     }
 
     #[test]
-    fn generated_module_registers_http_exports() {
-        let module = get_module();
-        assert_eq!(&*module.path, "harmony/http");
-
-        let lua = Lua::new();
-        let table = (module.setup)(&lua).expect("create harmony/http module table");
-
-        let _: Function = table.get("request").expect("register request");
-        let _: Function = table
-            .get("set_rate_limit")
-            .expect("register set_rate_limit");
-        let _: Function = table
-            .get("set_max_in_flight")
-            .expect("register set_max_in_flight");
-        let _: Function = table
-            .get("encode_uri_component")
-            .expect("register encode_uri_component");
+    fn into_luau_value_pushes_numeric_fields_as_number() {
+        let value = super::HttpResponse::success(
+            200,
+            "OK".into(),
+            super::HttpHeaderMap::default(),
+            super::HttpHeaderMap::default(),
+            Vec::new(),
+        )
+        .with_retry_info(3, false)
+        .into_luau_value();
+        let table = match value {
+            harmony_luau::Value::TableData(table) => table,
+            other => panic!("expected TableData, got {other:?}"),
+        };
+        let field = |name: &str| {
+            table
+                .fields()
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+                .unwrap_or_else(|| panic!("missing field {name}"))
+        };
+        assert!(
+            matches!(field("status_code"), harmony_luau::Value::Number(n) if n == 200.0),
+            "status_code must be Number, got {:?}",
+            field("status_code"),
+        );
+        assert!(
+            matches!(field("retries"), harmony_luau::Value::Number(n) if n == 3.0),
+            "retries must be Number, got {:?}",
+            field("retries"),
+        );
     }
 
     #[tokio::test]
@@ -1322,58 +1838,6 @@ mod tests {
             .clone()
             .try_acquire_owned()
             .expect("sibling acquires immediately after main releases");
-    }
-
-    #[test]
-    fn request_options_reject_non_table_values() {
-        let lua = Lua::new();
-        let value = Value::String(lua.create_string("not a table").expect("create string"));
-
-        let error = HttpRequestOptions::from_lua(value, &lua)
-            .expect_err("reject non-table request options");
-
-        assert!(error.to_string().contains("expected options to be a table"));
-    }
-
-    #[test]
-    fn request_options_accept_string_and_buffer_bodies() {
-        let lua = Lua::new();
-
-        let string_table = lua.create_table().expect("create string request table");
-        string_table
-            .set("url", "https://example.com/upload")
-            .expect("set string url");
-        string_table
-            .set("method", HttpMethod::Post)
-            .expect("set string method");
-        string_table
-            .set(
-                "body",
-                lua.create_string(b"\0abc").expect("create string body"),
-            )
-            .expect("set string body");
-
-        let string_options = HttpRequestOptions::from_lua(Value::Table(string_table), &lua)
-            .expect("convert string request options");
-        assert_eq!(string_options.body, Some(LuaBinaryInput(b"\0abc".to_vec())));
-
-        let buffer_table = lua.create_table().expect("create buffer request table");
-        buffer_table
-            .set("url", "https://example.com/upload")
-            .expect("set buffer url");
-        buffer_table
-            .set("method", HttpMethod::Post)
-            .expect("set buffer method");
-        buffer_table
-            .set(
-                "body",
-                Value::Buffer(lua.create_buffer([0, 255, 65]).expect("create buffer body")),
-            )
-            .expect("set buffer body");
-
-        let buffer_options = HttpRequestOptions::from_lua(Value::Table(buffer_table), &lua)
-            .expect("convert buffer request options");
-        assert_eq!(buffer_options.body, Some(LuaBinaryInput(vec![0, 255, 65])));
     }
 
     #[test]

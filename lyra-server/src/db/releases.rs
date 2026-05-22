@@ -57,7 +57,6 @@ use super::{
     DbTypeMarker,
 )]
 #[serde(rename_all = "lowercase")]
-#[harmony_macros::enumeration]
 pub(crate) enum ReleaseType {
     Album,
     Single,
@@ -135,10 +134,24 @@ impl TryFrom<DbValue> for ReleaseType {
     }
 }
 
-harmony_macros::compile!(type_path = ReleaseType, variants = true);
+impl_luau_enum_userdata!(
+    ReleaseType,
+    "ReleaseType",
+    [
+        Album,
+        Single,
+        EP,
+        Compilation,
+        Soundtrack,
+        Live,
+        Remix,
+        Broadcast,
+        Other,
+        Unknown,
+    ]
+);
 
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug, JsonSchema)]
-#[harmony_macros::structure]
 pub(crate) struct Release {
     pub(crate) db_id: Option<NodeId>,
     pub(crate) id: String,
@@ -151,7 +164,6 @@ pub(crate) struct Release {
     pub(crate) ctime: Option<u64>,
 }
 
-#[harmony_macros::implementation]
 impl Release {
     pub(crate) fn set_release_title(&mut self, release_title: String) {
         self.release_title = release_title;
@@ -166,7 +178,26 @@ impl Release {
     }
 }
 
-harmony_macros::compile!(type_path = Release, fields = true, methods = true);
+impl_luau_record_userdata!(
+    Release,
+    "Release",
+    fields {
+        db_id: Option<NodeId> as "db_id",
+        id: String as "id",
+        release_title: String as "release_title",
+        sort_title: Option<String> as "sort_title",
+        release_type: Option<ReleaseType> as "release_type",
+        release_date: Option<String> as "release_date",
+        locked: Option<bool> as "locked",
+        created_at: Option<u64> as "created_at",
+        ctime: Option<u64> as "ctime",
+    },
+    methods {
+        set_release_title(release_title: String),
+        set_sort_title(sort_title: String),
+        set_release_date(release_date: String),
+    }
+);
 
 pub(crate) fn normalize_release_date(value: &str) -> Option<String> {
     let value = value.trim();

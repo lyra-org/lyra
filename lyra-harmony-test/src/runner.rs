@@ -95,7 +95,7 @@ pub async fn run_test(
 
     let plugins_dir = find_plugins_dir(test_dir)?;
     let parent = plugins_dir.parent().unwrap_or(Path::new("/")).to_path_buf();
-    let http_module = crate::cached_http::get_module(
+    let http_module = crate::cached_http::module_spec(
         base_cache_dir.to_path_buf(),
         overlay_cache_dir.map(Path::to_path_buf),
         accessed_keys.clone(),

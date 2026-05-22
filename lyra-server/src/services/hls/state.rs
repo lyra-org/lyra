@@ -138,11 +138,6 @@ impl HlsJobKey {
     pub(crate) fn track_public_id(&self) -> &str {
         &self.track_public_id
     }
-
-    #[allow(dead_code)]
-    pub(crate) fn source_public_id(&self) -> &str {
-        &self.source_public_id
-    }
 }
 
 pub(crate) async fn cleanup_hls_dir(dir_path: &FsPath) {

@@ -21,6 +21,8 @@ type JsonObject = { [string]: JsonValue }
 type JsonArray = { JsonValue }
 type HttpRequestOptions = http.HttpRequestOptions
 type SearchResultItem = { [string]: JsonValue }
+type ProviderCoverCandidate = metadata.ProviderCoverCandidate
+type ProviderCoverResult = metadata.ProviderCoverResult
 type ProviderExternalIdMap = metadata.ProviderExternalIdMap
 type ExternalIdsByProvider = metadata.ExternalIdsByProvider
 type RefreshOptions = { [string]: boolean | string | number }
@@ -444,7 +446,7 @@ local function preferred_album_cover_url(album: JsonObject): string?
 	return preferred_cover_url(album, ALBUM_COVER_KEYS)
 end
 
-local function cover_payload(item: JsonObject, keys: { string }): JsonValue?
+local function cover_payload(item: JsonObject, keys: { string }): ProviderCoverResult?
 	local urls: { string } = {}
 	local seen: { [string]: boolean } = {}
 	for _, key in keys do
@@ -454,21 +456,21 @@ local function cover_payload(item: JsonObject, keys: { string }): JsonValue?
 		return nil
 	end
 
-	local candidates: { JsonValue } = {}
+	local candidates: { ProviderCoverCandidate } = {}
 	for _, url in urls do
-		table.insert(candidates, { url = url } :: JsonValue)
+		table.insert(candidates, { url = url } :: ProviderCoverCandidate)
 	end
 	return {
 		candidates = candidates,
 		selected_index = 1,
-	} :: JsonValue
+	} :: ProviderCoverResult
 end
 
-local function artist_cover_payload(artist: JsonObject): JsonValue?
+local function artist_cover_payload(artist: JsonObject): ProviderCoverResult?
 	return cover_payload(artist, ARTIST_COVER_KEYS)
 end
 
-local function album_cover_payload(album: JsonObject): JsonValue?
+local function album_cover_payload(album: JsonObject): ProviderCoverResult?
 	return cover_payload(album, ALBUM_COVER_KEYS)
 end
 
@@ -704,19 +706,19 @@ end
 
 provider:id({
 	id = "artist_id",
-	entity = "artist",
+	entity = ET.Artist,
 	unique = true,
 }, redirect_url_generator("artist"))
 
 provider:id({
 	id = "album_id",
-	entity = "release",
+	entity = ET.Release,
 	unique = true,
 }, redirect_url_generator("album"))
 
 provider:id({
 	id = "track_id",
-	entity = "track",
+	entity = ET.Track,
 	unique = true,
 }, redirect_url_generator("track"))
 
@@ -737,7 +739,7 @@ provider:cover(ET.Artist, {
 	require = {
 		any_of = { "ids.artist_id", "artist_name", "sort_name" },
 	},
-}, function(ctx): JsonValue?
+}, function(ctx): ProviderCoverResult?
 	local artist = resolve_artist_cover_match(ctx :: ArtistCoverContext)
 	if artist == nil then
 		return nil
@@ -751,7 +753,7 @@ provider:cover(ET.Release, {
 		all_of = { "release_title" },
 		any_of = { "ids.album_id", "artist_names" },
 	},
-}, function(ctx: metadata.ProviderCoverContext): JsonValue?
+}, function(ctx: metadata.ProviderCoverContext): ProviderCoverResult?
 	local album = resolve_release_cover_match(ctx)
 	if album == nil then
 		return nil

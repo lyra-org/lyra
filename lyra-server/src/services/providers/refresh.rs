@@ -3,16 +3,19 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::{
-    HashMap,
-    HashSet,
+use std::{
+    collections::{
+        HashMap,
+        HashSet,
+    },
+    path::PathBuf,
 };
 
 use agdb::{
     DbAny,
     DbId,
 };
-use mlua::LuaSerdeExt;
+use anyhow::Context;
 
 use crate::{
     STATE,
@@ -20,26 +23,21 @@ use crate::{
         self,
         ProviderConfig,
     },
-    plugins::LUA_SERIALIZE_OPTIONS,
-    plugins::caller,
-    services::EntityType,
-    services::providers::{
-        LIBRARY_REFRESH_LOCKS,
-        PROVIDER_REGISTRY,
-        ProviderCallStage,
-        with_provider_call,
-    },
+    plugins::executor::MetadataRefreshRequest,
     services::{
-        CoverPaths,
-        CoverSyncOptions,
+        EntityType,
         covers::{
+            CoverPaths,
             CoverScope,
+            CoverSyncOptions,
             configured_covers_root,
             resolve_cover_for_artist_id,
             resolve_cover_for_release_id,
             sync_and_persist_covers_for_library,
             sync_artist_cover,
             sync_release_cover_for_tracks,
+            upsert_artist_cover_metadata,
+            upsert_release_cover_metadata,
         },
         deduplicate_artists_by_external_id,
         entities::{
@@ -47,8 +45,14 @@ use crate::{
             build_entity_provider_context,
             build_release_context,
         },
-        upsert_artist_cover_metadata,
-        upsert_release_cover_metadata,
+        options::coerce_option_value,
+        providers::{
+            LIBRARY_REFRESH_LOCKS,
+            PROVIDER_REGISTRY,
+            ProviderCallStage,
+            ProviderCallbackHandle,
+            with_provider_call,
+        },
     },
 };
 
@@ -58,8 +62,6 @@ use super::{
     ProviderServiceError,
     dedup::deduplicate_releases_by_external_id,
 };
-
-use crate::services::options::coerce_option_value;
 
 struct LibraryRefreshGuard {
     library_db_id: DbId,
@@ -74,59 +76,11 @@ impl Drop for LibraryRefreshGuard {
     }
 }
 
-async fn sync_library_cover_scope(
-    library_db_id: DbId,
-    cover_paths: CoverPaths<'_>,
-    cover_sync_options: CoverSyncOptions,
-    provider_filter: Option<&str>,
-    scope: CoverScope,
-) {
-    if let Err(err) = sync_and_persist_covers_for_library(
-        &STATE.db.get(),
-        cover_paths,
-        library_db_id,
-        cover_sync_options,
-        provider_filter,
-        scope,
-    )
-    .await
-    {
-        tracing::warn!(
-            library_db_id = library_db_id.0,
-            scope = scope.as_str(),
-            error = %err,
-            "cover sync failed during library refresh"
-        );
-    }
-}
-
-pub(super) async fn enabled_providers() -> anyhow::Result<Vec<ProviderConfig>> {
-    let db = STATE.db.read().await;
-    let mut providers = db::providers::get(&db)?
-        .into_iter()
-        .filter(|provider| provider.enabled)
-        .collect::<Vec<_>>();
-    providers.sort_by(|a, b| {
-        b.priority
-            .cmp(&a.priority)
-            .then(a.provider_id.cmp(&b.provider_id))
-    });
-    Ok(providers)
-}
-
-async fn refresh_handlers(
-    providers: &[ProviderConfig],
-    entity_type: EntityType,
-) -> Vec<(String, crate::plugins::lifecycle::PluginFunctionHandle)> {
-    let registry = PROVIDER_REGISTRY.read().await;
-    providers
-        .iter()
-        .filter_map(|provider| {
-            registry
-                .get_refresh_handler(&provider.provider_id, entity_type)
-                .map(|handler| (provider.provider_id.clone(), handler.clone()))
-        })
-        .collect()
+pub(crate) struct LibraryRefreshOptions<'a> {
+    pub(crate) replace_cover: bool,
+    pub(crate) force_refresh: bool,
+    pub(crate) apply_sync_filters: bool,
+    pub(crate) provider_id: Option<&'a str>,
 }
 
 pub(super) fn resolve_library_id_for_entity(
@@ -136,27 +90,17 @@ pub(super) fn resolve_library_id_for_entity(
     let libraries = db::libraries::get_for_entity(db, node_id)?;
     Ok(libraries
         .into_iter()
-        .filter_map(|l| l.db_id)
+        .filter_map(|library| library.db_id)
         .min_by_key(|id| id.0))
 }
 
-async fn refresh_entity_metadata_inner(
+pub(crate) async fn refresh_entity_metadata(
     node_id: DbId,
     refresh_mode: EntityRefreshMode,
 ) -> Result<EntityRefreshResult, ProviderServiceError> {
-    let (cover_sync_options, passed_options) = match &refresh_mode {
-        EntityRefreshMode::MetadataOnly => (None, HashMap::new()),
-        EntityRefreshMode::WithReleaseArtifacts {
-            replace_cover,
-            force_refresh,
-            options,
-        } => (
-            Some(CoverSyncOptions {
-                replace_existing: *replace_cover,
-                force_refresh: *force_refresh,
-            }),
-            options.clone(),
-        ),
+    let passed_options = match &refresh_mode {
+        EntityRefreshMode::MetadataOnly => HashMap::new(),
+        EntityRefreshMode::WithReleaseArtifacts { options, .. } => options.clone(),
     };
 
     let (entity_type, context, library_db_id) = {
@@ -171,248 +115,44 @@ async fn refresh_entity_metadata_inner(
     };
 
     let providers = enabled_providers().await?;
-    let handlers = refresh_handlers(&providers, entity_type).await;
-
-    let declared_options = {
-        let registry = PROVIDER_REGISTRY.read().await;
-        handlers
-            .iter()
-            .map(|(pid, _)| (pid.clone(), registry.get_options(pid).to_vec()))
-            .collect::<HashMap<String, Vec<_>>>()
-    };
-
+    let handlers = refresh_callbacks_for(&providers, entity_type, None, false).await;
     let mut providers_called = Vec::new();
-    for (provider_id, handler) in handlers {
-        let Some(lua) = handler.try_upgrade_lua() else {
-            tracing::warn!(
-                provider_id = %provider_id,
-                "provider refresh handler's lua instance is no longer valid, skipping"
-            );
-            continue;
-        };
-        let call_ctx = lua
-            .to_value_with(&context, LUA_SERIALIZE_OPTIONS)
-            .map_err(anyhow::Error::from)?;
-        if !passed_options.is_empty() {
-            if let mlua::Value::Table(ref ctx_table) = call_ctx {
-                let declared = declared_options
-                    .get(&provider_id)
-                    .map(|v| v.as_slice())
-                    .unwrap_or(&[]);
-                let options_table = lua.create_table().map_err(anyhow::Error::from)?;
-                for (key, raw_value) in &passed_options {
-                    if let Some(decl) = declared.iter().find(|d| d.name == *key) {
-                        let coerced = coerce_option_value(raw_value, &decl.option_type);
-                        let lua_val = lua.to_value(&coerced).map_err(anyhow::Error::from)?;
-                        options_table
-                            .set(key.as_str(), lua_val)
-                            .map_err(anyhow::Error::from)?;
-                    }
-                }
-                ctx_table
-                    .set("options", options_table)
-                    .map_err(anyhow::Error::from)?;
-            }
-        }
-        with_provider_call(&provider_id, ProviderCallStage::MetadataRefresh, || async {
-            caller::scope_system(
-                crate::services::libraries::system_context(),
-                handler.call_async::<_, ()>(call_ctx),
-            )
-            .await
-        })
-        .await
-        .map_err(anyhow::Error::from)?;
+    for (provider_id, handler, _) in handlers {
+        let context = context_with_options(context.clone(), &provider_id, &passed_options).await;
+        dispatch_refresh_callback(&provider_id, handler.handler_id, context).await?;
         providers_called.push(provider_id);
-    }
-
-    if let Some(cover_sync_options) = cover_sync_options {
-        match entity_type {
-            EntityType::Release => {
-                let covers_root = configured_covers_root();
-                let mut resolved_cover_path = None;
-
-                let (release_entity, tracks, artists, library_root) = {
-                    let db = STATE.db.read().await;
-                    let library_root = if let Some(library_db_id) = library_db_id {
-                        db::libraries::get_by_id(&db, library_db_id)?.map(|library| library.path)
-                    } else {
-                        None
-                    };
-                    let release = db::releases::get_by_id(&db, node_id)?;
-                    let tracks = db::tracks::get(&db, node_id)?;
-                    let artists = db::artists::get(&db, node_id)?;
-                    (release, tracks, artists, library_root)
-                };
-
-                let cover_paths = CoverPaths {
-                    library_root: library_root.as_deref(),
-                    covers_root: covers_root.as_deref(),
-                };
-
-                if let Some(release) = release_entity {
-                    if let Err(err) = sync_release_cover_for_tracks(
-                        &STATE.db.get(),
-                        &tracks,
-                        &release,
-                        &artists,
-                        cover_paths,
-                        cover_sync_options,
-                    )
-                    .await
-                    {
-                        tracing::warn!(
-                            release_db_id = node_id.0,
-                            error = %err,
-                            "cover sync failed during release entity refresh"
-                        );
-                    }
-
-                    let db = STATE.db.read().await;
-                    match resolve_cover_for_release_id(&db, node_id, cover_paths) {
-                        Ok(path) => {
-                            resolved_cover_path = path;
-                        }
-                        Err(err) => {
-                            tracing::warn!(
-                                release_db_id = node_id.0,
-                                error = %err,
-                                "cover resolution failed during release entity refresh"
-                            );
-                        }
-                    }
-                }
-
-                if let Some(cover_path) = resolved_cover_path {
-                    if let Err(err) =
-                        upsert_release_cover_metadata(&STATE.db.get(), node_id, &cover_path).await
-                    {
-                        tracing::warn!(
-                            release_db_id = node_id.0,
-                            cover_path = %cover_path.display(),
-                            error = %err,
-                            "cover metadata upsert failed during release entity refresh"
-                        );
-                    }
-                }
-            }
-            EntityType::Artist => {
-                let covers_root = configured_covers_root();
-                let cover_paths = CoverPaths {
-                    // Artist covers are provider-managed and not library-scoped.
-                    library_root: None,
-                    covers_root: covers_root.as_deref(),
-                };
-                let artist_entity = {
-                    let db = STATE.db.read().await;
-                    db::artists::get_by_id(&db, node_id)?
-                };
-
-                if let Some(artist) = artist_entity {
-                    if let Err(err) = sync_artist_cover(
-                        &STATE.db.get(),
-                        &artist,
-                        cover_paths,
-                        cover_sync_options,
-                        None,
-                    )
-                    .await
-                    {
-                        tracing::warn!(
-                            artist_db_id = node_id.0,
-                            error = %err,
-                            "cover sync failed during artist entity refresh"
-                        );
-                    }
-
-                    let resolved_cover_path = {
-                        let db = STATE.db.read().await;
-                        match resolve_cover_for_artist_id(&db, node_id, cover_paths) {
-                            Ok(path) => path,
-                            Err(err) => {
-                                tracing::warn!(
-                                    artist_db_id = node_id.0,
-                                    error = %err,
-                                    "cover resolution failed during artist entity refresh"
-                                );
-                                None
-                            }
-                        }
-                    };
-
-                    if let Some(cover_path) = resolved_cover_path {
-                        if let Err(err) =
-                            upsert_artist_cover_metadata(&STATE.db.get(), node_id, &cover_path)
-                                .await
-                        {
-                            tracing::warn!(
-                                artist_db_id = node_id.0,
-                                cover_path = %cover_path.display(),
-                                error = %err,
-                                "cover metadata upsert failed during artist entity refresh"
-                            );
-                        }
-                    }
-                }
-            }
-            EntityType::Track => {
-                tracing::debug!(
-                    track_db_id = node_id.0,
-                    "skipping cover sync for track entity refresh"
-                );
-            }
-        }
     }
 
     if entity_type == EntityType::Release
         && let Some(library_db_id) = library_db_id
         && !providers_called.is_empty()
     {
-        let (unique_release_id_pairs, unique_track_id_pairs) = {
-            let registry = PROVIDER_REGISTRY.read().await;
-            (
-                registry.unique_id_pairs(EntityType::Release),
-                registry.unique_track_id_pairs(),
-            )
-        };
-        if !unique_release_id_pairs.is_empty() {
-            let provider_scope: HashSet<String> = providers_called.iter().cloned().collect();
-            let mut db_write = STATE.db.write().await;
-            if let Err(err) = deduplicate_releases_by_external_id(
-                &mut db_write,
-                library_db_id,
-                &unique_release_id_pairs,
-                &unique_track_id_pairs,
-                Some(&provider_scope),
-            ) {
-                tracing::warn!(
-                    library_db_id = library_db_id.0,
-                    node_id = node_id.0,
-                    error = %err,
-                    "release deduplication by external id failed during entity refresh"
-                );
-            }
-        }
+        deduplicate_release_scope(library_db_id, &providers_called).await;
+    }
+
+    if !providers_called.is_empty()
+        && let EntityRefreshMode::WithReleaseArtifacts {
+            replace_cover,
+            force_refresh,
+            ..
+        } = refresh_mode
+    {
+        sync_cover_for_refreshed_entity(
+            node_id,
+            entity_type,
+            library_db_id,
+            CoverSyncOptions {
+                replace_existing: replace_cover,
+                force_refresh,
+            },
+        )
+        .await?;
     }
 
     Ok(EntityRefreshResult {
         entity_type,
         providers_called,
     })
-}
-
-pub(crate) async fn refresh_entity_metadata(
-    node_id: DbId,
-    refresh_mode: EntityRefreshMode,
-) -> Result<EntityRefreshResult, ProviderServiceError> {
-    refresh_entity_metadata_inner(node_id, refresh_mode).await
-}
-
-pub(crate) struct LibraryRefreshOptions<'a> {
-    pub(crate) replace_cover: bool,
-    pub(crate) force_refresh: bool,
-    pub(crate) apply_sync_filters: bool,
-    pub(crate) provider_id: Option<&'a str>,
 }
 
 pub(crate) async fn refresh_library_metadata(
@@ -453,57 +193,23 @@ async fn refresh_release_metadata_inner(
     }
 
     let providers = enabled_providers().await?;
-    let provider_handlers: Vec<(
-        String,
-        crate::plugins::lifecycle::PluginFunctionHandle,
-        Option<crate::plugins::lifecycle::PluginFunctionHandle>,
-    )> = {
-        let registry = PROVIDER_REGISTRY.read().await;
-        providers
-            .iter()
-            .filter(|p| options.provider_id.is_none_or(|id| p.provider_id == id))
-            .filter_map(|provider| {
-                let handler = registry
-                    .get_refresh_handler(&provider.provider_id, EntityType::Release)?
-                    .clone();
-                let filter = if options.apply_sync_filters {
-                    registry
-                        .get_sync_filter(&provider.provider_id, EntityType::Release)
-                        .cloned()
-                } else {
-                    None
-                };
-                Some((provider.provider_id.clone(), handler, filter))
-            })
-            .collect()
-    };
-    let (unique_release_id_pairs, unique_track_id_pairs) = {
-        let registry = PROVIDER_REGISTRY.read().await;
-        (
-            registry.unique_id_pairs(EntityType::Release),
-            registry.unique_track_id_pairs(),
-        )
-    };
-
+    let handlers = refresh_callbacks_for(
+        &providers,
+        EntityType::Release,
+        options.provider_id,
+        options.apply_sync_filters,
+    )
+    .await;
     let mut providers_called = Vec::new();
     let mut context: Option<serde_json::Value> = None;
     let mut dirty = true;
 
-    for (provider_id, handler, filter) in &provider_handlers {
-        let Some(lua) = handler.try_upgrade_lua() else {
-            tracing::warn!(
-                provider_id,
-                release_db_id = release_id.0,
-                "provider refresh handler's lua instance is no longer valid, skipping"
-            );
-            continue;
-        };
-
+    for (provider_id, handler, filter) in &handlers {
         if dirty || context.is_none() {
             let rebuilt = {
                 let db = STATE.db.read().await;
                 match build_release_context(&db, release_id, Some(library_db_id)) {
-                    Ok(ctx) => Some(ctx),
+                    Ok(context) => Some(context),
                     Err(err) => {
                         if providers_called.is_empty() {
                             return Err(ProviderServiceError::Internal(err));
@@ -528,43 +234,31 @@ async fn refresh_release_metadata_inner(
         let Some(context) = context.as_ref() else {
             continue;
         };
-        let lua_ctx = lua
-            .to_value_with(context, LUA_SERIALIZE_OPTIONS)
-            .map_err(anyhow::Error::from)?;
-
-        match with_provider_call(&provider_id, ProviderCallStage::MetadataRefresh, || async {
-            if let Some(filter) = filter {
-                match caller::scope_system(
-                    crate::services::libraries::system_context(),
-                    filter.call_async::<_, bool>(lua_ctx.clone()),
-                )
+        let context = context_with_options(context.clone(), provider_id, &HashMap::new()).await;
+        let should_run = if let Some(filter) = filter {
+            match dispatch_sync_filter_callback(provider_id, filter.handler_id, context.clone())
                 .await
-                {
-                    Ok(false) => return Ok(false),
-                    Ok(true) => {}
-                    Err(err) => {
-                        tracing::warn!(
-                            provider_id,
-                            release_db_id = release_id.0,
-                            error = %err,
-                            "sync filter failed, skipping release for provider"
-                        );
-                        return Ok(false);
-                    }
+            {
+                Ok(value) => value,
+                Err(err) => {
+                    tracing::warn!(
+                        provider_id,
+                        release_db_id = release_id.0,
+                        error = %err,
+                        "sync filter failed, skipping release for provider"
+                    );
+                    false
                 }
             }
+        } else {
+            true
+        };
+        if !should_run {
+            continue;
+        }
 
-            caller::scope_system(
-                crate::services::libraries::system_context(),
-                handler.call_async::<_, ()>(lua_ctx),
-            )
-            .await
-            .map(|()| true)
-        })
-        .await
-        {
-            Ok(false) => continue,
-            Ok(true) => {
+        match dispatch_refresh_callback(provider_id, handler.handler_id, context).await {
+            Ok(()) => {
                 providers_called.push(provider_id.clone());
                 dirty = true;
             }
@@ -588,24 +282,24 @@ async fn refresh_release_metadata_inner(
                 "artist deduplication failed during scan release refresh"
             );
         }
-        if !unique_release_id_pairs.is_empty() {
-            let scope = HashSet::from([provider_id.clone()]);
-            if let Err(err) = deduplicate_releases_by_external_id(
-                &mut db_write,
-                library_db_id,
-                &unique_release_id_pairs,
-                &unique_track_id_pairs,
-                Some(&scope),
-            ) {
-                tracing::warn!(
-                    library_db_id = library_db_id.0,
-                    release_db_id = release_id.0,
-                    provider_id,
-                    error = %err,
-                    "release deduplication by external id failed during scan release refresh"
-                );
-            }
-        }
+        deduplicate_release_scope_locked(
+            &mut db_write,
+            library_db_id,
+            &HashSet::from([provider_id.to_string()]),
+        );
+    }
+
+    if !providers_called.is_empty() {
+        sync_cover_for_refreshed_entity(
+            release_id,
+            EntityType::Release,
+            Some(library_db_id),
+            CoverSyncOptions {
+                replace_existing: options.replace_cover,
+                force_refresh: options.force_refresh,
+            },
+        )
+        .await?;
     }
 
     Ok(usize::from(!providers_called.is_empty()))
@@ -615,49 +309,24 @@ async fn refresh_library_metadata_inner(
     library_db_id: DbId,
     options: &LibraryRefreshOptions<'_>,
 ) -> Result<usize, ProviderServiceError> {
-    let (library, releases) = {
+    let releases = {
         let db = STATE.db.read().await;
-        let library = db::libraries::get_by_id(&db, library_db_id)?
+        db::libraries::get_by_id(&db, library_db_id)?
             .ok_or(ProviderServiceError::LibraryNotFound(library_db_id.0))?;
-        let releases = db::releases::get(&db, library_db_id)?;
-        (library, releases)
+        db::releases::get(&db, library_db_id)?
     };
 
     let providers = enabled_providers().await?;
-    let provider_handlers: Vec<(
-        String,
-        crate::plugins::lifecycle::PluginFunctionHandle,
-        Option<crate::plugins::lifecycle::PluginFunctionHandle>,
-    )> = {
-        let registry = PROVIDER_REGISTRY.read().await;
-        providers
-            .iter()
-            .filter(|p| options.provider_id.is_none_or(|id| p.provider_id == id))
-            .filter_map(|provider| {
-                let handler = registry
-                    .get_refresh_handler(&provider.provider_id, EntityType::Release)?
-                    .clone();
-                let filter = if options.apply_sync_filters {
-                    registry
-                        .get_sync_filter(&provider.provider_id, EntityType::Release)
-                        .cloned()
-                } else {
-                    None
-                };
-                Some((provider.provider_id.clone(), handler, filter))
-            })
-            .collect()
-    };
-    let (unique_release_id_pairs, unique_track_id_pairs) = {
-        let registry = PROVIDER_REGISTRY.read().await;
-        (
-            registry.unique_id_pairs(EntityType::Release),
-            registry.unique_track_id_pairs(),
-        )
-    };
-    let mut refreshed_releases: HashSet<DbId> = HashSet::new();
+    let handlers = refresh_callbacks_for(
+        &providers,
+        EntityType::Release,
+        options.provider_id,
+        options.apply_sync_filters,
+    )
+    .await;
+    let mut refreshed_releases = HashSet::new();
     let mut context_cache: HashMap<DbId, serde_json::Value> = HashMap::new();
-    let mut dirty_releases: HashSet<DbId> = HashSet::new();
+    let mut dirty_releases = HashSet::new();
 
     for release in &releases {
         let Some(node_id) = release.db_id.clone().map(Into::<DbId>::into) else {
@@ -665,22 +334,13 @@ async fn refresh_library_metadata_inner(
         };
         let ctx = {
             let db = STATE.db.read().await;
-            build_release_context(&db, node_id, library.db_id)?
+            build_release_context(&db, node_id, Some(library_db_id))?
         };
         context_cache.insert(node_id, ctx);
     }
 
-    // Providers outer, albums inner: each provider completes a full pass before
-    // the next starts, so downstream providers see upstream writes.
-    for (provider_id, handler, filter) in &provider_handlers {
-        let Some(lua) = handler.try_upgrade_lua() else {
-            tracing::warn!(
-                provider_id,
-                "provider refresh handler's lua instance is no longer valid, skipping"
-            );
-            continue;
-        };
-        let mut pass_touched: HashSet<DbId> = HashSet::new();
+    for (provider_id, handler, filter) in &handlers {
+        let mut pass_touched = HashSet::new();
         for release in &releases {
             let Some(node_id) = release.db_id.clone().map(Into::<DbId>::into) else {
                 continue;
@@ -689,50 +349,39 @@ async fn refresh_library_metadata_inner(
             if dirty_releases.remove(&node_id) {
                 let ctx = {
                     let db = STATE.db.read().await;
-                    build_release_context(&db, node_id, library.db_id)?
+                    build_release_context(&db, node_id, Some(library_db_id))?
                 };
                 context_cache.insert(node_id, ctx);
             }
             let Some(context) = context_cache.get(&node_id) else {
                 continue;
             };
-            let lua_ctx = lua
-                .to_value_with(context, LUA_SERIALIZE_OPTIONS)
-                .map_err(anyhow::Error::from)?;
+            let context = context_with_options(context.clone(), provider_id, &HashMap::new()).await;
 
-            match with_provider_call(provider_id, ProviderCallStage::MetadataRefresh, || async {
-                if let Some(filter) = filter {
-                    match caller::scope_system(
-                        crate::services::libraries::system_context(),
-                        filter.call_async::<_, bool>(lua_ctx.clone()),
-                    )
+            let should_run = if let Some(filter) = filter {
+                match dispatch_sync_filter_callback(provider_id, filter.handler_id, context.clone())
                     .await
-                    {
-                        Ok(false) => return Ok(false),
-                        Ok(true) => {}
-                        Err(err) => {
-                            tracing::warn!(
-                                provider_id,
-                                release_db_id = node_id.0,
-                                error = %err,
-                                "sync filter failed, skipping release for provider"
-                            );
-                            return Ok(false);
-                        }
+                {
+                    Ok(value) => value,
+                    Err(err) => {
+                        tracing::warn!(
+                            provider_id,
+                            release_db_id = node_id.0,
+                            error = %err,
+                            "sync filter failed, skipping release for provider"
+                        );
+                        false
                     }
                 }
+            } else {
+                true
+            };
+            if !should_run {
+                continue;
+            }
 
-                caller::scope_system(
-                    crate::services::libraries::system_context(),
-                    handler.call_async::<_, ()>(lua_ctx),
-                )
-                .await
-                .map(|()| true)
-            })
-            .await
-            {
-                Ok(false) => continue,
-                Ok(true) => {
+            match dispatch_refresh_callback(provider_id, handler.handler_id, context).await {
+                Ok(()) => {
                     refreshed_releases.insert(node_id);
                     dirty_releases.insert(node_id);
                     pass_touched.insert(node_id);
@@ -741,7 +390,7 @@ async fn refresh_library_metadata_inner(
                     tracing::warn!(
                         provider_id,
                         release_db_id = node_id.0,
-                        error = %err,
+                        error = ?err,
                         "provider refresh handler failed during library refresh"
                     );
                 }
@@ -752,376 +401,334 @@ async fn refresh_library_metadata_inner(
             continue;
         }
 
-        {
-            let mut db_write = STATE.db.write().await;
-            if let Err(err) = deduplicate_artists_by_external_id(&mut db_write) {
-                tracing::warn!(
-                    provider_id,
-                    error = %err,
-                    "artist deduplication failed during library refresh"
-                );
-            }
-            if !unique_release_id_pairs.is_empty() {
-                let scope = HashSet::from([provider_id.clone()]);
-                if let Err(err) = deduplicate_releases_by_external_id(
-                    &mut db_write,
-                    library_db_id,
-                    &unique_release_id_pairs,
-                    &unique_track_id_pairs,
-                    Some(&scope),
-                ) {
-                    tracing::warn!(
-                        library_db_id = library_db_id.0,
-                        provider_id,
-                        error = %err,
-                        "release deduplication by external id failed during library refresh"
-                    );
-                }
-            }
+        let mut db_write = STATE.db.write().await;
+        if let Err(err) = deduplicate_artists_by_external_id(&mut db_write) {
+            tracing::warn!(
+                provider_id,
+                error = %err,
+                "artist deduplication failed during library refresh"
+            );
         }
+        deduplicate_release_scope_locked(
+            &mut db_write,
+            library_db_id,
+            &HashSet::from([provider_id.to_string()]),
+        );
     }
 
-    let cover_sync_options = CoverSyncOptions {
-        replace_existing: options.replace_cover,
-        force_refresh: options.force_refresh,
-    };
-    let covers_root = configured_covers_root();
-    let cover_paths = CoverPaths {
-        library_root: Some(library.path.as_path()),
-        covers_root: covers_root.as_deref(),
-    };
-    sync_library_cover_scope(
-        library_db_id,
-        cover_paths,
-        cover_sync_options,
-        options.provider_id,
-        CoverScope::Release,
-    )
-    .await;
-
-    let artist_cover_paths = CoverPaths {
-        library_root: None,
-        covers_root: covers_root.as_deref(),
-    };
-    sync_library_cover_scope(
-        library_db_id,
-        artist_cover_paths,
-        cover_sync_options,
-        options.provider_id,
-        CoverScope::Artist,
-    )
-    .await;
+    if !refreshed_releases.is_empty() {
+        sync_library_covers_after_refresh(library_db_id, options).await?;
+    }
 
     Ok(refreshed_releases.len())
 }
 
-#[cfg(test)]
-mod tests {
-    use std::{
-        collections::HashMap,
-        fs,
-        io::Cursor,
-        path::PathBuf,
-        sync::Arc,
-        time::{
-            SystemTime,
-            UNIX_EPOCH,
-        },
+async fn cover_path_buffers_for_library(
+    library_db_id: Option<DbId>,
+) -> Result<(Option<PathBuf>, Option<PathBuf>), ProviderServiceError> {
+    let library_root = if let Some(library_db_id) = library_db_id {
+        let db = STATE.db.read().await;
+        db::libraries::get_by_id(&db, library_db_id)?.map(|library| library.path)
+    } else {
+        None
     };
+    Ok((library_root, configured_covers_root()))
+}
 
-    use agdb::DbId;
-    use anyhow::Context;
-    use axum::{
-        Router,
-        extract::Path as AxumPath,
-        http::{
-            HeaderValue,
-            StatusCode,
-            header::CONTENT_TYPE,
-        },
-        response::IntoResponse,
-        routing::get,
-    };
-    use harmony_core::LuaFunctionAsyncExt;
-    use image::{
-        DynamicImage,
-        ImageBuffer,
-        ImageFormat,
-        Rgba,
-    };
-    use mlua as mluau;
-    use mlua::Lua;
-    use mlua::chunk;
-    use nanoid::nanoid;
-    use tokio::{
-        net::TcpListener,
-        task::JoinHandle,
-    };
+fn cover_paths<'a>(
+    library_root: &'a Option<PathBuf>,
+    covers_root: &'a Option<PathBuf>,
+) -> CoverPaths<'a> {
+    CoverPaths {
+        library_root: library_root.as_deref(),
+        covers_root: covers_root.as_deref(),
+    }
+}
 
-    use crate::{
-        STATE,
-        db,
-        plugins::metadata,
-        testing::{
-            LibraryFixtureConfig,
-            PreparedFixture,
-            initialize_runtime,
-            prepare_fixture,
-            runtime_test_lock,
-        },
-    };
+async fn sync_cover_for_refreshed_entity(
+    node_id: DbId,
+    entity_type: EntityType,
+    library_db_id: Option<DbId>,
+    options: CoverSyncOptions,
+) -> Result<(), ProviderServiceError> {
+    let (library_root, covers_root) = cover_path_buffers_for_library(library_db_id).await?;
+    let paths = cover_paths(&library_root, &covers_root);
 
-    struct TestDirGuard(PathBuf);
+    match entity_type {
+        EntityType::Release => {
+            let Some((release, tracks, artists)) = ({
+                let db = STATE.db.read().await;
+                db::releases::get_by_id(&db, node_id)?.map(|release| {
+                    let tracks = db::tracks::get_direct(&db, node_id).unwrap_or_default();
+                    let artists = db::artists::get(&db, node_id).unwrap_or_default();
+                    (release, tracks, artists)
+                })
+            }) else {
+                return Ok(());
+            };
 
-    impl Drop for TestDirGuard {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
+            let synced = sync_release_cover_for_tracks(
+                &STATE.db.get(),
+                &tracks,
+                &release,
+                &artists,
+                paths,
+                options,
+            )
+            .await
+            .map_err(ProviderServiceError::Internal)?;
+            let resolved = {
+                let db = STATE.db.read().await;
+                resolve_cover_for_release_id(&db, node_id, paths)?
+            };
+            if let Some(cover_path) = resolved {
+                upsert_release_cover_metadata(&STATE.db.get(), node_id, &cover_path)
+                    .await
+                    .map_err(ProviderServiceError::Internal)?;
+            }
+            tracing::debug!(
+                release_id = node_id.0,
+                synced,
+                "release cover sync completed after metadata refresh"
+            );
         }
+        EntityType::Artist => {
+            let Some(artist) = ({
+                let db = STATE.db.read().await;
+                db::artists::get_by_id(&db, node_id)?
+            }) else {
+                return Ok(());
+            };
+
+            let synced = sync_artist_cover(&STATE.db.get(), &artist, paths, options, None)
+                .await
+                .map_err(ProviderServiceError::Internal)?;
+            let resolved = {
+                let db = STATE.db.read().await;
+                resolve_cover_for_artist_id(&db, node_id, paths)?
+            };
+            if let Some(cover_path) = resolved {
+                upsert_artist_cover_metadata(&STATE.db.get(), node_id, &cover_path)
+                    .await
+                    .map_err(ProviderServiceError::Internal)?;
+            }
+            tracing::debug!(
+                artist_id = node_id.0,
+                synced,
+                "artist cover sync completed after metadata refresh"
+            );
+        }
+        EntityType::Track => {}
     }
 
-    fn setup_metadata_module(lua: &Lua) -> anyhow::Result<()> {
-        let table = (metadata::get_module().setup)(lua)?;
-        lua.globals().set("metadata", table)?;
-        Ok(())
-    }
+    Ok(())
+}
 
-    async fn seed_test_rate_limit() {
-        harmony_http::test_seed_rate_limit("provider-refresh.example", Arc::<str>::from("test"))
-            .await;
-    }
+async fn sync_library_covers_after_refresh(
+    library_db_id: DbId,
+    options: &LibraryRefreshOptions<'_>,
+) -> Result<(), ProviderServiceError> {
+    let (library_root, covers_root) = cover_path_buffers_for_library(Some(library_db_id)).await?;
+    let paths = cover_paths(&library_root, &covers_root);
+    let cover_options = CoverSyncOptions {
+        replace_existing: options.replace_cover,
+        force_refresh: options.force_refresh,
+    };
+    let release_count = sync_and_persist_covers_for_library(
+        &STATE.db.get(),
+        paths,
+        library_db_id,
+        cover_options,
+        options.provider_id,
+        CoverScope::Release,
+    )
+    .await
+    .map_err(ProviderServiceError::Internal)?;
+    let artist_count = sync_and_persist_covers_for_library(
+        &STATE.db.get(),
+        paths,
+        library_db_id,
+        cover_options,
+        options.provider_id,
+        CoverScope::Artist,
+    )
+    .await
+    .map_err(ProviderServiceError::Internal)?;
+    tracing::debug!(
+        library_db_id = library_db_id.0,
+        release_count,
+        artist_count,
+        "library cover sync completed after metadata refresh"
+    );
+    Ok(())
+}
 
-    fn make_test_png(color: [u8; 4]) -> anyhow::Result<Vec<u8>> {
-        let image = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(1, 1, Rgba::<u8>(color)));
-        let mut bytes = Cursor::new(Vec::new());
-        image.write_to(&mut bytes, ImageFormat::Png)?;
-        Ok(bytes.into_inner())
-    }
+async fn enabled_providers() -> anyhow::Result<Vec<ProviderConfig>> {
+    let db = STATE.db.read().await;
+    let mut providers = db::providers::get(&db)?
+        .into_iter()
+        .filter(|provider| provider.enabled)
+        .collect::<Vec<_>>();
+    providers.sort_by(|a, b| {
+        b.priority
+            .cmp(&a.priority)
+            .then(a.provider_id.cmp(&b.provider_id))
+    });
+    Ok(providers)
+}
 
-    async fn spawn_cover_server(
-        responses: HashMap<String, Vec<u8>>,
-    ) -> anyhow::Result<(String, JoinHandle<()>)> {
-        let responses = Arc::new(responses);
-        let app = Router::new().route(
-            "/{*path}",
-            get({
-                let responses = responses.clone();
-                move |AxumPath(path): AxumPath<String>| {
-                    let responses = responses.clone();
-                    async move {
-                        if let Some(bytes) = responses.get(&path) {
-                            (
-                                [(CONTENT_TYPE, HeaderValue::from_static("image/png"))],
-                                bytes.clone(),
-                            )
-                                .into_response()
-                        } else {
-                            StatusCode::NOT_FOUND.into_response()
-                        }
-                    }
-                }
-            }),
-        );
-
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let addr = listener.local_addr()?;
-        let handle = tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
-        });
-        Ok((format!("http://{addr}"), handle))
-    }
-
-    async fn initialize_runtime_with_covers() -> anyhow::Result<(TestDirGuard, PathBuf)> {
-        let root = std::env::temp_dir().join(format!(
-            "lyra-library-refresh-cover-test-{}-{}",
-            std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-        ));
-        let music_dir = root.join("music");
-        let covers_dir = root.join("covers");
-        fs::create_dir_all(&music_dir)?;
-        fs::create_dir_all(&covers_dir)?;
-
-        initialize_runtime(&LibraryFixtureConfig {
-            directory: music_dir.clone(),
-            language: None,
-            country: None,
+async fn refresh_callbacks_for(
+    providers: &[ProviderConfig],
+    entity_type: EntityType,
+    provider_filter: Option<&str>,
+    include_sync_filters: bool,
+) -> Vec<(
+    String,
+    ProviderCallbackHandle,
+    Option<ProviderCallbackHandle>,
+)> {
+    let registry = PROVIDER_REGISTRY.read().await;
+    providers
+        .iter()
+        .filter(|provider| provider_filter.is_none_or(|id| provider.provider_id == id))
+        .filter_map(|provider| {
+            let handler = registry
+                .get_refresh_callback(&provider.provider_id, entity_type)?
+                .clone();
+            let filter = if include_sync_filters {
+                registry
+                    .get_sync_filter_callback(&provider.provider_id, entity_type)
+                    .cloned()
+            } else {
+                None
+            };
+            Some((provider.provider_id.clone(), handler, filter))
         })
-        .await?;
+        .collect()
+}
 
-        let mut config = STATE.config.get().as_ref().clone();
-        config.covers_path = Some(covers_dir.clone());
-        STATE.config.replace(Arc::new(config));
-
-        Ok((TestDirGuard(root), music_dir))
+async fn context_with_options(
+    mut context: serde_json::Value,
+    provider_id: &str,
+    passed_options: &HashMap<String, String>,
+) -> serde_json::Value {
+    if passed_options.is_empty() {
+        return context;
     }
 
-    async fn prepare_single_artist_fixture(
-        music_dir: &std::path::Path,
-    ) -> anyhow::Result<PreparedFixture> {
-        let track_path = music_dir
-            .join("Selected Artist")
-            .join("Selected Album")
-            .join("01 Track.flac");
-        prepare_fixture(
-            &LibraryFixtureConfig {
-                directory: music_dir.to_path_buf(),
-                language: None,
-                country: None,
-            },
-            vec![lyra_metadata::RawTrackTags {
-                file_path: track_path.to_string_lossy().into_owned(),
-                album: Some("Selected Album".to_string()),
-                album_artists: vec!["Selected Artist".to_string()],
-                artists: vec!["Selected Artist".to_string()],
-                title: Some("Track 1".to_string()),
-                date: Some("2024-01-01".to_string()),
-                copyright: None,
-                genre: None,
-                label: None,
-                catalog_number: None,
-                disc: Some(1),
-                disc_total: Some(1),
-                track: Some(1),
-                track_total: Some(1),
-                duration_ms: 60_000,
-                sample_rate_hz: None,
-                channel_count: None,
-                bit_depth: None,
-                bitrate_bps: None,
-            }],
-        )
-        .await
-    }
-
-    #[tokio::test]
-    async fn library_refresh_syncs_artist_covers_and_respects_provider_filter() -> anyhow::Result<()>
-    {
-        let _guard = runtime_test_lock().await;
-        let (_test_dir, music_dir) = initialize_runtime_with_covers().await?;
-        seed_test_rate_limit().await;
-        setup_metadata_module(STATE.lua.get().as_ref())?;
-
-        let selected_release_png = make_test_png([0, 255, 0, 255])?;
-        let selected_artist_png = make_test_png([0, 0, 255, 255])?;
-        let ignored_release_png = make_test_png([255, 0, 0, 255])?;
-        let ignored_artist_png = make_test_png([255, 255, 0, 255])?;
-        let (server_root, server_handle) = spawn_cover_server(HashMap::from([
-            (
-                "selected-release.png".to_string(),
-                selected_release_png.clone(),
-            ),
-            (
-                "selected-artist.png".to_string(),
-                selected_artist_png.clone(),
-            ),
-            (
-                "ignored-release.png".to_string(),
-                ignored_release_png.clone(),
-            ),
-            ("ignored-artist.png".to_string(), ignored_artist_png.clone()),
-        ]))
-        .await?;
-
-        let selected_provider_id = format!("selected-{}", nanoid!());
-        let ignored_provider_id = format!("ignored-{}", nanoid!());
-        let lua_selected_provider_id = selected_provider_id.clone();
-        let lua_ignored_provider_id = ignored_provider_id.clone();
-
-        let register_fn = STATE
-            .lua
-            .get()
-            .load(chunk! {
-                local ET = metadata.EntityType
-
-                local selected = metadata.Provider.new($lua_selected_provider_id)
-                selected:refresh(ET.Release, function(_ctx) end)
-                selected:cover(ET.Release, {}, function(_ctx)
-                    return $server_root .. "/selected-release.png"
-                end)
-                selected:cover(ET.Artist, {}, function(_ctx)
-                    return $server_root .. "/selected-artist.png"
-                end)
-
-                local ignored = metadata.Provider.new($lua_ignored_provider_id)
-                ignored:cover(ET.Release, {}, function(_ctx)
-                    return $server_root .. "/ignored-release.png"
-                end)
-                ignored:cover(ET.Artist, {}, function(_ctx)
-                    return $server_root .. "/ignored-artist.png"
-                end)
+    let options = {
+        let registry = PROVIDER_REGISTRY.read().await;
+        let declared = registry.get_options(provider_id);
+        passed_options
+            .iter()
+            .filter_map(|(key, raw_value)| {
+                declared.iter().find(|decl| decl.name == *key).map(|decl| {
+                    (
+                        key.clone(),
+                        coerce_option_value(raw_value, &decl.option_type),
+                    )
+                })
             })
-            .set_name(&harmony_core::format_plugin_chunk_name("test", "init"))
-            .into_function()?;
-        register_fn.call_async::<()>(()).await?;
+            .collect::<serde_json::Map<_, _>>()
+    };
+    if options.is_empty() {
+        return context;
+    }
+    if let serde_json::Value::Object(object) = &mut context {
+        object.insert("options".to_string(), serde_json::Value::Object(options));
+    }
+    context
+}
 
-        {
-            let mut db_write = STATE.db.write().await;
-            db::providers::update_priority(&mut db_write, &selected_provider_id, 10)?;
-            db::providers::update_priority(&mut db_write, &ignored_provider_id, 100)?;
-        }
+async fn dispatch_refresh_callback(
+    provider_id: &str,
+    handler_id: u64,
+    context: serde_json::Value,
+) -> Result<(), ProviderServiceError> {
+    with_provider_call(
+        provider_id,
+        ProviderCallStage::MetadataRefresh,
+        || async move {
+            let runtime = match STATE.plugin_runtime.get() {
+                Some(runtime) => runtime,
+                None => {
+                    return Err(anyhow::anyhow!("plugin runtime is not initialized"));
+                }
+            };
+            runtime
+                .dispatch_metadata_refresh(MetadataRefreshRequest {
+                    handler_id,
+                    context,
+                })
+                .await
+                .map(|_| ())
+        },
+    )
+    .await
+    .map_err(ProviderServiceError::Internal)
+}
 
-        let prepared = prepare_single_artist_fixture(&music_dir).await?;
-        let library_db_id = DbId(prepared.library_id);
-        let release_db_id = DbId(prepared.release_id);
-
-        let refreshed = super::refresh_library_metadata(
-            library_db_id,
-            &super::LibraryRefreshOptions {
-                replace_cover: false,
-                force_refresh: true,
-                apply_sync_filters: false,
-                provider_id: Some(&selected_provider_id),
-            },
-        )
-        .await?;
-        assert_eq!(refreshed, 1);
-
-        let (artist_db_id, release_cover_path, artist_cover_path) = {
-            let db_read = STATE.db.read().await;
-            let artists = db::artists::get_by_library(&db_read, library_db_id)?;
-            let artist_db_id = artists
+async fn dispatch_sync_filter_callback(
+    provider_id: &str,
+    handler_id: u64,
+    context: serde_json::Value,
+) -> anyhow::Result<bool> {
+    with_provider_call(
+        provider_id,
+        ProviderCallStage::MetadataRefresh,
+        || async move {
+            let runtime = STATE
+                .plugin_runtime
+                .get()
+                .context("plugin runtime is not initialized")?;
+            let result = runtime
+                .dispatch_metadata_refresh(MetadataRefreshRequest {
+                    handler_id,
+                    context,
+                })
+                .await?;
+            Ok(result
+                .values
                 .first()
-                .and_then(|artist| artist.db_id.clone().map(Into::<DbId>::into))
-                .context("expected one library artist")?;
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false))
+        },
+    )
+    .await
+}
 
-            let release_cover_path = db::covers::get(&db_read, release_db_id)?
-                .map(|cover| cover.path)
-                .context("release cover metadata missing after library refresh")?;
-            let artist_cover_path = db::covers::get(&db_read, artist_db_id)?
-                .map(|cover| cover.path)
-                .context("artist cover metadata missing after library refresh")?;
+async fn deduplicate_release_scope(library_db_id: DbId, providers_called: &[String]) {
+    let provider_scope: HashSet<String> = providers_called.iter().cloned().collect();
+    let mut db_write = STATE.db.write().await;
+    deduplicate_release_scope_locked(&mut db_write, library_db_id, &provider_scope);
+}
 
-            (artist_db_id, release_cover_path, artist_cover_path)
-        };
-
-        let release_bytes = fs::read(&release_cover_path)?;
-        let artist_bytes = fs::read(&artist_cover_path)?;
-        assert_eq!(release_bytes, selected_release_png);
-        assert_eq!(artist_bytes, selected_artist_png);
-        assert_ne!(release_bytes, ignored_release_png);
-        assert_ne!(artist_bytes, ignored_artist_png);
-
-        let covers_root = STATE
-            .config
-            .get()
-            .covers_path
-            .clone()
-            .context("covers_path should be configured for test")?;
-        assert_eq!(
-            PathBuf::from(release_cover_path),
-            covers_root
-                .join(release_db_id.0.to_string())
-                .join("cover.png")
+fn deduplicate_release_scope_locked(
+    db_write: &mut DbAny,
+    library_db_id: DbId,
+    provider_scope: &HashSet<String>,
+) {
+    let (unique_release_id_pairs, unique_track_id_pairs) = {
+        let registry = futures::executor::block_on(PROVIDER_REGISTRY.read());
+        (
+            registry.unique_id_pairs(EntityType::Release),
+            registry.unique_track_id_pairs(),
+        )
+    };
+    if unique_release_id_pairs.is_empty() {
+        return;
+    }
+    if let Err(err) = deduplicate_releases_by_external_id(
+        db_write,
+        library_db_id,
+        &unique_release_id_pairs,
+        &unique_track_id_pairs,
+        Some(provider_scope),
+    ) {
+        tracing::warn!(
+            library_db_id = library_db_id.0,
+            error = %err,
+            "release deduplication by external id failed during metadata refresh callback"
         );
-        assert_eq!(
-            PathBuf::from(artist_cover_path),
-            covers_root
-                .join("artists")
-                .join(artist_db_id.0.to_string())
-                .join("cover.png")
-        );
-
-        server_handle.abort();
-        Ok(())
     }
 }

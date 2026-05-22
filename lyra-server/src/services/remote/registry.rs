@@ -201,15 +201,6 @@ pub(crate) async fn set_supported_commands(
     }
 }
 
-#[allow(dead_code)]
-pub(crate) async fn get_connection(connection_id: ConnectionId) -> Option<ConnectionSnapshot> {
-    let registry = REGISTRY.read().await;
-    registry
-        .connections
-        .get(&connection_id)
-        .map(snapshot_from_handle)
-}
-
 pub(crate) async fn get_connection_pair(
     id_a: ConnectionId,
     id_b: ConnectionId,

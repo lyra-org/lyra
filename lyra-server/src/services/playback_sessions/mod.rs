@@ -27,13 +27,13 @@ mod workflow;
 
 pub(crate) use self::sessions::{
     PlaybackScopeKey,
+    clear_playback_session_scope,
     get_playback_session,
     is_remote_control_degraded,
     mark_command_dispatched,
 };
 pub(crate) use self::workflow::{
     cleanup_evicted_playbacks,
-    clear_playback_session,
     list_playbacks,
     pause_playing_scopes_on_disconnect,
     playback_activity_ms,
@@ -46,7 +46,6 @@ pub(crate) use self::workflow::{
 pub(crate) use crate::db::PlaybackSession;
 use crate::db::PlaybackState;
 pub(crate) use updates::{
-    PLAYBACK_CALLBACK_REGISTRY,
     PlaybackUpdatePayload,
     dispatch_evicted_updates,
     dispatch_evicted_updates_for_caller,

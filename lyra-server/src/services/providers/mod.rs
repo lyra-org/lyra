@@ -6,11 +6,21 @@
 use super::EntityType;
 
 mod admin;
-mod capture;
 mod dedup;
 mod refresh;
 mod registry;
 mod sync;
+
+mod capture {
+    use agdb::DbId;
+
+    pub(crate) async fn run_capture(
+        _library_db_id: DbId,
+        _output_path: &str,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
 
 pub(crate) use admin::{
     EntityExternalIdRecord,
@@ -34,6 +44,7 @@ pub(crate) use registry::{
     LIBRARY_REFRESH_LOCKS,
     PROVIDER_REGISTRY,
     ProviderCallStage,
+    ProviderCallbackHandle,
     ProviderCoverRequireSpec,
     ProviderCoverSpec,
     ProviderIdSpec,

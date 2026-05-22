@@ -3,33 +3,263 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
-
-use agdb::QueryId;
-use harmony_core::LuaAsyncExt;
-use mlua::{
-    ExternalResult,
-    Lua,
-    Result,
-    Table,
+use std::collections::{
+    HashMap,
+    HashSet,
 };
 
-use crate::{
-    STATE,
-    plugins::caller::{
-        request_caller_at,
-        system_caller_at,
-    },
-    plugins::db::{
-        self,
-        NodeId,
-        ResolveId,
-    },
+use agdb::{
+    DbId,
+    QueryId,
 };
+use harmony_core::{
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
+};
+use harmony_luau as luau;
+use harmony_luau::{
+    DescribeInterface,
+    FieldDescriptor,
+    InterfaceDescriptor,
+    IntoLuauReturn,
+    LuauType,
+    LuauTypeInfo,
+    ModuleDescriptor,
+    ModuleFunctionDescriptor,
+    ParameterDescriptor,
+    render_definition_file_with_support,
+};
+use serde::Serialize;
 
-#[harmony_macros::interface]
-struct Library {
-    db_id: Option<NodeId>,
+use crate::plugins::db::{
+    self,
+    DbAsync,
+    ResolveId,
+};
+use crate::services::auth::Principal;
+
+#[derive(Clone, Default)]
+pub(crate) struct LibrariesModuleStore {
+    db: Option<DbAsync>,
+}
+
+impl LibrariesModuleStore {
+    pub(crate) fn empty() -> Self {
+        Self { db: None }
+    }
+
+    pub(crate) fn with_db(db: DbAsync) -> Self {
+        Self { db: Some(db) }
+    }
+
+    fn db(&self) -> luau::runtime::Result<DbAsync> {
+        self.db.clone().ok_or_else(|| {
+            crate::plugins::runtime_error(
+                "lyra/libraries requires a database-backed plugin executor",
+            )
+        })
+    }
+}
+
+struct LibrariesModule;
+
+pub(crate) fn module_spec() -> ModuleSpec {
+    ModuleSpec::new("lyra/libraries")
+        .capability("lyra.libraries")
+        .function(list_spec())
+        .function(get_for_entity_spec())
+        .function(get_for_entities_spec())
+        .install(|_| Ok(ModuleExport::new(LibrariesModule)))
+}
+
+fn list_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("list")
+        .arg_name("id")
+        .args::<Option<ResolveId>>()
+        .returns::<Vec<LibraryRecord>>()
+        .call_async(std::sync::Arc::new(list_callback))
+}
+
+fn get_for_entity_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get_for_entity")
+        .arg_name("entity_id")
+        .args::<i64>()
+        .returns::<Vec<LibraryRecord>>()
+        .call_async(std::sync::Arc::new(get_for_entity_callback))
+}
+
+fn get_for_entities_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get_for_entities")
+        .arg_name("entity_ids")
+        .args::<Vec<u64>>()
+        .returns::<luau::Table>()
+        .call_async(std::sync::Arc::new(get_for_entities_callback))
+}
+
+fn list_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let id = frame
+        .args
+        .read_optional_named::<luau::Value>("id")?
+        .map(parse_resolve_id)
+        .transpose()?;
+    let store = frame
+        .vm
+        .data()
+        .get::<LibrariesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+    let principal = caller_principal(&frame.context);
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let db = db.read().await;
+        let libraries: Vec<LibraryRecord> = match (principal.as_ref(), id) {
+            (Some(principal), None) => db::libraries::accessible(&db, principal)
+                .map_err(crate::plugins::runtime_error)?
+                .into_iter()
+                .map(LibraryRecord::from)
+                .collect::<Vec<_>>(),
+            (None, None) => {
+                db::libraries::for_system(&db, &crate::services::libraries::system_context())
+                    .map_err(crate::plugins::runtime_error)?
+                    .into_iter()
+                    .map(LibraryRecord::from)
+                    .collect::<Vec<_>>()
+            }
+            (principal, Some(resolve_id)) => {
+                let query_id = resolve_id
+                    .to_query_id(&db)
+                    .map_err(crate::plugins::runtime_error)?
+                    .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))?;
+                match (principal, query_id) {
+                    (Some(principal), QueryId::Id(id)) => {
+                        db::libraries::accessible_by_id(&db, principal, id)
+                            .map_err(crate::plugins::runtime_error)?
+                            .into_iter()
+                            .map(LibraryRecord::from)
+                            .collect::<Vec<_>>()
+                    }
+                    (None, QueryId::Id(id)) => db::libraries::for_system_by_id(
+                        &db,
+                        &crate::services::libraries::system_context(),
+                        id,
+                    )
+                    .map_err(crate::plugins::runtime_error)?
+                    .into_iter()
+                    .map(LibraryRecord::from)
+                    .collect::<Vec<_>>(),
+                    (Some(principal), QueryId::Alias(alias)) => {
+                        db::libraries::accessible_by_alias(&db, principal, alias.as_str())
+                            .map_err(crate::plugins::runtime_error)?
+                            .into_iter()
+                            .map(LibraryRecord::from)
+                            .collect::<Vec<_>>()
+                    }
+                    (None, QueryId::Alias(alias)) => db::libraries::for_system_by_alias(
+                        &db,
+                        &crate::services::libraries::system_context(),
+                        alias.as_str(),
+                    )
+                    .map_err(crate::plugins::runtime_error)?
+                    .into_iter()
+                    .map(LibraryRecord::from)
+                    .collect::<Vec<_>>(),
+                }
+            }
+        };
+        Ok(harmony_luau::serializable_to_luau_owned(libraries)?)
+    }))
+}
+
+fn get_for_entity_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let entity_id: i64 = frame.args.read_named("entity_id")?;
+    let store = frame
+        .vm
+        .data()
+        .get::<LibrariesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+    let principal = caller_principal(&frame.context);
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let db = db.read().await;
+        let libraries = if let Some(principal) = principal {
+            db::libraries::accessible_for_entity(&db, &principal, DbId(entity_id))
+                .map_err(crate::plugins::runtime_error)?
+                .into_iter()
+                .map(LibraryRecord::from)
+                .collect::<Vec<_>>()
+        } else {
+            db::libraries::for_system_for_entity(
+                &db,
+                &crate::services::libraries::system_context(),
+                DbId(entity_id),
+            )
+            .map_err(crate::plugins::runtime_error)?
+            .into_iter()
+            .map(LibraryRecord::from)
+            .collect::<Vec<_>>()
+        };
+        Ok(harmony_luau::serializable_to_luau_owned(libraries)?)
+    }))
+}
+
+fn get_for_entities_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let ids_table: luau::Table = frame.args.read_named("entity_ids")?;
+    let ids = parse_db_ids(frame.vm, &ids_table)?;
+    let store = frame
+        .vm
+        .data()
+        .get::<LibrariesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+    let principal = caller_principal(&frame.context);
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let db = db.read().await;
+        let libraries: HashMap<DbId, LibraryRecord> = if let Some(principal) = principal {
+            db::libraries::accessible_for_entities(&db, &principal, &ids)
+                .map_err(crate::plugins::runtime_error)?
+                .into_iter()
+                .map(|(id, library)| (id, LibraryRecord::from(library)))
+                .collect::<HashMap<_, _>>()
+        } else {
+            db::libraries::for_system_for_entities(
+                &db,
+                &crate::services::libraries::system_context(),
+                &ids,
+            )
+            .map_err(crate::plugins::runtime_error)?
+            .into_iter()
+            .map(|(id, library)| (id, LibraryRecord::from(library)))
+            .collect::<HashMap<_, _>>()
+        };
+        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, ids.len());
+        for id in ids {
+            let value = libraries
+                .get(&id)
+                .cloned()
+                .map(harmony_luau::serializable_to_luau_owned)
+                .transpose()?
+                .unwrap_or(luau::Value::Nil);
+            crate::plugins::set_owned_db_id_key(&mut table, id, value);
+        }
+        table.into_luau_return()
+    }))
+}
+
+#[derive(Clone, Serialize)]
+pub(crate) struct LibraryRecord {
+    db_id: Option<i64>,
     id: String,
     name: String,
     path: Option<String>,
@@ -37,144 +267,230 @@ struct Library {
     country: Option<String>,
 }
 
-struct LibrariesModule;
-
-#[harmony_macros::module(
-    plugin_scoped,
-    name = "Libraries",
-    local = "libraries",
-    path = "lyra/libraries",
-    interfaces(Library)
-)]
-impl LibrariesModule {
-    /// Lists libraries matching the given id or alias, or all libraries by default.
-    #[harmony(returns(Vec<Library>))]
-    pub(crate) async fn list(
-        lua: Lua,
-        plugin_id: Option<Arc<str>>,
-        id: Option<ResolveId>,
-    ) -> Result<Table> {
-        let db = STATE.db.read().await;
-
-        if let Ok(caller) = request_caller_at(&lua, plugin_id.clone()) {
-            let libraries = match id {
-                None => db::libraries::accessible(&db, &caller.principal).into_lua_err()?,
-                Some(resolve_id) => {
-                    let query_id = resolve_id
-                        .to_query_id(&db)
-                        .into_lua_err()?
-                        .ok_or_else(|| mlua::Error::runtime("could not resolve id"))?;
-                    match query_id {
-                        QueryId::Id(node_id) => {
-                            db::libraries::accessible_by_id(&db, &caller.principal, node_id)
-                                .into_lua_err()?
-                                .into_iter()
-                                .collect()
-                        }
-                        QueryId::Alias(alias) => db::libraries::accessible_by_alias(
-                            &db,
-                            &caller.principal,
-                            alias.as_str(),
-                        )
-                        .into_lua_err()?,
-                    }
-                }
-            };
-            let table = lua.create_table()?;
-            for (index, library) in libraries.into_iter().enumerate() {
-                table.set(index + 1, library)?;
-            }
-            return Ok(table);
+impl From<db::libraries::Library> for LibraryRecord {
+    fn from(library: db::libraries::Library) -> Self {
+        Self {
+            db_id: library.db_id.map(|id| id.0),
+            id: library.id,
+            name: library.name,
+            path: Some(library.path.to_string_lossy().to_string()),
+            language: library.language,
+            country: library.country,
         }
-
-        let caller = system_caller_at(&lua, plugin_id)?;
-        let libraries = match id {
-            None => db::libraries::for_system(&db, &caller.system_ctx).into_lua_err()?,
-            Some(resolve_id) => {
-                let query_id = resolve_id
-                    .to_query_id(&db)
-                    .into_lua_err()?
-                    .ok_or_else(|| mlua::Error::runtime("could not resolve id"))?;
-                match query_id {
-                    QueryId::Id(node_id) => {
-                        db::libraries::for_system_by_id(&db, &caller.system_ctx, node_id)
-                            .into_lua_err()?
-                            .into_iter()
-                            .collect()
-                    }
-                    QueryId::Alias(alias) => {
-                        db::libraries::for_system_by_alias(&db, &caller.system_ctx, alias.as_str())
-                            .into_lua_err()?
-                    }
-                }
-            }
-        };
-        let table = lua.create_table()?;
-        for (index, library) in libraries.into_iter().enumerate() {
-            table.set(index + 1, library)?;
-        }
-        Ok(table)
-    }
-
-    /// Returns the libraries that contain the given entity (release, artist, track, etc.).
-    #[harmony(args(entity_id: NodeId), returns(Vec<Library>))]
-    pub(crate) async fn get_for_entity(
-        lua: Lua,
-        plugin_id: Option<Arc<str>>,
-        entity_id: NodeId,
-    ) -> Result<Table> {
-        let db = STATE.db.read().await;
-        let table = lua.create_table()?;
-        if let Ok(caller) = request_caller_at(&lua, plugin_id.clone()) {
-            let libraries =
-                db::libraries::accessible_for_entity(&db, &caller.principal, entity_id.into())
-                    .into_lua_err()?;
-            for (index, library) in libraries.into_iter().enumerate() {
-                table.set(index + 1, library)?;
-            }
-            return Ok(table);
-        }
-        let caller = system_caller_at(&lua, plugin_id)?;
-        let libraries =
-            db::libraries::for_system_for_entity(&db, &caller.system_ctx, entity_id.into())
-                .into_lua_err()?;
-        for (index, library) in libraries.into_iter().enumerate() {
-            table.set(index + 1, library)?;
-        }
-        Ok(table)
-    }
-
-    /// Batch-resolves the first library for each entity. Returns a map of entity db_id → Library.
-    #[harmony(args(entity_ids: Vec<u64>), returns(std::collections::BTreeMap<u64, Library>))]
-    pub(crate) async fn get_for_entities(
-        lua: Lua,
-        plugin_id: Option<Arc<str>>,
-        entity_ids: Table,
-    ) -> Result<Table> {
-        let ids = crate::plugins::parse_ids(entity_ids)?;
-        let db = STATE.db.read().await;
-        let result = lua.create_table()?;
-        if let Ok(caller) = request_caller_at(&lua, plugin_id.clone()) {
-            let resolved = db::libraries::accessible_for_entities(&db, &caller.principal, &ids)
-                .into_lua_err()?;
-            for (entity_id, library) in resolved {
-                result.set(entity_id.0, library)?;
-            }
-            return Ok(result);
-        }
-        let caller = system_caller_at(&lua, plugin_id)?;
-        let resolved =
-            db::libraries::for_system_for_entities(&db, &caller.system_ctx, &ids).into_lua_err()?;
-        for (entity_id, library) in resolved {
-            result.set(entity_id.0, library)?;
-        }
-        Ok(result)
     }
 }
 
-crate::plugins::plugin_surface_exports!(
-    LibrariesModule,
-    "lyra.libraries",
-    "Read and modify library configuration.",
-    Low
-);
+impl From<db::libraries::LibraryView> for LibraryRecord {
+    fn from(library: db::libraries::LibraryView) -> Self {
+        Self {
+            db_id: None,
+            id: library.id,
+            name: library.name,
+            path: None,
+            language: library.language,
+            country: library.country,
+        }
+    }
+}
+
+impl From<db::libraries::LibraryFull> for LibraryRecord {
+    fn from(library: db::libraries::LibraryFull) -> Self {
+        Self {
+            db_id: library.db_id.map(|id| id.0),
+            id: library.id,
+            name: library.name,
+            path: Some(library.path.to_string_lossy().to_string()),
+            language: library.language,
+            country: library.country,
+        }
+    }
+}
+
+fn caller_principal(context: &luau::CallContext) -> Option<Principal> {
+    context.caller.get::<Principal>().ok().map(|p| (*p).clone())
+}
+
+fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
+    let mut values = Vec::new();
+    for (key, value) in table.pairs_raw(vm)? {
+        let Some(index) = array_index(key) else {
+            continue;
+        };
+        let Some(id) = db_id_value(value)? else {
+            continue;
+        };
+        values.push((index, id));
+    }
+    values.sort_by_key(|(index, _)| *index);
+
+    let mut ids = Vec::new();
+    let mut seen = HashSet::new();
+    for (_, id) in values {
+        if seen.insert(id) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+fn array_index(value: luau::Value) -> Option<i64> {
+    match value {
+        luau::Value::Integer(value) if value > 0 => Some(value),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
+            Some(value as i64)
+        }
+        _ => None,
+    }
+}
+
+fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
+    match value {
+        luau::Value::Integer(value) if value > 0 => Ok(Some(DbId(value))),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
+            Ok(Some(DbId(value as i64)))
+        }
+        luau::Value::Integer(_) | luau::Value::Number(_) => Ok(None),
+        other => Err(crate::plugins::runtime_error(format!(
+            "id entries must be positive integers, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn parse_resolve_id(value: luau::Value) -> luau::runtime::Result<ResolveId> {
+    match value {
+        luau::Value::Integer(value) => Ok(ResolveId::DbId(DbId(value))),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
+            Ok(ResolveId::DbId(DbId(value as i64)))
+        }
+        luau::Value::String(bytes) => {
+            let text = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
+            if db::ROOT_COLLECTION_ALIASES.contains(&text.as_str()) {
+                Ok(ResolveId::Alias(text))
+            } else {
+                Ok(ResolveId::Nanoid(text))
+            }
+        }
+        other => Err(crate::plugins::runtime_error(format!(
+            "expected integer or string id, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+impl LuauTypeInfo for LibraryRecord {
+    fn luau_type() -> LuauType {
+        LuauType::named("Library")
+    }
+}
+
+impl DescribeInterface for LibraryRecord {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("Library", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "db_id",
+                ty: Option::<i64>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "id",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "name",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "path",
+                ty: Option::<String>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "language",
+                ty: Option::<String>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "country",
+                ty: Option::<String>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
+    ParameterDescriptor {
+        name,
+        ty,
+        description: None,
+        variadic: false,
+    }
+}
+
+fn resolve_id_type() -> LuauType {
+    LuauType::union(vec![i64::luau_type(), String::luau_type()])
+}
+
+fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        name: "Libraries",
+        local_name: "libraries",
+        description: None,
+        fields: Vec::new(),
+        functions: vec![
+            ModuleFunctionDescriptor {
+                path: vec!["list"],
+                description: None,
+                params: vec![param("id", LuauType::optional(resolve_id_type()))],
+                returns: vec![Vec::<LibraryRecord>::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get_for_entity"],
+                description: None,
+                params: vec![param("entity_id", i64::luau_type())],
+                returns: vec![Vec::<LibraryRecord>::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get_for_entities"],
+                description: None,
+                params: vec![param("entity_ids", Vec::<u64>::luau_type())],
+                returns: vec![LuauType::map(u64::luau_type(), LibraryRecord::luau_type())],
+                yields: true,
+            },
+        ],
+    }
+}
+
+pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
+    render_definition_file_with_support(
+        &module_descriptor(),
+        &[],
+        &[LibraryRecord::interface_descriptor()],
+        &[],
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renders_libraries_module_definition() {
+        let rendered = render_luau_definition().expect("render lyra/libraries docs");
+
+        assert!(rendered.contains("@interface Library"));
+        assert!(rendered.contains("country: string?"));
+        assert!(rendered.contains("@class Libraries"));
+        assert!(rendered.contains("function libraries.list(id: (number | string)?): {Library}"));
+        assert!(rendered.contains(
+            "function libraries.get_for_entities(entity_ids: {number}): { [number]: Library }"
+        ));
+    }
+}

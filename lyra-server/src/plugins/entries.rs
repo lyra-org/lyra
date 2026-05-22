@@ -3,29 +3,126 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::QueryId;
-use harmony_core::LuaAsyncExt;
-use mlua::{
-    ExternalResult,
-    Lua,
-    Result,
-    Table,
+use agdb::{
+    DbId,
+    QueryId,
+};
+use harmony_core::{
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
+};
+use harmony_luau as luau;
+use harmony_luau::{
+    DescribeInterface,
+    FieldDescriptor,
+    InterfaceDescriptor,
+    LuauType,
+    LuauTypeInfo,
+    ModuleDescriptor,
+    ModuleFunctionDescriptor,
+    ParameterDescriptor,
+    render_definition_file_with_support,
+};
+use serde::Serialize;
+
+use crate::plugins::db::{
+    self,
+    DbAsync,
+    ResolveId,
 };
 
-use crate::{
-    STATE,
-    plugins::caller::RequestCaller,
-    plugins::db::{
-        self,
-        NodeId,
-        Permission,
-        ResolveId,
-    },
-};
+#[derive(Clone, Default)]
+pub(crate) struct EntriesModuleStore {
+    db: Option<DbAsync>,
+}
 
-#[harmony_macros::interface]
-struct EntryInfo {
-    db_id: Option<NodeId>,
+impl EntriesModuleStore {
+    pub(crate) fn empty() -> Self {
+        Self { db: None }
+    }
+
+    pub(crate) fn with_db(db: DbAsync) -> Self {
+        Self { db: Some(db) }
+    }
+
+    fn db(&self) -> luau::runtime::Result<DbAsync> {
+        self.db.clone().ok_or_else(|| {
+            crate::plugins::runtime_error("lyra/entries requires a database-backed plugin executor")
+        })
+    }
+}
+
+struct EntriesModule;
+
+pub(crate) fn module_spec() -> ModuleSpec {
+    ModuleSpec::new("lyra/entries")
+        .capability("lyra.entries")
+        .function(get_spec())
+        .install(|_| Ok(ModuleExport::new(EntriesModule)))
+}
+
+fn get_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get")
+        .arg_name("id")
+        .args::<Option<ResolveId>>()
+        .returns::<Vec<EntryRecord>>()
+        .call_async(std::sync::Arc::new(get_callback))
+}
+
+fn get_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let id = frame
+        .args
+        .read_optional_named::<luau::Value>("id")?
+        .map(parse_resolve_id)
+        .transpose()?;
+    let store = frame
+        .vm
+        .data()
+        .get::<EntriesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let db = db.read().await;
+        let entries = match id {
+            None => db::entries::get(&db, "libraries").map_err(crate::plugins::runtime_error)?,
+            Some(resolve_id) => {
+                let query_id = resolve_id
+                    .to_query_id(&db)
+                    .map_err(crate::plugins::runtime_error)?
+                    .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))?;
+                match query_id {
+                    QueryId::Id(node_id) => {
+                        if db::tracks::get_by_id(&db, node_id)
+                            .map_err(crate::plugins::runtime_error)?
+                            .is_some()
+                        {
+                            db::entries::get_by_track(&db, node_id)
+                                .map_err(crate::plugins::runtime_error)?
+                        } else {
+                            db::entries::get(&db, QueryId::Id(node_id))
+                                .map_err(crate::plugins::runtime_error)?
+                        }
+                    }
+                    other => db::entries::get(&db, other).map_err(crate::plugins::runtime_error)?,
+                }
+            }
+        };
+        let entries = entries
+            .into_iter()
+            .map(EntryRecord::from)
+            .collect::<Vec<_>>();
+        harmony_luau::serializable_to_luau_owned(entries)
+    }))
+}
+
+#[derive(Serialize)]
+pub(crate) struct EntryRecord {
+    db_id: Option<i64>,
     id: String,
     full_path: Option<String>,
     kind: String,
@@ -35,83 +132,146 @@ struct EntryInfo {
     mtime: u64,
 }
 
-use super::entry_to_table;
-
-struct EntriesModule;
-
-#[harmony_macros::module(
-    plugin_scoped,
-    name = "Entries",
-    local = "entries",
-    path = "lyra/entries",
-    interfaces(EntryInfo)
-)]
-impl EntriesModule {
-    /// Returns entries related to the given id, or all library entries by default.
-    #[harmony(returns(Vec<EntryInfo>))]
-    pub(crate) async fn get(
-        lua: Lua,
-        #[harmony_context] caller: RequestCaller,
-        id: Option<ResolveId>,
-    ) -> Result<Table> {
-        let db = STATE.db.read().await;
-        let include_full_path =
-            db::roles::has_permission(&caller.principal.permissions, Permission::ManageLibraries);
-
-        let entries = match id {
-            None => db::entries::get(&db, "libraries").into_lua_err()?,
-            Some(resolve_id) => {
-                let query_id = resolve_id
-                    .to_query_id(&db)
-                    .into_lua_err()?
-                    .ok_or_else(|| mlua::Error::runtime("could not resolve id"))?;
-                match query_id {
-                    QueryId::Id(node_id) => {
-                        if db::tracks::get_by_id(&db, node_id)
-                            .into_lua_err()?
-                            .is_some()
-                        {
-                            if !crate::routes::entity_accessible_to_principal(
-                                &db,
-                                &caller.principal,
-                                node_id,
-                            )
-                            .into_lua_err()?
-                            {
-                                return lua.create_table();
-                            }
-                            db::entries::get_by_track(&db, node_id).into_lua_err()?
-                        } else {
-                            db::entries::get(&db, QueryId::Id(node_id)).into_lua_err()?
-                        }
-                    }
-                    other => db::entries::get(&db, other).into_lua_err()?,
-                }
-            }
-        };
-
-        let rows = lua.create_table()?;
-        let mut index = 1usize;
-        for entry in entries {
-            let Some(entry_db_id) = entry.db_id else {
-                continue;
-            };
-            if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, entry_db_id)
-                .into_lua_err()?
-            {
-                continue;
-            }
-            rows.set(index, entry_to_table(&lua, entry, include_full_path)?)?;
-            index += 1;
+impl From<db::Entry> for EntryRecord {
+    fn from(entry: db::Entry) -> Self {
+        Self {
+            db_id: entry.db_id.map(|id| id.0),
+            id: entry.id,
+            full_path: None,
+            kind: entry.kind.to_string(),
+            name: entry.name,
+            hash: entry.hash,
+            size: entry.size,
+            mtime: entry.mtime,
         }
-
-        Ok(rows)
     }
 }
 
-crate::plugins::plugin_surface_exports!(
-    EntriesModule,
-    "lyra.entries",
-    "Read filesystem entry metadata.",
-    Low
-);
+fn parse_resolve_id(value: luau::Value) -> luau::runtime::Result<ResolveId> {
+    match value {
+        luau::Value::Integer(value) => Ok(ResolveId::DbId(DbId(value))),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
+            Ok(ResolveId::DbId(DbId(value as i64)))
+        }
+        luau::Value::String(bytes) => {
+            let text = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
+            if db::ROOT_COLLECTION_ALIASES.contains(&text.as_str()) {
+                Ok(ResolveId::Alias(text))
+            } else {
+                Ok(ResolveId::Nanoid(text))
+            }
+        }
+        other => Err(crate::plugins::runtime_error(format!(
+            "expected integer or string id, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+impl LuauTypeInfo for EntryRecord {
+    fn luau_type() -> LuauType {
+        LuauType::named("EntryInfo")
+    }
+}
+
+impl DescribeInterface for EntryRecord {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("EntryInfo", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "db_id",
+                ty: Option::<i64>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "id",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "full_path",
+                ty: Option::<String>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "kind",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "name",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "hash",
+                ty: Option::<String>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "size",
+                ty: u64::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "mtime",
+                ty: u64::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
+    ParameterDescriptor {
+        name,
+        ty,
+        description: None,
+        variadic: false,
+    }
+}
+
+fn resolve_id_type() -> LuauType {
+    LuauType::union(vec![i64::luau_type(), String::luau_type()])
+}
+
+fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        name: "Entries",
+        local_name: "entries",
+        description: None,
+        fields: Vec::new(),
+        functions: vec![ModuleFunctionDescriptor {
+            path: vec!["get"],
+            description: None,
+            params: vec![param("id", LuauType::optional(resolve_id_type()))],
+            returns: vec![Vec::<EntryRecord>::luau_type()],
+            yields: true,
+        }],
+    }
+}
+
+pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
+    render_definition_file_with_support(
+        &module_descriptor(),
+        &[],
+        &[EntryRecord::interface_descriptor()],
+        &[],
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renders_entries_module_definition() {
+        let rendered = render_luau_definition().expect("render lyra/entries docs");
+
+        assert!(rendered.contains("@interface EntryInfo"));
+        assert!(rendered.contains("full_path: string?"));
+        assert!(rendered.contains("@class Entries"));
+        assert!(rendered.contains("function entries.get(id: (number | string)?): {EntryInfo}"));
+    }
+}

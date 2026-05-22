@@ -22,7 +22,10 @@ use std::{
 };
 
 use agdb::DbId;
-use anyhow::Result;
+use anyhow::{
+    Result,
+    bail,
+};
 use futures::stream::{
     self,
     StreamExt,
@@ -67,6 +70,18 @@ pub(crate) struct LyricsTrackContext {
     pub(crate) force_refresh: bool,
 }
 
+pub(crate) fn track_context_to_json(context: &LyricsTrackContext) -> serde_json::Value {
+    serde_json::json!({
+        "track_db_id": context.track_db_id,
+        "track_name": context.track_name,
+        "artist_name": context.artist_name,
+        "album_name": context.album_name,
+        "duration_ms": context.duration_ms,
+        "external_ids": context.external_ids,
+        "force_refresh": context.force_refresh,
+    })
+}
+
 /// Closed kind set. Anything else surfaces as a Lua error.
 #[derive(Clone, Debug)]
 pub(crate) enum LyricsHandlerResult {
@@ -79,6 +94,55 @@ pub(crate) enum LyricsHandlerResult {
     RateLimited {
         retry_after_ms: Option<u64>,
     },
+}
+
+pub(crate) fn parse_handler_result(value: serde_json::Value) -> Result<LyricsHandlerResult> {
+    let serde_json::Value::Object(mut object) = value else {
+        bail!("provider:lyrics handler must return a table/object");
+    };
+    let kind = object
+        .remove("kind")
+        .and_then(|value| value.as_str().map(str::to_string))
+        .ok_or_else(|| {
+            anyhow::anyhow!("provider:lyrics handler return is missing string 'kind'")
+        })?;
+
+    match kind.as_str() {
+        "hit" => {
+            let candidates = object
+                .remove("candidates")
+                .ok_or_else(|| anyhow::anyhow!("provider:lyrics 'hit' requires candidates"))?;
+            let candidates: Vec<LyricsHandlerCandidate> = serde_json::from_value(candidates)
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "provider:lyrics 'hit' candidates did not match LyricsHandlerCandidate: {err}"
+                    )
+                })?;
+            if candidates.is_empty() {
+                bail!("provider:lyrics 'hit' must include at least one candidate");
+            }
+            if candidates.len() > 5 {
+                bail!("provider:lyrics 'hit' may include at most 5 candidates");
+            }
+            Ok(LyricsHandlerResult::Hit { candidates })
+        }
+        "miss" => Ok(LyricsHandlerResult::Miss),
+        "instrumental" => Ok(LyricsHandlerResult::Instrumental),
+        "rate_limited" => {
+            let retry_after_ms = match object.remove("retry_after_ms") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(serde_json::Value::Number(number)) => number.as_u64(),
+                Some(other) => bail!(
+                    "provider:lyrics 'rate_limited' retry_after_ms must be a non-negative integer when set, got {}",
+                    other
+                ),
+            };
+            Ok(LyricsHandlerResult::RateLimited { retry_after_ms })
+        }
+        other => bail!(
+            "provider:lyrics handler 'kind' must be one of 'hit', 'miss', 'instrumental', 'rate_limited' (got '{other}')"
+        ),
+    }
 }
 
 /// Paths reference the [`LyricsTrackContext`] tree.
@@ -190,10 +254,27 @@ pub(crate) async fn register_handler(handler: RegisteredHandler) {
     }
 
     tokio::spawn(async move {
+        // Rescan dispatch closures resolve STATE.plugin_runtime at call time;
+        // plugin init can register handlers before publish_runtime has run.
+        if !wait_for_plugin_runtime(&cancel).await {
+            return;
+        }
         if let Err(err) = rescan(false, cancel).await {
             tracing::warn!(error = %err, "lyrics startup rescan failed");
         }
     });
+}
+
+async fn wait_for_plugin_runtime(cancel: &CancellationToken) -> bool {
+    loop {
+        if crate::STATE.plugin_runtime.get().is_some() {
+            return true;
+        }
+        tokio::select! {
+            _ = cancel.cancelled() => return false,
+            _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
+        }
+    }
 }
 
 /// Multiple registrations from one plugin tear down together.
@@ -314,7 +395,7 @@ async fn dispatch_one(
             tracing::warn!(
                 provider = provider_id,
                 track_db_id = track_db_id.0,
-                error = %err,
+                error = ?err,
                 "lyrics handler returned error"
             );
             return Ok(());

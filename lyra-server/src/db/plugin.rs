@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+pub(crate) use crate::db::DbAsync;
+pub(crate) use crate::db::bootstrap::ROOT_COLLECTION_ALIASES;
 pub(crate) use crate::db::{
     Artist,
     ArtistRelationType,
@@ -16,17 +18,15 @@ pub(crate) use crate::db::{
     IdSource,
     ListOptions,
     NodeId,
-    PagedResult,
     Permission,
     PlaybackState,
+    Playlist,
     ProviderConfig,
     Release,
-    ReleaseType,
     ResolveId,
-    SortDirection,
     Tag,
     Track,
-    User,
+    parse_sort_direction,
     parse_sort_specs_tokens,
 };
 pub(crate) use crate::db::{
@@ -46,7 +46,6 @@ pub(crate) use crate::db::{
     lyrics,
     mixers,
     playback_sessions,
-    playlists,
     providers,
     releases,
     roles,
