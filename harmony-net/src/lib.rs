@@ -12,16 +12,8 @@ use harmony_core::{
     FunctionSpec,
     ModuleExport,
     ModuleSpec,
-    UserDataSpec,
 };
 use harmony_luau as luau;
-use harmony_luau::{
-    ClassDescriptor,
-    FieldDescriptor,
-    InterfaceDescriptor,
-    MethodDescriptor,
-    MethodKind,
-};
 use harmony_luau::{
     DescribeInterface,
     DescribeUserData,
@@ -31,6 +23,10 @@ use harmony_luau::{
     ModuleFunctionDescriptor,
     ParameterDescriptor,
     render_definition_file_with_support,
+};
+use harmony_luau::{
+    FieldDescriptor,
+    InterfaceDescriptor,
 };
 use tokio::io::{
     AsyncReadExt,
@@ -65,6 +61,18 @@ impl LuauTypeInfo for LuaBytes {
     }
 }
 
+impl luau::ToLuau for LuaBytes {
+    fn write(self, writer: &mut luau::ReturnWriter<'_>) -> luau::runtime::Result<()> {
+        writer.write(luau::Value::String(self.0))
+    }
+}
+
+impl luau::IntoLuauReturn for LuaBytes {
+    fn into_luau_return(self) -> luau::runtime::Result<luau::ReturnValues> {
+        luau::Value::String(self.0).into_luau_return()
+    }
+}
+
 #[derive(Clone, Debug)]
 struct SocketAddress {
     /// IP address (e.g. "192.168.1.1").
@@ -79,6 +87,18 @@ impl From<SocketAddr> for SocketAddress {
             address: addr.ip().to_string(),
             port: addr.port(),
         }
+    }
+}
+
+impl luau::ToLuau for SocketAddress {
+    fn write(self, writer: &mut luau::ReturnWriter<'_>) -> luau::runtime::Result<()> {
+        writer.write(socket_address_value(self))
+    }
+}
+
+impl luau::IntoLuauReturn for SocketAddress {
+    fn into_luau_return(self) -> luau::runtime::Result<luau::ReturnValues> {
+        socket_address_value(self).into_luau_return()
     }
 }
 
@@ -113,19 +133,6 @@ struct TcpBindOptions {
 const MAX_READ_BYTES: usize = 8 * 1024 * 1024; // 8 MB
 const UDP_MAX_DATAGRAM: usize = 65535;
 
-#[derive(Clone)]
-struct UdpSocket {
-    // RwLock allows concurrent I/O (read) while connect/close take exclusive (write) access.
-}
-
-#[derive(Clone)]
-struct TcpStream {
-    // No inner Arc — read/write need &mut self, so access is serialized.
-}
-
-#[derive(Clone)]
-struct TcpListener {}
-
 struct NetModule;
 
 pub fn module_spec() -> ModuleSpec {
@@ -134,64 +141,9 @@ pub fn module_spec() -> ModuleSpec {
         .function(udp_bind_spec())
         .function(tcp_connect_spec())
         .function(tcp_bind_spec())
-        .userdata(
-            UserDataSpec::new("UdpSocket")
-                .method(FunctionSpec::sync_fn("set_timeout").args::<Option<f64>>())
-                .method(FunctionSpec::sync_fn("address").returns::<SocketAddress>())
-                .method(FunctionSpec::async_fn("connect").args::<SocketAddress>())
-                .method(
-                    FunctionSpec::async_fn("send")
-                        .args::<LuaBinaryInput>()
-                        .args::<Option<f64>>(),
-                )
-                .method(
-                    FunctionSpec::async_fn("recv")
-                        .args::<Option<f64>>()
-                        .returns::<LuaBytes>(),
-                )
-                .method(
-                    FunctionSpec::async_fn("recv_from")
-                        .args::<Option<f64>>()
-                        .returns::<LuaBytes>()
-                        .returns::<SocketAddress>(),
-                )
-                .method(
-                    FunctionSpec::async_fn("send_to")
-                        .args::<LuaBinaryInput>()
-                        .args::<SocketAddress>()
-                        .args::<Option<f64>>(),
-                )
-                .method(FunctionSpec::async_fn("close")),
-        )
-        .userdata(
-            UserDataSpec::new("TcpStream")
-                .method(FunctionSpec::sync_fn("set_timeout").args::<Option<f64>>())
-                .method(FunctionSpec::sync_fn("address").returns::<SocketAddress>())
-                .method(
-                    FunctionSpec::async_fn("read")
-                        .args::<usize>()
-                        .args::<Option<f64>>()
-                        .returns::<LuaBytes>(),
-                )
-                .method(
-                    FunctionSpec::async_fn("write")
-                        .args::<LuaBinaryInput>()
-                        .args::<Option<f64>>(),
-                )
-                .method(FunctionSpec::async_fn("close")),
-        )
-        .userdata(
-            UserDataSpec::new("TcpListener")
-                .method(FunctionSpec::sync_fn("set_timeout").args::<Option<f64>>())
-                .method(FunctionSpec::sync_fn("address").returns::<SocketAddress>())
-                .method(
-                    FunctionSpec::async_fn("accept")
-                        .args::<Option<f64>>()
-                        .returns::<TcpStream>()
-                        .returns::<SocketAddress>(),
-                )
-                .method(FunctionSpec::async_fn("close")),
-        )
+        .userdata(UdpSocket::_harmony_userdata_spec())
+        .userdata(TcpStream::_harmony_userdata_spec())
+        .userdata(TcpListener::_harmony_userdata_spec())
         .install(|_| Ok(ModuleExport::new(NetModule)))
 }
 
@@ -219,14 +171,20 @@ fn tcp_bind_spec() -> FunctionSpec {
     spec.call_async(Arc::new(tcp_bind_callback))
 }
 
+#[harmony_macros::userdata(name = "UdpSocket")]
 #[derive(Clone)]
-struct UdpSocketState {
+struct UdpSocket {
     inner: Arc<TokioRwLock<Option<Arc<TokioUdpSocket>>>>,
     timeout: Arc<StdMutex<Option<f64>>>,
     local_addr: Arc<StdMutex<SocketAddress>>,
 }
 
-impl UdpSocketState {
+#[harmony_macros::userdata_methods]
+impl UdpSocket {
+    #[harmony(
+        description = "Sets the default timeout in seconds for all subsequent operations. Pass nil to clear.",
+        args(seconds: Option<f64>)
+    )]
     fn set_timeout(&self, seconds: Option<f64>) -> luau::runtime::Result<()> {
         if let Some(secs) = seconds {
             validate_timeout(secs)?;
@@ -239,6 +197,9 @@ impl UdpSocketState {
         Ok(())
     }
 
+    #[harmony(
+        description = "Returns the local address this socket is bound to. After connect, reflects the interface used to reach the peer."
+    )]
     fn address(&self) -> SocketAddress {
         self.local_addr
             .lock()
@@ -246,7 +207,24 @@ impl UdpSocketState {
             .clone()
     }
 
-    async fn connect(&self, address: SocketAddress) -> luau::runtime::Result<()> {
+    #[harmony(
+        description = "Associates the socket with a remote address.",
+        args(address: SocketAddress)
+    )]
+    fn connect(
+        &self,
+        vm: &luau::Vm,
+        address: luau::Table,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let address = socket_address_from_luau(vm, &address)?;
+        let socket = self.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            socket.connect_inner(address).await
+        }))
+    }
+
+    #[harmony(skip)]
+    async fn connect_inner(&self, address: SocketAddress) -> luau::runtime::Result<()> {
         let guard = self.inner.write().await;
         let socket = guard
             .as_ref()
@@ -268,7 +246,28 @@ impl UdpSocketState {
         Ok(())
     }
 
-    async fn send(&self, data: LuaBinaryInput, timeout: Option<f64>) -> luau::runtime::Result<()> {
+    #[harmony(
+        description = "Sends a datagram on a connected socket.",
+        args(data: LuaBinaryInput, timeout: Option<f64>)
+    )]
+    fn send(
+        &self,
+        data: luau::Value,
+        timeout: Option<f64>,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let data = binary_input_from_luau("data", data)?;
+        let socket = self.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            socket.send_inner(data, timeout).await
+        }))
+    }
+
+    #[harmony(skip)]
+    async fn send_inner(
+        &self,
+        data: LuaBinaryInput,
+        timeout: Option<f64>,
+    ) -> luau::runtime::Result<()> {
         let guard = self.inner.read().await;
         let socket = guard
             .as_ref()
@@ -286,7 +285,19 @@ impl UdpSocketState {
         .await
     }
 
-    async fn recv(&self, timeout: Option<f64>) -> luau::runtime::Result<LuaBytes> {
+    #[harmony(
+        description = "Receives a datagram on a connected socket.",
+        returns(LuaBytes)
+    )]
+    fn recv(&self, timeout: Option<f64>) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let socket = self.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            socket.recv_inner(timeout).await
+        }))
+    }
+
+    #[harmony(skip)]
+    async fn recv_inner(&self, timeout: Option<f64>) -> luau::runtime::Result<LuaBytes> {
         let guard = self.inner.read().await;
         let socket = guard
             .as_ref()
@@ -306,7 +317,19 @@ impl UdpSocketState {
         Ok(LuaBytes(buf))
     }
 
-    async fn recv_from(
+    #[harmony(
+        description = "Receives a datagram. Returns the data and the sender address.",
+        returns(LuaBytes, SocketAddress)
+    )]
+    fn recv_from(&self, timeout: Option<f64>) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let socket = self.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            socket.recv_from_inner(timeout).await
+        }))
+    }
+
+    #[harmony(skip)]
+    async fn recv_from_inner(
         &self,
         timeout: Option<f64>,
     ) -> luau::runtime::Result<(LuaBytes, SocketAddress)> {
@@ -329,7 +352,27 @@ impl UdpSocketState {
         Ok((LuaBytes(buf), SocketAddress::from(addr)))
     }
 
-    async fn send_to(
+    #[harmony(
+        description = "Sends a datagram to the specified address.",
+        args(data: LuaBinaryInput, address: SocketAddress, timeout: Option<f64>)
+    )]
+    fn send_to(
+        &self,
+        vm: &luau::Vm,
+        data: luau::Value,
+        address: luau::Table,
+        timeout: Option<f64>,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let data = binary_input_from_luau("data", data)?;
+        let address = socket_address_from_luau(vm, &address)?;
+        let socket = self.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            socket.send_to_inner(data, address, timeout).await
+        }))
+    }
+
+    #[harmony(skip)]
+    async fn send_to_inner(
         &self,
         data: LuaBinaryInput,
         address: SocketAddress,
@@ -353,7 +396,16 @@ impl UdpSocketState {
         .await
     }
 
-    async fn close(&self) -> luau::runtime::Result<()> {
+    #[harmony(description = "Closes the socket. Further operations will throw.")]
+    fn close(&self) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let socket = self.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            socket.close_inner().await
+        }))
+    }
+
+    #[harmony(skip)]
+    async fn close_inner(&self) -> luau::runtime::Result<()> {
         let mut guard = self.inner.write().await;
         *guard = None;
         Ok(())
@@ -365,15 +417,16 @@ fn udp_bind_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let table: luau::Table = frame.args.read_named("options")?;
     let options = udp_bind_options_from_luau(frame.vm, &table)?;
+    let vm = frame.vm.clone();
     let origin = frame.context.origin.clone();
-    let future: luau::ScheduledFuture = luau::ScheduledFuture::new(async move {
+    let future = luau::ScheduledFuture::new(async move {
         let socket = bind_udp_socket(options).await?;
-        Ok(udp_socket_value(origin, socket))
+        UdpSocket::_harmony_userdata_class().create_value(&vm, &origin, socket)
     });
     Ok(future)
 }
 
-async fn bind_udp_socket(options: UdpBindOptions) -> luau::runtime::Result<UdpSocketState> {
+async fn bind_udp_socket(options: UdpBindOptions) -> luau::runtime::Result<UdpSocket> {
     let addr = parse_bind_address(&options.address, options.port)?;
 
     let socket = TokioUdpSocket::bind(addr)
@@ -391,153 +444,27 @@ async fn bind_udp_socket(options: UdpBindOptions) -> luau::runtime::Result<UdpSo
         .map(SocketAddress::from)
         .map_err(|error| luau_runtime_error(format!("failed to get local address: {error}")))?;
 
-    Ok(UdpSocketState {
+    Ok(UdpSocket {
         inner: Arc::new(TokioRwLock::new(Some(Arc::new(socket)))),
         timeout: Arc::new(StdMutex::new(None)),
         local_addr: Arc::new(StdMutex::new(local_addr)),
     })
 }
 
-fn udp_socket_value(origin: luau::ChunkOrigin, socket: UdpSocketState) -> luau::Value {
-    let mut table = luau::OwnedTable::with_capacity(0, 8);
-    table.set_field(
-        "set_timeout",
-        sync_method_callback(&origin, "UdpSocket", "set_timeout", ["self", "seconds"], {
-            let socket = socket.clone();
-            move |mut frame| {
-                let _self: luau::Value = frame.args.read_named("self")?;
-                let seconds = frame.args.read_optional_named::<f64>("seconds")?;
-                socket.set_timeout(seconds)
-            }
-        }),
-    );
-    table.set_field(
-        "address",
-        sync_method_callback(&origin, "UdpSocket", "address", ["self"], {
-            let socket = socket.clone();
-            move |mut frame| {
-                let _self: luau::Value = frame.args.read_named("self")?;
-                frame
-                    .returns
-                    .write(socket_address_value(socket.address()))?;
-                Ok(())
-            }
-        }),
-    );
-    table.set_field(
-        "connect",
-        async_method_callback(&origin, "UdpSocket", "connect", ["self", "address"], {
-            let socket = socket.clone();
-            move |mut frame| {
-                let _self: luau::Value = frame.args.read_named("self")?;
-                let address_table: luau::Table = frame.args.read_named("address")?;
-                let address = socket_address_from_luau(frame.vm, &address_table)?;
-                let socket = socket.clone();
-                Ok(luau::ScheduledFuture::new(async move {
-                    socket.connect(address).await?;
-                    Ok(())
-                }))
-            }
-        }),
-    );
-    table.set_field(
-        "send",
-        async_method_callback(&origin, "UdpSocket", "send", ["self", "data", "timeout"], {
-            let socket = socket.clone();
-            move |mut frame| {
-                let _self: luau::Value = frame.args.read_named("self")?;
-                let data = binary_input_from_luau("data", frame.args.read_named("data")?)?;
-                let timeout = frame.args.read_optional_named::<f64>("timeout")?;
-                let socket = socket.clone();
-                Ok(luau::ScheduledFuture::new(async move {
-                    socket.send(data, timeout).await?;
-                    Ok(())
-                }))
-            }
-        }),
-    );
-    table.set_field(
-        "recv",
-        async_method_callback(&origin, "UdpSocket", "recv", ["self", "timeout"], {
-            let socket = socket.clone();
-            move |mut frame| {
-                let _self: luau::Value = frame.args.read_named("self")?;
-                let timeout = frame.args.read_optional_named::<f64>("timeout")?;
-                let socket = socket.clone();
-                Ok(luau::ScheduledFuture::new(async move {
-                    let bytes = socket.recv(timeout).await?;
-                    Ok(luau::Value::String(bytes.0))
-                }))
-            }
-        }),
-    );
-    table.set_field(
-        "recv_from",
-        async_method_callback(&origin, "UdpSocket", "recv_from", ["self", "timeout"], {
-            let socket = socket.clone();
-            move |mut frame| {
-                let _self: luau::Value = frame.args.read_named("self")?;
-                let timeout = frame.args.read_optional_named::<f64>("timeout")?;
-                let socket = socket.clone();
-                Ok(luau::ScheduledFuture::new(async move {
-                    let (bytes, address) = socket.recv_from(timeout).await?;
-                    Ok((
-                        luau::Value::String(bytes.0),
-                        socket_address_value(address),
-                    ))
-                }))
-            }
-        }),
-    );
-    table.set_field(
-        "send_to",
-        async_method_callback(
-            &origin,
-            "UdpSocket",
-            "send_to",
-            ["self", "data", "address", "timeout"],
-            {
-                let socket = socket.clone();
-                move |mut frame| {
-                    let _self: luau::Value = frame.args.read_named("self")?;
-                    let data = binary_input_from_luau("data", frame.args.read_named("data")?)?;
-                    let address_table: luau::Table = frame.args.read_named("address")?;
-                    let address = socket_address_from_luau(frame.vm, &address_table)?;
-                    let timeout = frame.args.read_optional_named::<f64>("timeout")?;
-                    let socket = socket.clone();
-                    Ok(luau::ScheduledFuture::new(async move {
-                        socket.send_to(data, address, timeout).await?;
-                        Ok(())
-                    }))
-                }
-            },
-        ),
-    );
-    table.set_field(
-        "close",
-        async_method_callback(&origin, "UdpSocket", "close", ["self"], {
-            let socket = socket.clone();
-            move |mut frame| {
-                let _self: luau::Value = frame.args.read_named("self")?;
-                let socket = socket.clone();
-                Ok(luau::ScheduledFuture::new(async move {
-                    socket.close().await?;
-                    Ok(())
-                }))
-            }
-        }),
-    );
-    luau::Value::TableData(table)
-}
-
+#[harmony_macros::userdata(name = "TcpStream")]
 #[derive(Clone)]
-struct TcpStreamState {
+struct TcpStream {
     inner: Arc<TokioMutex<Option<TokioTcpStream>>>,
     timeout: Arc<StdMutex<Option<f64>>>,
     local_addr: SocketAddress,
 }
 
-impl TcpStreamState {
+#[harmony_macros::userdata_methods]
+impl TcpStream {
+    #[harmony(
+        description = "Sets the default timeout in seconds for all subsequent operations. Pass nil to clear.",
+        args(seconds: Option<f64>)
+    )]
     fn set_timeout(&self, seconds: Option<f64>) -> luau::runtime::Result<()> {
         if let Some(secs) = seconds {
             validate_timeout(secs)?;
@@ -550,11 +477,30 @@ impl TcpStreamState {
         Ok(())
     }
 
+    #[harmony(description = "Returns the local address this socket is bound to.")]
     fn address(&self) -> SocketAddress {
         self.local_addr.clone()
     }
 
-    async fn read(
+    #[harmony(
+        description = "Reads up to max_bytes. Yields until at least 1 byte arrives. Returns empty string on EOF.",
+        args(max_bytes: usize, timeout: Option<f64>),
+        returns(LuaBytes)
+    )]
+    fn read(
+        &self,
+        max_bytes: luau::Value,
+        timeout: Option<f64>,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let max_bytes = usize_from_luau("max_bytes", max_bytes)?;
+        let stream = self.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            stream.read_inner(max_bytes, timeout).await
+        }))
+    }
+
+    #[harmony(skip)]
+    async fn read_inner(
         &self,
         max_bytes: usize,
         timeout: Option<f64>,
@@ -587,7 +533,28 @@ impl TcpStreamState {
         Ok(LuaBytes(buf))
     }
 
-    async fn write(&self, data: LuaBinaryInput, timeout: Option<f64>) -> luau::runtime::Result<()> {
+    #[harmony(
+        description = "Writes all bytes to the stream.",
+        args(data: LuaBinaryInput, timeout: Option<f64>)
+    )]
+    fn write(
+        &self,
+        data: luau::Value,
+        timeout: Option<f64>,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let data = binary_input_from_luau("data", data)?;
+        let stream = self.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            stream.write_inner(data, timeout).await
+        }))
+    }
+
+    #[harmony(skip)]
+    async fn write_inner(
+        &self,
+        data: LuaBinaryInput,
+        timeout: Option<f64>,
+    ) -> luau::runtime::Result<()> {
         let timeout = effective_timeout(timeout, &self.timeout)?;
         let mut guard = self.inner.lock().await;
         let stream = guard
@@ -604,7 +571,16 @@ impl TcpStreamState {
         .await
     }
 
-    async fn close(&self) -> luau::runtime::Result<()> {
+    #[harmony(description = "Closes the stream. Further operations will throw.")]
+    fn close(&self) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let stream = self.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            stream.close_inner().await
+        }))
+    }
+
+    #[harmony(skip)]
+    async fn close_inner(&self) -> luau::runtime::Result<()> {
         let mut guard = self.inner.lock().await;
         if let Some(mut stream) = guard.take() {
             let _ = stream.shutdown().await;
@@ -613,14 +589,20 @@ impl TcpStreamState {
     }
 }
 
+#[harmony_macros::userdata(name = "TcpListener")]
 #[derive(Clone)]
-struct TcpListenerState {
+struct TcpListener {
     inner: Arc<TokioMutex<Option<Arc<TokioTcpListener>>>>,
     timeout: Arc<StdMutex<Option<f64>>>,
     local_addr: SocketAddress,
 }
 
-impl TcpListenerState {
+#[harmony_macros::userdata_methods]
+impl TcpListener {
+    #[harmony(
+        description = "Sets the default timeout in seconds for all subsequent operations. Pass nil to clear.",
+        args(seconds: Option<f64>)
+    )]
     fn set_timeout(&self, seconds: Option<f64>) -> luau::runtime::Result<()> {
         if let Some(secs) = seconds {
             validate_timeout(secs)?;
@@ -633,14 +615,36 @@ impl TcpListenerState {
         Ok(())
     }
 
+    #[harmony(description = "Returns the local address this socket is bound to.")]
     fn address(&self) -> SocketAddress {
         self.local_addr.clone()
     }
 
-    async fn accept(
+    #[harmony(
+        description = "Accepts a new connection. Returns the stream and the client address.",
+        returns(TcpStream, SocketAddress)
+    )]
+    fn accept(
+        &self,
+        vm: &luau::Vm,
+        origin: &luau::ChunkOrigin,
+        timeout: Option<f64>,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let listener = self.clone();
+        let vm = vm.clone();
+        let origin = origin.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            let (stream, address) = listener.accept_inner(timeout).await?;
+            let stream = TcpStream::_harmony_userdata_class().create_value(&vm, &origin, stream)?;
+            Ok((stream, address))
+        }))
+    }
+
+    #[harmony(skip)]
+    async fn accept_inner(
         &self,
         timeout: Option<f64>,
-    ) -> luau::runtime::Result<(TcpStreamState, SocketAddress)> {
+    ) -> luau::runtime::Result<(TcpStream, SocketAddress)> {
         let listener = {
             let guard = self.inner.lock().await;
             guard
@@ -662,7 +666,7 @@ impl TcpListenerState {
             .local_addr()
             .map(SocketAddress::from)
             .map_err(|error| luau_runtime_error(format!("failed to get local address: {error}")))?;
-        let stream = TcpStreamState {
+        let stream = TcpStream {
             inner: Arc::new(TokioMutex::new(Some(stream))),
             timeout: Arc::new(StdMutex::new(None)),
             local_addr,
@@ -670,7 +674,16 @@ impl TcpListenerState {
         Ok((stream, SocketAddress::from(addr)))
     }
 
-    async fn close(&self) -> luau::runtime::Result<()> {
+    #[harmony(description = "Closes the listener. Further operations will throw.")]
+    fn close(&self) -> luau::runtime::Result<luau::ScheduledFuture> {
+        let listener = self.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            listener.close_inner().await
+        }))
+    }
+
+    #[harmony(skip)]
+    async fn close_inner(&self) -> luau::runtime::Result<()> {
         let mut guard = self.inner.lock().await;
         *guard = None;
         Ok(())
@@ -682,15 +695,16 @@ fn tcp_connect_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let table: luau::Table = frame.args.read_named("options")?;
     let options = tcp_connect_options_from_luau(frame.vm, &table)?;
+    let vm = frame.vm.clone();
     let origin = frame.context.origin.clone();
-    let future: luau::ScheduledFuture = luau::ScheduledFuture::new(async move {
+    let future = luau::ScheduledFuture::new(async move {
         let stream = connect_tcp_stream(options).await?;
-        Ok(tcp_stream_value(origin, stream))
+        TcpStream::_harmony_userdata_class().create_value(&vm, &origin, stream)
     });
     Ok(future)
 }
 
-async fn connect_tcp_stream(options: TcpConnectOptions) -> luau::runtime::Result<TcpStreamState> {
+async fn connect_tcp_stream(options: TcpConnectOptions) -> luau::runtime::Result<TcpStream> {
     let addr = format!("{}:{}", options.host, options.port);
 
     let timeout = options.timeout.map(validate_timeout).transpose()?;
@@ -708,7 +722,7 @@ async fn connect_tcp_stream(options: TcpConnectOptions) -> luau::runtime::Result
         .map(SocketAddress::from)
         .map_err(|error| luau_runtime_error(format!("failed to get local address: {error}")))?;
 
-    Ok(TcpStreamState {
+    Ok(TcpStream {
         inner: Arc::new(TokioMutex::new(Some(stream))),
         timeout: Arc::new(StdMutex::new(None)),
         local_addr,
@@ -720,15 +734,16 @@ fn tcp_bind_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let table: luau::Table = frame.args.read_named("options")?;
     let options = tcp_bind_options_from_luau(frame.vm, &table)?;
+    let vm = frame.vm.clone();
     let origin = frame.context.origin.clone();
-    let future: luau::ScheduledFuture = luau::ScheduledFuture::new(async move {
+    let future = luau::ScheduledFuture::new(async move {
         let listener = bind_tcp_listener(options).await?;
-        Ok(tcp_listener_value(origin, listener))
+        TcpListener::_harmony_userdata_class().create_value(&vm, &origin, listener)
     });
     Ok(future)
 }
 
-async fn bind_tcp_listener(options: TcpBindOptions) -> luau::runtime::Result<TcpListenerState> {
+async fn bind_tcp_listener(options: TcpBindOptions) -> luau::runtime::Result<TcpListener> {
     let addr = parse_bind_address(&options.address, options.port)?;
 
     let listener = TokioTcpListener::bind(addr)
@@ -740,226 +755,11 @@ async fn bind_tcp_listener(options: TcpBindOptions) -> luau::runtime::Result<Tcp
         .map(SocketAddress::from)
         .map_err(|error| luau_runtime_error(format!("failed to get local address: {error}")))?;
 
-    Ok(TcpListenerState {
+    Ok(TcpListener {
         inner: Arc::new(TokioMutex::new(Some(Arc::new(listener)))),
         timeout: Arc::new(StdMutex::new(None)),
         local_addr,
     })
-}
-
-fn tcp_stream_value(origin: luau::ChunkOrigin, stream: TcpStreamState) -> luau::Value {
-    let mut table = luau::OwnedTable::with_capacity(0, 5);
-    table.set_field(
-        "set_timeout",
-        sync_method_callback(&origin, "TcpStream", "set_timeout", ["self", "seconds"], {
-            let stream = stream.clone();
-            move |mut frame| {
-                let _self: luau::Value = frame.args.read_named("self")?;
-                let seconds = frame.args.read_optional_named::<f64>("seconds")?;
-                stream.set_timeout(seconds)
-            }
-        }),
-    );
-    table.set_field(
-        "address",
-        sync_method_callback(&origin, "TcpStream", "address", ["self"], {
-            let stream = stream.clone();
-            move |mut frame| {
-                let _self: luau::Value = frame.args.read_named("self")?;
-                frame
-                    .returns
-                    .write(socket_address_value(stream.address()))?;
-                Ok(())
-            }
-        }),
-    );
-    table.set_field(
-        "read",
-        async_method_callback(
-            &origin,
-            "TcpStream",
-            "read",
-            ["self", "max_bytes", "timeout"],
-            {
-                let stream = stream.clone();
-                move |mut frame| {
-                    let _self: luau::Value = frame.args.read_named("self")?;
-                    let max_bytes =
-                        usize_from_luau("max_bytes", frame.args.read_named("max_bytes")?)?;
-                    let timeout = frame.args.read_optional_named::<f64>("timeout")?;
-                    let stream = stream.clone();
-                    Ok(luau::ScheduledFuture::new(async move {
-                        let bytes = stream.read(max_bytes, timeout).await?;
-                        Ok(luau::Value::String(bytes.0))
-                    }))
-                }
-            },
-        ),
-    );
-    table.set_field(
-        "write",
-        async_method_callback(
-            &origin,
-            "TcpStream",
-            "write",
-            ["self", "data", "timeout"],
-            {
-                let stream = stream.clone();
-                move |mut frame| {
-                    let _self: luau::Value = frame.args.read_named("self")?;
-                    let data = binary_input_from_luau("data", frame.args.read_named("data")?)?;
-                    let timeout = frame.args.read_optional_named::<f64>("timeout")?;
-                    let stream = stream.clone();
-                    Ok(luau::ScheduledFuture::new(async move {
-                        stream.write(data, timeout).await?;
-                        Ok(())
-                    }))
-                }
-            },
-        ),
-    );
-    table.set_field(
-        "close",
-        async_method_callback(&origin, "TcpStream", "close", ["self"], {
-            let stream = stream.clone();
-            move |mut frame| {
-                let _self: luau::Value = frame.args.read_named("self")?;
-                let stream = stream.clone();
-                Ok(luau::ScheduledFuture::new(async move {
-                    stream.close().await?;
-                    Ok(())
-                }))
-            }
-        }),
-    );
-    luau::Value::TableData(table)
-}
-
-fn tcp_listener_value(origin: luau::ChunkOrigin, listener: TcpListenerState) -> luau::Value {
-    let mut table = luau::OwnedTable::with_capacity(0, 5);
-    table.set_field(
-        "set_timeout",
-        sync_method_callback(
-            &origin,
-            "TcpListener",
-            "set_timeout",
-            ["self", "seconds"],
-            {
-                let listener = listener.clone();
-                move |mut frame| {
-                    let _self: luau::Value = frame.args.read_named("self")?;
-                    let seconds = frame.args.read_optional_named::<f64>("seconds")?;
-                    listener.set_timeout(seconds)
-                }
-            },
-        ),
-    );
-    table.set_field(
-        "address",
-        sync_method_callback(&origin, "TcpListener", "address", ["self"], {
-            let listener = listener.clone();
-            move |mut frame| {
-                let _self: luau::Value = frame.args.read_named("self")?;
-                frame
-                    .returns
-                    .write(socket_address_value(listener.address()))?;
-                Ok(())
-            }
-        }),
-    );
-    table.set_field(
-        "accept",
-        async_method_callback(&origin, "TcpListener", "accept", ["self", "timeout"], {
-            let listener = listener.clone();
-            move |mut frame| {
-                let _self: luau::Value = frame.args.read_named("self")?;
-                let timeout = frame.args.read_optional_named::<f64>("timeout")?;
-                let listener = listener.clone();
-                let origin = frame.context.origin.clone();
-                Ok(luau::ScheduledFuture::new(async move {
-                    let (stream, address) = listener.accept(timeout).await?;
-                    Ok((
-                        tcp_stream_value(origin, stream),
-                        socket_address_value(address),
-                    ))
-                }))
-            }
-        }),
-    );
-    table.set_field(
-        "close",
-        async_method_callback(&origin, "TcpListener", "close", ["self"], {
-            let listener = listener.clone();
-            move |mut frame| {
-                let _self: luau::Value = frame.args.read_named("self")?;
-                let listener = listener.clone();
-                Ok(luau::ScheduledFuture::new(async move {
-                    listener.close().await?;
-                    Ok(())
-                }))
-            }
-        }),
-    );
-    luau::Value::TableData(table)
-}
-
-fn sync_method_callback<F, N>(
-    origin: &luau::ChunkOrigin,
-    class: &'static str,
-    name: &'static str,
-    names: N,
-    callback: F,
-) -> luau::Value
-where
-    F: for<'vm> Fn(luau::CallFrame<'vm>) -> luau::runtime::Result<()> + Send + Sync + 'static,
-    N: IntoIterator<Item = &'static str>,
-{
-    luau::Value::NativeFunction(luau::NativeFunctionValue::new(
-        method_callback_options(origin, class, name, names),
-        Arc::new(callback),
-    ))
-}
-
-fn async_method_callback<F, N>(
-    origin: &luau::ChunkOrigin,
-    class: &'static str,
-    name: &'static str,
-    names: N,
-    callback: F,
-) -> luau::Value
-where
-    F: for<'vm> Fn(luau::AsyncCallFrame<'vm>) -> luau::runtime::Result<luau::ScheduledFuture>
-        + Send
-        + Sync
-        + 'static,
-    N: IntoIterator<Item = &'static str>,
-{
-    luau::Value::NativeFunction(luau::NativeFunctionValue::new(
-        method_callback_options(origin, class, name, names),
-        async_callback_adapter(Arc::new(callback)),
-    ))
-}
-
-fn method_callback_options<N>(
-    origin: &luau::ChunkOrigin,
-    class: &'static str,
-    name: &'static str,
-    names: N,
-) -> luau::NativeFunctionOptions
-where
-    N: IntoIterator<Item = &'static str>,
-{
-    luau::NativeFunctionOptions::new(luau::ChunkOrigin {
-        module: Some(luau::ModuleId(Arc::from("harmony/net"))),
-        plugin: origin.plugin.clone(),
-        path: origin.path.clone(),
-    })
-    .function_name(format!("{class}.{name}"))
-    .argument_names(names.into_iter().map(Arc::from))
-}
-
-fn async_callback_adapter(callback: luau::NativeAsyncFn) -> luau::NativeFn {
-    harmony_core::async_luau_callback(callback)
 }
 
 fn udp_bind_options_from_luau(
@@ -1221,32 +1021,6 @@ fn field(name: &'static str, ty: LuauType, description: &'static str) -> FieldDe
     }
 }
 
-fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
-    ParameterDescriptor {
-        name,
-        ty,
-        description: None,
-        variadic: false,
-    }
-}
-
-fn method(
-    name: &'static str,
-    description: &'static str,
-    params: Vec<ParameterDescriptor>,
-    returns: Vec<LuauType>,
-    yields: bool,
-) -> MethodDescriptor {
-    MethodDescriptor {
-        name,
-        description: Some(description),
-        params,
-        returns,
-        yields,
-        kind: MethodKind::Instance,
-    }
-}
-
 impl LuauTypeInfo for SocketAddress {
     fn luau_type() -> LuauType {
         LuauType::literal("SocketAddress")
@@ -1344,192 +1118,6 @@ impl DescribeInterface for TcpBindOptions {
                     "Local address to bind (e.g. \"0.0.0.0\").",
                 ),
                 field("port", u16::luau_type(), "Local port to listen on."),
-            ],
-        }
-    }
-}
-
-impl LuauTypeInfo for UdpSocket {
-    fn luau_type() -> LuauType {
-        LuauType::literal("UdpSocket")
-    }
-}
-
-impl DescribeUserData for UdpSocket {
-    fn class_descriptor() -> ClassDescriptor {
-        ClassDescriptor {
-            name: "UdpSocket",
-            description: None,
-            fields: Vec::new(),
-            methods: vec![
-                method(
-                    "set_timeout",
-                    "Sets the default timeout in seconds for all subsequent operations. Pass nil to clear.",
-                    vec![param("seconds", Option::<f64>::luau_type())],
-                    Vec::new(),
-                    false,
-                ),
-                method(
-                    "address",
-                    "Returns the local address this socket is bound to. After connect, reflects the interface used to reach the peer.",
-                    Vec::new(),
-                    vec![SocketAddress::luau_type()],
-                    false,
-                ),
-                method(
-                    "connect",
-                    "Associates the socket with a remote address.",
-                    vec![param("address", SocketAddress::luau_type())],
-                    Vec::new(),
-                    true,
-                ),
-                method(
-                    "send",
-                    "Sends a datagram on a connected socket.",
-                    vec![
-                        param("data", LuaBinaryInput::luau_type()),
-                        param("timeout", Option::<f64>::luau_type()),
-                    ],
-                    Vec::new(),
-                    true,
-                ),
-                method(
-                    "recv",
-                    "Receives a datagram on a connected socket.",
-                    vec![param("timeout", Option::<f64>::luau_type())],
-                    vec![LuaBytes::luau_type()],
-                    true,
-                ),
-                method(
-                    "recv_from",
-                    "Receives a datagram. Returns the data and the sender address.",
-                    vec![param("timeout", Option::<f64>::luau_type())],
-                    vec![LuaBytes::luau_type(), SocketAddress::luau_type()],
-                    true,
-                ),
-                method(
-                    "send_to",
-                    "Sends a datagram to the specified address.",
-                    vec![
-                        param("data", LuaBinaryInput::luau_type()),
-                        param("address", SocketAddress::luau_type()),
-                        param("timeout", Option::<f64>::luau_type()),
-                    ],
-                    Vec::new(),
-                    true,
-                ),
-                method(
-                    "close",
-                    "Closes the socket. Further operations will throw.",
-                    Vec::new(),
-                    Vec::new(),
-                    true,
-                ),
-            ],
-        }
-    }
-}
-
-impl LuauTypeInfo for TcpStream {
-    fn luau_type() -> LuauType {
-        LuauType::literal("TcpStream")
-    }
-}
-
-impl DescribeUserData for TcpStream {
-    fn class_descriptor() -> ClassDescriptor {
-        ClassDescriptor {
-            name: "TcpStream",
-            description: None,
-            fields: Vec::new(),
-            methods: vec![
-                method(
-                    "set_timeout",
-                    "Sets the default timeout in seconds for all subsequent operations. Pass nil to clear.",
-                    vec![param("seconds", Option::<f64>::luau_type())],
-                    Vec::new(),
-                    false,
-                ),
-                method(
-                    "address",
-                    "Returns the local address this socket is bound to.",
-                    Vec::new(),
-                    vec![SocketAddress::luau_type()],
-                    false,
-                ),
-                method(
-                    "read",
-                    "Reads up to max_bytes. Yields until at least 1 byte arrives. Returns empty string on EOF.",
-                    vec![
-                        param("max_bytes", usize::luau_type()),
-                        param("timeout", Option::<f64>::luau_type()),
-                    ],
-                    vec![LuaBytes::luau_type()],
-                    true,
-                ),
-                method(
-                    "write",
-                    "Writes all bytes to the stream.",
-                    vec![
-                        param("data", LuaBinaryInput::luau_type()),
-                        param("timeout", Option::<f64>::luau_type()),
-                    ],
-                    Vec::new(),
-                    true,
-                ),
-                method(
-                    "close",
-                    "Closes the stream. Further operations will throw.",
-                    Vec::new(),
-                    Vec::new(),
-                    true,
-                ),
-            ],
-        }
-    }
-}
-
-impl LuauTypeInfo for TcpListener {
-    fn luau_type() -> LuauType {
-        LuauType::literal("TcpListener")
-    }
-}
-
-impl DescribeUserData for TcpListener {
-    fn class_descriptor() -> ClassDescriptor {
-        ClassDescriptor {
-            name: "TcpListener",
-            description: None,
-            fields: Vec::new(),
-            methods: vec![
-                method(
-                    "set_timeout",
-                    "Sets the default timeout in seconds for all subsequent operations. Pass nil to clear.",
-                    vec![param("seconds", Option::<f64>::luau_type())],
-                    Vec::new(),
-                    false,
-                ),
-                method(
-                    "address",
-                    "Returns the local address this socket is bound to.",
-                    Vec::new(),
-                    vec![SocketAddress::luau_type()],
-                    false,
-                ),
-                method(
-                    "accept",
-                    "Accepts a new connection. Returns the stream and the client address.",
-                    vec![param("timeout", Option::<f64>::luau_type())],
-                    vec![TcpStream::luau_type(), SocketAddress::luau_type()],
-                    true,
-                ),
-                method(
-                    "close",
-                    "Closes the listener. Further operations will throw.",
-                    Vec::new(),
-                    Vec::new(),
-                    true,
-                ),
             ],
         }
     }
