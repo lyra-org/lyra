@@ -3,62 +3,212 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use agdb::DbId;
-use harmony_core::LuaAsyncExt;
-use mlua::{
-    ExternalResult,
-    Lua,
-    Result,
-    Table,
-    Value,
+use std::{
+    collections::HashSet,
+    sync::Arc,
 };
-use std::collections::HashSet;
+
+use agdb::DbId;
+use harmony_core::{
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
+};
+use harmony_luau as luau;
+use harmony_luau::{
+    DescribeInterface,
+    FieldDescriptor,
+    InterfaceDescriptor,
+    LuauType,
+    LuauTypeInfo,
+    ModuleDescriptor,
+    ModuleFunctionDescriptor,
+    ParameterDescriptor,
+    render_definition_file_with_support,
+};
 
 use crate::{
-    STATE,
-    plugins::caller::RequestCaller,
     plugins::db::{
         self,
-        NodeId,
-        Permission,
+        DbAsync,
         ResolveId,
     },
-    services::playback_sources as playback_source_service,
+    services::{
+        auth::Principal,
+        playback_sources as playback_source_service,
+    },
 };
 
-#[harmony_macros::interface]
-struct EntryInfo {
-    db_id: Option<NodeId>,
-    id: String,
-    full_path: Option<String>,
-    kind: String,
-    name: String,
-    hash: Option<String>,
-    size: u64,
-    mtime: u64,
+#[derive(Clone, Default)]
+pub(crate) struct PlaybackSourcesModuleStore {
+    db: Option<DbAsync>,
 }
 
-#[harmony_macros::interface]
-struct PlaybackSourceInfo {
-    track_id: u64,
-    source_id: u64,
-    source_kind: String,
-    source_key: String,
-    is_primary: bool,
-    start_ms: Option<u64>,
-    end_ms: Option<u64>,
-    is_virtual: bool,
-    entry: Option<EntryInfo>,
+impl PlaybackSourcesModuleStore {
+    pub(crate) fn empty() -> Self {
+        Self { db: None }
+    }
+
+    pub(crate) fn with_db(db: DbAsync) -> Self {
+        Self { db: Some(db) }
+    }
+
+    fn db(&self) -> luau::runtime::Result<DbAsync> {
+        self.db.clone().ok_or_else(|| {
+            crate::plugins::runtime_error(
+                "lyra/playback_sources requires a database-backed plugin executor",
+            )
+        })
+    }
 }
 
-use super::entry_to_table;
+struct PlaybackSourcesModule;
+
+struct EntryInfo;
+
+struct PlaybackSourceInfo;
+
+pub(crate) fn module_spec() -> ModuleSpec {
+    ModuleSpec::new("lyra/playback_sources")
+        .capability("lyra.playback_sources")
+        .function(get_spec())
+        .function(get_many_spec())
+        .install(|_| Ok(ModuleExport::new(PlaybackSourcesModule)))
+}
+
+fn get_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get")
+        .context::<Principal>()
+        .arg_name("id")
+        .args::<Option<ResolveId>>()
+        .arg_name("include_entry")
+        .args::<Option<bool>>()
+        .returns::<luau::Table>()
+        .call_async(Arc::new(get_callback))
+}
+
+fn get_many_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get_many")
+        .context::<Principal>()
+        .arg_name("track_ids")
+        .args::<luau::Table>()
+        .arg_name("include_entry")
+        .args::<Option<bool>>()
+        .returns::<luau::Table>()
+        .call_async(Arc::new(get_many_callback))
+}
+
+fn get_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let id = frame
+        .args
+        .read_optional_named::<luau::Value>("id")?
+        .map(parse_resolve_id)
+        .transpose()?
+        .unwrap_or_else(|| ResolveId::alias("tracks"));
+    let include_entry = frame
+        .args
+        .read_optional_named::<bool>("include_entry")?
+        .unwrap_or(false);
+    let store = frame
+        .vm
+        .data()
+        .get::<PlaybackSourcesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let db = db.read().await;
+        let include_full_path =
+            db::roles::has_permission(&principal.permissions, db::Permission::ManageLibraries);
+        let query_id = id
+            .to_query_id(&db)
+            .map_err(crate::plugins::runtime_error)?
+            .ok_or_else(|| crate::plugins::runtime_error("could not resolve scope"))?;
+        let tracks = db::tracks::get(&db, query_id).map_err(crate::plugins::runtime_error)?;
+
+        let mut rows = luau::OwnedTable::new();
+        for track in tracks {
+            let Some(track_id) = track.db_id.map(DbId::from) else {
+                continue;
+            };
+            if !crate::routes::entity_accessible_to_principal(&db, &principal, track_id)
+                .map_err(crate::plugins::runtime_error)?
+            {
+                continue;
+            }
+            let Some(source) = playback_source_service::resolve(&db, track_id, include_entry)
+                .map_err(crate::plugins::runtime_error)?
+            else {
+                continue;
+            };
+            rows.push_array(luau::Value::TableData(source_to_table(
+                source,
+                include_entry,
+                include_full_path,
+            )));
+        }
+
+        Ok(luau::Value::TableData(rows))
+    }))
+}
+
+fn get_many_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let track_ids: luau::Table = frame.args.read_named("track_ids")?;
+    let track_ids = parse_db_ids(frame.vm, &track_ids)?;
+    let include_entry = frame
+        .args
+        .read_optional_named::<bool>("include_entry")?
+        .unwrap_or(false);
+    let store = frame
+        .vm
+        .data()
+        .get::<PlaybackSourcesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let db = db.read().await;
+        let include_full_path =
+            db::roles::has_permission(&principal.permissions, db::Permission::ManageLibraries);
+        let mut rows = luau::OwnedTable::with_entry_capacity(0, 0, track_ids.len());
+        for track_id in track_ids {
+            let value = if crate::routes::entity_accessible_to_principal(&db, &principal, track_id)
+                .map_err(crate::plugins::runtime_error)?
+            {
+                playback_source_service::resolve(&db, track_id, include_entry)
+                    .map_err(crate::plugins::runtime_error)?
+                    .map(|source| {
+                        luau::Value::TableData(source_to_table(
+                            source,
+                            include_entry,
+                            include_full_path,
+                        ))
+                    })
+                    .unwrap_or(luau::Value::Nil)
+            } else {
+                luau::Value::Nil
+            };
+            rows.set_key(luau::Value::Integer(track_id.0), value.clone());
+            rows.set_key(luau::Value::Number(track_id.0 as f64), value);
+        }
+
+        Ok(luau::Value::TableData(rows))
+    }))
+}
 
 fn source_to_table(
-    lua: &Lua,
     source: playback_source_service::PlaybackSource,
     include_entry: bool,
     include_full_path: bool,
-) -> Result<Table> {
+) -> luau::OwnedTable {
     let playback_source_service::PlaybackSource {
         track_db_id,
         source_id,
@@ -71,130 +221,334 @@ fn source_to_table(
         ..
     } = source;
 
-    let source_table = lua.create_table()?;
-    source_table.set("track_id", track_db_id.0)?;
-    source_table.set("source_id", source_id.0)?;
-    source_table.set("source_kind", source_kind)?;
-    source_table.set("source_key", source_key)?;
-    source_table.set("is_primary", is_primary)?;
-    source_table.set("start_ms", start_ms)?;
-    source_table.set("end_ms", end_ms)?;
-    source_table.set("is_virtual", start_ms.is_some() || end_ms.is_some())?;
+    let mut table = luau::OwnedTable::with_capacity(0, 9);
+    table.set_field("track_id", luau::Value::Integer(track_db_id.0));
+    table.set_field("source_id", luau::Value::Integer(source_id.0));
+    table.set_field("source_kind", luau::Value::String(source_kind.into_bytes()));
+    table.set_field("source_key", luau::Value::String(source_key.into_bytes()));
+    table.set_field("is_primary", luau::Value::Boolean(is_primary));
+    table.set_field("start_ms", optional_u64(start_ms));
+    table.set_field("end_ms", optional_u64(end_ms));
+    table.set_field(
+        "is_virtual",
+        luau::Value::Boolean(start_ms.is_some() || end_ms.is_some()),
+    );
     if include_entry {
-        if let Some(entry) = entry {
-            source_table.set("entry", entry_to_table(lua, entry, include_full_path)?)?;
+        table.set_field(
+            "entry",
+            entry
+                .map(|entry| luau::Value::TableData(entry_to_table(entry, include_full_path)))
+                .unwrap_or(luau::Value::Nil),
+        );
+    }
+    table
+}
+
+fn entry_to_table(entry: db::Entry, include_full_path: bool) -> luau::OwnedTable {
+    let mut table = luau::OwnedTable::with_capacity(0, 8);
+    table.set_field(
+        "db_id",
+        entry
+            .db_id
+            .map(|id| luau::Value::Integer(id.0))
+            .unwrap_or(luau::Value::Nil),
+    );
+    table.set_field("id", luau::Value::String(entry.id.into_bytes()));
+    table.set_field(
+        "full_path",
+        if include_full_path {
+            luau::Value::String(entry.full_path.to_string_lossy().into_owned().into_bytes())
         } else {
-            source_table.set("entry", Value::Nil)?;
-        }
-    }
-
-    Ok(source_table)
+            luau::Value::Nil
+        },
+    );
+    table.set_field(
+        "kind",
+        luau::Value::String(entry.kind.to_string().into_bytes()),
+    );
+    table.set_field("name", luau::Value::String(entry.name.into_bytes()));
+    table.set_field(
+        "hash",
+        entry
+            .hash
+            .map(|hash| luau::Value::String(hash.into_bytes()))
+            .unwrap_or(luau::Value::Nil),
+    );
+    table.set_field("size", luau::Value::Integer(saturating_i64(entry.size)));
+    table.set_field("mtime", luau::Value::Integer(saturating_i64(entry.mtime)));
+    table
 }
 
-struct PlaybackSourcesModule;
+fn optional_u64(value: Option<u64>) -> luau::Value {
+    value
+        .map(|value| luau::Value::Integer(saturating_i64(value)))
+        .unwrap_or(luau::Value::Nil)
+}
 
-#[harmony_macros::module(
-    plugin_scoped,
-    name = "PlaybackSources",
-    local = "playback_sources",
-    path = "lyra/playback_sources",
-    interfaces(EntryInfo, PlaybackSourceInfo)
-)]
-impl PlaybackSourcesModule {
-    /// Returns resolved playback sources for tracks matching the given scope.
-    #[harmony(args(id: Option<ResolveId>, include_entry: Option<bool>), returns(Vec<PlaybackSourceInfo>))]
-    pub(crate) async fn get(
-        lua: Lua,
-        #[harmony_context] caller: RequestCaller,
-        id: Option<ResolveId>,
-        include_entry: Option<bool>,
-    ) -> Result<Table> {
-        let resolve_id = id.unwrap_or_else(|| ResolveId::alias("tracks"));
-        let include_entry = include_entry.unwrap_or(false);
-        let db = STATE.db.read().await;
-        let include_full_path =
-            db::roles::has_permission(&caller.principal.permissions, Permission::ManageLibraries);
-        let query_id = resolve_id
-            .to_query_id(&db)
-            .into_lua_err()?
-            .ok_or_else(|| mlua::Error::runtime("could not resolve scope"))?;
-        let tracks = db::tracks::get(&db, query_id).into_lua_err()?;
-
-        let rows = lua.create_table()?;
-        let mut index = 1usize;
-        for track in tracks {
-            let Some(track_id) = track.db_id.map(DbId::from) else {
-                continue;
-            };
-            if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, track_id)
-                .into_lua_err()?
-            {
-                continue;
-            }
-            let Some(source) =
-                playback_source_service::resolve(&db, track_id, include_entry).into_lua_err()?
-            else {
-                continue;
-            };
-            let source_table = source_to_table(&lua, source, include_entry, include_full_path)?;
-
-            rows.set(index, source_table)?;
-            index += 1;
+fn parse_resolve_id(value: luau::Value) -> luau::runtime::Result<ResolveId> {
+    match value {
+        luau::Value::Integer(value) => Ok(ResolveId::DbId(DbId(value))),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
+            Ok(ResolveId::DbId(DbId(value as i64)))
         }
-
-        Ok(rows)
-    }
-
-    /// Returns resolved playback sources for many tracks.
-    #[harmony(args(track_ids: Vec<u64>, include_entry: Option<bool>), returns(std::collections::BTreeMap<u64, Option<PlaybackSourceInfo>>))]
-    pub(crate) async fn get_many(
-        lua: Lua,
-        #[harmony_context] caller: RequestCaller,
-        track_ids: Table,
-        include_entry: Option<bool>,
-    ) -> Result<Table> {
-        let include_entry = include_entry.unwrap_or(false);
-        let mut unique_track_ids = Vec::new();
-        let mut seen = HashSet::new();
-        for value in track_ids.sequence_values::<i64>() {
-            let raw_id = value?;
-            if raw_id <= 0 {
-                continue;
-            }
-            let track_db_id = DbId(raw_id);
-            if seen.insert(track_db_id) {
-                unique_track_ids.push(track_db_id);
+        luau::Value::String(bytes) => {
+            let text = String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?;
+            if db::ROOT_COLLECTION_ALIASES.contains(&text.as_str()) {
+                Ok(ResolveId::Alias(text))
+            } else {
+                Ok(ResolveId::Nanoid(text))
             }
         }
-
-        let db = STATE.db.read().await;
-        let include_full_path =
-            db::roles::has_permission(&caller.principal.permissions, Permission::ManageLibraries);
-        let rows = lua.create_table()?;
-        for track_id in unique_track_ids {
-            if !crate::routes::entity_accessible_to_principal(&db, &caller.principal, track_id)
-                .into_lua_err()?
-            {
-                rows.set(track_id.0, Value::Nil)?;
-                continue;
-            }
-            let Some(source) =
-                playback_source_service::resolve(&db, track_id, include_entry).into_lua_err()?
-            else {
-                rows.set(track_id.0, Value::Nil)?;
-                continue;
-            };
-            let source_table = source_to_table(&lua, source, include_entry, include_full_path)?;
-            rows.set(track_id.0, source_table)?;
-        }
-
-        Ok(rows)
+        other => Err(crate::plugins::runtime_error(format!(
+            "expected integer or string id, got {}",
+            other.type_name()
+        ))),
     }
 }
 
-crate::plugins::plugin_surface_exports!(
-    PlaybackSourcesModule,
-    "lyra.playback_sources",
-    "Read and modify playback sources.",
-    Medium
-);
+fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
+    let mut values = Vec::new();
+    for (key, value) in table.pairs_raw(vm)? {
+        let Some(index) = array_index(key) else {
+            continue;
+        };
+        let Some(id) = db_id_value(value)? else {
+            continue;
+        };
+        values.push((index, id));
+    }
+    values.sort_by_key(|(index, _)| *index);
+
+    let mut ids = Vec::new();
+    let mut seen = HashSet::new();
+    for (_, id) in values {
+        if seen.insert(id) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+fn array_index(value: luau::Value) -> Option<i64> {
+    match value {
+        luau::Value::Integer(value) if value > 0 => Some(value),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
+            Some(value as i64)
+        }
+        _ => None,
+    }
+}
+
+fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
+    match value {
+        luau::Value::Integer(value) if value > 0 => Ok(Some(DbId(value))),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
+            Ok(Some(DbId(value as i64)))
+        }
+        luau::Value::Integer(_) | luau::Value::Number(_) => Ok(None),
+        other => Err(crate::plugins::runtime_error(format!(
+            "id entries must be positive integers, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn saturating_i64(value: u64) -> i64 {
+    value.min(i64::MAX as u64) as i64
+}
+
+impl LuauTypeInfo for EntryInfo {
+    fn luau_type() -> LuauType {
+        LuauType::named("EntryInfo")
+    }
+}
+
+impl DescribeInterface for EntryInfo {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("EntryInfo", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "db_id",
+                ty: Option::<i64>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "id",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "full_path",
+                ty: Option::<String>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "kind",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "name",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "hash",
+                ty: Option::<String>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "size",
+                ty: u64::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "mtime",
+                ty: u64::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for PlaybackSourceInfo {
+    fn luau_type() -> LuauType {
+        LuauType::named("PlaybackSourceInfo")
+    }
+}
+
+impl DescribeInterface for PlaybackSourceInfo {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("PlaybackSourceInfo", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "track_id",
+                ty: i64::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "source_id",
+                ty: i64::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "source_kind",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "source_key",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "is_primary",
+                ty: bool::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "start_ms",
+                ty: Option::<u64>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "end_ms",
+                ty: Option::<u64>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "is_virtual",
+                ty: bool::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "entry",
+                ty: Option::<EntryInfo>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
+    ParameterDescriptor {
+        name,
+        ty,
+        description: None,
+        variadic: false,
+    }
+}
+
+fn resolve_id_type() -> LuauType {
+    LuauType::union(vec![i64::luau_type(), String::luau_type()])
+}
+
+fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        name: "PlaybackSources",
+        local_name: "playback_sources",
+        description: None,
+        fields: Vec::new(),
+        functions: vec![
+            ModuleFunctionDescriptor {
+                path: vec!["get"],
+                description: None,
+                params: vec![
+                    param("id", LuauType::optional(resolve_id_type())),
+                    param("include_entry", Option::<bool>::luau_type()),
+                ],
+                returns: vec![Vec::<PlaybackSourceInfo>::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get_many"],
+                description: None,
+                params: vec![
+                    param("track_ids", Vec::<u64>::luau_type()),
+                    param("include_entry", Option::<bool>::luau_type()),
+                ],
+                returns: vec![LuauType::map(
+                    u64::luau_type(),
+                    Option::<PlaybackSourceInfo>::luau_type(),
+                )],
+                yields: true,
+            },
+        ],
+    }
+}
+
+pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
+    render_definition_file_with_support(
+        &module_descriptor(),
+        &[],
+        &[
+            EntryInfo::interface_descriptor(),
+            PlaybackSourceInfo::interface_descriptor(),
+        ],
+        &[],
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renders_playback_sources_module_definition() {
+        let rendered = render_luau_definition().expect("render lyra/playback_sources docs");
+
+        assert!(rendered.contains("@interface EntryInfo"));
+        assert!(rendered.contains("@interface PlaybackSourceInfo"));
+        assert!(rendered.contains("entry: EntryInfo?"));
+        assert!(rendered.contains("@class PlaybackSources"));
+        assert!(rendered.contains("@yields"));
+        assert!(rendered.contains(
+            "function playback_sources.get(id: (number | string)?, include_entry: boolean?): {PlaybackSourceInfo}"
+        ));
+        assert!(rendered.contains(
+            "function playback_sources.get_many(track_ids: {number}, include_entry: boolean?): { [number]: PlaybackSourceInfo? }"
+        ));
+    }
+}

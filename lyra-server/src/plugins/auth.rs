@@ -4,36 +4,30 @@
 // www.meshiplaw.com/lyra.
 
 use harmony_core::{
-    LuaAsyncExt,
-    Module,
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
 };
-use mlua::{
-    ExternalResult,
-    Lua,
-    LuaSerdeExt,
-    Result,
-    Value,
+use harmony_luau as luau;
+use harmony_luau::{
+    DescribeInterface,
+    FieldDescriptor,
+    InterfaceDescriptor,
+    LuauType,
+    LuauTypeInfo,
+    ModuleDescriptor,
+    ModuleFunctionDescriptor,
+    ParameterDescriptor,
+    render_definition_file_with_support,
 };
 use serde::Serialize;
 
-use crate::{
-    STATE,
-    plugins::{
-        LUA_SERIALIZE_OPTIONS,
-        caller::RequestCaller,
-    },
-    services::auth::{
-        AuthCredential as ServiceAuthCredential,
-        Principal as ServicePrincipal,
-        ResolvedAuth as ServiceResolvedAuth,
-        login_with_password,
-        logout_with_token,
-        resolve_auth_from_bearer,
-        sessions::SessionMetadata,
-    },
+use crate::services::auth::{
+    AuthCredential as ServiceAuthCredential,
+    Principal as ServicePrincipal,
+    ResolvedAuth as ServiceResolvedAuth,
 };
 
-#[harmony_macros::interface]
 #[derive(Serialize)]
 pub(crate) struct Principal {
     pub(crate) user_id: i64,
@@ -42,7 +36,6 @@ pub(crate) struct Principal {
     pub(crate) permissions: Vec<String>,
 }
 
-#[harmony_macros::interface]
 #[derive(Serialize)]
 pub(crate) struct AuthCredential {
     pub(crate) session_id: Option<i64>,
@@ -50,26 +43,23 @@ pub(crate) struct AuthCredential {
     pub(crate) api_key_name: Option<String>,
 }
 
-#[harmony_macros::interface]
 #[derive(Serialize)]
 pub(crate) struct ResolvedAuth {
     pub(crate) principal: Principal,
     pub(crate) credential: AuthCredential,
 }
 
-#[harmony_macros::interface]
 #[derive(Serialize)]
 struct LoginResult {
     principal: Principal,
     token: String,
 }
 
-#[harmony_macros::interface]
-#[derive(Serialize)]
-struct AuthCapabilities {
-    enabled: bool,
-    allow_default_login_when_disabled: bool,
-    default_username: String,
+#[derive(Clone, Serialize)]
+pub(crate) struct AuthCapabilities {
+    pub(crate) enabled: bool,
+    pub(crate) allow_default_login_when_disabled: bool,
+    pub(crate) default_username: String,
 }
 
 pub(crate) fn to_plugin_principal(principal: ServicePrincipal) -> Principal {
@@ -116,140 +106,297 @@ pub(crate) fn to_plugin_auth(auth: ServiceResolvedAuth) -> ResolvedAuth {
     }
 }
 
-fn normalize_token(token: Option<String>) -> Option<String> {
-    token.and_then(|value| {
-        let trimmed = value.trim().to_string();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
-        }
-    })
-}
-
-pub(crate) fn plugin_auth_to_value(lua: &Lua, auth: ResolvedAuth) -> mlua::Result<Value> {
-    lua.to_value_with(&auth, LUA_SERIALIZE_OPTIONS)
-}
-
-fn auth_to_value(auth: ServiceResolvedAuth) -> mlua::Result<Value> {
-    let lua = STATE.lua.get();
-    plugin_auth_to_value(&lua, to_plugin_auth(auth))
-}
-
 struct AuthModule;
 
-#[harmony_macros::module(
-    plugin_scoped,
-    name = "Auth",
-    local = "auth",
-    path = "lyra/auth",
-    interfaces(AuthCapabilities, Principal, AuthCredential, ResolvedAuth, LoginResult)
-)]
-impl AuthModule {
-    /// Resolves a bearer credential to the authenticated principal and credential metadata.
-    #[harmony(returns(Option<ResolvedAuth>))]
-    pub(crate) async fn resolve_auth(
-        #[harmony_context] _caller: RequestCaller,
-        bearer: Option<String>,
-    ) -> Result<Value> {
-        let bearer = normalize_token(bearer);
+pub(crate) fn module_spec() -> ModuleSpec {
+    let spec = ModuleSpec::new("lyra/auth")
+        .capability("lyra.auth")
+        .function(auth_capabilities_spec())
+        .install(|_| Ok(ModuleExport::new(AuthModule)));
+    spec
+}
 
-        let auth = resolve_auth_from_bearer(bearer.as_deref())
-            .await
-            .into_lua_err()?;
-
-        match auth {
-            Some(auth) => auth_to_value(auth),
-            None => Ok(Value::Nil),
-        }
+fn auth_capabilities_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("capabilities").returns::<AuthCapabilities>();
+    spec.call(auth_capabilities_callback)
+}
+#[derive(Clone)]
+pub(crate) struct AuthCapabilitiesModuleStore {
+    capabilities: AuthCapabilities,
+}
+impl AuthCapabilitiesModuleStore {
+    pub(crate) fn new(capabilities: AuthCapabilities) -> Self {
+        Self { capabilities }
     }
+}
+fn auth_capabilities_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let capabilities = frame
+        .vm
+        .data()
+        .get::<AuthCapabilitiesModuleStore>()?
+        .capabilities
+        .clone();
+    frame
+        .returns
+        .write(auth_capabilities_table(&capabilities))?;
+    Ok(())
+}
+fn auth_capabilities_table(capabilities: &AuthCapabilities) -> luau::OwnedTable {
+    let mut table = luau::OwnedTable::with_capacity(0, 3);
+    table.set_field("enabled", luau::Value::Boolean(capabilities.enabled));
+    table.set_field(
+        "allow_default_login_when_disabled",
+        luau::Value::Boolean(capabilities.allow_default_login_when_disabled),
+    );
+    table.set_field(
+        "default_username",
+        luau::Value::String(capabilities.default_username.clone().into_bytes()),
+    );
+    table
+}
 
-    /// Revokes the session identified by the provided token.
-    pub(crate) async fn logout_session(
-        #[harmony_context] _caller: RequestCaller,
-        token: Option<String>,
-    ) -> Result<bool> {
-        let token = normalize_token(token);
-        logout_with_token(token.as_deref()).await.into_lua_err()
-    }
-
-    /// Attempts to log in and returns a principal plus session token.
-    #[harmony(returns(Option<LoginResult>))]
-    pub(crate) async fn login(
-        #[harmony_context] _caller: RequestCaller,
-        username: String,
-        password: Option<String>,
-        user_agent: Option<String>,
-        client_name: Option<String>,
-    ) -> Result<Value> {
-        let username = username.trim().to_string();
-        if username.is_empty() {
-            return Ok(Value::Nil);
-        }
-
-        let password = password.unwrap_or_default();
-        let metadata = SessionMetadata {
-            user_agent,
-            client_name,
-        };
-        let login_result = login_with_password(&username, &password, metadata)
-            .await
-            .into_lua_err()?;
-
-        match login_result {
-            Some(login_result) => {
-                let lua = STATE.lua.get();
-                let login_result = LoginResult {
-                    principal: to_plugin_principal(login_result.principal),
-                    token: login_result.token,
-                };
-                lua.to_value_with(&login_result, LUA_SERIALIZE_OPTIONS)
-            }
-            None => Ok(Value::Nil),
-        }
-    }
-
-    /// Returns the current authentication capabilities.
-    #[harmony(returns(AuthCapabilities))]
-    pub(crate) fn capabilities() -> Result<Value> {
-        let lua = STATE.lua.get();
-        let config = STATE.config.get();
-        let capabilities = AuthCapabilities {
-            enabled: config.auth.enabled,
-            allow_default_login_when_disabled: config.auth.allow_default_login_when_disabled,
-            default_username: config.auth.default_username.clone(),
-        };
-        lua.to_value_with(&capabilities, LUA_SERIALIZE_OPTIONS)
+impl LuauTypeInfo for Principal {
+    fn luau_type() -> LuauType {
+        LuauType::literal("Principal")
     }
 }
 
-pub(crate) fn get_module() -> Module {
-    Module {
-        path: "lyra/auth".into(),
-        setup: std::sync::Arc::new(|lua: &Lua| Ok(AuthModule::_harmony_module_table(lua)?)),
-        scope: harmony_core::Scope {
-            id: "lyra.auth".into(),
-            description: "Manage authentication sessions and tokens.",
-            danger: harmony_core::Danger::High,
-        },
+impl DescribeInterface for Principal {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("Principal", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "user_id",
+                ty: i64::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "username",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "role",
+                ty: Option::<String>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "permissions",
+                ty: Vec::<String>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for AuthCredential {
+    fn luau_type() -> LuauType {
+        LuauType::literal("AuthCredential")
+    }
+}
+
+impl DescribeInterface for AuthCredential {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("AuthCredential", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "session_id",
+                ty: Option::<i64>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "api_key_id",
+                ty: Option::<i64>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "api_key_name",
+                ty: Option::<String>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for ResolvedAuth {
+    fn luau_type() -> LuauType {
+        LuauType::literal("ResolvedAuth")
+    }
+}
+
+impl DescribeInterface for ResolvedAuth {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("ResolvedAuth", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "principal",
+                ty: Principal::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "credential",
+                ty: AuthCredential::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for LoginResult {
+    fn luau_type() -> LuauType {
+        LuauType::literal("LoginResult")
+    }
+}
+
+impl DescribeInterface for LoginResult {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("LoginResult", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "principal",
+                ty: Principal::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "token",
+                ty: String::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for AuthCapabilities {
+    fn luau_type() -> LuauType {
+        LuauType::literal("AuthCapabilities")
+    }
+}
+
+impl DescribeInterface for AuthCapabilities {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("AuthCapabilities", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "enabled",
+                ty: bool::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "allow_default_login_when_disabled",
+                ty: bool::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "default_username",
+                ty: String::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
+    ParameterDescriptor {
+        name,
+        ty,
+        description: None,
+        variadic: false,
+    }
+}
+
+fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        name: "Auth",
+        local_name: "auth",
+        description: None,
+        fields: Vec::new(),
+        functions: vec![
+            ModuleFunctionDescriptor {
+                path: vec!["resolve_auth"],
+                description: Some(
+                    "Resolves a bearer credential to the authenticated principal and credential metadata.",
+                ),
+                params: vec![param("bearer", Option::<String>::luau_type())],
+                returns: vec![Option::<ResolvedAuth>::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["logout_session"],
+                description: Some("Revokes the session identified by the provided token."),
+                params: vec![param("token", Option::<String>::luau_type())],
+                returns: vec![bool::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["login"],
+                description: Some("Attempts to log in and returns a principal plus session token."),
+                params: vec![
+                    param("username", String::luau_type()),
+                    param("password", Option::<String>::luau_type()),
+                    param("user_agent", Option::<String>::luau_type()),
+                    param("client_name", Option::<String>::luau_type()),
+                ],
+                returns: vec![Option::<LoginResult>::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["capabilities"],
+                description: Some("Returns the current authentication capabilities."),
+                params: Vec::new(),
+                returns: vec![AuthCapabilities::luau_type()],
+                yields: false,
+            },
+        ],
     }
 }
 
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    AuthModule::render_luau_definition()
+    render_definition_file_with_support(
+        &module_descriptor(),
+        &[],
+        &[
+            AuthCapabilities::interface_descriptor(),
+            Principal::interface_descriptor(),
+            AuthCredential::interface_descriptor(),
+            ResolvedAuth::interface_descriptor(),
+            LoginResult::interface_descriptor(),
+        ],
+        &[],
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_token;
+    use super::*;
 
     #[test]
-    fn normalize_token_trims_empty_values_to_none() {
-        assert_eq!(normalize_token(None), None);
-        assert_eq!(normalize_token(Some("  ".to_string())), None);
-        assert_eq!(
-            normalize_token(Some("  abc123  ".to_string())).as_deref(),
-            Some("abc123")
-        );
+    fn exposes_handwritten_module_spec() {
+        let spec = module_spec();
+
+        assert_eq!(spec.id.0.as_ref(), "lyra/auth");
+        assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "lyra.auth");
+        {
+            assert_eq!(spec.functions.len(), 1);
+            assert_eq!(spec.functions[0].name.as_ref(), "capabilities");
+            assert!(!spec.functions[0].yields);
+        }
+    }
+
+    #[test]
+    fn renders_auth_module_definition() {
+        let rendered = render_luau_definition().expect("render lyra/auth docs");
+
+        assert!(rendered.contains("@class Auth"));
+        assert!(rendered.contains("@interface Principal"));
+        assert!(rendered.contains("@interface AuthCredential"));
+        assert!(rendered.contains("@interface ResolvedAuth"));
+        assert!(rendered.contains("@interface LoginResult"));
+        assert!(rendered.contains("@interface AuthCapabilities"));
+        assert!(rendered.contains("function auth.capabilities(): AuthCapabilities"));
     }
 }

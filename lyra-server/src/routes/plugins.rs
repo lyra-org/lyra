@@ -40,8 +40,8 @@ use crate::{
             PluginId,
             PluginRestartError,
         },
-        runtime::{
-            self,
+        settings::{
+            self as plugin_settings_registry,
             FieldDefinition,
             FieldGroupDefinition,
             FieldProps,
@@ -56,13 +56,13 @@ use crate::{
             require_authenticated,
             require_manage_plugins,
         },
-        plugin_settings as settings,
+        plugin_settings as settings_service,
     },
 };
 
 fn map_settings_state_error(error: anyhow::Error) -> AppError {
     if error
-        .downcast_ref::<settings::InvalidStoredSettings>()
+        .downcast_ref::<settings_service::InvalidStoredSettings>()
         .is_some()
     {
         AppError::conflict(format!("{error:#}"))
@@ -311,7 +311,7 @@ fn group_to_response(
 }
 
 async fn load_registered_schema(plugin_id: &str, scope: SettingsScope) -> Result<Schema, AppError> {
-    let registry = runtime::REGISTRY.read().await;
+    let registry = plugin_settings_registry::REGISTRY.read().await;
     let typed_id = crate::plugins::lifecycle::PluginId::new(plugin_id.to_string())
         .map_err(|_| AppError::not_found(format!("plugin not found: {plugin_id}")))?;
     if !registry.is_frozen_for_plugin(&typed_id) && registry.get_schema(plugin_id, scope).is_none()
@@ -330,9 +330,12 @@ async fn load_settings_response(
     plugin_id: String,
     schema: Schema,
 ) -> Result<Json<PluginSettingsResponse>, AppError> {
-    let stored =
-        settings::load_validated_stored_values(&*STATE.db.read().await, &plugin_id, &schema)
-            .map_err(map_settings_state_error)?;
+    let stored = settings_service::load_validated_stored_values(
+        &*STATE.db.read().await,
+        &plugin_id,
+        &schema,
+    )
+    .map_err(map_settings_state_error)?;
     let groups = schema
         .groups
         .iter()
@@ -374,9 +377,9 @@ fn build_entry(
 
     let stored = match user_db_id {
         Some(user_db_id) => {
-            settings::load_validated_user_stored_values(db, user_db_id, plugin_id, schema)
+            settings_service::load_validated_user_stored_values(db, user_db_id, plugin_id, schema)
         }
-        None => settings::load_validated_stored_values(db, plugin_id, schema),
+        None => settings_service::load_validated_stored_values(db, plugin_id, schema),
     };
     let stored = match stored {
         Ok(values) => values,
@@ -416,7 +419,7 @@ async fn collect_settings_entries(
     user_db_id: Option<DbId>,
 ) -> PluginSettingsListResponse {
     let manifests = STATE.plugin_manifests.get();
-    let registry = runtime::REGISTRY.read().await;
+    let registry = plugin_settings_registry::REGISTRY.read().await;
     let db = STATE.db.read().await;
 
     let entries = manifests
@@ -483,9 +486,9 @@ async fn update_settings(
 ) -> Result<Json<PluginSettingsResponse>, AppError> {
     let _principal = require_manage_plugins(&headers).await?;
     let schema = load_registered_schema(&plugin_id, SettingsScope::Global).await?;
-    let changes = settings::validate_updates(&schema, &request.values)
+    let changes = settings_service::validate_updates(&schema, &request.values)
         .map_err(|error| AppError::bad_request(error.to_string()))?;
-    settings::apply_updates(&mut *STATE.db.write().await, &plugin_id, &schema, &changes)
+    settings_service::apply_updates(&mut *STATE.db.write().await, &plugin_id, &schema, &changes)
         .map_err(map_settings_state_error)?;
 
     load_settings_response(plugin_id, schema).await
@@ -496,7 +499,7 @@ async fn delete_settings(
     Path(plugin_id): Path<String>,
 ) -> Result<(), AppError> {
     let _principal = require_manage_plugins(&headers).await?;
-    settings::clear_stored_values(&mut *STATE.db.write().await, &plugin_id)?;
+    settings_service::clear_stored_values(&mut *STATE.db.write().await, &plugin_id)?;
     Ok(())
 }
 
@@ -505,7 +508,7 @@ async fn load_user_settings_response(
     user_db_id: agdb::DbId,
     schema: Schema,
 ) -> Result<Json<PluginSettingsResponse>, AppError> {
-    let stored = settings::load_validated_user_stored_values(
+    let stored = settings_service::load_validated_user_stored_values(
         &*STATE.db.read().await,
         user_db_id,
         &plugin_id,
@@ -537,9 +540,9 @@ async fn update_user_settings(
 ) -> Result<Json<PluginSettingsResponse>, AppError> {
     let principal = require_authenticated(&headers).await?;
     let schema = load_registered_schema(&plugin_id, SettingsScope::User).await?;
-    let changes = settings::validate_updates(&schema, &request.values)
+    let changes = settings_service::validate_updates(&schema, &request.values)
         .map_err(|error| AppError::bad_request(error.to_string()))?;
-    settings::apply_user_updates(
+    settings_service::apply_user_updates(
         &mut *STATE.db.write().await,
         principal.user_db_id,
         &plugin_id,
@@ -556,7 +559,7 @@ async fn delete_user_settings(
     Path(plugin_id): Path<String>,
 ) -> Result<(), AppError> {
     let principal = require_authenticated(&headers).await?;
-    settings::clear_user_stored_values(
+    settings_service::clear_user_stored_values(
         &mut *STATE.db.write().await,
         principal.user_db_id,
         &plugin_id,
@@ -898,7 +901,8 @@ mod tests {
     #[tokio::test]
     async fn load_registered_schema_returns_service_unavailable_while_registry_populates() {
         let _guard = REGISTRY_TEST_GUARD.lock().await;
-        runtime::initialize_registry().await;
+        let _runtime_guard = runtime_test_lock().await;
+        plugin_settings_registry::initialize_registry().await;
 
         let response = load_registered_schema("demo", SettingsScope::Global)
             .await
@@ -911,8 +915,9 @@ mod tests {
     #[tokio::test]
     async fn load_registered_schema_returns_not_found_after_registry_freezes() {
         let _guard = REGISTRY_TEST_GUARD.lock().await;
-        runtime::initialize_registry().await;
-        runtime::freeze_registry().await;
+        let _runtime_guard = runtime_test_lock().await;
+        plugin_settings_registry::initialize_registry().await;
+        plugin_settings_registry::freeze_registry().await;
 
         let response = load_registered_schema("demo", SettingsScope::Global)
             .await
@@ -920,6 +925,7 @@ mod tests {
             .into_response();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        plugin_settings_registry::initialize_registry().await;
     }
 
     fn empty_schema() -> Schema {

@@ -255,13 +255,13 @@ fn apply_to_release(release: &mut Release, merged: &MergedMetadata) -> bool {
 
     if let Some(title) = merged.fields.get("release_title").and_then(|v| v.as_str()) {
         if release.release_title != title {
-            release.release_title = title.to_string();
+            release.set_release_title(title.to_string());
             changed = true;
         }
     }
     if let Some(sort_title) = merged.fields.get("sort_title").and_then(|v| v.as_str()) {
         if release.sort_title.as_deref() != Some(sort_title) {
-            release.sort_title = Some(sort_title.to_string());
+            release.set_sort_title(sort_title.to_string());
             changed = true;
         }
     }
@@ -281,9 +281,9 @@ fn apply_to_release(release: &mut Release, merged: &MergedMetadata) -> bool {
         .and_then(|v| v.as_str())
         .and_then(db::releases::normalize_release_date)
     {
-        let next = Some(release_date);
+        let next = Some(release_date.clone());
         if release.release_date != next {
-            release.release_date = next;
+            release.set_release_date(release_date);
             changed = true;
         }
     }
@@ -296,48 +296,48 @@ fn apply_to_track(track: &mut Track, merged: &MergedMetadata) -> bool {
 
     if let Some(title) = merged.fields.get("track_title").and_then(|v| v.as_str()) {
         if track.track_title != title {
-            track.track_title = title.to_string();
+            track.set_track_title(title.to_string());
             changed = true;
         }
     }
     if let Some(sort_title) = merged.fields.get("sort_title").and_then(|v| v.as_str()) {
         if track.sort_title.as_deref() != Some(sort_title) {
-            track.sort_title = Some(sort_title.to_string());
+            track.set_sort_title(sort_title.to_string());
             changed = true;
         }
     }
     if let Some(year) = merged.fields.get("year").and_then(|v| v.as_u64()) {
         let next = Some(year as u32);
         if track.year != next {
-            track.year = next;
+            track.set_year(year as u32);
             changed = true;
         }
     }
     if let Some(disc) = merged.fields.get("disc").and_then(|v| v.as_u64()) {
         let next = Some(disc as u32);
         if track.disc != next {
-            track.disc = next;
+            track.set_disc(disc as u32);
             changed = true;
         }
     }
     if let Some(disc_total) = merged.fields.get("disc_total").and_then(|v| v.as_u64()) {
         let next = Some(disc_total as u32);
         if track.disc_total != next {
-            track.disc_total = next;
+            track.set_disc_total(disc_total as u32);
             changed = true;
         }
     }
     if let Some(track_num) = merged.fields.get("track").and_then(|v| v.as_u64()) {
         let next = Some(track_num as u32);
         if track.track != next {
-            track.track = next;
+            track.set_track(track_num as u32);
             changed = true;
         }
     }
     if let Some(track_total) = merged.fields.get("track_total").and_then(|v| v.as_u64()) {
         let next = Some(track_total as u32);
         if track.track_total != next {
-            track.track_total = next;
+            track.set_track_total(track_total as u32);
             changed = true;
         }
     }
@@ -350,7 +350,7 @@ fn apply_to_artist(artist: &mut Artist, merged: &MergedMetadata) -> bool {
 
     if let Some(name) = merged.fields.get("artist_name").and_then(|v| v.as_str()) {
         if artist.artist_name != name {
-            artist.artist_name = name.to_string();
+            artist.set_artist_name(name.to_string());
             changed = true;
         }
     }
@@ -365,7 +365,7 @@ fn apply_to_artist(artist: &mut Artist, merged: &MergedMetadata) -> bool {
                         "ignoring merged artist_type that conflicts with existing artist type"
                     );
                 } else if artist.artist_type != Some(at) {
-                    artist.artist_type = Some(at);
+                    artist.set_artist_type(at);
                     changed = true;
                 }
             }
@@ -379,13 +379,13 @@ fn apply_to_artist(artist: &mut Artist, merged: &MergedMetadata) -> bool {
     }
     if let Some(sort_name) = merged.fields.get("sort_name").and_then(|v| v.as_str()) {
         if artist.sort_name.as_deref() != Some(sort_name) {
-            artist.sort_name = Some(sort_name.to_string());
+            artist.set_sort_name(sort_name.to_string());
             changed = true;
         }
     }
     if let Some(description) = merged.fields.get("description").and_then(|v| v.as_str()) {
         if artist.description.as_deref() != Some(description) {
-            artist.description = Some(description.to_string());
+            artist.set_description(description.to_string());
             changed = true;
         }
     }

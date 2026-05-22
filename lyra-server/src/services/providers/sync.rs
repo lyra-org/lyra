@@ -36,7 +36,7 @@ pub(crate) async fn run_provider_sync(provider_id: &str) -> Result<(), ProviderS
     {
         let registry = PROVIDER_REGISTRY.read().await;
         if registry
-            .get_refresh_handler(provider_id, EntityType::Release)
+            .get_refresh_callback(provider_id, EntityType::Release)
             .is_none()
         {
             return Err(ProviderServiceError::NoRefreshHandler(

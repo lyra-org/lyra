@@ -33,7 +33,6 @@ use super::{
 };
 
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug, JsonSchema)]
-#[harmony_macros::structure]
 pub(crate) struct Track {
     pub(crate) db_id: Option<NodeId>,
     pub(crate) id: String,
@@ -54,7 +53,6 @@ pub(crate) struct Track {
     pub(crate) ctime: Option<u64>,
 }
 
-#[harmony_macros::implementation]
 impl Track {
     pub(crate) fn set_track_title(&mut self, track_title: String) {
         self.track_title = track_title;
@@ -89,7 +87,39 @@ impl Track {
     }
 }
 
-harmony_macros::compile!(type_path = Track, fields = true, methods = true);
+impl_luau_record_userdata!(
+    Track,
+    "Track",
+    fields {
+        db_id: Option<NodeId> as "db_id",
+        id: String as "id",
+        track_title: String as "track_title",
+        sort_title: Option<String> as "sort_title",
+        year: Option<u32> as "year",
+        disc: Option<u32> as "disc",
+        disc_total: Option<u32> as "disc_total",
+        track: Option<u32> as "track",
+        track_total: Option<u32> as "track_total",
+        duration_ms: Option<u64> as "duration_ms",
+        sample_rate_hz: Option<u32> as "sample_rate_hz",
+        channel_count: Option<u32> as "channel_count",
+        bit_depth: Option<u32> as "bit_depth",
+        bitrate_bps: Option<u32> as "bitrate_bps",
+        locked: Option<bool> as "locked",
+        created_at: Option<u64> as "created_at",
+        ctime: Option<u64> as "ctime",
+    },
+    methods {
+        set_track_title(track_title: String),
+        set_sort_title(sort_title: String),
+        set_year(year: u32),
+        set_disc(disc: u32),
+        set_disc_total(disc_total: u32),
+        set_track(track: u32),
+        set_track_total(track_total: u32),
+        set_duration_ms(duration_ms: u64),
+    }
+);
 
 pub(crate) fn get(db: &DbAny, from: impl Into<QueryId>) -> anyhow::Result<Vec<Track>> {
     let tracks: Vec<Track> = db

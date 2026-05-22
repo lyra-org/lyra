@@ -69,8 +69,10 @@ type RecordingResult = {
 }
 type Layer = metadata.Layer
 type EnsureArtistRequest = metadata.EnsureArtistRequest
+type ArtistType = metadata.ArtistType
 type Provider = metadata.Provider
 
+local ArtistType = metadata.ArtistType
 local provider: Provider? = nil
 local module = {}
 
@@ -1062,6 +1064,27 @@ local function select_best_release(
 	return best
 end
 
+local function artist_type_for_musicbrainz(mb_artist_type: string?): ArtistType?
+	if mb_artist_type == nil then
+		return nil
+	end
+
+	local normalized_type = string.lower(mb_artist_type)
+	if normalized_type == "person" then
+		return ArtistType.Person
+	elseif normalized_type == "group" then
+		return ArtistType.Group
+	elseif normalized_type == "character" then
+		return ArtistType.Character
+	elseif normalized_type == "orchestra" then
+		return ArtistType.Orchestra
+	elseif normalized_type == "choir" then
+		return ArtistType.Choir
+	end
+
+	return nil
+end
+
 local function set_artist_metadata(db_id: number?, mb_artist: ReleaseArtist?): boolean
 	local current_provider = provider
 	if not db_id or mb_artist == nil or not mb_artist.id or current_provider == nil then
@@ -1097,8 +1120,9 @@ local function ensure_artist_entity(mb_artist: ReleaseArtist?): number?
 	if mb_artist["sort-name"] then
 		request.sort_name = mb_artist["sort-name"]
 	end
-	if mb_artist["type"] then
-		request.artist_type = string.lower(mb_artist["type"])
+	local artist_type = artist_type_for_musicbrainz(mb_artist["type"])
+	if artist_type then
+		request.artist_type = artist_type
 	end
 	local ok, artist_id = pcall(current_provider.ensure_artist, current_provider, request)
 	if not ok or not artist_id then
@@ -1110,7 +1134,7 @@ end
 type ArtistRelationType = metadata.ArtistRelationType
 local ArtistRelationType = metadata.ArtistRelationType
 
-local MB_ARTIST_RELATION_MAP: { [string]: ArtistRelationType } = {
+local MB_ARTIST_RELATION_MAP: { [string]: ArtistRelationType? } = {
 	["voice actor"] = ArtistRelationType.VoiceActor,
 	["member of band"] = ArtistRelationType.MemberOf,
 }
@@ -1303,7 +1327,7 @@ end
 type CreditType = metadata.CreditType
 local CreditType = metadata.CreditType
 
-local MB_RELATION_TO_CREDIT: { [string]: { type: CreditType, detail: string? } } = {
+local MB_RELATION_TO_CREDIT: { [string]: { type: CreditType, detail: string? }? } = {
 	-- performance
 	vocal = { type = CreditType.Vocalist },
 	instrument = { type = CreditType.Instrumentalist },
@@ -1374,8 +1398,7 @@ local function joinphrase_opens_character_voice(joinphrase: string?): boolean
 		return false
 	end
 	local trimmed = string.gsub(joinphrase, "^%s+", "")
-	return string.find(trimmed, "^%([cC][vV][:%.%s]") ~= nil
-		or string.find(trimmed, "^（[cC][vV]：") ~= nil
+	return string.find(trimmed, "^%([cC][vV][:%.%s]") ~= nil or string.find(trimmed, "^（[cC][vV]：") ~= nil
 end
 
 local function joinphrase_closes_credit_group(joinphrase: string?): boolean

@@ -16,7 +16,6 @@ use serde::Serialize;
 use super::NodeId;
 
 #[derive(DbElement, Serialize, Clone, Debug)]
-#[harmony_macros::structure]
 pub(crate) struct DataStore {
     #[serde(skip)]
     pub(crate) db_id: Option<NodeId>,

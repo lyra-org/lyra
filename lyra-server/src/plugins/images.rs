@@ -14,17 +14,28 @@ use anyhow::{
     Result,
     anyhow,
 };
-use harmony_core::LuaAsyncExt;
+use harmony_core::{
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
+};
+use harmony_luau as luau;
+use harmony_luau::{
+    DescribeInterface,
+    FieldDescriptor,
+    InterfaceDescriptor,
+    LuauType,
+    LuauTypeInfo,
+    ModuleDescriptor,
+    ModuleFunctionDescriptor,
+    ParameterDescriptor,
+    render_definition_file_with_support,
+};
 use image::{
     DynamicImage,
     GenericImageView,
     RgbImage,
     codecs::jpeg::JpegEncoder,
-};
-use mlua::{
-    ExternalResult,
-    Lua,
-    Value,
 };
 use serde::Deserialize;
 
@@ -32,7 +43,6 @@ const CACHE_DIR: &str = ".lyra/cache/images";
 const DEFAULT_QUALITY: u8 = 90;
 
 #[derive(Deserialize)]
-#[harmony_macros::interface]
 struct ComposeOptions {
     sources: Vec<String>,
     width: Option<u32>,
@@ -40,7 +50,6 @@ struct ComposeOptions {
     quality: Option<u8>,
 }
 
-#[harmony_macros::interface]
 struct ComposeResult {
     path: String,
     hash: String,
@@ -170,97 +179,281 @@ fn file_hash(data: &[u8]) -> String {
 
 struct ImagesModule;
 
-#[harmony_macros::module(
-    plugin_scoped,
-    name = "Images",
-    local = "images",
-    path = "lyra/images",
-    interfaces(ComposeOptions, ComposeResult)
-)]
-impl ImagesModule {
-    /// Compose multiple source images into a single grid image.
-    /// Returns a cached result with path, hash, and mime_type.
-    #[harmony(args(options: ComposeOptions), returns(ComposeResult))]
-    pub(crate) async fn compose(
-        lua: Lua,
-        _plugin_id: Option<Arc<str>>,
-        options: Value,
-    ) -> mlua::Result<Value> {
-        let options: ComposeOptions = crate::plugins::from_lua_json_value(&lua, options)?;
-        let sources: Vec<String> = options
-            .sources
-            .into_iter()
-            .filter(|p| !p.is_empty())
-            .collect();
+async fn compose_impl(options: ComposeOptions) -> Result<ComposeResult> {
+    let sources: Vec<String> = options
+        .sources
+        .into_iter()
+        .filter(|p| !p.is_empty())
+        .collect();
 
-        if sources.is_empty() {
-            return Err(mlua::Error::runtime(
-                "sources must be a non-empty array of file paths",
+    if sources.is_empty() {
+        return Err(anyhow!("sources must be a non-empty array of file paths"));
+    }
+
+    let width: u32 = options.width.unwrap_or(600);
+    let height: u32 = options.height.unwrap_or(600);
+    let quality: u8 = options.quality.unwrap_or(DEFAULT_QUALITY);
+
+    let key = cache_key(&sources, width, height, quality);
+    let cache_path = cache_dir().join(format!("{key}.jpg"));
+
+    // Check cache first.
+    if cache_path.is_file() {
+        if let Ok(data) = std::fs::read(&cache_path) {
+            return Ok(ComposeResult {
+                path: cache_path.to_string_lossy().to_string(),
+                hash: file_hash(&data),
+                mime_type: "image/jpeg".to_string(),
+            });
+        }
+    }
+
+    let sources_owned = sources.clone();
+    let cache_path_owned = cache_path.clone();
+
+    let (_data, hash) = tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, String)> {
+        let data = compose_grid(&sources_owned, width, height, quality)?;
+        let hash = file_hash(&data);
+        ensure_cache_dir()?;
+        // Atomic write: write to temp file then rename to avoid
+        // concurrent writers producing a corrupt cached file.
+        let tmp_path =
+            cache_path_owned.with_extension(format!("tmp.{:?}", std::thread::current().id()));
+        std::fs::write(&tmp_path, &data).with_context(|| {
+            format!(
+                "failed to write composed image to temp file: {}",
+                tmp_path.display()
+            )
+        })?;
+        std::fs::rename(&tmp_path, &cache_path_owned).with_context(|| {
+            format!(
+                "failed to rename temp file to cache: {}",
+                cache_path_owned.display()
+            )
+        })?;
+        Ok((data, hash))
+    })
+    .await
+    .map_err(|err| anyhow!("compose task failed: {err}"))??;
+
+    Ok(ComposeResult {
+        path: cache_path.to_string_lossy().to_string(),
+        hash,
+        mime_type: "image/jpeg".to_string(),
+    })
+}
+fn compose_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let options_table: luau::Table = frame.args.read_named("options")?;
+    let options = parse_compose_options(frame.vm, &options_table)?;
+    Ok(luau::ScheduledFuture::new(async move {
+        let result = compose_impl(options)
+            .await
+            .map_err(|error| luau::Error::Runtime(error.to_string()))?;
+        Ok(luau::Value::TableData(result.into_luau_table()))
+    }))
+}
+fn parse_compose_options(
+    vm: &luau::Vm,
+    table: &luau::Table,
+) -> luau::runtime::Result<ComposeOptions> {
+    Ok(ComposeOptions {
+        sources: parse_sources(vm, table)?,
+        width: parse_optional_u32(vm, table, "width")?,
+        height: parse_optional_u32(vm, table, "height")?,
+        quality: parse_optional_u8(vm, table, "quality")?,
+    })
+}
+fn parse_sources(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
+    let luau::Value::Table(sources) = table.get_raw(vm, "sources")? else {
+        return Err(luau::Error::Runtime(
+            "images.compose options.sources must be an array".to_string(),
+        ));
+    };
+
+    let mut indexed = Vec::new();
+    for (key, value) in sources.pairs_raw(vm)? {
+        let index = match key {
+            luau::Value::Integer(value) if value > 0 => value,
+            luau::Value::Number(value) if value > 0.0 => value as i64,
+            _ => continue,
+        };
+        let luau::Value::String(value) = value else {
+            return Err(luau::Error::Runtime(
+                "images.compose options.sources entries must be strings".to_string(),
             ));
+        };
+        indexed.push((
+            index,
+            String::from_utf8(value).map_err(|error| {
+                luau::Error::Runtime(format!(
+                    "images.compose options.sources entries must be valid UTF-8: {error}"
+                ))
+            })?,
+        ));
+    }
+    indexed.sort_by_key(|(index, _)| *index);
+    Ok(indexed.into_iter().map(|(_, value)| value).collect())
+}
+fn parse_optional_u32(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<Option<u32>> {
+    match table.get_raw(vm, field)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::Integer(value) if value >= 0 && value <= i64::from(u32::MAX) => {
+            Ok(Some(value as u32))
         }
-
-        let width: u32 = options.width.unwrap_or(600);
-        let height: u32 = options.height.unwrap_or(600);
-        let quality: u8 = options.quality.unwrap_or(DEFAULT_QUALITY);
-
-        let key = cache_key(&sources, width, height, quality);
-        let cache_path = cache_dir().join(format!("{key}.jpg"));
-
-        // Check cache first.
-        if cache_path.is_file() {
-            if let Ok(data) = std::fs::read(&cache_path) {
-                let hash = file_hash(&data);
-                let table = lua.create_table()?;
-                table.set("path", cache_path.to_string_lossy().to_string())?;
-                table.set("hash", hash)?;
-                table.set("mime_type", "image/jpeg")?;
-                return Ok(Value::Table(table));
-            }
+        luau::Value::Number(value) if value >= 0.0 && value <= f64::from(u32::MAX) => {
+            Ok(Some(value as u32))
         }
-
-        let sources_owned = sources.clone();
-        let cache_path_owned = cache_path.clone();
-
-        let (_data, hash) = tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, String)> {
-            let data = compose_grid(&sources_owned, width, height, quality)?;
-            let hash = file_hash(&data);
-            ensure_cache_dir()?;
-            // Atomic write: write to temp file then rename to avoid
-            // concurrent writers producing a corrupt cached file.
-            let tmp_path =
-                cache_path_owned.with_extension(format!("tmp.{:?}", std::thread::current().id()));
-            std::fs::write(&tmp_path, &data).with_context(|| {
-                format!(
-                    "failed to write composed image to temp file: {}",
-                    tmp_path.display()
-                )
-            })?;
-            std::fs::rename(&tmp_path, &cache_path_owned).with_context(|| {
-                format!(
-                    "failed to rename temp file to cache: {}",
-                    cache_path_owned.display()
-                )
-            })?;
-            Ok((data, hash))
+        other => Err(luau::Error::Runtime(format!(
+            "images.compose options.{field} must be a non-negative number, got {}",
+            other.type_name()
+        ))),
+    }
+}
+fn parse_optional_u8(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<Option<u8>> {
+    parse_optional_u32(vm, table, field)?.map_or(Ok(None), |value| {
+        u8::try_from(value).map(Some).map_err(|_| {
+            luau::Error::Runtime(format!("images.compose options.{field} must fit in u8"))
         })
-        .await
-        .map_err(|err| mlua::Error::runtime(format!("compose task failed: {err}")))?
-        .into_lua_err()?;
+    })
+}
 
-        let table = lua.create_table()?;
-        table.set("path", cache_path.to_string_lossy().to_string())?;
-        table.set("hash", hash)?;
-        table.set("mime_type", "image/jpeg")?;
-        Ok(Value::Table(table))
+impl ComposeResult {
+    fn into_luau_table(self) -> luau::OwnedTable {
+        let mut table = luau::OwnedTable::with_capacity(0, 3);
+        table.set_field("path", luau::Value::String(self.path.into_bytes()));
+        table.set_field("hash", luau::Value::String(self.hash.into_bytes()));
+        table.set_field(
+            "mime_type",
+            luau::Value::String(self.mime_type.into_bytes()),
+        );
+        table
     }
 }
 
-crate::plugins::plugin_surface_exports!(
-    ImagesModule,
-    "lyra.images",
-    "Read and manipulate images.",
-    Low
-);
+pub(crate) fn module_spec() -> ModuleSpec {
+    ModuleSpec::new("lyra/images")
+        .capability("lyra.images")
+        .function(compose_spec())
+        .install(|_| Ok(ModuleExport::new(ImagesModule)))
+}
+
+fn compose_spec() -> FunctionSpec {
+    let spec = FunctionSpec::async_fn("compose")
+        .arg_name("options")
+        .args::<ComposeOptions>()
+        .returns::<ComposeResult>();
+    spec.call_async(Arc::new(compose_callback))
+}
+
+impl LuauTypeInfo for ComposeOptions {
+    fn luau_type() -> LuauType {
+        LuauType::literal("ComposeOptions")
+    }
+}
+
+impl DescribeInterface for ComposeOptions {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("ComposeOptions", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "sources",
+                ty: Vec::<String>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "width",
+                ty: Option::<u32>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "height",
+                ty: Option::<u32>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "quality",
+                ty: Option::<u8>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+impl LuauTypeInfo for ComposeResult {
+    fn luau_type() -> LuauType {
+        LuauType::literal("ComposeResult")
+    }
+}
+
+impl DescribeInterface for ComposeResult {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("ComposeResult", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "path",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "hash",
+                ty: String::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "mime_type",
+                ty: String::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
+fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        name: "Images",
+        local_name: "images",
+        description: None,
+        fields: Vec::new(),
+        functions: vec![ModuleFunctionDescriptor {
+            path: vec!["compose"],
+            description: Some(
+                "Compose multiple source images into a single grid image. Returns a cached result with path, hash, and mime_type.",
+            ),
+            params: vec![ParameterDescriptor {
+                name: "options",
+                ty: ComposeOptions::luau_type(),
+                description: None,
+                variadic: false,
+            }],
+            returns: vec![ComposeResult::luau_type()],
+            yields: true,
+        }],
+    }
+}
+
+pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
+    render_definition_file_with_support(
+        &module_descriptor(),
+        &[],
+        &[
+            ComposeOptions::interface_descriptor(),
+            ComposeResult::interface_descriptor(),
+        ],
+        &[],
+    )
+}
 
 #[cfg(test)]
 mod tests {
@@ -295,5 +488,28 @@ mod tests {
         let a = cache_key(&sources, 600, 600, 90);
         let b = cache_key(&sources, 300, 300, 90);
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn exposes_handwritten_module_spec() {
+        let spec = module_spec();
+
+        assert_eq!(spec.id.0.as_ref(), "lyra/images");
+        assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "lyra.images");
+        assert_eq!(spec.functions.len(), 1);
+        assert_eq!(spec.functions[0].name.as_ref(), "compose");
+        assert!(spec.functions[0].yields);
+    }
+
+    #[test]
+    fn renders_images_module_definition() {
+        let rendered = render_luau_definition().expect("render lyra/images docs");
+
+        assert!(rendered.contains("@class Images"));
+        assert!(rendered.contains("@interface ComposeOptions"));
+        assert!(rendered.contains("@interface ComposeResult"));
+        assert!(
+            rendered.contains("function images.compose(options: ComposeOptions): ComposeResult")
+        );
     }
 }

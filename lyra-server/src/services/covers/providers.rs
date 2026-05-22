@@ -16,14 +16,12 @@ use agdb::{
     DbId,
 };
 use anyhow::{
+    Context,
     Result,
     anyhow,
 };
-use mlua::LuaSerdeExt;
-use mlua::Value as LuaValue;
 use serde_json::Value;
 use std::sync::LazyLock;
-use tokio::sync::oneshot;
 
 use crate::{
     STATE,
@@ -34,6 +32,7 @@ use crate::{
         Release,
         Track,
     },
+    plugins::executor::MetadataRefreshRequest,
     services::providers::{
         PROVIDER_REGISTRY,
         ProviderCallStage,
@@ -67,12 +66,6 @@ pub(crate) enum ProviderSearchError {
     },
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
-}
-
-impl From<mlua::Error> for ProviderSearchError {
-    fn from(value: mlua::Error) -> Self {
-        Self::Internal(anyhow::Error::from(value))
-    }
 }
 
 impl From<serde_json::Error> for ProviderSearchError {
@@ -141,14 +134,8 @@ struct CachedProviderCoverSearchResult {
     expires_at: Instant,
 }
 
-#[derive(Debug)]
-enum ProviderCoverSearchCacheEntry {
-    Ready(CachedProviderCoverSearchResult),
-    Pending(Vec<oneshot::Sender<()>>),
-}
-
 static PROVIDER_COVER_SEARCH_CACHE: LazyLock<
-    tokio::sync::Mutex<HashMap<ProviderCoverSearchCacheKey, ProviderCoverSearchCacheEntry>>,
+    tokio::sync::Mutex<HashMap<ProviderCoverSearchCacheKey, CachedProviderCoverSearchResult>>,
 > = LazyLock::new(|| tokio::sync::Mutex::new(HashMap::new()));
 
 pub(crate) async fn clear_cover_search_cache() {
@@ -306,45 +293,67 @@ fn normalize_provider_search_result(
 pub(crate) async fn search_provider(
     request: ProviderSearchRequest<'_>,
 ) -> std::result::Result<Vec<NormalizedProviderSearchResult>, ProviderSearchError> {
-    let registry = PROVIDER_REGISTRY.read().await;
-    let handler = registry
-        .get_search_handler(request.provider_id, request.entity_type)
-        .ok_or_else(|| ProviderSearchError::NoSearchHandler {
+    let handler_id = {
+        let registry = PROVIDER_REGISTRY.read().await;
+        registry
+            .get_search_callback(request.provider_id, request.entity_type)
+            .map(|handler| handler.handler_id)
+    };
+    let Some(handler_id) = handler_id else {
+        return Err(ProviderSearchError::NoSearchHandler {
             provider_id: request.provider_id.to_string(),
             entity_type: request.entity_type.as_str(),
-        })?
-        .clone();
-    drop(registry);
+        });
+    };
 
-    let results: Vec<LuaValue> = handler
-        .call_async::<_, Vec<LuaValue>>(request.query.to_string())
-        .await?;
-    let include_cover_urls = request.include_cover_urls
-        && matches!(
-            request.entity_type,
-            EntityType::Release | EntityType::Artist
-        );
+    let provider_id = request.provider_id.to_string();
+    let entity_type = request.entity_type;
+    let include_cover_urls = request.include_cover_urls;
+    let force_refresh = request.force_refresh;
+    let query = request.query.to_string();
 
-    let mut normalized = Vec::with_capacity(results.len());
-    for result in results {
-        let json_value = serde_json::to_value(&result)?;
+    let result = with_provider_call(
+        &provider_id.clone(),
+        ProviderCallStage::MetadataRefresh,
+        || {
+            let provider_id = provider_id.clone();
+            async move {
+                let runtime = STATE
+                    .plugin_runtime
+                    .get()
+                    .context("plugin runtime is not initialized")?;
+                runtime
+                    .dispatch_metadata_refresh(MetadataRefreshRequest {
+                        handler_id,
+                        context: serde_json::Value::String(query),
+                    })
+                    .await
+                    .with_context(|| format!("provider search handler failed for '{provider_id}'"))
+            }
+        },
+    )
+    .await?;
+
+    let values = flatten_search_values(result.values);
+    let mut normalized = Vec::with_capacity(values.len());
+    for value in values {
         let resolved_cover_url = if include_cover_urls {
-            let ids = as_ids(&json_value).unwrap_or_default();
+            let ids = as_ids(&value).unwrap_or_default();
             if ids.is_empty() {
                 None
             } else {
                 match resolve_provider_cover_url(
-                    request.provider_id,
-                    request.entity_type,
+                    &provider_id,
+                    entity_type,
                     &serde_json::json!({ "ids": ids }),
-                    request.force_refresh,
+                    force_refresh,
                 )
                 .await
                 {
                     Ok(url) => url,
                     Err(err) => {
                         tracing::warn!(
-                            provider = request.provider_id,
+                            provider = provider_id,
                             error = %err,
                             "provider cover URL lookup failed during search response build"
                         );
@@ -355,16 +364,26 @@ pub(crate) async fn search_provider(
         } else {
             None
         };
-
         normalized.push(normalize_provider_search_result(
-            request.entity_type,
-            json_value,
+            entity_type,
+            value,
             include_cover_urls,
             resolved_cover_url,
         ));
     }
-
     Ok(normalized)
+}
+
+fn flatten_search_values(values: Vec<Value>) -> Vec<Value> {
+    if values.len() == 1
+        && let Some(array) = values.first().and_then(Value::as_array)
+    {
+        return array.clone();
+    }
+    values
+        .into_iter()
+        .filter(|value| !value.is_null())
+        .collect()
 }
 
 pub(crate) fn extract_cover_url(result: &Value) -> Option<String> {
@@ -669,176 +688,21 @@ pub(crate) fn artist_context_value(
     Ok(context)
 }
 
-async fn resolve_provider_cover_search_result_uncached(
-    provider_id: &str,
-    entity_type: EntityType,
-    context: &Value,
-    force_refresh: bool,
-) -> Result<Option<super::ProviderCoverSearchResult>> {
-    let cover_specs = {
-        let registry = PROVIDER_REGISTRY.read().await;
-        registry.get_cover_handlers(provider_id, entity_type)
-    };
-
-    for cover_spec in cover_specs {
-        if !cover_requirements_match(context, &cover_spec.require) {
-            continue;
-        }
-
-        let Some(lua) = cover_spec.handler.try_upgrade_lua() else {
-            tracing::warn!(
-                provider_id,
-                "cover handler's lua instance is no longer valid, skipping"
-            );
-            continue;
-        };
-        let handler_context = cover_handler_context(context, force_refresh);
-        let lua_ctx = lua
-            .to_value_with(&handler_context, crate::plugins::LUA_SERIALIZE_OPTIONS)
-            .map_err(anyhow::Error::from)?;
-        let timeout = if cover_spec.timeout.is_zero() {
-            DEFAULT_COVER_HANDLER_TIMEOUT
-        } else {
-            cover_spec.timeout
-        };
-        let result: LuaValue =
-            with_provider_call(provider_id, ProviderCallStage::CoverSearch, || async {
-                let call = cover_spec.handler.call_async::<_, LuaValue>(lua_ctx);
-                match tokio::time::timeout(timeout, call).await {
-                    Ok(Ok(value)) => Ok(value),
-                    Ok(Err(err)) => Err(err.into()),
-                    Err(_elapsed) => Err(anyhow!(
-                        "cover handler for provider '{provider_id}' timed out after {}ms",
-                        timeout.as_millis()
-                    )),
-                }
-            })
-            .await?;
-        let value = serde_json::to_value(&result)?;
-        if value.is_null() {
-            continue;
-        }
-        let Some(search_result) = parse_cover_search_result(&value) else {
-            continue;
-        };
-        return Ok(Some(search_result));
-    }
-
-    Ok(None)
-}
-
-async fn resolve_provider_cover_search_result(
-    provider_id: &str,
-    entity_type: EntityType,
-    context: &Value,
-    force_refresh: bool,
-) -> Result<Option<super::ProviderCoverSearchResult>> {
-    {
-        let registry = PROVIDER_REGISTRY.read().await;
-        if registry
-            .get_cover_handlers(provider_id, entity_type)
-            .is_empty()
-        {
-            return Ok(None);
-        }
-    }
-
-    let cache_key = provider_cover_cache_key(provider_id, entity_type, context);
-
-    loop {
-        let pending = {
-            let now = Instant::now();
-            let mut cache = PROVIDER_COVER_SEARCH_CACHE.lock().await;
-            cache.retain(|_, entry| match entry {
-                ProviderCoverSearchCacheEntry::Ready(cached) => cached.expires_at > now,
-                ProviderCoverSearchCacheEntry::Pending(_) => true,
-            });
-
-            match cache.get_mut(&cache_key) {
-                Some(ProviderCoverSearchCacheEntry::Ready(cached)) if !force_refresh => {
-                    return Ok(cached.result.clone());
-                }
-                Some(ProviderCoverSearchCacheEntry::Ready(_)) => {
-                    cache.insert(
-                        cache_key.clone(),
-                        ProviderCoverSearchCacheEntry::Pending(Vec::new()),
-                    );
-                    None
-                }
-                Some(ProviderCoverSearchCacheEntry::Pending(waiters)) => {
-                    let (sender, receiver) = oneshot::channel();
-                    waiters.push(sender);
-                    Some(receiver)
-                }
-                None => {
-                    cache.insert(
-                        cache_key.clone(),
-                        ProviderCoverSearchCacheEntry::Pending(Vec::new()),
-                    );
-                    None
-                }
-            }
-        };
-
-        if let Some(receiver) = pending {
-            let _ = receiver.await;
-            continue;
-        }
-
-        break;
-    }
-
-    let result = resolve_provider_cover_search_result_uncached(
-        provider_id,
-        entity_type,
-        context,
-        force_refresh,
-    )
-    .await;
-    let waiters = {
-        let mut cache = PROVIDER_COVER_SEARCH_CACHE.lock().await;
-        match &result {
-            Ok(search_result) => {
-                let entry = ProviderCoverSearchCacheEntry::Ready(CachedProviderCoverSearchResult {
-                    result: search_result.clone(),
-                    expires_at: Instant::now() + provider_cover_cache_ttl(search_result),
-                });
-                match cache.insert(cache_key, entry) {
-                    Some(ProviderCoverSearchCacheEntry::Pending(waiters)) => waiters,
-                    _ => Vec::new(),
-                }
-            }
-            Err(_) => match cache.remove(&cache_key) {
-                Some(ProviderCoverSearchCacheEntry::Pending(waiters)) => waiters,
-                _ => Vec::new(),
-            },
-        }
-    };
-
-    for waiter in waiters {
-        let _ = waiter.send(());
-    }
-
-    result
-}
-
 pub(crate) async fn resolve_provider_cover_url(
     provider_id: &str,
     entity_type: EntityType,
     context: &Value,
     force_refresh: bool,
 ) -> Result<Option<String>> {
-    let Some(search_result) =
-        resolve_provider_cover_search_result(provider_id, entity_type, context, force_refresh)
+    Ok(
+        search_provider_cover(provider_id, entity_type, context, force_refresh)
             .await?
-    else {
-        return Ok(None);
-    };
-
-    let selected = search_result
-        .selected_candidate()
-        .or_else(|| search_result.candidates.first());
-    Ok(selected.map(|candidate| candidate.url.clone()))
+            .and_then(|result| {
+                result
+                    .selected_candidate()
+                    .map(|candidate| candidate.url.clone())
+            }),
+    )
 }
 
 pub(crate) async fn resolve_provider_release_cover_url(
@@ -865,32 +729,133 @@ async fn search_cover_candidates_for_contexts(
 ) -> Result<Vec<super::ProviderCoverSearchResult>> {
     let mut results = Vec::new();
     for (provider_id, context) in provider_contexts {
-        match resolve_provider_cover_search_result(
-            &provider_id,
-            entity_type,
-            &context,
-            force_refresh,
-        )
-        .await
-        {
-            Ok(Some(mut search_result)) => {
-                search_result.provider_id = provider_id;
-                results.push(search_result);
-            }
+        match search_provider_cover(&provider_id, entity_type, &context, force_refresh).await {
+            Ok(Some(result)) => results.push(result),
             Ok(None) => {}
             Err(err) => {
                 tracing::warn!(
-                    provider = %provider_id,
+                    provider_id,
                     entity_type = entity_type.as_str(),
                     entity_id = entity_id.0,
                     error = %err,
-                    "provider cover candidate search failed"
+                    "provider cover search failed"
                 );
             }
         }
     }
-
     Ok(results)
+}
+
+async fn search_provider_cover(
+    provider_id: &str,
+    entity_type: EntityType,
+    context: &Value,
+    force_refresh: bool,
+) -> Result<Option<super::ProviderCoverSearchResult>> {
+    let cache_key = provider_cover_cache_key(provider_id, entity_type, context);
+    if !force_refresh && let Some(cached) = provider_cover_cache_get(&cache_key).await {
+        return Ok(cached);
+    }
+
+    let spec = {
+        let registry = PROVIDER_REGISTRY.read().await;
+        registry
+            .get_cover_handler(provider_id, entity_type)
+            .cloned()
+    };
+    let Some(spec) = spec else {
+        provider_cover_cache_put(cache_key, None).await;
+        return Ok(None);
+    };
+    if !cover_requirements_match(context, &spec.require) {
+        provider_cover_cache_put(cache_key, None).await;
+        return Ok(None);
+    }
+
+    let provider_id_owned = provider_id.to_string();
+    let handler_id = spec.handler.handler_id;
+    let timeout = spec.timeout;
+    let handler_context = cover_handler_context(context, force_refresh);
+    let dispatch = with_provider_call(
+        &provider_id_owned.clone(),
+        ProviderCallStage::CoverSearch,
+        || {
+            let provider_id = provider_id_owned.clone();
+            async move {
+                let runtime = STATE
+                    .plugin_runtime
+                    .get()
+                    .context("plugin runtime is not initialized")?;
+                tokio::time::timeout(timeout, async move {
+                    runtime
+                        .dispatch_metadata_refresh(MetadataRefreshRequest {
+                            handler_id,
+                            context: handler_context,
+                        })
+                        .await
+                })
+                .await
+                .with_context(|| {
+                    format!(
+                        "provider cover handler for '{}' timed out after {}ms",
+                        provider_id,
+                        timeout.as_millis()
+                    )
+                })?
+            }
+        },
+    )
+    .await?;
+
+    tracing::trace!(
+        provider_id,
+        entity_type = entity_type.as_str(),
+        priority = spec.priority,
+        "provider cover handler returned"
+    );
+
+    let mut result = dispatch
+        .values
+        .first()
+        .and_then(parse_cover_search_result)
+        .map(|mut result| {
+            result.provider_id = provider_id.to_string();
+            result
+        });
+    if result
+        .as_ref()
+        .is_some_and(|result| result.candidates.is_empty())
+    {
+        result = None;
+    }
+    provider_cover_cache_put(cache_key, result.clone()).await;
+    Ok(result)
+}
+
+async fn provider_cover_cache_get(
+    key: &ProviderCoverSearchCacheKey,
+) -> Option<Option<super::ProviderCoverSearchResult>> {
+    let mut cache = PROVIDER_COVER_SEARCH_CACHE.lock().await;
+    let now = Instant::now();
+    match cache.get(key) {
+        Some(entry) if entry.expires_at > now => Some(entry.result.clone()),
+        Some(_) => {
+            cache.remove(key);
+            None
+        }
+        None => None,
+    }
+}
+
+async fn provider_cover_cache_put(
+    key: ProviderCoverSearchCacheKey,
+    result: Option<super::ProviderCoverSearchResult>,
+) {
+    let expires_at = Instant::now() + provider_cover_cache_ttl(&result);
+    PROVIDER_COVER_SEARCH_CACHE
+        .lock()
+        .await
+        .insert(key, CachedProviderCoverSearchResult { result, expires_at });
 }
 
 pub(crate) async fn search_release_cover_candidates(
@@ -996,6 +961,112 @@ mod tests {
     use nanoid::nanoid;
     use serde_json::json;
     use std::path::PathBuf;
+    use std::time::{
+        SystemTime,
+        UNIX_EPOCH,
+    };
+
+    struct TempSearchPluginDir {
+        plugins_dir: PathBuf,
+    }
+
+    impl TempSearchPluginDir {
+        fn new() -> anyhow::Result<Self> {
+            let root = std::env::temp_dir().join(format!(
+                "lyra-search-plugin-test-{}-{}",
+                std::process::id(),
+                SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+            ));
+            let plugin_dir = root.join("searchtest");
+            std::fs::create_dir_all(&plugin_dir)?;
+            std::fs::write(
+                plugin_dir.join("plugin.json"),
+                r#"{
+                    "schema_version": 1,
+                    "id": "searchtest",
+                    "name": "Search Test",
+                    "version": "1.0.0",
+                    "description": "Search callback contract test",
+                    "entrypoint": "init.luau",
+                    "scopes": ["lyra.metadata"]
+                }"#,
+            )?;
+            std::fs::write(
+                plugin_dir.join("init.luau"),
+                r#"
+                    local metadata = require("@lyra/metadata")
+                    local provider = metadata.Provider.new("searchtest")
+
+                    provider:search(metadata.EntityType.Release, function(query)
+                        if type(query) ~= "string" then
+                            error("expected string query, got " .. type(query))
+                        end
+                        return {
+                            {
+                                title = "Search: " .. query,
+                                redirect_url = "https://example.test/releases/" .. query,
+                                ids = {
+                                    release_id = query,
+                                },
+                            },
+                        }
+                    end)
+                "#,
+            )?;
+            Ok(Self { plugins_dir: root })
+        }
+    }
+
+    impl Drop for TempSearchPluginDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.plugins_dir);
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_search_dispatches_query_string_to_handler() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
+            directory: std::env::temp_dir(),
+            language: None,
+            country: None,
+        })
+        .await?;
+        let plugins = TempSearchPluginDir::new()?;
+        let server_info = crate::plugins::server::load_server_info().await?;
+        let (runtime, errors) =
+            crate::plugins::executor::PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
+                plugins.plugins_dir.clone(),
+                server_info,
+                STATE.db.get(),
+                Vec::new(),
+            )?;
+        assert!(errors.is_empty(), "{errors:?}");
+        runtime.exec_plugin("searchtest").await?;
+        crate::plugins::bootstrap::publish_runtime(runtime.clone());
+
+        let results = search_provider(ProviderSearchRequest {
+            provider_id: "searchtest",
+            entity_type: EntityType::Release,
+            query: "loveless",
+            include_cover_urls: false,
+            force_refresh: false,
+        })
+        .await?;
+
+        assert_eq!(results.len(), 1);
+        let NormalizedProviderSearchResult::Release(result) = &results[0] else {
+            panic!("expected release search result");
+        };
+        assert_eq!(result.title, "Search: loveless");
+        assert_eq!(
+            result.ids.as_ref().and_then(|ids| ids.get("release_id")),
+            Some(&"loveless".to_string())
+        );
+
+        crate::STATE.plugin_runtime.replace(None);
+        Ok(())
+    }
 
     #[test]
     fn cover_requirements_match_handles_all_of_and_any_of() {

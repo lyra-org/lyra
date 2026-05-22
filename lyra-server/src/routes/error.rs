@@ -246,7 +246,6 @@ internal_app_error_from!(
     argon2::password_hash::Error,
     axum::http::Error,
     lyra_ffmpeg::Error,
-    mlua::Error,
     serde_json::Error,
     std::io::Error,
     tokio::task::JoinError,

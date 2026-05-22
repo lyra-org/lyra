@@ -3,210 +3,385 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
-
 use harmony_core::{
-    LuaAsyncExt,
-    LuaUserDataAsyncExt,
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
 };
-use harmony_luau::JsonValue;
-use mlua::{
-    LuaSerdeExt,
-    Result,
-};
-
-use crate::{
-    STATE,
-    plugins::db::{
-        self,
-        DataStore,
-    },
-    plugins::{
-        LUA_SERIALIZE_OPTIONS,
-        from_lua_json_value,
-    },
+use harmony_luau as luau;
+use harmony_luau::{
+    DescribeTypeAlias,
+    DescribeUserData,
+    JsonValue,
+    LuauType,
+    LuauTypeInfo,
+    ModuleDescriptor,
+    ModuleFunctionDescriptor,
+    ParameterDescriptor,
+    render_definition_file_with_support,
 };
 
-#[harmony_macros::implementation(plugin_scoped)]
-impl DataStore {
-    /// Gets a JSON value from this store by key.
-    #[harmony(returns(Option<JsonValue>))]
-    pub(crate) async fn get(
+use crate::plugins::db::DbAsync;
+use crate::plugins::db::{
+    self,
+    DataStore,
+};
+struct PluginCaller;
+
+fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
+    ParameterDescriptor {
+        name,
+        ty,
+        description: None,
+        variadic: false,
+    }
+}
+
+struct DataStoreModule;
+
+#[harmony_macros::userdata(name = "DataStore", description = "A named persistent JSON store.")]
+#[derive(Clone)]
+struct DataStoreHandle {
+    store: DataStoreModuleStore,
+    datastore_id: agdb::DbId,
+}
+
+#[harmony_macros::userdata_methods]
+impl DataStoreHandle {
+    #[harmony(
+        description = "Gets a JSON value from this store by key.",
+        args(key: String),
+        returns(Option<JsonValue>)
+    )]
+    fn get(&self, vm: &luau::Vm, key: String) -> luau::runtime::Result<luau::Value> {
+        self.store.get(vm, self.datastore_id, key)
+    }
+
+    #[harmony(
+        description = "Sets a JSON value in this store by key.",
+        args(key: String, value: JsonValue)
+    )]
+    fn set(&self, vm: &luau::Vm, key: String, value: luau::Value) -> luau::runtime::Result<()> {
+        let json = harmony_json::luau_to_json(vm, &value, 0)?;
+        self.store.set(self.datastore_id, key, json)
+    }
+
+    #[harmony(
+        description = "Removes an entry from this store by key. Returns whether a value was removed."
+    )]
+    fn remove(&self, key: String) -> luau::runtime::Result<bool> {
+        self.store.remove(self.datastore_id, key)
+    }
+
+    #[harmony(
+        description = "Gets multiple JSON values from this store under one read lock.",
+        args(keys: Vec<String>),
+        returns(Vec<Option<JsonValue>>)
+    )]
+    fn get_many(
         &self,
-        _plugin_id: Option<Arc<str>>,
-        key: String,
-    ) -> anyhow::Result<Option<mlua::Value>> {
-        let datastore_id = self
-            .db_id
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("datastore missing db_id"))?
-            .into();
+        vm: &luau::Vm,
+        keys: luau::Table,
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let keys = read_string_array(vm, &keys)?;
+        self.store.get_many(vm, self.datastore_id, keys)
+    }
 
-        let raw_value = {
-            let db = &*STATE.db.read().await;
-            match db::datastore::get_entry(db, datastore_id, &key)? {
-                Some(entry) => entry.value,
-                None => return Ok(None),
+    #[harmony(
+        description = "Writes multiple JSON values to this store under one write lock.",
+        args(entries: std::collections::BTreeMap<String, JsonValue>)
+    )]
+    fn set_many(&self, vm: &luau::Vm, entries: luau::Table) -> luau::runtime::Result<()> {
+        let entries = read_json_entries(vm, &entries)?;
+        self.store.set_many(self.datastore_id, entries)
+    }
+
+    #[harmony(description = "Removes every entry from this store. Returns the number removed.")]
+    fn clear(&self) -> luau::runtime::Result<i64> {
+        self.store
+            .clear(self.datastore_id)
+            .map(|removed| removed as i64)
+    }
+}
+
+pub(crate) fn module_spec() -> ModuleSpec {
+    ModuleSpec::new("lyra/datastore")
+        .capability("lyra.datastore")
+        .function(get_or_create_spec())
+        .userdata(DataStoreHandle::_harmony_userdata_spec())
+        .install(|_| Ok(ModuleExport::new(DataStoreModule)))
+}
+
+fn get_or_create_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("get_or_create")
+        .context::<PluginCaller>()
+        .named_arg::<String>("name")
+        .returns::<DataStoreHandle>();
+    spec.call(get_or_create_callback)
+}
+
+fn get_or_create_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let name: String = frame.args.read_named("name")?;
+    let store = frame
+        .vm
+        .data()
+        .get::<DataStoreModuleStore>()?
+        .as_ref()
+        .clone();
+    let datastore_id = store.get_or_create(name)?;
+    let userdata = DataStoreHandle::_harmony_userdata_class().create(
+        frame.vm,
+        &frame.context.origin,
+        DataStoreHandle {
+            store,
+            datastore_id,
+        },
+    )?;
+    frame.returns.write(userdata)?;
+    Ok(())
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct DataStoreModuleStore {
+    db: Option<DbAsync>,
+}
+impl DataStoreModuleStore {
+    pub(crate) fn empty() -> Self {
+        Self { db: None }
+    }
+
+    pub(crate) fn with_db(db: DbAsync) -> Self {
+        Self { db: Some(db) }
+    }
+
+    fn get_or_create(&self, name: String) -> luau::runtime::Result<agdb::DbId> {
+        let db = self.db()?;
+        {
+            let db = futures::executor::block_on(db.read());
+            if let Some(existing) =
+                db::datastore::find_by_name(&db, &name).map_err(crate::plugins::runtime_error)?
+            {
+                return datastore_db_id(existing);
             }
+        }
+
+        let mut db = futures::executor::block_on(db.write());
+        let datastore =
+            db::datastore::get_or_create(&mut db, name).map_err(crate::plugins::runtime_error)?;
+        datastore_db_id(datastore)
+    }
+
+    fn get(
+        &self,
+        vm: &luau::Vm,
+        datastore_id: agdb::DbId,
+        key: String,
+    ) -> luau::runtime::Result<luau::Value> {
+        let stored_value = {
+            let db = self.db()?;
+            let db = futures::executor::block_on(db.read());
+            db::datastore::get_entry(&db, datastore_id, &key)
+                .map_err(crate::plugins::runtime_error)?
+                .map(|entry| entry.value)
         };
-
-        let json: serde_json::Value = serde_json::from_str(&raw_value)?;
-        let lua = STATE.lua.get();
-        Ok(Some(lua.to_value_with(&json, LUA_SERIALIZE_OPTIONS)?))
+        let Some(stored_value) = stored_value else {
+            return Ok(luau::Value::Nil);
+        };
+        let json: serde_json::Value =
+            serde_json::from_str(&stored_value).map_err(crate::plugins::runtime_error)?;
+        harmony_json::json_to_luau(vm, json, 0)
     }
 
-    /// Sets a JSON value in this store by key.
-    #[harmony(args(key: String, value: JsonValue))]
-    pub(crate) async fn set(
+    fn set(
         &self,
-        _plugin_id: Option<Arc<str>>,
+        datastore_id: agdb::DbId,
         key: String,
-        value: mlua::Value,
-    ) -> anyhow::Result<()> {
-        let datastore_id = self
-            .db_id
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("datastore missing db_id"))?
-            .into();
-        let lua = STATE.lua.get();
-        let json: serde_json::Value = from_lua_json_value(lua.as_ref(), value)?;
-        let json_str = serde_json::to_string(&json)?;
-
-        let db = &mut *STATE.db.write().await;
-        db::datastore::upsert_entry(db, datastore_id, key, json_str)?;
-
-        Ok(())
+        json: serde_json::Value,
+    ) -> luau::runtime::Result<()> {
+        let json = serde_json::to_string(&json).map_err(crate::plugins::runtime_error)?;
+        let db = self.db()?;
+        let mut db = futures::executor::block_on(db.write());
+        db::datastore::upsert_entry(&mut db, datastore_id, key, json)
+            .map(|_| ())
+            .map_err(crate::plugins::runtime_error)
     }
 
-    /// Removes an entry from this store by key. Returns whether a value was removed.
-    pub(crate) async fn remove(
-        &self,
-        _plugin_id: Option<Arc<str>>,
-        key: String,
-    ) -> anyhow::Result<bool> {
-        let datastore_id = self
-            .db_id
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("datastore missing db_id"))?
-            .into();
-
-        let db = &mut *STATE.db.write().await;
-        db::datastore::remove_entry(db, datastore_id, &key)
+    fn remove(&self, datastore_id: agdb::DbId, key: String) -> luau::runtime::Result<bool> {
+        let db = self.db()?;
+        let mut db = futures::executor::block_on(db.write());
+        db::datastore::remove_entry(&mut db, datastore_id, &key)
+            .map_err(crate::plugins::runtime_error)
     }
 
-    /// Gets multiple JSON values from this store under one read lock.
-    /// Returns an array parallel to `keys` with `nil` for missing entries.
-    #[harmony(args(keys: Vec<String>), returns(Vec<Option<JsonValue>>))]
-    pub(crate) async fn get_many(
+    fn get_many(
         &self,
-        _plugin_id: Option<Arc<str>>,
+        vm: &luau::Vm,
+        datastore_id: agdb::DbId,
         keys: Vec<String>,
-    ) -> anyhow::Result<Vec<Option<mlua::Value>>> {
-        let datastore_id = self
-            .db_id
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("datastore missing db_id"))?
-            .into();
-
-        let raw_values = {
-            let db = &*STATE.db.read().await;
+    ) -> luau::runtime::Result<luau::OwnedTable> {
+        let stored_values = {
+            let db = self.db()?;
+            let db = futures::executor::block_on(db.read());
             let mut out = Vec::with_capacity(keys.len());
             for key in &keys {
-                out.push(db::datastore::get_entry(db, datastore_id, key)?.map(|entry| entry.value));
+                out.push(
+                    db::datastore::get_entry(&db, datastore_id, key)
+                        .map_err(crate::plugins::runtime_error)?
+                        .map(|entry| entry.value),
+                );
             }
             out
         };
 
-        let lua = STATE.lua.get();
-        let mut results = Vec::with_capacity(raw_values.len());
-        for raw in raw_values {
-            match raw {
-                Some(s) => {
-                    let json: serde_json::Value = serde_json::from_str(&s)?;
-                    results.push(Some(lua.to_value_with(&json, LUA_SERIALIZE_OPTIONS)?));
+        let mut table = luau::OwnedTable::with_capacity(stored_values.len(), 0);
+        for stored_value in stored_values {
+            let value = match stored_value {
+                Some(stored_value) => {
+                    let json: serde_json::Value = serde_json::from_str(&stored_value)
+                        .map_err(crate::plugins::runtime_error)?;
+                    harmony_json::json_to_luau(vm, json, 0)?
                 }
-                None => results.push(None),
-            }
+                None => luau::Value::Nil,
+            };
+            table.push_array(value);
         }
-        Ok(results)
+        Ok(table)
     }
 
-    /// Writes multiple JSON values to this store under one write lock.
-    #[harmony(args(entries: std::collections::BTreeMap<String, JsonValue>))]
-    pub(crate) async fn set_many(
+    fn set_many(
         &self,
-        _plugin_id: Option<Arc<str>>,
-        entries: std::collections::BTreeMap<String, mlua::Value>,
-    ) -> anyhow::Result<()> {
-        let datastore_id = self
-            .db_id
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("datastore missing db_id"))?
-            .into();
-
-        let lua = STATE.lua.get();
+        datastore_id: agdb::DbId,
+        entries: Vec<(String, serde_json::Value)>,
+    ) -> luau::runtime::Result<()> {
         let mut prepared = Vec::with_capacity(entries.len());
         for (key, value) in entries {
-            let json: serde_json::Value = from_lua_json_value(lua.as_ref(), value)?;
-            prepared.push((key, serde_json::to_string(&json)?));
+            prepared.push((
+                key,
+                serde_json::to_string(&value).map_err(crate::plugins::runtime_error)?,
+            ));
         }
 
-        let db = &mut *STATE.db.write().await;
-        for (key, json_str) in prepared {
-            db::datastore::upsert_entry(db, datastore_id, key, json_str)?;
+        let db = self.db()?;
+        let mut db = futures::executor::block_on(db.write());
+        for (key, value) in prepared {
+            db::datastore::upsert_entry(&mut db, datastore_id, key, value)
+                .map_err(crate::plugins::runtime_error)?;
         }
         Ok(())
     }
 
-    /// Removes every entry from this store. Returns the number removed.
-    pub(crate) async fn clear(&self, _plugin_id: Option<Arc<str>>) -> anyhow::Result<u64> {
-        let datastore_id = self
-            .db_id
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("datastore missing db_id"))?
-            .into();
+    fn clear(&self, datastore_id: agdb::DbId) -> luau::runtime::Result<u64> {
+        let db = self.db()?;
+        let mut db = futures::executor::block_on(db.write());
+        db::datastore::clear_entries(&mut db, datastore_id)
+            .map(|removed| removed as u64)
+            .map_err(crate::plugins::runtime_error)
+    }
 
-        let db = &mut *STATE.db.write().await;
-        let removed = db::datastore::clear_entries(db, datastore_id)?;
-        Ok(removed as u64)
+    fn db(&self) -> luau::runtime::Result<DbAsync> {
+        self.db.clone().ok_or_else(|| {
+            luau::Error::Runtime("lyra/datastore database is unavailable".to_string())
+        })
+    }
+}
+fn datastore_db_id(datastore: DataStore) -> luau::runtime::Result<agdb::DbId> {
+    datastore
+        .db_id
+        .map(Into::into)
+        .ok_or_else(|| luau::Error::Runtime("datastore missing db_id".to_string()))
+}
+
+fn read_string_array(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
+    let entries = table.reader(vm)?.array_values_raw()?;
+    let mut values = Vec::with_capacity(entries.len());
+    for value in entries {
+        let luau::Value::String(value) = value else {
+            return Err(luau::Error::Runtime(
+                "datastore key arrays must contain only strings".to_string(),
+            ));
+        };
+        values.push(String::from_utf8(value).map_err(crate::plugins::runtime_error)?);
+    }
+    Ok(values)
+}
+
+fn read_json_entries(
+    vm: &luau::Vm,
+    table: &luau::Table,
+) -> luau::runtime::Result<Vec<(String, serde_json::Value)>> {
+    let mut entries = Vec::new();
+    for (key, value) in table.pairs_raw(vm)? {
+        let luau::Value::String(key) = key else {
+            return Err(luau::Error::Runtime(
+                "datastore entry keys must be strings".to_string(),
+            ));
+        };
+        let key = String::from_utf8(key).map_err(crate::plugins::runtime_error)?;
+        let value = harmony_json::luau_to_json(vm, &value, 0)?;
+        entries.push((key, value));
+    }
+    Ok(entries)
+}
+fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        name: "DataStore",
+        local_name: "datastore",
+        description: None,
+        fields: Vec::new(),
+        functions: vec![ModuleFunctionDescriptor {
+            path: vec!["get_or_create"],
+            description: Some("Returns a named data store, creating it if needed."),
+            params: vec![param("name", String::luau_type())],
+            returns: vec![DataStoreHandle::luau_type()],
+            yields: false,
+        }],
     }
 }
 
-harmony_macros::compile!(type_path = DataStore, fields = false, methods = true);
-
-struct DataStoreModule;
-
-#[harmony_macros::module(
-    plugin_scoped,
-    name = "DataStore",
-    local = "datastore",
-    path = "lyra/datastore",
-    aliases(JsonValue),
-    classes(DataStore)
-)]
-impl DataStoreModule {
-    /// Returns a named data store, creating it if needed.
-    pub(crate) async fn get_or_create(
-        _plugin_id: Option<Arc<str>>,
-        name: String,
-    ) -> Result<DataStore> {
-        {
-            let db = STATE.db.read().await;
-            if let Some(existing) = db::datastore::find_by_name(&db, &name)
-                .map_err(|err| mlua::Error::runtime(err.to_string()))?
-            {
-                return Ok(existing);
-            }
-        }
-
-        let datastore = db::datastore::get_or_create(&mut *STATE.db.write().await, name)?;
-        Ok(datastore)
-    }
+pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
+    render_definition_file_with_support(
+        &module_descriptor(),
+        &[JsonValue::type_alias_descriptor()],
+        &[],
+        &[DataStoreHandle::class_descriptor()],
+    )
 }
 
-crate::plugins::plugin_surface_exports!(
-    DataStoreModule,
-    "lyra.datastore",
-    "Read and write this plugin's private key-value store.",
-    High
-);
+#[cfg(test)]
+mod spec_tests {
+    use super::*;
+
+    #[test]
+    fn exposes_module_spec_with_userdata() {
+        let spec = module_spec();
+
+        assert_eq!(spec.id.0.as_ref(), "lyra/datastore");
+        assert_eq!(
+            spec.capability.as_ref().unwrap().0.as_ref(),
+            "lyra.datastore"
+        );
+        assert_eq!(spec.functions.len(), 1);
+        assert_eq!(spec.functions[0].name.as_ref(), "get_or_create");
+        assert!(
+            spec.functions[0]
+                .context_type
+                .is_some_and(|name| name.contains("PluginCaller"))
+        );
+        assert_eq!(spec.userdata.len(), 1);
+        assert_eq!(spec.userdata[0].name.as_ref(), "DataStore");
+        assert_eq!(spec.userdata[0].methods.len(), 6);
+        assert!(spec.userdata[0].methods.iter().all(|method| !method.yields));
+    }
+
+    #[test]
+    fn renders_datastore_module_definition() {
+        let rendered = render_luau_definition().expect("render lyra/datastore docs");
+
+        assert!(rendered.contains("@class DataStore"));
+        assert!(rendered.contains("@type JsonValue"));
+        assert!(rendered.contains("function datastore.get_or_create(name: string): DataStore"));
+        assert!(rendered.contains("get: (self: DataStore, key: string) -> JsonValue?"));
+        assert!(rendered.contains("set: (self: DataStore, key: string, value: JsonValue)"));
+        assert!(rendered.contains("clear: (self: DataStore) -> number"));
+    }
+}

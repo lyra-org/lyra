@@ -54,7 +54,7 @@ use crate::services::playback_sessions::{
 
 const NATIVE_SOURCE_ID: &str = "native";
 
-async fn send_raw(socket: &mut WebSocket, msg: Message) -> bool {
+async fn send_message(socket: &mut WebSocket, msg: Message) -> bool {
     tokio::time::timeout(WRITE_TIMEOUT, socket.send(msg))
         .await
         .is_ok_and(|r| r.is_ok())
@@ -65,7 +65,7 @@ async fn send(socket: &mut WebSocket, msg: OutgoingMessage) -> bool {
         Ok(text) => text,
         Err(_) => return false,
     };
-    send_raw(socket, Message::Text(text.into())).await
+    send_message(socket, Message::Text(text.into())).await
 }
 
 fn extract_id(text: &str) -> String {
@@ -318,7 +318,7 @@ pub(crate) async fn run(
                         pong_deadline = None;
                     }
                     Some(Ok(Message::Ping(data))) => {
-                        if !send_raw(&mut socket, Message::Pong(data)).await {
+                        if !send_message(&mut socket, Message::Pong(data)).await {
                             break;
                         }
                     }
@@ -390,7 +390,7 @@ pub(crate) async fn run(
             }
 
             _ = ping_interval.tick() => {
-                if !send_raw(&mut socket, Message::Ping(vec![].into())).await {
+                if !send_message(&mut socket, Message::Ping(vec![].into())).await {
                     break;
                 }
                 awaiting_pong = true;
@@ -404,7 +404,7 @@ pub(crate) async fn run(
                     }
                     AuthStatus::Revoked => {
                         tracing::info!(connection_id, "session revoked, closing connection");
-                        let _ = send_raw(&mut socket, Message::Close(None)).await;
+                        let _ = send_message(&mut socket, Message::Close(None)).await;
                         break;
                     }
                     AuthStatus::Error => {
@@ -420,7 +420,7 @@ pub(crate) async fn run(
                                 consecutive_auth_errors,
                                 "auth check failed repeatedly, closing connection"
                             );
-                            let _ = send_raw(&mut socket, Message::Close(None)).await;
+                            let _ = send_message(&mut socket, Message::Close(None)).await;
                             break;
                         }
                     }
@@ -429,13 +429,13 @@ pub(crate) async fn run(
 
             _ = cancel.notified() => {
                 tracing::info!(connection_id, "connection evicted by duplicate session_key");
-                let _ = send_raw(&mut socket, Message::Close(None)).await;
+                let _ = send_message(&mut socket, Message::Close(None)).await;
                 break;
             }
 
             _ = sleep, if awaiting_pong => {
                 tracing::debug!(connection_id, "pong timeout, closing connection");
-                let _ = send_raw(&mut socket, Message::Close(None)).await;
+                let _ = send_message(&mut socket, Message::Close(None)).await;
                 break;
             }
         }

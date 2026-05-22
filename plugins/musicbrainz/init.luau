@@ -40,7 +40,9 @@ type JsonArray = { JsonValue }
 type HttpRequestOptions = http.HttpRequestOptions
 type DataStore = datastore.DataStore
 type DataStoreJsonValue = datastore.JsonValue
+type ProviderCoverCandidate = metadata.ProviderCoverCandidate
 type ProviderCoverContext = metadata.ProviderCoverContext
+type ProviderCoverResult = metadata.ProviderCoverResult
 type LookupHintLibrary = text_helpers.LookupHintLibrary
 type LocalArtist = track_helpers.LocalArtist
 type LocalTrack = track_helpers.LocalTrack
@@ -56,7 +58,7 @@ type CoverCacheEntry = {
 
 type ProviderIdSpec = {
 	id_type: string,
-	entity: string,
+	entity: metadata.EntityType,
 	unique: boolean?,
 }
 
@@ -338,23 +340,22 @@ local function write_cover_release_cache(ctx: ProviderCoverContext?, release_id:
 	)
 end
 
-local function single_cover_candidates_payload(url: string): JsonValue
-	local candidate: JsonObject = {
+local function single_cover_candidates_payload(url: string): ProviderCoverResult
+	local candidate: ProviderCoverCandidate = {
 		url = url,
 	}
-	local candidates: JsonArray = { candidate }
-	local payload: JsonObject = {
-		candidates = candidates,
+	local payload = {
+		candidates = { candidate },
 		selected_index = 1,
 	}
-	return payload
+	return payload :: ProviderCoverResult
 end
 
 local id_specs: { ProviderIdSpec } = {
-	{ id_type = "release", entity = "release", unique = true },
-	{ id_type = "release-group", entity = "release" },
-	{ id_type = "artist", entity = "artist" },
-	{ id_type = "recording", entity = "track", unique = true },
+	{ id_type = "release", entity = ET.Release, unique = true },
+	{ id_type = "release-group", entity = ET.Release },
+	{ id_type = "artist", entity = ET.Artist },
+	{ id_type = "recording", entity = ET.Track, unique = true },
 }
 
 for _, id_spec in id_specs do
@@ -366,7 +367,7 @@ for _, id_spec in id_specs do
 	}, BASE_URL .. "/" .. id_spec.id_type .. "/{id}")
 end
 
-local function release_cover_handler(ctx: ProviderCoverContext): JsonValue
+local function release_cover_handler(ctx: ProviderCoverContext): ProviderCoverResult?
 	local cache_hit, cached_release_id = read_cached_cover_release_id(ctx)
 	if cache_hit then
 		if type(cached_release_id) == "string" and cached_release_id ~= "" then
@@ -497,7 +498,7 @@ local acoustid_deps: acoustid.ResolveDeps = {
 
 provider:id({
 	id = "acoustid_track_id",
-	entity = "track",
+	entity = ET.Track,
 }, "https://acoustid.org/track/{id}")
 
 provider:declare_option({

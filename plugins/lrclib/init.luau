@@ -17,21 +17,13 @@ type HttpRequestOptions = http.HttpRequestOptions
 type HttpResponse = http.HttpResponse
 type DataStore = datastore.DataStore
 type PluginLyricsInput = lyrics_api.PluginLyricsInput
+type ProviderLyricsCandidate = metadata.ProviderLyricsCandidate
 type ProviderLyricsContext = metadata.ProviderLyricsContext
+type ProviderLyricsResult = metadata.ProviderLyricsResult
 
-type LyricsCandidate = {
-	lyrics: PluginLyricsInput,
-	title: string,
-	artist: string,
-	duration_ms: number?,
-	language: string,
-}
+type LyricsCandidate = ProviderLyricsCandidate
 
-type HandlerResult = {
-	kind: string,
-	candidates: { LyricsCandidate }?,
-	retry_after_ms: number?,
-}
+type HandlerResult = ProviderLyricsResult
 
 -- Lyra requires `provider:lyrics` registration to declare a rate limit on at
 -- least one domain. LRCLIB itself documents no server-side limits, so 4 req/s
@@ -387,7 +379,10 @@ local function handle(ctx: ProviderLyricsContext): HandlerResult
 		and (prev_attempt.status == "miss" or prev_attempt.status == "instrumental")
 		and now_ms() < prev_attempt.next_attempt_at_ms
 	then
-		return { kind = prev_attempt.status }
+		if prev_attempt.status == "instrumental" then
+			return { kind = "instrumental" }
+		end
+		return { kind = "miss" }
 	end
 
 	local function resolve_response(body: JsonObject): HandlerResult
@@ -474,6 +469,6 @@ provider:lyrics({
 	require = { all_of = { "track_name", "artist_name" } },
 	priority = 50,
 	timeout_ms = 30000,
-}, function(ctx: ProviderLyricsContext): JsonValue
-	return handle(ctx) :: JsonValue
+}, function(ctx: ProviderLyricsContext): ProviderLyricsResult
+	return handle(ctx)
 end)

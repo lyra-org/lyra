@@ -8,5 +8,3 @@ license-file = "../LICENSE"
 harmony-core = { path = "../harmony-core" }
 harmony-luau = { path = "../harmony-luau" }
 anyhow = { workspace = true }
-mlua = { workspace = true, features = ["luau", "anyhow"] }
-mlua_scheduler = { workspace = true, features = ["send"] }

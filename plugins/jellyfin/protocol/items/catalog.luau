@@ -1608,12 +1608,12 @@ function helpers.people_from_artist_relations(relations: { ArtistRelationInfo }?
 		if helpers.lower_or_empty(relation.direction) ~= "incoming" then
 			continue
 		end
-		if relation.relation_type ~= artists_module.ArtistRelationType.VoiceActor then
+		if relation.relation_type ~= "voice_actor" then
 			continue
 		end
 
 		local artist = relation.artist
-		if artist.artist_type ~= artists_module.ArtistType.Person then
+		if artist.artist_type ~= "person" then
 			continue
 		end
 
@@ -2461,7 +2461,7 @@ end
 
 function helpers.append_person_stubs(stubs: { ItemInfo }, artist_items: { Artist }): ()
 	for _, artist: Artist in artist_items do
-		if artist.artist_type ~= artists_module.ArtistType.Person then
+		if artist.artist_type ~= "person" then
 			continue
 		end
 
@@ -2840,7 +2840,7 @@ function helpers.person_ids_for_item(appears_in_item_id: string?): { [string]: b
 				continue
 			end
 			local artist_id = module.encode_jellyfin_item_id(artist.id)
-			if artist_id and artist.artist_type == artists_module.ArtistType.Person then
+			if artist_id and artist.artist_type == "person" then
 				allowed_ids[artist_id] = true
 			end
 		end
@@ -2860,13 +2860,13 @@ function helpers.person_ids_for_item(appears_in_item_id: string?): { [string]: b
 			if helpers.lower_or_empty(relation.direction) ~= "incoming" then
 				continue
 			end
-			if relation.relation_type ~= artists_module.ArtistRelationType.VoiceActor then
+			if relation.relation_type ~= "voice_actor" then
 				continue
 			end
 
 			local related_artist = relation.artist
 			local artist_id = module.encode_jellyfin_item_id(related_artist.id)
-			if artist_id and related_artist.artist_type == artists_module.ArtistType.Person then
+			if artist_id and related_artist.artist_type == "person" then
 				allowed_ids[artist_id] = true
 			end
 		end

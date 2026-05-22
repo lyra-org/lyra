@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use super::DbAccess;
 use agdb::{
     DbElement,
+    DbErrorType,
     DbId,
     DbValue,
     QueryBuilder,
@@ -51,12 +52,16 @@ pub(crate) fn find_node_id_by_id(db: &impl DbAccess, id: &str) -> anyhow::Result
 }
 
 pub(crate) fn find_id_by_db_id(db: &impl DbAccess, db_id: DbId) -> anyhow::Result<Option<String>> {
-    let result = db.exec(
+    let result = match db.exec(
         QueryBuilder::select()
             .values(vec![DbValue::String("id".into())])
             .ids(db_id)
             .query(),
-    )?;
+    ) {
+        Ok(result) => result,
+        Err(error) if error.ty == DbErrorType::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
     Ok(result.elements.into_iter().next().and_then(|element| {
         element.values.into_iter().find_map(|kv| {
             if matches!(&kv.key, DbValue::String(key) if key == "id") {
@@ -79,12 +84,24 @@ pub(crate) fn find_ids_by_db_ids(
         return Ok(HashMap::new());
     }
 
-    let result = db.exec(
+    let result = match db.exec(
         QueryBuilder::select()
             .values(vec![DbValue::String("id".into())])
             .ids(db_ids)
             .query(),
-    )?;
+    ) {
+        Ok(result) => result,
+        Err(error) if error.ty == DbErrorType::NotFound => {
+            let mut map = HashMap::with_capacity(db_ids.len());
+            for id in db_ids {
+                if let Some(public_id) = find_id_by_db_id(db, *id)? {
+                    map.insert(*id, public_id);
+                }
+            }
+            return Ok(map);
+        }
+        Err(error) => return Err(error.into()),
+    };
 
     let mut map = HashMap::with_capacity(result.elements.len());
     for element in result.elements {
@@ -154,4 +171,31 @@ pub(crate) fn find_id_by_indexed_string_field(
     }
 
     find_id_by_string_field(db, collection_alias, field_name, value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_db;
+
+    #[test]
+    fn find_id_by_db_id_returns_none_for_missing_node() -> anyhow::Result<()> {
+        let db = test_db::new_test_db()?;
+
+        assert_eq!(find_id_by_db_id(&db, DbId(999999))?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn find_ids_by_db_ids_skips_missing_nodes() -> anyhow::Result<()> {
+        let mut db = test_db::new_test_db()?;
+        let track_db_id = test_db::insert_track(&mut db, "Lookup Track")?;
+        let public_id = find_id_by_db_id(&db, track_db_id)?.expect("track has public id");
+
+        let resolved = find_ids_by_db_ids(&db, &[track_db_id, DbId(999999)])?;
+
+        assert_eq!(resolved.get(&track_db_id), Some(&public_id));
+        assert!(!resolved.contains_key(&DbId(999999)));
+        Ok(())
+    }
 }

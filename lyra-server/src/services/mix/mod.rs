@@ -13,11 +13,6 @@ use agdb::{
     DbId,
     QueryBuilder,
 };
-use harmony_core::{
-    cancel_thread,
-    run_thread,
-};
-use mlua::Table;
 use rand::seq::SliceRandom;
 
 use crate::STATE;
@@ -25,10 +20,10 @@ use crate::db::{
     self,
     Track,
 };
-use crate::plugins::lifecycle::PluginFunctionHandle;
 
 mod registry;
 
+use super::options::coerce_option_value;
 pub(crate) use registry::{
     MIX_REGISTRY,
     MixSeedType,
@@ -280,6 +275,13 @@ async fn prioritized_mixer_ids(seed_type: MixSeedType) -> anyhow::Result<Vec<Str
 
 /// First non-empty mixer wins; `None` falls through to builtin. Per-handler
 /// slice is `min(remaining_budget, MIXER_HANDLER_TIMEOUT)`.
+enum HandlerOutcome {
+    Tracks(Vec<Track>),
+    FellThrough,
+}
+
+/// Runs on a separate Lua thread so timeout can cancel the coroutine, not
+/// just drop the future. Cooperative — bounded by sync-binding timeouts.
 async fn dispatch_mixer(
     seed_type: MixSeedType,
     seed_id: DbId,
@@ -305,29 +307,25 @@ async fn dispatch_mixer(
             break;
         }
         let handler_timeout = (deadline - now).min(MIXER_HANDLER_TIMEOUT);
-        let handler = {
+        let handler_id = {
             let registry = MIX_REGISTRY.read().await;
-            registry.get_handler(mixer_id, seed_type).cloned()
+            registry.get_seed_callback(mixer_id, seed_type)
         };
-        let Some(handler) = handler else {
+        let Some(handler_id) = handler_id else {
             continue;
         };
 
-        let lua = match handler.try_upgrade_lua() {
-            Some(lua) => lua,
-            None => continue,
-        };
-        let ctx = lua.create_table()?;
-        ctx.set("seed_id", seed_id.0)?;
-        if let Some(limit) = options.limit {
-            ctx.set("limit", limit)?;
-        }
-        if let Some(user_db_id) = options.user_db_id {
-            ctx.set("user_id", user_db_id.0)?;
-        }
-        set_extra_options(&lua, &ctx, mixer_id, &options.extra).await?;
-
-        match run_handler_with_timeout(&lua, &handler, ctx, handler_timeout, mixer_id).await? {
+        match run_callback_with_timeout(
+            handler_id,
+            seed_id,
+            None,
+            Vec::new(),
+            options,
+            handler_timeout,
+            mixer_id,
+        )
+        .await?
+        {
             HandlerOutcome::Tracks(mut tracks) => {
                 let limit = options.limit.unwrap_or(DEFAULT_LIMIT);
                 tracks.truncate(limit);
@@ -338,69 +336,6 @@ async fn dispatch_mixer(
     }
 
     Ok(None)
-}
-
-enum HandlerOutcome {
-    Tracks(Vec<Track>),
-    FellThrough,
-}
-
-/// Runs on a separate Lua thread so timeout can cancel the coroutine, not
-/// just drop the future. Cooperative — bounded by sync-binding timeouts.
-async fn run_handler_with_timeout(
-    lua: &mlua::Lua,
-    handler: &PluginFunctionHandle,
-    ctx: Table,
-    timeout: std::time::Duration,
-    mixer_id: &str,
-) -> anyhow::Result<HandlerOutcome> {
-    // Pre-create so the timeout branch can cancel and force-close.
-    let thread = match lua.create_thread(handler.inner_function().clone()) {
-        Ok(t) => t,
-        Err(err) => {
-            tracing::warn!(
-                mixer = %mixer_id,
-                error = %err,
-                "failed to create mixer handler thread, trying next"
-            );
-            return Ok(HandlerOutcome::FellThrough);
-        }
-    };
-
-    match tokio::time::timeout(timeout, run_thread::<Table>(lua, thread.clone(), ctx)).await {
-        Ok(Ok(result)) => match parse_mix_result(&result).await {
-            Ok(tracks) if !tracks.is_empty() => Ok(HandlerOutcome::Tracks(tracks)),
-            Ok(_) => {
-                // Explicit "no tracks for this seed" — debug, not warn.
-                tracing::debug!(mixer = %mixer_id, "mixer returned empty, trying next");
-                Ok(HandlerOutcome::FellThrough)
-            }
-            Err(err) => {
-                tracing::warn!(mixer = %mixer_id, error = %err, "mixer result parse error, trying next");
-                Ok(HandlerOutcome::FellThrough)
-            }
-        },
-        Ok(Err(err)) => {
-            tracing::warn!(mixer = %mixer_id, error = %err, "mixer handler crashed, trying next");
-            Ok(HandlerOutcome::FellThrough)
-        }
-        Err(_) => {
-            let _ = cancel_thread(lua, &thread);
-            if let Err(err) = thread.close() {
-                tracing::warn!(
-                    mixer = %mixer_id,
-                    error = %err,
-                    "failed to close timed-out mix handler thread"
-                );
-            }
-            tracing::warn!(
-                mixer = %mixer_id,
-                timeout_ms = timeout.as_millis() as u64,
-                "mixer handler timed out; thread cancelled, trying next"
-            );
-            Ok(HandlerOutcome::FellThrough)
-        }
-    }
 }
 
 /// `dispatch_mixer` variant; context carries pre-resolved recent track IDs.
@@ -433,33 +368,25 @@ async fn dispatch_recent_listens_mixer(
             break;
         }
         let handler_timeout = (deadline - now).min(MIXER_HANDLER_TIMEOUT);
-        let handler = {
+        let handler_id = {
             let registry = MIX_REGISTRY.read().await;
-            registry
-                .get_handler(mixer_id, MixSeedType::RecentListens)
-                .cloned()
+            registry.get_seed_callback(mixer_id, MixSeedType::RecentListens)
         };
-        let Some(handler) = handler else {
+        let Some(handler_id) = handler_id else {
             continue;
         };
 
-        let lua = match handler.try_upgrade_lua() {
-            Some(lua) => lua,
-            None => continue,
-        };
-        let ctx = lua.create_table()?;
-        ctx.set("user_id", user_db_id.0)?;
-        if let Some(limit) = options.limit {
-            ctx.set("limit", limit)?;
-        }
-        set_extra_options(&lua, &ctx, mixer_id, &options.extra).await?;
-        let track_ids_table = lua.create_table()?;
-        for (i, id) in recent_track_ids.iter().enumerate() {
-            track_ids_table.set(i + 1, id.0)?;
-        }
-        ctx.set("recent_track_ids", track_ids_table)?;
-
-        match run_handler_with_timeout(&lua, &handler, ctx, handler_timeout, mixer_id).await? {
+        match run_callback_with_timeout(
+            handler_id,
+            user_db_id,
+            Some(user_db_id),
+            recent_track_ids.clone(),
+            options,
+            handler_timeout,
+            mixer_id,
+        )
+        .await?
+        {
             HandlerOutcome::Tracks(mut tracks) => {
                 let limit = options.limit.unwrap_or(DEFAULT_LIMIT);
                 tracks.truncate(limit);
@@ -472,47 +399,90 @@ async fn dispatch_recent_listens_mixer(
     Ok(None)
 }
 
-use super::options::coerce_option_value;
-
 /// Coerces `extra` via declared types into `ctx.options`.
-async fn set_extra_options(
-    lua: &mlua::Lua,
-    ctx: &Table,
+async fn run_callback_with_timeout(
+    handler_id: u64,
+    seed_id: DbId,
+    user_db_id: Option<DbId>,
+    recent_track_ids: Vec<DbId>,
+    options: &MixOptions,
+    timeout: std::time::Duration,
+    mixer_id: &str,
+) -> anyhow::Result<HandlerOutcome> {
+    let Some(runtime) = crate::STATE.plugin_runtime.get() else {
+        return Ok(HandlerOutcome::FellThrough);
+    };
+    let request = crate::plugins::executor::MixHandlerRequest {
+        handler_id,
+        seed_id: seed_id.0,
+        limit: options.limit,
+        user_id: user_db_id.or(options.user_db_id).map(|id| id.0),
+        recent_track_ids: recent_track_ids.into_iter().map(|id| id.0).collect(),
+        options: coerced_extra_options(mixer_id, &options.extra).await?,
+    };
+    match tokio::time::timeout(timeout, runtime.dispatch_mix_handler(request)).await {
+        Ok(Ok(result)) => {
+            let tracks = tracks_from_mixer_result_ids(result.track_ids).await?;
+            if tracks.is_empty() {
+                tracing::debug!(mixer = %mixer_id, "mixer returned empty, trying next");
+                Ok(HandlerOutcome::FellThrough)
+            } else {
+                Ok(HandlerOutcome::Tracks(tracks))
+            }
+        }
+        Ok(Err(err)) => {
+            tracing::warn!(mixer = %mixer_id, error = %err, "mixer handler crashed, trying next");
+            Ok(HandlerOutcome::FellThrough)
+        }
+        Err(_) => {
+            tracing::warn!(
+                mixer = %mixer_id,
+                timeout_ms = timeout.as_millis() as u64,
+                "mixer handler timed out; trying next"
+            );
+            Ok(HandlerOutcome::FellThrough)
+        }
+    }
+}
+
+async fn coerced_extra_options(
     mixer_id: &str,
     extra: &HashMap<String, String>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<serde_json::Map<String, serde_json::Value>> {
+    let mut output = serde_json::Map::new();
     if extra.is_empty() {
-        return Ok(());
+        return Ok(output);
     }
     let registry = MIX_REGISTRY.read().await;
     let declared = registry.get_options(mixer_id);
-    let options_table = lua.create_table()?;
     for (key, raw_value) in extra {
-        if let Some(decl) = declared.iter().find(|d| d.name == *key) {
-            let coerced = coerce_option_value(raw_value, &decl.option_type);
-            let lua_val = mlua::LuaSerdeExt::to_value(lua, &coerced)?;
-            options_table.set(key.as_str(), lua_val)?;
+        if let Some(decl) = declared.iter().find(|decl| decl.name == *key) {
+            output.insert(
+                key.clone(),
+                coerce_option_value(raw_value, &decl.option_type),
+            );
         }
     }
-    ctx.set("options", options_table)?;
-    Ok(())
+    Ok(output)
 }
 
 /// Aligned with `MAX_LIMIT`; drift causes silent truncation surprises.
 const MAX_MIXER_RESULT_IDS: usize = MAX_LIMIT;
 
-async fn parse_mix_result(result: &Table) -> anyhow::Result<Vec<Track>> {
-    let tracks_table: Table = result.get("tracks")?;
-    let mut track_ids = Vec::new();
-    for value in tracks_table.sequence_values::<Table>() {
-        let entry = value?;
-        let track_id: i64 = entry.get("track_id")?;
-        track_ids.push(DbId(track_id));
-        if track_ids.len() >= MAX_MIXER_RESULT_IDS {
+async fn tracks_from_mixer_result_ids(track_ids: Vec<i64>) -> anyhow::Result<Vec<Track>> {
+    let mut ids = Vec::new();
+    for track_id in track_ids {
+        if track_id > 0 {
+            ids.push(DbId(track_id));
+        }
+        if ids.len() >= MAX_MIXER_RESULT_IDS {
             break;
         }
     }
+    tracks_from_mixer_ids(ids).await
+}
 
+async fn tracks_from_mixer_ids(track_ids: Vec<DbId>) -> anyhow::Result<Vec<Track>> {
     if track_ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -522,7 +492,6 @@ async fn parse_mix_result(result: &Table) -> anyhow::Result<Vec<Track>> {
     let tracks_by_id: HashMap<DbId, Track> =
         db::graph::bulk_fetch_typed(&*db, track_ids.clone(), "Track")?;
 
-    // Preserve the plugin's ordering by iterating in the original ID order.
     let mut tracks = Vec::with_capacity(requested_count);
     for id in &track_ids {
         if let Some(track) = tracks_by_id.get(id) {
