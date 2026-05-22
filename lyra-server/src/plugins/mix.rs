@@ -3,63 +3,113 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{
+    cell::{
+        Cell,
+        RefCell,
+    },
+    collections::HashMap,
+    sync::Arc,
+};
 
 use agdb::DbId;
 use harmony_core::{
-    LuaAsyncExt,
-    LuaUserDataAsyncExt,
-    Module,
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
 };
+use harmony_luau as luau;
 use harmony_luau::{
-    ClassDescriptor,
     DescribeInterface,
     DescribeModule,
+    DescribeUserData,
+    FieldDescriptor,
+    FunctionParameter,
     LuauType,
     LuauTypeInfo,
     ModuleDescriptor,
     ModuleFunctionDescriptor,
     ParameterDescriptor,
-};
-use mlua::{
-    Function,
-    Lua,
-    Result,
-    Table,
-    Value,
+    TypeAliasDescriptor,
+    render_definition_file_with_support,
 };
 use nanoid::nanoid;
 
-use crate::STATE;
 use crate::plugins::db::{
     self,
+    Track,
     mixers::MixerConfig,
 };
-use crate::plugins::lifecycle::{
-    PluginFunctionHandle,
-    PluginId,
-};
-use crate::services::mix::{
-    self as mix_service,
-    MAX_LIMIT,
-    MIX_REGISTRY,
-    MixOptions,
-    MixSeedType,
-};
-use crate::services::options::{
-    OptionDeclaration,
-    OptionType,
-};
 
-use super::OptionConfig;
+use crate::{
+    STATE,
+    plugins::OptionConfig,
+    services::mix::{
+        self as mix_service,
+        MAX_LIMIT,
+        MixOptions,
+        MixSeedType,
+    },
+    services::options::{
+        OptionDeclaration,
+        OptionType,
+    },
+};
 
 struct MixHandler;
+struct MixRecentListensHandler;
+struct MixModule;
+
+#[derive(Default)]
+pub(crate) struct MixCallbackRegistry {
+    next_handler_id: Cell<u64>,
+    handlers: RefCell<HashMap<u64, MixCallback>>,
+}
+
+impl MixCallbackRegistry {
+    pub(crate) fn new() -> Self {
+        Self {
+            next_handler_id: Cell::new(1),
+            handlers: RefCell::new(HashMap::new()),
+        }
+    }
+
+    fn register(
+        &self,
+        mixer_id: String,
+        _seed_type: MixSeedType,
+        function: luau::Function,
+        context: harmony_core::CallContext,
+    ) -> u64 {
+        let id = self.next_handler_id.get();
+        self.next_handler_id.set(id.saturating_add(1));
+        self.handlers.borrow_mut().insert(
+            id,
+            MixCallback {
+                mixer_id,
+                function,
+                context,
+            },
+        );
+        id
+    }
+
+    pub(crate) fn get(&self, id: u64) -> Option<MixCallback> {
+        self.handlers.borrow().get(&id).cloned()
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct MixCallback {
+    pub(crate) mixer_id: String,
+    pub(crate) function: luau::Function,
+    pub(crate) context: harmony_core::CallContext,
+}
 
 impl LuauTypeInfo for MixHandler {
     fn luau_type() -> LuauType {
         LuauType::function(
-            vec![harmony_luau::FunctionParameter {
+            vec![FunctionParameter {
                 name: Some("ctx"),
                 ty: LuauType::literal("MixContext"),
                 variadic: false,
@@ -69,12 +119,10 @@ impl LuauTypeInfo for MixHandler {
     }
 }
 
-struct MixRecentListensHandler;
-
 impl LuauTypeInfo for MixRecentListensHandler {
     fn luau_type() -> LuauType {
         LuauType::function(
-            vec![harmony_luau::FunctionParameter {
+            vec![FunctionParameter {
                 name: Some("ctx"),
                 ty: LuauType::literal("MixRecentListensContext"),
                 variadic: false,
@@ -84,63 +132,215 @@ impl LuauTypeInfo for MixRecentListensHandler {
     }
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct Mixer {
-    plugin_id: PluginId,
+#[harmony_macros::userdata(name = "Mixer")]
+#[derive(Clone)]
+struct Mixer {
     id: String,
 }
 
+#[harmony_macros::userdata_methods]
 impl Mixer {
-    async fn wrap_handler(&self, func: Function) -> mlua::Result<PluginFunctionHandle> {
-        let counter = STATE
-            .plugin_registries
-            .inflight_counter(&self.plugin_id)
-            .await;
-        Ok(PluginFunctionHandle::new(
-            self.plugin_id.clone(),
-            counter,
-            func,
-        ))
+    #[harmony(
+        description = "Registers a handler for generating a mix from a seed track.",
+        args(handler: MixHandler)
+    )]
+    fn from_track(
+        &self,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        self.register_handler(context, vm, MixSeedType::Track, handler)
     }
 
-    /// Reject cross-plugin access — stashed userdata could otherwise
-    /// register under the wrong owner's counter.
-    fn ensure_owner(&self, caller: Option<&PluginId>) -> mlua::Result<()> {
-        match caller {
-            Some(id) if id == &self.plugin_id => Ok(()),
-            _ => Err(mlua::Error::runtime(format!(
-                "mixer '{}' method must be called by owning plugin '{}'",
-                self.id, self.plugin_id
-            ))),
-        }
+    #[harmony(
+        description = "Registers a handler for generating a mix from a seed release.",
+        args(handler: MixHandler)
+    )]
+    fn from_release(
+        &self,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        self.register_handler(context, vm, MixSeedType::Release, handler)
+    }
+
+    #[harmony(
+        description = "Registers a handler for generating a mix from a seed artist.",
+        args(handler: MixHandler)
+    )]
+    fn from_artist(
+        &self,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        self.register_handler(context, vm, MixSeedType::Artist, handler)
+    }
+
+    #[harmony(
+        description = "Registers a handler for generating a mix from a user's recent listens.",
+        args(handler: MixRecentListensHandler)
+    )]
+    fn from_recent_listens(
+        &self,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        self.register_handler(context, vm, MixSeedType::RecentListens, handler)
+    }
+
+    #[harmony(
+        description = "Registers a handler for generating a mix from a seed genre.",
+        args(handler: MixHandler)
+    )]
+    fn from_genre(
+        &self,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        self.register_handler(context, vm, MixSeedType::Genre, handler)
+    }
+
+    #[harmony(
+        description = "Registers a handler for generating a mix from a seed playlist.",
+        args(handler: MixHandler)
+    )]
+    fn from_playlist(
+        &self,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        self.register_handler(context, vm, MixSeedType::Playlist, handler)
+    }
+
+    #[harmony(
+        description = "Declares an option clients can toggle when requesting a mix.",
+        args(config: OptionConfig)
+    )]
+    fn declare_option(
+        &self,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+        config: luau::Table,
+    ) -> luau::runtime::Result<()> {
+        let plugin_id = self.current_plugin_id(context)?;
+        ensure_registration_open(&plugin_id)?;
+        let option = parse_option_declaration(vm, &config)?;
+        futures::executor::block_on(async {
+            mix_service::MIX_REGISTRY
+                .write()
+                .await
+                .declare_option(&self.id, option)
+        })
+        .map_err(crate::plugins::runtime_error)
+    }
+
+    #[harmony(skip)]
+    fn register_handler(
+        &self,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+        seed_type: MixSeedType,
+        function: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        let plugin_id = self.current_plugin_id(context)?;
+        ensure_registration_open(&plugin_id)?;
+        let handlers = vm.data().get::<MixCallbackRegistry>()?;
+        let handler_id = handlers.register(
+            self.id.clone(),
+            seed_type,
+            function,
+            core_call_context(context),
+        );
+        futures::executor::block_on(async {
+            mix_service::MIX_REGISTRY
+                .write()
+                .await
+                .set_seed_callback(&self.id, seed_type, handler_id);
+        });
+        Ok(())
+    }
+
+    #[harmony(skip)]
+    fn current_plugin_id(
+        &self,
+        context: &luau::CallContext,
+    ) -> luau::runtime::Result<crate::plugins::lifecycle::PluginId> {
+        let plugin_id = context.origin.plugin.clone().ok_or_else(|| {
+            crate::plugins::runtime_error("mix.Mixer methods must be called from plugin Luau code")
+        })?;
+        crate::plugins::lifecycle::PluginId::new(plugin_id.to_string())
+            .map_err(crate::plugins::runtime_error)
     }
 }
 
-#[harmony_macros::implementation(plugin_scoped)]
-impl Mixer {
-    pub async fn new(plugin_id: Option<Arc<str>>, id: String) -> Result<Self> {
-        let plugin_id = plugin_id
-            .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
-            .transpose()?;
-        let plugin_id = plugin_id.ok_or_else(|| {
-            mlua::Error::runtime("mix.Mixer.new must be called from plugin Lua code")
-        })?;
+pub(crate) fn module_spec() -> ModuleSpec {
+    ModuleSpec::new("lyra/mix")
+        .capability("lyra.mix")
+        .function(
+            FunctionSpec::sync_fn("Mixer.new")
+                .arg_name("id")
+                .args::<String>()
+                .returns::<Mixer>()
+                .call(mixer_new_callback),
+        )
+        .function(consumer_spec("from_track", from_track_callback))
+        .function(consumer_spec("from_release", from_release_callback))
+        .function(consumer_spec("from_artist", from_artist_callback))
+        .function(consumer_spec("from_genre", from_genre_callback))
+        .function(consumer_spec("from_playlist", from_playlist_callback))
+        .function(consumer_spec(
+            "instant_mix_from_audio",
+            instant_mix_from_audio_callback,
+        ))
+        .userdata(Mixer::_harmony_userdata_spec())
+        .install(|_| Ok(ModuleExport::new(MixModule)))
+}
 
+fn consumer_spec(
+    name: &'static str,
+    callback: fn(luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture>,
+) -> FunctionSpec {
+    FunctionSpec::async_fn(name)
+        .arg_name("seed_id")
+        .args::<i64>()
+        .arg_name("opts")
+        .args::<Option<luau::Value>>()
+        .returns::<Option<Vec<Track>>>()
+        .call_async(Arc::new(callback))
+}
+
+fn mixer_new_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let id: String = frame.args.read_named("id")?;
+    let Some(plugin_id) = frame.context.origin.plugin.clone() else {
+        return Err(crate::plugins::runtime_error(
+            "mix.Mixer.new must be called from plugin Luau code",
+        ));
+    };
+    let plugin_id = crate::plugins::lifecycle::PluginId::new(plugin_id.to_string())
+        .map_err(crate::plugins::runtime_error)?;
+    futures::executor::block_on(async {
+        let _registration = STATE
+            .plugin_registries
+            .ensure_registrations_open(&plugin_id)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        mix_service::MIX_REGISTRY
+            .write()
+            .await
+            .register(plugin_id, id.clone())
+            .map_err(crate::plugins::runtime_error)?;
+
+        let mut db = STATE.db.write().await;
+        if db::mixers::get_by_mixer_id(&db, &id)
+            .map_err(crate::plugins::runtime_error)?
+            .is_none()
         {
-            let _registration = STATE
-                .plugin_registries
-                .ensure_registrations_open(&plugin_id)
-                .await?;
-            let mut registry = MIX_REGISTRY.write().await;
-            registry
-                .register(plugin_id.clone(), id.clone())
-                .map_err(|err| mlua::Error::runtime(err.to_string()))?;
-        }
-
-        let db = &STATE.db;
-        let mut db_write = db.write().await;
-
-        if db::mixers::get_by_mixer_id(&db_write, &id)?.is_none() {
             let mixer_config = MixerConfig {
                 db_id: None,
                 id: nanoid!(),
@@ -149,399 +349,343 @@ impl Mixer {
                 priority: 50,
                 enabled: true,
             };
-            db::mixers::upsert(&mut db_write, &mixer_config)?;
+            db::mixers::upsert(&mut db, &mixer_config).map_err(crate::plugins::runtime_error)?;
         }
 
-        Ok(Mixer { plugin_id, id })
-    }
+        Ok::<(), luau::Error>(())
+    })?;
 
-    /// Registers a handler for generating a mix from a seed track.
-    #[harmony(args(handler: MixHandler))]
-    pub(crate) async fn from_track(
-        &self,
-        plugin_id: Option<Arc<str>>,
-        handler: Function,
-    ) -> Result<()> {
-        let plugin_id = plugin_id
-            .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
-            .transpose()?;
-        self.ensure_owner(plugin_id.as_ref())?;
+    let mixer = Mixer { id };
+    frame.returns.write(Mixer::_harmony_userdata_class().create(
+        frame.vm,
+        &frame.context.origin,
+        mixer,
+    )?)
+}
+
+fn ensure_registration_open(
+    plugin_id: &crate::plugins::lifecycle::PluginId,
+) -> luau::runtime::Result<()> {
+    futures::executor::block_on(async {
         let _registration = STATE
             .plugin_registries
-            .ensure_registrations_open(&self.plugin_id)
-            .await?;
-        let handle = self.wrap_handler(handler).await?;
-        let mut registry = MIX_REGISTRY.write().await;
-        registry.set_handler(&self.id, MixSeedType::Track, handle);
+            .ensure_registrations_open(plugin_id)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
         Ok(())
+    })
+}
+
+fn from_track_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let seed = parse_seed_id(frame.args.read_named("seed_id")?, "from_track")?;
+    let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
+    Ok(luau::ScheduledFuture::new(async move {
+        let tracks = mix_service::from_track(seed, &options)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(tracks_to_luau(tracks)?)
+    }))
+}
+
+fn from_release_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let seed = parse_seed_id(frame.args.read_named("seed_id")?, "from_release")?;
+    let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
+    Ok(luau::ScheduledFuture::new(async move {
+        let tracks = mix_service::from_release(seed, &options)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(tracks_to_luau(tracks)?)
+    }))
+}
+
+fn from_artist_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let seed = parse_seed_id(frame.args.read_named("seed_id")?, "from_artist")?;
+    let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
+    Ok(luau::ScheduledFuture::new(async move {
+        let tracks = mix_service::from_artist(seed, &options)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(tracks_to_luau(tracks)?)
+    }))
+}
+
+fn from_genre_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let seed = parse_seed_id(frame.args.read_named("seed_id")?, "from_genre")?;
+    let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
+    Ok(luau::ScheduledFuture::new(async move {
+        let tracks = mix_service::from_genre(seed, &options)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(tracks_to_luau(tracks)?)
+    }))
+}
+
+fn from_playlist_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let seed = parse_seed_id(frame.args.read_named("seed_id")?, "from_playlist")?;
+    let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
+    Ok(luau::ScheduledFuture::new(async move {
+        let tracks = mix_service::from_playlist(seed, &options)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(tracks_to_luau(tracks)?)
+    }))
+}
+
+fn instant_mix_from_audio_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let seed = parse_seed_id(frame.args.read_named("seed_id")?, "instant_mix_from_audio")?;
+    let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
+    Ok(luau::ScheduledFuture::new(async move {
+        let tracks = mix_service::instant_mix_from_audio(seed, &options)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(tracks_to_luau(tracks)?)
+    }))
+}
+
+fn parse_consumer_options(
+    vm: &luau::Vm,
+    opts: Option<luau::Value>,
+) -> luau::runtime::Result<MixOptions> {
+    let Some(opts) = opts else {
+        return Ok(MixOptions::default());
+    };
+    if matches!(opts, luau::Value::Nil) {
+        return Ok(MixOptions::default());
+    }
+    let json = harmony_json::luau_to_json(vm, &opts, 0)?;
+    if matches!(&json, serde_json::Value::Array(values) if values.is_empty()) {
+        return Ok(MixOptions::default());
+    }
+    let object = json
+        .as_object()
+        .ok_or_else(|| crate::plugins::runtime_error("mix options must be a table"))?;
+
+    let limit = object
+        .get("limit")
+        .map(|value| parse_positive_usize(value, "limit"))
+        .transpose()?;
+    if let Some(limit) = limit {
+        if limit > MAX_LIMIT {
+            return Err(crate::plugins::runtime_error(format!(
+                "mix options 'limit' must be <= {MAX_LIMIT}, got {limit}"
+            )));
+        }
+    }
+    let user_db_id = object
+        .get("user_id")
+        .map(|value| parse_positive_i64(value, "user_id").map(DbId))
+        .transpose()?;
+    let mut extra = HashMap::new();
+    if let Some(options) = object.get("options") {
+        let options = options.as_object().ok_or_else(|| {
+            crate::plugins::runtime_error("mix options 'options' must be a table")
+        })?;
+        for (key, value) in options {
+            let value = match value {
+                serde_json::Value::String(value) => value.clone(),
+                serde_json::Value::Bool(value) => value.to_string(),
+                serde_json::Value::Number(value) => value.to_string(),
+                other => {
+                    return Err(crate::plugins::runtime_error(format!(
+                        "mix options 'options.{key}' must be a string, boolean, or number, got {other}"
+                    )));
+                }
+            };
+            extra.insert(key.clone(), value);
+        }
     }
 
-    /// Registers a handler for generating a mix from a seed release.
-    #[harmony(args(handler: MixHandler))]
-    pub(crate) async fn from_release(
-        &self,
-        plugin_id: Option<Arc<str>>,
-        handler: Function,
-    ) -> Result<()> {
-        let plugin_id = plugin_id
-            .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
-            .transpose()?;
-        self.ensure_owner(plugin_id.as_ref())?;
-        let _registration = STATE
-            .plugin_registries
-            .ensure_registrations_open(&self.plugin_id)
-            .await?;
-        let handle = self.wrap_handler(handler).await?;
-        let mut registry = MIX_REGISTRY.write().await;
-        registry.set_handler(&self.id, MixSeedType::Release, handle);
-        Ok(())
-    }
+    Ok(MixOptions {
+        limit,
+        user_db_id,
+        extra,
+    })
+}
 
-    /// Registers a handler for generating a mix from a seed artist.
-    #[harmony(args(handler: MixHandler))]
-    pub(crate) async fn from_artist(
-        &self,
-        plugin_id: Option<Arc<str>>,
-        handler: Function,
-    ) -> Result<()> {
-        let plugin_id = plugin_id
-            .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
-            .transpose()?;
-        self.ensure_owner(plugin_id.as_ref())?;
-        let _registration = STATE
-            .plugin_registries
-            .ensure_registrations_open(&self.plugin_id)
-            .await?;
-        let handle = self.wrap_handler(handler).await?;
-        let mut registry = MIX_REGISTRY.write().await;
-        registry.set_handler(&self.id, MixSeedType::Artist, handle);
-        Ok(())
-    }
-
-    /// Registers a handler for generating a mix from a user's recent listens.
-    #[harmony(args(handler: MixRecentListensHandler))]
-    pub(crate) async fn from_recent_listens(
-        &self,
-        plugin_id: Option<Arc<str>>,
-        handler: Function,
-    ) -> Result<()> {
-        let plugin_id = plugin_id
-            .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
-            .transpose()?;
-        self.ensure_owner(plugin_id.as_ref())?;
-        let _registration = STATE
-            .plugin_registries
-            .ensure_registrations_open(&self.plugin_id)
-            .await?;
-        let handle = self.wrap_handler(handler).await?;
-        let mut registry = MIX_REGISTRY.write().await;
-        registry.set_handler(&self.id, MixSeedType::RecentListens, handle);
-        Ok(())
-    }
-
-    /// Registers a handler for generating a mix from a seed genre.
-    #[harmony(args(handler: MixHandler))]
-    pub(crate) async fn from_genre(
-        &self,
-        plugin_id: Option<Arc<str>>,
-        handler: Function,
-    ) -> Result<()> {
-        let plugin_id = plugin_id
-            .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
-            .transpose()?;
-        self.ensure_owner(plugin_id.as_ref())?;
-        let _registration = STATE
-            .plugin_registries
-            .ensure_registrations_open(&self.plugin_id)
-            .await?;
-        let handle = self.wrap_handler(handler).await?;
-        let mut registry = MIX_REGISTRY.write().await;
-        registry.set_handler(&self.id, MixSeedType::Genre, handle);
-        Ok(())
-    }
-
-    /// Registers a handler for generating a mix from a seed playlist.
-    #[harmony(args(handler: MixHandler))]
-    pub(crate) async fn from_playlist(
-        &self,
-        plugin_id: Option<Arc<str>>,
-        handler: Function,
-    ) -> Result<()> {
-        let plugin_id = plugin_id
-            .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
-            .transpose()?;
-        self.ensure_owner(plugin_id.as_ref())?;
-        let _registration = STATE
-            .plugin_registries
-            .ensure_registrations_open(&self.plugin_id)
-            .await?;
-        let handle = self.wrap_handler(handler).await?;
-        let mut registry = MIX_REGISTRY.write().await;
-        registry.set_handler(&self.id, MixSeedType::Playlist, handle);
-        Ok(())
-    }
-
-    /// Declares an option that clients can toggle when requesting a mix.
-    #[harmony(args(config: OptionConfig))]
-    pub(crate) async fn declare_option(
-        &self,
-        plugin_id: Option<Arc<str>>,
-        config: Table,
-    ) -> Result<()> {
-        let plugin_id = plugin_id
-            .map(|raw| PluginId::new(raw).map_err(mlua::Error::external))
-            .transpose()?;
-        self.ensure_owner(plugin_id.as_ref())?;
-        let _registration = STATE
-            .plugin_registries
-            .ensure_registrations_open(&self.plugin_id)
-            .await?;
-        let name: String = config
-            .get("name")
-            .ok()
-            .filter(|s: &String| !s.trim().is_empty())
-            .ok_or_else(|| mlua::Error::runtime("declare_option requires a non-empty 'name'"))?;
-        let label: String = config
-            .get("label")
-            .ok()
-            .filter(|s: &String| !s.trim().is_empty())
-            .ok_or_else(|| mlua::Error::runtime("declare_option requires a non-empty 'label'"))?;
-        let option_type_str: String = config
-            .get("type")
-            .ok()
-            .filter(|s: &String| !s.trim().is_empty())
-            .ok_or_else(|| mlua::Error::runtime("declare_option requires a non-empty 'type'"))?;
-        let option_type = match option_type_str.as_str() {
-            "boolean" => OptionType::Boolean,
-            "string" => OptionType::String,
-            "number" => OptionType::Number,
-            other => {
-                return Err(mlua::Error::runtime(format!(
-                    "declare_option: unsupported type '{other}', expected 'boolean', 'string', or 'number'"
-                )));
+fn parse_option_declaration(
+    vm: &luau::Vm,
+    config: &luau::Table,
+) -> luau::runtime::Result<OptionDeclaration> {
+    let name = required_string_field(vm, config, "name")?;
+    let label = required_string_field(vm, config, "label")?;
+    let option_type = match required_string_field(vm, config, "type")?.as_str() {
+        "boolean" => OptionType::Boolean,
+        "number" => OptionType::Number,
+        "string" => OptionType::String,
+        other => {
+            return Err(crate::plugins::runtime_error(format!(
+                "unsupported mix option type '{other}'; expected boolean, number, or string"
+            )));
+        }
+    };
+    let default = match config.get_raw(vm, "default")? {
+        luau::Value::Nil => serde_json::Value::Null,
+        value => harmony_json::luau_to_json(vm, &value, 0)?,
+    };
+    let requires_settings = match config.get_raw(vm, "requires_settings")? {
+        luau::Value::Nil => Vec::new(),
+        luau::Value::Table(table) => {
+            let mut values = Vec::new();
+            for (key, value) in table.pairs_raw(vm)? {
+                if !matches!(key, luau::Value::Integer(_) | luau::Value::Number(_)) {
+                    continue;
+                }
+                let luau::Value::String(value) = value else {
+                    continue;
+                };
+                values.push(String::from_utf8(value).map_err(crate::plugins::runtime_error)?);
             }
-        };
-        let default: mlua::Value = config.get("default").unwrap_or(mlua::Value::Nil);
-        let default_json = match &default {
-            mlua::Value::Boolean(b) => serde_json::Value::Bool(*b),
-            mlua::Value::Integer(n) => serde_json::json!(*n),
-            mlua::Value::Number(n) => serde_json::json!(*n),
-            mlua::Value::String(s) => serde_json::Value::String(s.to_str()?.to_string()),
-            _ => serde_json::Value::Null,
-        };
-        let requires_settings: Vec<String> = config
-            .get::<Vec<String>>("requires_settings")
-            .unwrap_or_default();
+            values
+        }
+        other => {
+            return Err(crate::plugins::runtime_error(format!(
+                "mix option requires_settings must be an array table, got {}",
+                other.type_name()
+            )));
+        }
+    };
 
-        let mut registry = MIX_REGISTRY.write().await;
-        registry
-            .declare_option(
-                &self.id,
-                OptionDeclaration {
-                    name,
-                    label,
-                    option_type,
-                    default: default_json,
-                    requires_settings,
-                },
-            )
-            .map_err(mlua::Error::runtime)?;
-        Ok(())
+    Ok(OptionDeclaration {
+        name,
+        label,
+        option_type,
+        default,
+        requires_settings,
+    })
+}
+
+fn required_string_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &'static str,
+) -> luau::runtime::Result<String> {
+    match table.get_raw(vm, key)? {
+        luau::Value::String(value) => {
+            String::from_utf8(value).map_err(crate::plugins::runtime_error)
+        }
+        luau::Value::Nil => Err(crate::plugins::runtime_error(format!(
+            "mix option '{key}' is required"
+        ))),
+        other => Err(crate::plugins::runtime_error(format!(
+            "mix option '{key}' must be a string, got {}",
+            other.type_name()
+        ))),
     }
 }
 
-harmony_macros::compile!(type_path = Mixer, fields = false, methods = true);
-
-struct MixModule;
-
-impl MixModule {
-    fn support_aliases() -> Vec<harmony_luau::TypeAliasDescriptor> {
-        vec![
-            harmony_luau::TypeAliasDescriptor {
-                name: "MixHandler",
-                description: Some(
-                    "A handler function that receives a context table and returns a result table with a `tracks` field. Returning an empty `tracks` array is a terminal success — no further mixers or the built-in algorithm will be tried. Raise an error to signal failure and allow fallthrough to the next mixer.",
-                ),
-                ty: MixHandler::luau_type(),
-            },
-            harmony_luau::TypeAliasDescriptor {
-                name: "MixRecentListensHandler",
-                description: Some(
-                    "A handler function for recent-listens mixes. Context includes pre-resolved recent track IDs. Returning an empty `tracks` array is a terminal success — raise an error to allow fallthrough.",
-                ),
-                ty: MixRecentListensHandler::luau_type(),
-            },
-        ]
+fn core_call_context(context: &luau::CallContext) -> harmony_core::CallContext {
+    let mut caller = harmony_core::ContextBag::default();
+    for (type_id, value) in context.caller.cloned_entries() {
+        caller.insert_shared(type_id, value);
     }
-
-    fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
-        vec![
-            OptionConfig::interface_descriptor(),
-            harmony_luau::InterfaceDescriptor {
-                name: "MixContext",
-                description: Some("Context passed to a mix handler."),
-                fields: vec![
-                    harmony_luau::FieldDescriptor {
-                        name: "seed_id",
-                        ty: f64::luau_type(),
-                        description: Some(
-                            "The database ID of the seed entity (track, release, artist, genre, or playlist).",
-                        ),
-                    },
-                    harmony_luau::FieldDescriptor {
-                        name: "limit",
-                        ty: LuauType::Optional(Box::new(f64::luau_type())),
-                        description: Some("Maximum number of tracks to return."),
-                    },
-                    harmony_luau::FieldDescriptor {
-                        name: "user_id",
-                        ty: LuauType::Optional(Box::new(f64::luau_type())),
-                        description: Some(
-                            "The database ID of the requesting user, if authenticated.",
-                        ),
-                    },
-                    harmony_luau::FieldDescriptor {
-                        name: "options",
-                        ty: LuauType::Optional(Box::new(LuauType::literal(
-                            "{ [string]: boolean | string | number }",
-                        ))),
-                        description: Some(
-                            "Typed options declared by the mixer via declare_option, coerced from query parameters.",
-                        ),
-                    },
-                ],
-            },
-            harmony_luau::InterfaceDescriptor {
-                name: "MixRecentListensContext",
-                description: Some("Context passed to a recent-listens mix handler."),
-                fields: vec![
-                    harmony_luau::FieldDescriptor {
-                        name: "user_id",
-                        ty: f64::luau_type(),
-                        description: Some("The database ID of the requesting user."),
-                    },
-                    harmony_luau::FieldDescriptor {
-                        name: "limit",
-                        ty: LuauType::Optional(Box::new(f64::luau_type())),
-                        description: Some("Maximum number of tracks to return."),
-                    },
-                    harmony_luau::FieldDescriptor {
-                        name: "recent_track_ids",
-                        ty: LuauType::literal("{ number }"),
-                        description: Some("Pre-resolved database IDs of recently listened tracks."),
-                    },
-                    harmony_luau::FieldDescriptor {
-                        name: "options",
-                        ty: LuauType::Optional(Box::new(LuauType::literal(
-                            "{ [string]: boolean | string | number }",
-                        ))),
-                        description: Some(
-                            "Typed options declared by the mixer via declare_option, coerced from query parameters.",
-                        ),
-                    },
-                ],
-            },
-            harmony_luau::InterfaceDescriptor {
-                name: "MixResultTrack",
-                description: Some("A track entry in a mix result."),
-                fields: vec![harmony_luau::FieldDescriptor {
-                    name: "track_id",
-                    ty: f64::luau_type(),
-                    description: Some("The database ID of the track."),
-                }],
-            },
-            harmony_luau::InterfaceDescriptor {
-                name: "MixResult",
-                description: Some("The result returned by a mix handler."),
-                fields: vec![harmony_luau::FieldDescriptor {
-                    name: "tracks",
-                    ty: LuauType::literal("{ MixResultTrack }"),
-                    description: Some("Ordered list of tracks for the mix."),
-                }],
-            },
-            harmony_luau::InterfaceDescriptor {
-                name: "MixConsumerOptions",
-                description: Some("Options for mix.from_* and instant_mix_from_audio."),
-                fields: vec![
-                    harmony_luau::FieldDescriptor {
-                        name: "limit",
-                        ty: LuauType::Optional(Box::new(f64::luau_type())),
-                        description: Some(
-                            "Max tracks. Positive whole number, ≤ server ceiling, default 200.",
-                        ),
-                    },
-                    harmony_luau::FieldDescriptor {
-                        name: "user_id",
-                        ty: LuauType::Optional(Box::new(f64::luau_type())),
-                        description: Some(
-                            "DB ID of the user the mix is for; drives heard/unheard partitioning. Leave nil to let the route inject from the authenticated principal.",
-                        ),
-                    },
-                    harmony_luau::FieldDescriptor {
-                        name: "options",
-                        ty: LuauType::Optional(Box::new(LuauType::literal(
-                            "{ [string]: boolean | string | number }",
-                        ))),
-                        description: Some(
-                            "Per-mixer options keyed by name. Forwarded to plugin mixers and coerced using their declare_option types.",
-                        ),
-                    },
-                ],
-            },
-        ]
+    harmony_core::CallContext {
+        origin: harmony_core::ChunkOrigin {
+            module: context
+                .origin
+                .module
+                .as_ref()
+                .map(|module| harmony_core::ModuleId(module.0.clone())),
+            plugin: context.origin.plugin.clone(),
+            path: context.origin.path.clone(),
+        },
+        capability: context
+            .capability
+            .as_ref()
+            .map(|capability| harmony_core::CapabilityId(capability.0.clone())),
+        caller,
+        task_group: harmony_core::TaskGroupId(context.task_group.0),
     }
+}
 
-    fn support_classes() -> Vec<ClassDescriptor> {
-        use harmony_luau::DescribeUserData;
-        let mut mixer = <Mixer as DescribeUserData>::class_descriptor();
-        mixer.methods.retain(|method| {
-            !(method.kind == harmony_luau::MethodKind::Static && method.name == "new")
-        });
-        // Re-declare Track for `{ Track }` returns; generated modules are scoped independently.
-        let track = <crate::plugins::db::Track as DescribeUserData>::class_descriptor();
-        vec![mixer, track]
+fn parse_seed_id(seed_id: i64, label: &'static str) -> luau::runtime::Result<DbId> {
+    if seed_id <= 0 {
+        return Err(crate::plugins::runtime_error(format!(
+            "mix.{label}: seed id must be a positive number, got {seed_id}"
+        )));
     }
+    Ok(DbId(seed_id))
+}
 
-    fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-        harmony_luau::render_definition_file_with_support(
-            &<Self as DescribeModule>::module_descriptor(),
-            &Self::support_aliases(),
-            &Self::support_interfaces(),
-            &Self::support_classes(),
-        )
+fn parse_positive_usize(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> luau::runtime::Result<usize> {
+    let value = parse_positive_i64(value, field)?;
+    usize::try_from(value)
+        .map_err(|_| crate::plugins::runtime_error(format!("mix options '{field}' is too large")))
+}
+
+fn parse_positive_i64(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> luau::runtime::Result<i64> {
+    let Some(value) = value.as_i64() else {
+        return Err(crate::plugins::runtime_error(format!(
+            "mix options '{field}' must be a whole number"
+        )));
+    };
+    if value <= 0 {
+        return Err(crate::plugins::runtime_error(format!(
+            "mix options '{field}' must be positive, got {value}"
+        )));
+    }
+    Ok(value)
+}
+
+fn tracks_to_luau(tracks: Option<Vec<Track>>) -> luau::runtime::Result<luau::Value> {
+    let Some(tracks) = tracks else {
+        return Ok(luau::Value::Nil);
+    };
+    harmony_luau::serializable_to_luau_owned(tracks)
+}
+
+fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
+    ParameterDescriptor {
+        name,
+        ty,
+        description: None,
+        variadic: false,
+    }
+}
+
+fn id_param() -> ParameterDescriptor {
+    param("id", f64::luau_type())
+}
+
+fn opts_param() -> ParameterDescriptor {
+    ParameterDescriptor {
+        name: "opts",
+        ty: LuauType::Optional(Box::new(LuauType::literal("MixConsumerOptions"))),
+        description: None,
+        variadic: false,
     }
 }
 
 impl DescribeModule for MixModule {
     fn module_descriptor() -> ModuleDescriptor {
         let mut descriptor = ModuleDescriptor::new("Mix", "mix", None);
-        let id_param = || ParameterDescriptor {
-            name: "id",
-            ty: f64::luau_type(),
-            description: Some("Database ID of the seed entity."),
-            variadic: false,
-        };
-        let opts_param = || ParameterDescriptor {
-            name: "opts",
-            ty: LuauType::Optional(Box::new(LuauType::literal("MixConsumerOptions"))),
-            description: None,
-            variadic: false,
-        };
         let optional_track_list =
             || vec![LuauType::Optional(Box::new(LuauType::literal("{ Track }")))];
 
         descriptor.functions.extend(vec![
             ModuleFunctionDescriptor {
                 path: vec!["Mixer", "new"],
-                description: Some("Creates or loads a mixer."),
-                params: vec![ParameterDescriptor {
-                    name: "id",
-                    ty: String::luau_type(),
-                    description: None,
-                    variadic: false,
-                }],
+                description: Some("Creates a mixer registration object."),
+                params: vec![param("id", String::luau_type())],
                 returns: vec![LuauType::literal("Mixer")],
-                yields: true,
+                yields: false,
             },
             ModuleFunctionDescriptor {
                 path: vec!["from_track"],
@@ -552,7 +696,7 @@ impl DescribeModule for MixModule {
             },
             ModuleFunctionDescriptor {
                 path: vec!["from_release"],
-                description: Some("Mix from a seed release (album). Nil if missing."),
+                description: Some("Mix from a seed release. Nil if missing."),
                 params: vec![id_param(), opts_param()],
                 returns: optional_track_list(),
                 yields: true,
@@ -592,240 +736,226 @@ impl DescribeModule for MixModule {
     }
 }
 
-/// Strict; `user_id` is a trust assertion — audit call sites.
-fn parse_consumer_options(opts: Option<Table>) -> Result<MixOptions> {
-    let Some(opts) = opts else {
-        return Ok(MixOptions::default());
-    };
-
-    let limit = parse_limit(opts.get::<Value>("limit")?)?;
-    let user_db_id = parse_user_db_id(opts.get::<Value>("user_id")?)?;
-
-    let mut extra = HashMap::new();
-    match opts.get::<Value>("options")? {
-        Value::Nil => {}
-        Value::Table(extras) => {
-            extras.for_each(|key: Value, value: Value| {
-                let key_str = key
-                    .as_string()
-                    .and_then(|s| s.to_str().ok().map(|c| c.to_string()))
-                    .ok_or_else(|| {
-                        mlua::Error::runtime(format!(
-                            "mix options 'options' keys must be strings, got {}",
-                            key.type_name()
-                        ))
-                    })?;
-                let value_str = match &value {
-                    Value::String(s) => {
-                        s.to_str().map(|c| c.to_string()).map_err(|err| {
-                            mlua::Error::runtime(format!(
-                                "mix options 'options.{key_str}' string is not valid UTF-8: {err}"
-                            ))
-                        })?
-                    }
-                    Value::Boolean(b) => b.to_string(),
-                    Value::Integer(i) => i.to_string(),
-                    Value::Number(n) if n.is_finite() => n.to_string(),
-                    other => {
-                        return Err(mlua::Error::runtime(format!(
-                            "mix options 'options.{key_str}' must be a string, boolean, or finite number, got {}",
-                            other.type_name()
-                        )));
-                    }
-                };
-                extra.insert(key_str, value_str);
-                Ok(())
-            })?;
-        }
-        other => {
-            return Err(mlua::Error::runtime(format!(
-                "mix options 'options' must be a table, got {}",
-                other.type_name()
-            )));
-        }
-    }
-
-    Ok(MixOptions {
-        limit,
-        user_db_id,
-        extra,
-    })
-}
-
-fn parse_user_db_id(value: Value) -> Result<Option<DbId>> {
-    let n = match value {
-        Value::Nil => return Ok(None),
-        Value::Integer(n) => n,
-        Value::Number(n) => {
-            if !n.is_finite() {
-                return Err(mlua::Error::runtime(format!(
-                    "mix options 'user_id' must be a finite number, got {n}"
-                )));
-            }
-            if n.fract() != 0.0 {
-                return Err(mlua::Error::runtime(format!(
-                    "mix options 'user_id' must be a whole number, got {n}"
-                )));
-            }
-            n as i64
-        }
-        other => {
-            return Err(mlua::Error::runtime(format!(
-                "mix options 'user_id' must be a number, got {}",
-                other.type_name()
-            )));
-        }
-    };
-    if n <= 0 {
-        return Err(mlua::Error::runtime(format!(
-            "mix options 'user_id' must be positive, got {n}"
-        )));
-    }
-    Ok(Some(DbId(n)))
-}
-
-fn parse_limit(value: Value) -> Result<Option<usize>> {
-    let n = match value {
-        Value::Nil => return Ok(None),
-        Value::Integer(n) => n,
-        Value::Number(n) => {
-            if !n.is_finite() {
-                return Err(mlua::Error::runtime(format!(
-                    "mix options 'limit' must be a finite number, got {n}"
-                )));
-            }
-            if n.fract() != 0.0 {
-                return Err(mlua::Error::runtime(format!(
-                    "mix options 'limit' must be a whole number, got {n}"
-                )));
-            }
-            n as i64
-        }
-        other => {
-            return Err(mlua::Error::runtime(format!(
-                "mix options 'limit' must be a number, got {}",
-                other.type_name()
-            )));
-        }
-    };
-    if n <= 0 {
-        return Err(mlua::Error::runtime(format!(
-            "mix options 'limit' must be positive, got {n}"
-        )));
-    }
-    let limit = n as usize;
-    if limit > MAX_LIMIT {
-        return Err(mlua::Error::runtime(format!(
-            "mix options 'limit' must be <= {MAX_LIMIT}, got {limit}"
-        )));
-    }
-    Ok(Some(limit))
-}
-
-fn parse_seed_id(seed_id: i64, label: &'static str) -> Result<DbId> {
-    if seed_id <= 0 {
-        return Err(mlua::Error::runtime(format!(
-            "mix.{label}: seed id must be a positive number, got {seed_id}"
-        )));
-    }
-    Ok(DbId(seed_id))
-}
-
-pub(crate) fn get_module() -> Module {
-    Module {
-        path: "lyra/mix".into(),
-        setup: Arc::new(|lua: &Lua| -> anyhow::Result<mlua::Table> {
-            let table = lua.create_table()?;
-            table.set("Mixer", lua.create_proxy::<Mixer>()?)?;
-
-            table.set(
-                "from_track",
-                lua.create_async_function(
-                    |_lua, (seed_id, opts): (i64, Option<Table>)| async move {
-                        let seed = parse_seed_id(seed_id, "from_track")?;
-                        let options = parse_consumer_options(opts)?;
-                        mix_service::from_track(seed, &options)
-                            .await
-                            .map_err(mlua::Error::external)
-                    },
-                )?,
-            )?;
-
-            table.set(
-                "from_release",
-                lua.create_async_function(
-                    |_lua, (seed_id, opts): (i64, Option<Table>)| async move {
-                        let seed = parse_seed_id(seed_id, "from_release")?;
-                        let options = parse_consumer_options(opts)?;
-                        mix_service::from_release(seed, &options)
-                            .await
-                            .map_err(mlua::Error::external)
-                    },
-                )?,
-            )?;
-
-            table.set(
-                "from_artist",
-                lua.create_async_function(
-                    |_lua, (seed_id, opts): (i64, Option<Table>)| async move {
-                        let seed = parse_seed_id(seed_id, "from_artist")?;
-                        let options = parse_consumer_options(opts)?;
-                        mix_service::from_artist(seed, &options)
-                            .await
-                            .map_err(mlua::Error::external)
-                    },
-                )?,
-            )?;
-
-            table.set(
-                "from_genre",
-                lua.create_async_function(
-                    |_lua, (seed_id, opts): (i64, Option<Table>)| async move {
-                        let seed = parse_seed_id(seed_id, "from_genre")?;
-                        let options = parse_consumer_options(opts)?;
-                        mix_service::from_genre(seed, &options)
-                            .await
-                            .map_err(mlua::Error::external)
-                    },
-                )?,
-            )?;
-
-            table.set(
-                "from_playlist",
-                lua.create_async_function(
-                    |_lua, (seed_id, opts): (i64, Option<Table>)| async move {
-                        let seed = parse_seed_id(seed_id, "from_playlist")?;
-                        let options = parse_consumer_options(opts)?;
-                        mix_service::from_playlist(seed, &options)
-                            .await
-                            .map_err(mlua::Error::external)
-                    },
-                )?,
-            )?;
-
-            table.set(
-                "instant_mix_from_audio",
-                lua.create_async_function(
-                    |_lua, (seed_id, opts): (i64, Option<Table>)| async move {
-                        let seed = parse_seed_id(seed_id, "instant_mix_from_audio")?;
-                        let options = parse_consumer_options(opts)?;
-                        mix_service::instant_mix_from_audio(seed, &options)
-                            .await
-                            .map_err(mlua::Error::external)
-                    },
-                )?,
-            )?;
-
-            Ok(table)
-        }),
-        scope: harmony_core::Scope {
-            id: "lyra.mix".into(),
-            description: "Register a mix generator.",
-            danger: harmony_core::Danger::Medium,
+fn support_aliases() -> Vec<TypeAliasDescriptor> {
+    vec![
+        TypeAliasDescriptor {
+            name: "Track",
+            description: Some("Track table returned by mix consumers."),
+            ty: track_type(),
         },
-    }
+        TypeAliasDescriptor {
+            name: "MixHandler",
+            description: Some(
+                "A handler function that receives a context table and returns a mix result.",
+            ),
+            ty: MixHandler::luau_type(),
+        },
+        TypeAliasDescriptor {
+            name: "MixRecentListensHandler",
+            description: Some("A handler function for recent-listens mixes."),
+            ty: MixRecentListensHandler::luau_type(),
+        },
+    ]
+}
+
+fn track_type() -> LuauType {
+    LuauType::object(vec![
+        FieldDescriptor {
+            name: "db_id",
+            ty: Option::<i64>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "id",
+            ty: String::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "track_title",
+            ty: String::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "sort_title",
+            ty: Option::<String>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "year",
+            ty: Option::<u32>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "disc",
+            ty: Option::<u32>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "disc_total",
+            ty: Option::<u32>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "track",
+            ty: Option::<u32>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "track_total",
+            ty: Option::<u32>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "duration_ms",
+            ty: Option::<u64>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "sample_rate_hz",
+            ty: Option::<u32>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "channel_count",
+            ty: Option::<u32>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "bit_depth",
+            ty: Option::<u32>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "bitrate_bps",
+            ty: Option::<u32>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "locked",
+            ty: Option::<bool>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "created_at",
+            ty: Option::<u64>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "ctime",
+            ty: Option::<u64>::luau_type(),
+            description: None,
+        },
+    ])
+}
+
+fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
+    vec![
+        OptionConfig::interface_descriptor(),
+        harmony_luau::InterfaceDescriptor {
+            name: "MixContext",
+            description: Some("Context passed to a mix handler."),
+            fields: vec![
+                FieldDescriptor {
+                    name: "seed_id",
+                    ty: f64::luau_type(),
+                    description: None,
+                },
+                FieldDescriptor {
+                    name: "limit",
+                    ty: LuauType::Optional(Box::new(f64::luau_type())),
+                    description: None,
+                },
+                FieldDescriptor {
+                    name: "user_id",
+                    ty: LuauType::Optional(Box::new(f64::luau_type())),
+                    description: None,
+                },
+                FieldDescriptor {
+                    name: "options",
+                    ty: LuauType::Optional(Box::new(LuauType::literal(
+                        "{ [string]: boolean | string | number }",
+                    ))),
+                    description: None,
+                },
+            ],
+        },
+        harmony_luau::InterfaceDescriptor {
+            name: "MixRecentListensContext",
+            description: Some("Context passed to a recent-listens mix handler."),
+            fields: vec![
+                FieldDescriptor {
+                    name: "user_id",
+                    ty: f64::luau_type(),
+                    description: None,
+                },
+                FieldDescriptor {
+                    name: "limit",
+                    ty: LuauType::Optional(Box::new(f64::luau_type())),
+                    description: None,
+                },
+                FieldDescriptor {
+                    name: "recent_track_ids",
+                    ty: LuauType::literal("{ number }"),
+                    description: None,
+                },
+                FieldDescriptor {
+                    name: "options",
+                    ty: LuauType::Optional(Box::new(LuauType::literal(
+                        "{ [string]: boolean | string | number }",
+                    ))),
+                    description: None,
+                },
+            ],
+        },
+        harmony_luau::InterfaceDescriptor {
+            name: "MixResultTrack",
+            description: Some("A track entry in a mix result."),
+            fields: vec![FieldDescriptor {
+                name: "track_id",
+                ty: f64::luau_type(),
+                description: None,
+            }],
+        },
+        harmony_luau::InterfaceDescriptor {
+            name: "MixResult",
+            description: Some("The result returned by a mix handler."),
+            fields: vec![FieldDescriptor {
+                name: "tracks",
+                ty: LuauType::literal("{ MixResultTrack }"),
+                description: None,
+            }],
+        },
+        harmony_luau::InterfaceDescriptor {
+            name: "MixConsumerOptions",
+            description: Some("Options for mix.from_* and instant_mix_from_audio."),
+            fields: vec![
+                FieldDescriptor {
+                    name: "limit",
+                    ty: LuauType::Optional(Box::new(f64::luau_type())),
+                    description: None,
+                },
+                FieldDescriptor {
+                    name: "user_id",
+                    ty: LuauType::Optional(Box::new(f64::luau_type())),
+                    description: None,
+                },
+                FieldDescriptor {
+                    name: "options",
+                    ty: LuauType::Optional(Box::new(LuauType::literal(
+                        "{ [string]: boolean | string | number }",
+                    ))),
+                    description: None,
+                },
+            ],
+        },
+    ]
 }
 
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
-    MixModule::render_luau_definition()
+    render_definition_file_with_support(
+        &MixModule::module_descriptor(),
+        &support_aliases(),
+        &support_interfaces(),
+        &[Mixer::class_descriptor()],
+    )
 }

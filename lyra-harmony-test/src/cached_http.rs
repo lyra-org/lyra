@@ -35,15 +35,11 @@ use flate2::{
     GzBuilder,
 };
 use harmony_core::{
-    LuaAsyncExt,
-    Module,
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
 };
-use harmony_http::HttpMethod;
-use mlua::{
-    Lua,
-    Table,
-    Value,
-};
+use harmony_luau as luau;
 use percent_encoding::{
     AsciiSet,
     NON_ALPHANUMERIC,
@@ -219,7 +215,8 @@ pub async fn take_cache_misses(cache_misses: &CacheMisses) -> Vec<String> {
     std::mem::take(&mut *cache_misses.write().await)
 }
 
-pub fn get_module(
+#[derive(Clone)]
+struct CachedHttpState {
     base_cache_dir: PathBuf,
     overlay_cache_dir: Option<PathBuf>,
     accessed_keys: AccessedKeys,
@@ -229,243 +226,84 @@ pub fn get_module(
     request_trace: RequestTrace,
     live_policy: LivePolicy,
     plugin_id: String,
-) -> Module {
-    Module {
-        path: "harmony/http".into(),
-        setup: Arc::new(move |lua: &Lua| -> anyhow::Result<Table> {
-            let table = lua.create_table()?;
-            table.set("HttpMethod", lua.create_proxy::<HttpMethod>()?)?;
-            let base_cache_dir = base_cache_dir.clone();
-            let overlay_cache_dir = overlay_cache_dir.clone();
-            let accessed_keys = accessed_keys.clone();
-            let request_count = request_count.clone();
-            let live_request_count = live_request_count.clone();
-            let cache_misses = cache_misses.clone();
-            let request_trace = request_trace.clone();
-            let live_policy = live_policy;
-            let plugin_id = plugin_id.clone();
+}
 
-            let base_cache_dir_req = base_cache_dir.clone();
-            let overlay_cache_dir_req = overlay_cache_dir.clone();
-            let accessed_keys_req = accessed_keys.clone();
-            let request_count_req = request_count.clone();
-            let live_request_count_req = live_request_count.clone();
-            let cache_misses_req = cache_misses.clone();
-            let request_trace_req = request_trace.clone();
-            table.set(
-                "request",
-                lua.create_async_function(move |lua, options: Table| {
-                    let base_cache_dir = base_cache_dir_req.clone();
-                    let overlay_cache_dir = overlay_cache_dir_req.clone();
-                    let accessed_keys = accessed_keys_req.clone();
-                    let request_count = request_count_req.clone();
-                    let live_request_count = live_request_count_req.clone();
-                    let cache_misses = cache_misses_req.clone();
-                    let request_trace = request_trace_req.clone();
-                    async move {
-                        request_count.fetch_add(1, Ordering::Relaxed);
+pub fn module_spec(
+    base_cache_dir: PathBuf,
+    overlay_cache_dir: Option<PathBuf>,
+    accessed_keys: AccessedKeys,
+    request_count: RequestCount,
+    live_request_count: LiveRequestCount,
+    cache_misses: CacheMisses,
+    request_trace: RequestTrace,
+    live_policy: LivePolicy,
+    plugin_id: String,
+) -> ModuleSpec {
+    let state = CachedHttpState {
+        base_cache_dir,
+        overlay_cache_dir,
+        accessed_keys,
+        request_count,
+        live_request_count,
+        cache_misses,
+        request_trace,
+        live_policy,
+        plugin_id,
+    };
+    let request_state = state.clone();
+    let rate_limit_plugin_id = state.plugin_id.clone();
 
-                        let url: String = options
-                            .get("url")
-                            .map_err(|_| mlua::Error::runtime("missing or invalid 'url' field"))?;
+    ModuleSpec::new("harmony/http")
+        .capability("harmony.http")
+        .function(
+            FunctionSpec::async_fn("request")
+                .arg_name("options")
+                .call_async(Arc::new(move |frame| {
+                    request_callback(frame, request_state.clone())
+                })),
+        )
+        .function(
+            FunctionSpec::async_fn("set_rate_limit")
+                .arg_name("options")
+                .call_async(Arc::new(move |frame| {
+                    set_rate_limit_callback(frame, rate_limit_plugin_id.clone())
+                })),
+        )
+        .function(
+            FunctionSpec::async_fn("set_max_in_flight")
+                .arg_name("options")
+                .call_async(Arc::new(set_max_in_flight_callback)),
+        )
+        .function(
+            FunctionSpec::sync_fn("encode_uri_component")
+                .named_arg::<String>("input")
+                .returns::<String>()
+                .call(encode_uri_component_callback),
+        )
+        .install(|_| Ok(ModuleExport::new(CachedHttpModule)))
+        .initializer(init_luau_http_module)
+}
 
-                        let cache_key = xxh3_hex(&url);
-                        {
-                            let mut keys = accessed_keys.write().await;
-                            keys.insert(cache_key.clone());
-                        }
+struct CachedHttpModule;
 
-                        let cached = if let Some(overlay_cache_dir) = overlay_cache_dir.as_deref() {
-                            match read_cache(overlay_cache_dir, &cache_key, &url)
-                                .map_err(mlua::Error::external)?
-                            {
-                                Some(cached) => Some(cached),
-                                None => read_cache(&base_cache_dir, &cache_key, &url)
-                                    .map_err(mlua::Error::external)?,
-                            }
-                        } else {
-                            read_cache(&base_cache_dir, &cache_key, &url)
-                                .map_err(mlua::Error::external)?
-                        };
-
-                        if let Some(cached) = cached {
-                            record_trace_entry(
-                                &request_trace,
-                                &cache_key,
-                                cached.status_code,
-                                &cached.body,
-                            )
-                            .await;
-                            return build_response_table(&lua, cached.status_code, &cached.body, 0);
-                        }
-
-                        if live_policy == LivePolicy::CacheOnly {
-                            cache_misses.write().await.push(url.clone());
-                            return Err(mlua::Error::runtime(format!("cache miss for {url}")));
-                        }
-
-                        live_request_count.fetch_add(1, Ordering::Relaxed);
-
-                        let domain = extract_domain(&url);
-                        let config = domain.as_deref().and_then(|domain| {
-                            RATE_LIMITER
-                                .lock()
-                                .expect("rate limiter mutex poisoned")
-                                .get_config(domain)
-                        });
-
-                        if let Some(domain) = domain.as_deref()
-                            && config.is_some()
-                        {
-                            let wait_time = RATE_LIMITER
-                                .lock()
-                                .expect("rate limiter mutex poisoned")
-                                .acquire(domain);
-                            if let Some(wait_time) = wait_time {
-                                tokio::time::sleep(wait_time).await;
-                            }
-                        }
-
-                        let mut retries = 0u32;
-                        let mut backoff = config
-                            .as_ref()
-                            .map(|cfg| cfg.initial_backoff)
-                            .unwrap_or(Duration::from_secs(1));
-
-                        loop {
-                            let response = execute_single_request(&url, options.clone())
-                                .await
-                                .map_err(mlua::Error::external)?;
-                            let write_cache_dir =
-                                overlay_cache_dir.as_ref().unwrap_or(&base_cache_dir);
-                            write_cache(
-                                write_cache_dir,
-                                &cache_key,
-                                &CachedResponse {
-                                    url: url.clone(),
-                                    status_code: response.status_code,
-                                    body: response.body.clone(),
-                                },
-                            )
-                            .map_err(mlua::Error::external)?;
-
-                            let should_retry = config.as_ref().is_some_and(|cfg| {
-                                retries < cfg.max_retries
-                                    && cfg.retry_status_codes.contains(&response.status_code)
-                            });
-                            if !should_retry {
-                                record_trace_entry(
-                                    &request_trace,
-                                    &cache_key,
-                                    response.status_code,
-                                    &response.body,
-                                )
-                                .await;
-                                return build_response_table(
-                                    &lua,
-                                    response.status_code,
-                                    &response.body,
-                                    retries,
-                                );
-                            }
-
-                            tokio::time::sleep(backoff).await;
-                            retries += 1;
-                            backoff = backoff.saturating_mul(2);
-                        }
-                    }
-                })?,
-            )?;
-
-            table.set(
-                "set_rate_limit",
-                lua.create_async_function(move |_lua, options: Value| {
-                    let plugin_id = plugin_id.clone();
-                    async move {
-                        let table = match options {
-                            Value::Table(table) => table,
-                            _ => {
-                                return Err(mlua::Error::runtime(
-                                    "http.set_rate_limit expects a table",
-                                ));
-                            }
-                        };
-
-                        let domain: String = table.get("domain").map_err(|e| {
-                            mlua::Error::runtime(format!("invalid 'domain' field: {e}"))
-                        })?;
-                        let requests_per_second = table
-                            .get::<Option<f64>>("requests_per_second")
-                            .map_err(|e| {
-                                mlua::Error::runtime(format!(
-                                    "invalid 'requests_per_second' field: {e}"
-                                ))
-                            })?
-                            .unwrap_or(1.0);
-                        if !requests_per_second.is_finite() || requests_per_second <= 0.0 {
-                            return Err(mlua::Error::runtime(
-                                "requests_per_second must be a positive number",
-                            ));
-                        }
-
-                        let config = RateLimitConfig {
-                            requests_per_second,
-                            retry_status_codes: table
-                                .get::<Option<Vec<u16>>>("retry_on")
-                                .map_err(|e| {
-                                    mlua::Error::runtime(format!("invalid 'retry_on' field: {e}"))
-                                })?
-                                .unwrap_or_else(|| vec![429, 503]),
-                            max_retries: table
-                                .get::<Option<u32>>("max_retries")
-                                .map_err(|e| {
-                                    mlua::Error::runtime(format!(
-                                        "invalid 'max_retries' field: {e}"
-                                    ))
-                                })?
-                                .unwrap_or(3),
-                            initial_backoff: Duration::from_millis(
-                                table
-                                    .get::<Option<u64>>("backoff_ms")
-                                    .map_err(|e| {
-                                        mlua::Error::runtime(format!(
-                                            "invalid 'backoff_ms' field: {e}"
-                                        ))
-                                    })?
-                                    .unwrap_or(1000),
-                            ),
-                        };
-
-                        RATE_LIMITER
-                            .lock()
-                            .expect("rate limiter mutex poisoned")
-                            .set_config(domain.clone(), config);
-
-                        harmony_http::test_seed_rate_limit(domain, plugin_id).await;
-
-                        Ok(())
-                    }
-                })?,
-            )?;
-
-            table.set(
-                "encode_uri_component",
-                lua.create_function(|_, input: String| {
-                    Ok(
-                        percent_encoding::utf8_percent_encode(&input, URI_COMPONENT_SET)
-                            .to_string(),
-                    )
-                })?,
-            )?;
-
-            Ok(table)
-        }),
-        scope: harmony_core::Scope {
-            id: "harmony.http".into(),
-            description: "Make outbound HTTP requests to any server on the internet.",
-            danger: harmony_core::Danger::High,
-        },
+fn init_luau_http_module(
+    vm: &luau::Vm,
+    _origin: &harmony_core::ChunkOrigin,
+    table: &luau::Table,
+) -> luau::runtime::Result<()> {
+    let methods = vm.create_table_with_capacity(0, 6)?;
+    for (name, method) in [
+        ("Get", "GET"),
+        ("Post", "POST"),
+        ("Put", "PUT"),
+        ("Delete", "DELETE"),
+        ("Patch", "PATCH"),
+        ("Head", "HEAD"),
+    ] {
+        methods.set_raw(vm, name, luau::Value::String(method.as_bytes().to_vec()))?;
     }
+    methods.set_readonly(vm, true)?;
+    table.set_table_raw(vm, "HttpMethod", &methods)
 }
 
 fn xxh3_hex(input: &str) -> String {
@@ -565,35 +403,218 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         .expect("failed to build HTTP client")
 });
 
-async fn execute_single_request(url: &str, options: Table) -> anyhow::Result<LiveResponse> {
-    let method: HttpMethod = options.get("method").unwrap_or_else(|_| HttpMethod::Get);
+#[derive(Clone, Copy)]
+enum CachedHttpMethod {
+    Get,
+    Post,
+    Put,
+    Delete,
+    Patch,
+    Head,
+}
 
+#[derive(Clone)]
+struct RequestOptions {
+    url: String,
+    method: CachedHttpMethod,
+    body: Option<Vec<u8>>,
+    headers: HashMap<String, String>,
+}
+
+fn request_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+    state: CachedHttpState,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let options_table: luau::Table = frame.args.read_named("options")?;
+    let options = request_options_from_luau(frame.vm, &options_table)?;
+    let future = luau::ScheduledFuture::new(async move {
+        state.request_count.fetch_add(1, Ordering::Relaxed);
+
+        let cache_key = xxh3_hex(&options.url);
+        {
+            let mut keys = state.accessed_keys.write().await;
+            keys.insert(cache_key.clone());
+        }
+
+        let cached = if let Some(overlay_cache_dir) = state.overlay_cache_dir.as_deref() {
+            match read_cache(overlay_cache_dir, &cache_key, &options.url)
+                .map_err(runtime_io_error)?
+            {
+                Some(cached) => Some(cached),
+                None => read_cache(&state.base_cache_dir, &cache_key, &options.url)
+                    .map_err(runtime_io_error)?,
+            }
+        } else {
+            read_cache(&state.base_cache_dir, &cache_key, &options.url).map_err(runtime_io_error)?
+        };
+
+        if let Some(cached) = cached {
+            record_trace_entry(
+                &state.request_trace,
+                &cache_key,
+                cached.status_code,
+                &cached.body,
+            )
+            .await;
+            return Ok(response_value(cached.status_code, &cached.body, 0));
+        }
+
+        if state.live_policy == LivePolicy::CacheOnly {
+            state.cache_misses.write().await.push(options.url.clone());
+            return Err(luau::Error::Runtime(format!(
+                "cache miss for {}",
+                options.url
+            )));
+        }
+
+        state.live_request_count.fetch_add(1, Ordering::Relaxed);
+
+        let domain = extract_domain(&options.url);
+        let config = domain.as_deref().and_then(|domain| {
+            RATE_LIMITER
+                .lock()
+                .expect("rate limiter mutex poisoned")
+                .get_config(domain)
+        });
+
+        if let Some(domain) = domain.as_deref()
+            && config.is_some()
+        {
+            let wait_time = RATE_LIMITER
+                .lock()
+                .expect("rate limiter mutex poisoned")
+                .acquire(domain);
+            if let Some(wait_time) = wait_time {
+                tokio::time::sleep(wait_time).await;
+            }
+        }
+
+        let mut retries = 0u32;
+        let mut backoff = config
+            .as_ref()
+            .map(|cfg| cfg.initial_backoff)
+            .unwrap_or(Duration::from_secs(1));
+
+        loop {
+            let response = execute_single_request(&options)
+                .await
+                .map_err(runtime_anyhow_error)?;
+            let write_cache_dir = state
+                .overlay_cache_dir
+                .as_ref()
+                .unwrap_or(&state.base_cache_dir);
+            write_cache(
+                write_cache_dir,
+                &cache_key,
+                &CachedResponse {
+                    url: options.url.clone(),
+                    status_code: response.status_code,
+                    body: response.body.clone(),
+                },
+            )
+            .map_err(runtime_io_error)?;
+
+            let should_retry = config.as_ref().is_some_and(|cfg| {
+                retries < cfg.max_retries && cfg.retry_status_codes.contains(&response.status_code)
+            });
+            if !should_retry {
+                record_trace_entry(
+                    &state.request_trace,
+                    &cache_key,
+                    response.status_code,
+                    &response.body,
+                )
+                .await;
+                return Ok(response_value(
+                    response.status_code,
+                    &response.body,
+                    retries,
+                ));
+            }
+
+            tokio::time::sleep(backoff).await;
+            retries += 1;
+            backoff = backoff.saturating_mul(2);
+        }
+    });
+    Ok(future)
+}
+
+fn set_rate_limit_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+    plugin_id: String,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let options_table: luau::Table = frame.args.read_named("options")?;
+    let domain = required_string_field(frame.vm, &options_table, "domain")?;
+    let requests_per_second =
+        optional_f64_field(frame.vm, &options_table, "requests_per_second")?.unwrap_or(1.0);
+    if !requests_per_second.is_finite() || requests_per_second <= 0.0 {
+        return Err(luau::Error::Runtime(
+            "requests_per_second must be a positive number".to_string(),
+        ));
+    }
+
+    let config = RateLimitConfig {
+        requests_per_second,
+        retry_status_codes: optional_u16_array_field(frame.vm, &options_table, "retry_on")?
+            .unwrap_or_else(|| vec![429, 503]),
+        max_retries: optional_u32_field(frame.vm, &options_table, "max_retries")?.unwrap_or(3),
+        initial_backoff: Duration::from_millis(
+            optional_u64_field(frame.vm, &options_table, "backoff_ms")?.unwrap_or(1000),
+        ),
+    };
+
+    let future = luau::ScheduledFuture::new(async move {
+        RATE_LIMITER
+            .lock()
+            .expect("rate limiter mutex poisoned")
+            .set_config(domain.clone(), config);
+        harmony_http::test_seed_rate_limit(domain, plugin_id).await;
+        Ok(())
+    });
+    Ok(future)
+}
+
+fn set_max_in_flight_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let _options: luau::Value = frame.args.read_named("options")?;
+    Ok(luau::ScheduledFuture::new(async { Ok(()) }))
+}
+
+fn encode_uri_component_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let input: String = frame.args.read_named("input")?;
+    frame
+        .returns
+        .write(percent_encoding::utf8_percent_encode(&input, URI_COMPONENT_SET).to_string())?;
+    Ok(())
+}
+
+async fn execute_single_request(options: &RequestOptions) -> anyhow::Result<LiveResponse> {
     let client = &*HTTP_CLIENT;
 
-    let mut req = match method {
-        HttpMethod::Get => client.get(url),
-        HttpMethod::Post => client.post(url),
-        HttpMethod::Put => client.put(url),
-        HttpMethod::Delete => client.delete(url),
-        HttpMethod::Patch => client.patch(url),
-        HttpMethod::Head => client.head(url),
+    let mut req = match options.method {
+        CachedHttpMethod::Get => client.get(&options.url),
+        CachedHttpMethod::Post => client.post(&options.url),
+        CachedHttpMethod::Put => client.put(&options.url),
+        CachedHttpMethod::Delete => client.delete(&options.url),
+        CachedHttpMethod::Patch => client.patch(&options.url),
+        CachedHttpMethod::Head => client.head(&options.url),
     };
 
     let mut has_user_agent = false;
-    if let Ok(headers) = options.get::<Table>("headers") {
-        for pair in headers.pairs::<String, String>().flatten() {
-            if pair.0.eq_ignore_ascii_case("user-agent") {
-                has_user_agent = true;
-            }
-            req = req.header(&pair.0, &pair.1);
+    for (key, value) in &options.headers {
+        if key.eq_ignore_ascii_case("user-agent") {
+            has_user_agent = true;
         }
+        req = req.header(key, value);
     }
     if !has_user_agent {
         req = req.header(reqwest::header::USER_AGENT, DEFAULT_USER_AGENT);
     }
 
-    if let Ok(body) = options.get::<String>("body") {
-        req = req.body(body);
+    if let Some(body) = &options.body {
+        req = req.body(body.clone());
     }
 
     let resp = req.send().await?;
@@ -603,23 +624,238 @@ async fn execute_single_request(url: &str, options: Table) -> anyhow::Result<Liv
     })
 }
 
-fn build_response_table(
-    lua: &Lua,
-    status_code: u16,
-    body: &str,
-    retries: u32,
-) -> mlua::Result<Table> {
-    let table = lua.create_table()?;
-    let success = (200..400).contains(&status_code);
-    table.set("success", success)?;
-    table.set("status_code", status_code)?;
-    table.set("status_message", status_message(status_code))?;
-    table.set("body", body)?;
-    table.set("headers", lua.create_table()?)?;
-    table.set("cookies", lua.create_table()?)?;
-    table.set("retries", retries)?;
-    table.set("rate_limited", retries > 0)?;
-    Ok(table)
+fn request_options_from_luau(
+    vm: &luau::Vm,
+    table: &luau::Table,
+) -> luau::runtime::Result<RequestOptions> {
+    Ok(RequestOptions {
+        url: required_string_field(vm, table, "url")?,
+        method: optional_method_field(vm, table, "method")?.unwrap_or(CachedHttpMethod::Get),
+        body: optional_binary_field(vm, table, "body")?,
+        headers: optional_string_map_field(vm, table, "headers")?.unwrap_or_default(),
+    })
+}
+
+fn response_value(status_code: u16, body: &str, retries: u32) -> luau::Value {
+    let mut table = luau::OwnedTable::with_capacity(0, 8);
+    table.set_field(
+        "success",
+        luau::Value::Boolean((200..400).contains(&status_code)),
+    );
+    table.set_field("status_code", luau::Value::Number(f64::from(status_code)));
+    table.set_field(
+        "status_message",
+        luau::Value::String(status_message(status_code).as_bytes().to_vec()),
+    );
+    table.set_field("body", luau::Value::String(body.as_bytes().to_vec()));
+    table.set_field(
+        "headers",
+        luau::Value::TableData(luau::OwnedTable::with_capacity(0, 0)),
+    );
+    table.set_field(
+        "cookies",
+        luau::Value::TableData(luau::OwnedTable::with_capacity(0, 0)),
+    );
+    table.set_field("retries", luau::Value::Number(f64::from(retries)));
+    table.set_field("rate_limited", luau::Value::Boolean(retries > 0));
+    luau::Value::TableData(table)
+}
+
+fn required_string_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<String> {
+    match table.get_raw(vm, field)? {
+        luau::Value::String(value) => String::from_utf8(value)
+            .map_err(|error| luau::Error::Runtime(format!("'{field}' must be UTF-8: {error}"))),
+        luau::Value::Nil => Err(luau::Error::Runtime(format!("missing '{field}' field"))),
+        other => Err(field_type_error(field, "string", other.type_name())),
+    }
+}
+
+fn optional_f64_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<Option<f64>> {
+    match table.get_raw(vm, field)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::Integer(value) => Ok(Some(value as f64)),
+        luau::Value::Number(value) => Ok(Some(value)),
+        other => Err(field_type_error(field, "number", other.type_name())),
+    }
+}
+
+fn optional_u32_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<Option<u32>> {
+    match table.get_raw(vm, field)? {
+        luau::Value::Nil => Ok(None),
+        value => number_to_u32(field, value).map(Some),
+    }
+}
+
+fn optional_u64_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<Option<u64>> {
+    match table.get_raw(vm, field)? {
+        luau::Value::Nil => Ok(None),
+        value => number_to_u64(field, value).map(Some),
+    }
+}
+
+fn optional_u16_array_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<Option<Vec<u16>>> {
+    match table.get_raw(vm, field)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::Table(value) => {
+            let mut output = Vec::new();
+            for (_key, value) in value.pairs_raw(vm)? {
+                output.push(number_to_u16(field, value)?);
+            }
+            Ok(Some(output))
+        }
+        other => Err(field_type_error(field, "table", other.type_name())),
+    }
+}
+
+fn optional_binary_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<Option<Vec<u8>>> {
+    match table.get_raw(vm, field)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::String(value) | luau::Value::Buffer(value) => Ok(Some(value)),
+        other => Err(field_type_error(
+            field,
+            "string or buffer",
+            other.type_name(),
+        )),
+    }
+}
+
+fn optional_string_map_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<Option<HashMap<String, String>>> {
+    match table.get_raw(vm, field)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::Table(value) => {
+            let mut output = HashMap::new();
+            for (key, value) in value.pairs_raw(vm)? {
+                let luau::Value::String(key) = key else {
+                    return Err(field_type_error(
+                        field,
+                        "table<string, string>",
+                        key.type_name(),
+                    ));
+                };
+                let luau::Value::String(value) = value else {
+                    return Err(field_type_error(
+                        field,
+                        "table<string, string>",
+                        value.type_name(),
+                    ));
+                };
+                output.insert(
+                    String::from_utf8(key).map_err(|error| {
+                        luau::Error::Runtime(format!("'{field}' key must be UTF-8: {error}"))
+                    })?,
+                    String::from_utf8(value).map_err(|error| {
+                        luau::Error::Runtime(format!("'{field}' value must be UTF-8: {error}"))
+                    })?,
+                );
+            }
+            Ok(Some(output))
+        }
+        other => Err(field_type_error(field, "table", other.type_name())),
+    }
+}
+
+fn optional_method_field(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    field: &'static str,
+) -> luau::runtime::Result<Option<CachedHttpMethod>> {
+    match table.get_raw(vm, field)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::String(value) => {
+            let method = String::from_utf8(value).map_err(|error| {
+                luau::Error::Runtime(format!("'{field}' must be UTF-8: {error}"))
+            })?;
+            parse_method(field, &method).map(Some)
+        }
+        other => Err(field_type_error(field, "HttpMethod", other.type_name())),
+    }
+}
+
+fn parse_method(field: &'static str, method: &str) -> luau::runtime::Result<CachedHttpMethod> {
+    match method.to_ascii_uppercase().as_str() {
+        "GET" => Ok(CachedHttpMethod::Get),
+        "POST" => Ok(CachedHttpMethod::Post),
+        "PUT" => Ok(CachedHttpMethod::Put),
+        "DELETE" => Ok(CachedHttpMethod::Delete),
+        "PATCH" => Ok(CachedHttpMethod::Patch),
+        "HEAD" => Ok(CachedHttpMethod::Head),
+        _ => Err(luau::Error::Runtime(format!(
+            "'{field}' must be one of Get, Post, Put, Delete, Patch, or Head"
+        ))),
+    }
+}
+
+fn number_to_u16(field: &'static str, value: luau::Value) -> luau::runtime::Result<u16> {
+    let value = number_to_u64(field, value)?;
+    u16::try_from(value)
+        .map_err(|_| luau::Error::Runtime(format!("'{field}' value is out of range for u16")))
+}
+
+fn number_to_u32(field: &'static str, value: luau::Value) -> luau::runtime::Result<u32> {
+    let value = number_to_u64(field, value)?;
+    u32::try_from(value)
+        .map_err(|_| luau::Error::Runtime(format!("'{field}' value is out of range for u32")))
+}
+
+fn number_to_u64(field: &'static str, value: luau::Value) -> luau::runtime::Result<u64> {
+    match value {
+        luau::Value::Integer(value) if value >= 0 => Ok(value as u64),
+        luau::Value::Number(value)
+            if value.is_finite()
+                && value >= 0.0
+                && value <= u64::MAX as f64
+                && value.fract() == 0.0 =>
+        {
+            Ok(value as u64)
+        }
+        other => Err(field_type_error(
+            field,
+            "non-negative integer",
+            other.type_name(),
+        )),
+    }
+}
+
+fn field_type_error(field: &str, expected: &str, actual: &str) -> luau::Error {
+    luau::Error::Runtime(format!(
+        "invalid '{field}' field: expected {expected}, got {actual}"
+    ))
+}
+
+fn runtime_io_error(error: std::io::Error) -> luau::Error {
+    luau::Error::Runtime(error.to_string())
+}
+
+fn runtime_anyhow_error(error: anyhow::Error) -> luau::Error {
+    luau::Error::Runtime(error.to_string())
 }
 
 fn status_message(code: u16) -> &'static str {

@@ -55,7 +55,7 @@ http.set_rate_limit({
 
 provider:id({
 	id = "qid",
-	entity = "release",
+	entity = ET.Release,
 }, "https://www.wikidata.org/wiki/{id}")
 
 local function as_json_object(value: JsonValue): JsonObject?

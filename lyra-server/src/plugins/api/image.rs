@@ -8,6 +8,7 @@ use std::io::Cursor;
 use anyhow::{
     Context,
     Result,
+    bail,
 };
 use image::{
     ExtendedColorType,
@@ -15,55 +16,39 @@ use image::{
     ImageFormat,
     codecs::jpeg::JpegEncoder,
 };
-use mlua::Table;
 
-const DEFAULT_IMAGE_QUALITY: u8 = 90;
+pub(super) const DEFAULT_IMAGE_QUALITY: u8 = 90;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ParsedImageTransformOptions {
-    pub(crate) format: Option<ImageFormat>,
-    pub(crate) quality: Option<u8>,
-    pub(crate) max_width: Option<u32>,
-    pub(crate) max_height: Option<u32>,
-}
-
-pub(super) fn parse_image_format(raw_format: &str) -> Option<ImageFormat> {
-    let normalized = raw_format.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "jpg" => Some(ImageFormat::Jpeg),
-        "png" => Some(ImageFormat::Png),
-        "webp" => Some(ImageFormat::WebP),
-        _ => None,
-    }
+pub(super) struct ParsedImageTransformOptions {
+    pub(super) format: Option<ImageFormat>,
+    pub(super) quality: Option<u8>,
+    pub(super) max_width: Option<u32>,
+    pub(super) max_height: Option<u32>,
 }
 
 pub(super) fn parse_image_transform_options(
-    options: Option<Table>,
-) -> mlua::Result<Option<ParsedImageTransformOptions>> {
-    let Some(options) = options else {
+    value: Option<&serde_json::Value>,
+) -> Result<Option<ParsedImageTransformOptions>> {
+    let Some(value) = value else {
         return Ok(None);
     };
-
-    let format = match options.get::<Option<String>>("format")? {
-        Some(raw_format) => {
-            let Some(format) = parse_image_format(&raw_format) else {
-                return Err(mlua::Error::runtime(format!(
-                    "unsupported image format: {raw_format}"
-                )));
-            };
-            Some(format)
-        }
+    let object = value
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("image transform options must be an object"))?;
+    let format = match object.get("format").and_then(serde_json::Value::as_str) {
+        Some(raw_format) => Some(
+            parse_image_format(raw_format)
+                .ok_or_else(|| anyhow::anyhow!("unsupported image format: {raw_format}"))?,
+        ),
         None => None,
     };
-
-    let quality = options.get::<Option<u8>>("quality")?;
-    let max_width = options.get::<Option<u32>>("max_width")?;
-    let max_height = options.get::<Option<u32>>("max_height")?;
-
+    let quality = parse_u8_json(object.get("quality"))?;
+    let max_width = super::parse_u32_json(object.get("max_width"))?;
+    let max_height = super::parse_u32_json(object.get("max_height"))?;
     if format.is_none() && quality.is_none() && max_width.is_none() && max_height.is_none() {
         return Ok(None);
     }
-
     Ok(Some(ParsedImageTransformOptions {
         format,
         quality,
@@ -72,18 +57,36 @@ pub(super) fn parse_image_transform_options(
     }))
 }
 
-fn target_image_size(
+pub(super) fn parse_u8_json(value: Option<&serde_json::Value>) -> Result<Option<u8>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let Some(value) = value.as_u64() else {
+        bail!("expected unsigned integer option");
+    };
+    Ok(Some(
+        u8::try_from(value).context("integer option out of range")?,
+    ))
+}
+
+pub(super) fn parse_image_format(raw_format: &str) -> Option<ImageFormat> {
+    match raw_format.trim().to_ascii_lowercase().as_str() {
+        "jpg" => Some(ImageFormat::Jpeg),
+        "png" => Some(ImageFormat::Png),
+        "webp" => Some(ImageFormat::WebP),
+        _ => None,
+    }
+}
+
+pub(super) fn target_image_size(
     source_width: u32,
     source_height: u32,
     max_width: Option<u32>,
     max_height: Option<u32>,
 ) -> (u32, u32) {
-    let has_max_width = max_width.is_some();
-    let has_max_height = max_height.is_some();
-    if !has_max_width && !has_max_height {
+    if max_width.is_none() && max_height.is_none() {
         return (source_width, source_height);
     }
-
     let mut scale = 1.0_f64;
     if let Some(width_limit) = max_width {
         scale = (width_limit as f64 / source_width as f64).min(scale);
@@ -91,11 +94,9 @@ fn target_image_size(
     if let Some(height_limit) = max_height {
         scale = (height_limit as f64 / source_height as f64).min(scale);
     }
-
     if scale >= 1.0 {
         return (source_width, source_height);
     }
-
     let target_width = (source_width as f64 * scale).floor().max(1.0) as u32;
     let target_height = (source_height as f64 * scale).floor().max(1.0) as u32;
     (target_width.max(1), target_height.max(1))
@@ -113,13 +114,11 @@ pub(super) fn transform_image(
         options.max_width,
         options.max_height,
     );
-
     let resized = if target_width == source_size.0 && target_height == source_size.1 {
         image
     } else {
         image.thumbnail(target_width, target_height)
     };
-
     let format = options
         .format
         .or_else(|| ImageFormat::from_path(path).ok())
@@ -148,6 +147,14 @@ pub(super) fn transform_image(
                 .with_context(|| format!("failed to encode image '{path}' as requested format"))?;
         }
     }
-
     Ok((cursor.into_inner(), format))
+}
+
+pub(super) fn image_format_mime(format: ImageFormat) -> &'static str {
+    match format {
+        ImageFormat::Jpeg => "image/jpeg",
+        ImageFormat::Png => "image/png",
+        ImageFormat::WebP => "image/webp",
+        _ => "application/octet-stream",
+    }
 }

@@ -8,51 +8,58 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Result;
-use harmony_core::Harmony;
-
+use crate::plugins::api as plugin_api;
 use crate::{
     STATE,
-    plugins::{
-        api as plugin_api,
-        lifecycle::PluginId,
-    },
+    plugins::lifecycle::PluginId,
     services,
 };
+use anyhow::{
+    Context,
+    Result,
+};
 
-pub(crate) fn initialize_harmony() -> Result<Arc<Harmony>> {
+pub(crate) type PluginRuntime = crate::plugins::executor::PluginExecutorHandle;
+
+pub(crate) async fn initialize_harmony() -> Result<PluginRuntime> {
     let plugins_dir = std::env::var_os("LYRA_PLUGINS_DIR")
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| PathBuf::from("plugins"));
 
-    let harmony = Arc::new(Harmony::new(
-        STATE.lua.get(),
-        "/",
-        crate::plugins::docs::runtime_modules().into(),
-        crate::plugins::globals::plugin_globals().into(),
-        Some(crate::plugins::globals::caller_resolver()),
-        Some(plugins_dir),
-    )?);
-    STATE
-        .plugin_manifests
-        .replace(Arc::from(harmony.plugin_manifests()));
-    Ok(harmony)
+    {
+        let server_info = crate::plugins::server::load_server_info()
+            .await
+            .context("build server info for plugin executor")?;
+        let (runtime, errors) = crate::plugins::executor::PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
+            plugins_dir,
+            server_info,
+            STATE.db.get(),
+            Vec::new(),
+        )?;
+        for error in errors {
+            tracing::warn!(error = %error, "plugin discovery error");
+        }
+        STATE
+            .plugin_manifests
+            .replace(Arc::from(runtime.plugin_manifests().await?));
+        Ok(runtime)
+    }
 }
 
-pub(crate) fn publish_runtime(harmony: Arc<Harmony>) {
-    STATE.plugin_runtime.replace(Some(harmony));
+pub(crate) fn publish_runtime(runtime: PluginRuntime) {
+    STATE.plugin_runtime.replace(Some(runtime));
 }
 
-pub(crate) async fn exec_for_capture(harmony: Arc<Harmony>) -> Result<()> {
-    harmony.exec_all().await?;
+pub(crate) async fn exec_for_capture(runtime: PluginRuntime) -> Result<()> {
+    runtime.exec_all().await?;
     deduplicate_artists_after_plugin_init().await;
     Ok(())
 }
 
 pub(crate) async fn finalize_startup() -> Result<()> {
     deduplicate_artists_after_plugin_init().await;
-    crate::plugins::runtime::freeze_registry().await;
+    crate::plugins::settings::freeze_registry().await;
     services::clear_cover_search_cache().await;
 
     plugin_api::finalize().await?;

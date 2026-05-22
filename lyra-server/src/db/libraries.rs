@@ -65,22 +65,9 @@ impl From<Library> for LibraryView {
     }
 }
 
-impl mlua::IntoLua for LibraryView {
-    fn into_lua(self, lua: &mlua::Lua) -> mlua::Result<mlua::Value> {
-        let table = lua.create_table()?;
-        table.set("id", self.id)?;
-        table.set("name", self.name)?;
-        if let Some(language) = self.language {
-            table.set("language", language)?;
-        }
-        if let Some(country) = self.country {
-            table.set("country", country)?;
-        }
-        Ok(mlua::Value::Table(table))
-    }
-}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LibraryFull {
+    pub(crate) db_id: Option<DbId>,
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) language: Option<String>,
@@ -91,47 +78,13 @@ pub(crate) struct LibraryFull {
 impl From<Library> for LibraryFull {
     fn from(library: Library) -> Self {
         Self {
+            db_id: library.db_id,
             id: library.id,
             name: library.name,
             language: library.language,
             country: library.country,
             path: library.path,
         }
-    }
-}
-
-impl mlua::IntoLua for LibraryFull {
-    fn into_lua(self, lua: &mlua::Lua) -> mlua::Result<mlua::Value> {
-        let table = lua.create_table()?;
-        table.set("id", self.id)?;
-        table.set("name", self.name)?;
-        table.set("path", self.path.to_string_lossy().to_string())?;
-        if let Some(language) = self.language {
-            table.set("language", language)?;
-        }
-        if let Some(country) = self.country {
-            table.set("country", country)?;
-        }
-        Ok(mlua::Value::Table(table))
-    }
-}
-
-impl mlua::IntoLua for Library {
-    fn into_lua(self, lua: &mlua::Lua) -> mlua::Result<mlua::Value> {
-        let table = lua.create_table()?;
-        if let Some(db_id) = self.db_id {
-            table.set("db_id", db_id.0)?;
-        }
-        table.set("id", self.id)?;
-        table.set("name", self.name)?;
-        table.set("path", self.path.to_string_lossy().to_string())?;
-        if let Some(language) = self.language {
-            table.set("language", language)?;
-        }
-        if let Some(country) = self.country {
-            table.set("country", country)?;
-        }
-        Ok(mlua::Value::Table(table))
     }
 }
 

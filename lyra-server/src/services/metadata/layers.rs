@@ -50,39 +50,6 @@ pub(crate) fn ensure_entity_exists(db: &DbAny, node_id: DbId) -> anyhow::Result<
     anyhow::bail!("Entity not found: {}", node_id.0);
 }
 
-pub(crate) fn list_entity_external_ids(
-    db: &DbAny,
-    node_id: DbId,
-) -> anyhow::Result<Vec<db::external_ids::ExternalId>> {
-    ensure_entity_exists(db, node_id)?;
-
-    let mut ids = db::external_ids::get_for_entity(db, node_id)?;
-    ids.sort_by(|a, b| {
-        a.provider_id
-            .cmp(&b.provider_id)
-            .then_with(|| a.id_type.cmp(&b.id_type))
-            .then_with(|| a.id_value.cmp(&b.id_value))
-    });
-
-    Ok(ids)
-}
-
-pub(crate) fn list_entity_custom_fields(
-    db: &DbAny,
-    node_id: DbId,
-) -> anyhow::Result<Vec<ProviderCustomFields>> {
-    ensure_entity_exists(db, node_id)?;
-
-    let mut rows = db::metadata::custom_fields::get_for_entity(db, node_id)?;
-    rows.sort_by(|a, b| {
-        a.provider_id
-            .cmp(&b.provider_id)
-            .then_with(|| a.version.cmp(&b.version))
-    });
-
-    Ok(rows)
-}
-
 fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

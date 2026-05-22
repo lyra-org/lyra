@@ -3,6 +3,87 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+macro_rules! impl_luau_enum_userdata {
+    ($ty:path, $name:literal, [$($variant:ident),+ $(,)?]) => {
+        impl ::harmony_luau::LuauTypeInfo for $ty {
+            fn luau_type() -> ::harmony_luau::LuauType {
+                ::harmony_luau::LuauType::literal($name)
+            }
+        }
+
+        impl ::harmony_luau::DescribeUserData for $ty {
+            fn class_descriptor() -> ::harmony_luau::ClassDescriptor {
+                ::harmony_luau::ClassDescriptor {
+                    name: $name,
+                    description: None,
+                    fields: vec![
+                        $(
+                            ::harmony_luau::FieldDescriptor {
+                                name: stringify!($variant),
+                                ty: <Self as ::harmony_luau::LuauTypeInfo>::luau_type(),
+                                description: None,
+                            }
+                        ),+
+                    ],
+                    methods: vec![],
+                }
+            }
+        }
+    };
+}
+
+macro_rules! impl_luau_record_userdata {
+    (
+        $ty:path,
+        $name:literal,
+        fields { $($field:tt : $field_ty:ty as $key:literal),* $(,)? },
+        methods { $($method:ident($arg:ident : $arg_ty:ty)),* $(,)? }
+    ) => {
+        impl ::harmony_luau::LuauTypeInfo for $ty {
+            fn luau_type() -> ::harmony_luau::LuauType {
+                ::harmony_luau::LuauType::literal($name)
+            }
+        }
+
+        impl ::harmony_luau::DescribeUserData for $ty {
+            fn class_descriptor() -> ::harmony_luau::ClassDescriptor {
+                ::harmony_luau::ClassDescriptor {
+                    name: $name,
+                    description: None,
+                    fields: vec![
+                        $(
+                            ::harmony_luau::FieldDescriptor {
+                                name: $key,
+                                ty: <$field_ty as ::harmony_luau::LuauTypeInfo>::luau_type(),
+                                description: None,
+                            }
+                        ),*
+                    ],
+                    methods: vec![
+                        $(
+                            ::harmony_luau::MethodDescriptor {
+                                name: stringify!($method),
+                                description: None,
+                                params: vec![
+                                    ::harmony_luau::ParameterDescriptor {
+                                        name: stringify!($arg),
+                                        ty: <$arg_ty as ::harmony_luau::LuauTypeInfo>::luau_type(),
+                                        description: None,
+                                        variadic: false,
+                                    }
+                                ],
+                                returns: vec![],
+                                yields: false,
+                                kind: ::harmony_luau::MethodKind::Instance,
+                            }
+                        ),*
+                    ],
+                }
+            }
+        }
+    };
+}
+
 pub(crate) mod api_keys;
 pub(crate) mod artists;
 pub(crate) mod bootstrap;
@@ -316,7 +397,6 @@ pub(crate) use playlists::Playlist;
 pub(crate) use providers::ProviderConfig;
 pub(crate) use providers::external_ids::IdSource;
 pub(crate) use releases::Release;
-pub(crate) use releases::ReleaseType;
 pub(crate) use roles::Permission;
 pub(crate) use tags::Tag;
 pub(crate) use track_sources::TrackSource;

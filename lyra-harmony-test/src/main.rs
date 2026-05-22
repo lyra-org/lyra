@@ -5,6 +5,7 @@
 
 mod cached_http;
 mod generate;
+mod luau_test_runner;
 mod runner;
 mod test_case;
 
@@ -26,6 +27,7 @@ struct Args {
     generate: Option<PathBuf>,
     output_dir: Option<PathBuf>,
     include_all: bool,
+    luau: bool,
     max_release_requests: Option<usize>,
     max_scenarios: Option<usize>,
 }
@@ -39,6 +41,7 @@ fn parse_args() -> anyhow::Result<Args> {
     args.record = extract_flag(&mut raw_args, "--record");
     args.discover = extract_flag(&mut raw_args, "--discover");
     args.include_all = extract_flag(&mut raw_args, "--include-all");
+    args.luau = extract_flag(&mut raw_args, "--luau");
 
     args.filter = extract_string_flag(&mut raw_args, "--filter")?;
     args.generate = extract_path_flag(&mut raw_args, "--generate")?;
@@ -57,7 +60,7 @@ fn parse_args() -> anyhow::Result<Args> {
     // Last positional arg is the test directory
     if raw_args.is_empty() {
         anyhow::bail!(
-            "Usage: lyra-harmony-test [--filter PATTERN] [--prune] [--record] [--discover] [--max-release-requests N] [--max-scenarios N] <test-dir>\n       lyra-harmony-test --generate <capture.json> --output-dir <dir>"
+            "Usage: lyra-harmony-test [--filter PATTERN] [--prune] [--record] [--discover] [--max-release-requests N] [--max-scenarios N] <test-dir>\n       lyra-harmony-test --luau [--filter PATTERN] <test-dir>\n       lyra-harmony-test --generate <capture.json> --output-dir <dir>"
         );
     }
     args.test_dir = PathBuf::from(raw_args.remove(0));
@@ -382,6 +385,14 @@ async fn main() -> anyhow::Result<()> {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("--generate requires --output-dir"))?;
         return generate::run_generate(capture_path, output_dir, args.include_all);
+    }
+
+    if args.luau {
+        let summary = luau_test_runner::run(&args.test_dir, args.filter.as_deref()).await?;
+        if summary.failed > 0 {
+            std::process::exit(1);
+        }
+        return Ok(());
     }
 
     let (test_base_dir, tests) = if args.test_dir.is_file() {

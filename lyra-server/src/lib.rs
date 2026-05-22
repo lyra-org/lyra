@@ -19,11 +19,7 @@ use anyhow::{
     Context,
     Result,
 };
-use harmony_core::{
-    Harmony,
-    PluginManifest,
-};
-use mlua::Lua;
+use harmony_core::PluginManifest;
 use tokio::sync::{
     OwnedRwLockReadGuard,
     OwnedRwLockWriteGuard,
@@ -111,35 +107,22 @@ impl DbHandle {
     }
 }
 
-pub(crate) type LuaHandle = SwapHandle<Arc<Lua>>;
 pub(crate) type ConfigHandle = SwapHandle<Arc<Config>>;
 pub(crate) type PluginManifestHandle = SwapHandle<Arc<[PluginManifest]>>;
-pub(crate) type PluginRuntimeHandle = SwapHandle<Option<Arc<Harmony>>>;
+pub(crate) type PluginRuntimeHandle = SwapHandle<Option<crate::plugins::bootstrap::PluginRuntime>>;
 
 pub(crate) struct AppState {
     pub(crate) db: DbHandle,
-    pub(crate) lua: LuaHandle,
     pub(crate) config: ConfigHandle,
     pub(crate) plugin_manifests: PluginManifestHandle,
     pub(crate) plugin_runtime: PluginRuntimeHandle,
     pub(crate) plugin_registries: PluginRegistries,
 }
 
-fn new_lua() -> Result<Arc<Lua>> {
-    let lua = Lua::new();
-    let package_table = lua.create_table()?;
-    lua.globals().set("package", package_table)?;
-    harmony_core::set_caller_resolver(&lua, crate::plugins::globals::caller_resolver());
-    crate::plugins::caller::install_context_propagator(&lua);
-    Ok(lua.into())
-}
-
 pub(crate) fn build_app_state(config: Config) -> Result<AppState> {
     let created = create(&config.db)?;
-    let lua = new_lua()?;
     Ok(AppState {
         db: DbHandle::new(created),
-        lua: LuaHandle::new(lua),
         config: ConfigHandle::new(Arc::new(config)),
         plugin_manifests: PluginManifestHandle::new(Arc::from(Vec::<PluginManifest>::new())),
         plugin_runtime: PluginRuntimeHandle::new(None),
@@ -152,8 +135,6 @@ impl AppState {
         // Keep `?` before the remaining replacements so a DB reset failure
         // cannot leave Lua/config/plugin state pointed at the wrong database.
         self.db.reset_with(|| create(&config.db))?;
-        let lua = new_lua()?;
-        self.lua.replace(lua);
         self.config.replace(Arc::new(config));
         self.plugin_manifests
             .replace(Arc::from(Vec::<PluginManifest>::new()));

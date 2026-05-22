@@ -3,31 +3,29 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
-
-use harmony_core::LuaAsyncExt;
-use mlua::{
-    ExternalResult,
-    Lua,
-    LuaSerdeExt,
-    Result,
-    Table,
-    Value,
+use agdb::DbId;
+use harmony_core::{
+    FunctionSpec,
+    ModuleExport,
+    ModuleSpec,
 };
-use serde::{
-    Deserialize,
-    Serialize,
+use harmony_luau as luau;
+use harmony_luau::{
+    DescribeInterface,
+    FieldDescriptor,
+    InterfaceDescriptor,
+    LuauType,
+    LuauTypeInfo,
+    ModuleDescriptor,
+    ModuleFunctionDescriptor,
+    ParameterDescriptor,
+    render_definition_file_with_support,
 };
 
 use crate::{
     STATE,
-    plugins::caller::{
-        request_caller,
-        system_caller,
-    },
     plugins::db::{
         self,
-        NodeId,
         Permission,
         labels::{
             LabelExternalIdInput,
@@ -39,409 +37,754 @@ use crate::{
     services::auth::Principal,
 };
 
-#[derive(Debug, Deserialize)]
-#[harmony_macros::interface]
-struct LabelExternalId {
+struct LabelsModule;
+struct LabelAddRequest;
+struct LabelResolveRequest;
+struct LabelExternalId;
+struct LabelInfo;
+struct LabelForReleaseInfo;
+
+pub(crate) fn module_spec() -> ModuleSpec {
+    ModuleSpec::new("lyra/labels")
+        .capability("lyra.labels")
+        .function(add_spec())
+        .function(resolve_spec())
+        .function(sync_for_release_spec())
+        .function(get_by_id_spec())
+        .function(get_for_release_spec())
+        .function(get_for_releases_many_spec())
+        .function(get_releases_spec())
+        .function(get_releases_many_spec())
+        .install(|_| Ok(ModuleExport::new(LabelsModule)))
+}
+
+fn add_spec() -> FunctionSpec {
+    FunctionSpec::sync_fn("add")
+        .arg_name("release_id")
+        .args::<i64>()
+        .arg_name("request")
+        .args::<luau::Table>()
+        .returns::<i64>()
+        .call(add_callback)
+}
+
+fn resolve_spec() -> FunctionSpec {
+    FunctionSpec::sync_fn("resolve")
+        .arg_name("request")
+        .args::<luau::Table>()
+        .returns::<i64>()
+        .call(resolve_callback)
+}
+
+fn sync_for_release_spec() -> FunctionSpec {
+    FunctionSpec::sync_fn("sync_for_release")
+        .arg_name("release_id")
+        .args::<i64>()
+        .arg_name("requests")
+        .args::<luau::Table>()
+        .call(sync_for_release_callback)
+}
+
+fn get_by_id_spec() -> FunctionSpec {
+    FunctionSpec::sync_fn("get_by_id")
+        .arg_name("label_id")
+        .args::<i64>()
+        .returns::<Option<LabelInfo>>()
+        .call(get_by_id_callback)
+}
+
+fn get_for_release_spec() -> FunctionSpec {
+    FunctionSpec::sync_fn("get_for_release")
+        .arg_name("release_id")
+        .args::<i64>()
+        .returns::<luau::Table>()
+        .call(get_for_release_callback)
+}
+
+fn get_for_releases_many_spec() -> FunctionSpec {
+    FunctionSpec::sync_fn("get_for_releases_many")
+        .arg_name("release_ids")
+        .args::<luau::Table>()
+        .returns::<luau::Table>()
+        .call(get_for_releases_many_callback)
+}
+
+fn get_releases_spec() -> FunctionSpec {
+    FunctionSpec::sync_fn("get_releases")
+        .arg_name("label_id")
+        .args::<i64>()
+        .returns::<luau::Table>()
+        .call(get_releases_callback)
+}
+
+fn get_releases_many_spec() -> FunctionSpec {
+    FunctionSpec::sync_fn("get_releases_many")
+        .arg_name("label_ids")
+        .args::<luau::Table>()
+        .returns::<luau::Table>()
+        .call(get_releases_many_callback)
+}
+
+fn add_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let release_id = DbId(require_positive_id(
+        frame.args.read_named("release_id")?,
+        "release_id",
+    )?);
+    let request: luau::Table = frame.args.read_named("request")?;
+    let request = parse_label_add_request(frame.vm, &request)?;
+    let principal = caller_principal(&frame.context);
+
+    let label_id = futures::executor::block_on(async {
+        let mut db = STATE.db.write().await;
+        if !can_mutate_release(&db, principal.as_ref(), release_id)? {
+            return Ok(DbId(0));
+        }
+        if db::releases::get_by_id(&db, release_id)
+            .map_err(crate::plugins::runtime_error)?
+            .is_some_and(|release| release.locked.unwrap_or(false))
+        {
+            return Ok(DbId(0));
+        }
+        db::labels::add_label_to_release(
+            &mut db,
+            release_id,
+            &ResolveLabel {
+                name: &request.name,
+                external_id: request.external_id_ref(),
+            },
+            request.catalog_number.as_deref(),
+        )
+        .map_err(crate::plugins::runtime_error)
+    })?;
+
+    frame.returns.write(label_id.0)
+}
+
+fn resolve_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let request: luau::Table = frame.args.read_named("request")?;
+    let request = parse_label_resolve_request(frame.vm, &request)?;
+    let principal = caller_principal(&frame.context);
+    if !can_mutate_global(principal.as_ref()) {
+        frame.returns.write(0_i64)?;
+        return Ok(());
+    }
+
+    let label_id = futures::executor::block_on(async {
+        let mut db = STATE.db.write().await;
+        db::labels::resolve(
+            &mut db,
+            &ResolveLabel {
+                name: &request.name,
+                external_id: request.external_id_ref(),
+            },
+        )
+        .map_err(crate::plugins::runtime_error)
+    })?;
+
+    frame.returns.write(label_id.0)
+}
+
+fn sync_for_release_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let release_id = DbId(require_positive_id(
+        frame.args.read_named("release_id")?,
+        "release_id",
+    )?);
+    let requests: luau::Table = frame.args.read_named("requests")?;
+    let requests = parse_label_add_requests(frame.vm, &requests)?;
+    let principal = caller_principal(&frame.context);
+
+    futures::executor::block_on(async {
+        let mut db = STATE.db.write().await;
+        if !can_mutate_release(&db, principal.as_ref(), release_id)? {
+            return Ok(());
+        }
+        if db::releases::get_by_id(&db, release_id)
+            .map_err(crate::plugins::runtime_error)?
+            .is_some_and(|release| release.locked.unwrap_or(false))
+        {
+            return Err(crate::plugins::runtime_error(
+                "cannot sync labels for a locked release",
+            ));
+        }
+        let inputs = requests
+            .iter()
+            .map(LabelAddRequestData::to_label_input)
+            .collect::<Vec<_>>();
+        db::labels::sync_release_labels(&mut db, release_id, &inputs)
+            .map_err(crate::plugins::runtime_error)
+    })
+}
+
+fn get_by_id_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let label_id = DbId(require_positive_id(
+        frame.args.read_named("label_id")?,
+        "label_id",
+    )?);
+    let label = futures::executor::block_on(async {
+        let db = STATE.db.read().await;
+        db::labels::get_by_id(&db, label_id).map_err(crate::plugins::runtime_error)
+    })?;
+    frame.returns.write(
+        label
+            .map(|label| luau::Value::TableData(label_info_table(label)))
+            .unwrap_or(luau::Value::Nil),
+    )
+}
+
+fn get_for_release_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let release_id = DbId(require_positive_id(
+        frame.args.read_named("release_id")?,
+        "release_id",
+    )?);
+    let principal = caller_principal(&frame.context);
+    let labels = futures::executor::block_on(async {
+        let db = STATE.db.read().await;
+        if !can_read_entity(&db, principal.as_ref(), release_id)? {
+            return Ok(Vec::new());
+        }
+        db::labels::get_for_release(&db, release_id).map_err(crate::plugins::runtime_error)
+    })?;
+    frame
+        .returns
+        .write(luau::Value::TableData(label_release_array(labels)))
+}
+
+fn get_for_releases_many_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let ids_table: luau::Table = frame.args.read_named("release_ids")?;
+    let ids = parse_db_ids(frame.vm, &ids_table)?;
+    let principal = caller_principal(&frame.context);
+    let labels = futures::executor::block_on(async {
+        let db = STATE.db.read().await;
+        let readable = ids
+            .into_iter()
+            .filter(|id| can_read_entity(&db, principal.as_ref(), *id).unwrap_or(false))
+            .collect::<Vec<_>>();
+        db::labels::get_for_releases_many(&db, &readable).map_err(crate::plugins::runtime_error)
+    })?;
+    let mut table = luau::OwnedTable::with_capacity(0, labels.len());
+    for (release_id, labels) in labels {
+        table.set_key(
+            luau::Value::Integer(release_id.0),
+            luau::Value::TableData(label_release_array(labels)),
+        );
+    }
+    frame.returns.write(luau::Value::TableData(table))
+}
+
+fn get_releases_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let label_id = DbId(require_positive_id(
+        frame.args.read_named("label_id")?,
+        "label_id",
+    )?);
+    let release_ids = futures::executor::block_on(async {
+        let db = STATE.db.read().await;
+        db::labels::get_releases(&db, label_id).map_err(crate::plugins::runtime_error)
+    })?;
+    frame
+        .returns
+        .write(luau::Value::TableData(id_array(release_ids)))
+}
+
+fn get_releases_many_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let ids_table: luau::Table = frame.args.read_named("label_ids")?;
+    let ids = parse_db_ids(frame.vm, &ids_table)?;
+    let release_ids = futures::executor::block_on(async {
+        let db = STATE.db.read().await;
+        db::labels::get_releases_many(&db, &ids).map_err(crate::plugins::runtime_error)
+    })?;
+    let mut table = luau::OwnedTable::with_capacity(0, release_ids.len());
+    for (label_id, ids) in release_ids {
+        table.set_key(
+            luau::Value::Integer(label_id.0),
+            luau::Value::TableData(id_array(ids)),
+        );
+    }
+    frame.returns.write(luau::Value::TableData(table))
+}
+
+#[derive(Clone)]
+struct LabelExternalIdData {
     provider_id: String,
     id_type: String,
-    id: String,
+    id_value: String,
 }
 
-#[derive(Debug, Deserialize)]
-#[harmony_macros::interface]
-struct LabelAddRequest {
+#[derive(Clone)]
+struct LabelAddRequestData {
     name: String,
     catalog_number: Option<String>,
-    external_id: Option<LabelExternalId>,
+    external_id: Option<LabelExternalIdData>,
 }
 
-#[derive(Debug, Deserialize)]
-#[harmony_macros::interface]
-struct LabelResolveRequest {
+struct LabelResolveRequestData {
     name: String,
-    external_id: Option<LabelExternalId>,
+    external_id: Option<LabelExternalIdData>,
 }
 
-#[derive(Debug, Serialize)]
-#[harmony_macros::interface]
-struct LabelInfo {
-    db_id: Option<NodeId>,
-    id: String,
-    name: String,
-}
-
-#[derive(Debug, Serialize)]
-#[harmony_macros::interface]
-struct LabelForReleaseInfo {
-    label: LabelInfo,
-    catalog_number: Option<String>,
-}
-
-fn label_to_info(label: db::labels::Label) -> LabelInfo {
-    LabelInfo {
-        db_id: label.db_id,
-        id: label.id,
-        name: label.name,
+impl LabelAddRequestData {
+    fn external_id_ref(&self) -> Option<ResolveExternalId<'_>> {
+        self.external_id.as_ref().map(LabelExternalIdData::as_ref)
     }
-}
 
-enum CallerAccess {
-    Request(Principal),
-    System,
-}
-
-fn caller_access(plugin_id: Option<Arc<str>>) -> Result<CallerAccess> {
-    match request_caller(plugin_id.clone()) {
-        Ok(caller) => Ok(CallerAccess::Request(caller.principal)),
-        Err(_) => {
-            system_caller(plugin_id)?;
-            Ok(CallerAccess::System)
+    fn to_label_input(&self) -> LabelInput {
+        LabelInput {
+            name: self.name.clone(),
+            catalog_number: self.catalog_number.clone(),
+            external_id: self
+                .external_id
+                .as_ref()
+                .map(|external_id| LabelExternalIdInput {
+                    provider_id: external_id.provider_id.clone(),
+                    id_type: external_id.id_type.clone(),
+                    id_value: external_id.id_value.clone(),
+                }),
         }
     }
 }
 
-fn request_can_manage_libraries(principal: &Principal) -> bool {
-    db::roles::has_permission(&principal.permissions, Permission::ManageLibraries)
+impl LabelResolveRequestData {
+    fn external_id_ref(&self) -> Option<ResolveExternalId<'_>> {
+        self.external_id.as_ref().map(LabelExternalIdData::as_ref)
+    }
+}
+
+impl LabelExternalIdData {
+    fn as_ref(&self) -> ResolveExternalId<'_> {
+        ResolveExternalId {
+            provider_id: &self.provider_id,
+            id_type: &self.id_type,
+            id_value: &self.id_value,
+        }
+    }
+}
+
+fn parse_label_add_request(
+    vm: &luau::Vm,
+    table: &luau::Table,
+) -> luau::runtime::Result<LabelAddRequestData> {
+    Ok(LabelAddRequestData {
+        name: required_string(vm, table, "name")?,
+        catalog_number: optional_string(vm, table, "catalog_number")?,
+        external_id: optional_external_id(vm, table)?,
+    })
+}
+
+fn parse_label_resolve_request(
+    vm: &luau::Vm,
+    table: &luau::Table,
+) -> luau::runtime::Result<LabelResolveRequestData> {
+    Ok(LabelResolveRequestData {
+        name: required_string(vm, table, "name")?,
+        external_id: optional_external_id(vm, table)?,
+    })
+}
+
+fn parse_label_add_requests(
+    vm: &luau::Vm,
+    table: &luau::Table,
+) -> luau::runtime::Result<Vec<LabelAddRequestData>> {
+    let mut parsed = Vec::new();
+    for (_, value) in ordered_array_values(vm, table)? {
+        let luau::Value::Table(request) = value else {
+            return Err(crate::plugins::runtime_error(
+                "label requests must be tables",
+            ));
+        };
+        parsed.push(parse_label_add_request(vm, &request)?);
+    }
+    Ok(parsed)
+}
+
+fn optional_external_id(
+    vm: &luau::Vm,
+    table: &luau::Table,
+) -> luau::runtime::Result<Option<LabelExternalIdData>> {
+    match table.get_raw(vm, "external_id")? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::Table(table) => {
+            let id_value = match optional_string(vm, &table, "id")? {
+                Some(value) => value,
+                None => optional_string(vm, &table, "id_value")?
+                    .ok_or_else(|| crate::plugins::runtime_error("external_id requires id"))?,
+            };
+            Ok(Some(LabelExternalIdData {
+                provider_id: required_string(vm, &table, "provider_id")?,
+                id_type: required_string(vm, &table, "id_type")?,
+                id_value,
+            }))
+        }
+        other => Err(crate::plugins::runtime_error(format!(
+            "external_id must be a table, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn required_string(vm: &luau::Vm, table: &luau::Table, key: &str) -> luau::runtime::Result<String> {
+    optional_string(vm, table, key)?
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| crate::plugins::runtime_error(format!("{key} must be a non-empty string")))
+}
+
+fn optional_string(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &str,
+) -> luau::runtime::Result<Option<String>> {
+    match table.get_raw(vm, key)? {
+        luau::Value::Nil => Ok(None),
+        luau::Value::String(bytes) => String::from_utf8(bytes)
+            .map(Some)
+            .map_err(crate::plugins::runtime_error),
+        other => Err(crate::plugins::runtime_error(format!(
+            "{key} must be a string, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn ordered_array_values(
+    vm: &luau::Vm,
+    table: &luau::Table,
+) -> luau::runtime::Result<Vec<(i64, luau::Value)>> {
+    let mut values = Vec::new();
+    for (key, value) in table.pairs_raw(vm)? {
+        let Some(index) = sequence_index(key) else {
+            continue;
+        };
+        values.push((index, value));
+    }
+    values.sort_by_key(|(index, _)| *index);
+    Ok(values)
+}
+
+fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {
+    let mut ids = Vec::new();
+    for (_, value) in ordered_array_values(vm, table)? {
+        if let Some(id) = db_id_from_value(value)? {
+            ids.push(id);
+        }
+    }
+    ids.sort_by_key(|id| id.0);
+    ids.dedup();
+    Ok(ids)
+}
+
+fn sequence_index(value: luau::Value) -> Option<i64> {
+    match value {
+        luau::Value::Integer(value) if value > 0 => Some(value),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
+            Some(value as i64)
+        }
+        _ => None,
+    }
+}
+
+fn db_id_from_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
+    match value {
+        luau::Value::Integer(value) if value > 0 => Ok(Some(DbId(value))),
+        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
+            Ok(Some(DbId(value as i64)))
+        }
+        luau::Value::Integer(_) | luau::Value::Number(_) => Ok(None),
+        other => Err(crate::plugins::runtime_error(format!(
+            "id entries must be positive integers, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn require_positive_id(value: i64, name: &str) -> luau::runtime::Result<i64> {
+    if value > 0 {
+        Ok(value)
+    } else {
+        Err(crate::plugins::runtime_error(format!(
+            "{name} must be positive"
+        )))
+    }
+}
+
+fn caller_principal(context: &luau::CallContext) -> Option<Principal> {
+    context.caller.get::<Principal>().ok().map(|p| (*p).clone())
 }
 
 fn can_read_entity(
     db: &impl db::DbAccess,
-    access: &CallerAccess,
-    entity_db_id: agdb::DbId,
-) -> Result<bool> {
-    match access {
-        CallerAccess::System => Ok(true),
-        CallerAccess::Request(principal) => {
+    principal: Option<&Principal>,
+    entity_db_id: DbId,
+) -> luau::runtime::Result<bool> {
+    match principal {
+        Some(principal) => {
             crate::routes::entity_accessible_to_principal(db, principal, entity_db_id)
-                .into_lua_err()
+                .map_err(crate::plugins::runtime_error)
         }
+        None => Ok(true),
     }
 }
 
 fn can_mutate_release(
     db: &impl db::DbAccess,
-    access: &CallerAccess,
-    release_db_id: agdb::DbId,
-) -> Result<bool> {
-    match access {
-        CallerAccess::System => Ok(true),
-        CallerAccess::Request(principal) => {
-            if !request_can_manage_libraries(principal) {
-                return Ok(false);
-            }
-            crate::routes::entity_accessible_to_principal(db, principal, release_db_id)
-                .into_lua_err()
-        }
+    principal: Option<&Principal>,
+    release_db_id: DbId,
+) -> luau::runtime::Result<bool> {
+    match principal {
+        Some(principal) => Ok(can_mutate_global(Some(principal))
+            && crate::routes::entity_accessible_to_principal(db, principal, release_db_id)
+                .map_err(crate::plugins::runtime_error)?),
+        None => Ok(true),
     }
 }
 
-fn can_mutate_global(access: &CallerAccess) -> bool {
-    match access {
-        CallerAccess::System => true,
-        CallerAccess::Request(principal) => request_can_manage_libraries(principal),
+fn can_mutate_global(principal: Option<&Principal>) -> bool {
+    principal.is_none_or(|principal| {
+        db::roles::has_permission(&principal.permissions, Permission::ManageLibraries)
+    })
+}
+
+fn label_info_table(label: db::labels::Label) -> luau::OwnedTable {
+    let mut table = luau::OwnedTable::with_capacity(0, 3);
+    let db_id = label.db_id.map(DbId::from);
+    table.set_field(
+        "db_id",
+        db_id
+            .map(|id| luau::Value::Integer(id.0))
+            .unwrap_or(luau::Value::Nil),
+    );
+    table.set_field("id", luau::Value::String(label.id.into_bytes()));
+    table.set_field("name", luau::Value::String(label.name.into_bytes()));
+    table
+}
+
+fn label_for_release_table(label: db::labels::LabelForRelease) -> luau::OwnedTable {
+    let mut table = luau::OwnedTable::with_capacity(0, 2);
+    table.set_field(
+        "label",
+        luau::Value::TableData(label_info_table(label.label)),
+    );
+    table.set_field(
+        "catalog_number",
+        label
+            .catalog_number
+            .map(|value| luau::Value::String(value.into_bytes()))
+            .unwrap_or(luau::Value::Nil),
+    );
+    table
+}
+
+fn label_release_array(labels: Vec<db::labels::LabelForRelease>) -> luau::OwnedTable {
+    let mut table = luau::OwnedTable::with_entry_capacity(0, 0, labels.len());
+    for (index, label) in labels.into_iter().enumerate() {
+        table.set_key(
+            luau::Value::Integer(index as i64 + 1),
+            luau::Value::TableData(label_for_release_table(label)),
+        );
+    }
+    table
+}
+
+fn id_array(ids: Vec<DbId>) -> luau::OwnedTable {
+    let mut table = luau::OwnedTable::with_entry_capacity(0, 0, ids.len());
+    for (index, id) in ids.into_iter().enumerate() {
+        table.set_key(
+            luau::Value::Integer(index as i64 + 1),
+            luau::Value::Integer(id.0),
+        );
+    }
+    table
+}
+
+impl LuauTypeInfo for LabelExternalId {
+    fn luau_type() -> LuauType {
+        LuauType::literal("LabelExternalId")
     }
 }
 
-struct LabelsModule;
+impl LuauTypeInfo for LabelAddRequest {
+    fn luau_type() -> LuauType {
+        LuauType::literal("LabelAddRequest")
+    }
+}
 
-#[harmony_macros::module(
-    plugin_scoped,
-    name = "Labels",
-    local = "labels",
-    path = "lyra/labels",
-    interfaces(
-        LabelExternalId,
-        LabelAddRequest,
-        LabelResolveRequest,
-        LabelInfo,
-        LabelForReleaseInfo
+impl LuauTypeInfo for LabelResolveRequest {
+    fn luau_type() -> LuauType {
+        LuauType::literal("LabelResolveRequest")
+    }
+}
+
+impl LuauTypeInfo for LabelInfo {
+    fn luau_type() -> LuauType {
+        LuauType::literal("LabelInfo")
+    }
+}
+
+impl LuauTypeInfo for LabelForReleaseInfo {
+    fn luau_type() -> LuauType {
+        LuauType::literal("LabelForReleaseInfo")
+    }
+}
+
+fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
+    FieldDescriptor {
+        name,
+        ty,
+        description: None,
+    }
+}
+
+fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
+    ParameterDescriptor {
+        name,
+        ty,
+        description: None,
+        variadic: false,
+    }
+}
+
+impl DescribeInterface for LabelExternalId {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("LabelExternalId", None);
+        descriptor.fields.extend([
+            field("provider_id", String::luau_type()),
+            field("id_type", String::luau_type()),
+            field("id", String::luau_type()),
+        ]);
+        descriptor
+    }
+}
+
+impl DescribeInterface for LabelAddRequest {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("LabelAddRequest", None);
+        descriptor.fields.extend([
+            field("name", String::luau_type()),
+            field("catalog_number", Option::<String>::luau_type()),
+            field("external_id", Option::<LabelExternalId>::luau_type()),
+        ]);
+        descriptor
+    }
+}
+
+impl DescribeInterface for LabelResolveRequest {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("LabelResolveRequest", None);
+        descriptor.fields.extend([
+            field("name", String::luau_type()),
+            field("external_id", Option::<LabelExternalId>::luau_type()),
+        ]);
+        descriptor
+    }
+}
+
+impl DescribeInterface for LabelInfo {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("LabelInfo", None);
+        descriptor.fields.extend([
+            field("db_id", Option::<i64>::luau_type()),
+            field("id", String::luau_type()),
+            field("name", String::luau_type()),
+        ]);
+        descriptor
+    }
+}
+
+impl DescribeInterface for LabelForReleaseInfo {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("LabelForReleaseInfo", None);
+        descriptor.fields.extend([
+            field("label", LabelInfo::luau_type()),
+            field("catalog_number", Option::<String>::luau_type()),
+        ]);
+        descriptor
+    }
+}
+
+fn module_descriptor() -> ModuleDescriptor {
+    ModuleDescriptor {
+        name: "Labels",
+        local_name: "labels",
+        description: Some("Read and mutate release label metadata."),
+        fields: Vec::new(),
+        functions: vec![
+            ModuleFunctionDescriptor {
+                path: vec!["add"],
+                description: None,
+                params: vec![
+                    param("release_id", i64::luau_type()),
+                    param("request", LabelAddRequest::luau_type()),
+                ],
+                returns: vec![i64::luau_type()],
+                yields: false,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["resolve"],
+                description: None,
+                params: vec![param("request", LabelResolveRequest::luau_type())],
+                returns: vec![i64::luau_type()],
+                yields: false,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["sync_for_release"],
+                description: None,
+                params: vec![
+                    param("release_id", i64::luau_type()),
+                    param("requests", Vec::<LabelAddRequest>::luau_type()),
+                ],
+                returns: Vec::new(),
+                yields: false,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get_by_id"],
+                description: None,
+                params: vec![param("label_id", i64::luau_type())],
+                returns: vec![Option::<LabelInfo>::luau_type()],
+                yields: false,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get_for_release"],
+                description: None,
+                params: vec![param("release_id", i64::luau_type())],
+                returns: vec![Vec::<LabelForReleaseInfo>::luau_type()],
+                yields: false,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get_for_releases_many"],
+                description: None,
+                params: vec![param("release_ids", Vec::<i64>::luau_type())],
+                returns: vec![LuauType::map(
+                    i64::luau_type(),
+                    Vec::<LabelForReleaseInfo>::luau_type(),
+                )],
+                yields: false,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get_releases"],
+                description: None,
+                params: vec![param("label_id", i64::luau_type())],
+                returns: vec![Vec::<i64>::luau_type()],
+                yields: false,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get_releases_many"],
+                description: None,
+                params: vec![param("label_ids", Vec::<i64>::luau_type())],
+                returns: vec![LuauType::map(i64::luau_type(), Vec::<i64>::luau_type())],
+                yields: false,
+            },
+        ],
+    }
+}
+
+pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
+    render_definition_file_with_support(
+        &module_descriptor(),
+        &[],
+        &[
+            LabelExternalId::interface_descriptor(),
+            LabelAddRequest::interface_descriptor(),
+            LabelResolveRequest::interface_descriptor(),
+            LabelInfo::interface_descriptor(),
+            LabelForReleaseInfo::interface_descriptor(),
+        ],
+        &[],
     )
-)]
-impl LabelsModule {
-    /// Resolve-or-create a label and link it to a release with an optional
-    /// catalog number. Resolution + linking run atomically.
-    ///
-    /// Locked-release no-op: returns sentinel `NodeId(DbId(0))`. Locked
-    /// releases skip because resolving-without-linking would leak a Label
-    /// that refcount GC cannot reach.
-    #[harmony(args(release_id: NodeId, request: LabelAddRequest))]
-    pub(crate) async fn add(
-        lua: Lua,
-        plugin_id: Option<Arc<str>>,
-        release_id: Value,
-        request: Value,
-    ) -> Result<NodeId> {
-        let access = caller_access(plugin_id)?;
-        let release_id: agdb::DbId = lua.from_value::<NodeId>(release_id)?.into();
-        let request: LabelAddRequest = crate::plugins::from_lua_json_value(&lua, request)?;
-
-        let mut db = STATE.db.write().await;
-        if !can_mutate_release(&*db, &access, release_id)? {
-            return Ok(NodeId::from(agdb::DbId(0)));
-        }
-
-        let is_locked = db::releases::get_by_id(&db, release_id)
-            .into_lua_err()?
-            .is_some_and(|r| r.locked.unwrap_or(false));
-
-        if is_locked {
-            return Ok(NodeId::from(agdb::DbId(0)));
-        }
-
-        let ext = request.external_id.as_ref().map(|e| ResolveExternalId {
-            provider_id: &e.provider_id,
-            id_type: &e.id_type,
-            id_value: &e.id,
-        });
-        let label_id = db::labels::add_label_to_release(
-            &mut db,
-            release_id,
-            &ResolveLabel {
-                name: &request.name,
-                external_id: ext,
-            },
-            request.catalog_number.as_deref(),
-        )
-        .into_lua_err()?;
-
-        Ok(label_id.into())
-    }
-
-    /// Resolve or create a label without linking. Useful when a plugin needs
-    /// the db_id before an unrelated operation.
-    ///
-    /// Not gated on release locks — no release is referenced. A bare Label
-    /// created here and never linked via `add` or `sync_for_release` becomes
-    /// a permanent orphan: refcount GC only fires on the last `ReleaseLabel`
-    /// unlink, and an unlinked Label has no trigger. Caller owns the
-    /// follow-up.
-    #[harmony(args(request: LabelResolveRequest))]
-    pub(crate) async fn resolve(
-        lua: Lua,
-        plugin_id: Option<Arc<str>>,
-        request: Value,
-    ) -> Result<NodeId> {
-        let access = caller_access(plugin_id)?;
-        if !can_mutate_global(&access) {
-            return Ok(NodeId::from(agdb::DbId(0)));
-        }
-        let request: LabelResolveRequest = crate::plugins::from_lua_json_value(&lua, request)?;
-        let ext = request.external_id.as_ref().map(|e| ResolveExternalId {
-            provider_id: &e.provider_id,
-            id_type: &e.id_type,
-            id_value: &e.id,
-        });
-        let mut db = STATE.db.write().await;
-        let label_id = db::labels::resolve(
-            &mut db,
-            &ResolveLabel {
-                name: &request.name,
-                external_id: ext,
-            },
-        )
-        .into_lua_err()?;
-        Ok(label_id.into())
-    }
-
-    /// Replace the labels on a release with the given set (authoritative
-    /// sync). Mirrors what the merged-metadata pipeline does.
-    ///
-    /// Errors on locked releases: reconciling against an empty set would
-    /// destroy the curated state the lock exists to protect. An explicit
-    /// error surfaces the refusal; a silent no-op would look like success.
-    #[harmony(args(release_id: NodeId, requests: Vec<LabelAddRequest>))]
-    pub(crate) async fn sync_for_release(
-        lua: Lua,
-        plugin_id: Option<Arc<str>>,
-        release_id: Value,
-        requests: Value,
-    ) -> Result<()> {
-        let access = caller_access(plugin_id)?;
-        let release_id: agdb::DbId = lua.from_value::<NodeId>(release_id)?.into();
-        let requests: Vec<LabelAddRequest> = crate::plugins::from_lua_json_value(&lua, requests)?;
-
-        let mut db = STATE.db.write().await;
-        if !can_mutate_release(&*db, &access, release_id)? {
-            return Ok(());
-        }
-
-        let is_locked = db::releases::get_by_id(&db, release_id)
-            .into_lua_err()?
-            .is_some_and(|r| r.locked.unwrap_or(false));
-        if is_locked {
-            return Err(mlua::Error::runtime(format!(
-                "release {} is locked; refusing to sync labels",
-                release_id.0
-            )));
-        }
-
-        let mut inputs: Vec<LabelInput> = Vec::with_capacity(requests.len());
-        for (idx, r) in requests.into_iter().enumerate() {
-            let name = r.name.trim().to_string();
-            if name.is_empty() {
-                return Err(mlua::Error::runtime(format!("labels[{idx}].name is blank")));
-            }
-            let catalog_number = r
-                .catalog_number
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-            let external_id = match r.external_id {
-                None => None,
-                Some(e) => {
-                    let provider_id = e.provider_id.trim().to_string();
-                    let id_type = e.id_type.trim().to_string();
-                    let id_value = e.id.trim().to_string();
-                    if provider_id.is_empty() || id_type.is_empty() || id_value.is_empty() {
-                        return Err(mlua::Error::runtime(format!(
-                            "labels[{idx}].external_id has blank component (provider_id / id_type / id required)"
-                        )));
-                    }
-                    Some(LabelExternalIdInput {
-                        provider_id,
-                        id_type,
-                        id_value,
-                    })
-                }
-            };
-            inputs.push(LabelInput {
-                name,
-                catalog_number,
-                external_id,
-            });
-        }
-
-        db::labels::sync_release_labels(&mut db, release_id, &inputs).into_lua_err()?;
-        Ok(())
-    }
-
-    #[harmony(returns(Option<LabelInfo>))]
-    pub(crate) async fn get_by_id(
-        lua: Lua,
-        _plugin_id: Option<Arc<str>>,
-        label_id: NodeId,
-    ) -> Result<Value> {
-        let db = STATE.db.read().await;
-        let label = db::labels::get_by_id(&*db, label_id.into()).into_lua_err()?;
-        match label {
-            Some(l) => lua.to_value_with(&label_to_info(l), crate::plugins::LUA_SERIALIZE_OPTIONS),
-            None => Ok(Value::Nil),
-        }
-    }
-
-    #[harmony(returns(Vec<LabelForReleaseInfo>))]
-    pub(crate) async fn get_for_release(
-        lua: Lua,
-        plugin_id: Option<Arc<str>>,
-        release_id: NodeId,
-    ) -> Result<Value> {
-        let access = caller_access(plugin_id)?;
-        let db = STATE.db.read().await;
-        let release_id: agdb::DbId = release_id.into();
-        if !can_read_entity(&*db, &access, release_id)? {
-            return lua.to_value_with(
-                &Vec::<LabelForReleaseInfo>::new(),
-                crate::plugins::LUA_SERIALIZE_OPTIONS,
-            );
-        }
-        let joined = db::labels::get_for_release(&*db, release_id).into_lua_err()?;
-        let infos: Vec<LabelForReleaseInfo> = joined
-            .into_iter()
-            .map(|lr| LabelForReleaseInfo {
-                label: label_to_info(lr.label),
-                catalog_number: lr.catalog_number,
-            })
-            .collect();
-        lua.to_value_with(&infos, crate::plugins::LUA_SERIALIZE_OPTIONS)
-    }
-
-    #[harmony(args(release_ids: Vec<u64>), returns(std::collections::BTreeMap<u64, Vec<LabelForReleaseInfo>>))]
-    pub(crate) async fn get_for_releases_many(
-        lua: Lua,
-        plugin_id: Option<Arc<str>>,
-        release_ids: Table,
-    ) -> Result<Table> {
-        let access = caller_access(plugin_id)?;
-        let ids = crate::plugins::parse_ids(release_ids)?;
-        let db = STATE.db.read().await;
-        let result = db::labels::get_for_releases_many(&*db, &ids).into_lua_err()?;
-        let table = lua.create_table()?;
-        for id in ids {
-            if !can_read_entity(&*db, &access, id)? {
-                table.set(
-                    id.0,
-                    lua.to_value_with(
-                        &Vec::<LabelForReleaseInfo>::new(),
-                        crate::plugins::LUA_SERIALIZE_OPTIONS,
-                    )?,
-                )?;
-                continue;
-            }
-            let joined = result.get(&id).cloned().unwrap_or_default();
-            let infos: Vec<LabelForReleaseInfo> = joined
-                .into_iter()
-                .map(|lr| LabelForReleaseInfo {
-                    label: label_to_info(lr.label),
-                    catalog_number: lr.catalog_number,
-                })
-                .collect();
-            table.set(
-                id.0,
-                lua.to_value_with(&infos, crate::plugins::LUA_SERIALIZE_OPTIONS)?,
-            )?;
-        }
-        Ok(table)
-    }
-
-    #[harmony(returns(Vec<u64>))]
-    pub(crate) async fn get_releases(
-        _lua: Lua,
-        plugin_id: Option<Arc<str>>,
-        label_id: NodeId,
-    ) -> Result<Vec<NodeId>> {
-        let access = caller_access(plugin_id)?;
-        let db = STATE.db.read().await;
-        let release_ids = db::labels::get_releases(&*db, label_id.into()).into_lua_err()?;
-        let mut visible = Vec::new();
-        for release_id in release_ids {
-            if can_read_entity(&*db, &access, release_id)? {
-                visible.push(release_id.into());
-            }
-        }
-        Ok(visible)
-    }
-
-    #[harmony(args(label_ids: Vec<u64>), returns(std::collections::BTreeMap<u64, Vec<u64>>))]
-    pub(crate) async fn get_releases_many(
-        _lua: Lua,
-        plugin_id: Option<Arc<str>>,
-        label_ids: Table,
-    ) -> Result<Table> {
-        let access = caller_access(plugin_id)?;
-        let ids = crate::plugins::parse_ids(label_ids)?;
-        let db = STATE.db.read().await;
-        let result = db::labels::get_releases_many(&*db, &ids).into_lua_err()?;
-        let lua = _lua;
-        let table = lua.create_table()?;
-        for id in ids {
-            let release_ids = result.get(&id).cloned().unwrap_or_default();
-            let mut release_id_values: Vec<NodeId> = Vec::new();
-            for release_id in release_ids {
-                if can_read_entity(&*db, &access, release_id)? {
-                    release_id_values.push(release_id.into());
-                }
-            }
-            table.set(
-                id.0,
-                lua.to_value_with(&release_id_values, crate::plugins::LUA_SERIALIZE_OPTIONS)?,
-            )?;
-        }
-        Ok(table)
-    }
 }
-
-crate::plugins::plugin_surface_exports!(
-    LabelsModule,
-    "lyra.labels",
-    "Read and modify record labels.",
-    Low
-);

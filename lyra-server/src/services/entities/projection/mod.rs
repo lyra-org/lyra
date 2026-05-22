@@ -211,7 +211,7 @@ fn include_not_supported(entity_type: &str, include: EntityInclude) -> anyhow::E
     )
 }
 
-pub(super) fn fetch_raw_entity(db: &DbAny, entity_id: DbId) -> anyhow::Result<DbElement> {
+pub(super) fn fetch_entity_element(db: &DbAny, entity_id: DbId) -> anyhow::Result<DbElement> {
     let result = db.exec(QueryBuilder::select().ids(entity_id).query())?;
     result
         .elements
@@ -220,7 +220,10 @@ pub(super) fn fetch_raw_entity(db: &DbAny, entity_id: DbId) -> anyhow::Result<Db
         .ok_or_else(|| anyhow::anyhow!("entity not found: {}", entity_id.0))
 }
 
-fn fetch_raw_entities(db: &DbAny, entity_ids: &[DbId]) -> anyhow::Result<HashMap<DbId, DbElement>> {
+fn fetch_entity_elements(
+    db: &DbAny,
+    entity_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, DbElement>> {
     if entity_ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -413,7 +416,7 @@ pub(crate) fn project_entity(
     use agdb::DbType;
 
     let entity_id = resolve_entity_id(db, query_id)?;
-    let element = fetch_raw_entity(db, entity_id)?;
+    let element = fetch_entity_element(db, entity_id)?;
     let entity_type = detect_entity_type(&element)?;
 
     let no_prefetch = PreFetchedIncludes::default();
@@ -476,7 +479,7 @@ pub(crate) fn project_entities(
     }
 
     let unique_entity_ids = super::dedupe_db_ids(&entity_ids);
-    let elements_by_id = fetch_raw_entities(db, &unique_entity_ids)?;
+    let elements_by_id = fetch_entity_elements(db, &unique_entity_ids)?;
 
     let mut resolved = Vec::with_capacity(entity_ids.len());
     let mut release_ids = Vec::new();

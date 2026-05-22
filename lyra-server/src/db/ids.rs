@@ -13,10 +13,6 @@ use harmony_luau::{
     LuauType,
     LuauTypeInfo,
 };
-use mlua::{
-    FromLua,
-    IntoLua,
-};
 use schemars::{
     JsonSchema,
     Schema,
@@ -46,27 +42,6 @@ impl From<NodeId> for DbId {
 impl From<NodeId> for QueryId {
     fn from(value: NodeId) -> Self {
         QueryId::Id(value.0)
-    }
-}
-
-impl FromLua for NodeId {
-    fn from_lua(lua_value: mlua::Value, _: &mlua::Lua) -> mlua::Result<Self> {
-        let id = match lua_value {
-            mlua::Value::Integer(i) => Ok(Self(DbId(i))),
-            _ => Err(mlua::Error::FromLuaConversionError {
-                from: lua_value.type_name(),
-                to: "NodeId".to_string(),
-                message: Some("expected integer".into()),
-            }),
-        }?;
-
-        Ok(id)
-    }
-}
-
-impl IntoLua for NodeId {
-    fn into_lua(self, _: &mlua::Lua) -> mlua::Result<mlua::Value> {
-        Ok(mlua::Value::Integer(self.0.0))
     }
 }
 
@@ -169,43 +144,6 @@ impl ResolveId {
     /// Creates a ResolveId for a known root collection alias.
     pub fn alias(name: &str) -> Self {
         ResolveId::Alias(name.to_string())
-    }
-}
-
-impl FromLua for ResolveId {
-    fn from_lua(lua_value: mlua::Value, _: &mlua::Lua) -> mlua::Result<Self> {
-        match lua_value {
-            mlua::Value::Integer(i) => Ok(ResolveId::DbId(DbId(i))),
-            mlua::Value::String(s) => {
-                let text = s
-                    .to_str()
-                    .map_err(|_| mlua::Error::FromLuaConversionError {
-                        from: "string",
-                        to: "ResolveId".to_string(),
-                        message: Some("invalid UTF-8 string".into()),
-                    })?;
-                if super::bootstrap::ROOT_COLLECTION_ALIASES.contains(&text.as_ref()) {
-                    Ok(ResolveId::Alias(text.to_string()))
-                } else {
-                    Ok(ResolveId::Nanoid(text.to_string()))
-                }
-            }
-            _ => Err(mlua::Error::FromLuaConversionError {
-                from: lua_value.type_name(),
-                to: "ResolveId".to_string(),
-                message: Some("expected integer or string".into()),
-            }),
-        }
-    }
-}
-
-impl IntoLua for ResolveId {
-    fn into_lua(self, lua: &mlua::Lua) -> mlua::Result<mlua::Value> {
-        match self {
-            ResolveId::DbId(db_id) => Ok(mlua::Value::Integer(db_id.0)),
-            ResolveId::Alias(alias) => Ok(mlua::Value::String(lua.create_string(&alias)?)),
-            ResolveId::Nanoid(nanoid) => Ok(mlua::Value::String(lua.create_string(&nanoid)?)),
-        }
     }
 }
 

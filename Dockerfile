@@ -59,7 +59,6 @@ COPY harmony-globals/Cargo.toml harmony-globals/Cargo.toml
 COPY harmony-http/Cargo.toml harmony-http/Cargo.toml
 COPY harmony-json/Cargo.toml harmony-json/Cargo.toml
 COPY harmony-luau/Cargo.toml harmony-luau/Cargo.toml
-COPY harmony-macros/Cargo.toml harmony-macros/Cargo.toml
 COPY harmony-net/Cargo.toml harmony-net/Cargo.toml
 COPY harmony-task/Cargo.toml harmony-task/Cargo.toml
 COPY lyra-chromaprint/Cargo.toml lyra-chromaprint/Cargo.toml
@@ -72,7 +71,6 @@ COPY lyra-harmony-test/Cargo.toml lyra-harmony-test/Cargo.toml
 RUN for dir in harmony-core harmony-crypt harmony-globals harmony-http harmony-json harmony-luau harmony-net harmony-task lyra-chromaprint lyra-ffmpeg lyra-metadata lyra-harmony-test; do \
       mkdir -p "$dir/src" && echo '' > "$dir/src/lib.rs"; \
     done && \
-    mkdir -p harmony-macros/src && echo '' > harmony-macros/src/lib.rs && \
     mkdir -p lyra-server/src && echo 'fn main() {}' > lyra-server/src/main.rs && echo '' > lyra-server/src/lib.rs
 
 # Fetch all dependencies (fails fast on resolution/network errors).

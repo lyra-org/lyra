@@ -199,7 +199,6 @@ pub(crate) async fn require_manage_libraries_on(
 }
 
 pub(crate) struct LoginResult {
-    pub(crate) principal: Principal,
     pub(crate) token: String,
 }
 
@@ -446,7 +445,6 @@ async fn create_login_result(
         .map_err(|e| AuthError::Internal(e.into()))?;
 
     Ok(LoginResult {
-        principal,
         token: session.token,
     })
 }
