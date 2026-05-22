@@ -15,9 +15,12 @@ use std::fmt::{
 };
 
 pub mod runtime;
+#[cfg(feature = "serde")]
+mod serde_value;
 
 pub use runtime::{
     ArgReader,
+    AsyncCallFrame,
     Buffer,
     ByteString,
     CallContext,
@@ -30,6 +33,8 @@ pub use runtime::{
     Error,
     FromLuau,
     Function,
+    InterruptBudgetGuard,
+    IntoLuauReturn,
     ModuleId,
     NativeAsyncFn,
     NativeFn,
@@ -37,20 +42,28 @@ pub use runtime::{
     NativeFunctionValue,
     OwnedTable,
     RegistryRef,
+    ReturnValues,
     ReturnWriter,
     ScheduledFuture,
     SourceBytes,
     StandardLibraries,
     Table,
+    TableReader,
     TaskGroupId,
     Thread,
     ThreadData,
     ThreadStatus,
     ToLuau,
+    UserData,
+    UserDataRef,
+    UserDataTag,
     Value,
     Vm,
     VmData,
+    VmOptions,
 };
+#[cfg(feature = "serde")]
+pub use serde_value::serializable_to_luau_owned;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LuauType {
@@ -451,6 +464,13 @@ impl_literal_types!("number" => u8, u16, u32, u64, u128, usize);
 impl_literal_types!("number" => f32, f64);
 impl_literal_types!("string" => String, &'static str, char);
 impl_literal_types!("string" => std::path::PathBuf);
+impl_literal_types!("string" => ByteString);
+impl_literal_types!("buffer" => Buffer);
+impl_literal_types!("table" => Table, OwnedTable);
+impl_literal_types!("function" => Function, NativeFunctionValue);
+impl_literal_types!("thread" => Thread);
+impl_literal_types!("userdata" => UserData);
+impl_literal_types!("any" => Value, ReturnValues);
 
 impl<T> LuauTypeInfo for Option<T>
 where

@@ -25,7 +25,7 @@ impl PluginExecutor {
             return Ok(());
         }
 
-        let payload_value = harmony_json::json_to_luau_owned(serde_json::to_value(&payload)?, 0)?;
+        let payload_value = harmony_luau::serializable_to_luau_owned(&payload)?;
         let scheduler = self.vm.data().get::<LocalScheduler>()?;
         for handler in handlers {
             let thread = self.vm.create_thread(&handler.function)?;

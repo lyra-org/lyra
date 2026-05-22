@@ -77,7 +77,7 @@ fn add_spec() -> FunctionSpec {
         .named_arg::<String>("tag")
         .named_arg::<String>("color")
         .returns::<String>();
-    spec.call_async_native(Arc::new(add_callback))
+    spec.call_async(Arc::new(add_callback))
 }
 
 fn remove_spec() -> FunctionSpec {
@@ -85,7 +85,7 @@ fn remove_spec() -> FunctionSpec {
         .named_arg::<NodeId>("user_id")
         .named_arg::<NodeId>("target_id")
         .named_arg::<String>("tag");
-    spec.call_async_native(Arc::new(remove_callback))
+    spec.call_async(Arc::new(remove_callback))
 }
 
 fn has_spec() -> FunctionSpec {
@@ -94,7 +94,7 @@ fn has_spec() -> FunctionSpec {
         .named_arg::<NodeId>("target_id")
         .named_arg::<String>("tag")
         .returns::<bool>();
-    spec.call_async_native(Arc::new(has_callback))
+    spec.call_async(Arc::new(has_callback))
 }
 
 fn has_many_spec() -> FunctionSpec {
@@ -103,7 +103,7 @@ fn has_many_spec() -> FunctionSpec {
         .named_arg::<Vec<u64>>("target_ids")
         .named_arg::<String>("tag")
         .returns::<std::collections::BTreeMap<u64, bool>>();
-    spec.call_async_native(Arc::new(has_many_callback))
+    spec.call_async(Arc::new(has_many_callback))
 }
 
 fn get_for_target_spec() -> FunctionSpec {
@@ -111,7 +111,7 @@ fn get_for_target_spec() -> FunctionSpec {
         .named_arg::<NodeId>("user_id")
         .named_arg::<NodeId>("target_id")
         .returns::<Vec<TagInfo>>();
-    spec.call_async_native(Arc::new(get_for_target_callback))
+    spec.call_async(Arc::new(get_for_target_callback))
 }
 
 fn get_for_targets_many_spec() -> FunctionSpec {
@@ -119,7 +119,7 @@ fn get_for_targets_many_spec() -> FunctionSpec {
         .named_arg::<NodeId>("user_id")
         .named_arg::<Vec<u64>>("target_ids")
         .returns::<std::collections::BTreeMap<u64, Vec<TagInfo>>>();
-    spec.call_async_native(Arc::new(get_for_targets_many_callback))
+    spec.call_async(Arc::new(get_for_targets_many_callback))
 }
 
 fn get_tagged_spec() -> FunctionSpec {
@@ -127,48 +127,54 @@ fn get_tagged_spec() -> FunctionSpec {
         .named_arg::<NodeId>("user_id")
         .named_arg::<String>("tag")
         .returns::<Vec<NodeId>>();
-    spec.call_async_native(Arc::new(get_tagged_callback))
+    spec.call_async(Arc::new(get_tagged_callback))
 }
-fn add_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn add_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let user_id = read_db_id_arg(&mut frame.args, "user_id")?;
     let target_id = read_db_id_arg(&mut frame.args, "target_id")?;
     let tag: String = frame.args.read_named("tag")?;
     let color: String = frame.args.read_named("color")?;
     let store = frame.vm.data().get::<TagsModuleStore>()?.as_ref().clone();
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let canonical = store.add(user_id, target_id, tag, color).await?;
-        Ok(vec![luau::Value::String(canonical.into_bytes())])
+        Ok(luau::Value::String(canonical.into_bytes()))
     }))
 }
-fn remove_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn remove_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let user_id = read_db_id_arg(&mut frame.args, "user_id")?;
     let target_id = read_db_id_arg(&mut frame.args, "target_id")?;
     let tag: String = frame.args.read_named("tag")?;
     let store = frame.vm.data().get::<TagsModuleStore>()?.as_ref().clone();
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         store.remove(user_id, target_id, tag).await?;
-        Ok(Vec::new())
+        Ok(())
     }))
 }
-fn has_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn has_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let user_id = read_db_id_arg(&mut frame.args, "user_id")?;
     let target_id = read_db_id_arg(&mut frame.args, "target_id")?;
     let tag: String = frame.args.read_named("tag")?;
     let store = frame.vm.data().get::<TagsModuleStore>()?.as_ref().clone();
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let has_tag = store.has(user_id, target_id, tag).await?;
-        Ok(vec![luau::Value::Boolean(has_tag)])
+        Ok(luau::Value::Boolean(has_tag))
     }))
 }
 fn has_many_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let user_id = read_db_id_arg(&mut frame.args, "user_id")?;
     let target_ids: luau::Table = frame.args.read_named("target_ids")?;
     let target_ids = parse_db_ids(frame.vm, &target_ids)?;
     let tag: String = frame.args.read_named("tag")?;
     let store = frame.vm.data().get::<TagsModuleStore>()?.as_ref().clone();
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let result = store.has_many(user_id, target_ids.clone(), tag).await?;
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, target_ids.len());
         for id in target_ids {
@@ -177,28 +183,28 @@ fn has_many_callback(
                 luau::Value::Boolean(result.get(&id).copied().unwrap_or(false)),
             );
         }
-        Ok(vec![luau::Value::TableData(table)])
+        Ok(luau::Value::TableData(table))
     }))
 }
 fn get_for_target_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let user_id = read_db_id_arg(&mut frame.args, "user_id")?;
     let target_id = read_db_id_arg(&mut frame.args, "target_id")?;
     let store = frame.vm.data().get::<TagsModuleStore>()?.as_ref().clone();
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let tags = store.get_for_target(user_id, target_id).await?;
-        Ok(vec![luau::Value::TableData(tag_info_array(tags))])
+        Ok(luau::Value::TableData(tag_info_array(tags)))
     }))
 }
 fn get_for_targets_many_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let user_id = read_db_id_arg(&mut frame.args, "user_id")?;
     let target_ids: luau::Table = frame.args.read_named("target_ids")?;
     let target_ids = parse_db_ids(frame.vm, &target_ids)?;
     let store = frame.vm.data().get::<TagsModuleStore>()?.as_ref().clone();
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let mut result = store
             .get_for_targets_many(user_id, target_ids.clone())
             .await?;
@@ -209,18 +215,18 @@ fn get_for_targets_many_callback(
                 luau::Value::TableData(tag_info_array(result.remove(&id).unwrap_or_default())),
             );
         }
-        Ok(vec![luau::Value::TableData(table)])
+        Ok(luau::Value::TableData(table))
     }))
 }
 fn get_tagged_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let user_id = read_db_id_arg(&mut frame.args, "user_id")?;
     let tag: String = frame.args.read_named("tag")?;
     let store = frame.vm.data().get::<TagsModuleStore>()?.as_ref().clone();
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let ids = store.get_tagged(user_id, tag).await?;
-        Ok(vec![luau::Value::TableData(db_id_array(ids))])
+        Ok(luau::Value::TableData(db_id_array(ids)))
     }))
 }
 #[derive(Clone, Default)]

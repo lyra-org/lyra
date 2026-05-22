@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::time::Duration;
+use std::{
+    sync::Arc,
+    time::Duration,
+};
 
 use harmony_core::{
     FunctionSpec,
@@ -32,8 +35,6 @@ pub fn module_spec() -> ModuleSpec {
         .capability("harmony.task")
         .function(defer_spec())
         .function(delay_spec())
-        .function(noop_spec("desynchronize"))
-        .function(noop_spec("synchronize"))
         .function(wait_spec())
         .function(cancel_spec())
         .function(spawn_spec())
@@ -72,7 +73,7 @@ fn wait_spec() -> FunctionSpec {
         .arg_name("time")
         .args::<Option<f64>>()
         .returns::<f64>();
-    spec.call(wait_callback)
+    spec.call_async(Arc::new(wait_callback))
 }
 
 fn spawn_spec() -> FunctionSpec {
@@ -82,15 +83,6 @@ fn spawn_spec() -> FunctionSpec {
         .variadic_args::<TaskArg>()
         .returns::<TaskThread>();
     spec.call(spawn_callback)
-}
-
-fn noop_spec(name: &'static str) -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn(name);
-    spec.call(noop_callback)
-}
-
-fn noop_callback(_frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    Ok(())
 }
 
 enum TaskTarget {
@@ -171,7 +163,9 @@ fn cancel_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> 
     Ok(())
 }
 
-fn wait_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+fn wait_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let seconds = frame
         .args
         .read_optional_named::<f64>("time")?
@@ -181,17 +175,10 @@ fn wait_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
             "task.wait time must be finite and non-negative: {error}"
         ))
     })?;
-    let scheduler = frame.vm.data().get::<harmony_core::LocalScheduler>()?;
-    scheduler.park_luau_thread(&frame.thread);
-    scheduler.schedule_luau_thread_after(
-        scheduler_context(&frame.context),
+    Ok(luau::ScheduledFuture::after(
         delay,
-        frame.vm.clone(),
-        frame.thread.clone(),
-        vec![luau::Value::Number(seconds)],
-    );
-    frame.yield_now();
-    Ok(())
+        async move { Ok(seconds) },
+    ))
 }
 
 fn scheduler_context(context: &luau::CallContext) -> harmony_core::CallContext {
@@ -293,24 +280,6 @@ impl DescribeModule for TaskModuleDocs {
                     yields: false,
                 },
                 ModuleFunctionDescriptor {
-                    path: vec!["desynchronize"],
-                    description: Some(
-                        "No-op compatibility shim for environments that support desynchronized execution.",
-                    ),
-                    params: Vec::new(),
-                    returns: Vec::new(),
-                    yields: false,
-                },
-                ModuleFunctionDescriptor {
-                    path: vec!["synchronize"],
-                    description: Some(
-                        "No-op compatibility shim for environments that support synchronized execution.",
-                    ),
-                    params: Vec::new(),
-                    returns: Vec::new(),
-                    yields: false,
-                },
-                ModuleFunctionDescriptor {
                     path: vec!["wait"],
                     description: Some(
                         "Yields the current thread for at least the requested duration and returns the elapsed seconds.",
@@ -397,7 +366,7 @@ mod tests {
 
         assert_eq!(spec.id.0.as_ref(), "harmony/task");
         assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "harmony.task");
-        assert_eq!(spec.functions.len(), 7);
+        assert_eq!(spec.functions.len(), 5);
         assert_eq!(spec.functions[0].name.as_ref(), "defer");
         assert!(spec.functions[0].variadic);
         assert_eq!(spec.functions[1].name.as_ref(), "delay");
@@ -431,8 +400,6 @@ mod tests {
         let values = vm.eval(
             std::sync::Arc::<[u8]>::from(
                 &br#"
-                    task.desynchronize()
-                    task.synchronize()
                     local spawned = task.spawn(function(lhs, rhs)
                         spawned_total = lhs + rhs
                     end, 20, 22)

@@ -120,6 +120,9 @@ pub fn luau_to_json(
         luau::Value::Thread(_) => Err(luau::Error::Runtime(
             "threads cannot be encoded as JSON".into(),
         )),
+        luau::Value::UserData(_) => Err(luau::Error::Runtime(
+            "userdata cannot be encoded as JSON".into(),
+        )),
     }
 }
 
@@ -147,7 +150,17 @@ pub fn optional_i64_field(
 ) -> luau::runtime::Result<Option<i64>> {
     match table.get_raw(vm, key)? {
         luau::Value::Integer(value) => Ok(Some(value)),
-        luau::Value::Number(value) => Ok(Some(value as i64)),
+        luau::Value::Number(value)
+            if value.is_finite()
+                && value.fract() == 0.0
+                && value >= i64::MIN as f64
+                && value < 9_223_372_036_854_775_808.0 =>
+        {
+            Ok(Some(value as i64))
+        }
+        luau::Value::Number(_) => Err(luau::Error::Runtime(format!(
+            "{key} must be an integer or nil"
+        ))),
         luau::Value::Nil => Ok(None),
         other => Err(luau::Error::Runtime(format!(
             "{key} must be a number or nil, got {}",
@@ -356,11 +369,7 @@ pub fn json_to_luau(
     match value {
         serde_json::Value::Null => Ok(luau::Value::Nil),
         serde_json::Value::Bool(value) => Ok(luau::Value::Boolean(value)),
-        serde_json::Value::Number(value) => value
-            .as_f64()
-            .filter(|value| value.is_finite())
-            .map(luau::Value::Number)
-            .ok_or_else(|| luau::Error::Runtime("JSON number is out of range".into())),
+        serde_json::Value::Number(value) => json_number_to_luau(value),
         serde_json::Value::String(value) => Ok(luau::Value::String(value.into_bytes())),
         serde_json::Value::Array(values) => {
             let table = vm.create_table_with_capacity(values.len() as i32, 0)?;
@@ -392,11 +401,7 @@ pub fn json_to_luau_owned(
     match value {
         serde_json::Value::Null => Ok(luau::Value::Nil),
         serde_json::Value::Bool(value) => Ok(luau::Value::Boolean(value)),
-        serde_json::Value::Number(value) => value
-            .as_f64()
-            .filter(|value| value.is_finite())
-            .map(luau::Value::Number)
-            .ok_or_else(|| luau::Error::Runtime("JSON number is out of range".into())),
+        serde_json::Value::Number(value) => json_number_to_luau(value),
         serde_json::Value::String(value) => Ok(luau::Value::String(value.into_bytes())),
         serde_json::Value::Array(values) => {
             let mut table = luau::OwnedTable::with_capacity(values.len(), 0);
@@ -413,6 +418,14 @@ pub fn json_to_luau_owned(
             Ok(luau::Value::TableData(table))
         }
     }
+}
+
+fn json_number_to_luau(value: serde_json::Number) -> luau::runtime::Result<luau::Value> {
+    value
+        .as_f64()
+        .filter(|value| value.is_finite())
+        .map(luau::Value::Number)
+        .ok_or_else(|| luau::Error::Runtime("JSON number is out of range".into()))
 }
 
 fn runtime_error(context: &str, error: impl fmt::Display) -> luau::Error {

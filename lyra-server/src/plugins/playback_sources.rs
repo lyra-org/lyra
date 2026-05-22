@@ -84,7 +84,7 @@ fn get_spec() -> FunctionSpec {
         .arg_name("include_entry")
         .args::<Option<bool>>()
         .returns::<luau::Table>()
-        .call_async_native(Arc::new(get_callback))
+        .call_async(Arc::new(get_callback))
 }
 
 fn get_many_spec() -> FunctionSpec {
@@ -95,10 +95,12 @@ fn get_many_spec() -> FunctionSpec {
         .arg_name("include_entry")
         .args::<Option<bool>>()
         .returns::<luau::Table>()
-        .call_async_native(Arc::new(get_many_callback))
+        .call_async(Arc::new(get_many_callback))
 }
 
-fn get_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn get_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id = frame
         .args
         .read_optional_named::<luau::Value>("id")?
@@ -118,7 +120,7 @@ fn get_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::S
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let include_full_path =
             db::roles::has_permission(&principal.permissions, db::Permission::ManageLibraries);
@@ -150,12 +152,12 @@ fn get_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::S
             )));
         }
 
-        Ok(vec![luau::Value::TableData(rows)])
+        Ok(luau::Value::TableData(rows))
     }))
 }
 
 fn get_many_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_ids: luau::Table = frame.args.read_named("track_ids")?;
     let track_ids = parse_db_ids(frame.vm, &track_ids)?;
@@ -172,7 +174,7 @@ fn get_many_callback(
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let include_full_path =
             db::roles::has_permission(&principal.permissions, db::Permission::ManageLibraries);
@@ -198,7 +200,7 @@ fn get_many_callback(
             rows.set_key(luau::Value::Number(track_id.0 as f64), value);
         }
 
-        Ok(vec![luau::Value::TableData(rows)])
+        Ok(luau::Value::TableData(rows))
     }))
 }
 

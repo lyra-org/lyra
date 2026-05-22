@@ -16,6 +16,7 @@ use harmony_luau as luau;
 use harmony_luau::{
     FieldDescriptor,
     InterfaceDescriptor,
+    IntoLuauReturn,
     LuauType,
     LuauTypeInfo,
     ModuleDescriptor,
@@ -79,7 +80,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(list_by_library_spec())
         .function(list_many_spec())
         .function(list_relations_many_spec())
-        .luau_initializer(install_enum_tables)
+        .initializer(install_enum_tables)
         .install(|_| Ok(ModuleExport::new(ArtistsModule)))
 }
 
@@ -88,7 +89,7 @@ fn list_spec() -> FunctionSpec {
         .arg_name("scope")
         .args::<Option<ResolveId>>()
         .returns::<Vec<Artist>>()
-        .call_async_native(std::sync::Arc::new(list_callback))
+        .call_async(std::sync::Arc::new(list_callback))
 }
 
 fn query_spec() -> FunctionSpec {
@@ -96,7 +97,7 @@ fn query_spec() -> FunctionSpec {
         .arg_name("opts")
         .args::<luau::Table>()
         .returns::<luau::Value>()
-        .call_async_native(std::sync::Arc::new(query_callback))
+        .call_async(std::sync::Arc::new(query_callback))
 }
 
 fn query_credited_spec() -> FunctionSpec {
@@ -104,7 +105,7 @@ fn query_credited_spec() -> FunctionSpec {
         .arg_name("opts")
         .args::<luau::Table>()
         .returns::<luau::Value>()
-        .call_async_native(std::sync::Arc::new(query_credited_callback))
+        .call_async(std::sync::Arc::new(query_credited_callback))
 }
 
 fn list_by_library_spec() -> FunctionSpec {
@@ -112,7 +113,7 @@ fn list_by_library_spec() -> FunctionSpec {
         .arg_name("library_id")
         .args::<i64>()
         .returns::<Vec<Artist>>()
-        .call_async_native(std::sync::Arc::new(list_by_library_callback))
+        .call_async(std::sync::Arc::new(list_by_library_callback))
 }
 
 fn list_many_spec() -> FunctionSpec {
@@ -120,7 +121,7 @@ fn list_many_spec() -> FunctionSpec {
         .arg_name("ids")
         .args::<Vec<u64>>()
         .returns::<luau::Table>()
-        .call_async_native(std::sync::Arc::new(list_many_callback))
+        .call_async(std::sync::Arc::new(list_many_callback))
 }
 
 fn list_relations_many_spec() -> FunctionSpec {
@@ -128,10 +129,12 @@ fn list_relations_many_spec() -> FunctionSpec {
         .arg_name("ids")
         .args::<Vec<u64>>()
         .returns::<luau::Table>()
-        .call_async_native(std::sync::Arc::new(list_relations_many_callback))
+        .call_async(std::sync::Arc::new(list_relations_many_callback))
 }
 
-fn list_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn list_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let scope = frame
         .args
         .read_optional_named::<luau::Value>("scope")?
@@ -146,18 +149,20 @@ fn list_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::
         .clone();
     let db = store.db()?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let query_id = scope
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
             .ok_or_else(|| crate::plugins::runtime_error("could not resolve scope"))?;
         let artists = db::artists::get(&db, query_id).map_err(crate::plugins::runtime_error)?;
-        Ok(vec![crate::plugins::serializable_to_luau_owned(artists)?])
+        Ok(harmony_luau::serializable_to_luau_owned(artists)?)
     }))
 }
 
-fn query_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn query_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let opts: luau::Table = frame.args.read_named("opts")?;
     let request = parse_query_options(frame.vm, &opts)?;
     let store = frame
@@ -168,7 +173,7 @@ fn query_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau:
         .clone();
     let db = store.db()?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let scope = request
             .scope
@@ -178,16 +183,12 @@ fn query_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau:
             .ok_or_else(|| crate::plugins::runtime_error("could not resolve scope"))?;
         let result = db::artists::query(&db, scope, &request.list_options, request.artist_type)
             .map_err(crate::plugins::runtime_error)?;
-        crate::plugins::luau_returns(query_result_table(
-            result.entries,
-            result.total_count,
-            result.offset,
-        )?)
+        query_result_table(result.entries, result.total_count, result.offset)?.into_luau_return()
     }))
 }
 
 fn query_credited_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let opts: luau::Table = frame.args.read_named("opts")?;
     let request = parse_credited_query_options(frame.vm, &opts)?;
@@ -199,7 +200,7 @@ fn query_credited_callback(
         .clone();
     let db = store.db()?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let filters = artist_services::CreditedArtistFilters {
             artist_type: request.artist_type,
@@ -213,16 +214,12 @@ fn query_credited_callback(
             &request.list_options,
         )
         .map_err(crate::plugins::runtime_error)?;
-        crate::plugins::luau_returns(query_result_table(
-            result.entries,
-            result.total_count,
-            result.offset,
-        )?)
+        query_result_table(result.entries, result.total_count, result.offset)?.into_luau_return()
     }))
 }
 
 fn list_by_library_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let library_id: i64 = frame.args.read_named("library_id")?;
     let store = frame
@@ -233,16 +230,16 @@ fn list_by_library_callback(
         .clone();
     let db = store.db()?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let artists = db::artists::get_by_library(&db, DbId(library_id))
             .map_err(crate::plugins::runtime_error)?;
-        Ok(vec![crate::plugins::serializable_to_luau_owned(artists)?])
+        Ok(harmony_luau::serializable_to_luau_owned(artists)?)
     }))
 }
 
 fn list_many_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("ids")?;
     let ids = parse_db_ids(frame.vm, &ids_table)?;
@@ -254,7 +251,7 @@ fn list_many_callback(
         .clone();
     let db = store.db()?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let related =
             db::artists::get_many_by_owner(&db, &ids).map_err(crate::plugins::runtime_error)?;
@@ -265,15 +262,15 @@ fn list_many_callback(
             crate::plugins::set_owned_db_id_key(
                 &mut table,
                 id,
-                crate::plugins::serializable_to_luau_owned(artists)?,
+                harmony_luau::serializable_to_luau_owned(artists)?,
             );
         }
-        crate::plugins::luau_returns(table)
+        table.into_luau_return()
     }))
 }
 
 fn list_relations_many_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("ids")?;
     let ids = parse_db_ids(frame.vm, &ids_table)?;
@@ -285,7 +282,7 @@ fn list_relations_many_callback(
         .clone();
     let db = store.db()?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let related = artist_services::get_relations_many(&db, &ids)
             .map_err(crate::plugins::runtime_error)?;
@@ -302,10 +299,10 @@ fn list_relations_many_callback(
             crate::plugins::set_owned_db_id_key(
                 &mut table,
                 id,
-                crate::plugins::serializable_to_luau_owned(relations)?,
+                harmony_luau::serializable_to_luau_owned(relations)?,
             );
         }
-        crate::plugins::luau_returns(table)
+        table.into_luau_return()
     }))
 }
 
@@ -317,7 +314,7 @@ fn query_result_table(
     let mut table = luau::OwnedTable::with_capacity(0, 3);
     table.set_field(
         "entities",
-        crate::plugins::serializable_to_luau_owned(entries)?,
+        harmony_luau::serializable_to_luau_owned(entries)?,
     );
     table.set_field("total_count", luau::Value::Integer(total_count as i64));
     table.set_field("offset", luau::Value::Integer(offset as i64));

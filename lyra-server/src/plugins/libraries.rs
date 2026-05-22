@@ -22,6 +22,7 @@ use harmony_luau::{
     DescribeInterface,
     FieldDescriptor,
     InterfaceDescriptor,
+    IntoLuauReturn,
     LuauType,
     LuauTypeInfo,
     ModuleDescriptor,
@@ -77,7 +78,7 @@ fn list_spec() -> FunctionSpec {
         .arg_name("id")
         .args::<Option<ResolveId>>()
         .returns::<Vec<LibraryRecord>>()
-        .call_async_native(std::sync::Arc::new(list_callback))
+        .call_async(std::sync::Arc::new(list_callback))
 }
 
 fn get_for_entity_spec() -> FunctionSpec {
@@ -85,7 +86,7 @@ fn get_for_entity_spec() -> FunctionSpec {
         .arg_name("entity_id")
         .args::<i64>()
         .returns::<Vec<LibraryRecord>>()
-        .call_async_native(std::sync::Arc::new(get_for_entity_callback))
+        .call_async(std::sync::Arc::new(get_for_entity_callback))
 }
 
 fn get_for_entities_spec() -> FunctionSpec {
@@ -93,10 +94,12 @@ fn get_for_entities_spec() -> FunctionSpec {
         .arg_name("entity_ids")
         .args::<Vec<u64>>()
         .returns::<luau::Table>()
-        .call_async_native(std::sync::Arc::new(get_for_entities_callback))
+        .call_async(std::sync::Arc::new(get_for_entities_callback))
 }
 
-fn list_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn list_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id = frame
         .args
         .read_optional_named::<luau::Value>("id")?
@@ -111,7 +114,7 @@ fn list_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::
     let db = store.db()?;
     let principal = caller_principal(&frame.context);
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let libraries: Vec<LibraryRecord> = match (principal.as_ref(), id) {
             (Some(principal), None) => db::libraries::accessible(&db, principal)
@@ -167,12 +170,12 @@ fn list_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::
                 }
             }
         };
-        Ok(vec![crate::plugins::serializable_to_luau_owned(libraries)?])
+        Ok(harmony_luau::serializable_to_luau_owned(libraries)?)
     }))
 }
 
 fn get_for_entity_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let entity_id: i64 = frame.args.read_named("entity_id")?;
     let store = frame
@@ -184,7 +187,7 @@ fn get_for_entity_callback(
     let db = store.db()?;
     let principal = caller_principal(&frame.context);
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let libraries = if let Some(principal) = principal {
             db::libraries::accessible_for_entity(&db, &principal, DbId(entity_id))
@@ -203,12 +206,12 @@ fn get_for_entity_callback(
             .map(LibraryRecord::from)
             .collect::<Vec<_>>()
         };
-        Ok(vec![crate::plugins::serializable_to_luau_owned(libraries)?])
+        Ok(harmony_luau::serializable_to_luau_owned(libraries)?)
     }))
 }
 
 fn get_for_entities_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("entity_ids")?;
     let ids = parse_db_ids(frame.vm, &ids_table)?;
@@ -221,7 +224,7 @@ fn get_for_entities_callback(
     let db = store.db()?;
     let principal = caller_principal(&frame.context);
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let libraries: HashMap<DbId, LibraryRecord> = if let Some(principal) = principal {
             db::libraries::accessible_for_entities(&db, &principal, &ids)
@@ -245,12 +248,12 @@ fn get_for_entities_callback(
             let value = libraries
                 .get(&id)
                 .cloned()
-                .map(crate::plugins::serializable_to_luau_owned)
+                .map(harmony_luau::serializable_to_luau_owned)
                 .transpose()?
                 .unwrap_or(luau::Value::Nil);
             crate::plugins::set_owned_db_id_key(&mut table, id, value);
         }
-        crate::plugins::luau_returns(table)
+        table.into_luau_return()
     }))
 }
 

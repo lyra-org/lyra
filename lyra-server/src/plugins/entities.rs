@@ -13,6 +13,7 @@ use harmony_luau::{
     DescribeInterface,
     DescribeTypeAlias,
     FieldDescriptor,
+    IntoLuauReturn,
     LuauType,
     LuauTypeInfo,
     ModuleDescriptor,
@@ -85,7 +86,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(query_spec("query_artist", ProjectionKind::Artist))
         .function(get_type_spec())
         .function(query_many_spec())
-        .luau_initializer(install_entity_constants)
+        .initializer(install_entity_constants)
         .install(|_| Ok(ModuleExport::new(EntitiesModule)))
 }
 
@@ -102,7 +103,7 @@ fn query_spec(name: &'static str, kind: ProjectionKind) -> FunctionSpec {
         .arg_name("request")
         .args::<luau::Table>()
         .returns::<luau::Value>()
-        .call_async_native(std::sync::Arc::new(move |frame| {
+        .call_async(std::sync::Arc::new(move |frame| {
             query_callback(frame, kind)
         }))
 }
@@ -112,7 +113,7 @@ fn get_type_spec() -> FunctionSpec {
         .arg_name("id")
         .args::<luau::Value>()
         .returns::<Option<String>>()
-        .call_async_native(std::sync::Arc::new(get_type_callback))
+        .call_async(std::sync::Arc::new(get_type_callback))
 }
 
 fn query_many_spec() -> FunctionSpec {
@@ -120,11 +121,11 @@ fn query_many_spec() -> FunctionSpec {
         .arg_name("request")
         .args::<luau::Table>()
         .returns::<luau::Table>()
-        .call_async_native(std::sync::Arc::new(query_many_callback))
+        .call_async(std::sync::Arc::new(query_many_callback))
 }
 
 fn query_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
     kind: ProjectionKind,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request: luau::Table = frame.args.read_named("request")?;
@@ -137,7 +138,7 @@ fn query_callback(
         .clone();
     let db = store.db()?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let query_id = resolve_id
             .to_query_id(&db)
@@ -149,13 +150,13 @@ fn query_callback(
         let value = match (kind, projection) {
             (ProjectionKind::Any, projection) => projection_to_luau_owned(projection)?,
             (ProjectionKind::Release, EntityProjectionInfo::Release(projection)) => {
-                crate::plugins::serializable_to_luau_owned(projection)?
+                harmony_luau::serializable_to_luau_owned(projection)?
             }
             (ProjectionKind::Track, EntityProjectionInfo::Track(projection)) => {
-                crate::plugins::serializable_to_luau_owned(projection)?
+                harmony_luau::serializable_to_luau_owned(projection)?
             }
             (ProjectionKind::Artist, EntityProjectionInfo::Artist(projection)) => {
-                crate::plugins::serializable_to_luau_owned(projection)?
+                harmony_luau::serializable_to_luau_owned(projection)?
             }
             (ProjectionKind::Release, EntityProjectionInfo::Track(_)) => {
                 return Err(crate::plugins::runtime_error(
@@ -189,12 +190,12 @@ fn query_callback(
             }
         };
 
-        Ok(vec![value])
+        Ok(value)
     }))
 }
 
 fn get_type_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id_value: luau::Value = frame.args.read_named("id")?;
     let resolve_id = parse_resolve_id(id_value)?;
@@ -206,7 +207,7 @@ fn get_type_callback(
         .clone();
     let db = store.db()?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let db_id = resolve_id
             .to_db_id(&db)
@@ -218,12 +219,12 @@ fn get_type_callback(
             None => Ok(None),
         }?;
 
-        crate::plugins::luau_returns(entity_type)
+        entity_type.into_luau_return()
     }))
 }
 
 fn query_many_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request: luau::Table = frame.args.read_named("request")?;
     let (ids, includes, library_id) = parse_query_many_request(frame.vm, &request)?;
@@ -235,7 +236,7 @@ fn query_many_callback(
         .clone();
     let db = store.db()?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let mut query_ids = Vec::new();
         let mut keys = Vec::new();
@@ -256,7 +257,7 @@ fn query_many_callback(
         for (key, projection) in keys.into_iter().zip(projections.into_iter()) {
             table.set_field(key, projection_to_luau_owned(projection)?);
         }
-        Ok(vec![luau::Value::TableData(table)])
+        Ok(luau::Value::TableData(table))
     }))
 }
 
@@ -415,13 +416,13 @@ fn projection_to_luau_owned(
 ) -> luau::runtime::Result<luau::Value> {
     match projection {
         EntityProjectionInfo::Release(projection) => {
-            crate::plugins::serializable_to_luau_owned(projection)
+            harmony_luau::serializable_to_luau_owned(projection)
         }
         EntityProjectionInfo::Track(projection) => {
-            crate::plugins::serializable_to_luau_owned(projection)
+            harmony_luau::serializable_to_luau_owned(projection)
         }
         EntityProjectionInfo::Artist(projection) => {
-            crate::plugins::serializable_to_luau_owned(projection)
+            harmony_luau::serializable_to_luau_owned(projection)
         }
     }
 }

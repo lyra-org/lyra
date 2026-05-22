@@ -4,8 +4,13 @@ version = "0.0.1"
 edition = "2024"
 license-file = "../LICENSE"
 
+[features]
+default = []
+serde = ["dep:serde"]
+
 [dependencies]
 harmony-luau-sys = { workspace = true }
 libc = { workspace = true }
+serde = { workspace = true, optional = true }
 thiserror = { workspace = true }
 time = { workspace = true }

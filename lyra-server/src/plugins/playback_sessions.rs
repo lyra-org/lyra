@@ -232,7 +232,7 @@ fn report_spec() -> FunctionSpec {
         .context::<Principal>()
         .arg_name("request")
         .args::<PlaybackReportRequest>()
-        .call_async_native(Arc::new(report_callback))
+        .call_async(Arc::new(report_callback))
 }
 
 fn start_spec() -> FunctionSpec {
@@ -241,7 +241,7 @@ fn start_spec() -> FunctionSpec {
         .arg_name("request")
         .args::<PlaybackStartRequest>()
         .returns::<i64>()
-        .call_async_native(Arc::new(start_callback))
+        .call_async(Arc::new(start_callback))
 }
 
 fn report_session_spec() -> FunctionSpec {
@@ -250,7 +250,7 @@ fn report_session_spec() -> FunctionSpec {
         .arg_name("request")
         .args::<PlaybackSessionReportRequest>()
         .returns::<Option<i64>>()
-        .call_async_native(Arc::new(report_session_callback))
+        .call_async(Arc::new(report_session_callback))
 }
 
 fn clear_session_spec() -> FunctionSpec {
@@ -258,7 +258,7 @@ fn clear_session_spec() -> FunctionSpec {
         .context::<Principal>()
         .arg_name("request")
         .args::<PlaybackSessionClearRequest>()
-        .call_async_native(Arc::new(clear_session_callback))
+        .call_async(Arc::new(clear_session_callback))
 }
 
 fn list_connections_spec() -> FunctionSpec {
@@ -267,7 +267,7 @@ fn list_connections_spec() -> FunctionSpec {
         .arg_name("user_id")
         .args::<i64>()
         .returns::<Vec<ConnectionInfo>>()
-        .call_async_native(Arc::new(list_connections_callback))
+        .call_async(Arc::new(list_connections_callback))
 }
 
 fn send_command_spec() -> FunctionSpec {
@@ -275,7 +275,7 @@ fn send_command_spec() -> FunctionSpec {
         .context::<Principal>()
         .arg_name("request")
         .args::<SendCommandRequest>()
-        .call_async_native(Arc::new(send_command_callback))
+        .call_async(Arc::new(send_command_callback))
 }
 
 fn on_update_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
@@ -305,7 +305,9 @@ fn on_update_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<(
     Ok(())
 }
 
-fn report_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn report_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request_value: luau::Value = frame.args.read_named("request")?;
     let request: PlaybackReportRequest = from_luau_json(frame.vm, &request_value)?;
     let store = frame
@@ -320,7 +322,7 @@ fn report_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau
         luau::Error::Runtime("playback_sessions.report must be called from plugin Luau code".into())
     })?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let playback_session_id =
             require_positive_id(request.playback_session_id, "playback_session_id")?;
         let mutation = playback_mutation(request.position_ms, request.duration_ms, request.state);
@@ -359,11 +361,13 @@ fn report_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau
             &update.playback,
             update.event,
         );
-        Ok(Vec::new())
+        Ok(())
     }))
 }
 
-fn start_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn start_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request_value: luau::Value = frame.args.read_named("request")?;
     let request: PlaybackStartRequest = from_luau_json(frame.vm, &request_value)?;
     let store = frame
@@ -378,7 +382,7 @@ fn start_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau:
         luau::Error::Runtime("playback_sessions.start must be called from plugin Luau code".into())
     })?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = require_positive_id(request.track_id, "track_id")?;
         let user_db_id = require_positive_id(request.user_id, "user_id")?;
         if user_db_id != principal.user_db_id {
@@ -417,12 +421,12 @@ fn start_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau:
             &update.playback,
             update.event,
         );
-        Ok(vec![luau::Value::Integer(playback_session_id)])
+        Ok(luau::Value::Integer(playback_session_id))
     }))
 }
 
 fn report_session_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request_value: luau::Value = frame.args.read_named("request")?;
     let request: PlaybackSessionReportRequest = from_luau_json(frame.vm, &request_value)?;
@@ -440,7 +444,7 @@ fn report_session_callback(
         )
     })?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let _ = require_non_empty_string(request.plugin_id, "plugin_id")?;
         let user_db_id = require_positive_id(request.user_id, "user_id")?;
         if user_db_id != principal.user_db_id {
@@ -484,7 +488,7 @@ fn report_session_callback(
             playback, event, ..
         } = update;
         let Some(playback) = playback else {
-            return Ok(vec![luau::Value::Nil]);
+            return Ok(luau::Value::Nil);
         };
 
         let playback_session_id = playback.playback_session_id.0;
@@ -493,12 +497,12 @@ fn report_session_callback(
             .unwrap_or_else(|| active_event.to_string());
         drop(db);
         playbacks::dispatch_playback_update_for_caller(dispatch_caller, &playback, event_label);
-        Ok(vec![luau::Value::Integer(playback_session_id)])
+        Ok(luau::Value::Integer(playback_session_id))
     }))
 }
 
 fn clear_session_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request_value: luau::Value = frame.args.read_named("request")?;
     let request: PlaybackSessionClearRequest = from_luau_json(frame.vm, &request_value)?;
@@ -509,11 +513,11 @@ fn clear_session_callback(
         )
     })?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let _ = require_non_empty_string(request.plugin_id, "plugin_id")?;
         let user_db_id = require_positive_id(request.user_id, "user_id")?;
         if user_db_id != principal.user_db_id {
-            return Ok(Vec::new());
+            return Ok(());
         }
         let session_key = require_non_empty_string(request.session_key, "session_key")?;
         let scope = PlaybackScopeKey {
@@ -522,12 +526,12 @@ fn clear_session_callback(
             session_key: &session_key,
         };
         playbacks::clear_playback_session_scope(&scope);
-        Ok(Vec::new())
+        Ok(())
     }))
 }
 
 fn list_connections_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let user_id: i64 = frame.args.read_named("user_id")?;
     let store = frame
@@ -539,10 +543,10 @@ fn list_connections_callback(
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let user_db_id = require_positive_id(user_id, "user_id")?;
         if user_db_id != principal.user_db_id {
-            return Ok(vec![empty_array_value()]);
+            return Ok(empty_array_value());
         }
 
         let connections = registry::list_connections().await;
@@ -604,16 +608,13 @@ fn list_connections_callback(
             });
         }
 
-        let value = harmony_json::json_to_luau_owned(
-            serde_json::to_value(&result).map_err(crate::plugins::runtime_error)?,
-            0,
-        )?;
-        Ok(vec![value])
+        let value = harmony_luau::serializable_to_luau_owned(&result)?;
+        Ok(value)
     }))
 }
 
 fn send_command_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request_value: luau::Value = frame.args.read_named("request")?;
     let request: SendCommandRequest = from_luau_json(frame.vm, &request_value)?;
@@ -626,7 +627,7 @@ fn send_command_callback(
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let user_db_id = require_positive_id(request.user_id, "user_id")?;
         if user_db_id != principal.user_db_id {
             return Err(crate::plugins::runtime_error(
@@ -697,7 +698,7 @@ fn send_command_callback(
             playbacks::mark_command_dispatched(&scope_key, now_ms);
         }
 
-        Ok(Vec::new())
+        Ok(())
     }))
 }
 

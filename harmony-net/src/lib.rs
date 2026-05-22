@@ -200,7 +200,7 @@ fn udp_bind_spec() -> FunctionSpec {
         .arg_name("options")
         .args::<UdpBindOptions>()
         .returns::<UdpSocket>();
-    spec.call_async_native(Arc::new(udp_bind_callback))
+    spec.call_async(Arc::new(udp_bind_callback))
 }
 
 fn tcp_connect_spec() -> FunctionSpec {
@@ -208,7 +208,7 @@ fn tcp_connect_spec() -> FunctionSpec {
         .arg_name("options")
         .args::<TcpConnectOptions>()
         .returns::<TcpStream>();
-    spec.call_async_native(Arc::new(tcp_connect_callback))
+    spec.call_async(Arc::new(tcp_connect_callback))
 }
 
 fn tcp_bind_spec() -> FunctionSpec {
@@ -216,7 +216,7 @@ fn tcp_bind_spec() -> FunctionSpec {
         .arg_name("options")
         .args::<TcpBindOptions>()
         .returns::<TcpListener>();
-    spec.call_async_native(Arc::new(tcp_bind_callback))
+    spec.call_async(Arc::new(tcp_bind_callback))
 }
 
 #[derive(Clone)]
@@ -361,14 +361,14 @@ impl UdpSocketState {
 }
 
 fn udp_bind_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let table: luau::Table = frame.args.read_named("options")?;
     let options = udp_bind_options_from_luau(frame.vm, &table)?;
     let origin = frame.context.origin.clone();
-    let future: luau::ScheduledFuture = Box::pin(async move {
+    let future: luau::ScheduledFuture = luau::ScheduledFuture::new(async move {
         let socket = bind_udp_socket(options).await?;
-        Ok(vec![udp_socket_value(origin, socket)])
+        Ok(udp_socket_value(origin, socket))
     });
     Ok(future)
 }
@@ -433,9 +433,9 @@ fn udp_socket_value(origin: luau::ChunkOrigin, socket: UdpSocketState) -> luau::
                 let address_table: luau::Table = frame.args.read_named("address")?;
                 let address = socket_address_from_luau(frame.vm, &address_table)?;
                 let socket = socket.clone();
-                Ok(Box::pin(async move {
+                Ok(luau::ScheduledFuture::new(async move {
                     socket.connect(address).await?;
-                    Ok(Vec::new())
+                    Ok(())
                 }))
             }
         }),
@@ -449,9 +449,9 @@ fn udp_socket_value(origin: luau::ChunkOrigin, socket: UdpSocketState) -> luau::
                 let data = binary_input_from_luau("data", frame.args.read_named("data")?)?;
                 let timeout = frame.args.read_optional_named::<f64>("timeout")?;
                 let socket = socket.clone();
-                Ok(Box::pin(async move {
+                Ok(luau::ScheduledFuture::new(async move {
                     socket.send(data, timeout).await?;
-                    Ok(Vec::new())
+                    Ok(())
                 }))
             }
         }),
@@ -464,9 +464,9 @@ fn udp_socket_value(origin: luau::ChunkOrigin, socket: UdpSocketState) -> luau::
                 let _self: luau::Value = frame.args.read_named("self")?;
                 let timeout = frame.args.read_optional_named::<f64>("timeout")?;
                 let socket = socket.clone();
-                Ok(Box::pin(async move {
+                Ok(luau::ScheduledFuture::new(async move {
                     let bytes = socket.recv(timeout).await?;
-                    Ok(vec![luau::Value::String(bytes.0)])
+                    Ok(luau::Value::String(bytes.0))
                 }))
             }
         }),
@@ -479,12 +479,12 @@ fn udp_socket_value(origin: luau::ChunkOrigin, socket: UdpSocketState) -> luau::
                 let _self: luau::Value = frame.args.read_named("self")?;
                 let timeout = frame.args.read_optional_named::<f64>("timeout")?;
                 let socket = socket.clone();
-                Ok(Box::pin(async move {
+                Ok(luau::ScheduledFuture::new(async move {
                     let (bytes, address) = socket.recv_from(timeout).await?;
-                    Ok(vec![
+                    Ok((
                         luau::Value::String(bytes.0),
                         socket_address_value(address),
-                    ])
+                    ))
                 }))
             }
         }),
@@ -505,9 +505,9 @@ fn udp_socket_value(origin: luau::ChunkOrigin, socket: UdpSocketState) -> luau::
                     let address = socket_address_from_luau(frame.vm, &address_table)?;
                     let timeout = frame.args.read_optional_named::<f64>("timeout")?;
                     let socket = socket.clone();
-                    Ok(Box::pin(async move {
+                    Ok(luau::ScheduledFuture::new(async move {
                         socket.send_to(data, address, timeout).await?;
-                        Ok(Vec::new())
+                        Ok(())
                     }))
                 }
             },
@@ -520,9 +520,9 @@ fn udp_socket_value(origin: luau::ChunkOrigin, socket: UdpSocketState) -> luau::
             move |mut frame| {
                 let _self: luau::Value = frame.args.read_named("self")?;
                 let socket = socket.clone();
-                Ok(Box::pin(async move {
+                Ok(luau::ScheduledFuture::new(async move {
                     socket.close().await?;
-                    Ok(Vec::new())
+                    Ok(())
                 }))
             }
         }),
@@ -678,14 +678,14 @@ impl TcpListenerState {
 }
 
 fn tcp_connect_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let table: luau::Table = frame.args.read_named("options")?;
     let options = tcp_connect_options_from_luau(frame.vm, &table)?;
     let origin = frame.context.origin.clone();
-    let future: luau::ScheduledFuture = Box::pin(async move {
+    let future: luau::ScheduledFuture = luau::ScheduledFuture::new(async move {
         let stream = connect_tcp_stream(options).await?;
-        Ok(vec![tcp_stream_value(origin, stream)])
+        Ok(tcp_stream_value(origin, stream))
     });
     Ok(future)
 }
@@ -716,14 +716,14 @@ async fn connect_tcp_stream(options: TcpConnectOptions) -> luau::runtime::Result
 }
 
 fn tcp_bind_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let table: luau::Table = frame.args.read_named("options")?;
     let options = tcp_bind_options_from_luau(frame.vm, &table)?;
     let origin = frame.context.origin.clone();
-    let future: luau::ScheduledFuture = Box::pin(async move {
+    let future: luau::ScheduledFuture = luau::ScheduledFuture::new(async move {
         let listener = bind_tcp_listener(options).await?;
-        Ok(vec![tcp_listener_value(origin, listener)])
+        Ok(tcp_listener_value(origin, listener))
     });
     Ok(future)
 }
@@ -788,9 +788,9 @@ fn tcp_stream_value(origin: luau::ChunkOrigin, stream: TcpStreamState) -> luau::
                         usize_from_luau("max_bytes", frame.args.read_named("max_bytes")?)?;
                     let timeout = frame.args.read_optional_named::<f64>("timeout")?;
                     let stream = stream.clone();
-                    Ok(Box::pin(async move {
+                    Ok(luau::ScheduledFuture::new(async move {
                         let bytes = stream.read(max_bytes, timeout).await?;
-                        Ok(vec![luau::Value::String(bytes.0)])
+                        Ok(luau::Value::String(bytes.0))
                     }))
                 }
             },
@@ -810,9 +810,9 @@ fn tcp_stream_value(origin: luau::ChunkOrigin, stream: TcpStreamState) -> luau::
                     let data = binary_input_from_luau("data", frame.args.read_named("data")?)?;
                     let timeout = frame.args.read_optional_named::<f64>("timeout")?;
                     let stream = stream.clone();
-                    Ok(Box::pin(async move {
+                    Ok(luau::ScheduledFuture::new(async move {
                         stream.write(data, timeout).await?;
-                        Ok(Vec::new())
+                        Ok(())
                     }))
                 }
             },
@@ -825,9 +825,9 @@ fn tcp_stream_value(origin: luau::ChunkOrigin, stream: TcpStreamState) -> luau::
             move |mut frame| {
                 let _self: luau::Value = frame.args.read_named("self")?;
                 let stream = stream.clone();
-                Ok(Box::pin(async move {
+                Ok(luau::ScheduledFuture::new(async move {
                     stream.close().await?;
-                    Ok(Vec::new())
+                    Ok(())
                 }))
             }
         }),
@@ -876,12 +876,12 @@ fn tcp_listener_value(origin: luau::ChunkOrigin, listener: TcpListenerState) -> 
                 let timeout = frame.args.read_optional_named::<f64>("timeout")?;
                 let listener = listener.clone();
                 let origin = frame.context.origin.clone();
-                Ok(Box::pin(async move {
+                Ok(luau::ScheduledFuture::new(async move {
                     let (stream, address) = listener.accept(timeout).await?;
-                    Ok(vec![
+                    Ok((
                         tcp_stream_value(origin, stream),
                         socket_address_value(address),
-                    ])
+                    ))
                 }))
             }
         }),
@@ -893,9 +893,9 @@ fn tcp_listener_value(origin: luau::ChunkOrigin, listener: TcpListenerState) -> 
             move |mut frame| {
                 let _self: luau::Value = frame.args.read_named("self")?;
                 let listener = listener.clone();
-                Ok(Box::pin(async move {
+                Ok(luau::ScheduledFuture::new(async move {
                     listener.close().await?;
-                    Ok(Vec::new())
+                    Ok(())
                 }))
             }
         }),
@@ -928,7 +928,7 @@ fn async_method_callback<F, N>(
     callback: F,
 ) -> luau::Value
 where
-    F: for<'vm> Fn(luau::CallFrame<'vm>) -> luau::runtime::Result<luau::ScheduledFuture>
+    F: for<'vm> Fn(luau::AsyncCallFrame<'vm>) -> luau::runtime::Result<luau::ScheduledFuture>
         + Send
         + Sync
         + 'static,
@@ -959,37 +959,7 @@ where
 }
 
 fn async_callback_adapter(callback: luau::NativeAsyncFn) -> luau::NativeFn {
-    Arc::new(move |mut frame| {
-        let vm = frame.vm.clone();
-        let thread = frame.thread.clone();
-        let context = scheduler_context(&frame.context);
-        let scheduler = frame.vm.data().get::<harmony_core::LocalScheduler>()?;
-        frame.yield_now();
-        let future = callback(frame)?;
-        scheduler.park_luau_thread(&thread);
-        scheduler.schedule_luau_future(context, vm, thread, future);
-        Ok(())
-    })
-}
-
-fn scheduler_context(context: &luau::CallContext) -> harmony_core::CallContext {
-    harmony_core::CallContext {
-        origin: harmony_core::ChunkOrigin {
-            module: context
-                .origin
-                .module
-                .as_ref()
-                .map(|module| harmony_core::ModuleId(module.0.clone())),
-            plugin: context.origin.plugin.clone(),
-            path: context.origin.path.clone(),
-        },
-        capability: context
-            .capability
-            .as_ref()
-            .map(|capability| harmony_core::CapabilityId(capability.0.clone())),
-        task_group: harmony_core::TaskGroupId(context.task_group.0),
-        ..harmony_core::CallContext::default()
-    }
+    harmony_core::async_luau_callback(callback)
 }
 
 fn udp_bind_options_from_luau(

@@ -801,7 +801,7 @@ pub fn module_spec() -> ModuleSpec {
         .function(set_max_in_flight_spec())
         .function(encode_uri_component_spec())
         .install(|_| Ok(ModuleExport::new(HttpModule)));
-    spec.luau_initializer(init_luau_http_module_callback)
+    spec.initializer(init_luau_http_module_callback)
 }
 
 fn request_spec() -> FunctionSpec {
@@ -810,7 +810,7 @@ fn request_spec() -> FunctionSpec {
         .arg_name("options")
         .args::<HttpRequestOptions>()
         .returns::<HttpResponse>();
-    spec.call_async_native(Arc::new(request_callback))
+    spec.call_async(Arc::new(request_callback))
 }
 
 fn set_rate_limit_spec() -> FunctionSpec {
@@ -818,7 +818,7 @@ fn set_rate_limit_spec() -> FunctionSpec {
         .context::<ChunkOrigin>()
         .arg_name("options")
         .args::<HttpRateLimitOptions>();
-    spec.call_async_native(Arc::new(set_rate_limit_callback))
+    spec.call_async(Arc::new(set_rate_limit_callback))
 }
 
 fn set_max_in_flight_spec() -> FunctionSpec {
@@ -826,7 +826,7 @@ fn set_max_in_flight_spec() -> FunctionSpec {
         .context::<ChunkOrigin>()
         .arg_name("options")
         .args::<HttpConcurrencyOptions>();
-    spec.call_async_native(Arc::new(set_max_in_flight_callback))
+    spec.call_async(Arc::new(set_max_in_flight_callback))
 }
 
 fn encode_uri_component_spec() -> FunctionSpec {
@@ -845,42 +845,42 @@ fn encode_uri_component_callback(mut frame: luau::CallFrame<'_>) -> luau::runtim
 }
 
 fn request_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let table: luau::Table = frame.args.read_named("options")?;
     let options = request_options_from_luau(frame.vm, &table)?;
-    let future: luau::ScheduledFuture = Box::pin(async move {
+    let future: luau::ScheduledFuture = luau::ScheduledFuture::new(async move {
         let response = execute_request_with_rate_limit(options).await;
-        Ok(vec![response.into_luau_value()])
+        Ok(response.into_luau_value())
     });
     Ok(future)
 }
 
 fn set_rate_limit_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let table: luau::Table = frame.args.read_named("options")?;
     let options = rate_limit_options_from_luau(frame.vm, &table)?;
     let plugin_id = frame.context.origin.plugin.clone();
-    let future: luau::ScheduledFuture = Box::pin(async move {
+    let future: luau::ScheduledFuture = luau::ScheduledFuture::new(async move {
         configure_rate_limit(plugin_id, options)
             .await
             .map_err(|error| luau::Error::Runtime(error.to_string()))?;
-        Ok(Vec::new())
+        Ok(())
     });
     Ok(future)
 }
 
 fn set_max_in_flight_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let table: luau::Table = frame.args.read_named("options")?;
     let options = concurrency_options_from_luau(frame.vm, &table)?;
-    let future: luau::ScheduledFuture = Box::pin(async move {
+    let future: luau::ScheduledFuture = luau::ScheduledFuture::new(async move {
         configure_max_in_flight(options)
             .await
             .map_err(|error| luau::Error::Runtime(error.to_string()))?;
-        Ok(Vec::new())
+        Ok(())
     });
     Ok(future)
 }

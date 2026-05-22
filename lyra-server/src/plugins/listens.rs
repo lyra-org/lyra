@@ -86,7 +86,7 @@ fn get_count_spec() -> FunctionSpec {
         .arg_name("merge_unique_external_ids")
         .args::<Option<bool>>()
         .returns::<u64>()
-        .call_async_native(Arc::new(get_count_callback))
+        .call_async(Arc::new(get_count_callback))
 }
 
 fn get_counts_spec() -> FunctionSpec {
@@ -99,7 +99,7 @@ fn get_counts_spec() -> FunctionSpec {
         .arg_name("merge_unique_external_ids")
         .args::<Option<bool>>()
         .returns::<luau::Table>()
-        .call_async_native(Arc::new(get_counts_callback))
+        .call_async(Arc::new(get_counts_callback))
 }
 
 fn get_stats_spec() -> FunctionSpec {
@@ -112,11 +112,11 @@ fn get_stats_spec() -> FunctionSpec {
         .arg_name("merge_unique_external_ids")
         .args::<Option<bool>>()
         .returns::<luau::Table>()
-        .call_async_native(Arc::new(get_stats_callback))
+        .call_async(Arc::new(get_stats_callback))
 }
 
 fn get_count_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_id: i64 = frame.args.read_named("track_id")?;
     if track_id <= 0 {
@@ -138,16 +138,16 @@ fn get_count_callback(
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = DbId(track_id);
         let stats = resolve_stats(db, &[track_db_id], &principal, user_db_id, merge).await?;
         let count = stats.counts.get(&track_db_id).copied().unwrap_or(0);
-        Ok(vec![luau::Value::Integer(saturating_i64(count))])
+        Ok(luau::Value::Integer(saturating_i64(count)))
     }))
 }
 
 fn get_counts_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_ids: luau::Table = frame.args.read_named("track_ids")?;
     let track_ids = parse_db_ids(frame.vm, &track_ids)?;
@@ -165,16 +165,14 @@ fn get_counts_callback(
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let stats = resolve_stats(db, &track_ids, &principal, user_db_id, merge).await?;
-        Ok(vec![luau::Value::TableData(dbid_map_to_table(
-            &stats.counts,
-        ))])
+        Ok(luau::Value::TableData(dbid_map_to_table(&stats.counts)))
     }))
 }
 
 fn get_stats_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_ids: luau::Table = frame.args.read_named("track_ids")?;
     let track_ids = parse_db_ids(frame.vm, &track_ids)?;
@@ -192,7 +190,7 @@ fn get_stats_callback(
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let stats = resolve_stats(db, &track_ids, &principal, user_db_id, merge).await?;
         let mut table = luau::OwnedTable::with_capacity(0, 2);
         table.set_field(
@@ -203,7 +201,7 @@ fn get_stats_callback(
             "last_played",
             luau::Value::TableData(dbid_map_to_table(&stats.last_played)),
         );
-        Ok(vec![luau::Value::TableData(table)])
+        Ok(luau::Value::TableData(table))
     }))
 }
 

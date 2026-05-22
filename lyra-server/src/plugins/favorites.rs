@@ -80,7 +80,7 @@ fn add_spec() -> FunctionSpec {
         .arg_name("target_id")
         .args::<i64>()
         .returns::<bool>()
-        .call_async_native(Arc::new(add_callback))
+        .call_async(Arc::new(add_callback))
 }
 
 fn remove_spec() -> FunctionSpec {
@@ -91,7 +91,7 @@ fn remove_spec() -> FunctionSpec {
         .arg_name("target_id")
         .args::<i64>()
         .returns::<bool>()
-        .call_async_native(Arc::new(remove_callback))
+        .call_async(Arc::new(remove_callback))
 }
 
 fn has_spec() -> FunctionSpec {
@@ -102,7 +102,7 @@ fn has_spec() -> FunctionSpec {
         .arg_name("target_id")
         .args::<i64>()
         .returns::<bool>()
-        .call_async_native(Arc::new(has_callback))
+        .call_async(Arc::new(has_callback))
 }
 
 fn has_many_spec() -> FunctionSpec {
@@ -113,7 +113,7 @@ fn has_many_spec() -> FunctionSpec {
         .arg_name("target_ids")
         .args::<luau::Table>()
         .returns::<luau::Table>()
-        .call_async_native(Arc::new(has_many_callback))
+        .call_async(Arc::new(has_many_callback))
 }
 
 fn list_ids_spec() -> FunctionSpec {
@@ -124,10 +124,12 @@ fn list_ids_spec() -> FunctionSpec {
         .arg_name("entity")
         .args::<String>()
         .returns::<luau::Table>()
-        .call_async_native(Arc::new(list_ids_callback))
+        .call_async(Arc::new(list_ids_callback))
 }
 
-fn add_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn add_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let user_id = DbId(frame.args.read_named::<i64>("user_id")?);
     let target_id = DbId(frame.args.read_named::<i64>("target_id")?);
     let store = frame
@@ -139,27 +141,29 @@ fn add_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::S
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         if user_id != principal.user_db_id {
-            return Ok(vec![luau::Value::Boolean(false)]);
+            return Ok(luau::Value::Boolean(false));
         }
 
         let mut db = db.write().await;
         let Some(target_public_id) =
             db::lookup::find_id_by_db_id(&*db, target_id).map_err(crate::plugins::runtime_error)?
         else {
-            return Ok(vec![luau::Value::Boolean(false)]);
+            return Ok(luau::Value::Boolean(false));
         };
         let outcome = favorite_service::add_for_principal(&mut db, &principal, &target_public_id)
             .map_err(crate::plugins::runtime_error)?;
-        Ok(vec![luau::Value::Boolean(matches!(
+        Ok(luau::Value::Boolean(matches!(
             outcome,
             favorite_service::MutationOutcome::Applied(_)
-        ))])
+        )))
     }))
 }
 
-fn remove_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn remove_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let user_id = DbId(frame.args.read_named::<i64>("user_id")?);
     let target_id = DbId(frame.args.read_named::<i64>("target_id")?);
     let store = frame
@@ -171,22 +175,24 @@ fn remove_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         if user_id != principal.user_db_id {
-            return Ok(vec![luau::Value::Boolean(false)]);
+            return Ok(luau::Value::Boolean(false));
         }
 
         let mut db = db.write().await;
         let outcome = favorite_service::remove_by_db_id(&mut db, principal.user_db_id, target_id)
             .map_err(crate::plugins::runtime_error)?;
-        Ok(vec![luau::Value::Boolean(matches!(
+        Ok(luau::Value::Boolean(matches!(
             outcome,
             favorite_service::MutationOutcome::Applied(_)
-        ))])
+        )))
     }))
 }
 
-fn has_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn has_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let user_id = DbId(frame.args.read_named::<i64>("user_id")?);
     let target_id = DbId(frame.args.read_named::<i64>("target_id")?);
     let store = frame
@@ -198,25 +204,25 @@ fn has_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::S
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         if user_id != principal.user_db_id {
-            return Ok(vec![luau::Value::Boolean(false)]);
+            return Ok(luau::Value::Boolean(false));
         }
 
         let db = db.read().await;
         let Some(target_public_id) =
             db::lookup::find_id_by_db_id(&*db, target_id).map_err(crate::plugins::runtime_error)?
         else {
-            return Ok(vec![luau::Value::Boolean(false)]);
+            return Ok(luau::Value::Boolean(false));
         };
         let favored = favorite_service::has_for_principal(&db, &principal, &target_public_id)
             .map_err(crate::plugins::runtime_error)?;
-        Ok(vec![luau::Value::Boolean(favored)])
+        Ok(luau::Value::Boolean(favored))
     }))
 }
 
 fn has_many_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let user_id = DbId(frame.args.read_named::<i64>("user_id")?);
     let target_ids: luau::Table = frame.args.read_named("target_ids")?;
@@ -230,7 +236,7 @@ fn has_many_callback(
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let result = if user_id == principal.user_db_id {
             let public_ids_by_db_id = db::lookup::find_ids_by_db_ids(&*db, &target_ids)
@@ -255,12 +261,12 @@ fn has_many_callback(
             table.set_key(luau::Value::Integer(id.0), value.clone());
             table.set_key(luau::Value::Number(id.0 as f64), value);
         }
-        Ok(vec![luau::Value::TableData(table)])
+        Ok(luau::Value::TableData(table))
     }))
 }
 
 fn list_ids_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let user_id = DbId(frame.args.read_named::<i64>("user_id")?);
     let entity: String = frame.args.read_named("entity")?;
@@ -274,9 +280,9 @@ fn list_ids_callback(
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         if user_id != principal.user_db_id {
-            return Ok(vec![luau::Value::TableData(db_id_array(Vec::new()))]);
+            return Ok(luau::Value::TableData(db_id_array(Vec::new())));
         }
 
         let db = db.read().await;
@@ -291,7 +297,7 @@ fn list_ids_callback(
                 visible_ids.push(id);
             }
         }
-        Ok(vec![luau::Value::TableData(db_id_array(visible_ids))])
+        Ok(luau::Value::TableData(db_id_array(visible_ids)))
     }))
 }
 

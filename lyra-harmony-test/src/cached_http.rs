@@ -258,21 +258,21 @@ pub fn module_spec(
         .function(
             FunctionSpec::async_fn("request")
                 .arg_name("options")
-                .call_async_native(Arc::new(move |frame| {
+                .call_async(Arc::new(move |frame| {
                     request_callback(frame, request_state.clone())
                 })),
         )
         .function(
             FunctionSpec::async_fn("set_rate_limit")
                 .arg_name("options")
-                .call_async_native(Arc::new(move |frame| {
+                .call_async(Arc::new(move |frame| {
                     set_rate_limit_callback(frame, rate_limit_plugin_id.clone())
                 })),
         )
         .function(
             FunctionSpec::async_fn("set_max_in_flight")
                 .arg_name("options")
-                .call_async_native(Arc::new(set_max_in_flight_callback)),
+                .call_async(Arc::new(set_max_in_flight_callback)),
         )
         .function(
             FunctionSpec::sync_fn("encode_uri_component")
@@ -281,7 +281,7 @@ pub fn module_spec(
                 .call(encode_uri_component_callback),
         )
         .install(|_| Ok(ModuleExport::new(CachedHttpModule)))
-        .luau_initializer(init_luau_http_module)
+        .initializer(init_luau_http_module)
 }
 
 struct CachedHttpModule;
@@ -422,12 +422,12 @@ struct RequestOptions {
 }
 
 fn request_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
     state: CachedHttpState,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let options_table: luau::Table = frame.args.read_named("options")?;
     let options = request_options_from_luau(frame.vm, &options_table)?;
-    let future: luau::ScheduledFuture = Box::pin(async move {
+    let future = luau::ScheduledFuture::new(async move {
         state.request_count.fetch_add(1, Ordering::Relaxed);
 
         let cache_key = xxh3_hex(&options.url);
@@ -456,7 +456,7 @@ fn request_callback(
                 &cached.body,
             )
             .await;
-            return Ok(vec![response_value(cached.status_code, &cached.body, 0)]);
+            return Ok(response_value(cached.status_code, &cached.body, 0));
         }
 
         if state.live_policy == LivePolicy::CacheOnly {
@@ -525,11 +525,11 @@ fn request_callback(
                     &response.body,
                 )
                 .await;
-                return Ok(vec![response_value(
+                return Ok(response_value(
                     response.status_code,
                     &response.body,
                     retries,
-                )]);
+                ));
             }
 
             tokio::time::sleep(backoff).await;
@@ -541,7 +541,7 @@ fn request_callback(
 }
 
 fn set_rate_limit_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
     plugin_id: String,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let options_table: luau::Table = frame.args.read_named("options")?;
@@ -564,22 +564,22 @@ fn set_rate_limit_callback(
         ),
     };
 
-    let future: luau::ScheduledFuture = Box::pin(async move {
+    let future = luau::ScheduledFuture::new(async move {
         RATE_LIMITER
             .lock()
             .expect("rate limiter mutex poisoned")
             .set_config(domain.clone(), config);
         harmony_http::test_seed_rate_limit(domain, plugin_id).await;
-        Ok(Vec::new())
+        Ok(())
     });
     Ok(future)
 }
 
 fn set_max_in_flight_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let _options: luau::Value = frame.args.read_named("options")?;
-    Ok(Box::pin(async { Ok(Vec::new()) }))
+    Ok(luau::ScheduledFuture::new(async { Ok(()) }))
 }
 
 fn encode_uri_component_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {

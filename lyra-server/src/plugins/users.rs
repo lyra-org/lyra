@@ -66,14 +66,14 @@ pub(crate) fn module_spec() -> ModuleSpec {
 fn list_spec() -> FunctionSpec {
     FunctionSpec::async_fn("list")
         .returns::<Vec<PublicUser>>()
-        .call_async_native(std::sync::Arc::new(list_callback))
+        .call_async(std::sync::Arc::new(list_callback))
 }
 
-fn list_callback(frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn list_callback(frame: luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
     let store = frame.vm.data().get::<UsersModuleStore>()?.as_ref().clone();
     let db = store.db()?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let users = db::users::get(&db)
             .map_err(crate::plugins::runtime_error)?
@@ -91,7 +91,7 @@ fn list_callback(frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::Sche
                 })
             })
             .collect::<Vec<_>>();
-        Ok(vec![crate::plugins::serializable_to_luau_owned(users)?])
+        harmony_luau::serializable_to_luau_owned(users)
     }))
 }
 

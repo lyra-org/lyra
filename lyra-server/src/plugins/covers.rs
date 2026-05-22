@@ -89,7 +89,7 @@ fn get_spec() -> FunctionSpec {
         .arg_name("id")
         .args::<ResolveId>()
         .returns::<Option<luau::Table>>()
-        .call_async_native(Arc::new(get_callback))
+        .call_async(Arc::new(get_callback))
 }
 
 fn get_many_spec() -> FunctionSpec {
@@ -98,28 +98,30 @@ fn get_many_spec() -> FunctionSpec {
         .arg_name("ids")
         .args::<luau::Table>()
         .returns::<luau::Table>()
-        .call_async_native(Arc::new(get_many_callback))
+        .call_async(Arc::new(get_many_callback))
 }
 
-fn get_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn get_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id = parse_resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
     let store = frame.vm.data().get::<CoversModuleStore>()?.as_ref().clone();
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let (resolved_cover, stale_owners) = {
             let db_read = db.read().await;
             let Some(QueryId::Id(item_id)) = id
                 .to_query_id(&db_read)
                 .map_err(crate::plugins::runtime_error)?
             else {
-                return Ok(vec![luau::Value::Nil]);
+                return Ok(luau::Value::Nil);
             };
             if !crate::routes::entity_accessible_to_principal(&*db_read, &principal, item_id)
                 .map_err(crate::plugins::runtime_error)?
             {
-                return Ok(vec![luau::Value::Nil]);
+                return Ok(luau::Value::Nil);
             }
             let mut stale_owners = Vec::new();
             let result = resolve_persisted_cover(&db_read, item_id, &mut stale_owners)
@@ -132,16 +134,14 @@ fn get_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::S
         }
 
         let Some((owner_id, cover)) = resolved_cover else {
-            return Ok(vec![luau::Value::Nil]);
+            return Ok(luau::Value::Nil);
         };
-        Ok(vec![luau::Value::TableData(cover_to_table(
-            owner_id, cover,
-        ))])
+        Ok(luau::Value::TableData(cover_to_table(owner_id, cover)))
     }))
 }
 
 fn get_many_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids: luau::Table = frame.args.read_named("ids")?;
     let item_ids = parse_db_ids(frame.vm, &ids)?;
@@ -149,7 +149,7 @@ fn get_many_callback(
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let (resolved, stale_owners) = {
             let db_read = db.read().await;
             let mut stale_owners = Vec::new();
@@ -181,7 +181,7 @@ fn get_many_callback(
             table.set_key(luau::Value::Number(item_id.0 as f64), value);
         }
 
-        Ok(vec![luau::Value::TableData(table)])
+        Ok(luau::Value::TableData(table))
     }))
 }
 

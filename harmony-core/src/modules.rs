@@ -9,6 +9,11 @@ use std::{
         PathBuf,
     },
     sync::Arc,
+    task::{
+        Context,
+        Poll,
+        Waker,
+    },
 };
 
 use anyhow::Result;
@@ -23,8 +28,14 @@ use crate::{
 pub type NativeModuleInstaller =
     Arc<dyn for<'a> Fn(ModuleLoadContext<'a>) -> Result<ModuleExport> + Send + Sync + 'static>;
 
-pub type LuauModuleInitializer = Arc<
+pub type ModuleInitializer = Arc<
     dyn Fn(&luau::Vm, &ChunkOrigin, &luau::Table) -> luau::runtime::Result<()>
+        + Send
+        + Sync
+        + 'static,
+>;
+pub type UserDataInitializer = Arc<
+    dyn Fn(&luau::Vm, &luau::ChunkOrigin, &luau::Table) -> luau::runtime::Result<()>
         + Send
         + Sync
         + 'static,
@@ -278,7 +289,7 @@ pub struct ModuleSpec {
     pub functions: Vec<FunctionSpec>,
     pub userdata: Vec<UserDataSpec>,
     pub install: Option<NativeModuleInstaller>,
-    pub luau_initializer: Option<LuauModuleInitializer>,
+    pub initializer: Option<ModuleInitializer>,
 }
 
 impl ModuleSpec {
@@ -289,7 +300,7 @@ impl ModuleSpec {
             functions: Vec::new(),
             userdata: Vec::new(),
             install: None,
-            luau_initializer: None,
+            initializer: None,
         }
     }
 
@@ -316,22 +327,32 @@ impl ModuleSpec {
         self
     }
 
-    pub fn luau_initializer<F>(mut self, initializer: F) -> Self
+    pub fn initializer<F>(mut self, initializer: F) -> Self
     where
         F: Fn(&luau::Vm, &ChunkOrigin, &luau::Table) -> luau::runtime::Result<()>
             + Send
             + Sync
             + 'static,
     {
-        self.luau_initializer = Some(Arc::new(initializer));
+        self.initializer = Some(Arc::new(initializer));
         self
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct UserDataSpec {
     pub name: Arc<str>,
     pub methods: Vec<FunctionSpec>,
+    pub initializer: Option<UserDataInitializer>,
+}
+
+impl fmt::Debug for UserDataSpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UserDataSpec")
+            .field("name", &self.name)
+            .field("methods", &self.methods)
+            .finish_non_exhaustive()
+    }
 }
 
 impl UserDataSpec {
@@ -339,11 +360,23 @@ impl UserDataSpec {
         Self {
             name: name.into(),
             methods: Vec::new(),
+            initializer: None,
         }
     }
 
     pub fn method(mut self, method: FunctionSpec) -> Self {
         self.methods.push(method);
+        self
+    }
+
+    pub fn initializer<F>(mut self, initializer: F) -> Self
+    where
+        F: Fn(&luau::Vm, &luau::ChunkOrigin, &luau::Table) -> luau::runtime::Result<()>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.initializer = Some(Arc::new(initializer));
         self
     }
 }
@@ -457,12 +490,7 @@ impl FunctionSpec {
         self
     }
 
-    pub fn call_native(mut self, callback: luau::NativeFn) -> Self {
-        self.callback = Some(FunctionCallback::Sync(callback));
-        self
-    }
-
-    pub fn call_async_native(mut self, callback: luau::NativeAsyncFn) -> Self {
+    pub fn call_async(mut self, callback: luau::NativeAsyncFn) -> Self {
         self.callback = Some(FunctionCallback::Async(callback));
         self
     }
@@ -747,6 +775,8 @@ impl ModuleRegistry {
 pub struct LuauRequireRuntime {
     registry: std::cell::RefCell<ModuleRegistry>,
     source_cache: std::cell::RefCell<LuauSourceCache>,
+    active_origins: std::cell::RefCell<HashMap<usize, Vec<ChunkOrigin>>>,
+    source_origins: std::cell::RefCell<HashMap<Arc<str>, ChunkOrigin>>,
     loader: Box<dyn SourceLoader>,
     policy: Box<dyn CapabilityPolicy>,
 }
@@ -760,6 +790,8 @@ impl LuauRequireRuntime {
         Self {
             registry: std::cell::RefCell::new(ModuleRegistry::new()),
             source_cache: std::cell::RefCell::new(LuauSourceCache::new()),
+            active_origins: std::cell::RefCell::new(HashMap::new()),
+            source_origins: std::cell::RefCell::new(HashMap::new()),
             loader: Box::new(loader),
             policy: Box::new(policy),
         }
@@ -778,7 +810,8 @@ pub fn install_luau_require(vm: &luau::Vm, origin: &ChunkOrigin) -> luau::runtim
             path: origin.path.clone(),
         })
         .function_name("require")
-        .argument_names([Arc::from("specifier")]),
+        .argument_names([Arc::from("specifier"), Arc::from("source_key")])
+        .use_thread_context_origin(true),
         Arc::new(require_luau_callback),
     )?;
     vm.set_global_function("require", &function)
@@ -786,8 +819,13 @@ pub fn install_luau_require(vm: &luau::Vm, origin: &ChunkOrigin) -> luau::runtim
 
 fn require_luau_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
     let specifier: String = frame.args.read_named("specifier")?;
+    let source_key = frame.args.read_optional_named::<String>("source_key")?;
     let runtime = frame.vm.data().get::<LuauRequireRuntime>()?;
-    let origin = core_origin(&frame.context.origin);
+    let origin = source_key
+        .as_deref()
+        .and_then(|source_key| runtime.source_origin(source_key))
+        .or_else(|| runtime.active_origin(frame.thread.state_id()))
+        .unwrap_or_else(|| core_origin(&frame.context.origin));
 
     if let Some(module_id) = specifier
         .strip_prefix('@')
@@ -824,16 +862,14 @@ impl LuauRequireRuntime {
             return Ok(values);
         }
 
-        install_luau_require(vm, &source.origin)
-            .map_err(|error| ModuleLoadError::SourceLoadFailed(anyhow::Error::new(error)))?;
+        self.source_origins
+            .borrow_mut()
+            .insert(source.cache_key.0.clone(), source.origin.clone());
+        let _active_origin = self.push_active_origin(vm.state_id(), source.origin.clone());
         let result = vm.eval(
-            source_with_local_require(source.bytes.as_ref()),
+            source_with_bound_require(source.bytes.as_ref(), &source.cache_key.0),
             luau_origin(&source.origin),
         );
-        let restore_result = install_luau_require(vm, origin);
-        if let Err(error) = restore_result {
-            return Err(ModuleLoadError::SourceLoadFailed(anyhow::Error::new(error)));
-        }
         let values =
             result.map_err(|error| ModuleLoadError::SourceLoadFailed(anyhow::Error::new(error)))?;
         let values = Arc::<[luau::Value]>::from(values.into_boxed_slice());
@@ -842,14 +878,78 @@ impl LuauRequireRuntime {
             .insert(source.cache_key, values.clone());
         Ok(values)
     }
+
+    fn active_origin(&self, state_id: usize) -> Option<ChunkOrigin> {
+        self.active_origins
+            .borrow()
+            .get(&state_id)
+            .and_then(|origins| origins.last().cloned())
+    }
+
+    fn source_origin(&self, source_key: &str) -> Option<ChunkOrigin> {
+        self.source_origins.borrow().get(source_key).cloned()
+    }
+
+    fn push_active_origin(&self, state_id: usize, origin: ChunkOrigin) -> ActiveOriginGuard<'_> {
+        self.active_origins
+            .borrow_mut()
+            .entry(state_id)
+            .or_default()
+            .push(origin);
+        ActiveOriginGuard {
+            runtime: self,
+            state_id,
+        }
+    }
+
+    fn pop_active_origin(&self, state_id: usize) {
+        let mut active_origins = self.active_origins.borrow_mut();
+        if let Some(origins) = active_origins.get_mut(&state_id) {
+            origins.pop();
+            if origins.is_empty() {
+                active_origins.remove(&state_id);
+            }
+        }
+    }
 }
 
-fn source_with_local_require(source: &[u8]) -> Arc<[u8]> {
-    const PREFIX: &[u8] = b"local require = require\n";
-    let mut wrapped = Vec::with_capacity(PREFIX.len() + source.len());
-    wrapped.extend_from_slice(PREFIX);
+struct ActiveOriginGuard<'a> {
+    runtime: &'a LuauRequireRuntime,
+    state_id: usize,
+}
+
+impl Drop for ActiveOriginGuard<'_> {
+    fn drop(&mut self) {
+        self.runtime.pop_active_origin(self.state_id);
+    }
+}
+
+fn source_with_bound_require(source: &[u8], source_key: &str) -> Arc<[u8]> {
+    let source_key = luau_string_literal(source_key);
+    let prefix = format!(
+        "local __harmony_global_require = require\nlocal __harmony_require_source = {source_key}\nlocal require = function(specifier)\n\treturn __harmony_global_require(specifier, __harmony_require_source)\nend\n"
+    );
+    let mut wrapped = Vec::with_capacity(prefix.len() + source.len());
+    wrapped.extend_from_slice(prefix.as_bytes());
     wrapped.extend_from_slice(source);
     Arc::from(wrapped)
+}
+
+fn luau_string_literal(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            ch => escaped.push(ch),
+        }
+    }
+    escaped.push('"');
+    escaped
 }
 
 fn module_load_runtime_error(error: ModuleLoadError) -> luau::Error {
@@ -955,7 +1055,14 @@ pub fn install_luau_module(
         table_for(&root, &nested, parent).set_function_raw(vm, leaf, &function)?;
     }
 
-    if let Some(initializer) = &module.luau_initializer {
+    let module_origin = function_origin(origin, &module.id);
+    for spec in &module.userdata {
+        if let Some(initializer) = &spec.initializer {
+            initializer(vm, &module_origin, &root)?;
+        }
+    }
+
+    if let Some(initializer) = &module.initializer {
         initializer(vm, origin, &root)?;
     }
 
@@ -967,17 +1074,38 @@ pub fn install_luau_module(
 }
 
 pub fn async_luau_callback(callback: luau::NativeAsyncFn) -> luau::NativeFn {
-    Arc::new(move |mut frame| {
+    Arc::new(move |frame| {
         let vm = frame.vm.clone();
         let thread = frame.thread.clone();
         let context = core_call_context(&frame.context);
         let scheduler = frame.vm.data().get::<crate::LocalScheduler>()?;
-        frame.yield_now();
-        let future = callback(frame)?;
-        scheduler.park_luau_thread(&thread);
-        scheduler.schedule_luau_future(context, vm, thread, future);
+        let mut returns = frame.returns.clone();
+        let mut future = callback(frame.into_async())?;
+        if let Some(delay) = future.take_start_delay() {
+            returns.request_yield();
+            scheduler.park_luau_thread(&thread);
+            scheduler.schedule_luau_future_after(context, delay, vm, thread, future);
+            return Ok(());
+        }
+        match poll_luau_future_once(&mut future) {
+            Poll::Ready(Ok(values)) => values.write_to(&mut returns)?,
+            Poll::Ready(Err(error)) => return Err(error),
+            Poll::Pending => {
+                returns.request_yield();
+                scheduler.park_luau_thread(&thread);
+                scheduler.schedule_luau_future(context, vm, thread, future);
+            }
+        }
         Ok(())
     })
+}
+
+fn poll_luau_future_once(
+    future: &mut luau::ScheduledFuture,
+) -> Poll<luau::runtime::Result<luau::ReturnValues>> {
+    let waker = Waker::noop();
+    let mut cx = Context::from_waker(waker);
+    std::pin::Pin::new(future).poll(&mut cx)
 }
 
 fn core_call_context(context: &luau::CallContext) -> crate::CallContext {
@@ -1225,18 +1353,17 @@ mod tests {
     }
 
     #[test]
-    fn luau_module_installer_schedules_async_callbacks() -> luau::runtime::Result<()> {
+    fn luau_module_installer_completes_ready_async_callbacks_without_yielding()
+    -> luau::runtime::Result<()> {
         let vm = luau::Vm::new()?;
         vm.data().insert(crate::LocalScheduler::new())?;
         let scheduler = vm.data().get::<crate::LocalScheduler>()?;
         let module = ModuleSpec::new("demo/async").function(
             FunctionSpec::async_fn("add_one")
                 .arg_name("value")
-                .call_async_native(Arc::new(|mut frame| {
+                .call_async(Arc::new(|mut frame| {
                     let value: i64 = frame.args.read_named("value")?;
-                    Ok(Box::pin(async move {
-                        Ok(vec![luau::Value::Integer(value + 1)])
-                    }))
+                    Ok(luau::ScheduledFuture::new(async move { Ok(value + 1) }))
                 })),
         );
         let table = install_luau_module(&vm, &ChunkOrigin::default(), &module)?;
@@ -1249,7 +1376,73 @@ mod tests {
 
         scheduler.spawn_luau_thread(crate::CallContext::default(), vm.clone(), thread, vec![]);
         assert_eq!(scheduler.poll_ready(), 1);
+        assert_eq!(scheduler.poll_ready(), 0);
+        assert_eq!(
+            vm.eval(
+                Arc::<[u8]>::from(&b"return async_result"[..]),
+                luau::ChunkOrigin::default(),
+            )?,
+            vec![luau::Value::Integer(42)]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn luau_module_installer_schedules_pending_async_callbacks() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        vm.data().insert(crate::LocalScheduler::new())?;
+        let scheduler = vm.data().get::<crate::LocalScheduler>()?;
+        let pending_once = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let pending_once_for_callback = pending_once.clone();
+        let module = ModuleSpec::new("demo/async").function(
+            FunctionSpec::async_fn("add_one")
+                .arg_name("value")
+                .call_async(Arc::new(move |mut frame| {
+                    let value: i64 = frame.args.read_named("value")?;
+                    let pending_once = pending_once_for_callback.clone();
+                    Ok(luau::ScheduledFuture::new(std::future::poll_fn(
+                        move |_cx| {
+                            if pending_once.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                                std::task::Poll::Pending
+                            } else {
+                                std::task::Poll::Ready(Ok(value + 1))
+                            }
+                        },
+                    )))
+                })),
+        );
+        let table = install_luau_module(&vm, &ChunkOrigin::default(), &module)?;
+        vm.set_global_table("module", &table)?;
+        let root = vm.load_chunk(&luau::Chunk::new(
+            Arc::<[u8]>::from(&b"async_result = module.add_one(41)"[..]),
+            luau::ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&root)?;
+
+        let handle = scheduler.spawn_luau_thread(
+            crate::CallContext::default(),
+            vm.clone(),
+            thread.clone(),
+            vec![],
+        );
+        assert_eq!(scheduler.luau_thread_handle(&thread), Some(handle));
         assert_eq!(scheduler.poll_ready(), 1);
+        assert_eq!(scheduler.luau_thread_handle(&thread), Some(handle));
+        assert_eq!(
+            scheduler
+                .snapshot(handle.id())
+                .expect("task snapshot")
+                .state,
+            crate::TaskState::Pending
+        );
+        assert_eq!(scheduler.poll_ready(), 1);
+        assert_eq!(
+            scheduler
+                .snapshot(handle.id())
+                .expect("task snapshot")
+                .state,
+            crate::TaskState::Completed
+        );
         assert_eq!(
             vm.eval(
                 Arc::<[u8]>::from(&b"return async_result"[..]),
@@ -1483,7 +1676,12 @@ mod tests {
         let mut loader = MemorySourceLoader::new();
         loader.insert(
             "plugin:demo/lib/util.luau",
-            b"return { source_answer = 7 }".as_slice(),
+            b"local child = require(\"./child.luau\"); return { source_answer = child.answer }"
+                .as_slice(),
+        );
+        loader.insert(
+            "plugin:demo/lib/child.luau",
+            b"return { answer = 7 }".as_slice(),
         );
         let origin = ChunkOrigin {
             plugin: Some(Arc::from("demo")),

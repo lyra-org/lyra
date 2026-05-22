@@ -4,10 +4,7 @@ use std::{
         TypeId,
         type_name,
     },
-    cell::{
-        Cell,
-        RefCell,
-    },
+    cell::Cell,
     collections::HashMap,
     ffi::{
         CStr,
@@ -18,6 +15,7 @@ use std::{
     fmt,
     future::Future,
     marker::PhantomData,
+    mem,
     panic::{
         AssertUnwindSafe,
         catch_unwind,
@@ -33,10 +31,12 @@ use std::{
         Weak,
         atomic::{
             AtomicU64,
+            AtomicUsize,
             Ordering,
         },
     },
     time::{
+        Duration,
         Instant,
         SystemTime,
         UNIX_EPOCH,
@@ -77,12 +77,29 @@ pub enum Error {
         name: Arc<str>,
         error: std::string::FromUtf8Error,
     },
+    #[error("argument `{name}` expected valid UTF-8: {error}")]
+    InvalidUtf8BorrowedArgument {
+        name: Arc<str>,
+        error: std::str::Utf8Error,
+    },
     #[error("call context does not contain {}", type_name)]
     MissingContext { type_name: &'static str },
     #[error("VM data lock is poisoned")]
     VmDataPoisoned,
     #[error("thread data lock is poisoned")]
     ThreadDataPoisoned,
+    #[error("Luau stack cannot reserve {needed} slots")]
+    StackCapacity { needed: i32 },
+    #[error("userdata tag {tag} is outside Luau's supported tag range")]
+    InvalidUserDataTag { tag: i32 },
+    #[error("userdata tag {tag} is already registered for another Rust type")]
+    UserDataTagMismatch { tag: i32 },
+    #[error("no Luau userdata tags are available")]
+    UserDataTagExhausted,
+    #[error("userdata has tag {actual}, expected {expected}")]
+    UserDataTypeMismatch { expected: i32, actual: i32 },
+    #[error("Luau serialization failed: {0}")]
+    Serialize(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -103,6 +120,31 @@ pub struct ChunkOrigin {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceBytes(pub Arc<[u8]>);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct UserDataTag(i32);
+
+impl UserDataTag {
+    pub fn new(tag: i32) -> Result<Self> {
+        if (0..sys::LUA_UTAG_LIMIT).contains(&tag) {
+            Ok(Self(tag))
+        } else {
+            Err(Error::InvalidUserDataTag { tag })
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VmOptions {
+    pub memory_limit: Option<usize>,
+}
+
+impl VmOptions {
+    pub fn memory_limit(mut self, bytes: usize) -> Self {
+        self.memory_limit = Some(bytes);
+        self
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CompileOptions {
@@ -186,21 +228,42 @@ pub struct Vm {
 struct VmInner {
     id: u64,
     state: NonNull<sys::lua_State>,
+    control: NonNull<VmControl>,
     data: VmData,
     thread_contexts: RwLock<HashMap<usize, CallContext>>,
+    userdata_tags: RwLock<HashMap<i32, TypeId>>,
     started_at: Instant,
 }
 
 impl Vm {
     pub fn new() -> Result<Self> {
-        let state = unsafe { sys::lua_newstate(Some(alloc), ptr::null_mut()) };
-        let state = NonNull::new(state).ok_or(Error::VmCreate)?;
+        Self::with_options(VmOptions::default())
+    }
+
+    pub fn with_options(options: VmOptions) -> Result<Self> {
+        let control = Box::into_raw(Box::new(VmControl::new(options)));
+        let state = unsafe { sys::lua_newstate(Some(alloc), control.cast()) };
+        let state = match NonNull::new(state) {
+            Some(state) => state,
+            None => {
+                unsafe {
+                    drop(Box::from_raw(control));
+                }
+                return Err(Error::VmCreate);
+            }
+        };
+        let control = NonNull::new(control).expect("Box::into_raw never returns null");
+        unsafe {
+            sys::lua_set_callback_userdata(state.as_ptr(), control.as_ptr().cast());
+        }
         Ok(Self {
             inner: Arc::new(VmInner {
                 id: NEXT_VM_ID.fetch_add(1, Ordering::Relaxed),
                 state,
+                control,
                 data: VmData::default(),
                 thread_contexts: RwLock::new(HashMap::new()),
+                userdata_tags: RwLock::new(HashMap::new()),
                 started_at: Instant::now(),
             }),
         })
@@ -210,8 +273,31 @@ impl Vm {
         self.inner.id
     }
 
+    pub fn state_id(&self) -> usize {
+        self.inner.state.as_ptr() as usize
+    }
+
     pub fn data(&self) -> &VmData {
         &self.inner.data
+    }
+
+    pub fn memory_used(&self) -> usize {
+        self.inner.control().allocated.load(Ordering::Relaxed)
+    }
+
+    pub fn memory_limit(&self) -> Option<usize> {
+        let limit = self.inner.control().memory_limit.load(Ordering::Relaxed);
+        (limit != 0).then_some(limit)
+    }
+
+    pub fn interrupt_after(&self, budget: Duration) -> InterruptBudgetGuard {
+        let deadline = current_unix_millis()
+            .saturating_add(budget.as_millis().min(u128::from(u64::MAX)) as u64);
+        let previous_deadline = self.set_interrupt_deadline_millis(deadline);
+        InterruptBudgetGuard {
+            vm: self.clone(),
+            previous_deadline,
+        }
     }
 
     pub fn open_standard_libraries(&self, libraries: StandardLibraries) -> Result<()> {
@@ -274,7 +360,7 @@ impl Vm {
             )
         };
         if status != sys::LUA_OK {
-            let message = self.error_message(-1);
+            let message = self.error_message(StackIndex::TOP);
             return Err(Error::Load(message));
         }
         let reference = self.ref_top()?;
@@ -296,6 +382,7 @@ impl Vm {
 
     pub fn create_table_with_capacity(&self, array: i32, records: i32) -> Result<Table> {
         let guard = self.stack_guard();
+        self.ensure_stack(1)?;
         unsafe {
             sys::lua_createtable(self.inner.state.as_ptr(), array, records);
         }
@@ -306,6 +393,7 @@ impl Vm {
 
     pub fn create_buffer(&self, bytes: &[u8]) -> Result<Buffer> {
         let guard = self.stack_guard();
+        self.ensure_stack(1)?;
         unsafe {
             let ptr = sys::lua_newbuffer(self.inner.state.as_ptr(), bytes.len());
             ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast(), bytes.len());
@@ -313,6 +401,31 @@ impl Vm {
         let reference = self.ref_top()?;
         drop(guard);
         Ok(Buffer { reference })
+    }
+
+    pub fn create_userdata<T>(&self, tag: UserDataTag, value: T) -> Result<UserData>
+    where
+        T: 'static,
+    {
+        self.register_userdata_tag::<T>(tag)?;
+        let guard = self.stack_guard();
+        self.ensure_stack(1)?;
+        unsafe {
+            let ptr =
+                sys::lua_newuserdatatagged(self.inner.state.as_ptr(), mem::size_of::<T>(), tag.0);
+            ptr::write(ptr.cast::<T>(), value);
+        }
+        let reference = self.ref_top()?;
+        drop(guard);
+        Ok(UserData { reference, tag })
+    }
+
+    pub fn create_userdata_auto<T>(&self, value: T) -> Result<UserData>
+    where
+        T: 'static,
+    {
+        let tag = self.userdata_tag::<T>()?;
+        self.create_userdata(tag, value)
     }
 
     pub fn create_function(&self, origin: ChunkOrigin, callback: NativeFn) -> Result<Function> {
@@ -434,6 +547,88 @@ impl Vm {
         }
     }
 
+    fn ensure_stack(&self, needed: i32) -> Result<()> {
+        self.ensure_stack_to(self.inner.state, needed)
+    }
+
+    fn ensure_stack_to(&self, state: NonNull<sys::lua_State>, needed: i32) -> Result<()> {
+        if needed <= 0 {
+            return Ok(());
+        }
+        let ok = unsafe { sys::lua_checkstack(state.as_ptr(), needed) };
+        if ok == 0 {
+            return Err(Error::StackCapacity { needed });
+        }
+        Ok(())
+    }
+
+    fn set_interrupt_deadline_millis(&self, deadline: u64) -> u64 {
+        let previous = self
+            .inner
+            .control()
+            .interrupt_deadline_millis
+            .swap(deadline, Ordering::Release);
+        unsafe {
+            sys::lua_set_interrupt_callback(
+                self.inner.state.as_ptr(),
+                if deadline == 0 { None } else { Some(interrupt) },
+            );
+        }
+        previous
+    }
+
+    fn register_userdata_tag<T>(&self, tag: UserDataTag) -> Result<()>
+    where
+        T: 'static,
+    {
+        let mut tags = self
+            .inner
+            .userdata_tags
+            .write()
+            .map_err(|_| Error::VmDataPoisoned)?;
+        match tags.get(&tag.0) {
+            Some(type_id) if *type_id == TypeId::of::<T>() => Ok(()),
+            Some(_) => Err(Error::UserDataTagMismatch { tag: tag.0 }),
+            None => {
+                unsafe {
+                    sys::lua_setuserdatadtor(
+                        self.inner.state.as_ptr(),
+                        tag.0,
+                        Some(drop_userdata::<T>),
+                    );
+                }
+                tags.insert(tag.0, TypeId::of::<T>());
+                Ok(())
+            }
+        }
+    }
+
+    pub fn userdata_tag<T>(&self) -> Result<UserDataTag>
+    where
+        T: 'static,
+    {
+        let type_id = TypeId::of::<T>();
+        let mut tags = self
+            .inner
+            .userdata_tags
+            .write()
+            .map_err(|_| Error::VmDataPoisoned)?;
+        if let Some(tag) = tags
+            .iter()
+            .find_map(|(tag, existing)| (*existing == type_id).then_some(*tag))
+        {
+            return Ok(UserDataTag(tag));
+        }
+        let tag = (0..sys::LUA_UTAG_LIMIT)
+            .find(|tag| !tags.contains_key(tag))
+            .ok_or(Error::UserDataTagExhausted)?;
+        unsafe {
+            sys::lua_setuserdatadtor(self.inner.state.as_ptr(), tag, Some(drop_userdata::<T>));
+        }
+        tags.insert(tag, type_id);
+        Ok(UserDataTag(tag))
+    }
+
     unsafe fn open_library(
         &self,
         name: &'static [u8],
@@ -506,6 +701,7 @@ impl Vm {
     }
 
     fn ref_top(&self) -> Result<RegistryRef> {
+        self.ensure_stack(1)?;
         let reference = unsafe { sys::lua_ref(self.inner.state.as_ptr(), -1) };
         Ok(RegistryRef {
             vm: self.clone(),
@@ -513,12 +709,12 @@ impl Vm {
         })
     }
 
-    fn ref_value_from(&self, state: *mut sys::lua_State, index: i32) -> RegistryRef {
+    fn ref_value_from(&self, state: NonNull<sys::lua_State>, index: StackIndex) -> RegistryRef {
         let reference = unsafe {
-            let index = sys::lua_absindex(state, index);
-            sys::lua_pushvalue(state, index);
-            let reference = sys::lua_ref(state, -1);
-            sys::lua_pop(state, 1);
+            let index = AbsStackIndex::from_stack(state, index);
+            sys::lua_pushvalue(state.as_ptr(), index.raw());
+            let reference = sys::lua_ref(state.as_ptr(), -1);
+            sys::lua_pop(state.as_ptr(), 1);
             reference
         };
         RegistryRef {
@@ -555,6 +751,7 @@ impl Vm {
                 actual_vm: self.inner.id,
             });
         }
+        self.ensure_stack_to(state, 1)?;
         unsafe {
             sys::lua_getref(state.as_ptr(), reference.reference);
         }
@@ -566,6 +763,7 @@ impl Vm {
     }
 
     fn push_value_to(&self, state: NonNull<sys::lua_State>, value: &Value) -> Result<()> {
+        self.ensure_stack_to(state, 1)?;
         unsafe {
             match value {
                 Value::Nil => sys::lua_pushnil(state.as_ptr()),
@@ -586,6 +784,7 @@ impl Vm {
                 Value::Table(value) => self.push_registry_to(state, &value.reference)?,
                 Value::Function(value) => self.push_registry_to(state, &value.reference)?,
                 Value::Thread(value) => self.push_thread_to(state, value)?,
+                Value::UserData(value) => self.push_registry_to(state, &value.reference)?,
             }
         }
         Ok(())
@@ -598,6 +797,7 @@ impl Vm {
         callback: NativeFn,
     ) -> Result<()> {
         let debug_name = CString::new("harmony_native_callback")?;
+        self.ensure_stack_to(state, 2)?;
         unsafe {
             let slot = sys::lua_newuserdatadtor(
                 state.as_ptr(),
@@ -616,6 +816,7 @@ impl Vm {
                     task_group: options.task_group,
                     function_name: options.function_name.clone(),
                     argument_names: options.argument_names.clone(),
+                    use_thread_context_origin: options.use_thread_context_origin,
                 },
             );
             sys::lua_pushcclosure(
@@ -642,6 +843,7 @@ impl Vm {
         }
 
         if thread.state() == state {
+            self.ensure_stack_to(state, 1)?;
             unsafe {
                 sys::lua_pushthread(state.as_ptr());
             }
@@ -653,32 +855,33 @@ impl Vm {
         ))
     }
 
-    fn read_value(&self, index: i32) -> Value {
+    fn read_value(&self, index: StackIndex) -> Value {
         self.read_value_from(self.inner.state, index)
     }
 
-    fn read_value_from(&self, state: NonNull<sys::lua_State>, index: i32) -> Value {
-        let state = state.as_ptr();
+    fn read_value_from(&self, state: NonNull<sys::lua_State>, index: StackIndex) -> Value {
+        let state_ptr = state.as_ptr();
+        let raw_index = index.raw();
         unsafe {
-            match sys::lua_type(state, index) {
+            match sys::lua_type(state_ptr, raw_index) {
                 sys::LUA_TNIL | sys::LUA_TNONE => Value::Nil,
-                sys::LUA_TBOOLEAN => Value::Boolean(sys::lua_toboolean(state, index) != 0),
+                sys::LUA_TBOOLEAN => Value::Boolean(sys::lua_toboolean(state_ptr, raw_index) != 0),
                 sys::LUA_TINTEGER => {
                     let mut is_integer = 0;
-                    Value::Integer(sys::lua_tointeger64(state, index, &mut is_integer))
+                    Value::Integer(sys::lua_tointeger64(state_ptr, raw_index, &mut is_integer))
                 }
                 sys::LUA_TNUMBER => {
                     let mut is_number = 0;
-                    Value::Number(sys::lua_tonumberx(state, index, &mut is_number))
+                    Value::Number(sys::lua_tonumberx(state_ptr, raw_index, &mut is_number))
                 }
                 sys::LUA_TSTRING => {
                     let mut len = 0usize;
-                    let ptr = sys::lua_tolstring(state, index, &mut len);
+                    let ptr = sys::lua_tolstring(state_ptr, raw_index, &mut len);
                     Value::String(std::slice::from_raw_parts(ptr.cast(), len).to_vec())
                 }
                 sys::LUA_TBUFFER => {
                     let mut len = 0usize;
-                    let ptr = sys::lua_tobuffer(state, index, &mut len);
+                    let ptr = sys::lua_tobuffer(state_ptr, raw_index, &mut len);
                     Value::Buffer(std::slice::from_raw_parts(ptr.cast(), len).to_vec())
                 }
                 sys::LUA_TTABLE => Value::Table(Table {
@@ -689,7 +892,7 @@ impl Vm {
                     origin: ChunkOrigin::default(),
                 }),
                 sys::LUA_TTHREAD => {
-                    let thread_state = sys::lua_tothread(state, index);
+                    let thread_state = sys::lua_tothread(state_ptr, raw_index);
                     let thread_state =
                         NonNull::new(thread_state).expect("thread value is non-null");
                     let reference = self.ref_value_from(state, index);
@@ -704,19 +907,23 @@ impl Vm {
                         status == sys::LUA_OK && top == 0,
                     ))
                 }
+                sys::LUA_TUSERDATA => Value::UserData(UserData {
+                    reference: self.ref_value_from(state, index),
+                    tag: UserDataTag(sys::lua_userdatatag(state_ptr, raw_index)),
+                }),
                 _ => Value::Nil,
             }
         }
     }
 
-    fn error_message(&self, index: i32) -> String {
+    fn error_message(&self, index: StackIndex) -> String {
         Self::error_message_from(self.inner.state, index)
     }
 
-    fn error_message_from(state: NonNull<sys::lua_State>, index: i32) -> String {
+    fn error_message_from(state: NonNull<sys::lua_State>, index: StackIndex) -> String {
         let state = state.as_ptr();
         unsafe {
-            let ptr = sys::lua_tostring(state, index);
+            let ptr = sys::lua_tostring(state, index.raw());
             if ptr.is_null() {
                 return "unknown Luau error".to_string();
             }
@@ -729,7 +936,42 @@ impl Drop for VmInner {
     fn drop(&mut self) {
         unsafe {
             sys::lua_close(self.state.as_ptr());
+            drop(Box::from_raw(self.control.as_ptr()));
         }
+    }
+}
+
+impl VmInner {
+    fn control(&self) -> &VmControl {
+        unsafe { self.control.as_ref() }
+    }
+}
+
+struct VmControl {
+    allocated: AtomicUsize,
+    memory_limit: AtomicUsize,
+    interrupt_deadline_millis: AtomicU64,
+}
+
+impl VmControl {
+    fn new(options: VmOptions) -> Self {
+        Self {
+            allocated: AtomicUsize::new(0),
+            memory_limit: AtomicUsize::new(options.memory_limit.unwrap_or(0)),
+            interrupt_deadline_millis: AtomicU64::new(0),
+        }
+    }
+}
+
+pub struct InterruptBudgetGuard {
+    vm: Vm,
+    previous_deadline: u64,
+}
+
+impl Drop for InterruptBudgetGuard {
+    fn drop(&mut self) {
+        self.vm
+            .set_interrupt_deadline_millis(self.previous_deadline);
     }
 }
 
@@ -765,6 +1007,54 @@ struct StackGuard<'vm> {
 impl Drop for StackGuard<'_> {
     fn drop(&mut self) {
         self.vm.set_top(self.top);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StackIndex(c_int);
+
+impl StackIndex {
+    const TOP: Self = Self(-1);
+
+    fn absolute(index: c_int) -> Self {
+        debug_assert!(index > 0, "absolute Luau stack indexes must be positive");
+        Self(index)
+    }
+
+    fn relative(index: c_int) -> Self {
+        debug_assert!(index < 0, "relative Luau stack indexes must be negative");
+        Self(index)
+    }
+
+    fn argument(index: usize) -> Self {
+        debug_assert!(
+            index < c_int::MAX as usize,
+            "Luau argument index must fit in c_int"
+        );
+        Self::absolute(index as c_int + 1)
+    }
+
+    fn raw(self) -> c_int {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AbsStackIndex(c_int);
+
+impl AbsStackIndex {
+    fn from_stack(state: NonNull<sys::lua_State>, index: StackIndex) -> Self {
+        let absolute = if index.raw() > 0 {
+            index.raw()
+        } else {
+            unsafe { sys::lua_absindex(state.as_ptr(), index.raw()) }
+        };
+        debug_assert!(absolute > 0, "absolute Luau stack indexes must be positive");
+        Self(absolute)
+    }
+
+    fn raw(self) -> c_int {
+        self.0
     }
 }
 
@@ -845,13 +1135,13 @@ impl Function {
             )
         };
         if status != sys::LUA_OK {
-            let message = vm.error_message(-1);
+            let message = vm.error_message(StackIndex::TOP);
             return Err(Error::Runtime(message));
         }
         let returned = vm.top() - guard.top;
         let mut values = Vec::with_capacity(returned.max(0) as usize);
         for offset in 0..returned {
-            values.push(vm.read_value(guard.top + 1 + offset));
+            values.push(vm.read_value(StackIndex::absolute(guard.top + 1 + offset)));
         }
         Ok(values)
     }
@@ -952,7 +1242,7 @@ impl Thread {
                 let top = unsafe { sys::lua_gettop(self.inner.state.as_ptr()) };
                 let mut values = Vec::with_capacity(top.max(0) as usize);
                 for index in 1..=top {
-                    values.push(vm.read_value_from(self.inner.state, index));
+                    values.push(vm.read_value_from(self.inner.state, StackIndex::absolute(index)));
                 }
                 unsafe {
                     sys::lua_settop(self.inner.state.as_ptr(), 0);
@@ -965,7 +1255,7 @@ impl Thread {
                 }
             }
             _ => {
-                let message = Vm::error_message_from(self.inner.state, -1);
+                let message = Vm::error_message_from(self.inner.state, StackIndex::TOP);
                 unsafe {
                     sys::lua_settop(self.inner.state.as_ptr(), 0);
                 }
@@ -1094,7 +1384,46 @@ impl Table {
         unsafe {
             sys::lua_rawgetfield(vm.inner.state.as_ptr(), -1, key.as_ptr());
         }
-        Ok(vm.read_value(-1))
+        Ok(vm.read_value(StackIndex::TOP))
+    }
+
+    pub fn get_integer_raw(&self, vm: &Vm, key: i32) -> Result<Value> {
+        let _guard = vm.stack_guard();
+        vm.push_registry(&self.reference)?;
+        unsafe {
+            sys::lua_rawgeti(vm.inner.state.as_ptr(), -1, key);
+        }
+        Ok(vm.read_value(StackIndex::TOP))
+    }
+
+    pub fn raw_len(&self, vm: &Vm) -> Result<usize> {
+        let reader = self.reader(vm)?;
+        Ok(reader.raw_len())
+    }
+
+    pub fn array_values_raw(&self, vm: &Vm) -> Result<Vec<Value>> {
+        let _guard = vm.stack_guard();
+        vm.ensure_stack(2)?;
+        vm.push_registry(&self.reference)?;
+
+        let mut values = Vec::new();
+        for index in 1..=i32::MAX {
+            unsafe {
+                sys::lua_rawgeti(vm.inner.state.as_ptr(), -1, index);
+            }
+            let value = vm.read_value(StackIndex::TOP);
+            unsafe {
+                sys::lua_pop(vm.inner.state.as_ptr(), 1);
+            }
+            if value == Value::Nil {
+                return Ok(values);
+            }
+            values.push(value);
+        }
+
+        Err(Error::Runtime(
+            "table array part exceeded supported integer indexes".to_string(),
+        ))
     }
 
     pub fn pairs_raw(&self, vm: &Vm) -> Result<Vec<(Value, Value)>> {
@@ -1104,13 +1433,25 @@ impl Table {
         unsafe {
             sys::lua_pushnil(vm.inner.state.as_ptr());
             while sys::lua_next(vm.inner.state.as_ptr(), -2) != 0 {
-                let key = vm.read_value(-2);
-                let value = vm.read_value(-1);
+                let key = vm.read_value(StackIndex::relative(-2));
+                let value = vm.read_value(StackIndex::TOP);
                 pairs.push((key, value));
                 sys::lua_pop(vm.inner.state.as_ptr(), 1);
             }
         }
         Ok(pairs)
+    }
+
+    pub fn reader<'vm>(&self, vm: &'vm Vm) -> Result<TableReader<'vm>> {
+        let guard = vm.stack_guard();
+        vm.push_registry(&self.reference)?;
+        let table_index = AbsStackIndex::from_stack(vm.inner.state, StackIndex::TOP);
+        Ok(TableReader {
+            vm,
+            state: vm.inner.state,
+            table_index,
+            _guard: guard,
+        })
     }
 
     pub fn set_metatable_raw(&self, vm: &Vm, metatable: Option<&Table>) -> Result<()> {
@@ -1150,6 +1491,69 @@ impl Table {
     }
 }
 
+pub struct TableReader<'vm> {
+    vm: &'vm Vm,
+    state: NonNull<sys::lua_State>,
+    table_index: AbsStackIndex,
+    _guard: StackGuard<'vm>,
+}
+
+impl TableReader<'_> {
+    pub fn raw_len(&self) -> usize {
+        let len = unsafe { sys::lua_objlen(self.state.as_ptr(), self.table_index.raw()) };
+        debug_assert!(len >= 0);
+        len as usize
+    }
+
+    pub fn get_raw(&self, key: &str) -> Result<Value> {
+        let key = CString::new(key)?;
+        self.vm.ensure_stack_to(self.state, 1)?;
+        unsafe {
+            sys::lua_rawgetfield(self.state.as_ptr(), self.table_index.raw(), key.as_ptr());
+        }
+        self.pop_value()
+    }
+
+    pub fn get_integer_raw(&self, key: i32) -> Result<Value> {
+        self.vm.ensure_stack_to(self.state, 1)?;
+        unsafe {
+            sys::lua_rawgeti(self.state.as_ptr(), self.table_index.raw(), key);
+        }
+        self.pop_value()
+    }
+
+    pub fn get_fields_raw(&self, keys: &[&str]) -> Result<Vec<Value>> {
+        let mut values = Vec::with_capacity(keys.len());
+        for key in keys {
+            values.push(self.get_raw(key)?);
+        }
+        Ok(values)
+    }
+
+    pub fn array_values_raw(&self) -> Result<Vec<Value>> {
+        let len = self.raw_len();
+        if len > i32::MAX as usize {
+            return Err(Error::Runtime(
+                "table array part exceeded supported integer indexes".to_string(),
+            ));
+        }
+
+        let mut values = Vec::with_capacity(len);
+        for index in 1..=len as i32 {
+            values.push(self.get_integer_raw(index)?);
+        }
+        Ok(values)
+    }
+
+    fn pop_value(&self) -> Result<Value> {
+        let value = self.vm.read_value_from(self.state, StackIndex::TOP);
+        unsafe {
+            sys::lua_pop(self.state.as_ptr(), 1);
+        }
+        Ok(value)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Buffer {
     reference: RegistryRef,
@@ -1163,7 +1567,7 @@ impl Buffer {
     pub fn to_vec(&self, vm: &Vm) -> Result<Vec<u8>> {
         let _guard = vm.stack_guard();
         vm.push_registry(&self.reference)?;
-        match vm.read_value(-1) {
+        match vm.read_value(StackIndex::TOP) {
             Value::Buffer(bytes) => Ok(bytes),
             other => Err(Error::ArgumentType {
                 name: Arc::from("buffer"),
@@ -1174,14 +1578,77 @@ impl Buffer {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ByteString(pub Vec<u8>);
+#[derive(Clone, Debug, PartialEq)]
+pub struct UserData {
+    reference: RegistryRef,
+    tag: UserDataTag,
+}
 
-impl ByteString {
-    pub fn into_vec(self) -> Vec<u8> {
-        self.0
+impl UserData {
+    pub fn vm_id(&self) -> u64 {
+        self.reference.vm.id()
+    }
+
+    pub fn tag(&self) -> UserDataTag {
+        self.tag
+    }
+
+    pub fn set_metatable_raw(&self, vm: &Vm, metatable: Option<&Table>) -> Result<()> {
+        let _guard = vm.stack_guard();
+        vm.push_registry(&self.reference)?;
+        if let Some(metatable) = metatable {
+            vm.push_registry(&metatable.reference)?;
+        } else {
+            unsafe {
+                sys::lua_pushnil(vm.inner.state.as_ptr());
+            }
+        }
+        unsafe {
+            sys::lua_setmetatable(vm.inner.state.as_ptr(), -2);
+        }
+        Ok(())
+    }
+
+    pub fn borrow<T>(&self, vm: &Vm, tag: UserDataTag) -> Result<UserDataRef<'_, T>>
+    where
+        T: 'static,
+    {
+        let _guard = vm.stack_guard();
+        vm.push_registry(&self.reference)?;
+        let actual = unsafe { sys::lua_userdatatag(vm.inner.state.as_ptr(), -1) };
+        if actual != tag.0 {
+            return Err(Error::UserDataTypeMismatch {
+                expected: tag.0,
+                actual,
+            });
+        }
+        let ptr = unsafe { sys::lua_touserdatatagged(vm.inner.state.as_ptr(), -1, tag.0) };
+        let ptr = NonNull::new(ptr.cast::<T>()).ok_or(Error::UserDataTypeMismatch {
+            expected: tag.0,
+            actual,
+        })?;
+        Ok(UserDataRef {
+            ptr,
+            _owner: PhantomData,
+        })
     }
 }
+
+pub struct UserDataRef<'a, T> {
+    ptr: NonNull<T>,
+    _owner: PhantomData<&'a UserData>,
+}
+
+impl<T> std::ops::Deref for UserDataRef<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.ptr.as_ref() }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ByteString(pub Vec<u8>);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -1196,6 +1663,7 @@ pub enum Value {
     Table(Table),
     Function(Function),
     Thread(Thread),
+    UserData(UserData),
 }
 
 #[derive(Clone)]
@@ -1309,29 +1777,31 @@ impl OwnedTable {
 }
 
 pub struct ArgReader<'vm> {
-    values: Vec<Value>,
+    vm: &'vm Vm,
+    state: NonNull<sys::lua_State>,
+    argc: usize,
     index: usize,
     names: Vec<Arc<str>>,
-    _vm: PhantomData<&'vm Vm>,
 }
 
 impl<'vm> ArgReader<'vm> {
-    pub fn new(values: Vec<Value>) -> Self {
+    fn stack(
+        vm: &'vm Vm,
+        state: NonNull<sys::lua_State>,
+        argc: i32,
+        names: impl IntoIterator<Item = Arc<str>>,
+    ) -> Self {
         Self {
-            values,
+            vm,
+            state,
+            argc: argc.max(0) as usize,
             index: 0,
-            names: Vec::new(),
-            _vm: PhantomData,
+            names: names.into_iter().collect(),
         }
     }
 
-    pub fn with_names(values: Vec<Value>, names: impl IntoIterator<Item = Arc<str>>) -> Self {
-        Self {
-            values,
-            index: 0,
-            names: names.into_iter().collect(),
-            _vm: PhantomData,
-        }
+    pub fn vm(&self) -> &'vm Vm {
+        self.vm
     }
 
     pub fn read<T: FromLuau<'vm>>(&mut self) -> Result<T> {
@@ -1349,10 +1819,10 @@ impl<'vm> ArgReader<'vm> {
         &mut self,
         name: &'static str,
     ) -> Result<Option<T>> {
-        if self.index >= self.values.len() {
+        if self.index >= self.len() {
             return Ok(None);
         }
-        if matches!(self.values.get(self.index), Some(Value::Nil)) {
+        if self.is_nil(self.index) {
             self.index += 1;
             return Ok(None);
         }
@@ -1360,43 +1830,278 @@ impl<'vm> ArgReader<'vm> {
     }
 
     pub fn drain_remaining(&mut self) -> Vec<Value> {
-        let values = self.values[self.index..].to_vec();
-        self.index = self.values.len();
+        let values = (self.index..self.len())
+            .map(|index| self.value_at(index))
+            .collect();
+        self.index = self.len();
         values
+    }
+
+    pub fn read_string_bytes(&mut self) -> Result<&[u8]> {
+        self.next_borrowed_bytes("string")
+    }
+
+    pub fn read_named_string_bytes(&mut self, name: &'static str) -> Result<&[u8]> {
+        if self.names.len() <= self.index {
+            self.names.resize(self.index + 1, Arc::from(name));
+        }
+        self.next_borrowed_bytes("string")
+    }
+
+    pub fn read_str(&mut self) -> Result<&str> {
+        let (name, bytes) = self.next_named_borrowed_bytes("string")?;
+        std::str::from_utf8(bytes)
+            .map_err(|error| Error::InvalidUtf8BorrowedArgument { name, error })
+    }
+
+    pub fn read_named_str(&mut self, name: &'static str) -> Result<&str> {
+        if self.names.len() <= self.index {
+            self.names.resize(self.index + 1, Arc::from(name));
+        }
+        self.read_str()
+    }
+
+    pub fn read_buffer_bytes(&mut self) -> Result<&[u8]> {
+        self.next_borrowed_bytes("buffer")
+    }
+
+    pub fn read_named_buffer_bytes(&mut self, name: &'static str) -> Result<&[u8]> {
+        if self.names.len() <= self.index {
+            self.names.resize(self.index + 1, Arc::from(name));
+        }
+        self.next_borrowed_bytes("buffer")
     }
 
     fn next_value(&mut self, expected: &'static str) -> Result<Value> {
         self.next_named_value(expected).map(|(_, value)| value)
     }
 
-    fn next_named_value(&mut self, expected: &'static str) -> Result<(Arc<str>, Value)> {
-        let name = self
-            .names
-            .get(self.index)
-            .cloned()
-            .unwrap_or_else(|| Arc::from(format!("arg{}", self.index + 1)));
-        let value = self
-            .values
-            .get(self.index)
-            .cloned()
-            .ok_or_else(|| Error::MissingArgument(name.clone()))?;
+    fn next_bool(&mut self) -> Result<bool> {
+        let name = self.current_name();
+        if self.index >= self.len() {
+            return Err(Error::MissingArgument(name));
+        }
+        let index = StackIndex::argument(self.index).raw();
+        let actual_type = unsafe { sys::lua_type(self.state.as_ptr(), index) };
+        if actual_type != sys::LUA_TBOOLEAN {
+            return Err(Error::ArgumentType {
+                name,
+                expected: "boolean",
+                actual: stack_type_name(actual_type),
+            });
+        }
+        let value = unsafe { sys::lua_toboolean(self.state.as_ptr(), index) != 0 };
         self.index += 1;
-        if value.type_name() == expected || expected == "any" {
-            Ok((name, value))
-        } else {
-            Err(Error::ArgumentType {
+        Ok(value)
+    }
+
+    fn next_i64(&mut self) -> Result<i64> {
+        let name = self.current_name();
+        if self.index >= self.len() {
+            return Err(Error::MissingArgument(name));
+        }
+        let index = StackIndex::argument(self.index).raw();
+        let actual_type = unsafe { sys::lua_type(self.state.as_ptr(), index) };
+        let value = match actual_type {
+            sys::LUA_TINTEGER => {
+                let mut is_integer = 0;
+                unsafe { sys::lua_tointeger64(self.state.as_ptr(), index, &mut is_integer) }
+            }
+            sys::LUA_TNUMBER => {
+                let mut is_number = 0;
+                let value =
+                    unsafe { sys::lua_tonumberx(self.state.as_ptr(), index, &mut is_number) };
+                checked_i64_arg(name.clone(), value)?
+            }
+            _ => {
+                return Err(Error::ArgumentType {
+                    name,
+                    expected: "number",
+                    actual: stack_type_name(actual_type),
+                });
+            }
+        };
+        self.index += 1;
+        Ok(value)
+    }
+
+    fn next_f64(&mut self) -> Result<f64> {
+        let name = self.current_name();
+        if self.index >= self.len() {
+            return Err(Error::MissingArgument(name));
+        }
+        let index = StackIndex::argument(self.index).raw();
+        let actual_type = unsafe { sys::lua_type(self.state.as_ptr(), index) };
+        let value = match actual_type {
+            sys::LUA_TINTEGER => {
+                let mut is_integer = 0;
+                unsafe { sys::lua_tointeger64(self.state.as_ptr(), index, &mut is_integer) as f64 }
+            }
+            sys::LUA_TNUMBER => {
+                let mut is_number = 0;
+                unsafe { sys::lua_tonumberx(self.state.as_ptr(), index, &mut is_number) }
+            }
+            _ => {
+                return Err(Error::ArgumentType {
+                    name,
+                    expected: "number",
+                    actual: stack_type_name(actual_type),
+                });
+            }
+        };
+        self.index += 1;
+        Ok(value)
+    }
+
+    fn next_named_value(&mut self, expected: &'static str) -> Result<(Arc<str>, Value)> {
+        let name = self.current_name();
+        if self.index >= self.len() {
+            return Err(Error::MissingArgument(name));
+        }
+        let actual = self.type_name_at(self.index);
+        if actual != expected && expected != "any" {
+            return Err(Error::ArgumentType {
                 name,
                 expected,
-                actual: value.type_name(),
-            })
+                actual,
+            });
+        }
+        let value = self.value_at(self.index);
+        self.index += 1;
+        Ok((name, value))
+    }
+
+    fn next_borrowed_bytes(&mut self, expected: &'static str) -> Result<&[u8]> {
+        self.next_named_borrowed_bytes(expected)
+            .map(|(_, bytes)| bytes)
+    }
+
+    fn next_named_borrowed_bytes(&mut self, expected: &'static str) -> Result<(Arc<str>, &[u8])> {
+        let name = self.current_name();
+        if self.index >= self.len() {
+            return Err(Error::MissingArgument(name));
+        }
+        let index = self.index;
+        let actual = self.type_name_at(index);
+        if actual != expected {
+            return Err(Error::ArgumentType {
+                name,
+                expected,
+                actual,
+            });
+        }
+        self.index += 1;
+        let bytes = self.bytes_at(index, expected);
+        Ok((name, bytes))
+    }
+
+    fn current_name(&self) -> Arc<str> {
+        self.names
+            .get(self.index)
+            .cloned()
+            .unwrap_or_else(|| Arc::from(format!("arg{}", self.index + 1)))
+    }
+
+    fn len(&self) -> usize {
+        self.argc
+    }
+
+    fn is_nil(&self, index: usize) -> bool {
+        self.type_name_at(index) == "nil"
+    }
+
+    fn value_at(&self, index: usize) -> Value {
+        self.vm
+            .read_value_from(self.state, StackIndex::argument(index))
+    }
+
+    fn bytes_at(&self, index: usize, expected: &'static str) -> &[u8] {
+        unsafe {
+            let index = StackIndex::argument(index).raw();
+            let mut len = 0usize;
+            let ptr = if expected == "buffer" {
+                sys::lua_tobuffer(self.state.as_ptr(), index, &mut len).cast::<u8>()
+            } else {
+                sys::lua_tolstring(self.state.as_ptr(), index, &mut len).cast::<u8>()
+            };
+            if ptr.is_null() {
+                &[]
+            } else {
+                std::slice::from_raw_parts(ptr, len)
+            }
+        }
+    }
+
+    fn type_name_at(&self, index: usize) -> &'static str {
+        unsafe {
+            stack_type_name(sys::lua_type(
+                self.state.as_ptr(),
+                StackIndex::argument(index).raw(),
+            ))
         }
     }
 }
 
-#[derive(Clone, Default)]
+fn stack_type_name(type_id: i32) -> &'static str {
+    match type_id {
+        sys::LUA_TNIL | sys::LUA_TNONE => "nil",
+        sys::LUA_TBOOLEAN => "boolean",
+        sys::LUA_TINTEGER | sys::LUA_TNUMBER => "number",
+        sys::LUA_TSTRING => "string",
+        sys::LUA_TTABLE => "table",
+        sys::LUA_TFUNCTION => "function",
+        sys::LUA_TTHREAD => "thread",
+        sys::LUA_TBUFFER => "buffer",
+        sys::LUA_TUSERDATA => "userdata",
+        _ => "unknown",
+    }
+}
+
+fn checked_i64_arg(name: Arc<str>, value: f64) -> Result<i64> {
+    if value.is_finite()
+        && value.fract() == 0.0
+        && value >= i64::MIN as f64
+        && value < 9_223_372_036_854_775_808.0
+    {
+        Ok(value as i64)
+    } else {
+        Err(Error::ArgumentType {
+            name,
+            expected: "integer",
+            actual: "number",
+        })
+    }
+}
+
+#[derive(Clone)]
 pub struct ReturnWriter<'vm> {
-    state: Rc<RefCell<ReturnState>>,
-    _vm: PhantomData<&'vm Vm>,
+    state: NonNull<ReturnState>,
+    _marker: PhantomData<&'vm ReturnState>,
+}
+
+impl<'vm> ReturnWriter<'vm> {
+    fn borrowed(state: &'vm mut ReturnState) -> Self {
+        Self {
+            state: NonNull::from(state),
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn write<T: ToLuau>(&mut self, value: T) -> Result<()> {
+        value.write(self)
+    }
+
+    pub fn request_yield(&mut self) {
+        self.with_state_mut(|state| state.yield_requested = true);
+    }
+
+    fn push(&mut self, value: Value) {
+        self.with_state_mut(|state| state.values.push(value));
+    }
+
+    fn with_state_mut<T>(&mut self, callback: impl FnOnce(&mut ReturnState) -> T) -> T {
+        unsafe { callback(self.state.as_mut()) }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -1405,41 +2110,77 @@ struct ReturnState {
     yield_requested: bool,
 }
 
-impl<'vm> ReturnWriter<'vm> {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn write<T: ToLuau>(&mut self, value: T) -> Result<()> {
-        value.write(self)
-    }
-
-    pub fn into_values(self) -> Vec<Value> {
-        match Rc::try_unwrap(self.state) {
-            Ok(state) => state.into_inner().values,
-            Err(state) => state.borrow().values.clone(),
-        }
-    }
-
-    fn push(&mut self, value: Value) {
-        self.state.borrow_mut().values.push(value);
-    }
-
-    fn request_yield(&mut self) {
-        self.state.borrow_mut().yield_requested = true;
-    }
-
-    fn snapshot(&self) -> ReturnState {
-        self.state.borrow().clone()
-    }
-}
-
 pub trait FromLuau<'vm>: Sized {
     fn read(reader: &mut ArgReader<'vm>) -> Result<Self>;
 }
 
 pub trait ToLuau {
     fn write(self, writer: &mut ReturnWriter<'_>) -> Result<()>;
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum ReturnValues {
+    #[default]
+    None,
+    One(Value),
+    Many(Vec<Value>),
+}
+
+impl ReturnValues {
+    pub fn none() -> Self {
+        Self::None
+    }
+
+    pub fn one(value: Value) -> Self {
+        Self::One(value)
+    }
+
+    pub fn many(values: Vec<Value>) -> Self {
+        match values.len() {
+            0 => Self::None,
+            1 => Self::One(values.into_iter().next().expect("single return value")),
+            _ => Self::Many(values),
+        }
+    }
+
+    pub fn as_slice(&self) -> &[Value] {
+        match self {
+            Self::None => &[],
+            Self::One(value) => std::slice::from_ref(value),
+            Self::Many(values) => values,
+        }
+    }
+
+    pub fn write_to(self, writer: &mut ReturnWriter<'_>) -> Result<()> {
+        match self {
+            Self::None => {}
+            Self::One(value) => writer.write(value)?,
+            Self::Many(values) => {
+                for value in values {
+                    writer.write(value)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn extend_into(self, values: &mut Vec<Value>) {
+        match self {
+            Self::None => {}
+            Self::One(value) => values.push(value),
+            Self::Many(mut many) => values.append(&mut many),
+        }
+    }
+}
+
+pub trait IntoLuauReturn {
+    fn into_luau_return(self) -> Result<ReturnValues>;
+}
+
+impl IntoLuauReturn for ReturnValues {
+    fn into_luau_return(self) -> Result<ReturnValues> {
+        Ok(self)
+    }
 }
 
 impl Value {
@@ -1455,6 +2196,7 @@ impl Value {
             Self::Table(_) => "table",
             Self::Function(_) => "function",
             Self::Thread(_) => "thread",
+            Self::UserData(_) => "userdata",
         }
     }
 }
@@ -1472,6 +2214,12 @@ impl ToLuau for Value {
     }
 }
 
+impl IntoLuauReturn for Value {
+    fn into_luau_return(self) -> Result<ReturnValues> {
+        Ok(ReturnValues::one(self))
+    }
+}
+
 impl ToLuau for OwnedTable {
     fn write(self, writer: &mut ReturnWriter<'_>) -> Result<()> {
         writer.push(Value::TableData(self));
@@ -1479,10 +2227,22 @@ impl ToLuau for OwnedTable {
     }
 }
 
+impl IntoLuauReturn for OwnedTable {
+    fn into_luau_return(self) -> Result<ReturnValues> {
+        Ok(ReturnValues::one(Value::TableData(self)))
+    }
+}
+
 impl ToLuau for NativeFunctionValue {
     fn write(self, writer: &mut ReturnWriter<'_>) -> Result<()> {
         writer.push(Value::NativeFunction(self));
         Ok(())
+    }
+}
+
+impl IntoLuauReturn for NativeFunctionValue {
+    fn into_luau_return(self) -> Result<ReturnValues> {
+        Ok(ReturnValues::one(Value::NativeFunction(self)))
     }
 }
 
@@ -1506,6 +2266,12 @@ impl ToLuau for Table {
     }
 }
 
+impl IntoLuauReturn for Table {
+    fn into_luau_return(self) -> Result<ReturnValues> {
+        Ok(ReturnValues::one(Value::Table(self)))
+    }
+}
+
 impl<'vm> FromLuau<'vm> for Function {
     fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
         match reader.next_value("function")? {
@@ -1523,6 +2289,12 @@ impl ToLuau for Function {
     fn write(self, writer: &mut ReturnWriter<'_>) -> Result<()> {
         writer.push(Value::Function(self));
         Ok(())
+    }
+}
+
+impl IntoLuauReturn for Function {
+    fn into_luau_return(self) -> Result<ReturnValues> {
+        Ok(ReturnValues::one(Value::Function(self)))
     }
 }
 
@@ -1546,43 +2318,60 @@ impl ToLuau for Thread {
     }
 }
 
-macro_rules! impl_luau_scalar {
-    ($ty:ty, $expected:literal, $variant:ident) => {
-        impl<'vm> FromLuau<'vm> for $ty {
-            fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
-                match reader.next_value($expected)? {
-                    Value::$variant(value) => Ok(value as $ty),
-                    other => Err(Error::ArgumentType {
-                        name: Arc::from("value"),
-                        expected: $expected,
-                        actual: other.type_name(),
-                    }),
-                }
-            }
-        }
-
-        impl ToLuau for $ty {
-            fn write(self, writer: &mut ReturnWriter<'_>) -> Result<()> {
-                writer.push(Value::$variant(self.into()));
-                Ok(())
-            }
-        }
-    };
+impl IntoLuauReturn for Thread {
+    fn into_luau_return(self) -> Result<ReturnValues> {
+        Ok(ReturnValues::one(Value::Thread(self)))
+    }
 }
 
-impl_luau_scalar!(bool, "boolean", Boolean);
-
-impl<'vm> FromLuau<'vm> for i64 {
+impl<'vm> FromLuau<'vm> for UserData {
     fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
-        match reader.next_value("number")? {
-            Value::Integer(value) => Ok(value),
-            Value::Number(value) => Ok(value as i64),
+        match reader.next_value("userdata")? {
+            Value::UserData(value) => Ok(value),
             other => Err(Error::ArgumentType {
                 name: Arc::from("value"),
-                expected: "number",
+                expected: "userdata",
                 actual: other.type_name(),
             }),
         }
+    }
+}
+
+impl ToLuau for UserData {
+    fn write(self, writer: &mut ReturnWriter<'_>) -> Result<()> {
+        writer.push(Value::UserData(self));
+        Ok(())
+    }
+}
+
+impl IntoLuauReturn for UserData {
+    fn into_luau_return(self) -> Result<ReturnValues> {
+        Ok(ReturnValues::one(Value::UserData(self)))
+    }
+}
+
+impl<'vm> FromLuau<'vm> for bool {
+    fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
+        reader.next_bool()
+    }
+}
+
+impl ToLuau for bool {
+    fn write(self, writer: &mut ReturnWriter<'_>) -> Result<()> {
+        writer.push(Value::Boolean(self));
+        Ok(())
+    }
+}
+
+impl IntoLuauReturn for bool {
+    fn into_luau_return(self) -> Result<ReturnValues> {
+        Ok(ReturnValues::one(Value::Boolean(self)))
+    }
+}
+
+impl<'vm> FromLuau<'vm> for i64 {
+    fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
+        reader.next_i64()
     }
 }
 
@@ -1593,17 +2382,15 @@ impl ToLuau for i64 {
     }
 }
 
+impl IntoLuauReturn for i64 {
+    fn into_luau_return(self) -> Result<ReturnValues> {
+        Ok(ReturnValues::one(Value::Integer(self)))
+    }
+}
+
 impl<'vm> FromLuau<'vm> for f64 {
     fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
-        match reader.next_value("number")? {
-            Value::Integer(value) => Ok(value as f64),
-            Value::Number(value) => Ok(value),
-            other => Err(Error::ArgumentType {
-                name: Arc::from("value"),
-                expected: "number",
-                actual: other.type_name(),
-            }),
-        }
+        reader.next_f64()
     }
 }
 
@@ -1614,16 +2401,17 @@ impl ToLuau for f64 {
     }
 }
 
+impl IntoLuauReturn for f64 {
+    fn into_luau_return(self) -> Result<ReturnValues> {
+        Ok(ReturnValues::one(Value::Number(self)))
+    }
+}
+
 impl<'vm> FromLuau<'vm> for ByteString {
     fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
-        match reader.next_value("string")? {
-            Value::String(value) => Ok(Self(value)),
-            other => Err(Error::ArgumentType {
-                name: Arc::from("value"),
-                expected: "string",
-                actual: other.type_name(),
-            }),
-        }
+        reader
+            .next_borrowed_bytes("string")
+            .map(|bytes| Self(bytes.to_vec()))
     }
 }
 
@@ -1634,6 +2422,12 @@ impl ToLuau for ByteString {
     }
 }
 
+impl IntoLuauReturn for ByteString {
+    fn into_luau_return(self) -> Result<ReturnValues> {
+        Ok(ReturnValues::one(Value::String(self.0)))
+    }
+}
+
 impl ToLuau for Vec<u8> {
     fn write(self, writer: &mut ReturnWriter<'_>) -> Result<()> {
         writer.push(Value::String(self));
@@ -1641,83 +2435,33 @@ impl ToLuau for Vec<u8> {
     }
 }
 
+impl IntoLuauReturn for Vec<u8> {
+    fn into_luau_return(self) -> Result<ReturnValues> {
+        Ok(ReturnValues::one(Value::String(self)))
+    }
+}
+
 impl<'vm> FromLuau<'vm> for String {
     fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
-        match reader.next_named_value("string")? {
-            (name, Value::String(value)) => {
-                String::from_utf8(value).map_err(|error| Error::InvalidUtf8Argument { name, error })
-            }
-            (_, other) => Err(Error::ArgumentType {
-                name: Arc::from("value"),
-                expected: "string",
-                actual: other.type_name(),
-            }),
-        }
+        let (name, bytes) = reader.next_named_borrowed_bytes("string")?;
+        String::from_utf8(bytes.to_vec())
+            .map_err(|error| Error::InvalidUtf8Argument { name, error })
     }
 }
 
-impl<'vm> FromLuau<'vm> for Option<String> {
+impl<'vm, T> FromLuau<'vm> for Option<T>
+where
+    T: FromLuau<'vm>,
+{
     fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
-        if reader.index >= reader.values.len() {
+        if reader.index >= reader.len() {
             return Ok(None);
         }
-        if matches!(reader.values.get(reader.index), Some(Value::Nil)) {
+        if reader.is_nil(reader.index) {
             reader.index += 1;
             return Ok(None);
         }
-        String::read(reader).map(Some)
-    }
-}
-
-impl<'vm> FromLuau<'vm> for Option<f64> {
-    fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
-        if reader.index >= reader.values.len() {
-            return Ok(None);
-        }
-        if matches!(reader.values.get(reader.index), Some(Value::Nil)) {
-            reader.index += 1;
-            return Ok(None);
-        }
-        f64::read(reader).map(Some)
-    }
-}
-
-impl<'vm> FromLuau<'vm> for Option<i64> {
-    fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
-        if reader.index >= reader.values.len() {
-            return Ok(None);
-        }
-        if matches!(reader.values.get(reader.index), Some(Value::Nil)) {
-            reader.index += 1;
-            return Ok(None);
-        }
-        i64::read(reader).map(Some)
-    }
-}
-
-impl<'vm> FromLuau<'vm> for Option<bool> {
-    fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
-        if reader.index >= reader.values.len() {
-            return Ok(None);
-        }
-        if matches!(reader.values.get(reader.index), Some(Value::Nil)) {
-            reader.index += 1;
-            return Ok(None);
-        }
-        bool::read(reader).map(Some)
-    }
-}
-
-impl<'vm> FromLuau<'vm> for Option<ByteString> {
-    fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
-        if reader.index >= reader.values.len() {
-            return Ok(None);
-        }
-        if matches!(reader.values.get(reader.index), Some(Value::Nil)) {
-            reader.index += 1;
-            return Ok(None);
-        }
-        ByteString::read(reader).map(Some)
+        T::read(reader).map(Some)
     }
 }
 
@@ -1736,16 +2480,21 @@ where
     }
 }
 
+impl<T> IntoLuauReturn for Option<T>
+where
+    T: IntoLuauReturn,
+{
+    fn into_luau_return(self) -> Result<ReturnValues> {
+        match self {
+            Some(value) => value.into_luau_return(),
+            None => Ok(ReturnValues::one(Value::Nil)),
+        }
+    }
+}
+
 impl<'vm> FromLuau<'vm> for Vec<u8> {
     fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
-        match reader.next_value("string")? {
-            Value::String(value) => Ok(value),
-            other => Err(Error::ArgumentType {
-                name: Arc::from("value"),
-                expected: "string",
-                actual: other.type_name(),
-            }),
-        }
+        reader.next_borrowed_bytes("string").map(ToOwned::to_owned)
     }
 }
 
@@ -1756,6 +2505,12 @@ impl ToLuau for String {
     }
 }
 
+impl IntoLuauReturn for String {
+    fn into_luau_return(self) -> Result<ReturnValues> {
+        Ok(ReturnValues::one(Value::String(self.into_bytes())))
+    }
+}
+
 impl ToLuau for &str {
     fn write(self, writer: &mut ReturnWriter<'_>) -> Result<()> {
         writer.push(Value::String(self.as_bytes().to_vec()));
@@ -1763,11 +2518,107 @@ impl ToLuau for &str {
     }
 }
 
-pub type ScheduledFuture =
-    std::pin::Pin<Box<dyn Future<Output = Result<Vec<Value>>> + Send + 'static>>;
+impl IntoLuauReturn for &str {
+    fn into_luau_return(self) -> Result<ReturnValues> {
+        Ok(ReturnValues::one(Value::String(self.as_bytes().to_vec())))
+    }
+}
+
+impl ToLuau for () {
+    fn write(self, _writer: &mut ReturnWriter<'_>) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl IntoLuauReturn for () {
+    fn into_luau_return(self) -> Result<ReturnValues> {
+        Ok(ReturnValues::none())
+    }
+}
+
+macro_rules! impl_into_luau_return_tuple {
+    ($($name:ident),+ $(,)?) => {
+        impl<$($name),+> IntoLuauReturn for ($($name,)+)
+        where
+            $($name: IntoLuauReturn,)+
+        {
+            #[allow(non_snake_case)]
+            fn into_luau_return(self) -> Result<ReturnValues> {
+                let ($($name,)+) = self;
+                let mut values = Vec::new();
+                $(
+                    $name.into_luau_return()?.extend_into(&mut values);
+                )+
+                Ok(ReturnValues::many(values))
+            }
+        }
+    };
+}
+
+impl_into_luau_return_tuple!(A, B);
+impl_into_luau_return_tuple!(A, B, C);
+impl_into_luau_return_tuple!(A, B, C, D);
+
+pub struct ScheduledFuture {
+    start_delay: Option<Duration>,
+    state: ScheduledFutureState,
+}
+
+enum ScheduledFutureState {
+    Future(std::pin::Pin<Box<dyn Future<Output = Result<ReturnValues>> + 'static>>),
+}
+
+impl ScheduledFuture {
+    pub fn new<F, T>(future: F) -> Self
+    where
+        F: Future<Output = Result<T>> + 'static,
+        T: IntoLuauReturn + 'static,
+    {
+        Self::with_start_delay(None, future)
+    }
+
+    pub fn after<F, T>(delay: Duration, future: F) -> Self
+    where
+        F: Future<Output = Result<T>> + 'static,
+        T: IntoLuauReturn + 'static,
+    {
+        Self::with_start_delay(Some(delay), future)
+    }
+
+    pub fn take_start_delay(&mut self) -> Option<Duration> {
+        self.start_delay.take()
+    }
+
+    fn with_start_delay<F, T>(start_delay: Option<Duration>, future: F) -> Self
+    where
+        F: Future<Output = Result<T>> + 'static,
+        T: IntoLuauReturn + 'static,
+    {
+        Self {
+            start_delay,
+            state: ScheduledFutureState::Future(Box::pin(async move {
+                future.await?.into_luau_return()
+            })),
+        }
+    }
+}
+
+impl Future for ScheduledFuture {
+    type Output = Result<ReturnValues>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        match &mut self.state {
+            ScheduledFutureState::Future(future) => future.as_mut().poll(cx),
+        }
+    }
+}
+
 pub type NativeFn = Arc<dyn for<'vm> Fn(CallFrame<'vm>) -> Result<()> + Send + Sync + 'static>;
 pub type NativeAsyncFn =
-    Arc<dyn for<'vm> Fn(CallFrame<'vm>) -> Result<ScheduledFuture> + Send + Sync + 'static>;
+    Arc<dyn for<'vm> Fn(AsyncCallFrame<'vm>) -> Result<ScheduledFuture> + Send + Sync + 'static>;
 
 #[derive(Clone, Debug)]
 pub struct NativeFunctionOptions {
@@ -1776,6 +2627,7 @@ pub struct NativeFunctionOptions {
     pub task_group: TaskGroupId,
     pub function_name: Option<Arc<str>>,
     pub argument_names: Vec<Arc<str>>,
+    pub use_thread_context_origin: bool,
 }
 
 impl NativeFunctionOptions {
@@ -1786,6 +2638,7 @@ impl NativeFunctionOptions {
             task_group: TaskGroupId(0),
             function_name: None,
             argument_names: Vec::new(),
+            use_thread_context_origin: false,
         }
     }
 
@@ -1808,6 +2661,11 @@ impl NativeFunctionOptions {
         self.argument_names = names.into_iter().collect();
         self
     }
+
+    pub fn use_thread_context_origin(mut self, enabled: bool) -> Self {
+        self.use_thread_context_origin = enabled;
+        self
+    }
 }
 
 struct CallbackSlot {
@@ -1819,6 +2677,7 @@ struct CallbackSlot {
     task_group: TaskGroupId,
     function_name: Option<Arc<str>>,
     argument_names: Vec<Arc<str>>,
+    use_thread_context_origin: bool,
 }
 
 #[derive(Clone)]
@@ -1917,15 +2776,37 @@ pub struct CallFrame<'vm> {
     pub returns: ReturnWriter<'vm>,
 }
 
-impl CallFrame<'_> {
+impl<'vm> CallFrame<'vm> {
+    pub fn into_async(self) -> AsyncCallFrame<'vm> {
+        AsyncCallFrame {
+            vm: self.vm,
+            thread: self.thread,
+            context: self.context,
+            args: self.args,
+        }
+    }
+
     pub fn yield_now(&mut self) {
         self.returns.request_yield();
     }
 }
 
+pub struct AsyncCallFrame<'vm> {
+    pub vm: &'vm Vm,
+    pub thread: Thread,
+    pub context: CallContext,
+    pub args: ArgReader<'vm>,
+}
+
 unsafe extern "C-unwind" fn drop_callback_slot(userdata: *mut c_void) {
     unsafe {
         ptr::drop_in_place(userdata.cast::<CallbackSlot>());
+    }
+}
+
+unsafe extern "C-unwind" fn drop_userdata<T>(_: *mut sys::lua_State, userdata: *mut c_void) {
+    unsafe {
+        ptr::drop_in_place(userdata.cast::<T>());
     }
 }
 
@@ -1951,13 +2832,9 @@ unsafe extern "C-unwind" fn native_callback(state: *mut sys::lua_State) -> i32 {
         Ok(context) => context,
         Err(error) => return lua_error(state.as_ptr(), &error.to_string()),
     };
+    let mut return_state = ReturnState::default();
+    let returns = ReturnWriter::borrowed(&mut return_state);
     let argc = unsafe { sys::lua_gettop(state.as_ptr()) };
-    let mut args = Vec::with_capacity(argc.max(0) as usize);
-    for index in 1..=argc {
-        args.push(vm.read_value_from(state, index));
-    }
-
-    let returns = ReturnWriter::new();
     let thread_reference = vm.ref_current_thread_from(state);
     let caller = thread_context
         .as_ref()
@@ -1967,30 +2844,38 @@ unsafe extern "C-unwind" fn native_callback(state: *mut sys::lua_State) -> i32 {
         .as_ref()
         .map(|context| context.task_group)
         .unwrap_or(slot.task_group);
+    let origin = if slot.use_thread_context_origin {
+        thread_context
+            .as_ref()
+            .map(|context| context.origin.clone())
+            .unwrap_or_else(|| slot.origin.clone())
+    } else {
+        slot.origin.clone()
+    };
     let frame = CallFrame {
         vm: &vm,
         thread: Thread::new(
             Some(thread_reference),
             state,
             slot.vm_id,
-            slot.origin.clone(),
+            origin.clone(),
             true,
             false,
         ),
         context: CallContext {
-            origin: slot.origin.clone(),
+            origin,
             capability: slot.capability.clone(),
             caller,
             task_group,
         },
-        args: ArgReader::with_names(args, slot.argument_names.clone()),
+        args: ArgReader::stack(&vm, state, argc, slot.argument_names.clone()),
         returns: returns.clone(),
     };
 
     let result = catch_unwind(AssertUnwindSafe(|| (slot.callback)(frame)));
+    drop(returns);
     match result {
         Ok(Ok(())) => {
-            let return_state = returns.snapshot();
             for value in &return_state.values {
                 if let Err(error) = vm.push_value_to(state, value) {
                     return lua_error(state.as_ptr(), &error.to_string());
@@ -2034,6 +2919,13 @@ fn current_unix_seconds() -> i64 {
         .unwrap_or(0)
 }
 
+fn current_unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
+
 fn format_os_date(format: &str, timestamp: i64) -> Result<String> {
     if format != "!%Y-%m-%dT%H:%M:%SZ" {
         return Err(Error::Runtime(format!(
@@ -2061,6 +2953,30 @@ fn lua_error(state: *mut sys::lua_State, message: &str) -> i32 {
     unsafe {
         sys::lua_pushlstring(state, message.as_ptr().cast(), message.len());
         sys::lua_error(state);
+    }
+}
+
+unsafe extern "C-unwind" fn interrupt(state: *mut sys::lua_State, gc: c_int) {
+    if state.is_null() || gc >= 0 {
+        return;
+    }
+
+    let control = unsafe {
+        sys::lua_callback_userdata(state)
+            .cast::<VmControl>()
+            .as_ref()
+    };
+    let Some(control) = control else {
+        return;
+    };
+
+    let deadline = control.interrupt_deadline_millis.load(Ordering::Acquire);
+    if deadline != 0 && current_unix_millis() >= deadline {
+        unsafe {
+            sys::lua_checkstack(state, 1);
+            sys::lua_pushlstring(state, c"Luau execution interrupted".as_ptr(), 26);
+            sys::lua_error(state);
+        }
     }
 }
 
@@ -2149,18 +3065,42 @@ impl Drop for CompiledBytecode {
 }
 
 unsafe extern "C-unwind" fn alloc(
-    _ud: *mut c_void,
+    ud: *mut c_void,
     ptr: *mut c_void,
-    _osize: usize,
+    osize: usize,
     nsize: usize,
 ) -> *mut c_void {
+    let control = unsafe { ud.cast::<VmControl>().as_ref() };
     if nsize == 0 {
         unsafe {
             libc::free(ptr);
         }
+        if let Some(control) = control {
+            let allocated = control.allocated.load(Ordering::Relaxed);
+            control
+                .allocated
+                .store(allocated.saturating_sub(osize), Ordering::Relaxed);
+        }
         ptr::null_mut()
     } else {
-        unsafe { libc::realloc(ptr, nsize) }
+        if let Some(control) = control {
+            let allocated = control.allocated.load(Ordering::Relaxed);
+            let next_allocated = match allocated.saturating_sub(osize).checked_add(nsize) {
+                Some(value) => value,
+                None => return ptr::null_mut(),
+            };
+            let limit = control.memory_limit.load(Ordering::Relaxed);
+            if limit != 0 && next_allocated > limit {
+                return ptr::null_mut();
+            }
+            let result = unsafe { libc::realloc(ptr, nsize) };
+            if !result.is_null() {
+                control.allocated.store(next_allocated, Ordering::Relaxed);
+            }
+            result
+        } else {
+            unsafe { libc::realloc(ptr, nsize) }
+        }
     }
 }
 
@@ -2353,10 +3293,34 @@ mod tests {
         table.set_raw(&vm, "name", Value::String(b"demo".to_vec()))?;
         table.set_raw(&vm, "count", Value::Integer(7))?;
         table.set_integer_raw(&vm, 1, Value::String(b"first".to_vec()))?;
+        table.set_integer_raw(&vm, 2, Value::Integer(9))?;
 
         assert_eq!(table.vm_id(), vm.id());
         assert_eq!(table.get_raw(&vm, "name")?, Value::String(b"demo".to_vec()));
         assert_eq!(table.get_raw(&vm, "count")?, Value::Integer(7));
+        assert_eq!(table.raw_len(&vm)?, 2);
+        assert_eq!(
+            table.get_integer_raw(&vm, 1)?,
+            Value::String(b"first".to_vec())
+        );
+        assert_eq!(
+            table.array_values_raw(&vm)?,
+            vec![Value::String(b"first".to_vec()), Value::Integer(9)]
+        );
+        {
+            let reader = table.reader(&vm)?;
+            assert_eq!(reader.raw_len(), 2);
+            assert_eq!(reader.get_raw("name")?, Value::String(b"demo".to_vec()));
+            assert_eq!(reader.get_integer_raw(2)?, Value::Integer(9));
+            assert_eq!(
+                reader.get_fields_raw(&["name", "count"])?,
+                vec![Value::String(b"demo".to_vec()), Value::Integer(7)]
+            );
+            assert_eq!(
+                reader.array_values_raw()?,
+                vec![Value::String(b"first".to_vec()), Value::Integer(9)]
+            );
+        }
         assert!(table.pairs_raw(&vm)?.contains(&(
             Value::String(b"name".to_vec()),
             Value::String(b"demo".to_vec())
@@ -2424,6 +3388,48 @@ mod tests {
     }
 
     #[test]
+    fn userdata_handles_store_vm_owned_rust_values() -> Result<()> {
+        #[derive(Debug, PartialEq)]
+        struct PluginObject {
+            value: i64,
+        }
+
+        let vm = Vm::new()?;
+        let tag = UserDataTag::new(1)?;
+        let other_tag = UserDataTag::new(2)?;
+        let userdata = vm.create_userdata(tag, PluginObject { value: 42 })?;
+
+        assert_eq!(userdata.vm_id(), vm.id());
+        assert_eq!(userdata.tag(), tag);
+        assert_eq!(userdata.borrow::<PluginObject>(&vm, tag)?.value, 42);
+        assert!(matches!(
+            userdata.borrow::<PluginObject>(&vm, other_tag),
+            Err(Error::UserDataTypeMismatch { .. })
+        ));
+
+        let callback_tag = tag;
+        let callback: NativeFn = Arc::new(move |mut frame| {
+            let userdata: UserData = frame.args.read_named("object")?;
+            let object = userdata.borrow::<PluginObject>(frame.vm, callback_tag)?;
+            frame.returns.write(object.value)?;
+            Ok(())
+        });
+        let function = vm.create_function_with_options(
+            NativeFunctionOptions::new(ChunkOrigin::default())
+                .function_name("value")
+                .argument_names([Arc::from("object")]),
+            callback,
+        )?;
+
+        assert_eq!(
+            function.call(&vm, &[Value::UserData(userdata)])?,
+            vec![Value::Integer(42)]
+        );
+        assert_eq!(vm.stack_top_for_tests(), 0);
+        Ok(())
+    }
+
+    #[test]
     fn thread_resumes_loaded_function_with_owned_args() -> Result<()> {
         let vm = Vm::new()?;
         let function = vm.load_chunk(&Chunk::new(
@@ -2444,6 +3450,37 @@ mod tests {
             Err(Error::Runtime(message)) if message.contains("already completed")
         ));
         assert_eq!(vm.stack_top_for_tests(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn interrupt_budget_stops_cpu_bound_thread() -> Result<()> {
+        let vm = Vm::new()?;
+        let function = vm.load_chunk(&Chunk::new(
+            Arc::<[u8]>::from(&b"while true do end"[..]),
+            ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&function)?;
+
+        let _guard = vm.interrupt_after(Duration::ZERO);
+        let error = thread
+            .resume(&vm, &[])
+            .expect_err("interrupt budget should stop the loop");
+
+        assert!(matches!(
+            error,
+            Error::Runtime(message) if message.contains("interrupted")
+        ));
+        assert_eq!(vm.stack_top_for_tests(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn vm_options_track_memory_limit_and_usage() -> Result<()> {
+        let vm = Vm::with_options(VmOptions::default().memory_limit(1024 * 1024))?;
+
+        assert_eq!(vm.memory_limit(), Some(1024 * 1024));
+        assert!(vm.memory_used() > 0);
         Ok(())
     }
 
@@ -2656,6 +3693,37 @@ mod tests {
     }
 
     #[test]
+    fn native_callbacks_can_borrow_string_and_buffer_args() -> Result<()> {
+        let vm = Vm::new()?;
+        let callback: NativeFn = Arc::new(|mut frame| {
+            let text_len = frame.args.read_named_str("text")?.len() as i64;
+            let data_len = frame.args.read_named_buffer_bytes("data")?.len() as i64;
+            frame.returns.write(text_len)?;
+            frame.returns.write(data_len)?;
+            Ok(())
+        });
+        let function = vm.create_function_with_options(
+            NativeFunctionOptions::new(ChunkOrigin::default())
+                .function_name("borrowed")
+                .argument_names([Arc::from("text"), Arc::from("data")]),
+            callback,
+        )?;
+
+        assert_eq!(
+            function.call(
+                &vm,
+                &[
+                    Value::String(b"hello".to_vec()),
+                    Value::Buffer(vec![1, 2, 3, 4])
+                ],
+            )?,
+            vec![Value::Integer(5), Value::Integer(4)]
+        );
+        assert_eq!(vm.stack_top_for_tests(), 0);
+        Ok(())
+    }
+
+    #[test]
     fn vm_data_stores_typed_metadata() -> Result<()> {
         #[derive(Debug, PartialEq, Eq)]
         struct RuntimeLabel(&'static str);
@@ -2673,11 +3741,25 @@ mod tests {
     }
 
     #[test]
-    fn arg_reader_reports_named_type_errors() {
-        let mut reader = ArgReader::new(vec![Value::String(b"bad".to_vec())]);
-        let error = reader.read_named::<i64>("track_id").unwrap_err();
+    fn native_callbacks_reject_fractional_integer_args() -> Result<()> {
+        let vm = Vm::new()?;
+        let callback: NativeFn = Arc::new(|mut frame| {
+            let _: i64 = frame.args.read_named("track_id")?;
+            Ok(())
+        });
+        let function = vm.create_function_with_options(
+            NativeFunctionOptions::new(ChunkOrigin::default())
+                .function_name("integer_arg")
+                .argument_names([Arc::from("track_id")]),
+            callback,
+        )?;
+        let error = function
+            .call(&vm, &[Value::Number(1.5)])
+            .expect_err("fractional Luau number must not read as integer");
 
         assert!(error.to_string().contains("track_id"));
-        assert!(error.to_string().contains("expected number"));
+        assert!(error.to_string().contains("expected integer"));
+        assert_eq!(vm.stack_top_for_tests(), 0);
+        Ok(())
     }
 }

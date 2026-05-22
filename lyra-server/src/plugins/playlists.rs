@@ -173,7 +173,7 @@ fn list_spec() -> FunctionSpec {
     FunctionSpec::async_fn("list")
         .context::<Principal>()
         .returns::<Vec<PlaylistInfo>>()
-        .call_async_native(Arc::new(list_callback))
+        .call_async(Arc::new(list_callback))
 }
 
 fn get_by_id_spec() -> FunctionSpec {
@@ -182,7 +182,7 @@ fn get_by_id_spec() -> FunctionSpec {
         .arg_name("id")
         .args::<ResolveId>()
         .returns::<Option<PlaylistInfo>>()
-        .call_async_native(Arc::new(get_by_id_callback))
+        .call_async(Arc::new(get_by_id_callback))
 }
 
 fn get_by_user_spec() -> FunctionSpec {
@@ -191,7 +191,7 @@ fn get_by_user_spec() -> FunctionSpec {
         .arg_name("user_id")
         .args::<i64>()
         .returns::<Vec<PlaylistInfo>>()
-        .call_async_native(Arc::new(get_by_user_callback))
+        .call_async(Arc::new(get_by_user_callback))
 }
 
 fn get_owner_spec() -> FunctionSpec {
@@ -200,7 +200,7 @@ fn get_owner_spec() -> FunctionSpec {
         .arg_name("playlist_id")
         .args::<ResolveId>()
         .returns::<Option<i64>>()
-        .call_async_native(Arc::new(get_owner_callback))
+        .call_async(Arc::new(get_owner_callback))
 }
 
 fn get_tracks_spec() -> FunctionSpec {
@@ -209,7 +209,7 @@ fn get_tracks_spec() -> FunctionSpec {
         .arg_name("playlist_id")
         .args::<ResolveId>()
         .returns::<Vec<PlaylistTrackLink>>()
-        .call_async_native(Arc::new(get_tracks_callback))
+        .call_async(Arc::new(get_tracks_callback))
 }
 
 fn get_tracks_many_spec() -> FunctionSpec {
@@ -218,7 +218,7 @@ fn get_tracks_many_spec() -> FunctionSpec {
         .arg_name("playlist_ids")
         .args::<luau::Table>()
         .returns::<luau::Table>()
-        .call_async_native(Arc::new(get_tracks_many_callback))
+        .call_async(Arc::new(get_tracks_many_callback))
 }
 
 fn create_spec() -> FunctionSpec {
@@ -227,7 +227,7 @@ fn create_spec() -> FunctionSpec {
         .arg_name("request")
         .args::<PlaylistCreateRequest>()
         .returns::<i64>()
-        .call_async_native(Arc::new(create_callback))
+        .call_async(Arc::new(create_callback))
 }
 
 fn update_spec() -> FunctionSpec {
@@ -236,7 +236,7 @@ fn update_spec() -> FunctionSpec {
         .arg_name("request")
         .args::<PlaylistUpdateRequest>()
         .returns::<Option<PlaylistInfo>>()
-        .call_async_native(Arc::new(update_callback))
+        .call_async(Arc::new(update_callback))
 }
 
 fn add_track_spec() -> FunctionSpec {
@@ -247,7 +247,7 @@ fn add_track_spec() -> FunctionSpec {
         .arg_name("track_id")
         .args::<ResolveId>()
         .returns::<i64>()
-        .call_async_native(Arc::new(add_track_callback))
+        .call_async(Arc::new(add_track_callback))
 }
 
 fn remove_track_spec() -> FunctionSpec {
@@ -256,10 +256,10 @@ fn remove_track_spec() -> FunctionSpec {
         .arg_name("entry_id")
         .args::<ResolveId>()
         .returns::<()>()
-        .call_async_native(Arc::new(remove_track_callback))
+        .call_async(Arc::new(remove_track_callback))
 }
 
-fn list_callback(frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn list_callback(frame: luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
     let store = frame
         .vm
         .data()
@@ -269,7 +269,7 @@ fn list_callback(frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::Sche
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let playlists = playlist_service::list(&db)
             .map_err(crate::plugins::runtime_error)?
@@ -283,12 +283,12 @@ fn list_callback(frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::Sche
             })
             .map(PlaylistInfo::from)
             .collect::<Vec<_>>();
-        Ok(vec![serializable_to_luau_owned(playlists)?])
+        Ok(harmony_luau::serializable_to_luau_owned(playlists)?)
     }))
 }
 
 fn get_by_id_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id = parse_resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
     let store = frame
@@ -300,7 +300,7 @@ fn get_by_id_callback(
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let query_id = id
             .to_query_id(&db)
@@ -309,24 +309,24 @@ fn get_by_id_callback(
         let Some(playlist) =
             playlist_service::get(&db, query_id).map_err(crate::plugins::runtime_error)?
         else {
-            return Ok(vec![luau::Value::Nil]);
+            return Ok(luau::Value::Nil);
         };
         let Some(playlist_db_id) = playlist.db_id.clone().map(DbId::from) else {
-            return Ok(vec![luau::Value::Nil]);
+            return Ok(luau::Value::Nil);
         };
         if !crate::routes::playlist_accessible_to_principal(&*db, &principal, playlist_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
-            return Ok(vec![luau::Value::Nil]);
+            return Ok(luau::Value::Nil);
         }
-        Ok(vec![serializable_to_luau_owned(PlaylistInfo::from(
-            playlist,
-        ))?])
+        Ok(harmony_luau::serializable_to_luau_owned(
+            PlaylistInfo::from(playlist),
+        )?)
     }))
 }
 
 fn get_by_user_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let owner_db_id = DbId(frame.args.read_named::<i64>("user_id")?);
     let store = frame
@@ -338,11 +338,11 @@ fn get_by_user_callback(
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         if owner_db_id != principal.user_db_id {
-            return Ok(vec![
-                serializable_to_luau_owned(Vec::<PlaylistInfo>::new())?,
-            ]);
+            return Ok(harmony_luau::serializable_to_luau_owned(
+                Vec::<PlaylistInfo>::new(),
+            )?);
         }
         let db = db.read().await;
         let playlists = playlist_service::get_by_user(&db, owner_db_id)
@@ -350,12 +350,12 @@ fn get_by_user_callback(
             .into_iter()
             .map(PlaylistInfo::from)
             .collect::<Vec<_>>();
-        Ok(vec![serializable_to_luau_owned(playlists)?])
+        Ok(harmony_luau::serializable_to_luau_owned(playlists)?)
     }))
 }
 
 fn get_owner_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let playlist_id = parse_resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
     let store = frame
@@ -367,32 +367,32 @@ fn get_owner_callback(
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let Some(playlist_id) = playlist_id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
         else {
-            return Ok(vec![luau::Value::Nil]);
+            return Ok(luau::Value::Nil);
         };
         let QueryId::Id(playlist_db_id) = playlist_id else {
-            return Ok(vec![luau::Value::Nil]);
+            return Ok(luau::Value::Nil);
         };
         if !crate::routes::playlist_accessible_to_principal(&*db, &principal, playlist_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
-            return Ok(vec![luau::Value::Nil]);
+            return Ok(luau::Value::Nil);
         }
         let owner_id = playlist_service::get_owner(&db, QueryId::Id(playlist_db_id))
             .map_err(crate::plugins::runtime_error)?
             .map(|id| luau::Value::Integer(id.0))
             .unwrap_or(luau::Value::Nil);
-        Ok(vec![owner_id])
+        Ok(owner_id)
     }))
 }
 
 fn get_tracks_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let playlist_id = parse_resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
     let store = frame
@@ -404,24 +404,25 @@ fn get_tracks_callback(
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let playlist_id = playlist_id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
             .ok_or_else(|| crate::plugins::runtime_error("could not resolve playlist id"))?;
         let QueryId::Id(playlist_db_id) = playlist_id else {
-            return Ok(vec![serializable_to_luau_owned(
-                Vec::<PlaylistTrackLink>::new(),
-            )?]);
+            return Ok(harmony_luau::serializable_to_luau_owned(Vec::<
+                PlaylistTrackLink,
+            >::new(
+            ))?);
         };
         let links = visible_track_links(&db, &principal, playlist_db_id)?;
-        Ok(vec![serializable_to_luau_owned(links)?])
+        Ok(harmony_luau::serializable_to_luau_owned(links)?)
     }))
 }
 
 fn get_tracks_many_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let playlist_ids: luau::Table = frame.args.read_named("playlist_ids")?;
     let playlist_ids = parse_db_ids(frame.vm, &playlist_ids)?;
@@ -434,7 +435,7 @@ fn get_tracks_many_callback(
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let result = playlist_service::get_tracks_many(&db, &playlist_ids)
             .map_err(crate::plugins::runtime_error)?;
@@ -453,15 +454,17 @@ fn get_tracks_many_callback(
             } else {
                 Vec::new()
             };
-            let value = serializable_to_luau_owned(links)?;
+            let value = harmony_luau::serializable_to_luau_owned(links)?;
             table.set_key(luau::Value::Integer(id.0), value.clone());
             table.set_key(luau::Value::Number(id.0 as f64), value);
         }
-        Ok(vec![luau::Value::TableData(table)])
+        Ok(luau::Value::TableData(table))
     }))
 }
 
-fn create_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn create_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request: luau::Table = frame.args.read_named("request")?;
     let request = parse_create_request(frame.vm, request)?;
     let store = frame
@@ -473,7 +476,7 @@ fn create_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         if DbId(request.user_id) != principal.user_db_id {
             return Err(crate::plugins::runtime_error("user not found"));
         }
@@ -481,11 +484,13 @@ fn create_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau
         let mut db = db.write().await;
         let playlist_id =
             playlist_service::create(&mut db, &request).map_err(crate::plugins::runtime_error)?;
-        Ok(vec![luau::Value::Number(playlist_id.0 as f64)])
+        Ok(luau::Value::Number(playlist_id.0 as f64))
     }))
 }
 
-fn update_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn update_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request: luau::Table = frame.args.read_named("request")?;
     let request = parse_update_request(frame.vm, request)?;
     let store = frame
@@ -497,7 +502,7 @@ fn update_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
         let playlist_id = request
             .playlist_id
@@ -505,24 +510,24 @@ fn update_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau
             .map_err(crate::plugins::runtime_error)?
             .ok_or_else(|| crate::plugins::runtime_error("could not resolve playlist id"))?;
         let QueryId::Id(playlist_db_id) = playlist_id else {
-            return Ok(vec![luau::Value::Nil]);
+            return Ok(luau::Value::Nil);
         };
         if !playlist_owned_by_principal(&*db, &principal, playlist_db_id)? {
-            return Ok(vec![luau::Value::Nil]);
+            return Ok(luau::Value::Nil);
         }
         let request = request.into_service_request(QueryId::Id(playlist_db_id));
         let playlist = playlist_service::update(&mut db, &request)
             .map_err(crate::plugins::runtime_error)?
             .map(PlaylistInfo::from)
-            .map(serializable_to_luau_owned)
+            .map(harmony_luau::serializable_to_luau_owned)
             .transpose()?
             .unwrap_or(luau::Value::Nil);
-        Ok(vec![playlist])
+        Ok(playlist)
     }))
 }
 
 fn add_track_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let playlist_id = parse_resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
     let track_id = parse_resolve_id(frame.args.read_named::<luau::Value>("track_id")?)?;
@@ -535,7 +540,7 @@ fn add_track_callback(
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
         let playlist_id = playlist_id
             .to_query_id(&db)
@@ -567,12 +572,12 @@ fn add_track_callback(
             QueryId::Id(track_db_id),
         )
         .map_err(crate::plugins::runtime_error)?;
-        Ok(vec![luau::Value::Number(link.edge_id.0 as f64)])
+        Ok(luau::Value::Number(link.edge_id.0 as f64))
     }))
 }
 
 fn remove_track_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let entry_id = parse_resolve_id(frame.args.read_named::<luau::Value>("entry_id")?)?;
     let store = frame
@@ -584,7 +589,7 @@ fn remove_track_callback(
     let db = store.db()?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
         let entry_id = entry_id
             .to_query_id(&db)
@@ -596,14 +601,14 @@ fn remove_track_callback(
         let Some(playlist_db_id) = playlist_service::get_playlist_for_entry(&db, entry_db_id)
             .map_err(crate::plugins::runtime_error)?
         else {
-            return Ok(Vec::new());
+            return Ok(());
         };
         if !playlist_owned_by_principal(&*db, &principal, playlist_db_id)? {
-            return Ok(Vec::new());
+            return Ok(());
         }
         playlist_service::remove_track(&mut db, QueryId::Id(entry_db_id))
             .map_err(crate::plugins::runtime_error)?;
-        Ok(Vec::new())
+        Ok(())
     }))
 }
 
@@ -836,11 +841,6 @@ fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
             other.type_name()
         ))),
     }
-}
-
-fn serializable_to_luau_owned<T: serde::Serialize>(value: T) -> luau::runtime::Result<luau::Value> {
-    let value = serde_json::to_value(value).map_err(crate::plugins::runtime_error)?;
-    harmony_json::json_to_luau_owned(value, 0)
 }
 
 impl LuauTypeInfo for PlaylistInfo {

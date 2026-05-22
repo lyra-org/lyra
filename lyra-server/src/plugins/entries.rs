@@ -67,10 +67,12 @@ fn get_spec() -> FunctionSpec {
         .arg_name("id")
         .args::<Option<ResolveId>>()
         .returns::<Vec<EntryRecord>>()
-        .call_async_native(std::sync::Arc::new(get_callback))
+        .call_async(std::sync::Arc::new(get_callback))
 }
 
-fn get_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn get_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id = frame
         .args
         .read_optional_named::<luau::Value>("id")?
@@ -84,7 +86,7 @@ fn get_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::S
         .clone();
     let db = store.db()?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let entries = match id {
             None => db::entries::get(&db, "libraries").map_err(crate::plugins::runtime_error)?,
@@ -114,7 +116,7 @@ fn get_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::S
             .into_iter()
             .map(EntryRecord::from)
             .collect::<Vec<_>>();
-        Ok(vec![crate::plugins::serializable_to_luau_owned(entries)?])
+        harmony_luau::serializable_to_luau_owned(entries)
     }))
 }
 

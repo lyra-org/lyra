@@ -15,7 +15,8 @@ harmony-crypt = { path = "../harmony-crypt" }
 harmony-globals = { path = "../harmony-globals" }
 harmony-json = { path = "../harmony-json" }
 harmony-http = { path = "../harmony-http" }
-harmony-luau = { path = "../harmony-luau" }
+harmony-luau = { path = "../harmony-luau", features = ["serde"] }
+harmony-macros = { path = "../harmony-macros" }
 harmony-task = { path = "../harmony-task" }
 harmony-net = { path = "../harmony-net" }
 agdb = { git = "https://github.com/agnesoft/agdb.git", features = ["serde"] }

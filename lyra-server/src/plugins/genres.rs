@@ -229,7 +229,7 @@ fn get_by_id_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<(
         db::genres::get_by_id(&db, DbId(genre_id)).map_err(crate::plugins::runtime_error)
     })?;
 
-    write_optional_genre(frame.vm, &mut frame.returns, genre)
+    write_optional_genre(&mut frame.returns, genre)
 }
 
 fn find_by_name_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
@@ -252,7 +252,7 @@ fn find_by_name_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Resul
         db::genres::get_by_id(&db, db_id).map_err(crate::plugins::runtime_error)
     })?;
 
-    write_optional_genre(frame.vm, &mut frame.returns, genre)
+    write_optional_genre(&mut frame.returns, genre)
 }
 
 fn get_parents_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
@@ -265,13 +265,14 @@ fn get_parents_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result
         db::genres::get_parents(&db, DbId(genre_id)).map_err(crate::plugins::runtime_error)
     })?;
 
-    frame.returns.write(serializable_to_luau(
-        frame.vm,
-        genres
-            .into_iter()
-            .map(GenreRecord::from)
-            .collect::<Vec<_>>(),
-    )?)
+    frame
+        .returns
+        .write(harmony_luau::serializable_to_luau_owned(
+            genres
+                .into_iter()
+                .map(GenreRecord::from)
+                .collect::<Vec<_>>(),
+        )?)
 }
 
 fn get_children_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
@@ -284,13 +285,14 @@ fn get_children_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Resul
         db::genres::get_children(&db, DbId(genre_id)).map_err(crate::plugins::runtime_error)
     })?;
 
-    frame.returns.write(serializable_to_luau(
-        frame.vm,
-        genres
-            .into_iter()
-            .map(GenreRecord::from)
-            .collect::<Vec<_>>(),
-    )?)
+    frame
+        .returns
+        .write(harmony_luau::serializable_to_luau_owned(
+            genres
+                .into_iter()
+                .map(GenreRecord::from)
+                .collect::<Vec<_>>(),
+        )?)
 }
 
 fn get_releases_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
@@ -303,10 +305,11 @@ fn get_releases_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Resul
         db::genres::get_releases(&db, DbId(genre_id)).map_err(crate::plugins::runtime_error)
     })?;
 
-    frame.returns.write(serializable_to_luau(
-        frame.vm,
-        release_ids.into_iter().map(|id| id.0).collect::<Vec<_>>(),
-    )?)
+    frame
+        .returns
+        .write(harmony_luau::serializable_to_luau_owned(
+            release_ids.into_iter().map(|id| id.0).collect::<Vec<_>>(),
+        )?)
 }
 
 fn get_releases_many_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
@@ -333,7 +336,7 @@ fn get_releases_many_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::
             frame.vm,
             &table,
             id,
-            serializable_to_luau(frame.vm, release_ids)?,
+            harmony_luau::serializable_to_luau_owned(release_ids)?,
         )?;
     }
     frame.returns.write(table)
@@ -349,13 +352,14 @@ fn get_for_release_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Re
         db::genres::get_for_release(&db, DbId(release_id)).map_err(crate::plugins::runtime_error)
     })?;
 
-    frame.returns.write(serializable_to_luau(
-        frame.vm,
-        genres
-            .into_iter()
-            .map(GenreRecord::from)
-            .collect::<Vec<_>>(),
-    )?)
+    frame
+        .returns
+        .write(harmony_luau::serializable_to_luau_owned(
+            genres
+                .into_iter()
+                .map(GenreRecord::from)
+                .collect::<Vec<_>>(),
+        )?)
 }
 
 fn get_for_releases_many_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
@@ -378,7 +382,12 @@ fn get_for_releases_many_callback(mut frame: luau::CallFrame<'_>) -> luau::runti
             .into_iter()
             .map(GenreRecord::from)
             .collect::<Vec<_>>();
-        set_db_id_key(frame.vm, &table, id, serializable_to_luau(frame.vm, value)?)?;
+        set_db_id_key(
+            frame.vm,
+            &table,
+            id,
+            harmony_luau::serializable_to_luau_owned(value)?,
+        )?;
     }
     frame.returns.write(table)
 }
@@ -463,12 +472,13 @@ impl From<db::genres::Genre> for GenreRecord {
 }
 
 fn write_optional_genre(
-    vm: &luau::Vm,
     returns: &mut luau::ReturnWriter<'_>,
     genre: Option<db::genres::Genre>,
 ) -> luau::runtime::Result<()> {
     match genre {
-        Some(genre) => returns.write(serializable_to_luau(vm, GenreRecord::from(genre))?),
+        Some(genre) => returns.write(harmony_luau::serializable_to_luau_owned(
+            GenreRecord::from(genre),
+        )?),
         None => returns.write(luau::Value::Nil),
     }
 }
@@ -536,14 +546,6 @@ fn set_db_id_key(
             table.set_raw(vm, &key.0.to_string(), value)
         }
     }
-}
-
-fn serializable_to_luau<T: Serialize>(
-    vm: &luau::Vm,
-    value: T,
-) -> luau::runtime::Result<luau::Value> {
-    let value = serde_json::to_value(value).map_err(crate::plugins::runtime_error)?;
-    harmony_json::json_to_luau(vm, value, 0)
 }
 
 impl LuauTypeInfo for GenreRecord {

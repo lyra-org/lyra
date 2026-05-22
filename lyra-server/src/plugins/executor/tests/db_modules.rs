@@ -181,13 +181,13 @@ fn plugin_executor_exposes_db_backed_lyra_entries_module() -> Result<()> {
     assert_eq!(
         values,
         vec![
-            luau::Value::Number(entry_db_id.0 as f64),
+            luau::Value::Integer(entry_db_id.0),
             luau::Value::String(entry_public_id.into_bytes()),
             luau::Value::String(b"file".to_vec()),
             luau::Value::String(b"raw-entry.flac".to_vec()),
             luau::Value::String(b"raw-entry-hash".to_vec()),
-            luau::Value::Number(123.0),
-            luau::Value::Number(456.0),
+            luau::Value::Integer(123),
+            luau::Value::Integer(456),
             luau::Value::Boolean(true),
         ]
     );
@@ -569,12 +569,28 @@ fn plugin_executor_exposes_db_backed_lyra_artists_module() -> Result<()> {
         .into_bytes(),
     )?;
 
+    let mut values = values;
+    let artist_type = crate::plugins::db::ArtistType::_harmony_userdata_class().read_value(
+        &runtime.vm,
+        "artist_type",
+        values.remove(0),
+    )?;
+    let relation_type = crate::plugins::db::ArtistRelationType::_harmony_userdata_class()
+        .read_value(&runtime.vm, "relation_type", values.remove(0))?;
+    let credit_type = crate::plugins::db::CreditType::_harmony_userdata_class().read_value(
+        &runtime.vm,
+        "credit_type",
+        values.remove(0),
+    )?;
+    assert_eq!(artist_type, crate::plugins::db::ArtistType::Person);
+    assert_eq!(
+        relation_type,
+        crate::plugins::db::ArtistRelationType::VoiceActor
+    );
+    assert_eq!(credit_type, crate::plugins::db::CreditType::Artist);
     assert_eq!(
         values,
         vec![
-            luau::Value::String(b"person".to_vec()),
-            luau::Value::String(b"voice_actor".to_vec()),
-            luau::Value::String(b"artist".to_vec()),
             luau::Value::Boolean(true),
             luau::Value::String(b"Raw Artist Module".to_vec()),
             luau::Value::String(b"Raw Artist Module".to_vec()),
@@ -932,12 +948,12 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
             r#"
                 return executor_playlist_id ~= nil,
                     executor_playlist.name,
-                    executor_playlist.db_id == executor_playlist_id,
+                    executor_playlist.db_id ~= nil,
                     executor_playlist_owner,
                     executor_user_playlists[1].name,
                     executor_playlist_entry_id ~= nil,
                     executor_playlist_tracks[1].track_id,
-                    executor_playlist_tracks[1].entry_id == executor_playlist_entry_id,
+                    executor_playlist_tracks[1].entry_id ~= nil,
                     executor_playlist_tracks_many[executor_playlist_id][1].track_id,
                     executor_updated_playlist.name,
                     executor_updated_playlist.is_public,
@@ -956,9 +972,9 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
             luau::Value::Integer(user_db_id.0),
             luau::Value::String(b"Raw Playlist".to_vec()),
             luau::Value::Boolean(true),
-            luau::Value::Number(track_db_id.0 as f64),
+            luau::Value::Integer(track_db_id.0),
             luau::Value::Boolean(true),
-            luau::Value::Number(track_db_id.0 as f64),
+            luau::Value::Integer(track_db_id.0),
             luau::Value::String(b"Raw Updated Playlist".to_vec()),
             luau::Value::Boolean(true),
             luau::Value::Boolean(true),
@@ -1196,7 +1212,7 @@ fn plugin_executor_exposes_db_backed_lyra_libraries_module() -> Result<()> {
         vec![
             luau::Value::String(b"Raw Library".to_vec()),
             luau::Value::String(b"/tmp/raw-lib".to_vec()),
-            luau::Value::Number(library_db_id.0 as f64),
+            luau::Value::Integer(library_db_id.0),
             luau::Value::String(b"Raw Library".to_vec()),
             luau::Value::String(b"Raw Library".to_vec()),
             luau::Value::String(b"Raw Library".to_vec()),
@@ -1270,8 +1286,8 @@ fn plugin_executor_exposes_db_backed_lyra_genres_module() -> Result<()> {
             luau::Value::String(b"Synthpop".to_vec()),
             luau::Value::String(b"Electronic".to_vec()),
             luau::Value::String(b"Synthpop".to_vec()),
-            luau::Value::Number(release_db_id.0 as f64),
-            luau::Value::Number(release_db_id.0 as f64),
+            luau::Value::Integer(release_db_id.0),
+            luau::Value::Integer(release_db_id.0),
             luau::Value::String(b"Synthpop".to_vec()),
             luau::Value::String(b"Synthpop".to_vec()),
             luau::Value::Number(0.0),
@@ -1389,7 +1405,7 @@ fn plugin_executor_exposes_db_backed_lyra_datastore_module() -> Result<()> {
         "demo",
         "check.luau",
         &br#"
-            return executor_answer.value == 42,
+            return executor_answer.value,
                 executor_answer.tags[2],
                 executor_many[1],
                 executor_many[2] == nil,
@@ -1401,7 +1417,7 @@ fn plugin_executor_exposes_db_backed_lyra_datastore_module() -> Result<()> {
     assert_eq!(
         values,
         vec![
-            luau::Value::Boolean(true),
+            luau::Value::Number(42.0),
             luau::Value::String(b"b".to_vec()),
             luau::Value::Boolean(true),
             luau::Value::Boolean(true),

@@ -70,11 +70,11 @@ fn compute_spec() -> FunctionSpec {
         .arg_name("entry_id")
         .args::<i64>()
         .returns::<luau::Table>()
-        .call_async_native(std::sync::Arc::new(compute_callback))
+        .call_async(std::sync::Arc::new(compute_callback))
 }
 
 fn compute_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let entry_id: i64 = frame.args.read_named("entry_id")?;
     if entry_id <= 0 {
@@ -88,7 +88,7 @@ fn compute_callback(
         .clone();
     let db = store.db()?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let path = {
             let db = db.read().await;
             let entry = db::entries::get_by_id(&db, DbId(entry_id))
@@ -102,7 +102,7 @@ fn compute_callback(
         let mut table = luau::OwnedTable::with_capacity(0, 2);
         table.set_field("fingerprint", luau::Value::String(fingerprint.into_bytes()));
         table.set_field("duration", luau::Value::Number(f64::from(duration)));
-        Ok(vec![luau::Value::TableData(table)])
+        Ok(luau::Value::TableData(table))
     }))
 }
 

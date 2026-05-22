@@ -20,19 +20,15 @@ use harmony_core::{
 };
 use harmony_luau as luau;
 use harmony_luau::{
-    ClassDescriptor,
     DescribeInterface,
     DescribeModule,
+    DescribeUserData,
     FieldDescriptor,
     FunctionParameter,
     LuauType,
     LuauTypeInfo,
-    MethodDescriptor,
-    MethodKind,
     ModuleDescriptor,
     ModuleFunctionDescriptor,
-    NativeFunctionOptions,
-    NativeFunctionValue,
     ParameterDescriptor,
     TypeAliasDescriptor,
     render_definition_file_with_support,
@@ -62,7 +58,6 @@ use crate::{
 
 struct MixHandler;
 struct MixRecentListensHandler;
-struct Mixer;
 struct MixModule;
 
 #[derive(Default)]
@@ -137,9 +132,150 @@ impl LuauTypeInfo for MixRecentListensHandler {
     }
 }
 
-impl LuauTypeInfo for Mixer {
-    fn luau_type() -> LuauType {
-        LuauType::literal("Mixer")
+#[harmony_macros::userdata(name = "Mixer")]
+#[derive(Clone)]
+struct Mixer {
+    id: String,
+}
+
+#[harmony_macros::userdata_methods]
+impl Mixer {
+    #[harmony(
+        description = "Registers a handler for generating a mix from a seed track.",
+        args(handler: MixHandler)
+    )]
+    fn from_track(
+        &self,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        self.register_handler(context, vm, MixSeedType::Track, handler)
+    }
+
+    #[harmony(
+        description = "Registers a handler for generating a mix from a seed release.",
+        args(handler: MixHandler)
+    )]
+    fn from_release(
+        &self,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        self.register_handler(context, vm, MixSeedType::Release, handler)
+    }
+
+    #[harmony(
+        description = "Registers a handler for generating a mix from a seed artist.",
+        args(handler: MixHandler)
+    )]
+    fn from_artist(
+        &self,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        self.register_handler(context, vm, MixSeedType::Artist, handler)
+    }
+
+    #[harmony(
+        description = "Registers a handler for generating a mix from a user's recent listens.",
+        args(handler: MixRecentListensHandler)
+    )]
+    fn from_recent_listens(
+        &self,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        self.register_handler(context, vm, MixSeedType::RecentListens, handler)
+    }
+
+    #[harmony(
+        description = "Registers a handler for generating a mix from a seed genre.",
+        args(handler: MixHandler)
+    )]
+    fn from_genre(
+        &self,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        self.register_handler(context, vm, MixSeedType::Genre, handler)
+    }
+
+    #[harmony(
+        description = "Registers a handler for generating a mix from a seed playlist.",
+        args(handler: MixHandler)
+    )]
+    fn from_playlist(
+        &self,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        self.register_handler(context, vm, MixSeedType::Playlist, handler)
+    }
+
+    #[harmony(
+        description = "Declares an option clients can toggle when requesting a mix.",
+        args(config: OptionConfig)
+    )]
+    fn declare_option(
+        &self,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+        config: luau::Table,
+    ) -> luau::runtime::Result<()> {
+        let plugin_id = self.current_plugin_id(context)?;
+        ensure_registration_open(&plugin_id)?;
+        let option = parse_option_declaration(vm, &config)?;
+        futures::executor::block_on(async {
+            mix_service::MIX_REGISTRY
+                .write()
+                .await
+                .declare_option(&self.id, option)
+        })
+        .map_err(crate::plugins::runtime_error)
+    }
+
+    #[harmony(skip)]
+    fn register_handler(
+        &self,
+        context: &luau::CallContext,
+        vm: &luau::Vm,
+        seed_type: MixSeedType,
+        function: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        let plugin_id = self.current_plugin_id(context)?;
+        ensure_registration_open(&plugin_id)?;
+        let handlers = vm.data().get::<MixCallbackRegistry>()?;
+        let handler_id = handlers.register(
+            self.id.clone(),
+            seed_type,
+            function,
+            core_call_context(context),
+        );
+        futures::executor::block_on(async {
+            mix_service::MIX_REGISTRY
+                .write()
+                .await
+                .set_seed_callback(&self.id, seed_type, handler_id);
+        });
+        Ok(())
+    }
+
+    #[harmony(skip)]
+    fn current_plugin_id(
+        &self,
+        context: &luau::CallContext,
+    ) -> luau::runtime::Result<crate::plugins::lifecycle::PluginId> {
+        let plugin_id = context.origin.plugin.clone().ok_or_else(|| {
+            crate::plugins::runtime_error("mix.Mixer methods must be called from plugin Luau code")
+        })?;
+        crate::plugins::lifecycle::PluginId::new(plugin_id.to_string())
+            .map_err(crate::plugins::runtime_error)
     }
 }
 
@@ -162,12 +298,13 @@ pub(crate) fn module_spec() -> ModuleSpec {
             "instant_mix_from_audio",
             instant_mix_from_audio_callback,
         ))
+        .userdata(Mixer::_harmony_userdata_spec())
         .install(|_| Ok(ModuleExport::new(MixModule)))
 }
 
 fn consumer_spec(
     name: &'static str,
-    callback: fn(luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture>,
+    callback: fn(luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture>,
 ) -> FunctionSpec {
     FunctionSpec::async_fn(name)
         .arg_name("seed_id")
@@ -175,7 +312,7 @@ fn consumer_spec(
         .arg_name("opts")
         .args::<Option<luau::Value>>()
         .returns::<Option<Vec<Track>>>()
-        .call_async_native(Arc::new(callback))
+        .call_async(Arc::new(callback))
 }
 
 fn mixer_new_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
@@ -218,38 +355,12 @@ fn mixer_new_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<(
         Ok::<(), luau::Error>(())
     })?;
 
-    let mut table = luau::OwnedTable::with_capacity(0, 7);
-    table.set_field(
-        "from_track",
-        register_handler_method(&frame, id.clone(), MixSeedType::Track, "from_track"),
-    );
-    table.set_field(
-        "from_release",
-        register_handler_method(&frame, id.clone(), MixSeedType::Release, "from_release"),
-    );
-    table.set_field(
-        "from_artist",
-        register_handler_method(&frame, id.clone(), MixSeedType::Artist, "from_artist"),
-    );
-    table.set_field(
-        "from_recent_listens",
-        register_handler_method(
-            &frame,
-            id.clone(),
-            MixSeedType::RecentListens,
-            "from_recent_listens",
-        ),
-    );
-    table.set_field(
-        "from_genre",
-        register_handler_method(&frame, id.clone(), MixSeedType::Genre, "from_genre"),
-    );
-    table.set_field(
-        "from_playlist",
-        register_handler_method(&frame, id.clone(), MixSeedType::Playlist, "from_playlist"),
-    );
-    table.set_field("declare_option", declare_option_method(&frame, id));
-    frame.returns.write(luau::Value::TableData(table))
+    let mixer = Mixer { id };
+    frame.returns.write(Mixer::_harmony_userdata_class().create(
+        frame.vm,
+        &frame.context.origin,
+        mixer,
+    )?)
 }
 
 fn ensure_registration_open(
@@ -265,150 +376,81 @@ fn ensure_registration_open(
     })
 }
 
-fn register_handler_method(
-    frame: &luau::CallFrame<'_>,
-    mixer_id: String,
-    seed_type: MixSeedType,
-    name: &'static str,
-) -> luau::Value {
-    let options = NativeFunctionOptions::new(frame.context.origin.clone())
-        .function_name(name)
-        .argument_names([Arc::<str>::from("self"), Arc::<str>::from("handler")]);
-    luau::Value::NativeFunction(NativeFunctionValue::new(
-        options,
-        Arc::new(move |mut frame| {
-            let _self_value: luau::Value = frame.args.read_named("self")?;
-            let function: luau::Function = frame.args.read_named("handler")?;
-            let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
-                crate::plugins::runtime_error(
-                    "mix.Mixer methods must be called from plugin Luau code",
-                )
-            })?;
-            let plugin_id = crate::plugins::lifecycle::PluginId::new(plugin_id.to_string())
-                .map_err(crate::plugins::runtime_error)?;
-            ensure_registration_open(&plugin_id)?;
-            let handlers = frame.vm.data().get::<MixCallbackRegistry>()?;
-            let handler_id = handlers.register(
-                mixer_id.clone(),
-                seed_type,
-                function,
-                core_call_context(&frame.context),
-            );
-            futures::executor::block_on(async {
-                mix_service::MIX_REGISTRY
-                    .write()
-                    .await
-                    .set_seed_callback(&mixer_id, seed_type, handler_id);
-            });
-            Ok(())
-        }),
-    ))
-}
-
-fn declare_option_method(frame: &luau::CallFrame<'_>, mixer_id: String) -> luau::Value {
-    let options = NativeFunctionOptions::new(frame.context.origin.clone())
-        .function_name("declare_option")
-        .argument_names([Arc::<str>::from("self"), Arc::<str>::from("config")]);
-    luau::Value::NativeFunction(NativeFunctionValue::new(
-        options,
-        Arc::new(move |mut frame| {
-            let _self_value: luau::Value = frame.args.read_named("self")?;
-            let config: luau::Table = frame.args.read_named("config")?;
-            let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
-                crate::plugins::runtime_error(
-                    "mix.Mixer methods must be called from plugin Luau code",
-                )
-            })?;
-            let plugin_id = crate::plugins::lifecycle::PluginId::new(plugin_id.to_string())
-                .map_err(crate::plugins::runtime_error)?;
-            ensure_registration_open(&plugin_id)?;
-            let option = parse_option_declaration(frame.vm, &config)?;
-            futures::executor::block_on(async {
-                mix_service::MIX_REGISTRY
-                    .write()
-                    .await
-                    .declare_option(&mixer_id, option)
-            })
-            .map_err(crate::plugins::runtime_error)
-        }),
-    ))
-}
-
 fn from_track_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let seed = parse_seed_id(frame.args.read_named("seed_id")?, "from_track")?;
     let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let tracks = mix_service::from_track(seed, &options)
             .await
             .map_err(crate::plugins::runtime_error)?;
-        Ok(vec![tracks_to_luau(tracks)?])
+        Ok(tracks_to_luau(tracks)?)
     }))
 }
 
 fn from_release_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let seed = parse_seed_id(frame.args.read_named("seed_id")?, "from_release")?;
     let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let tracks = mix_service::from_release(seed, &options)
             .await
             .map_err(crate::plugins::runtime_error)?;
-        Ok(vec![tracks_to_luau(tracks)?])
+        Ok(tracks_to_luau(tracks)?)
     }))
 }
 
 fn from_artist_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let seed = parse_seed_id(frame.args.read_named("seed_id")?, "from_artist")?;
     let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let tracks = mix_service::from_artist(seed, &options)
             .await
             .map_err(crate::plugins::runtime_error)?;
-        Ok(vec![tracks_to_luau(tracks)?])
+        Ok(tracks_to_luau(tracks)?)
     }))
 }
 
 fn from_genre_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let seed = parse_seed_id(frame.args.read_named("seed_id")?, "from_genre")?;
     let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let tracks = mix_service::from_genre(seed, &options)
             .await
             .map_err(crate::plugins::runtime_error)?;
-        Ok(vec![tracks_to_luau(tracks)?])
+        Ok(tracks_to_luau(tracks)?)
     }))
 }
 
 fn from_playlist_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let seed = parse_seed_id(frame.args.read_named("seed_id")?, "from_playlist")?;
     let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let tracks = mix_service::from_playlist(seed, &options)
             .await
             .map_err(crate::plugins::runtime_error)?;
-        Ok(vec![tracks_to_luau(tracks)?])
+        Ok(tracks_to_luau(tracks)?)
     }))
 }
 
 fn instant_mix_from_audio_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let seed = parse_seed_id(frame.args.read_named("seed_id")?, "instant_mix_from_audio")?;
     let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let tracks = mix_service::instant_mix_from_audio(seed, &options)
             .await
             .map_err(crate::plugins::runtime_error)?;
-        Ok(vec![tracks_to_luau(tracks)?])
+        Ok(tracks_to_luau(tracks)?)
     }))
 }
 
@@ -606,10 +648,7 @@ fn tracks_to_luau(tracks: Option<Vec<Track>>) -> luau::runtime::Result<luau::Val
     let Some(tracks) = tracks else {
         return Ok(luau::Value::Nil);
     };
-    harmony_json::json_to_luau_owned(
-        serde_json::to_value(tracks).map_err(crate::plugins::runtime_error)?,
-        0,
-    )
+    harmony_luau::serializable_to_luau_owned(tracks)
 }
 
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
@@ -694,90 +733,6 @@ impl DescribeModule for MixModule {
             },
         ]);
         descriptor
-    }
-}
-
-impl Mixer {
-    fn class_descriptor() -> ClassDescriptor {
-        let handler = || vec![param("handler", MixHandler::luau_type())];
-        let recent_handler = || vec![param("handler", MixRecentListensHandler::luau_type())];
-        ClassDescriptor {
-            name: "Mixer",
-            description: None,
-            fields: vec![],
-            methods: vec![
-                MethodDescriptor {
-                    name: "from_track",
-                    description: Some(
-                        "Registers a handler for generating a mix from a seed track.",
-                    ),
-                    params: handler(),
-                    returns: vec![],
-                    yields: false,
-                    kind: MethodKind::Instance,
-                },
-                MethodDescriptor {
-                    name: "from_release",
-                    description: Some(
-                        "Registers a handler for generating a mix from a seed release.",
-                    ),
-                    params: handler(),
-                    returns: vec![],
-                    yields: false,
-                    kind: MethodKind::Instance,
-                },
-                MethodDescriptor {
-                    name: "from_artist",
-                    description: Some(
-                        "Registers a handler for generating a mix from a seed artist.",
-                    ),
-                    params: handler(),
-                    returns: vec![],
-                    yields: false,
-                    kind: MethodKind::Instance,
-                },
-                MethodDescriptor {
-                    name: "from_recent_listens",
-                    description: Some(
-                        "Registers a handler for generating a mix from a user's recent listens.",
-                    ),
-                    params: recent_handler(),
-                    returns: vec![],
-                    yields: false,
-                    kind: MethodKind::Instance,
-                },
-                MethodDescriptor {
-                    name: "from_genre",
-                    description: Some(
-                        "Registers a handler for generating a mix from a seed genre.",
-                    ),
-                    params: handler(),
-                    returns: vec![],
-                    yields: false,
-                    kind: MethodKind::Instance,
-                },
-                MethodDescriptor {
-                    name: "from_playlist",
-                    description: Some(
-                        "Registers a handler for generating a mix from a seed playlist.",
-                    ),
-                    params: handler(),
-                    returns: vec![],
-                    yields: false,
-                    kind: MethodKind::Instance,
-                },
-                MethodDescriptor {
-                    name: "declare_option",
-                    description: Some(
-                        "Declares an option clients can toggle when requesting a mix.",
-                    ),
-                    params: vec![param("config", OptionConfig::luau_type())],
-                    returns: vec![],
-                    yields: false,
-                    kind: MethodKind::Instance,
-                },
-            ],
-        }
     }
 }
 

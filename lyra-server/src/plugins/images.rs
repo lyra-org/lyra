@@ -243,15 +243,15 @@ async fn compose_impl(options: ComposeOptions) -> Result<ComposeResult> {
     })
 }
 fn compose_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let options_table: luau::Table = frame.args.read_named("options")?;
     let options = parse_compose_options(frame.vm, &options_table)?;
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let result = compose_impl(options)
             .await
             .map_err(|error| luau::Error::Runtime(error.to_string()))?;
-        Ok(vec![luau::Value::TableData(result.into_luau_table())])
+        Ok(luau::Value::TableData(result.into_luau_table()))
     }))
 }
 fn parse_compose_options(
@@ -352,7 +352,7 @@ fn compose_spec() -> FunctionSpec {
         .arg_name("options")
         .args::<ComposeOptions>()
         .returns::<ComposeResult>();
-    spec.call_async_native(Arc::new(compose_callback))
+    spec.call_async(Arc::new(compose_callback))
 }
 
 impl LuauTypeInfo for ComposeOptions {

@@ -143,7 +143,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .capability("lyra.metadata")
         .function(provider_new_spec())
         .function(ids_for_provider_spec())
-        .luau_initializer(install_metadata_constants)
+        .initializer(install_metadata_constants)
         .install(|_| Ok(ModuleExport::new(MetadataModule)))
 }
 

@@ -51,10 +51,7 @@ pub(super) fn api_context_value(request: &ApiHandlerRequest) -> Result<luau::Val
     if let Some(auth) = request.auth.clone() {
         ctx.set_field(
             "auth",
-            harmony_json::json_to_luau_owned(
-                serde_json::to_value(crate::plugins::auth::to_plugin_auth(auth))?,
-                0,
-            )?,
+            harmony_luau::serializable_to_luau_owned(crate::plugins::auth::to_plugin_auth(auth))?,
         );
     } else {
         ctx.set_field("auth", luau::Value::Nil);

@@ -838,6 +838,7 @@ dependencies = [
  "fastrand",
  "harmony-core",
  "harmony-luau",
+ "harmony-macros",
  "httpdate",
  "percent-encoding",
  "reqwest",
@@ -855,7 +856,6 @@ dependencies = [
  "anyhow",
  "harmony-core",
  "harmony-luau",
- "serde",
  "serde_json",
 ]
 
@@ -865,6 +865,7 @@ version = "0.0.1"
 dependencies = [
  "harmony-luau-sys",
  "libc",
+ "serde",
  "thiserror 2.0.18",
  "time",
 ]
@@ -872,10 +873,19 @@ dependencies = [
 [[package]]
 name = "harmony-luau-sys"
 version = "0.0.1"
-source = "git+https://github.com/lyra-org/harmony-luau-sys#faff001a476f75b1a2f6058f72cf994d82188b6d"
+source = "git+https://github.com/lyra-org/harmony-luau-sys#f9a33e951cbd40c7e4a10cf02c9909028c589628"
 dependencies = [
  "cc",
  "libc",
+]
+
+[[package]]
+name = "harmony-macros"
+version = "0.0.1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -885,6 +895,7 @@ dependencies = [
  "anyhow",
  "harmony-core",
  "harmony-luau",
+ "harmony-macros",
  "tokio",
 ]
 
@@ -1411,6 +1422,7 @@ dependencies = [
  "harmony-http",
  "harmony-json",
  "harmony-luau",
+ "harmony-macros",
  "harmony-net",
  "harmony-task",
  "image",

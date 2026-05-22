@@ -276,7 +276,7 @@ fn get_spec() -> FunctionSpec {
         .named_arg::<Option<String>>("language")
         .named_arg::<Option<bool>>("require_synced")
         .returns::<Option<LyricsInfo>>()
-        .call_async_native(Arc::new(get_callback))
+        .call_async(Arc::new(get_callback))
 }
 
 fn parse_lrc_spec() -> FunctionSpec {
@@ -293,7 +293,7 @@ fn upsert_spec() -> FunctionSpec {
         .named_arg::<i64>("track_id")
         .named_arg::<PluginLyricsInput>("lyrics")
         .returns::<i64>()
-        .call_async_native(Arc::new(upsert_callback))
+        .call_async(Arc::new(upsert_callback))
 }
 
 fn upsert_user_override_spec() -> FunctionSpec {
@@ -302,7 +302,7 @@ fn upsert_user_override_spec() -> FunctionSpec {
         .named_arg::<i64>("track_id")
         .named_arg::<UserLyricsUploadInput>("upload")
         .returns::<LyricsInfo>()
-        .call_async_native(Arc::new(upsert_user_override_callback))
+        .call_async(Arc::new(upsert_user_override_callback))
 }
 
 fn delete_user_override_for_track_spec() -> FunctionSpec {
@@ -311,7 +311,7 @@ fn delete_user_override_for_track_spec() -> FunctionSpec {
         .arg_name("track_id")
         .args::<i64>()
         .returns::<bool>()
-        .call_async_native(Arc::new(delete_user_override_for_track_callback))
+        .call_async(Arc::new(delete_user_override_for_track_callback))
 }
 
 fn delete_for_track_spec() -> FunctionSpec {
@@ -319,7 +319,7 @@ fn delete_for_track_spec() -> FunctionSpec {
         .context::<Principal>()
         .arg_name("track_id")
         .args::<i64>()
-        .call_async_native(Arc::new(delete_for_track_callback))
+        .call_async(Arc::new(delete_for_track_callback))
 }
 
 fn has_spec() -> FunctionSpec {
@@ -328,7 +328,7 @@ fn has_spec() -> FunctionSpec {
         .arg_name("track_id")
         .args::<i64>()
         .returns::<bool>()
-        .call_async_native(Arc::new(has_callback))
+        .call_async(Arc::new(has_callback))
 }
 
 fn has_many_spec() -> FunctionSpec {
@@ -337,26 +337,28 @@ fn has_many_spec() -> FunctionSpec {
         .arg_name("track_ids")
         .args::<Vec<u64>>()
         .returns::<std::collections::BTreeMap<u64, bool>>()
-        .call_async_native(Arc::new(has_many_callback))
+        .call_async(Arc::new(has_many_callback))
 }
 
-fn get_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn get_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_id: i64 = frame.args.read_named("track_id")?;
     let language: Option<String> = frame.args.read_optional_named("language")?;
     let require_synced: Option<bool> = frame.args.read_optional_named("require_synced")?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = DbId(track_id);
         if track_db_id.0 <= 0 {
-            return Ok(vec![luau::Value::Nil]);
+            return Ok(luau::Value::Nil);
         }
 
         let db = STATE.db.read().await;
         if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
-            return Ok(vec![luau::Value::Nil]);
+            return Ok(luau::Value::Nil);
         }
         let detail = lyrics_service::get_preferred_detail(
             &db,
@@ -370,7 +372,7 @@ fn get_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::S
             Some(detail) => lyrics_detail_to_luau_value(detail)?,
             None => luau::Value::Nil,
         };
-        Ok(vec![value])
+        Ok(value)
     }))
 }
 
@@ -382,7 +384,9 @@ fn parse_lrc_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<(
     Ok(())
 }
 
-fn upsert_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn upsert_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_id: i64 = frame.args.read_named("track_id")?;
     let lyrics_value: luau::Value = frame.args.read_named("lyrics")?;
     let lyrics: PluginLyricsInput = from_luau_json(frame.vm, &lyrics_value)?;
@@ -391,7 +395,7 @@ fn upsert_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau
         luau::Error::Runtime("lyrics.upsert must be called from plugin Luau code".into())
     })?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let now = lyrics_service::now_ms().map_err(crate::plugins::runtime_error)?;
         let input = lyrics
             .into_lyrics_input(now)
@@ -411,19 +415,19 @@ fn upsert_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau
             plugin_id.to_string(),
         )
         .map_err(crate::plugins::runtime_error)?;
-        Ok(vec![luau::Value::Integer(lyrics_db_id.0)])
+        Ok(luau::Value::Integer(lyrics_db_id.0))
     }))
 }
 
 fn upsert_user_override_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_id: i64 = frame.args.read_named("track_id")?;
     let upload_value: luau::Value = frame.args.read_named("upload")?;
     let upload: UserLyricsUploadInput = from_luau_json(frame.vm, &upload_value)?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = require_positive_id(track_id, "track_id")?;
         let now = lyrics_service::now_ms().map_err(crate::plugins::runtime_error)?;
         let UserLyricsUploadInput {
@@ -443,80 +447,82 @@ fn upsert_user_override_callback(
         }
         let detail = lyrics_service::upsert_user_lyrics_by_db_id(&mut db, track_db_id, input)
             .map_err(crate::plugins::runtime_error)?;
-        Ok(vec![lyrics_detail_to_luau_value(detail)?])
+        Ok(lyrics_detail_to_luau_value(detail)?)
     }))
 }
 
 fn delete_user_override_for_track_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_id: i64 = frame.args.read_named("track_id")?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = require_positive_id(track_id, "track_id")?;
         let mut db = STATE.db.write().await;
         if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
-            return Ok(vec![luau::Value::Boolean(false)]);
+            return Ok(luau::Value::Boolean(false));
         }
         let deleted = lyrics_service::delete_user_lyrics_for_track_by_db_id(&mut db, track_db_id)
             .map_err(crate::plugins::runtime_error)?;
-        Ok(vec![luau::Value::Boolean(deleted)])
+        Ok(luau::Value::Boolean(deleted))
     }))
 }
 
 fn delete_for_track_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_id: i64 = frame.args.read_named("track_id")?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = require_positive_id(track_id, "track_id")?;
         let mut db = STATE.db.write().await;
         if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
-            return Ok(Vec::new());
+            return Ok(());
         }
         lyrics_service::delete_all_lyrics_for_track(&mut db, track_db_id)
             .map_err(crate::plugins::runtime_error)?;
-        Ok(Vec::new())
+        Ok(())
     }))
 }
 
-fn has_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn has_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_id: i64 = frame.args.read_named("track_id")?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = DbId(track_id);
         if track_db_id.0 <= 0 {
-            return Ok(vec![luau::Value::Boolean(false)]);
+            return Ok(luau::Value::Boolean(false));
         }
 
         let db = STATE.db.read().await;
         if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
-            return Ok(vec![luau::Value::Boolean(false)]);
+            return Ok(luau::Value::Boolean(false));
         }
         let detail = lyrics_service::get_preferred_detail(&db, track_db_id, None, false)
             .map_err(crate::plugins::runtime_error)?;
-        Ok(vec![luau::Value::Boolean(detail.is_some())])
+        Ok(luau::Value::Boolean(detail.is_some()))
     }))
 }
 
 fn has_many_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_ids_table: luau::Table = frame.args.read_named("track_ids")?;
     let track_ids = parse_db_ids(frame.vm, &track_ids_table)?;
     let principal = (*frame.context.caller.get::<Principal>()?).clone();
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = STATE.db.read().await;
         let providers = db::providers::get(&db).map_err(crate::plugins::runtime_error)?;
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, track_ids.len());
@@ -552,7 +558,7 @@ fn has_many_callback(
             );
         }
 
-        Ok(vec![luau::Value::TableData(table)])
+        Ok(luau::Value::TableData(table))
     }))
 }
 impl PluginLyricsInput {
@@ -607,14 +613,7 @@ fn lyric_word_table(word: PluginLyricWordInput) -> luau::OwnedTable {
 }
 
 fn lyrics_detail_to_luau_value(detail: LyricsDetail) -> luau::runtime::Result<luau::Value> {
-    serializable_to_luau_owned(lyrics_detail_to_info(detail))
-}
-
-fn serializable_to_luau_owned<T: Serialize>(value: T) -> luau::runtime::Result<luau::Value> {
-    harmony_json::json_to_luau_owned(
-        serde_json::to_value(value).map_err(crate::plugins::runtime_error)?,
-        0,
-    )
+    harmony_luau::serializable_to_luau_owned(lyrics_detail_to_info(detail))
 }
 
 fn from_luau_json<T>(vm: &luau::Vm, value: &luau::Value) -> luau::runtime::Result<T>

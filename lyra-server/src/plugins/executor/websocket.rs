@@ -78,11 +78,11 @@ fn websocket_reader_value(
             harmony_core::async_luau_callback(Arc::new(move |mut frame| {
                 let _self_value: luau::Value = frame.args.read_named("self")?;
                 let inbound = recv_inbound.clone();
-                Ok(Box::pin(async move {
+                Ok(luau::ScheduledFuture::new(async move {
                     let mut rx = inbound.lock().await;
                     match rx.recv().await {
-                        Some(text) => Ok(vec![luau::Value::String(text.into_bytes())]),
-                        None => Ok(vec![luau::Value::Nil]),
+                        Some(text) => Ok(luau::Value::String(text.into_bytes())),
+                        None => Ok(luau::Value::Nil),
                     }
                 }))
             })),
@@ -122,12 +122,12 @@ fn websocket_sender_value(
                     return Err(luau::Error::Runtime("websocket is closed".to_string()));
                 }
                 let outbound = send_outbound.clone();
-                Ok(Box::pin(async move {
+                Ok(luau::ScheduledFuture::new(async move {
                     outbound
                         .send(text)
                         .await
                         .map_err(|_| luau::Error::Runtime("websocket is closed".to_string()))?;
-                    Ok(Vec::new())
+                    Ok(())
                 }))
             })),
         )),

@@ -116,7 +116,7 @@ fn read_string_bytes(
     name: &'static str,
 ) -> luau::runtime::Result<Vec<u8>> {
     let bytes: luau::ByteString = args.read_named(name)?;
-    Ok(bytes.into_vec())
+    Ok(bytes.0)
 }
 
 fn hash_bytes(algorithm: &str, bytes: &[u8]) -> luau::runtime::Result<String> {

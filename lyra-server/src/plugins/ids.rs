@@ -2,8 +2,10 @@
 // v1.0. If a copy of the Lyra Public License was not distributed with this file,
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::{
+    collections::HashSet,
+    sync::Arc,
+};
 
 use harmony_core::{
     FunctionSpec,
@@ -41,7 +43,7 @@ fn get_id_spec() -> FunctionSpec {
         .arg_name("db_id")
         .args::<i64>()
         .returns::<Option<String>>();
-    spec.call_async_native(Arc::new(get_id_callback))
+    spec.call_async(Arc::new(get_id_callback))
 }
 
 fn get_ids_spec() -> FunctionSpec {
@@ -49,7 +51,7 @@ fn get_ids_spec() -> FunctionSpec {
         .arg_name("db_ids")
         .args::<Vec<u64>>()
         .returns::<std::collections::BTreeMap<u64, Option<String>>>();
-    spec.call_async_native(Arc::new(get_ids_callback))
+    spec.call_async(Arc::new(get_ids_callback))
 }
 
 fn get_db_id_spec() -> FunctionSpec {
@@ -57,7 +59,7 @@ fn get_db_id_spec() -> FunctionSpec {
         .arg_name("id")
         .args::<String>()
         .returns::<Option<i64>>();
-    spec.call_async_native(Arc::new(get_db_id_callback))
+    spec.call_async(Arc::new(get_db_id_callback))
 }
 
 fn get_db_ids_spec() -> FunctionSpec {
@@ -65,9 +67,11 @@ fn get_db_ids_spec() -> FunctionSpec {
         .arg_name("ids")
         .args::<Vec<String>>()
         .returns::<std::collections::BTreeMap<String, Option<u64>>>();
-    spec.call_async_native(Arc::new(get_db_ids_callback))
+    spec.call_async(Arc::new(get_db_ids_callback))
 }
-fn get_id_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn get_id_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let db_id: i64 = frame.args.read_named("db_id")?;
     let store = frame
         .vm
@@ -75,16 +79,12 @@ fn get_id_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<luau
         .get::<IdsLookupModuleStore>()?
         .as_ref()
         .clone();
-    Ok(Box::pin(async move {
-        let id = store.find_id_by_db_id(DbId(db_id)).await?;
-        Ok(vec![
-            id.map(|id| luau::Value::String(id.into_bytes()))
-                .unwrap_or(luau::Value::Nil),
-        ])
+    Ok(luau::ScheduledFuture::new(async move {
+        store.find_id_by_db_id(DbId(db_id)).await
     }))
 }
 fn get_ids_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let table: luau::Table = frame.args.read_named("db_ids")?;
     let ids = parse_db_ids(frame.vm, &table)?;
@@ -94,7 +94,7 @@ fn get_ids_callback(
         .get::<IdsLookupModuleStore>()?
         .as_ref()
         .clone();
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let resolved = store.find_ids_by_db_ids(&ids).await?;
 
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, ids.len());
@@ -107,11 +107,11 @@ fn get_ids_callback(
                     .unwrap_or(luau::Value::Nil),
             );
         }
-        Ok(vec![luau::Value::TableData(table)])
+        Ok(table)
     }))
 }
 fn get_db_id_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id: String = frame.args.read_named("id")?;
     let store = frame
@@ -120,17 +120,12 @@ fn get_db_id_callback(
         .get::<IdsLookupModuleStore>()?
         .as_ref()
         .clone();
-    Ok(Box::pin(async move {
-        let db_id = store.find_node_id_by_id(&id).await?;
-        Ok(vec![
-            db_id
-                .map(|id| luau::Value::Integer(id.0))
-                .unwrap_or(luau::Value::Nil),
-        ])
+    Ok(luau::ScheduledFuture::new(async move {
+        Ok(store.find_node_id_by_id(&id).await?.map(|id| id.0))
     }))
 }
 fn get_db_ids_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let table: luau::Table = frame.args.read_named("ids")?;
     let ids = parse_strings(frame.vm, &table)?;
@@ -140,7 +135,7 @@ fn get_db_ids_callback(
         .get::<IdsLookupModuleStore>()?
         .as_ref()
         .clone();
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let str_refs = ids.iter().map(String::as_str).collect::<Vec<_>>();
         let resolved = store.find_node_ids_by_ids(&str_refs).await?;
 
@@ -154,7 +149,7 @@ fn get_db_ids_callback(
                     .unwrap_or(luau::Value::Nil),
             );
         }
-        Ok(vec![luau::Value::TableData(table)])
+        Ok(table)
     }))
 }
 #[derive(Clone, Default)]

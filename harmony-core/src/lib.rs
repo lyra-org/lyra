@@ -8,6 +8,7 @@ mod modules;
 mod plugin;
 mod scheduler;
 mod tokio_runtime;
+mod userdata;
 
 pub use luaurc::LuaurcConfig;
 pub use modules::{
@@ -62,3 +63,7 @@ pub use scheduler::{
     TaskState,
 };
 pub use tokio_runtime::TokioRuntimeContext;
+pub use userdata::{
+    UserDataClass,
+    UserDataType,
+};

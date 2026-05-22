@@ -3,10 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::{
-    Arc,
-    LazyLock,
-};
+use std::sync::LazyLock;
 
 use harmony_core::{
     FunctionSpec,
@@ -56,8 +53,9 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn server_info_spec() -> FunctionSpec {
-    let spec = FunctionSpec::async_fn("info").returns::<ServerInfo>();
-    spec.call_async_native(Arc::new(server_info_callback))
+    FunctionSpec::sync_fn("info")
+        .returns::<ServerInfo>()
+        .call(server_info_callback)
 }
 
 pub(crate) async fn load_server_info() -> anyhow::Result<ServerInfo> {
@@ -91,13 +89,11 @@ impl ServerInfoModuleStore {
         Self { info }
     }
 }
-fn server_info_callback(
-    frame: luau::CallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
+fn server_info_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
     let info = frame.vm.data().get::<ServerInfoModuleStore>()?.info.clone();
-    Ok(Box::pin(async move {
-        Ok(vec![luau::Value::TableData(server_info_table(&info))])
-    }))
+    frame
+        .returns
+        .write(luau::Value::TableData(server_info_table(&info)))
 }
 fn server_info_table(info: &ServerInfo) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, 7);
@@ -187,7 +183,7 @@ fn module_descriptor() -> ModuleDescriptor {
             description: Some("Returns information about the running server."),
             params: Vec::<ParameterDescriptor>::new(),
             returns: vec![ServerInfo::luau_type()],
-            yields: true,
+            yields: false,
         }],
     }
 }
@@ -213,7 +209,7 @@ mod spec_tests {
         assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "lyra.server");
         assert_eq!(spec.functions.len(), 1);
         assert_eq!(spec.functions[0].name.as_ref(), "info");
-        assert!(spec.functions[0].yields);
+        assert!(!spec.functions[0].yields);
         assert!(
             spec.functions[0]
                 .return_types

@@ -53,22 +53,6 @@ pub(crate) use surfaces::{
     render_lyra_doc_source,
 };
 
-pub(crate) fn luau_returns<T: harmony_luau::ToLuau>(
-    value: T,
-) -> harmony_luau::runtime::Result<Vec<harmony_luau::Value>> {
-    let mut writer = harmony_luau::ReturnWriter::new();
-    writer.write(value)?;
-    Ok(writer.into_values())
-}
-
-pub(crate) fn serializable_to_luau_owned<T: serde::Serialize>(
-    value: T,
-) -> harmony_luau::runtime::Result<harmony_luau::Value> {
-    let value = serde_json::to_value(value)
-        .map_err(|error| harmony_luau::Error::Runtime(error.to_string()))?;
-    harmony_json::json_to_luau_owned(value, 0)
-}
-
 pub(crate) fn set_owned_db_id_key(
     table: &mut harmony_luau::OwnedTable,
     key: agdb::DbId,

@@ -6,6 +6,7 @@ members = [
 	"harmony-http",
 	"harmony-json",
 	"harmony-luau",
+	"harmony-macros",
 	"lyra-chromaprint",
 	"lyra-ffmpeg",
 	"lyra-harmony-test",

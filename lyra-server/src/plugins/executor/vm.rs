@@ -9,6 +9,7 @@ use std::{
     fs,
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{
@@ -198,9 +199,12 @@ impl PluginExecutor {
     where
         L: SourceLoader + 'static,
     {
-        let vm = luau::Vm::new()?;
+        let vm =
+            luau::Vm::with_options(luau::VmOptions::default().memory_limit(256 * 1024 * 1024))?;
         vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
-        vm.data().insert(LocalScheduler::new())?;
+        let scheduler = LocalScheduler::new();
+        scheduler.set_luau_resume_budget(Some(Duration::from_secs(300)));
+        vm.data().insert(scheduler)?;
         vm.data()
             .insert(crate::plugins::manifests::PluginManifestModuleStore::new(
                 manifests.clone(),
@@ -233,6 +237,7 @@ impl PluginExecutor {
         for globals in harmony_globals::plugin_log_global_specs() {
             install_luau_globals(&vm, &ChunkOrigin::default(), &globals)?;
         }
+        install_luau_require(&vm, &ChunkOrigin::default())?;
 
         let tokio_runtime = TokioRuntimeContext::new()?;
 
@@ -342,12 +347,12 @@ impl PluginExecutor {
         context: CallContext,
     ) -> Result<Vec<luau::Value>> {
         let origin = context.origin.clone();
-        install_luau_require(&self.vm, &origin)?;
 
         let function = self
             .vm
             .load_chunk(&luau::Chunk::new(source, luau_origin(&origin)))?;
         let thread = self.vm.create_thread(&function)?;
+        self.vm.sandbox_thread(&thread)?;
         let scheduler = self.vm.data().get::<LocalScheduler>()?;
         scheduler.spawn_luau_thread(context, self.vm.clone(), thread.clone(), Vec::new());
         drive_luau_thread(&self.tokio_runtime, &scheduler, &thread)

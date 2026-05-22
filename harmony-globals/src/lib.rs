@@ -90,6 +90,7 @@ fn log_value_to_display_string(value: &luau::Value) -> String {
         luau::Value::Table(_) => "<table>".to_string(),
         luau::Value::Function(_) => "<function>".to_string(),
         luau::Value::Thread(_) => "<thread>".to_string(),
+        luau::Value::UserData(_) => "<userdata>".to_string(),
     }
 }
 

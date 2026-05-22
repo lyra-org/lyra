@@ -13,6 +13,7 @@ use harmony_core::{
 };
 use harmony_luau as luau;
 use harmony_luau::{
+    IntoLuauReturn,
     LuauType,
     LuauTypeInfo,
     ModuleDescriptor,
@@ -65,7 +66,7 @@ fn get_primary_source_key_spec() -> FunctionSpec {
         .arg_name("track_id")
         .args::<i64>()
         .returns::<Option<String>>()
-        .call_async_native(std::sync::Arc::new(get_primary_source_key_callback))
+        .call_async(std::sync::Arc::new(get_primary_source_key_callback))
 }
 
 fn get_primary_container_spec() -> FunctionSpec {
@@ -73,7 +74,7 @@ fn get_primary_container_spec() -> FunctionSpec {
         .arg_name("track_id")
         .args::<i64>()
         .returns::<Option<String>>()
-        .call_async_native(std::sync::Arc::new(get_primary_container_callback))
+        .call_async(std::sync::Arc::new(get_primary_container_callback))
 }
 
 fn get_primary_containers_spec() -> FunctionSpec {
@@ -81,15 +82,15 @@ fn get_primary_containers_spec() -> FunctionSpec {
         .arg_name("track_ids")
         .args::<Vec<u64>>()
         .returns::<luau::Table>()
-        .call_async_native(std::sync::Arc::new(get_primary_containers_callback))
+        .call_async(std::sync::Arc::new(get_primary_containers_callback))
 }
 
 fn get_primary_source_key_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_id: i64 = frame.args.read_named("track_id")?;
     if track_id <= 0 {
-        return Ok(Box::pin(async { Ok(vec![luau::Value::Nil]) }));
+        return Ok(luau::ScheduledFuture::new(async { Ok(luau::Value::Nil) }));
     }
 
     let store = frame
@@ -100,23 +101,23 @@ fn get_primary_source_key_callback(
         .clone();
     let db = store.db()?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let source = db::track_sources::get_primary_by_track(&db, DbId(track_id))
             .map_err(crate::plugins::runtime_error)?;
         let source_key = source
             .map(|source| source.source_key)
             .filter(|value| !value.trim().is_empty());
-        crate::plugins::luau_returns(source_key)
+        source_key.into_luau_return()
     }))
 }
 
 fn get_primary_container_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_id: i64 = frame.args.read_named("track_id")?;
     if track_id <= 0 {
-        return Ok(Box::pin(async { Ok(vec![luau::Value::Nil]) }));
+        return Ok(luau::ScheduledFuture::new(async { Ok(luau::Value::Nil) }));
     }
 
     let store = frame
@@ -127,16 +128,16 @@ fn get_primary_container_callback(
         .clone();
     let db = store.db()?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let container = resolve_primary_container(&db, DbId(track_id))
             .map_err(crate::plugins::runtime_error)?;
-        crate::plugins::luau_returns(container)
+        container.into_luau_return()
     }))
 }
 
 fn get_primary_containers_callback(
-    mut frame: luau::CallFrame<'_>,
+    mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("track_ids")?;
     let ids = parse_db_ids(frame.vm, &ids_table)?;
@@ -148,7 +149,7 @@ fn get_primary_containers_callback(
         .clone();
     let db = store.db()?;
 
-    Ok(Box::pin(async move {
+    Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, ids.len());
         for id in &ids {
@@ -159,7 +160,7 @@ fn get_primary_containers_callback(
                 .unwrap_or(luau::Value::Nil);
             crate::plugins::set_owned_db_id_key(&mut table, *id, value);
         }
-        Ok(vec![luau::Value::TableData(table)])
+        Ok(luau::Value::TableData(table))
     }))
 }
 
