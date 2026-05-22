@@ -981,7 +981,7 @@ impl DescribeModule for ApiModule {
 }
 
 fn support_aliases() -> Vec<TypeAliasDescriptor> {
-    vec![
+    let mut aliases = vec![
         TypeAliasDescriptor::new(
             "ApiMethod",
             LuauType::union(vec![
@@ -1018,11 +1018,10 @@ fn support_aliases() -> Vec<TypeAliasDescriptor> {
             LuauType::map(String::luau_type(), String::luau_type()),
             Some("String-keyed path parameter map."),
         ),
-        TypeAliasDescriptor::new(
-            "ApiResponse",
-            LuauType::literal("any"),
-            Some("API response returned by route handlers."),
-        ),
+    ];
+    aliases.extend(api_response_aliases());
+    aliases.extend([
+        JsonValue::type_alias_descriptor(),
         TypeAliasDescriptor::new(
             "ApiHandler",
             LuauType::function(
@@ -1059,8 +1058,103 @@ fn support_aliases() -> Vec<TypeAliasDescriptor> {
             ),
             Some("API WebSocket route handler."),
         ),
-        JsonValue::type_alias_descriptor(),
+    ]);
+    aliases
+}
+
+fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
+    vec![
+        response_alias(
+            "ApiJsonResponse",
+            "json",
+            [field("body", JsonValue::luau_type())],
+        ),
+        response_alias("ApiEmptyResponse", "empty", []),
+        response_alias(
+            "ApiTextResponse",
+            "text",
+            [field("body", String::luau_type())],
+        ),
+        response_alias(
+            "ApiBytesResponse",
+            "bytes",
+            [field(
+                "body",
+                LuauType::union(vec![String::luau_type(), LuauType::literal("buffer")]),
+            )],
+        ),
+        response_alias("ApiRedirectResponse", "redirect", []),
+        response_alias(
+            "ApiFileResponse",
+            "file",
+            [
+                field("path", String::luau_type()),
+                field(
+                    "transform",
+                    LuauType::optional(ImageTransformOptions::luau_type()),
+                ),
+            ],
+        ),
+        response_alias(
+            "ApiStreamTrackResponse",
+            "stream_track",
+            [
+                field("track_id", i64::luau_type()),
+                field(
+                    "options",
+                    LuauType::optional(TrackServeOptions::luau_type()),
+                ),
+            ],
+        ),
+        response_alias(
+            "ApiDownloadTrackResponse",
+            "download_track",
+            [
+                field("track_id", i64::luau_type()),
+                field(
+                    "options",
+                    LuauType::optional(TrackServeOptions::luau_type()),
+                ),
+            ],
+        ),
+        response_alias(
+            "ApiHlsPlaylistResponse",
+            "hls_playlist",
+            [
+                field("track_id", i64::luau_type()),
+                field("options", LuauType::optional(HlsServeOptions::luau_type())),
+            ],
+        ),
+        TypeAliasDescriptor::new(
+            "ApiResponse",
+            LuauType::union(vec![
+                LuauType::literal("ApiJsonResponse"),
+                LuauType::literal("ApiEmptyResponse"),
+                LuauType::literal("ApiTextResponse"),
+                LuauType::literal("ApiBytesResponse"),
+                LuauType::literal("ApiRedirectResponse"),
+                LuauType::literal("ApiFileResponse"),
+                LuauType::literal("ApiStreamTrackResponse"),
+                LuauType::literal("ApiDownloadTrackResponse"),
+                LuauType::literal("ApiHlsPlaylistResponse"),
+            ]),
+            Some("API response returned by route handlers."),
+        ),
     ]
+}
+
+fn response_alias(
+    name: &'static str,
+    kind: &'static str,
+    fields: impl IntoIterator<Item = FieldDescriptor>,
+) -> TypeAliasDescriptor {
+    let mut shape = vec![
+        field("kind", LuauType::string_literal(kind)),
+        field("status", LuauType::optional(u16::luau_type())),
+        field("headers", LuauType::optional(ApiHeaders::luau_type())),
+    ];
+    shape.extend(fields);
+    TypeAliasDescriptor::new(name, LuauType::object(shape), None)
 }
 
 fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {

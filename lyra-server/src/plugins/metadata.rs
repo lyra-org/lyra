@@ -1833,6 +1833,135 @@ fn metadata_type_aliases() -> Vec<TypeAliasDescriptor> {
             string_enum(&["voice_actor", "member_of"]),
         ),
         alias("OptionValue", union([boolean(), string(), number()])),
+        alias("ProviderSearchResult", map(string(), ty("JsonValue"))),
+        alias(
+            "ProviderSearchHandlerResult",
+            opt(union([
+                ty("ProviderSearchResult"),
+                array(ty("ProviderSearchResult")),
+            ])),
+        ),
+        alias(
+            "ProviderSearchHandler",
+            LuauType::function(
+                vec![fn_param("query", string())],
+                vec![ty("ProviderSearchHandlerResult")],
+            ),
+        ),
+        alias(
+            "ProviderCoverCandidate",
+            union([
+                string(),
+                LuauType::object(vec![
+                    field("url", opt(string())),
+                    field("cover_url", opt(string())),
+                    field("cover_image_url", opt(string())),
+                    field("cover", opt(string())),
+                    field("width", opt(number())),
+                    field("height", opt(number())),
+                ]),
+            ]),
+        ),
+        alias(
+            "ProviderCoverResult",
+            union([
+                ty("ProviderCoverCandidate"),
+                LuauType::object(vec![
+                    field("candidates", array(ty("ProviderCoverCandidate"))),
+                    field("selected_index", opt(number())),
+                ]),
+            ]),
+        ),
+        alias(
+            "ProviderCoverHandler",
+            LuauType::function(
+                vec![fn_param("ctx", ty("ProviderCoverContext"))],
+                vec![opt(ty("ProviderCoverResult"))],
+            ),
+        ),
+        alias(
+            "ProviderLyricsHitResult",
+            LuauType::object(vec![
+                field("kind", LuauType::string_literal("hit")),
+                field("candidates", array(ty("ProviderLyricsCandidate"))),
+            ]),
+        ),
+        alias(
+            "ProviderLyricsMissResult",
+            LuauType::object(vec![field("kind", LuauType::string_literal("miss"))]),
+        ),
+        alias(
+            "ProviderLyricsInstrumentalResult",
+            LuauType::object(vec![field(
+                "kind",
+                LuauType::string_literal("instrumental"),
+            )]),
+        ),
+        alias(
+            "ProviderLyricsRateLimitedResult",
+            LuauType::object(vec![
+                field("kind", LuauType::string_literal("rate_limited")),
+                field("retry_after_ms", opt(number())),
+            ]),
+        ),
+        alias(
+            "ProviderLyricsResult",
+            union([
+                ty("ProviderLyricsHitResult"),
+                ty("ProviderLyricsMissResult"),
+                ty("ProviderLyricsInstrumentalResult"),
+                ty("ProviderLyricsRateLimitedResult"),
+            ]),
+        ),
+        alias(
+            "ProviderLyricsHandler",
+            LuauType::function(
+                vec![fn_param("ctx", ty("ProviderLyricsContext"))],
+                vec![ty("ProviderLyricsResult")],
+            ),
+        ),
+        alias(
+            "ProviderRefreshContext",
+            union([
+                ty("ReleaseRefreshContext"),
+                ty("ArtistRefreshContext"),
+                ty("TrackRefreshContext"),
+            ]),
+        ),
+        alias(
+            "ProviderRefreshHandler",
+            union([
+                LuauType::function(
+                    vec![fn_param("ctx", ty("ReleaseRefreshContext"))],
+                    vec![ty("nil")],
+                ),
+                LuauType::function(
+                    vec![fn_param("ctx", ty("ArtistRefreshContext"))],
+                    vec![ty("nil")],
+                ),
+                LuauType::function(
+                    vec![fn_param("ctx", ty("TrackRefreshContext"))],
+                    vec![ty("nil")],
+                ),
+            ]),
+        ),
+        alias(
+            "ProviderRefreshFilter",
+            union([
+                LuauType::function(
+                    vec![fn_param("ctx", ty("ReleaseRefreshContext"))],
+                    vec![boolean()],
+                ),
+                LuauType::function(
+                    vec![fn_param("ctx", ty("ArtistRefreshContext"))],
+                    vec![boolean()],
+                ),
+                LuauType::function(
+                    vec![fn_param("ctx", ty("TrackRefreshContext"))],
+                    vec![boolean()],
+                ),
+            ]),
+        ),
     ]
 }
 
@@ -1921,6 +2050,51 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("artists", opt(array(ty("ReleaseRefreshArtist")))),
                 field("tracks", opt(array(ty("ReleaseRefreshTrack")))),
                 field("library_id", opt(number())),
+                field("options", opt(map(string(), ty("OptionValue")))),
+            ],
+        ),
+        interface(
+            "ArtistRefreshContext",
+            vec![
+                field("db_id", opt(number())),
+                field("id", opt(string())),
+                field("artist_name", opt(string())),
+                field("sort_name", opt(string())),
+                field("artist_type", opt(string())),
+                field("description", opt(string())),
+                field("external_ids", opt(ty("ExternalIdsByProvider"))),
+                field("custom_fields", opt(ty("CustomFieldsByProvider"))),
+                field("options", opt(map(string(), ty("OptionValue")))),
+            ],
+        ),
+        interface(
+            "TrackRefreshRelease",
+            vec![
+                field("db_id", opt(number())),
+                field("id", opt(string())),
+                field("release_title", opt(string())),
+                field("sort_title", opt(string())),
+                field("release_date", opt(string())),
+                field("custom_fields", opt(ty("CustomFieldsByProvider"))),
+            ],
+        ),
+        interface(
+            "TrackRefreshContext",
+            vec![
+                field("db_id", opt(number())),
+                field("id", opt(string())),
+                field("track_title", opt(string())),
+                field("sort_title", opt(string())),
+                field("year", opt(number())),
+                field("disc", opt(number())),
+                field("disc_total", opt(number())),
+                field("track", opt(number())),
+                field("track_total", opt(number())),
+                field("duration_ms", opt(number())),
+                field("external_ids", opt(ty("ExternalIdsByProvider"))),
+                field("custom_fields", opt(ty("CustomFieldsByProvider"))),
+                field("artists", opt(array(ty("ReleaseRefreshTrackArtist")))),
+                field("releases", opt(array(ty("TrackRefreshRelease")))),
                 field("options", opt(map(string(), ty("OptionValue")))),
             ],
         ),
@@ -2016,6 +2190,41 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
             ],
         ),
         interface(
+            "ProviderLyricWordInput",
+            vec![
+                field("ts_ms", number()),
+                field("char_start", number()),
+                field("char_end", number()),
+            ],
+        ),
+        interface(
+            "ProviderLyricLineInput",
+            vec![
+                field("ts_ms", number()),
+                field("text", string()),
+                field("words", array(ty("ProviderLyricWordInput"))),
+            ],
+        ),
+        interface(
+            "ProviderLyricsInput",
+            vec![
+                field("id", string()),
+                field("language", string()),
+                field("plain_text", string()),
+                field("lines", array(ty("ProviderLyricLineInput"))),
+            ],
+        ),
+        interface(
+            "ProviderLyricsCandidate",
+            vec![
+                field("lyrics", ty("ProviderLyricsInput")),
+                field("title", string()),
+                field("artist", string()),
+                field("duration_ms", opt(number())),
+                field("language", opt(string())),
+            ],
+        ),
+        interface(
             "EnsureArtistRequest",
             vec![
                 field("id_type", string()),
@@ -2091,10 +2300,7 @@ fn provider_class() -> ClassDescriptor {
             "search",
             vec![
                 param("entity", ty("EntityType")),
-                param(
-                    "handler",
-                    LuauType::function(vec![fn_param("query", string())], vec![any()]),
-                ),
+                param("handler", ty("ProviderSearchHandler")),
             ],
             vec![],
         ),
@@ -2103,7 +2309,7 @@ fn provider_class() -> ClassDescriptor {
             vec![
                 param("entity", ty("EntityType")),
                 param("config", ty("ProviderCoverConfig")),
-                param("handler", any()),
+                param("handler", ty("ProviderCoverHandler")),
             ],
             vec![],
         ),
@@ -2111,7 +2317,7 @@ fn provider_class() -> ClassDescriptor {
             "lyrics",
             vec![
                 param("config", ty("ProviderLyricsConfig")),
-                param("handler", any()),
+                param("handler", ty("ProviderLyricsHandler")),
             ],
             vec![],
         ),
@@ -2119,8 +2325,8 @@ fn provider_class() -> ClassDescriptor {
             "refresh",
             vec![
                 param("entity", ty("EntityType")),
-                param("handler", any()),
-                param("filter", opt(any())),
+                param("handler", ty("ProviderRefreshHandler")),
+                param("filter", opt(ty("ProviderRefreshFilter"))),
             ],
             vec![],
         ),
@@ -2226,10 +2432,6 @@ fn string_enum(values: &[&'static str]) -> LuauType {
             .map(|value| LuauType::string_literal(value))
             .collect(),
     )
-}
-
-fn any() -> LuauType {
-    LuauType::any()
 }
 
 fn boolean() -> LuauType {
