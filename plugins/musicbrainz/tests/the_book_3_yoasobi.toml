@@ -1,0 +1,120 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2023.08.04] YOASOBI - The Book 3 (CD) [FLAC - 44.1 kHz, 16-bit]/10 好きだ.flac"
+album = "THE BOOK 3"
+artists = ["YOASOBI"]
+title = "好きだ"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 10
+duration_ms = 217333
+
+[[raw_tags]]
+file_path = "[2023.08.04] YOASOBI - The Book 3 (CD) [FLAC - 44.1 kHz, 16-bit]/09 アドベンチャー.flac"
+album = "THE BOOK 3"
+artists = ["YOASOBI"]
+title = "アドベンチャー"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 10
+duration_ms = 198853
+
+[[raw_tags]]
+file_path = "[2023.08.04] YOASOBI - The Book 3 (CD) [FLAC - 44.1 kHz, 16-bit]/08 セブンティーン.flac"
+album = "THE BOOK 3"
+artists = ["YOASOBI"]
+title = "セブンティーン"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 10
+duration_ms = 198466
+
+[[raw_tags]]
+file_path = "[2023.08.04] YOASOBI - The Book 3 (CD) [FLAC - 44.1 kHz, 16-bit]/07 アイドル.flac"
+album = "THE BOOK 3"
+artists = ["YOASOBI"]
+title = "アイドル"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 10
+duration_ms = 211733
+
+[[raw_tags]]
+file_path = "[2023.08.04] YOASOBI - The Book 3 (CD) [FLAC - 44.1 kHz, 16-bit]/06 Interlude ''Worship''.flac"
+album = "THE BOOK 3"
+artists = ["YOASOBI"]
+title = "Interlude 'Worship'"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 10
+duration_ms = 67933
+
+[[raw_tags]]
+file_path = "[2023.08.04] YOASOBI - The Book 3 (CD) [FLAC - 44.1 kHz, 16-bit]/05 ミスター.flac"
+album = "THE BOOK 3"
+artists = ["YOASOBI"]
+title = "ミスター"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 10
+duration_ms = 185573
+
+[[raw_tags]]
+file_path = "[2023.08.04] YOASOBI - The Book 3 (CD) [FLAC - 44.1 kHz, 16-bit]/04 海のまにまに.flac"
+album = "THE BOOK 3"
+artists = ["YOASOBI"]
+title = "海のまにまに"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 10
+duration_ms = 256120
+
+[[raw_tags]]
+file_path = "[2023.08.04] YOASOBI - The Book 3 (CD) [FLAC - 44.1 kHz, 16-bit]/03 祝福.flac"
+album = "THE BOOK 3"
+artists = ["YOASOBI"]
+title = "祝福"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 10
+duration_ms = 192400
+
+[[raw_tags]]
+file_path = "[2023.08.04] YOASOBI - The Book 3 (CD) [FLAC - 44.1 kHz, 16-bit]/02 Interlude ''Awakening''.flac"
+album = "THE BOOK 3"
+artists = ["YOASOBI"]
+title = "Interlude 'Awakening'"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 10
+duration_ms = 48866
+
+[[raw_tags]]
+file_path = "[2023.08.04] YOASOBI - The Book 3 (CD) [FLAC - 44.1 kHz, 16-bit]/01 勇者.flac"
+album = "THE BOOK 3"
+artists = ["YOASOBI"]
+title = "勇者"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 10
+duration_ms = 194266
+
+[expect.release]
+ids = { release_group_id = "763ff344-f4ea-4bf9-9429-930ca03fddb9", release_id = ["37e42e02-9eb9-41fd-b962-427cd8b30265", "fa036443-0131-4c4a-a838-d9d033184859", "d9aa1639-bf98-4d2e-a7e8-881dc81d3a3d"] }
+fields = { release_title = "THE BOOK 3", release_date = "2023-10-04" }

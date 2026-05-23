@@ -1,0 +1,30 @@
+{
+  "test_name": "タクト_gaku",
+  "scenario_id": "18465b6b47d1ed17",
+  "responses": [
+    {
+      "cache_key": "4eb5998cedbe45af",
+      "url": "https://musicbrainz.org/ws/2/artist?query=ryo%20(supercell)",
+      "status_code": 200,
+      "body_hash": "4548615e0a2ab144"
+    },
+    {
+      "cache_key": "5e3a64309e9a6a9e",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%BF%E3%82%AF%E3%83%88&limit=100",
+      "status_code": 200,
+      "body_hash": "ca7fffcf61b8ef1c"
+    },
+    {
+      "cache_key": "b8362bb3f250aa6b",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=16aaf3de-ead2-4752-902a-c298e47d4729&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "d69ff519d553c1a3"
+    },
+    {
+      "cache_key": "f1808e6148e40769",
+      "url": "https://musicbrainz.org/ws/2/work/e56304b9-7294-4f72-9e12-41a4bb81708f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "02c5e980f304145c"
+    }
+  ]
+}
