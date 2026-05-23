@@ -1,0 +1,139 @@
+// This Source Code Form is subject to the terms of the Lyra Public License,
+// v1.0. If a copy of the Lyra Public License was not distributed with this file,
+// You can obtain one here:
+// www.meshiplaw.com/lyra.
+
+mod actor;
+mod api;
+mod messages;
+mod metadata;
+mod mix;
+mod modules;
+mod playback;
+mod runner;
+mod stores;
+mod vm;
+mod websocket;
+pub(crate) use self::actor::PluginExecutorHandle;
+use self::messages::TaskIdKey;
+pub(crate) use self::messages::{
+    ApiHandlerRequest,
+    ApiHandlerResponse,
+    ApiResponseBody,
+    ApiResponseKind,
+    MetadataRefreshRequest,
+    MetadataRefreshResult,
+    MixHandlerRequest,
+    MixHandlerResult,
+    WebSocketStartRequest,
+    WebSocketState,
+};
+pub(crate) use self::modules::plugin_scope_ids_for_test;
+
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    sync::Arc,
+    time::Duration,
+};
+
+use harmony_core::{
+    ChunkOrigin,
+    LoadedPlugin,
+    LocalScheduler,
+    ModuleId,
+    TaskState,
+    TokioRuntimeContext,
+};
+use harmony_luau as luau;
+
+pub(crate) struct PluginExecutor {
+    vm: luau::Vm,
+    plugins: Arc<[LoadedPlugin]>,
+    tokio_runtime: TokioRuntimeContext,
+    websocket_tasks: RefCell<HashMap<TaskIdKey, Arc<WebSocketState>>>,
+}
+
+impl PluginExecutor {
+    fn poll_background_tasks(&self) {
+        let Ok(scheduler) = self.vm.data().get::<LocalScheduler>() else {
+            return;
+        };
+        {
+            let _guard = self.tokio_runtime.enter();
+            scheduler.poll_ready();
+        }
+        let snapshots = scheduler.snapshots();
+        let mut completed_websockets = Vec::new();
+        for snapshot in snapshots {
+            if snapshot.state != TaskState::Pending {
+                let key = TaskIdKey(snapshot.id.0);
+                if let Some(state) = self.websocket_tasks.borrow().get(&key) {
+                    state.request_close();
+                    completed_websockets.push(key);
+                }
+            }
+        }
+        scheduler.remove_finished();
+        if !completed_websockets.is_empty() {
+            let mut tasks = self.websocket_tasks.borrow_mut();
+            for key in completed_websockets {
+                tasks.remove(&key);
+            }
+        }
+    }
+
+    fn next_scheduler_delay(&self) -> Option<Duration> {
+        let scheduler = self.vm.data().get::<LocalScheduler>().ok()?;
+        if !scheduler.has_pending() {
+            return None;
+        }
+        scheduler.next_wake_delay()
+    }
+}
+
+fn default_auth_capabilities() -> crate::plugins::auth::AuthCapabilities {
+    crate::plugins::auth::AuthCapabilities {
+        enabled: false,
+        allow_default_login_when_disabled: true,
+        default_username: "default".to_string(),
+    }
+}
+
+#[cfg(test)]
+fn default_server_info() -> crate::plugins::server::ServerInfo {
+    crate::plugins::server::ServerInfo {
+        id: "raw-runtime".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        commit_hash: env!("LYRA_GIT_HASH").to_string(),
+        hostname: "localhost".to_string(),
+        port: 0,
+        published_url: None,
+        setup_complete: false,
+    }
+}
+
+fn plugin_origin(plugin_id: impl Into<Arc<str>>, path: impl Into<Arc<str>>) -> ChunkOrigin {
+    let plugin = plugin_id.into();
+    let path = path.into();
+    ChunkOrigin {
+        module: Some(ModuleId(Arc::from(format!("plugins/{plugin}/{path}")))),
+        plugin: Some(plugin.clone()),
+        path: Some(Arc::from(format!("plugins/{plugin}/{path}"))),
+    }
+}
+
+fn luau_origin(origin: &ChunkOrigin) -> luau::ChunkOrigin {
+    luau::ChunkOrigin {
+        module: origin
+            .module
+            .as_ref()
+            .map(|module| luau::ModuleId(module.0.clone())),
+        plugin: origin.plugin.clone(),
+        path: origin.path.clone(),
+    }
+}
+
+#[cfg(test)]
+#[path = "tests.rs"]
+mod tests;
