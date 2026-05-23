@@ -1,0 +1,36 @@
+{
+  "test_name": "インスタントラヴ_feat_natsumi_miminari",
+  "scenario_id": "546b5d02dfcfe052",
+  "responses": [
+    {
+      "cache_key": "6093477c6c39a4b2",
+      "url": "https://musicbrainz.org/ws/2/artist/04490e5c-f43e-43f5-9963-4a3a4701ad80?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "654c301871de9a00"
+    },
+    {
+      "cache_key": "720401823e48813f",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%A4%E3%83%B3%E3%82%B9%E3%82%BF%E3%83%B3%E3%83%88%E3%83%BB%E3%83%A9%E3%83%B4%20%5C(feat.%20natsumi%5C)&limit=100",
+      "status_code": 200,
+      "body_hash": "838c3f86bb016174"
+    },
+    {
+      "cache_key": "78c2e520dfca339d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=MIMiNARI",
+      "status_code": 200,
+      "body_hash": "ab703c0a3c680cce"
+    },
+    {
+      "cache_key": "988f97d156203357",
+      "url": "https://musicbrainz.org/ws/2/work/b899af59-eb59-4e79-bc49-14ad9cb8d843?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a9e34bac8faa63ea"
+    },
+    {
+      "cache_key": "d7a93890cece0a87",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=089b6849-d232-47cb-8882-70e0094356fd&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "191f24de855c3c6f"
+    }
+  ]
+}

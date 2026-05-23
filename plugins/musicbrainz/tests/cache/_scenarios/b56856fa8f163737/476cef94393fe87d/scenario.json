@@ -1,0 +1,36 @@
+{
+  "test_name": "厭わない_feat_富田美憂_市ノ瀬加那_miminari",
+  "scenario_id": "476cef94393fe87d",
+  "responses": [
+    {
+      "cache_key": "6093477c6c39a4b2",
+      "url": "https://musicbrainz.org/ws/2/artist/04490e5c-f43e-43f5-9963-4a3a4701ad80?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "91e7ef7bb8907259"
+    },
+    {
+      "cache_key": "78c2e520dfca339d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=MIMiNARI",
+      "status_code": 200,
+      "body_hash": "42e3fcfec42f7543"
+    },
+    {
+      "cache_key": "88e2c28def2b6db9",
+      "url": "https://musicbrainz.org/ws/2/work/e32fac11-0102-45cd-99d0-723dd298e13d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "463e85ce8bb76446"
+    },
+    {
+      "cache_key": "bd325909892d997d",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=0d2319bf-eae1-4339-b2b0-7dd86f9ec980&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3ab49a100abb8be7"
+    },
+    {
+      "cache_key": "d0a7b925ee5c0736",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%8E%AD%E3%82%8F%E3%81%AA%E3%81%84%20%5C(feat.%20%E5%AF%8C%E7%94%B0%E7%BE%8E%E6%86%82%20%26%20%E5%B8%82%E3%83%8E%E7%80%AC%E5%8A%A0%E9%82%A3%5C)&limit=100",
+      "status_code": 200,
+      "body_hash": "0b692d7afdd884dc"
+    }
+  ]
+}
