@@ -1,0 +1,45 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "星街すいせい - 先駆者 (2023-01-29) [WEB FLAC]/1.02. 先駆者 (Instrumental).flac"
+album = "先駆者"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "先駆者 (Instrumental)"
+copyright = "℗ 2023 cover corp."
+disc = 1
+disc_total = 1
+track = 2
+track_total = 2
+duration_ms = 274000
+
+[[raw_tags]]
+file_path = "星街すいせい - 先駆者 (2023-01-29) [WEB FLAC]/1.01. 先駆者.flac"
+album = "先駆者"
+album_artists = ["星街すいせい"]
+artists = ["星街すいせい"]
+title = "先駆者"
+copyright = "℗ 2023 cover corp."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 2
+duration_ms = 274000
+
+[expect.release]
+ids = { release_group_id = "44fd88d8-6a4f-44cd-bccc-0357c8de5ecb", release_id = "94b0895d-dc5a-4f57-96e2-79c5786954d5" }
+fields = { release_title = "先駆者", release_date = "2023-01-29" }
+
+[expect.artists."8eeb59f4-0071-4261-b1f8-91d8294622d2"]
+fields = { artist_name = "星街すいせい", sort_name = "Hoshimachi, Suisei" }
+
+[expect.tracks."d62e6432-7825-44d6-b443-7e7180aae183"]
+fields = { disc = 1, track = 2, track_title = "先駆者 (instrumental)" }
+
+[expect.tracks."e18740cb-5cd3-40a4-ac6a-779d4209c1d6"]
+fields = { disc = 1, track = 1, track_title = "先駆者" }

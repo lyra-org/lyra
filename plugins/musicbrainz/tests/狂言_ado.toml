@@ -1,0 +1,237 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Ado - Kyougen/14. 夜のピエロ.flac"
+album = "狂言"
+album_artists = ["Ado"]
+artists = ["Ado"]
+title = "夜のピエロ"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 14
+duration_ms = 200733
+
+[[raw_tags]]
+file_path = "Ado - Kyougen/13. 過学習.flac"
+album = "狂言"
+album_artists = ["Ado"]
+artists = ["Ado"]
+title = "過学習"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 14
+duration_ms = 215853
+
+[[raw_tags]]
+file_path = "Ado - Kyougen/12. マザーランド.flac"
+album = "狂言"
+album_artists = ["Ado"]
+artists = ["Ado"]
+title = "マザーランド"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 14
+duration_ms = 260066
+
+[[raw_tags]]
+file_path = "Ado - Kyougen/11. うっせぇわ.flac"
+album = "狂言"
+album_artists = ["Ado"]
+artists = ["Ado"]
+title = "うっせぇわ"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 14
+duration_ms = 206893
+
+[[raw_tags]]
+file_path = "Ado - Kyougen/10. 心という名の不可解.flac"
+album = "狂言"
+album_artists = ["Ado"]
+artists = ["Ado"]
+title = "心という名の不可解"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 14
+duration_ms = 269893
+
+[[raw_tags]]
+file_path = "Ado - Kyougen/09. 阿修羅ちゃん.flac"
+album = "狂言"
+album_artists = ["Ado"]
+artists = ["Ado"]
+title = "阿修羅ちゃん"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 14
+duration_ms = 195080
+
+[[raw_tags]]
+file_path = "Ado - Kyougen/08. ギラギラ.flac"
+album = "狂言"
+album_artists = ["Ado"]
+artists = ["Ado"]
+title = "ギラギラ"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 14
+duration_ms = 276080
+
+[[raw_tags]]
+file_path = "Ado - Kyougen/07. ラッキー・ブルート.flac"
+album = "狂言"
+album_artists = ["Ado"]
+artists = ["Ado"]
+title = "ラッキー・ブルート"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 14
+duration_ms = 209613
+
+[[raw_tags]]
+file_path = "Ado - Kyougen/06. 会いたくて.flac"
+album = "狂言"
+album_artists = ["Ado"]
+artists = ["Ado"]
+title = "会いたくて"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 14
+duration_ms = 295146
+
+[[raw_tags]]
+file_path = "Ado - Kyougen/05. 花火.flac"
+album = "狂言"
+album_artists = ["Ado"]
+artists = ["Ado"]
+title = "花火"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 14
+duration_ms = 212373
+
+[[raw_tags]]
+file_path = "Ado - Kyougen/04. FREEDOM.flac"
+album = "狂言"
+album_artists = ["Ado"]
+artists = ["Ado"]
+title = "FREEDOM"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 14
+duration_ms = 186106
+
+[[raw_tags]]
+file_path = "Ado - Kyougen/03. ドメスティックでバイオレンス.flac"
+album = "狂言"
+album_artists = ["Ado"]
+artists = ["Ado"]
+title = "ドメスティックでバイオレンス"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 14
+duration_ms = 158480
+
+[[raw_tags]]
+file_path = "Ado - Kyougen/02. 踊.flac"
+album = "狂言"
+album_artists = ["Ado"]
+artists = ["Ado"]
+title = "踊"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 14
+duration_ms = 210346
+
+[[raw_tags]]
+file_path = "Ado - Kyougen/01. レディメイド.flac"
+album = "狂言"
+album_artists = ["Ado"]
+artists = ["Ado"]
+title = "レディメイド"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 14
+duration_ms = 243186
+
+[expect.release]
+ids = { release_group_id = "000b747c-a83b-4b00-aa47-a839f6527a92", release_id = ["0dd04718-0910-4307-87b2-89d0377fbc5b", "f5e81e1e-759c-45a8-b03e-48768c211005", "a1639974-9569-4f8d-a726-ac4867065463", "ed4e12b4-4106-4069-8e60-7e0abf6a2d77"] }
+fields = { release_title = "狂言", release_date = "2022-01-26" }
+
+[expect.artists."e134b52f-2e9e-4734-9bc3-bea9648d1fa1"]
+fields = { artist_name = "Ado", sort_name = "Ado" }
+
+[expect.tracks."0394cf8e-14a4-4eb2-9816-8ddef32ed94d"]
+fields = { disc = 1, track = 13, track_title = "過学習" }
+
+[expect.tracks."058d99f7-2770-4a65-86c0-19f92f9fcea3"]
+fields = { disc = 1, track = 7, track_title = "ラッキー・ブルート" }
+
+[expect.tracks."079df479-7a6a-4e6b-b3b2-df911006e670"]
+fields = { disc = 1, track = 12, track_title = "マザーランド" }
+
+[expect.tracks."2b886020-c7e7-4da7-8c04-46d2daabd88e"]
+fields = { disc = 1, track = 3, track_title = "ドメスティックでバイオレンス" }
+
+[expect.tracks."5d992918-e00d-420a-85cd-04dd6e262a00"]
+fields = { disc = 1, track = 11, track_title = "うっせぇわ" }
+
+[expect.tracks."5e7a3676-dbdb-48f9-b916-ddee65d015c8"]
+fields = { disc = 1, track = 1, track_title = "レディメイド" }
+
+[expect.tracks."7334cbd8-5104-4a04-b931-cce1889f920f"]
+fields = { disc = 1, track = 14, track_title = "夜のピエロ" }
+
+[expect.tracks."8dc671a4-3ee1-4f3e-9b3b-00d4a2e980ed"]
+fields = { disc = 1, track = 9, track_title = "阿修羅ちゃん" }
+
+[expect.tracks."9eacbbd7-65ca-4154-ae76-9a1866ff6bcd"]
+fields = { disc = 1, track = 5, track_title = "花火" }
+
+[expect.tracks."ab14c6ef-be4f-440a-9c4a-fd1a067c2c52"]
+fields = { disc = 1, track = 10, track_title = "心という名の不可解" }
+
+[expect.tracks."ab7a42e2-c477-44e6-8cc7-056f8f8b10a5"]
+fields = { disc = 1, track = 6, track_title = "会いたくて" }
+
+[expect.tracks."d7e4646b-e831-4d85-a740-647ad9e1e37d"]
+fields = { disc = 1, track = 8, track_title = "ギラギラ" }
+
+[expect.tracks."e85a1656-1d91-45d8-b028-2a98b33af9bd"]
+fields = { disc = 1, track = 4, track_title = "FREEDOM" }
+
+[expect.tracks."edb6736a-50b3-4815-ba46-e453807f0835"]
+fields = { disc = 1, track = 2, track_title = "踊" }
