@@ -1,0 +1,48 @@
+{
+  "test_name": "hello_ep_official髭男dism",
+  "scenario_id": "64f62bcd0159ae94",
+  "responses": [
+    {
+      "cache_key": "268614b3a0c996ba",
+      "url": "https://musicbrainz.org/ws/2/work/c7a7eab9-ebb8-4381-a481-5efd3b489d86?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "bfd1f2ccd21ad19f"
+    },
+    {
+      "cache_key": "7148ce3acc2c61ed",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=5983a6ef-2346-49cc-ba44-c713940e1285&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3e3138e568251355"
+    },
+    {
+      "cache_key": "7f2553f3b173b575",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AHELLO%20EP&limit=100",
+      "status_code": 200,
+      "body_hash": "49bc6477ade040cf"
+    },
+    {
+      "cache_key": "ac202f410fb14406",
+      "url": "https://musicbrainz.org/ws/2/artist/6dddd7a2-5583-49d0-a8b2-9ee46d04f27e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "039ebdd63e696dab"
+    },
+    {
+      "cache_key": "bc0e3bbd3a4dd445",
+      "url": "https://musicbrainz.org/ws/2/work/a494bc5d-adf3-4c25-ba36-9c1f7d9b4bea?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "375c485f70498e3a"
+    },
+    {
+      "cache_key": "d9ef3b8efdfe71db",
+      "url": "https://musicbrainz.org/ws/2/work/ff0c057d-18c6-441a-9b6f-267db5dcc774?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ac1869eedee2f9f9"
+    },
+    {
+      "cache_key": "e632cd6797fe55ad",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Official%E9%AB%AD%E7%94%B7dism",
+      "status_code": 200,
+      "body_hash": "7dc790efa5a1476d"
+    }
+  ]
+}
