@@ -12,6 +12,7 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
+#[cfg(any(feature = "docgen", test))]
 use harmony_luau::{
     DescribeInterface,
     FieldDescriptor,
@@ -56,6 +57,7 @@ impl ChromaprintModuleStore {
 
 struct ChromaprintModule;
 
+#[cfg(any(feature = "docgen", test))]
 struct ChromaprintResult;
 
 pub(crate) fn module_spec() -> ModuleSpec {
@@ -106,12 +108,14 @@ fn compute_callback(
     }))
 }
 
+#[cfg(any(feature = "docgen", test))]
 impl LuauTypeInfo for ChromaprintResult {
     fn luau_type() -> LuauType {
         LuauType::named("ChromaprintResult")
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 impl DescribeInterface for ChromaprintResult {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("ChromaprintResult", None);
@@ -131,6 +135,7 @@ impl DescribeInterface for ChromaprintResult {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -140,6 +145,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Chromaprint",
@@ -156,6 +162,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),

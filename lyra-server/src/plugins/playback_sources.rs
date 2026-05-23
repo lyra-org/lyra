@@ -15,6 +15,7 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
+#[cfg(any(feature = "docgen", test))]
 use harmony_luau::{
     DescribeInterface,
     FieldDescriptor,
@@ -64,8 +65,10 @@ impl PlaybackSourcesModuleStore {
 
 struct PlaybackSourcesModule;
 
+#[cfg(any(feature = "docgen", test))]
 struct EntryInfo;
 
+#[cfg(any(feature = "docgen", test))]
 struct PlaybackSourceInfo;
 
 pub(crate) fn module_spec() -> ModuleSpec {
@@ -357,12 +360,14 @@ fn saturating_i64(value: u64) -> i64 {
     value.min(i64::MAX as u64) as i64
 }
 
+#[cfg(any(feature = "docgen", test))]
 impl LuauTypeInfo for EntryInfo {
     fn luau_type() -> LuauType {
         LuauType::named("EntryInfo")
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 impl DescribeInterface for EntryInfo {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("EntryInfo", None);
@@ -412,12 +417,14 @@ impl DescribeInterface for EntryInfo {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 impl LuauTypeInfo for PlaybackSourceInfo {
     fn luau_type() -> LuauType {
         LuauType::named("PlaybackSourceInfo")
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 impl DescribeInterface for PlaybackSourceInfo {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("PlaybackSourceInfo", None);
@@ -472,6 +479,7 @@ impl DescribeInterface for PlaybackSourceInfo {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -481,10 +489,12 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn resolve_id_type() -> LuauType {
     LuauType::union(vec![i64::luau_type(), String::luau_type()])
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "PlaybackSources",
@@ -519,6 +529,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),

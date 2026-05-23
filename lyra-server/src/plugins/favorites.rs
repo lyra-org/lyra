@@ -15,6 +15,7 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
+#[cfg(any(feature = "docgen", test))]
 use harmony_luau::{
     LuauType,
     LuauTypeInfo,
@@ -360,6 +361,7 @@ fn db_id_array(ids: Vec<DbId>) -> luau::OwnedTable {
     table
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -369,6 +371,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Favorites",
@@ -430,6 +433,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(&module_descriptor(), &[], &[], &[])
 }

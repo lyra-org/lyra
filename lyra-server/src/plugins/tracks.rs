@@ -12,10 +12,11 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
+use harmony_luau::IntoLuauReturn;
+#[cfg(any(feature = "docgen", test))]
 use harmony_luau::{
     FieldDescriptor,
     InterfaceDescriptor,
-    IntoLuauReturn,
     LuauType,
     LuauTypeInfo,
     ModuleDescriptor,
@@ -451,6 +452,7 @@ fn query_result_table(
     Ok(table)
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -460,6 +462,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     FieldDescriptor {
         name,
@@ -468,10 +471,12 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn resolve_id_type() -> LuauType {
     LuauType::union(vec![i64::luau_type(), String::luau_type()])
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn sort_order_type() -> LuauType {
     LuauType::union(vec![
         LuauType::string_literal("ascending"),
@@ -479,6 +484,7 @@ fn sort_order_type() -> LuauType {
     ])
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn track_type() -> LuauType {
     LuauType::object(vec![
         field("db_id", Option::<i64>::luau_type()),
@@ -501,6 +507,7 @@ fn track_type() -> LuauType {
     ])
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn track_type_aliases() -> Vec<TypeAliasDescriptor> {
     vec![
         TypeAliasDescriptor::new("Track", track_type(), None),
@@ -516,6 +523,7 @@ fn track_type_aliases() -> Vec<TypeAliasDescriptor> {
     ]
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn track_query_options() -> InterfaceDescriptor {
     let mut descriptor = InterfaceDescriptor::new("TrackQueryOptions", None);
     descriptor.fields.extend([
@@ -531,6 +539,7 @@ fn track_query_options() -> InterfaceDescriptor {
     descriptor
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Tracks",
@@ -583,6 +592,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),

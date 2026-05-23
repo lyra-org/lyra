@@ -16,6 +16,9 @@ use harmony_luau::{
     InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
+};
+#[cfg(feature = "docgen")]
+use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
     ParameterDescriptor,
@@ -38,10 +41,14 @@ use crate::{
 };
 
 struct LabelsModule;
+#[cfg(feature = "docgen")]
 struct LabelAddRequest;
+#[cfg(feature = "docgen")]
 struct LabelResolveRequest;
+#[cfg(feature = "docgen")]
 struct LabelExternalId;
 struct LabelInfo;
+#[cfg(feature = "docgen")]
 struct LabelForReleaseInfo;
 
 pub(crate) fn module_spec() -> ModuleSpec {
@@ -593,18 +600,21 @@ fn id_array(ids: Vec<DbId>) -> luau::OwnedTable {
     table
 }
 
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for LabelExternalId {
     fn luau_type() -> LuauType {
         LuauType::literal("LabelExternalId")
     }
 }
 
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for LabelAddRequest {
     fn luau_type() -> LuauType {
         LuauType::literal("LabelAddRequest")
     }
 }
 
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for LabelResolveRequest {
     fn luau_type() -> LuauType {
         LuauType::literal("LabelResolveRequest")
@@ -617,6 +627,7 @@ impl LuauTypeInfo for LabelInfo {
     }
 }
 
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for LabelForReleaseInfo {
     fn luau_type() -> LuauType {
         LuauType::literal("LabelForReleaseInfo")
@@ -631,6 +642,7 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     }
 }
 
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -640,6 +652,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
+#[cfg(feature = "docgen")]
 impl DescribeInterface for LabelExternalId {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("LabelExternalId", None);
@@ -652,6 +665,7 @@ impl DescribeInterface for LabelExternalId {
     }
 }
 
+#[cfg(feature = "docgen")]
 impl DescribeInterface for LabelAddRequest {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("LabelAddRequest", None);
@@ -664,6 +678,7 @@ impl DescribeInterface for LabelAddRequest {
     }
 }
 
+#[cfg(feature = "docgen")]
 impl DescribeInterface for LabelResolveRequest {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("LabelResolveRequest", None);
@@ -687,6 +702,7 @@ impl DescribeInterface for LabelInfo {
     }
 }
 
+#[cfg(feature = "docgen")]
 impl DescribeInterface for LabelForReleaseInfo {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("LabelForReleaseInfo", None);
@@ -698,6 +714,7 @@ impl DescribeInterface for LabelForReleaseInfo {
     }
 }
 
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Labels",
@@ -774,6 +791,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),

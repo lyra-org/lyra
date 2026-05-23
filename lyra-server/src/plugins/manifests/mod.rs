@@ -15,6 +15,7 @@ use harmony_luau as luau;
 mod descriptors;
 
 use self::descriptors::PluginManifest;
+#[cfg(feature = "docgen")]
 pub(crate) use self::descriptors::render_luau_definition;
 
 #[cfg(test)]

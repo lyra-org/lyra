@@ -12,17 +12,19 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
+use harmony_luau::IntoLuauReturn;
+#[cfg(any(feature = "docgen", test))]
+use harmony_luau::render_definition_file_with_support;
+#[cfg(any(feature = "docgen", test))]
 use harmony_luau::{
     FieldDescriptor,
     InterfaceDescriptor,
-    IntoLuauReturn,
     LuauType,
     LuauTypeInfo,
     ModuleDescriptor,
     ModuleFunctionDescriptor,
     ParameterDescriptor,
     TypeAliasDescriptor,
-    render_definition_file_with_support,
 };
 use serde::Serialize;
 
@@ -583,6 +585,7 @@ fn parse_optional_u64(
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -592,6 +595,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     FieldDescriptor {
         name,
@@ -600,10 +604,12 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn resolve_id_type() -> LuauType {
     LuauType::union(vec![i64::luau_type(), String::luau_type()])
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn sort_order_type() -> LuauType {
     LuauType::union(vec![
         LuauType::string_literal("ascending"),
@@ -611,10 +617,12 @@ fn sort_order_type() -> LuauType {
     ])
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn string_enum(values: impl IntoIterator<Item = &'static str>) -> LuauType {
     LuauType::union(values.into_iter().map(LuauType::string_literal).collect())
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn artist_type() -> LuauType {
     LuauType::object(vec![
         field("db_id", Option::<i64>::luau_type()),
@@ -639,6 +647,7 @@ fn artist_type() -> LuauType {
     ])
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn artist_type_aliases() -> Vec<TypeAliasDescriptor> {
     vec![
         TypeAliasDescriptor::new("Artist", artist_type(), None),
@@ -668,6 +677,7 @@ fn artist_type_aliases() -> Vec<TypeAliasDescriptor> {
     ]
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn artist_interfaces() -> Vec<InterfaceDescriptor> {
     let mut relation = InterfaceDescriptor::new("ArtistRelationInfo", None);
     relation.fields.extend([
@@ -697,6 +707,7 @@ fn artist_interfaces() -> Vec<InterfaceDescriptor> {
     vec![relation, query_options]
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Artists",
@@ -756,7 +767,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(feature = "docgen")]
+#[cfg(any(feature = "docgen", test))]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),

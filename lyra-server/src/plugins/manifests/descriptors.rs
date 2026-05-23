@@ -9,12 +9,16 @@ use harmony_luau::{
     InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
+};
+#[cfg(feature = "docgen")]
+use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
     ParameterDescriptor,
     render_definition_file_with_support,
 };
 
+#[cfg(feature = "docgen")]
 use crate::plugins::settings;
 
 pub(super) struct PluginManifest;
@@ -64,6 +68,7 @@ impl DescribeInterface for PluginManifest {
     }
 }
 
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Plugins",
@@ -105,6 +110,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     let type_aliases = settings::descriptors::type_alias_descriptors().to_vec();
     let mut interfaces = vec![PluginManifest::interface_descriptor()];
@@ -114,6 +120,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
     render_definition_file_with_support(&module_descriptor(), &type_aliases, &interfaces, &classes)
 }
 
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,

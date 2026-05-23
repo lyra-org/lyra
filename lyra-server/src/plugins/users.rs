@@ -15,6 +15,9 @@ use harmony_luau::{
     InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
+};
+#[cfg(any(feature = "docgen", test))]
+use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
     render_definition_file_with_support,
@@ -125,6 +128,7 @@ impl DescribeInterface for PublicUser {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Users",
@@ -141,6 +145,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),
