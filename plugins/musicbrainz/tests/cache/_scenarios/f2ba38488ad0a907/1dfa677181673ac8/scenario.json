@@ -1,0 +1,54 @@
+{
+  "test_name": "堕天_creepy_nuts",
+  "scenario_id": "1dfa677181673ac8",
+  "responses": [
+    {
+      "cache_key": "4e003dfe0a2a37ad",
+      "url": "https://musicbrainz.org/ws/2/artist/e5e045da-59a3-4b65-8bb4-3c7f3ac9a529?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2c16f6cc2f905beb"
+    },
+    {
+      "cache_key": "7ca743343a202f87",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Creepy%20Nuts",
+      "status_code": 200,
+      "body_hash": "c6dc26011c71ae5d"
+    },
+    {
+      "cache_key": "a6977ba98728ae86",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Ae5e045da-59a3-4b65-8bb4-3c7f3ac9a529%20AND%20(release%3A%E5%A0%95%E5%A4%A9%20OR%20recording%3A%E5%A0%95%E5%A4%A9)",
+      "status_code": 200,
+      "body_hash": "deeb16dd49a285e6"
+    },
+    {
+      "cache_key": "af4543fda86dfed5",
+      "url": "https://musicbrainz.org/ws/2/work/c207727a-e653-45b3-b847-34afb7854a25?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c3212d37e83fce2a"
+    },
+    {
+      "cache_key": "b0d31886e270061d",
+      "url": "https://musicbrainz.org/ws/2/work/7955efa8-8d59-4028-b020-e249179e1e23?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8376b08d17985821"
+    },
+    {
+      "cache_key": "b2edaca1e9478158",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=3e4a47eb-f19c-49c9-9e57-0f3ec89c4e79&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "1fcd96ef2cccdcf8"
+    },
+    {
+      "cache_key": "cc080a7318c6545d",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%A0%95%E5%A4%A9&limit=100",
+      "status_code": 200,
+      "body_hash": "40de7465cfcaefb8"
+    },
+    {
+      "cache_key": "f767d2f79cb5489b",
+      "url": "https://musicbrainz.org/ws/2/work/5e901d7e-23d9-4993-a781-1c8c7e0f5324?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4811235f603ba0ec"
+    }
+  ]
+}
