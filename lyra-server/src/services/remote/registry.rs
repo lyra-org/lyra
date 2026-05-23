@@ -129,6 +129,20 @@ impl ConnectionRegistry {
         self.tokens.remove(&handle.token);
         Some(handle)
     }
+
+    fn connection_and_token_target(
+        &self,
+        source_id: ConnectionId,
+        target_token: &str,
+    ) -> (Option<ConnectionSnapshot>, Option<ConnectionSnapshot>) {
+        let source = self.connections.get(&source_id).map(snapshot_from_handle);
+        let target = self
+            .tokens
+            .get(target_token)
+            .and_then(|id| self.connections.get(id))
+            .map(snapshot_from_handle);
+        (source, target)
+    }
 }
 
 #[derive(Debug)]
@@ -201,14 +215,12 @@ pub(crate) async fn set_supported_commands(
     }
 }
 
-pub(crate) async fn get_connection_pair(
-    id_a: ConnectionId,
-    id_b: ConnectionId,
+pub(crate) async fn get_connection_and_token_target(
+    source_id: ConnectionId,
+    target_token: &str,
 ) -> (Option<ConnectionSnapshot>, Option<ConnectionSnapshot>) {
     let registry = REGISTRY.read().await;
-    let a = registry.connections.get(&id_a).map(snapshot_from_handle);
-    let b = registry.connections.get(&id_b).map(snapshot_from_handle);
-    (a, b)
+    registry.connection_and_token_target(source_id, target_token)
 }
 
 /// Errors if the target is not found or the message could not be queued.
@@ -478,6 +490,37 @@ mod tests {
         assert_eq!(handle.unwrap().session_key, "key");
         assert!(reg.remove(id).is_none());
         assert!(!reg.tokens.contains_key(&token));
+    }
+
+    #[test]
+    fn connection_and_token_target_resolves_opaque_target_token() {
+        let mut reg = test_registry();
+        let source_id = reg
+            .insert(
+                DbId(1),
+                "user-1".into(),
+                "source".into(),
+                test_cancel(),
+                test_tx(),
+            )
+            .unwrap();
+        let target_id = reg
+            .insert(
+                DbId(1),
+                "user-1".into(),
+                "target".into(),
+                test_cancel(),
+                test_tx(),
+            )
+            .unwrap();
+        let target_token = reg.connections[&target_id].token.clone();
+
+        let (source, target) = reg.connection_and_token_target(source_id, &target_token);
+
+        assert_eq!(source.unwrap().connection_id, source_id);
+        let target = target.unwrap();
+        assert_eq!(target.connection_id, target_id);
+        assert_eq!(target.session_key, "target");
     }
 
     #[test]

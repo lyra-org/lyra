@@ -27,6 +27,7 @@ mod workflow;
 
 pub(crate) use self::sessions::{
     PlaybackScopeKey,
+    bind_current_playback_session_scope,
     clear_playback_session_scope,
     get_playback_session,
     is_remote_control_degraded,

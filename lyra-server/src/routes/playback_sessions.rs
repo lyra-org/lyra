@@ -56,6 +56,7 @@ use crate::{
 };
 
 const ACTIVE_PLAYBACK_TIMEOUT_MS: u64 = playbacks::ACTIVE_SESSION_TTL_MS;
+const NATIVE_PLAYBACK_PLUGIN_ID: &str = "native";
 const REST_PLAYBACK_PLUGIN_ID: &str = "rest";
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -84,6 +85,13 @@ struct PlaybackStartRequest {
         )
     )]
     state: Option<PlaybackState>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Client-provided WebSocket session key for browser-native remote control."
+        )
+    )]
+    connection_session_key: Option<String>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -114,6 +122,13 @@ struct PlaybackProgressRequest {
         schemars(description = "Playback state: playing, paused, stopped, buffering, completed.")
     )]
     state: Option<PlaybackState>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Client-provided WebSocket session key for browser-native remote control."
+        )
+    )]
+    connection_session_key: Option<String>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -225,6 +240,10 @@ fn rest_playback_session_key(credential: &AuthCredential) -> Option<String> {
     }
 }
 
+fn connection_session_key(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
 fn active_playback_cutoff_ms(current_ms: u64, state: PlaybackState) -> Option<u64> {
     if state.is_terminal() {
         return None;
@@ -305,9 +324,35 @@ async fn start_playback(
         AppError::not_found(format!("Track not found: {}", request.track_id))
     })?;
 
-    let (playback, event, evicted_playbacks) = if let Some(session_key) =
-        rest_playback_session_key(&auth.credential)
-    {
+    let connection_session_key = connection_session_key(request.connection_session_key.as_deref());
+
+    let (playback, event, evicted_playbacks) = if let Some(session_key) = connection_session_key {
+        let update = playbacks::report_playback_session_with_cleanup(
+            &mut db,
+            playbacks::SessionPlaybackReportRequest {
+                plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
+                user_db_id: principal.user_db_id,
+                session_key,
+                track_db_id,
+                mutation: mutation.clone(),
+                now_ms: current_ms,
+                active_event: ActiveEvent::Started,
+                stale_ttl_ms: playbacks::ACTIVE_SESSION_TTL_MS,
+            },
+        )?;
+        let playbacks::OptionalPlaybackUpdateResult {
+            playback,
+            event,
+            evicted_playbacks,
+        } = update;
+        let playback = playback
+            .ok_or_else(|| AppError::bad_request("cannot start playback with terminal state"))?;
+        (
+            playback,
+            event.unwrap_or_else(|| ActiveEvent::Started.to_string()),
+            evicted_playbacks,
+        )
+    } else if let Some(session_key) = rest_playback_session_key(&auth.credential) {
         let update = playbacks::report_playback_session_with_cleanup(
             &mut db,
             playbacks::SessionPlaybackReportRequest {
@@ -386,6 +431,21 @@ async fn report_playback_progress(
             active_event: ActiveEvent::Progress,
         },
     )?;
+    if let Some(session_key) = connection_session_key(request.connection_session_key.as_deref())
+        && !update.playback.playback.state.is_terminal()
+    {
+        let scope = playbacks::PlaybackScopeKey {
+            plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
+            user_db_id: principal.user_db_id,
+            session_key,
+        };
+        playbacks::bind_current_playback_session_scope(
+            &scope,
+            update.playback.playback_session_id,
+            update.playback.playback_session_public_id.clone(),
+            current_ms,
+        );
+    }
     dispatch_evicted_updates(update.evicted_playbacks);
 
     let response = playback_to_response(&*db, &update.playback, current_ms)?;
@@ -465,7 +525,7 @@ async fn get_active_sessions(
         // scope currently owns this playback session.
         let connection = connections.iter().find(|c| {
             let scope_key = playbacks::PlaybackScopeKey {
-                plugin_id: "native",
+                plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
                 user_db_id: c.user_db_id,
                 session_key: &c.session_key,
             };
@@ -476,7 +536,7 @@ async fn get_active_sessions(
         let degraded = connection
             .map(|c| {
                 let scope_key = playbacks::PlaybackScopeKey {
-                    plugin_id: "native",
+                    plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
                     user_db_id: c.user_db_id,
                     session_key: &c.session_key,
                 };

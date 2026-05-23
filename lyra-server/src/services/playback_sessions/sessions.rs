@@ -126,6 +126,45 @@ pub(crate) fn upsert_playback_session(
     entry.clone()
 }
 
+pub(crate) fn bind_current_playback_session_scope(
+    scope: &PlaybackScopeKey<'_>,
+    playback_session_id: DbId,
+    playback_session_public_id: String,
+    now_ms: u64,
+) {
+    let key = scope.owned();
+    let mut scopes = PLAYBACK_SESSION_SCOPES
+        .write()
+        .expect("playback session scopes RwLock poisoned");
+    let entry = scopes.entry(key).or_insert_with(|| PlaybackSessionScope {
+        current_playback_session_id: None,
+        current_playback_session_public_id: None,
+        previous_playback_session_id: None,
+        previous_playback_session_public_id: None,
+        previous_demoted_at_ms: None,
+        previous_expires_at_ms: None,
+        updated_at_ms: now_ms,
+        command_dispatched_at_ms: None,
+    });
+
+    entry.updated_at_ms = now_ms;
+    entry.command_dispatched_at_ms = None;
+
+    if entry.current_playback_session_id == Some(playback_session_id) {
+        entry.current_playback_session_public_id = Some(playback_session_public_id);
+        return;
+    }
+
+    entry.previous_playback_session_id = entry.current_playback_session_id;
+    entry.previous_playback_session_public_id = entry.current_playback_session_public_id.clone();
+    entry.previous_demoted_at_ms = entry.current_playback_session_id.map(|_| now_ms);
+    entry.previous_expires_at_ms = entry
+        .current_playback_session_id
+        .map(|_| now_ms.saturating_add(super::PREVIOUS_PLAYBACK_GRACE_MS));
+    entry.current_playback_session_id = Some(playback_session_id);
+    entry.current_playback_session_public_id = Some(playback_session_public_id);
+}
+
 pub(crate) fn update_playback_session(
     scope: &PlaybackScopeKey<'_>,
     session: &PlaybackSessionScope,
