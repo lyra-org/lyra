@@ -1,0 +1,30 @@
+{
+  "test_name": "hated_十五少女",
+  "scenario_id": "ed93624181e484b2",
+  "responses": [
+    {
+      "cache_key": "3bf613566bd9280e",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AHATED&limit=100",
+      "status_code": 200,
+      "body_hash": "6b379a86bcb71273"
+    },
+    {
+      "cache_key": "3dc395c10bc3f36e",
+      "url": "https://musicbrainz.org/ws/2/artist/980c09f5-552b-4321-b67e-e9684be6efbf?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9e69d43bcf6a7f7f"
+    },
+    {
+      "cache_key": "564e2e953dc33e09",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=9e874934-b5fc-4775-81f0-24fe519cf52c&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "65a7dd59fc44d87e"
+    },
+    {
+      "cache_key": "e1c3d8a90c49f87b",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E5%8D%81%E4%BA%94%E5%B0%91%E5%A5%B3",
+      "status_code": 200,
+      "body_hash": "e83bf84a67b02749"
+    }
+  ]
+}
