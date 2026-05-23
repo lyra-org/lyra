@@ -230,7 +230,17 @@ impl Scheduler {
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) -> TaskHandle {
-        self.insert_work(context, TaskWork::LuauThread { vm, thread, args }, None)
+        let pending_start = !thread.is_started();
+        self.insert_work(
+            context,
+            TaskWork::LuauThread {
+                vm,
+                thread,
+                args,
+                pending_start,
+            },
+            None,
+        )
     }
 
     pub fn spawn_luau_thread_after(
@@ -244,9 +254,15 @@ impl Scheduler {
         let wake_at = Instant::now()
             .checked_add(delay)
             .unwrap_or_else(Instant::now);
+        let pending_start = !thread.is_started();
         self.insert_work(
             context,
-            TaskWork::LuauThread { vm, thread, args },
+            TaskWork::LuauThread {
+                vm,
+                thread,
+                args,
+                pending_start,
+            },
             Some(wake_at),
         )
     }
@@ -297,6 +313,7 @@ impl Scheduler {
         task.state = TaskState::Pending;
         task.error = None;
         task.output = None;
+        task.wake_at = wake_at;
         if let Some(wake_at) = wake_at {
             self.sleeping.push((wake_at, id));
         } else {
@@ -339,10 +356,41 @@ impl Scheduler {
                 state: TaskState::Pending,
                 error: None,
                 output: None,
+                wake_at,
             },
         );
 
         handle
+    }
+
+    fn take_pending_luau_thread_start(
+        &mut self,
+        id: TaskId,
+        wake_at: Option<Instant>,
+    ) -> Option<Vec<luau::Value>> {
+        let task = self.tasks.get_mut(&id)?;
+        if task.state != TaskState::Pending || !start_wake_is_not_later(wake_at, task.wake_at) {
+            return None;
+        }
+
+        let Some(TaskWork::LuauThread {
+            thread,
+            args,
+            pending_start,
+            ..
+        }) = task.work.as_mut()
+        else {
+            return None;
+        };
+        if !*pending_start || thread.is_started() {
+            return None;
+        }
+
+        let args = std::mem::take(args);
+        task.work = None;
+        task.state = TaskState::Cancelled;
+        task.wake_at = None;
+        Some(args)
     }
 
     pub fn cancel(&mut self, id: TaskId) -> bool {
@@ -355,6 +403,7 @@ impl Scheduler {
 
         task.work = None;
         task.state = TaskState::Cancelled;
+        task.wake_at = None;
         true
     }
 
@@ -396,14 +445,22 @@ impl Scheduler {
                 WorkPoll::Completed { output } => {
                     task.work = None;
                     task.state = TaskState::Completed;
+                    task.wake_at = None;
                     {
                         task.output = output;
                     }
                     completed += 1;
                 }
+                WorkPoll::Cancelled => {
+                    task.work = None;
+                    task.state = TaskState::Cancelled;
+                    task.wake_at = None;
+                    completed += 1;
+                }
                 WorkPoll::Failed(error) => {
                     task.work = None;
                     task.state = TaskState::Failed;
+                    task.wake_at = None;
                     task.error = Some(Arc::from(error));
                     completed += 1;
                 }
@@ -618,7 +675,8 @@ impl LocalScheduler {
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) -> TaskHandle {
-        let key = (thread.vm_id(), thread.state_id());
+        let key = luau_thread_key(&thread);
+        let args = self.prepare_luau_thread_start_args(key, &thread, args, None);
         let handle = self.scheduler.borrow_mut().spawn_luau_thread(
             context,
             vm.clone(),
@@ -644,7 +702,7 @@ impl LocalScheduler {
                 .borrow_mut()
                 .push(PendingLuauWork::Thread {
                     context,
-                    delay: Duration::ZERO,
+                    delay: None,
                     vm,
                     thread,
                     args,
@@ -663,7 +721,11 @@ impl LocalScheduler {
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) -> TaskHandle {
-        let key = (thread.vm_id(), thread.state_id());
+        let key = luau_thread_key(&thread);
+        let wake_at = Instant::now()
+            .checked_add(delay)
+            .unwrap_or_else(Instant::now);
+        let args = self.prepare_luau_thread_start_args(key, &thread, args, Some(wake_at));
         let handle = self.scheduler.borrow_mut().spawn_luau_thread_after(
             context,
             delay,
@@ -691,7 +753,7 @@ impl LocalScheduler {
                 .borrow_mut()
                 .push(PendingLuauWork::Thread {
                     context,
-                    delay,
+                    delay: Some(delay),
                     vm,
                     thread,
                     args,
@@ -778,9 +840,9 @@ impl LocalScheduler {
     }
 
     pub fn cancel_luau_thread(&self, thread: &luau::Thread) -> bool {
-        let key = (thread.vm_id(), thread.state_id());
+        let key = luau_thread_key(thread);
         let Some(handle) = self.thread_tasks.borrow_mut().remove(&key) else {
-            return false;
+            return self.cancel_pending_luau_thread_work(key);
         };
         self.cancel(handle.id())
     }
@@ -818,7 +880,7 @@ impl LocalScheduler {
     fn take_parked_luau_thread(&self, thread: &luau::Thread) -> bool {
         self.parked_threads
             .borrow_mut()
-            .remove(&(thread.vm_id(), thread.state_id()))
+            .remove(&luau_thread_key(thread))
     }
 
     pub fn poll_ready(&self) -> usize {
@@ -874,6 +936,45 @@ impl LocalScheduler {
         self.scheduler.borrow_mut().remove_finished()
     }
 
+    fn prepare_luau_thread_start_args(
+        &self,
+        key: (u64, usize),
+        thread: &luau::Thread,
+        mut args: Vec<luau::Value>,
+        wake_at: Option<Instant>,
+    ) -> Vec<luau::Value> {
+        if thread.is_started() {
+            return args;
+        }
+
+        let Some(handle) = self.thread_tasks.borrow().get(&key).copied() else {
+            return args;
+        };
+        let Some(mut merged_args) = self
+            .scheduler
+            .borrow_mut()
+            .take_pending_luau_thread_start(handle.id(), wake_at)
+        else {
+            return args;
+        };
+
+        self.thread_tasks.borrow_mut().remove(&key);
+        self.clear_luau_context_for_task(handle.id());
+        merged_args.append(&mut args);
+        merged_args
+    }
+
+    fn cancel_pending_luau_thread_work(&self, key: (u64, usize)) -> bool {
+        let mut pending = self.pending_luau_work.borrow_mut();
+        let original_len = pending.len();
+        pending.retain(|work| match work {
+            PendingLuauWork::Thread { thread, .. } | PendingLuauWork::Future { thread, .. } => {
+                luau_thread_key(thread) != key
+            }
+        });
+        pending.len() != original_len
+    }
+
     fn flush_pending_luau_threads(&self) {
         let pending = std::mem::take(&mut *self.pending_luau_work.borrow_mut());
         for pending in pending {
@@ -885,7 +986,11 @@ impl LocalScheduler {
                     thread,
                     args,
                 } => {
-                    self.spawn_luau_thread_after(context, delay, vm, thread, args);
+                    if let Some(delay) = delay {
+                        self.spawn_luau_thread_after(context, delay, vm, thread, args);
+                    } else {
+                        self.spawn_luau_thread(context, vm, thread, args);
+                    }
                 }
                 PendingLuauWork::Future {
                     target,
@@ -895,7 +1000,7 @@ impl LocalScheduler {
                     thread,
                     future,
                 } => {
-                    let key = (thread.vm_id(), thread.state_id());
+                    let key = luau_thread_key(&thread);
                     let wake_at = delay.map(|delay| {
                         Instant::now()
                             .checked_add(delay)
@@ -953,10 +1058,22 @@ impl LocalScheduler {
     }
 }
 
+fn luau_thread_key(thread: &luau::Thread) -> (u64, usize) {
+    (thread.vm_id(), thread.state_id())
+}
+
+fn start_wake_is_not_later(new_wake_at: Option<Instant>, old_wake_at: Option<Instant>) -> bool {
+    match (new_wake_at, old_wake_at) {
+        (None, _) => true,
+        (Some(_), None) => false,
+        (Some(new_wake_at), Some(old_wake_at)) => new_wake_at <= old_wake_at,
+    }
+}
+
 enum PendingLuauWork {
     Thread {
         context: CallContext,
-        delay: Duration,
+        delay: Option<Duration>,
         vm: luau::Vm,
         thread: luau::Thread,
         args: Vec<luau::Value>,
@@ -977,6 +1094,7 @@ struct Task {
     state: TaskState,
     error: Option<Arc<str>>,
     output: Option<Vec<luau::Value>>,
+    wake_at: Option<Instant>,
 }
 
 enum TaskWork {
@@ -985,6 +1103,7 @@ enum TaskWork {
         vm: luau::Vm,
         thread: luau::Thread,
         args: Vec<luau::Value>,
+        pending_start: bool,
     },
     LuauFuture {
         vm: luau::Vm,
@@ -995,6 +1114,7 @@ enum TaskWork {
 
 enum WorkPoll {
     Completed { output: Option<Vec<luau::Value>> },
+    Cancelled,
     Failed(String),
     Pending,
 }
@@ -1011,7 +1131,18 @@ fn poll_work(
             Poll::Ready(Err(error)) => WorkPoll::Failed(error.to_string()),
             Poll::Pending => WorkPoll::Pending,
         },
-        TaskWork::LuauThread { vm, thread, args } => {
+        TaskWork::LuauThread {
+            vm,
+            thread,
+            args,
+            pending_start,
+        } => {
+            if *pending_start {
+                if thread.is_started() {
+                    return WorkPoll::Cancelled;
+                }
+                *pending_start = false;
+            }
             if let Err(error) = vm.set_thread_call_context(thread, luau_call_context(context)) {
                 return WorkPoll::Failed(error.to_string());
             }
