@@ -46,6 +46,7 @@ use crate::plugins::{
 #[cfg(feature = "docgen")]
 type RenderDocsFn = fn() -> Result<String>;
 
+#[cfg(feature = "docgen")]
 struct Surface {
     #[cfg(feature = "docgen")]
     id: &'static str,
@@ -53,6 +54,7 @@ struct Surface {
     render_docs: RenderDocsFn,
 }
 
+#[cfg(feature = "docgen")]
 macro_rules! surface {
     ($id:literal, $module:path, $render:path) => {
         Surface {

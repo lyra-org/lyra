@@ -40,23 +40,26 @@ use self::router::{
     install_router,
     installed_static_dir,
 };
+#[cfg(feature = "docgen")]
 use self::types::{
     ApiAuth,
     ApiContext,
-    ApiHandler,
     ApiHeaders,
-    ApiMethod,
     ApiPathParams,
-    ApiQueryParams,
     ApiRequest,
     ApiResponse,
-    ApiRouteAuthMode,
-    ApiWebSocketHandler,
     ApiWebSocketReader,
     ApiWebSocketSender,
     HlsServeOptions,
     ImageTransformOptions,
     TrackServeOptions,
+};
+use self::types::{
+    ApiHandler,
+    ApiMethod,
+    ApiQueryParams,
+    ApiRouteAuthMode,
+    ApiWebSocketHandler,
 };
 use self::websocket::dispatch_websocket_route;
 
@@ -134,6 +137,9 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
+#[cfg(feature = "docgen")]
+use harmony_luau::render_definition_file_with_support;
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeInterface,
     DescribeModule,
@@ -147,7 +153,6 @@ use harmony_luau::{
     ModuleFunctionDescriptor,
     ParameterDescriptor,
     TypeAliasDescriptor,
-    render_definition_file_with_support,
 };
 use tower::ServiceExt;
 use tower_http::services::{
@@ -155,29 +160,28 @@ use tower_http::services::{
     ServeFile,
 };
 
+#[cfg(feature = "docgen")]
+use crate::plugins::auth::{
+    AuthCredential,
+    Principal as AuthPrincipal,
+};
+use crate::routes::{
+    build_ranged_file_body,
+    download_track_response,
+    registry::{
+        RouteKey,
+        is_placeholder_segment,
+        lowercase_literal_segments,
+    },
+    serve_hls_playlist_for_track,
+    stream_track_response,
+};
+use crate::services::auth::resolve_optional_auth;
 use crate::services::remote::constants::{
     MAX_MESSAGE_SIZE,
     PING_INTERVAL,
     PONG_TIMEOUT,
     WRITE_TIMEOUT,
-};
-use crate::{
-    plugins::auth::{
-        AuthCredential,
-        Principal as AuthPrincipal,
-    },
-    routes::{
-        build_ranged_file_body,
-        download_track_response,
-        registry::{
-            RouteKey,
-            is_placeholder_segment,
-            lowercase_literal_segments,
-        },
-        serve_hls_playlist_for_track,
-        stream_track_response,
-    },
-    services::auth::resolve_optional_auth,
 };
 
 struct ApiModule;
@@ -733,6 +737,7 @@ fn core_call_context(context: &luau::CallContext) -> harmony_core::CallContext {
     }
 }
 
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -742,6 +747,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
+#[cfg(feature = "docgen")]
 fn route_params(include_method: bool) -> Vec<ParameterDescriptor> {
     let mut params = Vec::new();
     if include_method {
@@ -759,10 +765,12 @@ fn route_params(include_method: bool) -> Vec<ParameterDescriptor> {
     params
 }
 
+#[cfg(feature = "docgen")]
 fn response_returns() -> Vec<LuauType> {
     vec![ApiResponse::luau_type()]
 }
 
+#[cfg(feature = "docgen")]
 impl DescribeModule for ApiModule {
     fn module_descriptor() -> ModuleDescriptor {
         let mut descriptor = ModuleDescriptor::new("Api", "api", None);
@@ -984,6 +992,7 @@ impl DescribeModule for ApiModule {
     }
 }
 
+#[cfg(feature = "docgen")]
 fn support_aliases() -> Vec<TypeAliasDescriptor> {
     let mut aliases = vec![
         TypeAliasDescriptor::new(
@@ -1066,6 +1075,7 @@ fn support_aliases() -> Vec<TypeAliasDescriptor> {
     aliases
 }
 
+#[cfg(feature = "docgen")]
 fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
     vec![
         response_alias(
@@ -1147,6 +1157,7 @@ fn api_response_aliases() -> Vec<TypeAliasDescriptor> {
     ]
 }
 
+#[cfg(feature = "docgen")]
 fn response_alias(
     name: &'static str,
     kind: &'static str,
@@ -1161,6 +1172,7 @@ fn response_alias(
     TypeAliasDescriptor::new(name, LuauType::object(shape), None)
 }
 
+#[cfg(feature = "docgen")]
 fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
     vec![
         AuthPrincipal::interface_descriptor(),
@@ -1265,6 +1277,7 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
     ]
 }
 
+#[cfg(feature = "docgen")]
 fn interface(
     name: &'static str,
     fields: impl IntoIterator<Item = FieldDescriptor>,
@@ -1274,6 +1287,7 @@ fn interface(
     descriptor
 }
 
+#[cfg(feature = "docgen")]
 fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     FieldDescriptor {
         name,
@@ -1282,6 +1296,7 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     }
 }
 
+#[cfg(feature = "docgen")]
 fn track_serve_option_fields(include_format: bool) -> Vec<FieldDescriptor> {
     let mut fields = Vec::new();
     if include_format {

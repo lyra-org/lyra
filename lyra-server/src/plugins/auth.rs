@@ -9,16 +9,20 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
+#[cfg(any(feature = "docgen", test))]
+use harmony_luau::render_definition_file_with_support;
 use harmony_luau::{
     DescribeInterface,
     FieldDescriptor,
     InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
+};
+#[cfg(any(feature = "docgen", test))]
+use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
     ParameterDescriptor,
-    render_definition_file_with_support,
 };
 use serde::Serialize;
 
@@ -50,6 +54,7 @@ pub(crate) struct ResolvedAuth {
 }
 
 #[derive(Serialize)]
+#[cfg(any(feature = "docgen", test))]
 struct LoginResult {
     principal: Principal,
     token: String,
@@ -245,12 +250,14 @@ impl DescribeInterface for ResolvedAuth {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 impl LuauTypeInfo for LoginResult {
     fn luau_type() -> LuauType {
         LuauType::literal("LoginResult")
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 impl DescribeInterface for LoginResult {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("LoginResult", None);
@@ -300,6 +307,7 @@ impl DescribeInterface for AuthCapabilities {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -309,6 +317,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Auth",
@@ -355,7 +364,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(feature = "docgen")]
+#[cfg(any(feature = "docgen", test))]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),

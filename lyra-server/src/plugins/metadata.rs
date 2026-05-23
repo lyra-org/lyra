@@ -29,6 +29,7 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     ClassDescriptor,
     FieldDescriptor,
@@ -1638,6 +1639,7 @@ fn string_array_from_table(
     Ok(values)
 }
 
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &metadata_module_descriptor(),
@@ -1647,6 +1649,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
     )
 }
 
+#[cfg(feature = "docgen")]
 fn metadata_module_descriptor() -> ModuleDescriptor {
     let mut descriptor = ModuleDescriptor::new("Metadata", "metadata", None);
     descriptor.functions.extend([
@@ -1671,6 +1674,7 @@ fn metadata_module_descriptor() -> ModuleDescriptor {
     descriptor
 }
 
+#[cfg(feature = "docgen")]
 fn metadata_type_aliases() -> Vec<TypeAliasDescriptor> {
     vec![
         alias(
@@ -1824,6 +1828,7 @@ fn metadata_type_aliases() -> Vec<TypeAliasDescriptor> {
     ]
 }
 
+#[cfg(feature = "docgen")]
 fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
     vec![
         interface(
@@ -2097,6 +2102,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
     ]
 }
 
+#[cfg(feature = "docgen")]
 fn metadata_classes() -> Vec<ClassDescriptor> {
     vec![
         <EntityType as harmony_luau::DescribeUserData>::class_descriptor(),
@@ -2108,6 +2114,7 @@ fn metadata_classes() -> Vec<ClassDescriptor> {
     ]
 }
 
+#[cfg(feature = "docgen")]
 fn layer_class() -> ClassDescriptor {
     let mut class = ClassDescriptor::new("Layer", None);
     class.methods.extend([
@@ -2145,6 +2152,7 @@ fn layer_class() -> ClassDescriptor {
     class
 }
 
+#[cfg(feature = "docgen")]
 fn provider_class() -> ClassDescriptor {
     let mut class = ClassDescriptor::new("Provider", None);
     class.methods.extend([
@@ -2239,10 +2247,12 @@ fn provider_class() -> ClassDescriptor {
     class
 }
 
+#[cfg(feature = "docgen")]
 fn alias(name: &'static str, ty: LuauType) -> TypeAliasDescriptor {
     TypeAliasDescriptor::new(name, ty, None)
 }
 
+#[cfg(feature = "docgen")]
 fn interface(name: &'static str, fields: Vec<FieldDescriptor>) -> InterfaceDescriptor {
     InterfaceDescriptor {
         name,
@@ -2251,6 +2261,7 @@ fn interface(name: &'static str, fields: Vec<FieldDescriptor>) -> InterfaceDescr
     }
 }
 
+#[cfg(feature = "docgen")]
 fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     FieldDescriptor {
         name,
@@ -2259,6 +2270,7 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     }
 }
 
+#[cfg(feature = "docgen")]
 fn method(
     name: &'static str,
     params: Vec<ParameterDescriptor>,
@@ -2274,6 +2286,7 @@ fn method(
     }
 }
 
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -2283,6 +2296,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
+#[cfg(feature = "docgen")]
 fn fn_param(name: &'static str, ty: LuauType) -> FunctionParameter {
     FunctionParameter {
         name: Some(name),
@@ -2291,34 +2305,42 @@ fn fn_param(name: &'static str, ty: LuauType) -> FunctionParameter {
     }
 }
 
+#[cfg(feature = "docgen")]
 fn boolean() -> LuauType {
     bool::luau_type()
 }
 
+#[cfg(feature = "docgen")]
 fn string() -> LuauType {
     String::luau_type()
 }
 
+#[cfg(feature = "docgen")]
 fn number() -> LuauType {
     LuauType::literal("number")
 }
 
+#[cfg(feature = "docgen")]
 fn ty(name: &'static str) -> LuauType {
     LuauType::literal(name)
 }
 
+#[cfg(feature = "docgen")]
 fn opt(ty: LuauType) -> LuauType {
     LuauType::optional(ty)
 }
 
+#[cfg(feature = "docgen")]
 fn array(ty: LuauType) -> LuauType {
     LuauType::array(ty)
 }
 
+#[cfg(feature = "docgen")]
 fn map(key: LuauType, value: LuauType) -> LuauType {
     LuauType::map(key, value)
 }
 
+#[cfg(feature = "docgen")]
 fn union<const N: usize>(types: [LuauType; N]) -> LuauType {
     LuauType::union(types.into())
 }

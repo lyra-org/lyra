@@ -9,11 +9,14 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
+use harmony_luau::IntoLuauReturn;
+#[cfg(any(feature = "docgen", test))]
+use harmony_luau::render_definition_file_with_support;
+#[cfg(any(feature = "docgen", test))]
 use harmony_luau::{
     DescribeInterface,
     DescribeTypeAlias,
     FieldDescriptor,
-    IntoLuauReturn,
     LuauType,
     LuauTypeInfo,
     ModuleDescriptor,
@@ -21,9 +24,25 @@ use harmony_luau::{
     ModuleFunctionDescriptor,
     ParameterDescriptor,
     TypeAliasDescriptor,
-    render_definition_file_with_support,
 };
 
+#[cfg(any(feature = "docgen", test))]
+use crate::services::entities::{
+    ArtistProjectionIncludes,
+    ArtistProjectionInfo,
+    ArtistProjectionKind,
+    CreditProjectionInfo,
+    CreditedArtistProjectionInfo,
+    EntityLookupHints,
+    ProjectionEntryInfo,
+    ReleaseProjectionIncludes,
+    ReleaseProjectionInfo,
+    ReleaseProjectionKind,
+    ReleaseProjectionTrack,
+    TrackProjectionIncludes,
+    TrackProjectionInfo,
+    TrackProjectionKind,
+};
 use crate::{
     plugins::db::{
         self,
@@ -31,22 +50,8 @@ use crate::{
         ResolveId,
     },
     services::entities::{
-        ArtistProjectionIncludes,
-        ArtistProjectionInfo,
-        ArtistProjectionKind,
-        CreditProjectionInfo,
-        CreditedArtistProjectionInfo,
         EntityInclude,
-        EntityLookupHints,
         EntityProjectionInfo,
-        ProjectionEntryInfo,
-        ReleaseProjectionIncludes,
-        ReleaseProjectionInfo,
-        ReleaseProjectionKind,
-        ReleaseProjectionTrack,
-        TrackProjectionIncludes,
-        TrackProjectionInfo,
-        TrackProjectionKind,
         project_entities,
         project_entity,
     },
@@ -473,6 +478,7 @@ fn install_string_table(
     root.set_table_raw(vm, key, &table)
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -482,6 +488,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     FieldDescriptor {
         name,
@@ -490,18 +497,22 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn resolve_id_type() -> LuauType {
     LuauType::union(vec![i64::luau_type(), String::luau_type()])
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn include_selector_type() -> LuauType {
     LuauType::union(vec![String::luau_type(), Vec::<String>::luau_type()])
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn string_enum(values: impl IntoIterator<Item = &'static str>) -> LuauType {
     LuauType::union(values.into_iter().map(LuauType::string_literal).collect())
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn track_type() -> LuauType {
     LuauType::object(vec![
         field("db_id", Option::<i64>::luau_type()),
@@ -524,6 +535,7 @@ fn track_type() -> LuauType {
     ])
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn release_type() -> LuauType {
     LuauType::object(vec![
         field("db_id", Option::<i64>::luau_type()),
@@ -541,6 +553,7 @@ fn release_type() -> LuauType {
     ])
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn artist_type() -> LuauType {
     LuauType::object(vec![
         field("db_id", Option::<i64>::luau_type()),
@@ -559,6 +572,7 @@ fn artist_type() -> LuauType {
     ])
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn entity_type_aliases() -> Vec<TypeAliasDescriptor> {
     vec![
         TypeAliasDescriptor::new(
@@ -648,6 +662,7 @@ fn entity_type_aliases() -> Vec<TypeAliasDescriptor> {
     ]
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn entity_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
     vec![
         EntityLookupHints::interface_descriptor(),
@@ -664,6 +679,7 @@ fn entity_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
     ]
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Entities",
@@ -742,7 +758,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(feature = "docgen")]
+#[cfg(any(feature = "docgen", test))]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),

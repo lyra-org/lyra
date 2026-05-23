@@ -26,6 +26,9 @@ use harmony_luau::{
     InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
+};
+#[cfg(any(feature = "docgen", test))]
+use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
     ParameterDescriptor,
@@ -420,6 +423,7 @@ impl DescribeInterface for ComposeResult {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Images",
@@ -443,6 +447,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),

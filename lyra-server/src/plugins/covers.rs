@@ -22,6 +22,7 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
+#[cfg(any(feature = "docgen", test))]
 use harmony_luau::{
     DescribeInterface,
     FieldDescriptor,
@@ -73,6 +74,7 @@ enum CoverValidity {
 
 struct CoversModule;
 
+#[cfg(any(feature = "docgen", test))]
 struct CoverInfo;
 
 pub(crate) fn module_spec() -> ModuleSpec {
@@ -395,12 +397,14 @@ fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 impl LuauTypeInfo for CoverInfo {
     fn luau_type() -> LuauType {
         LuauType::named("CoverInfo")
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 impl DescribeInterface for CoverInfo {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("CoverInfo", None);
@@ -435,6 +439,7 @@ impl DescribeInterface for CoverInfo {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -444,10 +449,12 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn resolve_id_type() -> LuauType {
     LuauType::union(vec![i64::luau_type(), String::luau_type()])
 }
 
+#[cfg(any(feature = "docgen", test))]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Covers",
@@ -476,6 +483,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),

@@ -27,10 +27,13 @@ use harmony_luau::{
     InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
+    TypeAliasDescriptor,
+};
+#[cfg(feature = "docgen")]
+use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
     ParameterDescriptor,
-    TypeAliasDescriptor,
     render_definition_file_with_support,
 };
 use serde::{
@@ -39,6 +42,8 @@ use serde::{
     de::DeserializeOwned,
 };
 
+#[cfg(feature = "docgen")]
+use crate::services::playback_sessions::PlaybackUpdatePayload;
 use crate::{
     plugins::db::{
         self,
@@ -50,7 +55,6 @@ use crate::{
         playback_sessions::{
             self as playbacks,
             PlaybackScopeKey,
-            PlaybackUpdatePayload,
         },
         remote::{
             constants::RemoteAction,
@@ -793,6 +797,7 @@ fn empty_array_value() -> luau::Value {
     luau::Value::TableData(luau::OwnedTable::with_capacity(0, 0))
 }
 
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -802,6 +807,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "PlaybackSessions",
@@ -866,6 +872,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),

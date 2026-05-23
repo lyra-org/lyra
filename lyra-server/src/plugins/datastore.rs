@@ -9,10 +9,11 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
+use harmony_luau::JsonValue;
+#[cfg(any(feature = "docgen", test))]
 use harmony_luau::{
     DescribeTypeAlias,
     DescribeUserData,
-    JsonValue,
     LuauType,
     LuauTypeInfo,
     ModuleDescriptor,
@@ -28,6 +29,7 @@ use crate::plugins::db::{
 };
 struct PluginCaller;
 
+#[cfg(any(feature = "docgen", test))]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -322,6 +324,7 @@ fn read_json_entries(
     }
     Ok(entries)
 }
+#[cfg(any(feature = "docgen", test))]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "DataStore",
@@ -338,6 +341,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
+#[cfg(any(feature = "docgen", test))]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),

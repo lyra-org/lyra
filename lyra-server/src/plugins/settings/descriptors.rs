@@ -3,21 +3,25 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     ClassDescriptor,
+    DescribeUserData,
+    ModuleFunctionDescriptor,
+    ParameterDescriptor,
+};
+use harmony_luau::{
     DescribeInterface,
     DescribeTypeAlias,
-    DescribeUserData,
     FieldDescriptor,
     FunctionParameter,
     InterfaceDescriptor,
     LuauType,
     LuauTypeInfo,
-    ModuleFunctionDescriptor,
-    ParameterDescriptor,
     TypeAliasDescriptor,
 };
 
+#[cfg(feature = "docgen")]
 use super::luau::{
     SettingsBuilder,
     UserSettingsAccessor,
@@ -247,6 +251,7 @@ impl DescribeInterface for SettingsChoiceProps {
     }
 }
 
+#[cfg(feature = "docgen")]
 pub(crate) fn declare_settings_descriptor() -> ModuleFunctionDescriptor {
     ModuleFunctionDescriptor {
         path: vec!["declare_settings"],
@@ -257,6 +262,7 @@ pub(crate) fn declare_settings_descriptor() -> ModuleFunctionDescriptor {
     }
 }
 
+#[cfg(feature = "docgen")]
 pub(crate) fn declare_user_settings_descriptor() -> ModuleFunctionDescriptor {
     ModuleFunctionDescriptor {
         path: vec!["declare_user_settings"],
@@ -267,6 +273,7 @@ pub(crate) fn declare_user_settings_descriptor() -> ModuleFunctionDescriptor {
     }
 }
 
+#[cfg(feature = "docgen")]
 pub(crate) fn type_alias_descriptors() -> [TypeAliasDescriptor; 2] {
     [
         SettingsConfig::type_alias_descriptor(),
@@ -274,6 +281,7 @@ pub(crate) fn type_alias_descriptors() -> [TypeAliasDescriptor; 2] {
     ]
 }
 
+#[cfg(feature = "docgen")]
 pub(crate) fn interface_descriptors() -> [InterfaceDescriptor; 5] {
     [
         SettingsChoiceOption::interface_descriptor(),
@@ -284,6 +292,7 @@ pub(crate) fn interface_descriptors() -> [InterfaceDescriptor; 5] {
     ]
 }
 
+#[cfg(feature = "docgen")]
 pub(crate) fn class_descriptors() -> [ClassDescriptor; 2] {
     [
         SettingsBuilder::class_descriptor(),
@@ -291,6 +300,7 @@ pub(crate) fn class_descriptors() -> [ClassDescriptor; 2] {
     ]
 }
 
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
