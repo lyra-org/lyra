@@ -1,0 +1,36 @@
+{
+  "test_name": "bling_bang_bang_born_creepy_nuts",
+  "scenario_id": "cf85db0bfdfb6ca9",
+  "responses": [
+    {
+      "cache_key": "1cb1a0109af5b032",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ABling%5C-Bang%5C-Bang%5C-Born&limit=100",
+      "status_code": 200,
+      "body_hash": "d8128c67e22c80f3"
+    },
+    {
+      "cache_key": "4e003dfe0a2a37ad",
+      "url": "https://musicbrainz.org/ws/2/artist/e5e045da-59a3-4b65-8bb4-3c7f3ac9a529?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "10240a58f25f2054"
+    },
+    {
+      "cache_key": "58e71823cc978886",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=88d1c744-85b5-4b57-823b-0dd6c6dbbfed&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "b4d6357d5bd29d17"
+    },
+    {
+      "cache_key": "77bcb87a2be93148",
+      "url": "https://musicbrainz.org/ws/2/work/a4ce00f6-07a2-40d5-9f93-350aa9899118?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d2e24fb3858d69bd"
+    },
+    {
+      "cache_key": "7ca743343a202f87",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Creepy%20Nuts",
+      "status_code": 200,
+      "body_hash": "a91d256ba46ff618"
+    }
+  ]
+}

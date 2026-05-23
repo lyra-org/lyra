@@ -1,0 +1,103 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2014] Mrs. GREEN APPLE - Introduction [CD FLAC]/06 慶びの種.flac"
+album = "Introduction"
+artists = ["Mrs. GREEN APPLE"]
+title = "慶びの種"
+genre = "Indie / Alternative"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 6
+duration_ms = 280413
+
+[[raw_tags]]
+file_path = "[2014] Mrs. GREEN APPLE - Introduction [CD FLAC]/05 リスキーゲーム.flac"
+album = "Introduction"
+artists = ["Mrs. GREEN APPLE"]
+title = "リスキーゲーム"
+genre = "Indie / Alternative"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 6
+duration_ms = 176573
+
+[[raw_tags]]
+file_path = "[2014] Mrs. GREEN APPLE - Introduction [CD FLAC]/04 FACTORY.flac"
+album = "Introduction"
+artists = ["Mrs. GREEN APPLE"]
+title = "FACTORY"
+genre = "Indie / Alternative"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 6
+duration_ms = 213653
+
+[[raw_tags]]
+file_path = "[2014] Mrs. GREEN APPLE - Introduction [CD FLAC]/03 スターダム.flac"
+album = "Introduction"
+artists = ["Mrs. GREEN APPLE"]
+title = "スターダム"
+genre = "Indie / Alternative"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 6
+duration_ms = 234613
+
+[[raw_tags]]
+file_path = "[2014] Mrs. GREEN APPLE - Introduction [CD FLAC]/02 藍.flac"
+album = "Introduction"
+artists = ["Mrs. GREEN APPLE"]
+title = "藍"
+genre = "Indie / Alternative"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 6
+duration_ms = 239306
+
+[[raw_tags]]
+file_path = "[2014] Mrs. GREEN APPLE - Introduction [CD FLAC]/01 HeLLo.flac"
+album = "Introduction"
+artists = ["Mrs. GREEN APPLE"]
+title = "HeLLo"
+genre = "Indie / Alternative"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 6
+duration_ms = 187773
+
+[expect.release]
+ids = { release_id = "317e18f6-b378-4d51-a044-f1c053f34e87" }
+fields = { release_title = "Introduction", release_date = "2014-07-05" }
+
+[expect.artists."9ce674b7-5180-41f7-9ac2-95dc0d8a0ed2"]
+fields = { artist_name = "Mrs. GREEN APPLE", sort_name = "Mrs. GREEN APPLE" }
+
+[expect.tracks."0e89a3fa-98bb-4d2b-af99-c587b05e1938"]
+fields = { disc = 1, track = 2, track_title = "藍" }
+
+[expect.tracks."4bce2820-c65a-4dab-b1f3-6739ae1d393f"]
+fields = { disc = 1, track = 1, track_title = "HeLLo" }
+
+[expect.tracks."6af3254b-8fe6-44ca-b350-59d3118afcd7"]
+fields = { disc = 1, track = 5, track_title = "リスキーゲーム" }
+
+[expect.tracks."c3400829-ae76-4589-b6bc-62c011ed05b6"]
+fields = { disc = 1, track = 4, track_title = "FACTORY" }
+
+[expect.tracks."e5c5be22-23d5-43a9-9142-88c20683aa69"]
+fields = { disc = 1, track = 6, track_title = "慶びの種" }
+
+[expect.tracks."ee97cc7a-ab46-4021-8785-3086c4c3036d"]
+fields = { disc = 1, track = 3, track_title = "スターダム" }
