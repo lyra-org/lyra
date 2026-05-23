@@ -1200,12 +1200,23 @@ impl Thread {
         &self.inner.data
     }
 
+    pub fn is_started(&self) -> bool {
+        self.inner.started.get() || self.has_started_state()
+    }
+
     fn reference(&self) -> Option<&RegistryRef> {
         self.inner._reference.as_ref()
     }
 
     fn state(&self) -> NonNull<sys::lua_State> {
         self.inner.state
+    }
+
+    fn has_started_state(&self) -> bool {
+        unsafe {
+            sys::lua_status(self.inner.state.as_ptr()) != sys::LUA_OK
+                || sys::lua_gettop(self.inner.state.as_ptr()) != 1
+        }
     }
 
     pub fn resume(&self, vm: &Vm, args: &[Value]) -> Result<ThreadStatus> {
@@ -1219,11 +1230,9 @@ impl Thread {
             return Err(Error::Runtime("thread already completed".to_string()));
         }
 
+        let started = self.is_started();
         unsafe {
-            sys::lua_settop(
-                self.inner.state.as_ptr(),
-                if self.inner.started.get() { 0 } else { 1 },
-            );
+            sys::lua_settop(self.inner.state.as_ptr(), if started { 0 } else { 1 });
         }
         for arg in args {
             vm.push_value_to(self.inner.state, arg)?;

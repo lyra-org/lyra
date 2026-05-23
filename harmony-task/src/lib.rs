@@ -142,7 +142,7 @@ fn schedule_task(
 
     let context = scheduler_context(&frame.context);
     if let Some(delay) = delay {
-        let _ = scheduler.spawn_luau_thread_after(
+        scheduler.schedule_luau_thread_after(
             context,
             delay,
             frame.vm.clone(),
@@ -224,9 +224,7 @@ impl DescribeModule for TaskModuleDocs {
         ModuleDescriptor {
             name: "Task",
             local_name: "task",
-            description: Some(
-                "Task scheduling primitives backed by the Harmony scheduler.\nAlso patches coroutine.resume and coroutine.wrap to resume scheduled threads correctly.",
-            ),
+            description: Some("Task scheduling primitives backed by the Harmony scheduler."),
             fields: Vec::new(),
             functions: vec![
                 ModuleFunctionDescriptor {
