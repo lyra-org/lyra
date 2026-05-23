@@ -1783,9 +1783,59 @@ impl OwnedTable {
 pub struct ArgReader<'vm> {
     vm: &'vm Vm,
     state: NonNull<sys::lua_State>,
+    cursor: ArgCursor,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ArgCursor {
     argc: usize,
     index: usize,
     names: Vec<Arc<str>>,
+}
+
+impl ArgCursor {
+    fn new(argc: i32, names: impl IntoIterator<Item = Arc<str>>) -> Self {
+        Self {
+            argc: argc.max(0) as usize,
+            index: 0,
+            names: names.into_iter().collect(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.argc
+    }
+
+    fn index(&self) -> usize {
+        self.index
+    }
+
+    fn is_finished(&self) -> bool {
+        self.index >= self.len()
+    }
+
+    fn current_name(&self) -> Arc<str> {
+        self.names
+            .get(self.index)
+            .cloned()
+            .unwrap_or_else(|| Arc::from(format!("arg{}", self.index + 1)))
+    }
+
+    fn label_current(&mut self, name: &'static str) {
+        if self.names.len() <= self.index {
+            self.names.resize(self.index + 1, Arc::from(name));
+        }
+    }
+
+    fn advance(&mut self) {
+        self.index += 1;
+    }
+
+    fn drain_remaining(&mut self) -> std::ops::Range<usize> {
+        let remaining = self.index..self.argc;
+        self.index = self.argc;
+        remaining
+    }
 }
 
 impl<'vm> ArgReader<'vm> {
@@ -1798,9 +1848,7 @@ impl<'vm> ArgReader<'vm> {
         Self {
             vm,
             state,
-            argc: argc.max(0) as usize,
-            index: 0,
-            names: names.into_iter().collect(),
+            cursor: ArgCursor::new(argc, names),
         }
     }
 
@@ -1813,9 +1861,7 @@ impl<'vm> ArgReader<'vm> {
     }
 
     pub fn read_named<T: FromLuau<'vm>>(&mut self, name: &'static str) -> Result<T> {
-        if self.names.len() <= self.index {
-            self.names.resize(self.index + 1, Arc::from(name));
-        }
+        self.cursor.label_current(name);
         T::read(self)
     }
 
@@ -1823,22 +1869,19 @@ impl<'vm> ArgReader<'vm> {
         &mut self,
         name: &'static str,
     ) -> Result<Option<T>> {
-        if self.index >= self.len() {
+        if self.cursor.is_finished() {
             return Ok(None);
         }
-        if self.is_nil(self.index) {
-            self.index += 1;
+        if self.is_nil(self.cursor.index()) {
+            self.cursor.advance();
             return Ok(None);
         }
         self.read_named(name).map(Some)
     }
 
     pub fn drain_remaining(&mut self) -> Vec<Value> {
-        let values = (self.index..self.len())
-            .map(|index| self.value_at(index))
-            .collect();
-        self.index = self.len();
-        values
+        let remaining = self.cursor.drain_remaining();
+        remaining.map(|index| self.value_at(index)).collect()
     }
 
     pub fn read_string_bytes(&mut self) -> Result<&[u8]> {
@@ -1846,9 +1889,7 @@ impl<'vm> ArgReader<'vm> {
     }
 
     pub fn read_named_string_bytes(&mut self, name: &'static str) -> Result<&[u8]> {
-        if self.names.len() <= self.index {
-            self.names.resize(self.index + 1, Arc::from(name));
-        }
+        self.cursor.label_current(name);
         self.next_borrowed_bytes("string")
     }
 
@@ -1859,9 +1900,7 @@ impl<'vm> ArgReader<'vm> {
     }
 
     pub fn read_named_str(&mut self, name: &'static str) -> Result<&str> {
-        if self.names.len() <= self.index {
-            self.names.resize(self.index + 1, Arc::from(name));
-        }
+        self.cursor.label_current(name);
         self.read_str()
     }
 
@@ -1870,9 +1909,7 @@ impl<'vm> ArgReader<'vm> {
     }
 
     pub fn read_named_buffer_bytes(&mut self, name: &'static str) -> Result<&[u8]> {
-        if self.names.len() <= self.index {
-            self.names.resize(self.index + 1, Arc::from(name));
-        }
+        self.cursor.label_current(name);
         self.next_borrowed_bytes("buffer")
     }
 
@@ -1882,10 +1919,10 @@ impl<'vm> ArgReader<'vm> {
 
     fn next_bool(&mut self) -> Result<bool> {
         let name = self.current_name();
-        if self.index >= self.len() {
+        if self.cursor.is_finished() {
             return Err(Error::MissingArgument(name));
         }
-        let index = StackIndex::argument(self.index).raw();
+        let index = StackIndex::argument(self.cursor.index()).raw();
         let actual_type = unsafe { sys::lua_type(self.state.as_ptr(), index) };
         if actual_type != sys::LUA_TBOOLEAN {
             return Err(Error::ArgumentType {
@@ -1895,16 +1932,16 @@ impl<'vm> ArgReader<'vm> {
             });
         }
         let value = unsafe { sys::lua_toboolean(self.state.as_ptr(), index) != 0 };
-        self.index += 1;
+        self.cursor.advance();
         Ok(value)
     }
 
     fn next_i64(&mut self) -> Result<i64> {
         let name = self.current_name();
-        if self.index >= self.len() {
+        if self.cursor.is_finished() {
             return Err(Error::MissingArgument(name));
         }
-        let index = StackIndex::argument(self.index).raw();
+        let index = StackIndex::argument(self.cursor.index()).raw();
         let actual_type = unsafe { sys::lua_type(self.state.as_ptr(), index) };
         let value = match actual_type {
             sys::LUA_TINTEGER => {
@@ -1925,16 +1962,16 @@ impl<'vm> ArgReader<'vm> {
                 });
             }
         };
-        self.index += 1;
+        self.cursor.advance();
         Ok(value)
     }
 
     fn next_f64(&mut self) -> Result<f64> {
         let name = self.current_name();
-        if self.index >= self.len() {
+        if self.cursor.is_finished() {
             return Err(Error::MissingArgument(name));
         }
-        let index = StackIndex::argument(self.index).raw();
+        let index = StackIndex::argument(self.cursor.index()).raw();
         let actual_type = unsafe { sys::lua_type(self.state.as_ptr(), index) };
         let value = match actual_type {
             sys::LUA_TINTEGER => {
@@ -1953,16 +1990,16 @@ impl<'vm> ArgReader<'vm> {
                 });
             }
         };
-        self.index += 1;
+        self.cursor.advance();
         Ok(value)
     }
 
     fn next_named_value(&mut self, expected: &'static str) -> Result<(Arc<str>, Value)> {
         let name = self.current_name();
-        if self.index >= self.len() {
+        if self.cursor.is_finished() {
             return Err(Error::MissingArgument(name));
         }
-        let actual = self.type_name_at(self.index);
+        let actual = self.type_name_at(self.cursor.index());
         if actual != expected && expected != "any" {
             return Err(Error::ArgumentType {
                 name,
@@ -1970,8 +2007,8 @@ impl<'vm> ArgReader<'vm> {
                 actual,
             });
         }
-        let value = self.value_at(self.index);
-        self.index += 1;
+        let value = self.value_at(self.cursor.index());
+        self.cursor.advance();
         Ok((name, value))
     }
 
@@ -1982,10 +2019,10 @@ impl<'vm> ArgReader<'vm> {
 
     fn next_named_borrowed_bytes(&mut self, expected: &'static str) -> Result<(Arc<str>, &[u8])> {
         let name = self.current_name();
-        if self.index >= self.len() {
+        if self.cursor.is_finished() {
             return Err(Error::MissingArgument(name));
         }
-        let index = self.index;
+        let index = self.cursor.index();
         let actual = self.type_name_at(index);
         if actual != expected {
             return Err(Error::ArgumentType {
@@ -1994,20 +2031,13 @@ impl<'vm> ArgReader<'vm> {
                 actual,
             });
         }
-        self.index += 1;
+        self.cursor.advance();
         let bytes = self.bytes_at(index, expected);
         Ok((name, bytes))
     }
 
     fn current_name(&self) -> Arc<str> {
-        self.names
-            .get(self.index)
-            .cloned()
-            .unwrap_or_else(|| Arc::from(format!("arg{}", self.index + 1)))
-    }
-
-    fn len(&self) -> usize {
-        self.argc
+        self.cursor.current_name()
     }
 
     fn is_nil(&self, index: usize) -> bool {
@@ -2458,11 +2488,11 @@ where
     T: FromLuau<'vm>,
 {
     fn read(reader: &mut ArgReader<'vm>) -> Result<Self> {
-        if reader.index >= reader.len() {
+        if reader.cursor.is_finished() {
             return Ok(None);
         }
-        if reader.is_nil(reader.index) {
-            reader.index += 1;
+        if reader.is_nil(reader.cursor.index()) {
+            reader.cursor.advance();
             return Ok(None);
         }
         T::read(reader).map(Some)
@@ -3117,6 +3147,157 @@ mod tests {
     }
 
     #[test]
+    fn userdata_tags_accept_only_luau_tag_range() -> Result<()> {
+        assert_eq!(UserDataTag::new(0)?, UserDataTag(0));
+        assert_eq!(
+            UserDataTag::new(sys::LUA_UTAG_LIMIT - 1)?,
+            UserDataTag(sys::LUA_UTAG_LIMIT - 1)
+        );
+
+        assert!(matches!(
+            UserDataTag::new(-1),
+            Err(Error::InvalidUserDataTag { tag: -1 })
+        ));
+        assert!(matches!(
+            UserDataTag::new(sys::LUA_UTAG_LIMIT),
+            Err(Error::InvalidUserDataTag { tag }) if tag == sys::LUA_UTAG_LIMIT
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn vm_control_initializes_memory_and_interrupt_state() {
+        let unlimited = VmControl::new(VmOptions::default());
+        assert_eq!(unlimited.allocated.load(Ordering::Relaxed), 0);
+        assert_eq!(unlimited.memory_limit.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            unlimited.interrupt_deadline_millis.load(Ordering::Relaxed),
+            0
+        );
+
+        let limited = VmControl::new(VmOptions::default().memory_limit(4096));
+        assert_eq!(limited.allocated.load(Ordering::Relaxed), 0);
+        assert_eq!(limited.memory_limit.load(Ordering::Relaxed), 4096);
+        assert_eq!(limited.interrupt_deadline_millis.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn local_metadata_stores_typed_values_without_vm() -> Result<()> {
+        #[derive(Debug, PartialEq, Eq)]
+        struct Label(&'static str);
+
+        let vm_data = VmData::default();
+        vm_data.insert(Label("vm"))?;
+        assert_eq!(*vm_data.get::<Label>()?, Label("vm"));
+        assert!(matches!(
+            vm_data.get::<String>(),
+            Err(Error::MissingContext { .. })
+        ));
+
+        let thread_data = ThreadData::default();
+        thread_data.insert(Label("thread"))?;
+        assert_eq!(*thread_data.get::<Label>()?, Label("thread"));
+        assert!(matches!(
+            thread_data.get::<String>(),
+            Err(Error::MissingContext { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn owned_table_preserves_array_fields_and_raw_entries() {
+        let mut table = OwnedTable::with_entry_capacity(2, 1, 1);
+        table.push_array(Value::Integer(1));
+        table.push_array(Value::String(b"two".to_vec()));
+        table.set_field("name", Value::String(b"demo".to_vec()));
+        table.set_key(Value::Number(4.0), Value::Boolean(true));
+
+        assert_eq!(
+            table.array(),
+            &[Value::Integer(1), Value::String(b"two".to_vec())]
+        );
+        assert_eq!(
+            table.fields(),
+            &[("name".to_string(), Value::String(b"demo".to_vec()))]
+        );
+        assert_eq!(
+            table.entries(),
+            &[(Value::Number(4.0), Value::Boolean(true))]
+        );
+    }
+
+    #[test]
+    fn arg_cursor_tracks_labels_and_remaining_arguments() {
+        let mut cursor = ArgCursor::new(3, [Arc::from("given")]);
+
+        assert_eq!(cursor.len(), 3);
+        assert_eq!(cursor.index(), 0);
+        assert_eq!(cursor.current_name().as_ref(), "given");
+
+        cursor.advance();
+        assert_eq!(cursor.current_name().as_ref(), "arg2");
+        cursor.label_current("named");
+        assert_eq!(cursor.current_name().as_ref(), "named");
+
+        cursor.advance();
+        assert_eq!(cursor.drain_remaining().collect::<Vec<_>>(), vec![2]);
+        assert!(cursor.is_finished());
+
+        assert_eq!(ArgCursor::new(-1, []).len(), 0);
+    }
+
+    #[test]
+    fn return_writer_records_values_and_yield_request() -> Result<()> {
+        let mut state = ReturnState::default();
+        let mut writer = ReturnWriter::borrowed(&mut state);
+
+        writer.write(Value::Integer(1))?;
+        writer.write(Value::String(b"ok".to_vec()))?;
+        writer.request_yield();
+
+        assert_eq!(
+            state.values,
+            vec![Value::Integer(1), Value::String(b"ok".to_vec())]
+        );
+        assert!(state.yield_requested);
+        Ok(())
+    }
+
+    #[test]
+    fn native_function_options_builder_sets_rust_owned_metadata() {
+        let origin = ChunkOrigin {
+            module: Some(ModuleId(Arc::from("plugin/module"))),
+            plugin: Some(Arc::from("demo")),
+            path: Some(Arc::from("plugins/demo/init.luau")),
+        };
+
+        let options = NativeFunctionOptions::new(origin.clone())
+            .capability(CapabilityId(Arc::from("demo.run")))
+            .task_group(TaskGroupId(7))
+            .function_name("run")
+            .argument_names([Arc::from("input"), Arc::from("options")])
+            .use_thread_context_origin(true);
+
+        assert_eq!(options.origin, origin);
+        assert_eq!(
+            options.capability,
+            Some(CapabilityId(Arc::from("demo.run")))
+        );
+        assert_eq!(options.task_group, TaskGroupId(7));
+        assert_eq!(options.function_name.as_deref(), Some("run"));
+        assert_eq!(
+            options
+                .argument_names
+                .iter()
+                .map(AsRef::as_ref)
+                .collect::<Vec<&str>>(),
+            vec!["input", "options"]
+        );
+        assert!(options.use_thread_context_origin);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn vm_compiles_and_runs_chunk_with_origin() -> Result<()> {
         let vm = Vm::new()?;
         let values = vm.eval(
@@ -3133,6 +3314,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn chunks_return_table_and_function_handles() -> Result<()> {
         let vm = Vm::new()?;
         let values = vm.eval(
@@ -3160,6 +3342,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn vm_opens_only_requested_standard_libraries() -> Result<()> {
         let vm = Vm::new()?;
         let missing_string = vm.eval(
@@ -3190,6 +3373,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn safe_os_library_exposes_only_plugin_required_functions() -> Result<()> {
         let vm = Vm::new()?;
         let missing_os = vm.eval(
@@ -3243,6 +3427,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn sandbox_freezes_opened_standard_libraries_and_globals() -> Result<()> {
         let vm = Vm::new()?;
         vm.open_standard_libraries(StandardLibraries::all_supported())?;
@@ -3267,6 +3452,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn stack_guard_restores_after_load_and_runtime_errors() -> Result<()> {
         let vm = Vm::new()?;
 
@@ -3294,6 +3480,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn table_raw_access_uses_vm_checked_handles() -> Result<()> {
         let vm = Vm::new()?;
         let table = vm.create_table()?;
@@ -3342,6 +3529,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn table_metatable_raw_access_uses_vm_checked_handles() -> Result<()> {
         let vm = Vm::new()?;
         let table = vm.create_table()?;
@@ -3361,6 +3549,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn table_handles_fail_fast_across_vms() -> Result<()> {
         let owner = Vm::new()?;
         let other = Vm::new()?;
@@ -3377,6 +3566,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn buffer_handles_round_trip_bytes_and_fail_fast_across_vms() -> Result<()> {
         let owner = Vm::new()?;
         let other = Vm::new()?;
@@ -3396,6 +3586,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn userdata_handles_store_vm_owned_rust_values() -> Result<()> {
         #[derive(Debug, PartialEq)]
         struct PluginObject {
@@ -3438,6 +3629,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn thread_resumes_loaded_function_with_owned_args() -> Result<()> {
         let vm = Vm::new()?;
         let function = vm.load_chunk(&Chunk::new(
@@ -3462,6 +3654,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn interrupt_budget_stops_cpu_bound_thread() -> Result<()> {
         let vm = Vm::new()?;
         let function = vm.load_chunk(&Chunk::new(
@@ -3484,6 +3677,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn vm_options_track_memory_limit_and_usage() -> Result<()> {
         let vm = Vm::with_options(VmOptions::default().memory_limit(1024 * 1024))?;
 
@@ -3493,6 +3687,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn thread_handles_fail_fast_across_vms() -> Result<()> {
         let owner = Vm::new()?;
         let other = Vm::new()?;
@@ -3514,6 +3709,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn lua_thread_values_are_preserved_and_resumable() -> Result<()> {
         let vm = Vm::new()?;
         vm.open_standard_libraries(StandardLibraries {
@@ -3540,6 +3736,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn thread_data_stores_typed_metadata() -> Result<()> {
         #[derive(Debug, PartialEq, Eq)]
         struct ThreadLabel(&'static str);
@@ -3562,6 +3759,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn native_function_receives_owned_args_context_and_returns_values() -> Result<()> {
         let vm = Vm::new()?;
         let callback: NativeFn = Arc::new(|mut frame| {
@@ -3601,6 +3799,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn owned_table_supports_arbitrary_raw_keys() -> Result<()> {
         let vm = Vm::new()?;
         let mut table = OwnedTable::with_entry_capacity(0, 0, 2);
@@ -3626,6 +3825,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn native_function_errors_are_luau_runtime_errors_with_argument_names() -> Result<()> {
         let vm = Vm::new()?;
         let callback: NativeFn = Arc::new(|mut frame| {
@@ -3662,6 +3862,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn string_args_require_utf8_and_byte_string_preserves_raw_bytes() -> Result<()> {
         let vm = Vm::new()?;
         let utf8_callback: NativeFn = Arc::new(|mut frame| {
@@ -3701,6 +3902,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn native_callbacks_can_borrow_string_and_buffer_args() -> Result<()> {
         let vm = Vm::new()?;
         let callback: NativeFn = Arc::new(|mut frame| {
@@ -3732,6 +3934,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn vm_data_stores_typed_metadata() -> Result<()> {
         #[derive(Debug, PartialEq, Eq)]
         struct RuntimeLabel(&'static str);
@@ -3749,6 +3952,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires Luau C VM")]
     fn native_callbacks_reject_fractional_integer_args() -> Result<()> {
         let vm = Vm::new()?;
         let callback: NativeFn = Arc::new(|mut frame| {
