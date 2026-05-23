@@ -1,0 +1,120 @@
+{
+  "test_name": "瞬く世界にiを揺らせ_chico_with_honeyworks",
+  "scenario_id": "86166535aee48dbe",
+  "responses": [
+    {
+      "cache_key": "050261263d839334",
+      "url": "https://musicbrainz.org/ws/2/artist/1dc670f7-1a43-4a71-973a-2ad181f4edd4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c6a5d499a86054fb"
+    },
+    {
+      "cache_key": "06a1080dc983e0e7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=CHiCO%20with%20HoneyWorks",
+      "status_code": 200,
+      "body_hash": "965e2ee11e60dc3c"
+    },
+    {
+      "cache_key": "0a180e9fb7a64dcd",
+      "url": "https://musicbrainz.org/ws/2/work/75145e98-a051-4c1e-bf95-aaadde4b756e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "96f2516f38cfec34"
+    },
+    {
+      "cache_key": "1f7e6cf3f388e36e",
+      "url": "https://musicbrainz.org/ws/2/work/5988109e-a54f-4110-8f57-81ae446ef8c3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fd0e639ee8018218"
+    },
+    {
+      "cache_key": "4cf9fa20651f4424",
+      "url": "https://musicbrainz.org/ws/2/work/cfe8e81b-319a-4d21-b77c-98a929cb76a3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7395b6f15fe3a25e"
+    },
+    {
+      "cache_key": "643810cdc97bf835",
+      "url": "https://musicbrainz.org/ws/2/work/7c8f7f27-a8fa-405f-9f70-6100e2eb9084?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0b1f212fa2e32239"
+    },
+    {
+      "cache_key": "66ca936029efd605",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%9E%AC%E3%81%8F%E4%B8%96%E7%95%8C%E3%81%ABi%E3%82%92%E6%8F%BA%E3%82%89%E3%81%9B&limit=100",
+      "status_code": 200,
+      "body_hash": "a75811b8f7524ac3"
+    },
+    {
+      "cache_key": "8182b5e405790f30",
+      "url": "https://musicbrainz.org/ws/2/work/528f4790-9f36-4a84-894d-ad08e64a861e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1cfebb7ee1846152"
+    },
+    {
+      "cache_key": "8953da5afbb2b7ec",
+      "url": "https://musicbrainz.org/ws/2/work/0d522fa3-8316-469c-90a4-6390f2ffdd4a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ee73b0ce48c45cab"
+    },
+    {
+      "cache_key": "89ea698547ddf239",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=c342fecf-8f69-4584-8a18-69d96f492c87&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "c2f28c5ae29cec24"
+    },
+    {
+      "cache_key": "8ec95d52b9fd714d",
+      "url": "https://musicbrainz.org/ws/2/work/191b7b77-4cc3-45ac-909f-d65483539337?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "607accaade1a29b4"
+    },
+    {
+      "cache_key": "940b246deb94098d",
+      "url": "https://musicbrainz.org/ws/2/work/8fce5892-bfe9-42d7-bc2e-fe7d575ea922?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "36752e5bd0b3945b"
+    },
+    {
+      "cache_key": "96643623e3ef807a",
+      "url": "https://musicbrainz.org/ws/2/work/4e0a0358-cfb2-4a73-a586-5322219dbf2a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "eb412098ca6500a3"
+    },
+    {
+      "cache_key": "96a1464b515c4d62",
+      "url": "https://musicbrainz.org/ws/2/artist/d5eb261a-f2b0-4139-8aab-236bc253e4b2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7b01de82c889b2e6"
+    },
+    {
+      "cache_key": "a7a54d5c9ab1da1d",
+      "url": "https://musicbrainz.org/ws/2/work/1de3bc05-245c-4ce0-8ec3-10cd84ddbc55?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "be352e0668816474"
+    },
+    {
+      "cache_key": "a9fcaeb190610c42",
+      "url": "https://musicbrainz.org/ws/2/work/508da158-5158-494b-80c0-446d780d574c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6f4bb8c108f222b9"
+    },
+    {
+      "cache_key": "c7363ca3294280d7",
+      "url": "https://musicbrainz.org/ws/2/work/2fb5673f-7844-4df9-baab-43df0fa0c41a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "49d48fa483c73e3d"
+    },
+    {
+      "cache_key": "e9601dae77a51186",
+      "url": "https://musicbrainz.org/ws/2/work/4d29860b-d846-474d-8c15-c704eeff7430?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f390fe98157f2432"
+    },
+    {
+      "cache_key": "ffc26759dc2ce155",
+      "url": "https://musicbrainz.org/ws/2/work/2ba1bc94-6b30-401e-b8ec-b6b1ab9ec0de?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a3f6c5e3c80e0a4c"
+    }
+  ]
+}
