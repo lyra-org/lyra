@@ -1,0 +1,30 @@
+{
+  "test_name": "fake_face_dance_music_音田雅則",
+  "scenario_id": "c80d8b464d9b5098",
+  "responses": [
+    {
+      "cache_key": "2506789553ad0692",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3Afake%20face%20dance%20music&limit=100",
+      "status_code": 200,
+      "body_hash": "3feb70e322a9ca01"
+    },
+    {
+      "cache_key": "4a3d3a565680ecc2",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=aaf97c49-1ff8-49e7-a4d2-98b4dbc8ddf0&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "914b635c30759468"
+    },
+    {
+      "cache_key": "5d49d4724c957dac",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E9%9F%B3%E7%94%B0%E9%9B%85%E5%89%87",
+      "status_code": 200,
+      "body_hash": "900ac8b5c138e285"
+    },
+    {
+      "cache_key": "e589a78a2fdc7b25",
+      "url": "https://musicbrainz.org/ws/2/work/037ab1f1-68aa-430b-9207-2db2295f7a22?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b04cb9d659ef2977"
+    }
+  ]
+}
