@@ -151,17 +151,16 @@ pub(crate) fn validate_media_token(
 }
 
 #[cfg(test)]
-pub(crate) fn clear_media_tokens_for_tests() {
-    tokens().clear();
-}
-
-#[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    pub(crate) fn clear_media_tokens() {
+        tokens().clear();
+    }
 
     #[test]
     fn media_token_validates_for_matching_track_and_purpose() {
-        clear_media_tokens_for_tests();
+        clear_media_tokens();
         let issued = issue_media_token(DbId(42), MediaTokenPurpose::Stream);
 
         validate_media_token(&issued.token, MediaTokenPurpose::Stream, DbId(42))
@@ -170,7 +169,7 @@ mod tests {
 
     #[test]
     fn media_token_rejects_wrong_track_or_purpose() {
-        clear_media_tokens_for_tests();
+        clear_media_tokens();
         let issued = issue_media_token(DbId(42), MediaTokenPurpose::Stream);
 
         assert!(matches!(

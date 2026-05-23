@@ -303,26 +303,6 @@ impl ProviderRegistry {
         self.unique_id_pairs(EntityType::Track)
     }
 
-    #[cfg(test)]
-    pub(crate) fn id_registration(
-        &self,
-        provider_id: &str,
-        id_type: &str,
-    ) -> Option<(ProviderIdSpec, bool)> {
-        let provider = self.state(provider_id)?;
-        let spec = provider.id_specs.get(id_type)?.clone();
-        let has_generator = provider.id_generators.contains_key(id_type);
-        Some((spec, has_generator))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn id_url_template(&self, provider_id: &str, id_type: &str) -> Option<String> {
-        let provider = self.state(provider_id)?;
-        match provider.id_generators.get(id_type)? {
-            ProviderIdUrlGenerator::Template(template) => Some(template.clone()),
-        }
-    }
-
     pub(crate) fn id_spec_matches_entity(
         &self,
         provider_id: &str,
@@ -361,7 +341,7 @@ impl ProviderRegistry {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::{
         Arc,
         atomic::{
@@ -379,10 +359,29 @@ mod tests {
         },
     };
 
-    use super::{
-        ProviderCallStage,
-        with_provider_call,
-    };
+    use super::*;
+
+    pub(crate) fn id_registration(
+        registry: &ProviderRegistry,
+        provider_id: &str,
+        id_type: &str,
+    ) -> Option<(ProviderIdSpec, bool)> {
+        let provider = registry.state(provider_id)?;
+        let spec = provider.id_specs.get(id_type)?.clone();
+        let has_generator = provider.id_generators.contains_key(id_type);
+        Some((spec, has_generator))
+    }
+
+    pub(crate) fn id_url_template(
+        registry: &ProviderRegistry,
+        provider_id: &str,
+        id_type: &str,
+    ) -> Option<String> {
+        let provider = registry.state(provider_id)?;
+        match provider.id_generators.get(id_type)? {
+            ProviderIdUrlGenerator::Template(template) => Some(template.clone()),
+        }
+    }
 
     #[tokio::test]
     async fn provider_calls_are_serialized_per_provider() {

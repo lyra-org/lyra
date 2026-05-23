@@ -284,6 +284,29 @@ pub(crate) fn hash_entry_group(mut entries: Vec<Entry>) -> Vec<Entry> {
     entries
 }
 
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    pub(crate) fn prepare_entries(
+        library: &Library,
+        existing: Vec<Entry>,
+    ) -> anyhow::Result<Vec<Entry>> {
+        let scanned = scan_fs(&library.path)?;
+        let (mut enriched, to_hash) = diff_and_needs_hash(scanned, existing);
+        let hash_map = compute_hashes(to_hash);
+        for e in &mut enriched {
+            if e.kind == EntryKind::File
+                && e.hash.is_none()
+                && let Some(h) = hash_map.get(e.full_path.to_string_lossy().as_ref())
+            {
+                e.hash = Some(h.clone());
+            }
+        }
+        Ok(enriched)
+    }
+}
+
 pub(crate) fn compute_hashes(to_hash: Vec<PathBuf>) -> HashMap<String, String> {
     let pairs: Vec<(String, String)> = to_hash
         .into_par_iter()
@@ -331,23 +354,4 @@ pub(crate) fn prepare_entry_scan_plan(
         groups,
         observed_paths,
     })
-}
-
-#[cfg(test)]
-pub(crate) fn prepare_entries(
-    library: &Library,
-    existing: Vec<Entry>,
-) -> anyhow::Result<Vec<Entry>> {
-    let scanned = scan_fs(&library.path)?;
-    let (mut enriched, to_hash) = diff_and_needs_hash(scanned, existing);
-    let hash_map = compute_hashes(to_hash);
-    for e in &mut enriched {
-        if e.kind == EntryKind::File
-            && e.hash.is_none()
-            && let Some(h) = hash_map.get(e.full_path.to_string_lossy().as_ref())
-        {
-            e.hash = Some(h.clone());
-        }
-    }
-    Ok(enriched)
 }

@@ -280,7 +280,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::users::test_user("alice")?)?
+            db::users::create(&mut db, &db::test_db::test_user("alice")?)?
         };
 
         let err = create_api_key(user_db_id, "   ")
@@ -301,7 +301,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::users::test_user("alice")?)?
+            db::users::create(&mut db, &db::test_db::test_user("alice")?)?
         };
 
         let long_name: String = "x".repeat(MAX_API_KEY_NAME_LEN + 1);
@@ -328,7 +328,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::users::test_user("alice")?)?
+            db::users::create(&mut db, &db::test_db::test_user("alice")?)?
         };
 
         for i in 0..MAX_API_KEYS_PER_USER {
@@ -353,7 +353,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::users::test_user("alice")?)?
+            db::users::create(&mut db, &db::test_db::test_user("alice")?)?
         };
         let created = create_api_key(user_db_id, "laptop").await?;
 
@@ -380,7 +380,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::users::test_user("alice")?)?
+            db::users::create(&mut db, &db::test_db::test_user("alice")?)?
         };
         let created = create_api_key(user_db_id, "laptop").await?;
 
@@ -402,7 +402,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::users::test_user("alice")?)?
+            db::users::create(&mut db, &db::test_db::test_user("alice")?)?
         };
         let created = create_api_key(user_db_id, "laptop").await?;
 

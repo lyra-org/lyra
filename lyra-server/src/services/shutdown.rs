@@ -34,8 +34,3 @@ pub(crate) fn reset() -> CancellationToken {
 pub(crate) fn cancel() {
     token().cancel();
 }
-
-#[cfg(test)]
-pub(crate) fn reset_for_test() -> CancellationToken {
-    reset()
-}

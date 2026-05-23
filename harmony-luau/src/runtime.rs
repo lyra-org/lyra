@@ -695,11 +695,6 @@ impl Vm {
         Ok(())
     }
 
-    #[cfg(test)]
-    fn stack_top_for_tests(&self) -> i32 {
-        self.top()
-    }
-
     fn ref_top(&self) -> Result<RegistryRef> {
         self.ensure_stack(1)?;
         let reference = unsafe { sys::lua_ref(self.inner.state.as_ptr(), -1) };
@@ -3117,6 +3112,10 @@ unsafe extern "C-unwind" fn alloc(
 mod tests {
     use super::*;
 
+    fn stack_top(vm: &Vm) -> i32 {
+        vm.top()
+    }
+
     #[test]
     fn vm_compiles_and_runs_chunk_with_origin() -> Result<()> {
         let vm = Vm::new()?;
@@ -3156,7 +3155,7 @@ mod tests {
             function.call(&vm, &[Value::Number(8.0)])?,
             vec![Value::Number(50.0)]
         );
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 
@@ -3186,7 +3185,7 @@ mod tests {
                 Value::String(b"a,b".to_vec())
             ]
         );
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 
@@ -3239,7 +3238,7 @@ mod tests {
             unsupported_date,
             Err(Error::Runtime(message)) if message.contains("unsupported os.date format")
         ));
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 
@@ -3263,7 +3262,7 @@ mod tests {
             ),
             Err(Error::Runtime(_))
         ));
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 
@@ -3279,7 +3278,7 @@ mod tests {
             },
         );
         assert!(matches!(bad_load, Err(Error::Load(_))));
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
 
         let bad_runtime = vm.eval(
             Arc::<[u8]>::from(&b"return missing + 1"[..]),
@@ -3289,7 +3288,7 @@ mod tests {
             },
         );
         assert!(matches!(bad_runtime, Err(Error::Runtime(_))));
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
 
         Ok(())
     }
@@ -3338,7 +3337,7 @@ mod tests {
             matches!(key, Value::Integer(1) | Value::Number(1.0))
                 && *value == Value::String(b"first".to_vec())
         }));
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 
@@ -3357,7 +3356,7 @@ mod tests {
         assert_eq!(returned.get_raw(&vm, "marker")?, Value::Boolean(true));
         table.set_metatable_raw(&vm, None)?;
         assert!(table.metatable_raw(&vm)?.is_none());
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 
@@ -3372,8 +3371,8 @@ mod tests {
             .expect_err("cross-VM table access must fail");
 
         assert!(matches!(error, Error::VmMismatch { .. }));
-        assert_eq!(owner.stack_top_for_tests(), 0);
-        assert_eq!(other.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&owner), 0);
+        assert_eq!(stack_top(&other), 0);
         Ok(())
     }
 
@@ -3391,8 +3390,8 @@ mod tests {
                 .expect_err("cross-VM buffer access must fail"),
             Error::VmMismatch { .. }
         ));
-        assert_eq!(owner.stack_top_for_tests(), 0);
-        assert_eq!(other.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&owner), 0);
+        assert_eq!(stack_top(&other), 0);
         Ok(())
     }
 
@@ -3434,7 +3433,7 @@ mod tests {
             function.call(&vm, &[Value::UserData(userdata)])?,
             vec![Value::Integer(42)]
         );
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 
@@ -3458,7 +3457,7 @@ mod tests {
             thread.resume(&vm, &[]),
             Err(Error::Runtime(message)) if message.contains("already completed")
         ));
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 
@@ -3480,7 +3479,7 @@ mod tests {
             error,
             Error::Runtime(message) if message.contains("interrupted")
         ));
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 
@@ -3509,8 +3508,8 @@ mod tests {
                 .expect_err("cross-VM thread access must fail"),
             Error::VmMismatch { .. }
         ));
-        assert_eq!(owner.stack_top_for_tests(), 0);
-        assert_eq!(other.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&owner), 0);
+        assert_eq!(stack_top(&other), 0);
         Ok(())
     }
 
@@ -3536,7 +3535,7 @@ mod tests {
             thread.resume(&vm, &[Value::Number(41.0)])?,
             ThreadStatus::Completed(vec![Value::Number(42.0)])
         );
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 
@@ -3597,7 +3596,7 @@ mod tests {
             function.call(&vm, &[Value::Number(20.0), Value::Number(22.0)])?,
             vec![Value::Number(42.0)]
         );
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 
@@ -3622,7 +3621,7 @@ mod tests {
                 Value::String(b"value".to_vec())
             ]
         );
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 
@@ -3658,7 +3657,7 @@ mod tests {
                     && message.contains("expected number")
                     && message.contains("got string")
         ));
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 
@@ -3697,7 +3696,7 @@ mod tests {
             bytes.call(&vm, &[Value::String(vec![0xff, b'a'])])?,
             vec![Value::String(vec![0xff, b'a'])]
         );
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 
@@ -3728,7 +3727,7 @@ mod tests {
             )?,
             vec![Value::Integer(5), Value::Integer(4)]
         );
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 
@@ -3768,7 +3767,7 @@ mod tests {
 
         assert!(error.to_string().contains("track_id"));
         assert!(error.to_string().contains("expected integer"));
-        assert_eq!(vm.stack_top_for_tests(), 0);
+        assert_eq!(stack_top(&vm), 0);
         Ok(())
     }
 }

@@ -358,7 +358,10 @@ pub(crate) fn ensure_user_has_role(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_db::new_test_db;
+    use crate::db::test_db::{
+        new_test_db,
+        test_user,
+    };
     use crate::db::users;
     use agdb::DbValue;
 
@@ -430,7 +433,7 @@ mod tests {
         let mut db = new_test_db()?;
         ensure_builtin_roles(&mut db)?;
 
-        let user_db_id = users::create(&mut db, &users::test_user("alice")?)?;
+        let user_db_id = users::create(&mut db, &test_user("alice")?)?;
         ensure_user_has_role(&mut db, user_db_id, "admin")?;
 
         let role = get_role_for_user(&db, user_db_id)?;
@@ -445,7 +448,7 @@ mod tests {
         let mut db = new_test_db()?;
         ensure_builtin_roles(&mut db)?;
 
-        let user_db_id = users::create(&mut db, &users::test_user("alice")?)?;
+        let user_db_id = users::create(&mut db, &test_user("alice")?)?;
         ensure_user_has_role(&mut db, user_db_id, "admin")?;
 
         let user_role = get_by_name(&db, "user")?.unwrap();
@@ -485,11 +488,11 @@ mod tests {
 
         assert_eq!(count_admins(&db)?, 0);
 
-        let alice = users::create(&mut db, &users::test_user("alice")?)?;
+        let alice = users::create(&mut db, &test_user("alice")?)?;
         ensure_user_has_role(&mut db, alice, "admin")?;
         assert_eq!(count_admins(&db)?, 1);
 
-        let bob = users::create(&mut db, &users::test_user("bob")?)?;
+        let bob = users::create(&mut db, &test_user("bob")?)?;
         ensure_user_has_role(&mut db, bob, "admin")?;
         assert_eq!(count_admins(&db)?, 2);
 
@@ -505,7 +508,7 @@ mod tests {
         ensure_user_has_role(&mut db, default_id, "admin")?;
         assert!(!has_non_default_admin(&db, "default")?);
 
-        let alice = users::create(&mut db, &users::test_user("alice")?)?;
+        let alice = users::create(&mut db, &test_user("alice")?)?;
         ensure_user_has_role(&mut db, alice, "admin")?;
         assert!(has_non_default_admin(&db, "default")?);
 
@@ -525,7 +528,7 @@ mod tests {
         };
         let custom_admin_role_id = create(&mut db, &custom_admin_role)?;
 
-        let alice = users::create(&mut db, &users::test_user("alice")?)?;
+        let alice = users::create(&mut db, &test_user("alice")?)?;
         assign_role_to_user(&mut db, alice, custom_admin_role_id)?;
 
         assert_eq!(count_admins(&db)?, 1);
@@ -583,7 +586,7 @@ mod tests {
         };
         let custom_admin_role_id = create(&mut db, &custom_admin_role)?;
 
-        let alice = users::create(&mut db, &users::test_user("alice")?)?;
+        let alice = users::create(&mut db, &test_user("alice")?)?;
         assign_role_to_user(&mut db, alice, custom_admin_role_id)?;
 
         assert!(has_non_default_admin(&db, "default")?);

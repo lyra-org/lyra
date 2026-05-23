@@ -730,7 +730,7 @@ mod tests {
         username: &str,
         permissions: Vec<Permission>,
     ) -> anyhow::Result<agdb::DbId> {
-        let user_db_id = db::users::create(db, &db::users::test_user(username)?)?;
+        let user_db_id = db::users::create(db, &db::test_db::test_user(username)?)?;
         let role = db::roles::Role {
             db_id: None,
             id: nanoid!(),
@@ -758,7 +758,7 @@ mod tests {
 
         let (user_db_id, visible_id, hidden_id) = {
             let mut db = STATE.db.write().await;
-            let user_db_id = db::users::create(&mut db, &db::users::test_user("listener")?)?;
+            let user_db_id = db::users::create(&mut db, &db::test_db::test_user("listener")?)?;
             let visible = db.transaction_mut(|t| -> anyhow::Result<db::Library> {
                 Ok(db::libraries::create_with_creator(
                     t,
@@ -799,7 +799,7 @@ mod tests {
                 "manager",
                 vec![Permission::ManageLibraries],
             )?;
-            let target_db_id = db::users::create(&mut db, &db::users::test_user("target")?)?;
+            let target_db_id = db::users::create(&mut db, &db::test_db::test_user("target")?)?;
             let target_id = db::users::get_by_id(&db, target_db_id)?
                 .expect("target user")
                 .id;

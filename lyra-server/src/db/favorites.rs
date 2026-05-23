@@ -896,8 +896,8 @@ mod tests {
     #[test]
     fn delete_user_cascades_favorites() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let user_a = crate::db::users::create(&mut db, &crate::db::users::test_user("alice")?)?;
-        let user_b = crate::db::users::create(&mut db, &crate::db::users::test_user("bob")?)?;
+        let user_a = crate::db::users::create(&mut db, &crate::db::test_db::test_user("alice")?)?;
+        let user_b = crate::db::users::create(&mut db, &crate::db::test_db::test_user("bob")?)?;
         let track = create_test_track(&mut db)?;
 
         add(

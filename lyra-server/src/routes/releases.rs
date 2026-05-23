@@ -602,7 +602,7 @@ mod tests {
         let user_db_id = {
             let mut db = STATE.db.write().await;
             db::roles::ensure_builtin_roles(&mut db)?;
-            let user_db_id = db::users::create(&mut db, &db::users::test_user(username)?)?;
+            let user_db_id = db::users::create(&mut db, &db::test_db::test_user(username)?)?;
             db::roles::ensure_user_has_role(&mut db, user_db_id, db::roles::BUILTIN_ADMIN_ROLE)?;
             user_db_id
         };

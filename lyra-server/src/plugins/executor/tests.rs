@@ -6,8 +6,94 @@ use anyhow::{
 use harmony_core::{
     CallContext,
     LuauRequireRuntime,
+    MemorySourceLoader,
     ModuleSpec,
+    PluginLoadError,
 };
+
+fn default_server_info() -> crate::plugins::server::ServerInfo {
+    crate::plugins::server::ServerInfo {
+        id: "raw-runtime".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        commit_hash: env!("LYRA_GIT_HASH").to_string(),
+        hostname: "localhost".to_string(),
+        port: 0,
+        published_url: None,
+        setup_complete: false,
+    }
+}
+
+impl PluginExecutor {
+    pub(crate) fn with_manifests(manifests: Arc<[harmony_core::PluginManifest]>) -> Result<Self> {
+        Self::with_runtime_state(manifests, default_server_info())
+    }
+
+    pub(crate) fn with_runtime_state(
+        manifests: Arc<[harmony_core::PluginManifest]>,
+        server_info: crate::plugins::server::ServerInfo,
+    ) -> Result<Self> {
+        Self::with_loader(
+            manifests,
+            server_info,
+            stores::PluginModuleStores::empty(),
+            MemorySourceLoader::new(),
+        )
+    }
+
+    pub(crate) fn with_database(
+        manifests: Arc<[harmony_core::PluginManifest]>,
+        server_info: crate::plugins::server::ServerInfo,
+        db: crate::plugins::db::DbAsync,
+    ) -> Result<Self> {
+        Self::with_loader(
+            manifests,
+            server_info,
+            stores::PluginModuleStores::with_db(db),
+            MemorySourceLoader::new(),
+        )
+    }
+
+    pub(crate) fn discover_from_plugins_dir(
+        plugins_dir: impl Into<std::path::PathBuf>,
+        server_info: crate::plugins::server::ServerInfo,
+    ) -> Result<(Self, Vec<PluginLoadError>)> {
+        Self::discover_from_plugins_dir_with_stores(
+            plugins_dir,
+            server_info,
+            stores::PluginModuleStores::empty(),
+            Vec::new(),
+        )
+    }
+
+    pub(crate) fn discover_from_plugins_dir_with_db(
+        plugins_dir: impl Into<std::path::PathBuf>,
+        server_info: crate::plugins::server::ServerInfo,
+        db: crate::plugins::db::DbAsync,
+    ) -> Result<(Self, Vec<PluginLoadError>)> {
+        Self::discover_from_plugins_dir_with_db_and_modules(
+            plugins_dir,
+            server_info,
+            db,
+            Vec::new(),
+        )
+    }
+
+    pub(crate) fn eval_plugin_source(
+        &self,
+        plugin_id: impl Into<Arc<str>>,
+        path: impl Into<Arc<str>>,
+        source: impl Into<Arc<[u8]>>,
+    ) -> Result<Vec<luau::Value>> {
+        let origin = plugin_origin(plugin_id, path);
+        self.eval_plugin_source_with_call_context(
+            source,
+            CallContext {
+                origin,
+                ..CallContext::default()
+            },
+        )
+    }
+}
 
 fn runtime_with_scopes(scopes: &[&str]) -> Result<PluginExecutor> {
     PluginExecutor::with_manifests(Arc::from(vec![manifest("demo", scopes)]))
@@ -123,17 +209,23 @@ fn plugin_executor_declares_metadata_provider_ids_and_options() -> Result<()> {
 
     let registry =
         futures::executor::block_on(crate::services::providers::PROVIDER_REGISTRY.read());
-    let (id_spec, has_generator) = registry
-        .id_registration("raw-provider", "release_id")
-        .context("provider id registration")?;
+    let (id_spec, has_generator) = crate::services::providers::registry_tests::id_registration(
+        &registry,
+        "raw-provider",
+        "release_id",
+    )
+    .context("provider id registration")?;
     assert_eq!(id_spec.id, "release_id");
     assert_eq!(id_spec.entity, crate::services::EntityType::Release);
     assert!(id_spec.unique);
     assert!(has_generator);
     assert_eq!(
-        registry
-            .id_url_template("raw-provider", "release_id")
-            .as_deref(),
+        crate::services::providers::registry_tests::id_url_template(
+            &registry,
+            "raw-provider",
+            "release_id",
+        )
+        .as_deref(),
         Some("https://example.test/release/{id}")
     );
     let option = registry
@@ -272,7 +364,7 @@ fn plugin_executor_dispatches_registered_api_handler() -> Result<()> {
         "#[..],
     )?;
 
-    let handler_id = futures::executor::block_on(crate::plugins::api::registered_handler_for_test(
+    let handler_id = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
         "POST",
         "/demo/{id}",
     ))
@@ -331,7 +423,7 @@ fn plugin_executor_dispatches_registered_websocket_handler() -> Result<()> {
         "#[..],
     )?;
 
-    let handler_id = futures::executor::block_on(crate::plugins::api::registered_handler_for_test(
+    let handler_id = futures::executor::block_on(crate::plugins::api::tests::registered_handler(
         "GET",
         "/socket/{id}",
     ))
@@ -408,11 +500,11 @@ fn foreground_dispatch_does_not_hide_finished_websocket_cleanup() -> Result<()> 
     )?;
 
     let websocket_handler_id = futures::executor::block_on(
-        crate::plugins::api::registered_handler_for_test("GET", "/socket"),
+        crate::plugins::api::tests::registered_handler("GET", "/socket"),
     )
     .context("registered websocket handler")?;
     let api_handler_id = futures::executor::block_on(
-        crate::plugins::api::registered_handler_for_test("GET", "/ping"),
+        crate::plugins::api::tests::registered_handler("GET", "/ping"),
     )
     .context("registered API handler")?;
     let (inbound_tx, inbound_rx) = tokio::sync::mpsc::channel(4);

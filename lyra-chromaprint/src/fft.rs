@@ -76,26 +76,6 @@ impl RealFft {
         self.split_chroma(real, imag, chroma_notes, bands);
     }
 
-    #[cfg(test)]
-    pub fn power_spectrum(
-        &self,
-        samples: &[i16],
-        hamming: &[Float; WINDOW_SIZE],
-        real: &mut [Float; WORK_LEN],
-        imag: &mut [Float; WORK_LEN],
-        powers: &mut [Float; FFT_FRAME_SIZE],
-    ) {
-        for i in 0..WORK_LEN {
-            let even = i * 2;
-            let j = self.bit_reversal[i] as usize;
-            real[j] = (samples[even] as Float / 32768.0) * hamming[even];
-            imag[j] = (samples[even + 1] as Float / 32768.0) * hamming[even + 1];
-        }
-
-        self.process_complex(real, imag);
-        self.split_real_fft(real, imag, powers);
-    }
-
     fn process_complex(&self, real: &mut [Float; WORK_LEN], imag: &mut [Float; WORK_LEN]) {
         self.process_two_radix2_stages::<4>(real, imag);
         self.process_two_radix2_stages::<16>(real, imag);
@@ -236,24 +216,6 @@ impl RealFft {
         }
     }
 
-    #[cfg(test)]
-    fn split_real_fft(
-        &self,
-        real: &[Float; WORK_LEN],
-        imag: &[Float; WORK_LEN],
-        powers: &mut [Float; FFT_FRAME_SIZE],
-    ) {
-        let dc = real[0] + imag[0];
-        let nyquist = real[0] - imag[0];
-        powers[0] = dc * dc;
-        powers[WORK_LEN] = nyquist * nyquist;
-
-        for k in 1..CHROMA_MAX_INDEX {
-            let energy = self.split_bin_power(real, imag, k);
-            powers[k] = energy;
-        }
-    }
-
     fn split_chroma(
         &self,
         real: &[Float; WORK_LEN],
@@ -287,5 +249,46 @@ impl RealFft {
         let re = 0.5 * (sum_re + rotated_im);
         let im = 0.5 * (sum_im - rotated_re);
         re * re + im * im
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    pub(crate) fn power_spectrum(
+        fft: &RealFft,
+        samples: &[i16],
+        hamming: &[Float; WINDOW_SIZE],
+        real: &mut [Float; WORK_LEN],
+        imag: &mut [Float; WORK_LEN],
+        powers: &mut [Float; FFT_FRAME_SIZE],
+    ) {
+        for i in 0..WORK_LEN {
+            let even = i * 2;
+            let j = fft.bit_reversal[i] as usize;
+            real[j] = (samples[even] as Float / 32768.0) * hamming[even];
+            imag[j] = (samples[even + 1] as Float / 32768.0) * hamming[even + 1];
+        }
+
+        fft.process_complex(real, imag);
+        split_real_fft(fft, real, imag, powers);
+    }
+
+    fn split_real_fft(
+        fft: &RealFft,
+        real: &[Float; WORK_LEN],
+        imag: &[Float; WORK_LEN],
+        powers: &mut [Float; FFT_FRAME_SIZE],
+    ) {
+        let dc = real[0] + imag[0];
+        let nyquist = real[0] - imag[0];
+        powers[0] = dc * dc;
+        powers[WORK_LEN] = nyquist * nyquist;
+
+        for k in 1..CHROMA_MAX_INDEX {
+            let energy = fft.split_bin_power(real, imag, k);
+            powers[k] = energy;
+        }
     }
 }

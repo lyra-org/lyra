@@ -242,12 +242,15 @@ mod tests {
 
     use super::*;
     use crate::db::{
-        test_db::new_test_db,
+        test_db::{
+            new_test_db,
+            test_user,
+        },
         users,
     };
 
     fn create_test_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId> {
-        users::create(db, &users::test_user(username)?)
+        users::create(db, &test_user(username)?)
     }
 
     #[test]

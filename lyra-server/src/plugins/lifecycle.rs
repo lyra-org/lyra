@@ -81,20 +81,8 @@ pub(crate) struct ScopedRegistry<T: PluginScopedInner> {
 }
 
 impl<T: PluginScopedInner> ScopedRegistry<T> {
-    #[cfg(test)]
-    pub(crate) fn new(inner: T) -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(inner)),
-        }
-    }
-
     pub(crate) fn from_shared(inner: Arc<RwLock<T>>) -> Self {
         Self { inner }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn shared(&self) -> Arc<RwLock<T>> {
-        self.inner.clone()
     }
 
     pub(crate) async fn teardown(&self, plugin_id: &PluginId) {
@@ -248,6 +236,18 @@ async fn refreeze_plugin_registration_exemptions(plugin_id: &PluginId) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl<T: PluginScopedInner> ScopedRegistry<T> {
+        fn new(inner: T) -> Self {
+            Self {
+                inner: Arc::new(RwLock::new(inner)),
+            }
+        }
+
+        fn shared(&self) -> Arc<RwLock<T>> {
+            self.inner.clone()
+        }
+    }
 
     #[test]
     fn plugin_id_rejects_empty() {

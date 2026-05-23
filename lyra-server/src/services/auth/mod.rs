@@ -674,7 +674,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::users::test_user("alice")?)?
+            db::users::create(&mut db, &db::test_db::test_user("alice")?)?
         };
         let api_key = api_keys::create_api_key(user_db_id, "laptop").await?;
         let api_key_db_id = {
@@ -714,7 +714,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::users::test_user("expiring")?)?
+            db::users::create(&mut db, &db::test_db::test_user("expiring")?)?
         };
         let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
         let session_db_id = {
@@ -762,7 +762,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::users::test_user("no-ttl")?)?
+            db::users::create(&mut db, &db::test_db::test_user("no-ttl")?)?
         };
         let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
 
@@ -786,9 +786,9 @@ mod tests {
         let (session_user_db_id, api_key_user_db_id) = {
             let mut db = STATE.db.write().await;
             let session_user_db_id =
-                db::users::create(&mut db, &db::users::test_user("session-user")?)?;
+                db::users::create(&mut db, &db::test_db::test_user("session-user")?)?;
             let api_key_user_db_id =
-                db::users::create(&mut db, &db::users::test_user("api-key-user")?)?;
+                db::users::create(&mut db, &db::test_db::test_user("api-key-user")?)?;
             (session_user_db_id, api_key_user_db_id)
         };
 
@@ -870,7 +870,7 @@ mod tests {
 
         let other_user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::users::test_user("other-user")?)?
+            db::users::create(&mut db, &db::test_db::test_user("other-user")?)?
         };
         let other_session =
             sessions::create_session_for_user(other_user_db_id, Default::default()).await?;
@@ -895,7 +895,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::users::test_user("listener")?)?
+            db::users::create(&mut db, &db::test_db::test_user("listener")?)?
         };
         let library = {
             let mut db = STATE.db.write().await;
@@ -925,7 +925,7 @@ mod tests {
         let (user_db_id, library_id) = {
             let mut db = STATE.db.write().await;
             db::roles::ensure_builtin_roles(&mut db)?;
-            let user_db_id = db::users::create(&mut db, &db::users::test_user("admin-user")?)?;
+            let user_db_id = db::users::create(&mut db, &db::test_db::test_user("admin-user")?)?;
             db::roles::ensure_user_has_role(&mut db, user_db_id, db::roles::BUILTIN_ADMIN_ROLE)?;
             let library = db.transaction_mut(|t| -> anyhow::Result<db::Library> {
                 Ok(db::libraries::create_system(
@@ -953,7 +953,8 @@ mod tests {
 
         let (user_db_id, library_db_id, library_id) = {
             let mut db = STATE.db.write().await;
-            let user_db_id = db::users::create(&mut db, &db::users::test_user("library-manager")?)?;
+            let user_db_id =
+                db::users::create(&mut db, &db::test_db::test_user("library-manager")?)?;
             let role = db::roles::Role {
                 db_id: None,
                 id: nanoid::nanoid!(),
@@ -1004,7 +1005,7 @@ mod tests {
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::users::test_user("recycled")?)?
+            db::users::create(&mut db, &db::test_db::test_user("recycled")?)?
         };
         let user_public_id = {
             let db = STATE.db.read().await;
@@ -1042,7 +1043,7 @@ mod tests {
 
         let new_user_db_id = {
             let mut db = STATE.db.write().await;
-            db::users::create(&mut db, &db::users::test_user("recycled-replacement")?)?
+            db::users::create(&mut db, &db::test_db::test_user("recycled-replacement")?)?
         };
 
         {

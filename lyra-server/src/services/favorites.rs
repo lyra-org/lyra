@@ -279,7 +279,10 @@ fn now_ms() -> anyhow::Result<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::test_db::new_test_db;
+    use crate::db::test_db::{
+        new_test_db,
+        test_user,
+    };
     use crate::db::{
         Playlist,
         users,
@@ -382,7 +385,7 @@ mod tests {
     }
 
     fn create_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId> {
-        users::create(db, &users::test_user(username)?)
+        users::create(db, &test_user(username)?)
     }
 
     fn create_track(db: &mut DbAny, public_id: &str) -> anyhow::Result<DbId> {

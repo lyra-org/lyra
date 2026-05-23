@@ -189,7 +189,8 @@ mod tests {
         let mut real = [0.0f32; fft::WORK_LEN];
         let mut imag = [0.0f32; fft::WORK_LEN];
 
-        fft::FFT.power_spectrum(
+        fft::tests::power_spectrum(
+            &fft::FFT,
             &samples[..WINDOW_SIZE],
             hamming,
             &mut real,

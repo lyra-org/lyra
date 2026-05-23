@@ -36,7 +36,7 @@ fn declare_settings_registers_global_and_user_schemas() -> Result<()> {
     let mut db = crate::plugins::db::test_db::new_test_db()?;
     let user_db_id = crate::plugins::db::users::create(
         &mut db,
-        &crate::plugins::db::users::test_user("settings-test")?,
+        &crate::plugins::db::test_db::test_user("settings-test")?,
     )?;
     let db = Arc::new(tokio::sync::RwLock::new(db));
 
