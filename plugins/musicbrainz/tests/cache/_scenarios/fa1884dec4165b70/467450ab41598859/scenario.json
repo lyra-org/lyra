@@ -1,0 +1,42 @@
+{
+  "test_name": "光の中へ_結束バンド",
+  "scenario_id": "467450ab41598859",
+  "responses": [
+    {
+      "cache_key": "197600cad48f3414",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=8edd55a4-5894-4f7a-87e1-5ffdd3386b78&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "9055eb9d9d115c20"
+    },
+    {
+      "cache_key": "20cc1a511d57b8de",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%85%89%E3%81%AE%E4%B8%AD%E3%81%B8&limit=100",
+      "status_code": 200,
+      "body_hash": "69c9a0ca6b6162e9"
+    },
+    {
+      "cache_key": "357a0e024a64e49d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%B5%90%E6%9D%9F%E3%83%90%E3%83%B3%E3%83%89",
+      "status_code": 200,
+      "body_hash": "ffc73dde112f97a6"
+    },
+    {
+      "cache_key": "87f7b7dfafbb2370",
+      "url": "https://musicbrainz.org/ws/2/work/28a9777f-74a3-482d-848c-27c1a0a6f04f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d549c06e5ca025ae"
+    },
+    {
+      "cache_key": "c63da08baa1bcd90",
+      "url": "https://musicbrainz.org/ws/2/artist/c1b0fe0a-779d-43ed-b193-4370f0d0f88f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e08e0ab73173e313"
+    },
+    {
+      "cache_key": "ce9ba87f97ce5b9a",
+      "url": "https://musicbrainz.org/ws/2/work/e4f076a9-80b4-463c-950a-127bc89661bd?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "245663cbb69851d3"
+    }
+  ]
+}

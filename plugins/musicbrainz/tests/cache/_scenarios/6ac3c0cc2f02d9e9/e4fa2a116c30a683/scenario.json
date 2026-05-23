@@ -1,0 +1,120 @@
+{
+  "test_name": "attack_on_titan_進撃の巨人_original_soundtrack_hiroyuki_sawano_澤野弘之",
+  "scenario_id": "e4fa2a116c30a683",
+  "responses": [
+    {
+      "cache_key": "1866a49f9ca94608",
+      "url": "https://musicbrainz.org/ws/2/work/26c53fc1-931d-4edb-9398-0c6d0c58b7cf?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "280bc3916946f5d3"
+    },
+    {
+      "cache_key": "1bfb5e7bffbe3559",
+      "url": "https://musicbrainz.org/ws/2/work/ef9b2b69-25aa-4450-b906-eeb571b7da57?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b16d56f5de6da86e"
+    },
+    {
+      "cache_key": "256cfd2fa55078d8",
+      "url": "https://musicbrainz.org/ws/2/work/d9e9a40f-f059-4660-97d9-03cee59a2f17?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f775f27171c5d4de"
+    },
+    {
+      "cache_key": "6e000b572fe90489",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=a75812d1-c4d3-4583-bb77-7cdbd82a8ab6&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "f34cb13d6cc01670"
+    },
+    {
+      "cache_key": "8700447ad6a31247",
+      "url": "https://musicbrainz.org/ws/2/work/e2b5436a-33fc-4d60-a754-3d2a3029b77f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "63db034eef3086d9"
+    },
+    {
+      "cache_key": "967dff718c92a089",
+      "url": "https://musicbrainz.org/ws/2/work/6dc9fabc-41c0-4034-888c-5ca336cf6549?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c355c29e9cace04e"
+    },
+    {
+      "cache_key": "aec45cee228e0b7d",
+      "url": "https://musicbrainz.org/ws/2/work/dc2a5578-0518-4cb0-b320-b353f38a438a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5cfc21c5b41e9071"
+    },
+    {
+      "cache_key": "af0a02f3afaf4102",
+      "url": "https://musicbrainz.org/ws/2/work/7d515898-4b2a-4f9e-a8a0-44f3265fc449?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "06ab1eee2d98e5c6"
+    },
+    {
+      "cache_key": "b4932fa00f118b20",
+      "url": "https://musicbrainz.org/ws/2/work/26552820-6060-436a-beab-9cdbc949f29c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "342d0c577195ba9a"
+    },
+    {
+      "cache_key": "b59c6da788fc38df",
+      "url": "https://musicbrainz.org/ws/2/work/67109dc1-c497-4fa6-8b1b-a40b18beba3c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "85ade97a5eb0d61b"
+    },
+    {
+      "cache_key": "b5a8a56810033b05",
+      "url": "https://musicbrainz.org/ws/2/work/a53baee3-1b86-4435-a9f8-f22749ac4601?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9d03cf05a5686c13"
+    },
+    {
+      "cache_key": "b7c40b7bd16162ea",
+      "url": "https://musicbrainz.org/ws/2/work/38953074-1263-4407-bda8-92c0fe364ca8?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f68ce56d940e9160"
+    },
+    {
+      "cache_key": "ba10e802129116e7",
+      "url": "https://musicbrainz.org/ws/2/work/5a9df4e5-dabd-4c5e-9507-918a10db45e4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "03f51366d8356316"
+    },
+    {
+      "cache_key": "bdade2d8d08f9bde",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AAttack%20on%20Titan%20%5C(%E9%80%B2%E6%92%83%E3%81%AE%E5%B7%A8%E4%BA%BA%5C)%20Original%20Soundtrack&limit=100",
+      "status_code": 200,
+      "body_hash": "68dd21c6a4ced8d6"
+    },
+    {
+      "cache_key": "c1e9d5eb4cd43aee",
+      "url": "https://musicbrainz.org/ws/2/work/cef0a53a-d1f9-493c-b5b9-0f4e4ef5ff1a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b1daa82e0452e3e7"
+    },
+    {
+      "cache_key": "cf0e6114eddcf5df",
+      "url": "https://musicbrainz.org/ws/2/work/c516cd37-bc32-47f0-bb30-5e2e164b8b68?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "821b143042640c0b"
+    },
+    {
+      "cache_key": "d219d57000160fd3",
+      "url": "https://musicbrainz.org/ws/2/work/ec7fca85-5bea-4a07-9709-f2eb6cf5b72e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4de90ad0a691fd6d"
+    },
+    {
+      "cache_key": "db27d4da6eca4950",
+      "url": "https://musicbrainz.org/ws/2/work/968fba38-6c9d-48a5-92af-ce487621d087?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ff53afd659f12ea8"
+    },
+    {
+      "cache_key": "f5571a8bba067a4f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Hiroyuki%20Sawano%20(%E6%BE%A4%E9%87%8E%E5%BC%98%E4%B9%8B)",
+      "status_code": 200,
+      "body_hash": "e2d69282e4341dba"
+    }
+  ]
+}
