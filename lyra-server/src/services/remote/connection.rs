@@ -130,16 +130,8 @@ async fn handle_remote_control(cmd: ClientCommand, connection_id: ConnectionId) 
         }
     };
 
-    let target_id: ConnectionId = match target_str.parse() {
-        Ok(id) => id,
-        Err(_) => return ResponseMessage::error(id, format!("invalid target: {target_str}")),
-    };
-
-    if target_id == connection_id {
-        return ResponseMessage::error(id, "cannot target self");
-    }
-
-    let (source, target_snap) = registry::get_connection_pair(connection_id, target_id).await;
+    let (source, target_snap) =
+        registry::get_connection_and_token_target(connection_id, &target_str).await;
 
     let Some(source) = source else {
         return ResponseMessage::error(id, "source connection not found");
@@ -147,6 +139,10 @@ async fn handle_remote_control(cmd: ClientCommand, connection_id: ConnectionId) 
     let Some(target_snap) = target_snap else {
         return ResponseMessage::error(id, "target connection not found");
     };
+
+    if target_snap.connection_id == connection_id {
+        return ResponseMessage::error(id, "cannot target self");
+    }
 
     if source.user_public_id != target_snap.user_public_id {
         return ResponseMessage::error(id, "not authorized to control target");
@@ -172,7 +168,7 @@ async fn handle_remote_control(cmd: ClientCommand, connection_id: ConnectionId) 
         data,
     });
 
-    match registry::send_to_connection(target_id, forwarded).await {
+    match registry::send_to_connection(target_snap.connection_id, forwarded).await {
         Ok(()) => {
             if let Ok(now_ms) = playbacks::now_ms() {
                 let scope_key = playbacks::PlaybackScopeKey {
