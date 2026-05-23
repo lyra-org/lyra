@@ -271,6 +271,254 @@ mod tests {
 
         assert!(!should_transcode(&output, Some(1_000), Some(2_000)));
     }
+
+    #[test]
+    fn builder_rejects_missing_or_invalid_rust_owned_specs_before_ffmpeg() {
+        assert!(matches!(
+            FfmpegContext::builder().build(),
+            Err(Error::OpenInput(message)) if message == "no input specified"
+        ));
+
+        assert!(matches!(
+            FfmpegContext::builder()
+                .input("input.flac")
+                .build(),
+            Err(Error::OpenOutput(message)) if message == "no output specified"
+        ));
+
+        assert!(matches!(
+            FfmpegContext::builder()
+                .input("bad\0input.flac")
+                .output(Output::new("/tmp/out.mp3"))
+                .build(),
+            Err(Error::InvalidCString {
+                field: "input path"
+            })
+        ));
+    }
+
+    #[test]
+    fn io_write_callback_records_rust_callback_outcomes() {
+        let mut ctx = IoCallbackContext {
+            write_callback: Box::new(|buf| WriteResult::Wrote(buf.len())),
+            seek_callback: None,
+            status: None,
+        };
+        let buf = [1_u8, 2, 3];
+
+        let wrote = unsafe {
+            io_write_callback(
+                (&mut ctx as *mut IoCallbackContext).cast(),
+                buf.as_ptr(),
+                buf.len() as i32,
+            )
+        };
+
+        assert_eq!(wrote, 3);
+        assert!(ctx.status.is_none());
+
+        ctx.write_callback = Box::new(|_| WriteResult::Wrote(usize::MAX));
+        let clamped = unsafe {
+            io_write_callback(
+                (&mut ctx as *mut IoCallbackContext).cast(),
+                buf.as_ptr(),
+                buf.len() as i32,
+            )
+        };
+        assert_eq!(clamped, 3);
+
+        ctx.write_callback = Box::new(|_| WriteResult::Wrote(0));
+        let zero = unsafe {
+            io_write_callback(
+                (&mut ctx as *mut IoCallbackContext).cast(),
+                buf.as_ptr(),
+                buf.len() as i32,
+            )
+        };
+        assert_eq!(zero, AVERROR(EIO));
+        assert!(matches!(
+            ctx.status,
+            Some(CallbackStatus::OutputError(ref message))
+                if message == "write callback wrote zero bytes"
+        ));
+
+        ctx.status = None;
+        ctx.write_callback = Box::new(|_| WriteResult::Finished);
+        let finished = unsafe {
+            io_write_callback(
+                (&mut ctx as *mut IoCallbackContext).cast(),
+                buf.as_ptr(),
+                buf.len() as i32,
+            )
+        };
+        assert_eq!(finished, AVERROR_EOF);
+        assert!(matches!(ctx.status, Some(CallbackStatus::OutputStopped)));
+
+        ctx.status = None;
+        ctx.write_callback = Box::new(|_| WriteResult::error("sink failed"));
+        let failed = unsafe {
+            io_write_callback(
+                (&mut ctx as *mut IoCallbackContext).cast(),
+                buf.as_ptr(),
+                buf.len() as i32,
+            )
+        };
+        assert_eq!(failed, AVERROR(EIO));
+        assert!(matches!(
+            ctx.status,
+            Some(CallbackStatus::OutputError(ref message)) if message == "sink failed"
+        ));
+    }
+
+    #[test]
+    fn io_write_callback_rejects_invalid_raw_inputs() {
+        let mut ctx = IoCallbackContext {
+            write_callback: Box::new(|buf| WriteResult::Wrote(buf.len())),
+            seek_callback: None,
+            status: None,
+        };
+        let buf = [1_u8];
+
+        assert_eq!(
+            unsafe { io_write_callback(null_mut(), buf.as_ptr(), buf.len() as i32) },
+            AVERROR(EIO)
+        );
+        assert_eq!(
+            unsafe {
+                io_write_callback(
+                    (&mut ctx as *mut IoCallbackContext).cast(),
+                    null(),
+                    buf.len() as i32,
+                )
+            },
+            AVERROR(EIO)
+        );
+        assert_eq!(
+            unsafe {
+                io_write_callback((&mut ctx as *mut IoCallbackContext).cast(), buf.as_ptr(), 0)
+            },
+            AVERROR(EIO)
+        );
+        assert!(ctx.status.is_none());
+    }
+
+    #[test]
+    fn io_write_callback_catches_panics() {
+        let mut ctx = IoCallbackContext {
+            write_callback: Box::new(|_| -> WriteResult {
+                panic!("sink panic");
+            }),
+            seek_callback: None,
+            status: None,
+        };
+        let buf = [1_u8];
+
+        let result = unsafe {
+            io_write_callback(
+                (&mut ctx as *mut IoCallbackContext).cast(),
+                buf.as_ptr(),
+                buf.len() as i32,
+            )
+        };
+
+        assert_eq!(result, AVERROR(EIO));
+        assert!(matches!(ctx.status, Some(CallbackStatus::OutputPanic)));
+    }
+
+    #[test]
+    fn io_seek_callback_maps_requests_and_status() {
+        let mut seen = Vec::new();
+        let mut ctx = IoCallbackContext {
+            write_callback: Box::new(|buf| WriteResult::Wrote(buf.len())),
+            seek_callback: Some(Box::new(move |request| {
+                seen.push(request);
+                match request {
+                    SeekRequest::Start(offset) => SeekResult::Position(offset + 10),
+                    SeekRequest::Current(_) => SeekResult::Unseekable,
+                    SeekRequest::End(_) => SeekResult::Unsupported,
+                    SeekRequest::Size => SeekResult::error("size failed"),
+                }
+            })),
+            status: None,
+        };
+        let opaque = (&mut ctx as *mut IoCallbackContext).cast();
+
+        assert_eq!(unsafe { io_seek_callback(opaque, 5, 0) }, 15);
+        assert_eq!(
+            unsafe { io_seek_callback(opaque, 5, 1) },
+            AVERROR(ESPIPE) as i64
+        );
+        assert_eq!(
+            unsafe { io_seek_callback(opaque, 5, 2) },
+            AVERROR(ENOSYS) as i64
+        );
+        assert_eq!(
+            unsafe { io_seek_callback(opaque, 0, AVSEEK_SIZE) },
+            AVERROR(EIO) as i64
+        );
+        assert!(matches!(
+            ctx.status,
+            Some(CallbackStatus::SeekError(ref message)) if message == "size failed"
+        ));
+    }
+
+    #[test]
+    fn io_seek_callback_rejects_missing_or_unsupported_seek() {
+        let mut ctx = IoCallbackContext {
+            write_callback: Box::new(|buf| WriteResult::Wrote(buf.len())),
+            seek_callback: None,
+            status: None,
+        };
+
+        assert_eq!(
+            unsafe { io_seek_callback(null_mut(), 0, 0) },
+            AVERROR(EIO) as i64
+        );
+        assert_eq!(
+            unsafe { io_seek_callback((&mut ctx as *mut IoCallbackContext).cast(), 0, 0) },
+            AVERROR(ESPIPE) as i64
+        );
+
+        ctx.seek_callback = Some(Box::new(|_| SeekResult::Position(0)));
+        assert_eq!(
+            unsafe { io_seek_callback((&mut ctx as *mut IoCallbackContext).cast(), 0, 9999) },
+            AVERROR(ENOSYS) as i64
+        );
+        assert!(ctx.status.is_none());
+    }
+
+    #[test]
+    fn io_seek_callback_catches_panics() {
+        let mut ctx = IoCallbackContext {
+            write_callback: Box::new(|buf| WriteResult::Wrote(buf.len())),
+            seek_callback: Some(Box::new(|_| -> SeekResult {
+                panic!("seek panic");
+            })),
+            status: None,
+        };
+
+        let result = unsafe { io_seek_callback((&mut ctx as *mut IoCallbackContext).cast(), 0, 0) };
+
+        assert_eq!(result, AVERROR(EIO) as i64);
+        assert!(matches!(ctx.status, Some(CallbackStatus::SeekPanic)));
+    }
+
+    #[test]
+    fn interrupt_callback_reads_abort_flag_without_ffmpeg() {
+        let abort_flag = AtomicBool::new(false);
+
+        assert_eq!(unsafe { interrupt_callback(null_mut()) }, 0);
+        assert_eq!(
+            unsafe { interrupt_callback((&abort_flag as *const AtomicBool).cast_mut().cast()) },
+            0
+        );
+
+        abort_flag.store(true, Ordering::SeqCst);
+        assert_eq!(
+            unsafe { interrupt_callback((&abort_flag as *const AtomicBool).cast_mut().cast()) },
+            1
+        );
+    }
 }
 
 struct IoCallbackContext {

@@ -112,6 +112,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn test_transcode_to_mp3_file() {
         transcode_to_file(
             "/tmp/lyra-ffmpeg-test.mp3",
@@ -122,11 +123,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn test_transcode_to_mp3_callback() {
         transcode_to_callback(AudioFormat::Mp3, AudioCodec::Mp3, 20000);
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn test_transcode_to_flac_file() {
         transcode_to_file(
             "/tmp/lyra-ffmpeg-test.flac",
@@ -137,11 +140,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn test_transcode_to_flac_callback() {
         transcode_to_callback(AudioFormat::Flac, AudioCodec::Flac, 10000);
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn test_transcode_to_wav_file() {
         transcode_to_file(
             "/tmp/lyra-ffmpeg-test.wav",
@@ -152,11 +157,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn test_transcode_to_wav_callback() {
         transcode_to_callback(AudioFormat::Wav, AudioCodec::PcmS16Le, 80000);
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn test_transcode_to_ogg_file() {
         transcode_to_file(
             "/tmp/lyra-ffmpeg-test.ogg",
@@ -167,11 +174,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn test_transcode_to_ogg_callback() {
         transcode_to_callback(AudioFormat::Ogg, AudioCodec::Vorbis, 10000);
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn test_transcode_to_aac_file() {
         transcode_to_file(
             "/tmp/lyra-ffmpeg-test.m4a",
@@ -182,6 +191,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn test_transcode_to_aac_callback() {
         let (tx, rx) = mpsc::channel::<Vec<u8>>();
 
@@ -219,6 +229,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn test_transcode_to_opus_file() {
         transcode_to_file(
             "/tmp/lyra-ffmpeg-test.opus",
@@ -229,11 +240,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn test_transcode_to_opus_callback() {
         transcode_to_callback(AudioFormat::Opus, AudioCodec::Opus, 5000);
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn test_transcode_to_aiff_file() {
         transcode_to_file(
             "/tmp/lyra-ffmpeg-test.aiff",
@@ -244,11 +257,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn test_transcode_to_aiff_callback() {
         transcode_to_callback(AudioFormat::Aiff, AudioCodec::PcmS16Be, 80000);
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn test_transcode_to_alac_file() {
         transcode_to_file(
             "/tmp/lyra-ffmpeg-test-alac.m4a",
@@ -259,6 +274,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn test_remux_to_caf_file() {
         let output_path = "/tmp/lyra-ffmpeg-test.caf";
         std::fs::remove_file(output_path).ok();
@@ -363,6 +379,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn reports_callback_error() {
         let output = Output::with_callback(|_| WriteResult::error("sink failed"))
             .audio_format(AudioFormat::Mp3)
@@ -385,6 +402,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "requires FFmpeg C APIs")]
     fn reports_callback_panic() {
         let output = Output::with_callback(|_| -> WriteResult {
             panic!("sink panic");
