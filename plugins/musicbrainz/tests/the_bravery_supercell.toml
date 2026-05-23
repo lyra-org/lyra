@@ -1,0 +1,100 @@
+plugin = "musicbrainz"
+
+[library]
+directory = "."
+language = "jpn"
+country = "JP"
+
+[[raw_tags]]
+file_path = "supercell – The Bravery (2013) [FLAC] {SRCL 8243}/07 - The Bravery (TV Edit) -Instrumental-.flac"
+album = "The Bravery"
+album_artists = ["supercell"]
+artists = ["supercell"]
+title = "The Bravery (TV Edit) -Instrumental-"
+genre = "JPop"
+disc = 1
+disc_total = 2
+track = 7
+track_total = 7
+duration_ms = 93573
+
+[[raw_tags]]
+file_path = "supercell – The Bravery (2013) [FLAC] {SRCL 8243}/06 - 青空 -Instrumental-.flac"
+album = "The Bravery"
+album_artists = ["supercell"]
+artists = ["supercell"]
+title = "青空 -Instrumental-"
+genre = "JPop"
+disc = 1
+disc_total = 2
+track = 6
+track_total = 7
+duration_ms = 210520
+
+[[raw_tags]]
+file_path = "supercell – The Bravery (2013) [FLAC] {SRCL 8243}/05 - The Bravery -Instrumental-.flac"
+album = "The Bravery"
+album_artists = ["supercell"]
+artists = ["supercell"]
+title = "The Bravery -Instrumental-"
+genre = "JPop"
+disc = 1
+disc_total = 2
+track = 5
+track_total = 7
+duration_ms = 367093
+
+[[raw_tags]]
+file_path = "supercell – The Bravery (2013) [FLAC] {SRCL 8243}/04 - The Bravery (TV Edit).flac"
+album = "The Bravery"
+album_artists = ["supercell"]
+artists = ["supercell"]
+title = "The Bravery (TV Edit)"
+genre = "JPop"
+disc = 1
+disc_total = 2
+track = 4
+track_total = 7
+duration_ms = 95280
+
+[[raw_tags]]
+file_path = "supercell – The Bravery (2013) [FLAC] {SRCL 8243}/03 - 青空.flac"
+album = "The Bravery"
+album_artists = ["supercell"]
+artists = ["supercell"]
+title = "青空"
+genre = "JPop"
+disc = 1
+disc_total = 2
+track = 3
+track_total = 7
+duration_ms = 211346
+
+[[raw_tags]]
+file_path = "supercell – The Bravery (2013) [FLAC] {SRCL 8243}/02 - She is my senior.flac"
+album = "The Bravery"
+album_artists = ["supercell"]
+artists = ["supercell"]
+title = "She is my senior"
+genre = "JPop"
+disc = 1
+disc_total = 2
+track = 2
+track_total = 7
+duration_ms = 171773
+
+[[raw_tags]]
+file_path = "supercell – The Bravery (2013) [FLAC] {SRCL 8243}/01 - The Bravery.flac"
+album = "The Bravery"
+album_artists = ["supercell"]
+artists = ["supercell"]
+title = "The Bravery"
+genre = "JPop"
+disc = 1
+disc_total = 2
+track = 1
+track_total = 7
+duration_ms = 366786
+
+[expect.release]
+ids = { release_group_id = "48334009-2f9d-4163-95f9-95c39450f8d0", release_id = "2004591a-3b31-44e4-b9a4-04306db7dcd9" }

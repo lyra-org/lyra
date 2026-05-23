@@ -1,0 +1,36 @@
+{
+  "test_name": "火星人_ヨルシカ",
+  "scenario_id": "9f6e23b852a1b89f",
+  "responses": [
+    {
+      "cache_key": "266c2bc5c6705fb3",
+      "url": "https://musicbrainz.org/ws/2/artist/dfc6a151-3792-4695-8fda-f64723eaa788?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0fffd2d698f135db"
+    },
+    {
+      "cache_key": "2e3520d467199c9b",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%81%AB%E6%98%9F%E4%BA%BA&limit=100",
+      "status_code": 200,
+      "body_hash": "91db62975e512768"
+    },
+    {
+      "cache_key": "3bd1ecd9dffe309e",
+      "url": "https://musicbrainz.org/ws/2/work/a3390e6f-ea7e-433b-825c-aa742f7745e5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "07d67208ed0c35b0"
+    },
+    {
+      "cache_key": "5844bc2763d88e2e",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=c1aee57f-4e11-4591-b8a0-ad55f894a129&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "2cf56637415ca02e"
+    },
+    {
+      "cache_key": "781e5a6d34dc95ea",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%A8%E3%83%AB%E3%82%B7%E3%82%AB",
+      "status_code": 200,
+      "body_hash": "1cb0f6d8dc20473c"
+    }
+  ]
+}
