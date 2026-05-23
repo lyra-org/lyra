@@ -250,10 +250,10 @@ fn plugin_executor_exposes_db_backed_lyra_chromaprint_module() -> Result<()> {
 fn plugin_executor_exposes_db_backed_lyra_users_module() -> Result<()> {
     let mut db = crate::plugins::db::test_db::new_test_db()?;
     crate::plugins::db::roles::ensure_builtin_roles(&mut db)?;
-    crate::plugins::db::users::create(&mut db, &crate::plugins::db::users::test_user("bob")?)?;
+    crate::plugins::db::users::create(&mut db, &crate::plugins::db::test_db::test_user("bob")?)?;
     let alice_id = crate::plugins::db::users::create(
         &mut db,
-        &crate::plugins::db::users::test_user("alice")?,
+        &crate::plugins::db::test_db::test_user("alice")?,
     )?;
     crate::plugins::db::roles::ensure_user_has_role(
         &mut db,
@@ -304,7 +304,7 @@ fn plugin_executor_exposes_db_backed_lyra_users_module() -> Result<()> {
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
     let mut db = crate::plugins::db::test_db::new_test_db()?;
-    let user = crate::plugins::db::users::test_user("listener")?;
+    let user = crate::plugins::db::test_db::test_user("listener")?;
     let user_public_id = user.id.clone();
     let user_db_id = crate::plugins::db::users::create(&mut db, &user)?;
     let track_db_id = crate::plugins::db::test_db::insert_track(&mut db, "Raw Listen Track")?;
@@ -407,7 +407,7 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_favorites_module() -> Result<()> {
     let mut db = crate::plugins::db::test_db::new_test_db()?;
-    let user = crate::plugins::db::users::test_user("favorite-user")?;
+    let user = crate::plugins::db::test_db::test_user("favorite-user")?;
     let user_public_id = user.id.clone();
     let user_db_id = crate::plugins::db::users::create(&mut db, &user)?;
     let library_db_id =
@@ -751,7 +751,7 @@ fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()> {
     let mut db = crate::plugins::db::test_db::new_test_db()?;
-    let user = crate::plugins::db::users::test_user("playback-source-user")?;
+    let user = crate::plugins::db::test_db::test_user("playback-source-user")?;
     let user_public_id = user.id.clone();
     let user_db_id = crate::plugins::db::users::create(&mut db, &user)?;
     let track_db_id =
@@ -880,7 +880,7 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
     let mut db = crate::plugins::db::test_db::new_test_db()?;
-    let user = crate::plugins::db::users::test_user("playlist-user")?;
+    let user = crate::plugins::db::test_db::test_user("playlist-user")?;
     let user_public_id = user.id.clone();
     let user_db_id = crate::plugins::db::users::create(&mut db, &user)?;
     let track_db_id = crate::plugins::db::test_db::insert_track(&mut db, "Raw Playlist Track")?;
@@ -986,7 +986,7 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_covers_module() -> Result<()> {
     let mut db = crate::plugins::db::test_db::new_test_db()?;
-    let user = crate::plugins::db::users::test_user("cover-user")?;
+    let user = crate::plugins::db::test_db::test_user("cover-user")?;
     let user_public_id = user.id.clone();
     let user_db_id = crate::plugins::db::users::create(&mut db, &user)?;
     let release_db_id =
@@ -1301,7 +1301,7 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
     let mut db = crate::plugins::db::test_db::new_test_db()?;
     let user_db_id = crate::plugins::db::users::create(
         &mut db,
-        &crate::plugins::db::users::test_user("raw-tags")?,
+        &crate::plugins::db::test_db::test_user("raw-tags")?,
     )?;
     let track_db_id = crate::plugins::db::test_db::insert_track(&mut db, "Raw Tag Track")?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));

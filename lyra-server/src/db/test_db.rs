@@ -21,6 +21,17 @@ use agdb::{
     DbId,
     QueryBuilder,
 };
+use argon2::{
+    Argon2,
+    password_hash::{
+        PasswordHasher,
+        SaltString,
+        rand_core::{
+            OsRng,
+            RngCore,
+        },
+    },
+};
 use nanoid::nanoid;
 
 use crate::config::DbKind;
@@ -162,6 +173,29 @@ pub(crate) fn insert_library(db: &mut DbAny, name: &str, directory: &str) -> any
     Ok(library_id)
 }
 
+pub(crate) fn test_user(username: &str) -> anyhow::Result<super::users::User> {
+    Ok(super::users::User {
+        db_id: None,
+        id: nanoid!(),
+        username: username.to_string(),
+        password: hash_random_secret()?,
+    })
+}
+
+pub(crate) fn test_session(token_hash: &str) -> super::users::Session {
+    let now = super::users::now_secs();
+    super::users::Session {
+        db_id: None,
+        id: nanoid!(),
+        token_hash: token_hash.to_string(),
+        expires_at: 0,
+        created_at: now,
+        last_seen_at: now,
+        user_agent: None,
+        client_name: None,
+    }
+}
+
 /// Library node without the `from("libraries")` edge — for ingestion tests
 /// that need a graph entity unreachable from the root alias.
 pub(crate) fn insert_test_library_node(
@@ -243,6 +277,15 @@ pub(crate) fn connect_artist_with_order(
             .query(),
     )?;
     Ok(())
+}
+
+fn hash_random_secret() -> anyhow::Result<String> {
+    let mut secret = [0_u8; 32];
+    OsRng.fill_bytes(&mut secret);
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::default();
+    let hash = argon2.hash_password(&secret, &salt)?.to_string();
+    Ok(hash)
 }
 
 #[track_caller]

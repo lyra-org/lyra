@@ -40,6 +40,8 @@ pub(crate) use refresh::{
     refresh_library_metadata,
     refresh_release_metadata_for_scan,
 };
+#[cfg(test)]
+pub(crate) use registry::tests as registry_tests;
 pub(crate) use registry::{
     LIBRARY_REFRESH_LOCKS,
     PROVIDER_REGISTRY,

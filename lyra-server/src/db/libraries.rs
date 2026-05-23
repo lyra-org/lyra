@@ -975,7 +975,7 @@ mod tests {
     }
 
     fn create_test_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId> {
-        super::super::users::create(db, &super::super::users::test_user(username)?)
+        super::super::users::create(db, &super::super::test_db::test_user(username)?)
     }
 
     fn principal_for(user_db_id: DbId, user_public_id: &str) -> crate::services::auth::Principal {
@@ -1263,7 +1263,10 @@ mod tests {
         use test::Bencher;
 
         use super::*;
-        use crate::db::test_db::new_test_db;
+        use crate::db::test_db::{
+            new_test_db,
+            test_user,
+        };
         use crate::db::users;
         use nanoid::nanoid;
 
@@ -1278,7 +1281,7 @@ mod tests {
 
         fn parity_setup() -> ParitySetup {
             let mut db = new_test_db().unwrap();
-            let user_db_id = users::create(&mut db, &users::test_user("alice").unwrap()).unwrap();
+            let user_db_id = users::create(&mut db, &test_user("alice").unwrap()).unwrap();
             let user = users::get_by_id(&db, user_db_id)
                 .unwrap()
                 .expect("user exists");
@@ -1302,7 +1305,7 @@ mod tests {
                 })
                 .unwrap();
             }
-            let other_user = users::create(&mut db, &users::test_user("other").unwrap()).unwrap();
+            let other_user = users::create(&mut db, &test_user("other").unwrap()).unwrap();
             let inaccessible = db
                 .transaction_mut(|t| -> anyhow::Result<Library> {
                     let path = PathBuf::from(format!("/tmp/lyra-bench-inacc-{}", nanoid!()));

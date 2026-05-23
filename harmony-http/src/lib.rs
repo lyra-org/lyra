@@ -250,11 +250,6 @@ impl ConcurrencyLimiter {
     fn get(&self, host: &str) -> Option<Arc<Semaphore>> {
         self.entries.get(host).map(|e| e.semaphore.clone())
     }
-
-    #[cfg(test)]
-    fn max_in_flight(&self, host: &str) -> Option<usize> {
-        self.entries.get(host).map(|e| e.max_in_flight)
-    }
 }
 
 fn parse_rate_limit_headers(headers: &HttpHeaderMap) -> Option<ServerRateLimitInfo> {
@@ -1430,6 +1425,10 @@ mod tests {
         render_luau_definition,
     };
 
+    fn max_in_flight(limiter: &super::ConcurrencyLimiter, host: &str) -> Option<usize> {
+        limiter.entries.get(host).map(|entry| entry.max_in_flight)
+    }
+
     #[test]
     fn extract_domain_strips_scheme_and_port() {
         assert_eq!(extract_domain("http://host:8080").as_deref(), Some("host"),);
@@ -1527,7 +1526,7 @@ mod tests {
         assert!(super::has_rate_limit_for_plugin("luau-http-plugin").await);
         {
             let limiter = super::CONCURRENCY_LIMITER.read().await;
-            assert_eq!(limiter.max_in_flight("example.com"), Some(2));
+            assert_eq!(max_in_flight(&limiter, "example.com"), Some(2));
         }
         let mut values = vm.eval(
             std::sync::Arc::<[u8]>::from(&b"return stored_method"[..]),
@@ -1678,16 +1677,16 @@ mod tests {
     async fn concurrency_limiter_tighten_only_rejects_relaxation() {
         let mut limiter = super::ConcurrencyLimiter::new();
         limiter.set_limit("example.com".to_string(), 5);
-        assert_eq!(limiter.max_in_flight("example.com"), Some(5));
+        assert_eq!(max_in_flight(&limiter, "example.com"), Some(5));
 
         limiter.set_limit("example.com".to_string(), 10);
-        assert_eq!(limiter.max_in_flight("example.com"), Some(5));
+        assert_eq!(max_in_flight(&limiter, "example.com"), Some(5));
 
         limiter.set_limit("example.com".to_string(), 2);
-        assert_eq!(limiter.max_in_flight("example.com"), Some(2));
+        assert_eq!(max_in_flight(&limiter, "example.com"), Some(2));
 
         limiter.set_limit("example.com".to_string(), 2);
-        assert_eq!(limiter.max_in_flight("example.com"), Some(2));
+        assert_eq!(max_in_flight(&limiter, "example.com"), Some(2));
     }
 
     #[tokio::test]

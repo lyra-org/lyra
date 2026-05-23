@@ -229,7 +229,7 @@ mod tests {
 
     impl Drop for ShutdownResetGuard {
         fn drop(&mut self) {
-            crate::services::shutdown::reset_for_test();
+            crate::services::shutdown::reset();
         }
     }
 
@@ -237,7 +237,7 @@ mod tests {
     async fn ranged_file_body_finishes_after_shutdown_cancelled() -> anyhow::Result<()> {
         let _runtime_guard = crate::testing::runtime_test_lock().await;
         let _guard = ShutdownResetGuard;
-        let shutdown = crate::services::shutdown::reset_for_test();
+        let shutdown = crate::services::shutdown::reset();
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         let path = std::env::temp_dir().join(format!("lyra-ranged-shutdown-test-{nanos}.bin"));
         let file_size = FILE_STREAM_CHUNK_SIZE * 96;

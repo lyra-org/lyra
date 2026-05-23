@@ -442,7 +442,7 @@ mod tests {
     }
 
     fn test_user(db: &mut DbAny) -> anyhow::Result<DbId> {
-        let user = db::users::test_user("testuser")?;
+        let user = db::test_db::test_user("testuser")?;
         Ok(db::users::create(db, &user)?)
     }
 
@@ -706,7 +706,7 @@ mod tests {
         let mut db = new_test_db()?;
         let user_a = test_user(&mut db)?;
         let user_b = {
-            let user = db::users::test_user("otheruser")?;
+            let user = db::test_db::test_user("otheruser")?;
             db::users::create(&mut db, &user)?
         };
         let schema = schema(vec![group(
@@ -743,7 +743,7 @@ mod tests {
         let mut db = new_test_db()?;
         let user_a = test_user(&mut db)?;
         let user_b = {
-            let user = db::users::test_user("otheruser")?;
+            let user = db::test_db::test_user("otheruser")?;
             db::users::create(&mut db, &user)?
         };
         let schema = schema(vec![group(

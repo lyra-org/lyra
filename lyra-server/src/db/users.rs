@@ -354,32 +354,11 @@ pub(crate) fn update_user_password(
 }
 
 #[cfg(test)]
-pub(crate) fn test_user(username: &str) -> anyhow::Result<User> {
-    Ok(User {
-        db_id: None,
-        id: nanoid!(),
-        username: username.to_string(),
-        password: hash_random_secret()?,
-    })
-}
-
-#[cfg(test)]
-pub(crate) fn test_session(token_hash: &str) -> Session {
-    let now = now_secs();
-    Session {
-        db_id: None,
-        id: nanoid!(),
-        token_hash: token_hash.to_string(),
-        expires_at: 0,
-        created_at: now,
-        last_seen_at: now,
-        user_agent: None,
-        client_name: None,
-    }
-}
-
-#[cfg(test)]
 mod tests {
+    use super::super::test_db::{
+        test_session,
+        test_user,
+    };
     use super::*;
     use crate::db::test_db::new_test_db;
     use anyhow::anyhow;

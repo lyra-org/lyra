@@ -16,8 +16,6 @@ use anyhow::{
     Context,
     Result,
 };
-#[cfg(test)]
-use harmony_core::MemorySourceLoader;
 use harmony_core::{
     CallContext,
     ChunkOrigin,
@@ -37,8 +35,6 @@ use harmony_core::{
 };
 use harmony_luau as luau;
 
-#[cfg(test)]
-use super::default_server_info;
 use super::{
     PluginExecutor,
     WebSocketState,
@@ -55,38 +51,6 @@ use super::{
 };
 
 impl PluginExecutor {
-    #[cfg(test)]
-    pub(crate) fn with_manifests(manifests: Arc<[harmony_core::PluginManifest]>) -> Result<Self> {
-        Self::with_runtime_state(manifests, default_server_info())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_runtime_state(
-        manifests: Arc<[harmony_core::PluginManifest]>,
-        server_info: crate::plugins::server::ServerInfo,
-    ) -> Result<Self> {
-        Self::with_loader(
-            manifests,
-            server_info,
-            PluginModuleStores::empty(),
-            MemorySourceLoader::new(),
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_database(
-        manifests: Arc<[harmony_core::PluginManifest]>,
-        server_info: crate::plugins::server::ServerInfo,
-        db: crate::plugins::db::DbAsync,
-    ) -> Result<Self> {
-        Self::with_loader(
-            manifests,
-            server_info,
-            PluginModuleStores::with_db(db),
-            MemorySourceLoader::new(),
-        )
-    }
-
     pub(crate) fn with_filesystem_sources(
         manifests: Arc<[harmony_core::PluginManifest]>,
         server_info: crate::plugins::server::ServerInfo,
@@ -98,33 +62,6 @@ impl PluginExecutor {
             server_info,
             PluginModuleStores::empty(),
             FilesystemSourceLoader::new(source_root, plugins_dir),
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn discover_from_plugins_dir(
-        plugins_dir: impl Into<PathBuf>,
-        server_info: crate::plugins::server::ServerInfo,
-    ) -> Result<(Self, Vec<PluginLoadError>)> {
-        Self::discover_from_plugins_dir_with_stores(
-            plugins_dir,
-            server_info,
-            PluginModuleStores::empty(),
-            Vec::new(),
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn discover_from_plugins_dir_with_db(
-        plugins_dir: impl Into<PathBuf>,
-        server_info: crate::plugins::server::ServerInfo,
-        db: crate::plugins::db::DbAsync,
-    ) -> Result<(Self, Vec<PluginLoadError>)> {
-        Self::discover_from_plugins_dir_with_db_and_modules(
-            plugins_dir,
-            server_info,
-            db,
-            Vec::new(),
         )
     }
 
@@ -142,7 +79,7 @@ impl PluginExecutor {
         )
     }
 
-    fn discover_from_plugins_dir_with_stores(
+    pub(super) fn discover_from_plugins_dir_with_stores(
         plugins_dir: impl Into<PathBuf>,
         server_info: crate::plugins::server::ServerInfo,
         stores: PluginModuleStores,
@@ -169,7 +106,7 @@ impl PluginExecutor {
         Ok((runtime, errors))
     }
 
-    fn with_loader<L>(
+    pub(super) fn with_loader<L>(
         manifests: Arc<[harmony_core::PluginManifest]>,
         server_info: crate::plugins::server::ServerInfo,
         stores: PluginModuleStores,
@@ -299,23 +236,6 @@ impl PluginExecutor {
         )
     }
 
-    #[cfg(test)]
-    pub(crate) fn eval_plugin_source(
-        &self,
-        plugin_id: impl Into<Arc<str>>,
-        path: impl Into<Arc<str>>,
-        source: impl Into<Arc<[u8]>>,
-    ) -> Result<Vec<luau::Value>> {
-        let origin = plugin_origin(plugin_id, path);
-        self.eval_plugin_source_with_call_context(
-            source,
-            CallContext {
-                origin,
-                ..CallContext::default()
-            },
-        )
-    }
-
     pub(crate) fn run_plugin_source(
         &self,
         plugin_id: impl Into<Arc<str>>,
@@ -341,7 +261,7 @@ impl PluginExecutor {
             .map(|_| ())
     }
 
-    fn eval_plugin_source_with_call_context(
+    pub(super) fn eval_plugin_source_with_call_context(
         &self,
         source: impl Into<Arc<[u8]>>,
         context: CallContext,

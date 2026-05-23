@@ -339,173 +339,21 @@ pub(crate) fn prune_missing_entries(
 }
 
 #[cfg(test)]
-pub(crate) fn sync_entries(
-    db: &mut DbAny,
-    library: &Library,
-    entries: Vec<Entry>,
-) -> anyhow::Result<Vec<DbId>> {
-    let library_db_id = library
-        .db_id
-        .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
-    let mut disk_by_path = HashMap::new();
-    for e in &entries {
-        disk_by_path.insert(e.full_path.clone(), e.clone());
-    }
-
-    let existing = load_existing(db, library_db_id)?;
-    let mut db_by_path = HashMap::new();
-    for e in existing.into_iter() {
-        db_by_path.insert(e.full_path.clone(), e);
-    }
-
-    let mut to_delete = Vec::new();
-    let mut to_add = Vec::new();
-
-    // First collect all entries that need to be deleted
-    for (path, e) in &db_by_path {
-        if !disk_by_path.contains_key(path) {
-            to_delete.push(e.clone());
-        }
-    }
-
-    let mut dir_deletes: Vec<Entry> = to_delete
-        .iter()
-        .filter(|entry| entry.kind == EntryKind::Dir)
-        .cloned()
-        .collect();
-    dir_deletes.sort_by_key(|entry| entry.full_path.components().count());
-    let mut top_level_dirs = Vec::new();
-    for entry in dir_deletes {
-        if top_level_dirs
-            .iter()
-            .any(|parent: &Entry| entry.full_path.starts_with(&parent.full_path))
-        {
-            continue;
-        }
-        top_level_dirs.push(entry);
-    }
-
-    for (path, e) in &disk_by_path {
-        // skip the root directory entry, as we store that as the library itself
-        if path == &PathBuf::from(&library.path) {
-            continue;
-        }
-
-        if !db_by_path.contains_key(path) {
-            to_add.push(e.clone());
-        }
-    }
-
-    let mut to_update = Vec::new();
-    for entry in &entries {
-        let Some(existing) = db_by_path.get(&entry.full_path) else {
-            continue;
-        };
-        if entry.kind != existing.kind
-            || entry.file_kind != existing.file_kind
-            || entry.name != existing.name
-            || entry.size != existing.size
-            || entry.mtime != existing.mtime
-            || entry.hash != existing.hash
-        {
-            to_update.push(entry.clone());
-        }
-    }
-
-    db.transaction_mut(|t| -> anyhow::Result<Vec<DbId>> {
-        // HACK: get all the altered items to return for metadata
-        let mut altered = Vec::new();
-
-        for e in &top_level_dirs {
-            let dir_id = e
-                .db_id
-                .ok_or_else(|| anyhow::anyhow!("directory entry missing db_id"))?;
-            t.exec_mut(QueryBuilder::remove().search().from(dir_id).query())?;
-        }
-
-        if !to_delete.is_empty() {
-            let ids: Vec<DbId> = to_delete
-                .iter()
-                .map(|e| {
-                    e.db_id
-                        .ok_or_else(|| anyhow::anyhow!("entry missing db_id during delete"))
-                })
-                .collect::<anyhow::Result<Vec<_>>>()?;
-            t.exec_mut(QueryBuilder::remove().ids(&ids).query())?;
-
-            // add all the ids to the altered list
-            altered.extend(ids);
-        }
-
-        if !to_update.is_empty() {
-            t.exec_mut(QueryBuilder::insert().elements(&to_update).query())?;
-            altered.extend(to_update.iter().filter_map(|entry| entry.db_id));
-        }
-
-        let qr_ids = t.exec_mut(QueryBuilder::insert().elements(&to_add).query())?;
-        let entries: Vec<Entry> = t
-            .exec(
-                QueryBuilder::select()
-                    .elements::<Entry>()
-                    .ids(&qr_ids)
-                    .query(),
-            )?
-            .try_into()?;
-        let mut path_to_id = HashMap::new();
-        for e in &entries {
-            let eid = e
-                .db_id
-                .ok_or_else(|| anyhow::anyhow!("newly inserted entry missing db_id"))?;
-            path_to_id.insert(e.full_path.clone(), eid);
-        }
-        for e in &entries {
-            let entry_id = e
-                .db_id
-                .ok_or_else(|| anyhow::anyhow!("entry missing db_id during edge insert"))?;
-            altered.push(entry_id);
-
-            let parent = e
-                .full_path
-                .parent()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let pid = path_to_id
-                .get(&PathBuf::from(&parent))
-                .copied()
-                .or_else(|| {
-                    db_by_path
-                        .get(&PathBuf::from(&parent))
-                        .and_then(|en| en.db_id)
-                })
-                .unwrap_or(library_db_id);
-
-            t.exec_mut(
-                QueryBuilder::insert()
-                    .edges()
-                    .from(pid)
-                    .to(entry_id)
-                    .values_uniform([("owned", 1).into()])
-                    .query(),
-            )?;
-        }
-
-        Ok(altered)
-    })
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::Library;
     use crate::db::test_db::TestDb;
     use crate::services::libraries::scanning::{
         hash_entry_group,
-        prepare_entries,
         prepare_entry_scan_plan,
+        tests::prepare_entries,
     };
     use agdb::DbValue;
     use nanoid::nanoid;
-    use std::collections::HashSet;
+    use std::collections::{
+        HashMap,
+        HashSet,
+    };
     use std::fs;
     use std::path::Path;
     use std::time::{
@@ -532,6 +380,155 @@ mod tests {
 
     fn new_library(db: &mut DbAny, root: &Path) -> anyhow::Result<Library> {
         crate::db::test_db::insert_test_library_node(db, "Test", root.to_path_buf())
+    }
+
+    fn sync_entries(
+        db: &mut DbAny,
+        library: &Library,
+        entries: Vec<Entry>,
+    ) -> anyhow::Result<Vec<DbId>> {
+        let library_db_id = library
+            .db_id
+            .ok_or_else(|| anyhow::anyhow!("library missing db_id"))?;
+        let mut disk_by_path = HashMap::new();
+        for e in &entries {
+            disk_by_path.insert(e.full_path.clone(), e.clone());
+        }
+
+        let existing = load_existing(db, library_db_id)?;
+        let mut db_by_path = HashMap::new();
+        for e in existing.into_iter() {
+            db_by_path.insert(e.full_path.clone(), e);
+        }
+
+        let mut to_delete = Vec::new();
+        let mut to_add = Vec::new();
+
+        for (path, e) in &db_by_path {
+            if !disk_by_path.contains_key(path) {
+                to_delete.push(e.clone());
+            }
+        }
+
+        let mut dir_deletes: Vec<Entry> = to_delete
+            .iter()
+            .filter(|entry| entry.kind == EntryKind::Dir)
+            .cloned()
+            .collect();
+        dir_deletes.sort_by_key(|entry| entry.full_path.components().count());
+        let mut top_level_dirs = Vec::new();
+        for entry in dir_deletes {
+            if top_level_dirs
+                .iter()
+                .any(|parent: &Entry| entry.full_path.starts_with(&parent.full_path))
+            {
+                continue;
+            }
+            top_level_dirs.push(entry);
+        }
+
+        for (path, e) in &disk_by_path {
+            if path == &PathBuf::from(&library.path) {
+                continue;
+            }
+
+            if !db_by_path.contains_key(path) {
+                to_add.push(e.clone());
+            }
+        }
+
+        let mut to_update = Vec::new();
+        for entry in &entries {
+            let Some(existing) = db_by_path.get(&entry.full_path) else {
+                continue;
+            };
+            if entry.kind != existing.kind
+                || entry.file_kind != existing.file_kind
+                || entry.name != existing.name
+                || entry.size != existing.size
+                || entry.mtime != existing.mtime
+                || entry.hash != existing.hash
+            {
+                to_update.push(entry.clone());
+            }
+        }
+
+        db.transaction_mut(|t| -> anyhow::Result<Vec<DbId>> {
+            let mut altered = Vec::new();
+
+            for e in &top_level_dirs {
+                let dir_id = e
+                    .db_id
+                    .ok_or_else(|| anyhow::anyhow!("directory entry missing db_id"))?;
+                t.exec_mut(QueryBuilder::remove().search().from(dir_id).query())?;
+            }
+
+            if !to_delete.is_empty() {
+                let ids: Vec<DbId> = to_delete
+                    .iter()
+                    .map(|e| {
+                        e.db_id
+                            .ok_or_else(|| anyhow::anyhow!("entry missing db_id during delete"))
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                t.exec_mut(QueryBuilder::remove().ids(&ids).query())?;
+                altered.extend(ids);
+            }
+
+            if !to_update.is_empty() {
+                t.exec_mut(QueryBuilder::insert().elements(&to_update).query())?;
+                altered.extend(to_update.iter().filter_map(|entry| entry.db_id));
+            }
+
+            let qr_ids = t.exec_mut(QueryBuilder::insert().elements(&to_add).query())?;
+            let entries: Vec<Entry> = t
+                .exec(
+                    QueryBuilder::select()
+                        .elements::<Entry>()
+                        .ids(&qr_ids)
+                        .query(),
+                )?
+                .try_into()?;
+            let mut path_to_id = HashMap::new();
+            for e in &entries {
+                let eid = e
+                    .db_id
+                    .ok_or_else(|| anyhow::anyhow!("newly inserted entry missing db_id"))?;
+                path_to_id.insert(e.full_path.clone(), eid);
+            }
+            for e in &entries {
+                let entry_id = e
+                    .db_id
+                    .ok_or_else(|| anyhow::anyhow!("entry missing db_id during edge insert"))?;
+                altered.push(entry_id);
+
+                let parent = e
+                    .full_path
+                    .parent()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let pid = path_to_id
+                    .get(&PathBuf::from(&parent))
+                    .copied()
+                    .or_else(|| {
+                        db_by_path
+                            .get(&PathBuf::from(&parent))
+                            .and_then(|en| en.db_id)
+                    })
+                    .unwrap_or(library_db_id);
+
+                t.exec_mut(
+                    QueryBuilder::insert()
+                        .edges()
+                        .from(pid)
+                        .to(entry_id)
+                        .values_uniform([("owned", 1).into()])
+                        .query(),
+                )?;
+            }
+
+            Ok(altered)
+        })
     }
 
     fn full_sync(db: &mut DbAny, library: &Library) -> anyhow::Result<Vec<DbId>> {

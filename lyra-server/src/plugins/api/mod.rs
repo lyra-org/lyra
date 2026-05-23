@@ -222,13 +222,17 @@ pub(crate) async fn teardown_plugin_routes(plugin_id: &crate::plugins::lifecycle
 }
 
 #[cfg(test)]
-pub(crate) async fn registered_handler_for_test(method: &str, path: &str) -> Option<u64> {
-    let registry = API_ROUTE_REGISTRY.read().await;
-    registry
-        .snapshot()
-        .into_iter()
-        .find(|route| route.key.method.as_ref() == method && route.key.path.as_ref() == path)
-        .map(|route| route.handler_id)
+pub(crate) mod tests {
+    use super::*;
+
+    pub(crate) async fn registered_handler(method: &str, path: &str) -> Option<u64> {
+        let registry = API_ROUTE_REGISTRY.read().await;
+        registry
+            .snapshot()
+            .into_iter()
+            .find(|route| route.key.method.as_ref() == method && route.key.path.as_ref() == path)
+            .map(|route| route.handler_id)
+    }
 }
 
 fn route_spec(

@@ -204,15 +204,6 @@ impl LyricsProviderRegistry {
         });
         all
     }
-
-    #[cfg(test)]
-    pub(crate) fn clear(&mut self) {
-        for token in self.plugin_cancels.values() {
-            token.cancel();
-        }
-        self.plugin_cancels.clear();
-        self.handlers.clear();
-    }
 }
 
 pub(crate) static LYRICS_PROVIDER_REGISTRY: LazyLock<RwLock<LyricsProviderRegistry>> =
@@ -287,16 +278,6 @@ pub(crate) async fn make_plugin_cancellation_child(plugin_id: &PluginId) -> Canc
 pub(crate) async fn unregister_handlers_for_plugin(plugin_id: &PluginId) {
     let mut registry = LYRICS_PROVIDER_REGISTRY.write().await;
     registry.remove_for_plugin(plugin_id);
-}
-
-#[cfg(test)]
-pub(crate) async fn reset_registry_for_test() {
-    let mut registry = LYRICS_PROVIDER_REGISTRY.write().await;
-    registry.clear();
-    drop(registry);
-    if let Ok(mut set) = IN_FLIGHT.lock() {
-        set.clear();
-    }
 }
 
 /// Run every matching handler in priority order. Not stop-on-first-hit —
@@ -706,6 +687,19 @@ mod tests {
         }
     }
 
+    async fn reset_registry() {
+        let mut registry = LYRICS_PROVIDER_REGISTRY.write().await;
+        for token in registry.plugin_cancels.values() {
+            token.cancel();
+        }
+        registry.plugin_cancels.clear();
+        registry.handlers.clear();
+        drop(registry);
+        if let Ok(mut set) = IN_FLIGHT.lock() {
+            set.clear();
+        }
+    }
+
     async fn install_track_in_state_db(title: &str, artist: &str, duration_ms: u64) -> DbId {
         let mut db = STATE.db.write().await;
         let track_id = test_db::insert_track(&mut *db, title).expect("insert track");
@@ -727,7 +721,7 @@ mod tests {
             country: None,
         })
         .await?;
-        reset_registry_for_test().await;
+        reset_registry().await;
         Ok(())
     }
 
