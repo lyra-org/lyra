@@ -1,0 +1,30 @@
+{
+  "test_name": "no_one_汐れいら",
+  "scenario_id": "0d62e8c441458aa4",
+  "responses": [
+    {
+      "cache_key": "2e18b42e938fea68",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=2ad4d19f-c1ca-46c9-87ab-c77957c3c2c2&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "7b53cfd05505b228"
+    },
+    {
+      "cache_key": "384fb80ffcf0df3f",
+      "url": "https://musicbrainz.org/ws/2/work/853ae739-e255-432f-898b-1b7332babb78?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6b49bcfc1b5b47bb"
+    },
+    {
+      "cache_key": "8ca2e1efa1d1095d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%B1%90%E3%82%8C%E3%81%84%E3%82%89",
+      "status_code": 200,
+      "body_hash": "2c0d909bea8db6ad"
+    },
+    {
+      "cache_key": "9e0a4a69cad522ca",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ANo%20one&limit=100",
+      "status_code": 200,
+      "body_hash": "0d0d445e7cfbdad0"
+    }
+  ]
+}
