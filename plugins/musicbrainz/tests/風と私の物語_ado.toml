@@ -1,0 +1,28 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Ado — 風と私の物語 (2025) [WEB-FLAC]/01. 風と私の物語.flac"
+album = "風と私の物語"
+album_artists = ["Ado"]
+artists = ["Ado"]
+title = "風と私の物語"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 348367
+
+[expect.release]
+ids = { release_group_id = "f8739b6f-8e2a-48b7-967d-c6370e026f7f", release_id = ["338c6101-12b7-4952-824c-5a956f941653", "201cb6e5-c3d5-453f-89ff-274f15d7b607"] }
+fields = { release_title = "風と私の物語" }
+
+[expect.artists."e134b52f-2e9e-4734-9bc3-bea9648d1fa1"]
+fields = { artist_name = "Ado", sort_name = "Ado" }
+
+[expect.tracks."3a3be477-fb69-4ce9-919c-a4a49dd91ea4"]
+fields = { disc = 1, track = 1, track_title = "風と私の物語" }
