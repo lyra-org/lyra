@@ -1259,6 +1259,7 @@ mod tests {
         assert!(resolved.is_none());
         Ok(())
     }
+    #[cfg(feature = "nightly")]
     mod benches {
         extern crate test;
 

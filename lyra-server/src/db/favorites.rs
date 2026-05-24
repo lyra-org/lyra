@@ -1017,6 +1017,7 @@ mod tests {
 
         Ok(())
     }
+    #[cfg(feature = "nightly")]
     mod benches {
         extern crate test;
 

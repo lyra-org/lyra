@@ -1,3 +1,2 @@
 [toolchain]
-channel = "nightly"
-components = ["miri", "rust-src", "rustfmt"]
+channel = "stable"

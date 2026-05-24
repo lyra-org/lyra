@@ -31,7 +31,7 @@ luau-lsp analyze --no-flags-enabled --flag=LuauSolverV2=true --platform standard
 Run `cargo run -p lyra-server -- docs setup` before Luau analysis after changing Rust-defined Luau module surfaces or generated Luau definitions.
 
 ## Coding Style & Naming Conventions
-- Format Rust code with `cargo fmt` and Luau scripts with `stylua`.
+- Format Rust code with `cargo +nightly fmt` and Luau scripts with `stylua`.
 - Keep comments minimal and purposeful; prefer clear code over commentary.
 - Lua plugin scripts (`plugins/*.luau`) follow the existing project style, including tab-based indentation.
 
