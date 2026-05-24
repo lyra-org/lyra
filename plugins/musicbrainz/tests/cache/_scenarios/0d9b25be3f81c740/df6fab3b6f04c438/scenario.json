@@ -1,0 +1,42 @@
+{
+  "test_name": "wild_side_ali",
+  "scenario_id": "df6fab3b6f04c438",
+  "responses": [
+    {
+      "cache_key": "0a48a7ef1c80e5da",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=6428bc0b-8604-4a42-aea2-81c362fe3726&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "049d058ebbaad25f"
+    },
+    {
+      "cache_key": "2365dbe8b47e0734",
+      "url": "https://musicbrainz.org/ws/2/work/0325a4a2-ab50-4e05-8bfd-fa35ddd59996?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e5e3f2e91dbc6cb5"
+    },
+    {
+      "cache_key": "64d7652f71ef4c5f",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AWild%20Side&limit=100",
+      "status_code": 200,
+      "body_hash": "bfb381672accc79d"
+    },
+    {
+      "cache_key": "c657e8452c1d3b1d",
+      "url": "https://musicbrainz.org/ws/2/artist/a0bb95b8-9fd9-47dd-af28-d4210f7f2a11?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "dcb05461e7f13257"
+    },
+    {
+      "cache_key": "eea588962f023828",
+      "url": "https://musicbrainz.org/ws/2/artist?query=ALI",
+      "status_code": 200,
+      "body_hash": "01a35211c2f4f22f"
+    },
+    {
+      "cache_key": "f701c4d78747632f",
+      "url": "https://musicbrainz.org/ws/2/work/823e7705-ce14-4280-b494-7f3b61a3c258?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "824461d5ebc05534"
+    }
+  ]
+}
