@@ -1,0 +1,42 @@
+{
+  "test_name": "くちづけdiamond初回限定盤_weaver",
+  "scenario_id": "0d3c62e2871825be",
+  "responses": [
+    {
+      "cache_key": "a0c9f4ce78ea6ac2",
+      "url": "https://musicbrainz.org/ws/2/artist/db71e39f-e829-46b5-9c62-e76900b979f3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c857954d9d24fd1b"
+    },
+    {
+      "cache_key": "a67a0e2123924af3",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%8F%E3%81%A1%E3%81%A5%E3%81%91Diamond%E3%80%80%E3%80%90%E5%88%9D%E5%9B%9E%E9%99%90%E5%AE%9A%E7%9B%A4%E3%80%91&limit=100",
+      "status_code": 200,
+      "body_hash": "3d28b3095919ac54"
+    },
+    {
+      "cache_key": "af4abfdb5fa0002f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=WEAVER",
+      "status_code": 200,
+      "body_hash": "b712df382eda2181"
+    },
+    {
+      "cache_key": "c9f7de5016159f63",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=5b75b7a7-97f6-4477-9b2e-1344b9147261&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "8ef8177b846e0c3e"
+    },
+    {
+      "cache_key": "ccfbbf195a3d6912",
+      "url": "https://musicbrainz.org/ws/2/work/68808cae-6ef4-4627-93ba-fe6ccb24ae4d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c2fc9f7d393ad035"
+    },
+    {
+      "cache_key": "d0ee910882aaf92c",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Adb71e39f-e829-46b5-9c62-e76900b979f3%20AND%20(release%3A%E3%81%8F%E3%81%A1%E3%81%A5%E3%81%91Diamond%E3%80%80%E3%80%90%E5%88%9D%E5%9B%9E%E9%99%90%E5%AE%9A%E7%9B%A4%E3%80%91%20OR%20recording%3A%E3%81%8F%E3%81%A1%E3%81%A5%E3%81%91Diamond)",
+      "status_code": 200,
+      "body_hash": "857b578aabe9b0eb"
+    }
+  ]
+}
