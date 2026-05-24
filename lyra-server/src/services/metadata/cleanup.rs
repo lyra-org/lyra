@@ -155,12 +155,13 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
         )?;
         let mut has_track_ref = false;
         for edge in incoming.elements {
-            if edge.to != Some(source_db_id) {
+            if edge.to != source_db_id {
                 continue;
             }
-            let Some(from_id) = edge.from else {
+            let from_id = edge.from;
+            if from_id.0 == 0 {
                 continue;
-            };
+            }
             if db::tracks::get_by_id(db, from_id)?.is_some() {
                 has_track_ref = true;
                 break;
@@ -197,12 +198,13 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
         )?;
         let mut has_source_ref = false;
         for edge in incoming.elements {
-            if edge.to != Some(cue_track_db_id) {
+            if edge.to != cue_track_db_id {
                 continue;
             }
-            let Some(from_id) = edge.from else {
+            let from_id = edge.from;
+            if from_id.0 == 0 {
                 continue;
-            };
+            }
             if db::track_sources::get_by_id(db, from_id)?.is_some() {
                 has_source_ref = true;
                 break;
@@ -239,12 +241,13 @@ pub(crate) fn cleanup_orphaned_metadata(db: &mut DbAny) -> anyhow::Result<()> {
         )?;
         let mut has_cue_track_ref = false;
         for edge in outgoing.elements {
-            if edge.from != Some(cue_sheet_db_id) {
+            if edge.from != cue_sheet_db_id {
                 continue;
             }
-            let Some(to_id) = edge.to else {
+            let to_id = edge.to;
+            if to_id.0 == 0 {
                 continue;
-            };
+            }
             if db::cue::tracks::get_by_id(db, to_id)?.is_some() {
                 has_cue_track_ref = true;
                 break;
@@ -401,7 +404,8 @@ fn merge_artist_into(
     )?;
 
     for element in &incoming.elements {
-        if let Some(from_id) = element.from {
+        let from_id = element.from;
+        if from_id.0 != 0 {
             ensure_owned_edge(db, from_id, winner)?;
         }
     }

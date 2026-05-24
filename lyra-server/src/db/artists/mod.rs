@@ -450,9 +450,10 @@ fn artist_edge_orders(
         .exec(QueryBuilder::select().ids(edge_ids).query())?
         .elements
     {
-        let Some(credit_db_id) = edge.to else {
+        let credit_db_id = edge.to;
+        if credit_db_id.0 == 0 {
             continue;
-        };
+        }
         let Some(order) = edge_order_value(&edge) else {
             continue;
         };
@@ -462,7 +463,7 @@ fn artist_edge_orders(
     for (credit_db_id, order) in credit_orders {
         let credit_edges = super::graph::direct_edges_from(db, credit_db_id)?;
         for edge in credit_edges {
-            let Some(artist_db_id) = edge.to.filter(|id| id.0 > 0) else {
+            let Some(artist_db_id) = (edge.to.0 > 0).then_some(edge.to) else {
                 continue;
             };
             orders
@@ -491,9 +492,10 @@ pub(crate) fn credit_edge_orders_from_owner(
         .exec(QueryBuilder::select().ids(edge_ids).query())?
         .elements
     {
-        let Some(target_db_id) = edge.to else {
+        let target_db_id = edge.to;
+        if target_db_id.0 == 0 {
             continue;
-        };
+        }
         let Some(order) = edge_order_value(&edge) else {
             continue;
         };
@@ -556,12 +558,13 @@ fn get_connected_credited_artists(
     let mut order_by_credit: HashMap<DbId, Option<u64>> = HashMap::new();
     let mut credit_artist_links: Vec<(DbId, DbId)> = Vec::new();
     for edge in &edges {
-        let Some(to) = edge.to.filter(|id| id.0 > 0) else {
+        let Some(to) = (edge.to.0 > 0).then_some(edge.to) else {
             continue;
         };
-        if edge.from == Some(owner_db_id) && credits_by_id.contains_key(&to) {
+        if edge.from == owner_db_id && credits_by_id.contains_key(&to) {
             order_by_credit.insert(to, edge_order_value(edge));
-        } else if let Some(from) = edge.from.filter(|id| credits_by_id.contains_key(id)) {
+        } else if edge.from.0 != 0 && credits_by_id.contains_key(&edge.from) {
+            let from = edge.from;
             if artists_by_id.contains_key(&to) {
                 credit_artist_links.push((from, to));
             }

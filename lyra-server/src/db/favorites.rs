@@ -201,7 +201,7 @@ pub(crate) fn edge_snapshot(
     target_db_id: DbId,
 ) -> anyhow::Result<Option<String>> {
     for element in read_outbound_favorite_edges(db, user_db_id)? {
-        if element.to != Some(target_db_id) {
+        if element.to != target_db_id {
             continue;
         }
         let mut snapshot = String::new();
@@ -232,9 +232,10 @@ pub(crate) fn edge_snapshots(
     let wanted: HashSet<DbId> = target_db_ids.iter().copied().collect();
     let mut snapshots: HashMap<DbId, String> = HashMap::with_capacity(target_db_ids.len());
     for element in read_outbound_favorite_edges(db, user_db_id)? {
-        let Some(target_db_id) = element.to else {
+        let target_db_id = element.to;
+        if target_db_id.0 == 0 {
             continue;
-        };
+        }
         if !wanted.contains(&target_db_id) {
             continue;
         }
@@ -379,7 +380,7 @@ fn find_favorite_edge(
     // that has been deleted since the caller's last observation — in that case
     // the cascade has already removed the edge and we correctly return `None`.
     for element in read_outbound_favorite_edges(db, user_db_id)? {
-        if element.to == Some(target_db_id) {
+        if element.to == target_db_id {
             return Ok(Some(element.id));
         }
     }
@@ -404,7 +405,7 @@ fn read_outbound_favorite_edges(
     Ok(result
         .elements
         .into_iter()
-        .filter(|element| element.from == Some(user_db_id) && element_is_favorite(element))
+        .filter(|element| element.from == user_db_id && element_is_favorite(element))
         .collect())
 }
 
@@ -424,7 +425,7 @@ fn read_inbound_favorite_edges(
     Ok(result
         .elements
         .into_iter()
-        .filter(|element| element.to == Some(target_db_id) && element_is_favorite(element))
+        .filter(|element| element.to == target_db_id && element_is_favorite(element))
         .collect())
 }
 
@@ -436,7 +437,10 @@ fn element_is_favorite(element: &DbElement) -> bool {
 }
 
 fn parse_favorite_edge(element: DbElement) -> Option<FavoriteEdge> {
-    let target_db_id = element.to?;
+    if element.id.0 >= 0 {
+        return None;
+    }
+    let target_db_id = (element.to.0 != 0).then_some(element.to)?;
     let mut kind: Option<FavoriteKind> = None;
     let mut first_favorited_at_ms: Option<i64> = None;
     let mut last_refreshed_at_ms: Option<i64> = None;
@@ -504,7 +508,7 @@ mod tests {
 
         let favorited: HashSet<DbId> = read_outbound_favorite_edges(db, user_db_id)?
             .into_iter()
-            .filter_map(|element| element.to)
+            .filter_map(|element| (element.id.0 < 0 && element.to.0 != 0).then_some(element.to))
             .collect();
 
         Ok(target_db_ids
@@ -926,8 +930,7 @@ mod tests {
             "only user_b's favorite edge should remain after deleting user_a",
         );
         assert_eq!(
-            inbound[0].from,
-            Some(user_b),
+            inbound[0].from, user_b,
             "remaining favorite edge must originate from user_b",
         );
 

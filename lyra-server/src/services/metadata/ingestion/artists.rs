@@ -63,7 +63,7 @@ pub(crate) fn sync_artist_edges(
             continue;
         };
         let edges = crate::db::graph::direct_edges_from(db, credit_db_id)?;
-        if let Some(artist_db_id) = edges.iter().find_map(|e| e.to.filter(|id| id.0 > 0)) {
+        if let Some(artist_db_id) = edges.iter().find_map(|e| (e.to.0 > 0).then_some(e.to)) {
             existing_by_artist.insert(artist_db_id, credit_db_id);
         }
     }

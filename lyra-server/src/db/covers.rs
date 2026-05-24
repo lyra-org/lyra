@@ -186,7 +186,7 @@ mod tests {
         Ok(qr
             .elements
             .into_iter()
-            .any(|edge| edge.from == Some(from) && edge.to == Some(to)))
+            .any(|edge| edge.from == from && edge.to == to))
     }
 
     fn outgoing_edge_count(db: &DbAny, from: DbId) -> anyhow::Result<u64> {
@@ -203,7 +203,7 @@ mod tests {
         Ok(qr
             .elements
             .into_iter()
-            .filter(|edge| edge.from == Some(from))
+            .filter(|edge| edge.from == from)
             .count() as u64)
     }
 

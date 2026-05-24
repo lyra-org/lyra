@@ -154,7 +154,7 @@ mod tests {
         Ok(qr
             .elements
             .into_iter()
-            .filter(|edge| edge.from == Some(from))
+            .filter(|edge| edge.from == from)
             .count() as u64)
     }
 

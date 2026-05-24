@@ -111,7 +111,7 @@ fn merge_release_into(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Resu
         let credit_targets = db::graph::direct_edges_from(db, credit_db_id)?;
         let artist_db_id = credit_targets
             .iter()
-            .find_map(|e| e.to.filter(|id| id.0 > 0));
+            .find_map(|e| (e.to.0 > 0).then_some(e.to));
 
         let should_migrate = match artist_db_id {
             Some(pid) => !winner_artists.contains(&pid),

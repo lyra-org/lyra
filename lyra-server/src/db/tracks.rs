@@ -275,7 +275,7 @@ pub(crate) fn get_by_artist(db: &DbAny, artist_db_id: DbId) -> anyhow::Result<Ve
             )?
             .elements
             .iter()
-            .filter_map(|e| e.from.filter(|id| id.0 > 0))
+            .filter_map(|e| (e.from.0 > 0).then_some(e.from))
             .collect();
         for owner_id in incoming {
             if seen_owners.insert(owner_id) {

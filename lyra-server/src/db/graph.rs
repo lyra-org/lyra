@@ -36,7 +36,7 @@ pub(crate) fn direct_edges_from(
     Ok(result
         .elements
         .into_iter()
-        .filter(|element| element.from == Some(from_id))
+        .filter(|element| element.from == from_id)
         .collect())
 }
 
@@ -47,7 +47,7 @@ pub(crate) fn direct_edge_ids(
 ) -> anyhow::Result<Vec<DbId>> {
     Ok(direct_edges_from(db, from)?
         .into_iter()
-        .filter_map(|element| (element.to == Some(to)).then_some(element.id))
+        .filter_map(|element| (element.to == to).then_some(element.id))
         .collect())
 }
 
@@ -164,8 +164,8 @@ pub(crate) fn collect_related_ids_by_owner(
                 continue;
             }
             let related_id = match (edge.from, edge.to) {
-                (Some(from), Some(to)) if from == *owner_id => Some(to),
-                (Some(from), Some(to)) if to == *owner_id => Some(from),
+                (from, to) if from.0 != 0 && to.0 != 0 && from == *owner_id => Some(to),
+                (from, to) if from.0 != 0 && to.0 != 0 && to == *owner_id => Some(from),
                 _ => None,
             };
             let Some(related_id) = related_id else {

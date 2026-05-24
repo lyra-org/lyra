@@ -168,7 +168,7 @@ pub(crate) fn get_relations_to(
             .limit(100)
             .query(),
     )?;
-    collect_relations(result, relation_type, |e| e.from)
+    collect_relations(result, relation_type, |e| (e.from.0 != 0).then_some(e.from))
 }
 
 pub(crate) fn get_relations_from(
@@ -184,7 +184,7 @@ pub(crate) fn get_relations_from(
             .limit(100)
             .query(),
     )?;
-    collect_relations(result, relation_type, |e| e.to)
+    collect_relations(result, relation_type, |e| (e.to.0 != 0).then_some(e.to))
 }
 
 pub(crate) fn get_related_targets_from_many(

@@ -91,7 +91,7 @@ pub(crate) fn upsert(
         )?
         .elements
         .into_iter()
-        .any(|edge| edge.from == Some(cue_sheet_id) && edge.to == Some(cue_track_id));
+        .any(|edge| edge.from == cue_sheet_id && edge.to == cue_track_id);
     if !has_sheet_edge {
         db.exec_mut(
             QueryBuilder::insert()
@@ -112,12 +112,13 @@ pub(crate) fn upsert(
             .query(),
     )?;
     for edge in outgoing_edges.elements {
-        if edge.from != Some(cue_track_id) {
+        if edge.from != cue_track_id {
             continue;
         }
-        let Some(target_id) = edge.to else {
+        let target_id = edge.to;
+        if target_id.0 == 0 {
             continue;
-        };
+        }
 
         let entry_query = db.exec(
             QueryBuilder::select()
@@ -147,7 +148,7 @@ pub(crate) fn upsert(
         )?
         .elements
         .into_iter()
-        .any(|edge| edge.from == Some(cue_track_id) && edge.to == Some(audio_entry_id));
+        .any(|edge| edge.from == cue_track_id && edge.to == audio_entry_id);
     if !has_audio_entry_edge {
         db.exec_mut(
             QueryBuilder::insert()

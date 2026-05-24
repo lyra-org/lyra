@@ -329,10 +329,13 @@ fn collect_lines(db: &impl DbAccess, lyrics_id: DbId) -> anyhow::Result<Vec<Line
 
     let mut line_refs: Vec<(u32, DbId)> = Vec::new();
     for edge in outgoing.elements {
-        if edge.from != Some(lyrics_id) {
+        if edge.from != lyrics_id {
             continue;
         }
-        let Some(to_id) = edge.to else { continue };
+        let to_id = edge.to;
+        if to_id.0 == 0 {
+            continue;
+        }
         let idx = edge_u32(&edge, EDGE_LINE_IDX_KEY);
         let Some(idx) = idx else { continue };
         line_refs.push((idx, to_id));
@@ -368,10 +371,13 @@ fn collect_words(db: &impl DbAccess, line_id: DbId) -> anyhow::Result<Vec<LyricW
 
     let mut word_refs: Vec<(u32, DbId)> = Vec::new();
     for edge in outgoing.elements {
-        if edge.from != Some(line_id) {
+        if edge.from != line_id {
             continue;
         }
-        let Some(to_id) = edge.to else { continue };
+        let to_id = edge.to;
+        if to_id.0 == 0 {
+            continue;
+        }
         let Some(idx) = edge_u32(&edge, EDGE_WORD_IDX_KEY) else {
             continue;
         };

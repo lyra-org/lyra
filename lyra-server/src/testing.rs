@@ -548,7 +548,7 @@ fn snapshot_credits(db: &DbAny, owner_id: DbId) -> anyhow::Result<Vec<CreditSnap
             continue;
         };
         let edges = db::graph::direct_edges_from(db, credit_db_id)?;
-        let credit_artist_db_id = match edges.iter().find_map(|e| e.to.filter(|id| id.0 > 0)) {
+        let credit_artist_db_id = match edges.iter().find_map(|e| (e.to.0 > 0).then_some(e.to)) {
             Some(id) => id,
             None => continue,
         };

@@ -300,7 +300,8 @@ pub(crate) fn owner_tag_ids(db: &impl DbAccess, owner_db_id: DbId) -> anyhow::Re
     )?;
     let mut ids = Vec::new();
     for element in result.elements {
-        if let Some(from_id) = element.from {
+        let from_id = element.from;
+        if from_id.0 != 0 {
             if from_id.0 > 0 {
                 ids.push(from_id);
             }
@@ -325,7 +326,8 @@ pub(crate) fn get_owner(db: &impl DbAccess, tag_id: DbId) -> anyhow::Result<Opti
             .query(),
     )?;
     for element in result.elements {
-        if let Some(to_id) = element.to {
+        let to_id = element.to;
+        if to_id.0 != 0 {
             if to_id.0 > 0 {
                 return Ok(Some(to_id));
             }
@@ -338,9 +340,10 @@ pub(crate) fn get_targets(db: &impl DbAccess, tag_id: DbId) -> anyhow::Result<Ve
     let mut targets = Vec::new();
     let mut seen = HashSet::new();
     for element in tag_target_edges_from(db, tag_id)? {
-        let Some(target_id) = element.to else {
+        let target_id = element.to;
+        if target_id.0 == 0 {
             continue;
-        };
+        }
         if seen.insert(target_id) {
             targets.push(target_id);
         }
@@ -390,9 +393,10 @@ pub(crate) fn get_for_targets_many(
     for &target_db_id in target_db_ids {
         let mut target_seen = HashSet::new();
         for element in inbound_tag_edges(db, target_db_id)? {
-            let Some(tag_id) = element.from else {
+            let tag_id = element.from;
+            if tag_id.0 == 0 {
                 continue;
-            };
+            }
             if !owner_tags.contains(&tag_id) || !target_seen.insert(tag_id) {
                 continue;
             }
@@ -441,13 +445,13 @@ fn tag_target_edges_from(db: &impl DbAccess, tag_id: DbId) -> anyhow::Result<Vec
     Ok(result
         .elements
         .into_iter()
-        .filter(|e| e.from == Some(tag_id))
+        .filter(|e| e.from == tag_id)
         .collect())
 }
 
 fn has_target_edge(db: &impl DbAccess, tag_id: DbId, target_db_id: DbId) -> anyhow::Result<bool> {
     for element in tag_target_edges_from(db, tag_id)? {
-        if element.to == Some(target_db_id) {
+        if element.to == target_db_id {
             return Ok(true);
         }
     }
@@ -534,7 +538,7 @@ pub(crate) fn remove_target(
 
     let edge_id = tag_target_edges_from(db, tag_id)?
         .into_iter()
-        .find(|e| e.to == Some(target_db_id))
+        .find(|e| e.to == target_db_id)
         .map(|e| e.id);
     let Some(edge_id) = edge_id else {
         return Ok(false);
@@ -684,7 +688,8 @@ pub(crate) fn remove_inbound_for_target_with_orphan_cleanup(
 
     for &target_db_id in target_db_ids {
         for element in inbound_tag_edges(db, target_db_id)? {
-            if let Some(from_id) = element.from {
+            let from_id = element.from;
+            if from_id.0 != 0 {
                 impacted_tag_ids.insert(from_id);
             }
             edge_ids_to_remove.push(element.id);
@@ -724,7 +729,7 @@ fn inbound_tag_edges(db: &impl DbAccess, target_db_id: DbId) -> anyhow::Result<V
     Ok(result
         .elements
         .into_iter()
-        .filter(|e| e.to == Some(target_db_id))
+        .filter(|e| e.to == target_db_id)
         .collect())
 }
 

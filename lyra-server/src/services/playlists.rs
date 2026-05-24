@@ -257,7 +257,10 @@ pub(crate) fn get_playlist_for_entry(
     entry_db_id: DbId,
 ) -> anyhow::Result<Option<DbId>> {
     let result = db.exec(QueryBuilder::select().ids(entry_db_id).query())?;
-    Ok(result.elements.first().and_then(|element| element.from))
+    Ok(result
+        .elements
+        .first()
+        .and_then(|element| (element.id.0 < 0 && element.from.0 != 0).then_some(element.from)))
 }
 
 pub(crate) fn remove_tracks(

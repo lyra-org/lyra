@@ -392,7 +392,7 @@ pub(crate) fn get_by_artist(db: &DbAny, artist_db_id: DbId) -> anyhow::Result<Ve
             )?
             .elements
             .iter()
-            .filter_map(|e| e.from.filter(|id| id.0 > 0))
+            .filter_map(|e| (e.from.0 > 0).then_some(e.from))
             .collect();
         for owner_id in incoming {
             if seen_owners.insert(owner_id) {
@@ -573,9 +573,10 @@ pub(crate) fn get_by_tracks(
             .query(),
     ) {
         for edge in edges.elements {
-            let (Some(from), Some(to)) = (edge.from, edge.to) else {
+            let (from, to) = (edge.from, edge.to);
+            if from.0 == 0 || to.0 == 0 {
                 continue;
-            };
+            }
             if track_db_id_set.contains(&from) {
                 append_related_id(
                     &mut related_ids_by_track,
@@ -632,8 +633,8 @@ pub(crate) fn get_by_tracks(
         for edges in [forward_edges, reverse_edges] {
             for edge in edges.elements {
                 let related_id = match (edge.from, edge.to) {
-                    (Some(from), Some(to)) if from == *track_db_id => Some(to),
-                    (Some(from), Some(to)) if to == *track_db_id => Some(from),
+                    (from, to) if from.0 != 0 && to.0 != 0 && from == *track_db_id => Some(to),
+                    (from, to) if from.0 != 0 && to.0 != 0 && to == *track_db_id => Some(from),
                     _ => None,
                 };
                 let Some(related_id) = related_id else {

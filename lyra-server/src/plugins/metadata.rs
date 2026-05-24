@@ -948,7 +948,7 @@ fn link_credit_callback(
             };
             server_db::graph::direct_edges_from(&db_write, credit_id)
                 .ok()
-                .is_some_and(|edges| edges.iter().any(|edge| edge.to == Some(artist_id)))
+                .is_some_and(|edges| edges.iter().any(|edge| edge.to == artist_id))
         });
 
         if already_linked {
