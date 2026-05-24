@@ -1,0 +1,30 @@
+{
+  "test_name": "roar_various_artists",
+  "scenario_id": "14978c0ac28a63fe",
+  "responses": [
+    {
+      "cache_key": "08e143df3ad4caad",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=b96e0290-2f09-43ef-81cd-86fd161fb947&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "e22592587df826fc"
+    },
+    {
+      "cache_key": "5c495c6cb471a87c",
+      "url": "https://musicbrainz.org/ws/2/artist/e959608b-e13f-42a9-8fa3-4977d44c77f2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0e3364fa9ac0b966"
+    },
+    {
+      "cache_key": "71103d44184744d5",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AROAR&limit=100",
+      "status_code": 200,
+      "body_hash": "6d244091f04df7a4"
+    },
+    {
+      "cache_key": "8b72edb39d82d76e",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AROAR&limit=100&inc=recordings+artist-credits+genres+media+release-groups",
+      "status_code": 200,
+      "body_hash": "6d244091f04df7a4"
+    }
+  ]
+}

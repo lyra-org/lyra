@@ -1,0 +1,114 @@
+{
+  "test_name": "traveler_official髭男dism",
+  "scenario_id": "f2223d838b8a2db8",
+  "responses": [
+    {
+      "cache_key": "0dbed958e17f7035",
+      "url": "https://musicbrainz.org/ws/2/work/b863b1d6-8836-4f92-9fe3-9654a4c6e9f3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "920570974e0c3a00"
+    },
+    {
+      "cache_key": "142aa053f6b4f707",
+      "url": "https://musicbrainz.org/ws/2/work/d332fc9a-5e24-432c-b1ee-bc76667b8395?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6333763a89738daf"
+    },
+    {
+      "cache_key": "1e53e5bd5a5b3b56",
+      "url": "https://musicbrainz.org/ws/2/work/a99dd10e-ba27-4ee7-8bfc-838153062688?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "64af4d2e6ba8f2d6"
+    },
+    {
+      "cache_key": "37e127135e1d1aa0",
+      "url": "https://musicbrainz.org/ws/2/work/ba5b54a0-2e53-4376-95b9-0685cadc8f1a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1d0893419ad62d98"
+    },
+    {
+      "cache_key": "3c3ea848e1497cfd",
+      "url": "https://musicbrainz.org/ws/2/work/44a9cba5-536c-4790-b5d2-8caf362c0666?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8ae65c64eb1953ca"
+    },
+    {
+      "cache_key": "3f02ac7c07951707",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=14f24696-10f4-4584-a426-1f66a2650cf8&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "ee46ebd46ddea9cd"
+    },
+    {
+      "cache_key": "49589012933592ed",
+      "url": "https://musicbrainz.org/ws/2/work/e72cc147-c295-40ab-9aad-729831cc5874?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "676c5cec0afa1dcd"
+    },
+    {
+      "cache_key": "5e5dc0e983fafb54",
+      "url": "https://musicbrainz.org/ws/2/work/793c23f8-cb49-4f66-86b6-be4614d94187?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b807db28c9992907"
+    },
+    {
+      "cache_key": "77ee2700f5d50f04",
+      "url": "https://musicbrainz.org/ws/2/work/cca3aa22-ecd5-41c1-891e-9faa7f557038?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ed80a487711a4ba4"
+    },
+    {
+      "cache_key": "8e3908a1651bc004",
+      "url": "https://musicbrainz.org/ws/2/work/66596fa1-ecaf-4883-8180-f1136ec45ea5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0127eac7d9cd8a9e"
+    },
+    {
+      "cache_key": "93a36f82b5e0e051",
+      "url": "https://musicbrainz.org/ws/2/work/1c24e89c-3f70-4104-9412-6d1ac5744d21?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e687db3b10719932"
+    },
+    {
+      "cache_key": "ac202f410fb14406",
+      "url": "https://musicbrainz.org/ws/2/artist/6dddd7a2-5583-49d0-a8b2-9ee46d04f27e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "559372e096debcbf"
+    },
+    {
+      "cache_key": "cc60454504095fb3",
+      "url": "https://musicbrainz.org/ws/2/work/bbc69a78-b1b0-48ac-a311-bdefc580f6a2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8a2d6ef5eff7c6fe"
+    },
+    {
+      "cache_key": "e632cd6797fe55ad",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Official%E9%AB%AD%E7%94%B7dism",
+      "status_code": 200,
+      "body_hash": "89d702e5027d7e17"
+    },
+    {
+      "cache_key": "eb31ae0e405394fa",
+      "url": "https://musicbrainz.org/ws/2/work/68b36ec3-aec3-4a5c-937f-c9688db46c4b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "607aef571623a1ba"
+    },
+    {
+      "cache_key": "ec08e4d6491875d7",
+      "url": "https://musicbrainz.org/ws/2/work/2b20888e-65bb-4f53-96d1-3d6f8fcefe9e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b9976620dc364856"
+    },
+    {
+      "cache_key": "f2fdf5562a04ef6e",
+      "url": "https://musicbrainz.org/ws/2/work/7d13b943-ce0e-4f95-83b7-9cc244c4fe69?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9a3171e64e6ce996"
+    },
+    {
+      "cache_key": "f4ffc59c6affd005",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ATraveler&limit=100",
+      "status_code": 200,
+      "body_hash": "b787ee10f0246a1a"
+    }
+  ]
+}
