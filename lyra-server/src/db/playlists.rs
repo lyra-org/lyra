@@ -110,9 +110,10 @@ pub(crate) fn get_by_user(db: &DbAny, user_db_id: DbId) -> anyhow::Result<Vec<Pl
 
     let mut playlists = Vec::new();
     for element in &result.elements {
-        let Some(from_id) = element.from else {
+        let from_id = element.from;
+        if from_id.0 == 0 {
             continue;
-        };
+        }
         if from_id.0 <= 0 {
             continue;
         }
@@ -165,9 +166,10 @@ pub(crate) fn get_owner(
     )?;
 
     for element in &result.elements {
-        let Some(to_id) = element.to else {
+        let to_id = element.to;
+        if to_id.0 == 0 {
             continue;
-        };
+        }
         if to_id.0 > 0 {
             return Ok(Some(to_id));
         }
@@ -376,7 +378,11 @@ pub(crate) fn resolve_edge_targets(db: &DbAny, edge_ids: &[DbId]) -> anyhow::Res
         return Ok(Vec::new());
     }
     let result = db.exec(QueryBuilder::select().ids(edge_ids).query())?;
-    Ok(result.elements.iter().filter_map(|e| e.to).collect())
+    Ok(result
+        .elements
+        .iter()
+        .filter_map(|e| (e.id.0 < 0 && e.to.0 != 0).then_some(e.to))
+        .collect())
 }
 
 fn get_max_position(db: &impl DbAccess, playlist_db_id: DbId) -> anyhow::Result<u64> {

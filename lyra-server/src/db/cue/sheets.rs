@@ -74,7 +74,7 @@ pub(crate) fn upsert(
         )?
         .elements
         .into_iter()
-        .any(|edge| edge.from == Some(sheet_id) && edge.to == Some(cue_entry_id));
+        .any(|edge| edge.from == sheet_id && edge.to == cue_entry_id);
     if !has_cue_entry_edge {
         db.exec_mut(
             QueryBuilder::insert()

@@ -166,7 +166,7 @@ pub(crate) fn upsert(
         )?
         .elements
         .into_iter()
-        .any(|edge| edge.from == Some(track_db_id) && edge.to == Some(source_id));
+        .any(|edge| edge.from == track_db_id && edge.to == source_id);
     if !has_track_edge {
         db.exec_mut(
             QueryBuilder::insert()
@@ -188,12 +188,13 @@ pub(crate) fn upsert(
                 .query(),
         )?;
         for edge in connected_edges.elements {
-            if edge.from != Some(track_db_id) {
+            if edge.from != track_db_id {
                 continue;
             }
-            let Some(target_id) = edge.to else {
+            let target_id = edge.to;
+            if target_id.0 == 0 {
                 continue;
-            };
+            }
 
             let source_query = db.exec(
                 QueryBuilder::select()
@@ -236,12 +237,13 @@ pub(crate) fn upsert(
     )?;
 
     for edge in outgoing_edges.elements {
-        if edge.from != Some(source_id) {
+        if edge.from != source_id {
             continue;
         }
-        let Some(target_id) = edge.to else {
+        let target_id = edge.to;
+        if target_id.0 == 0 {
             continue;
-        };
+        }
 
         let entry_query = db.exec(
             QueryBuilder::select()
@@ -286,7 +288,7 @@ pub(crate) fn upsert(
         )?
         .elements
         .into_iter()
-        .any(|edge| edge.from == Some(source_id) && edge.to == Some(entry_db_id));
+        .any(|edge| edge.from == source_id && edge.to == entry_db_id);
     if !has_entry_edge {
         db.exec_mut(
             QueryBuilder::insert()
@@ -310,7 +312,7 @@ pub(crate) fn upsert(
             )?
             .elements
             .into_iter()
-            .any(|edge| edge.from == Some(source_id) && edge.to == Some(cue_track_id));
+            .any(|edge| edge.from == source_id && edge.to == cue_track_id);
         if !has_cue_track_edge {
             db.exec_mut(
                 QueryBuilder::insert()

@@ -90,7 +90,12 @@ project-local guidance for using agdb in Lyra.
 
 - All queries return `QueryResult { result: i64, elements: Vec<DbElement> }`.
 - `DbElement` has `id`, `from`, `to`, and `values`:
-  - `from`/`to` are set only for edges.
+  - For edge elements (`id < 0`), `from` / `to` are the origin and
+    destination node IDs.
+  - For node elements (`id > 0`), `from` is the first outgoing edge ID and
+    `to` is the first incoming edge ID, or `DbId(0)` when absent.
+  - Check `element.id.0 < 0` before treating `from` / `to` as edge endpoint
+    node IDs.
 - `result` meaning depends on query:
   - Inserts: count of inserted/updated elements (or key-values for insert values).
   - Removes: negative count of removed items.

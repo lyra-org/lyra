@@ -186,7 +186,7 @@ pub(crate) fn get_owner_id(db: &DbAny, api_key_db_id: DbId) -> anyhow::Result<Op
     Ok(result
         .elements
         .into_iter()
-        .find_map(|element| element.to.filter(|id| id.0 > 0)))
+        .find_map(|element| (element.to.0 > 0).then_some(element.to)))
 }
 
 pub(crate) fn delete_by_id(db: &mut DbAny, api_key_db_id: DbId) -> anyhow::Result<bool> {

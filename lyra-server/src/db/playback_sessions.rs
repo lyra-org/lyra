@@ -133,9 +133,10 @@ pub(crate) struct EvictedPlayback {
 
 pub(crate) fn get_track_id(db: &DbAny, playback_session_id: DbId) -> anyhow::Result<Option<DbId>> {
     for edge in super::graph::direct_edges_from(db, playback_session_id)? {
-        let Some(target_id) = edge.to else {
+        let target_id = edge.to;
+        if target_id.0 == 0 {
             continue;
-        };
+        }
         if get_track_by_id(db, target_id)?.is_some() {
             return Ok(Some(target_id));
         }
@@ -146,9 +147,10 @@ pub(crate) fn get_track_id(db: &DbAny, playback_session_id: DbId) -> anyhow::Res
 
 pub(crate) fn get_user_id(db: &DbAny, playback_session_id: DbId) -> anyhow::Result<Option<DbId>> {
     for edge in super::graph::direct_edges_from(db, playback_session_id)? {
-        let Some(target_id) = edge.to else {
+        let target_id = edge.to;
+        if target_id.0 == 0 {
             continue;
-        };
+        }
         if get_user_by_id(db, target_id)?.is_some() {
             return Ok(Some(target_id));
         }

@@ -226,9 +226,10 @@ fn resolve_listen_user_ids(db: &DbAny, listens: &[Listen]) -> anyhow::Result<Has
             continue;
         };
         for edge in super::graph::direct_edges_from(db, listen_db_id)? {
-            let Some(target_id) = edge.to else {
+            let target_id = edge.to;
+            if target_id.0 == 0 {
                 continue;
-            };
+            }
             targets_by_listen
                 .entry(listen_db_id)
                 .or_default()

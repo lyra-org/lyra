@@ -747,9 +747,10 @@ pub(crate) fn users_with_access(
     let edges = read_inbound_access_edges(db, library_db_id)?;
     let mut users: Vec<super::users::User> = Vec::with_capacity(edges.len());
     for edge in edges {
-        let Some(user_db_id) = edge.from else {
+        let user_db_id = edge.from;
+        if user_db_id.0 == 0 {
             continue;
-        };
+        }
         // Skip orphan edges (user-node missing); real errors still propagate.
         if let Some(user) = super::users::get_by_id(db, user_db_id)? {
             users.push(user);
@@ -767,9 +768,10 @@ pub(crate) fn accessible_library_ids(
     let edges = read_outbound_access_edges(db, user_db_id)?;
     let mut ids = HashSet::with_capacity(edges.len());
     for edge in edges {
-        let Some(library_db_id) = edge.to else {
+        let library_db_id = edge.to;
+        if library_db_id.0 == 0 {
             continue;
-        };
+        }
         if let Some(library) = get_by_id(db, library_db_id)? {
             ids.insert(library.id);
         }
@@ -798,7 +800,7 @@ fn find_access_edge(
     library_db_id: DbId,
 ) -> anyhow::Result<Option<DbId>> {
     for element in read_outbound_access_edges(db, user_db_id)? {
-        if element.to == Some(library_db_id) {
+        if element.to == library_db_id {
             return Ok(Some(element.id));
         }
     }
@@ -823,7 +825,7 @@ fn read_outbound_access_edges(
     Ok(result
         .elements
         .into_iter()
-        .filter(|element| element.from == Some(user_db_id) && element_is_access(element))
+        .filter(|element| element.from == user_db_id && element_is_access(element))
         .collect())
 }
 
@@ -843,7 +845,7 @@ fn read_inbound_access_edges(
     Ok(result
         .elements
         .into_iter()
-        .filter(|element| element.to == Some(library_db_id) && element_is_access(element))
+        .filter(|element| element.to == library_db_id && element_is_access(element))
         .collect())
 }
 

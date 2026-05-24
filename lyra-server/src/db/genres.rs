@@ -511,9 +511,10 @@ pub(crate) fn get_for_releases_many(
         )?;
         let mut release_genre_ids = Vec::new();
         for edge in edges.elements {
-            let Some(genre_id) = edge.from else {
+            let genre_id = edge.from;
+            if genre_id.0 == 0 {
                 continue;
-            };
+            }
             if genre_id.0 <= 0 {
                 continue;
             }
