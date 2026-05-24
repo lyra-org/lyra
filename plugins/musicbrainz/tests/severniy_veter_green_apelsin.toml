@@ -1,0 +1,204 @@
+plugin = "musicbrainz"
+run = "sync"
+
+[library]
+directory = "."
+
+[[raw_tags]]
+file_path = "Green Apelsin/Северный ветер [2021]/15 Green Apelsin - CD-01 - Okhota na lisitsu (acoustic).flac"
+album = "Severniy veter"
+artists = ["Green Apelsin"]
+title = "Okhota na lisitsu (Acoustic)"
+genre = "Pop"
+track = 15
+track_total = 15
+duration_ms = 199505
+
+[[raw_tags]]
+file_path = "Green Apelsin/Северный ветер [2021]/14 Green Apelsin - CD-01 - Ya tebya naidu (acoustic).flac"
+album = "Severniy veter"
+artists = ["Green Apelsin"]
+title = "Ya tebya najdu (Acoustic)"
+genre = "Pop"
+track = 14
+track_total = 15
+duration_ms = 252937
+
+[[raw_tags]]
+file_path = "Green Apelsin/Северный ветер [2021]/13 Green Apelsin - CD-01 - Proklyatie rusalki (acoustic).flac"
+album = "Severniy veter"
+artists = ["Green Apelsin"]
+title = "Proklyatue rusalki (Acoustic)"
+genre = "Pop"
+track = 13
+track_total = 15
+duration_ms = 184629
+
+[[raw_tags]]
+file_path = "Green Apelsin/Северный ветер [2021]/12 Green Apelsin - CD-01 - Slasche meda (acoustic).flac"
+album = "Severniy veter"
+artists = ["Green Apelsin"]
+title = "Slasche meda (Acoustic)"
+genre = "Pop"
+track = 12
+track_total = 15
+duration_ms = 159819
+
+[[raw_tags]]
+file_path = "Green Apelsin/Северный ветер [2021]/11 Green Apelsin - CD-01 - Valhalla.flac"
+album = "Severniy veter"
+artists = ["Green Apelsin"]
+title = "Valhalla"
+genre = "Pop"
+track = 11
+track_total = 15
+duration_ms = 247000
+
+[[raw_tags]]
+file_path = "Green Apelsin/Северный ветер [2021]/10 Green Apelsin - CD-01 - Orudie ubiystva.flac"
+album = "Severniy veter"
+artists = ["Green Apelsin"]
+title = "Orudie ubijstva"
+genre = "Pop"
+track = 10
+track_total = 15
+duration_ms = 154420
+
+[[raw_tags]]
+file_path = "Green Apelsin/Северный ветер [2021]/09 Green Apelsin - CD-01 - Eto vse ty.flac"
+album = "Severniy veter"
+artists = ["Green Apelsin"]
+title = "Eto vse ty"
+genre = "Pop"
+track = 9
+track_total = 15
+duration_ms = 195937
+
+[[raw_tags]]
+file_path = "Green Apelsin/Северный ветер [2021]/08 Green Apelsin - CD-01 - Letit.flac"
+album = "Severniy veter"
+artists = ["Green Apelsin"]
+title = "Letit"
+genre = "Pop"
+track = 8
+track_total = 15
+duration_ms = 225245
+
+[[raw_tags]]
+file_path = "Green Apelsin/Северный ветер [2021]/07 Green Apelsin - CD-01 - Trup nevesty.flac"
+album = "Severniy veter"
+artists = ["Green Apelsin"]
+title = "Trup nevesty"
+genre = "Pop"
+track = 7
+track_total = 15
+duration_ms = 205264
+
+[[raw_tags]]
+file_path = "Green Apelsin/Северный ветер [2021]/06 Green Apelsin - CD-01 - Zhdu tebya.flac"
+album = "Severniy veter"
+artists = ["Green Apelsin"]
+title = "Zhdu tebya"
+genre = "Pop"
+track = 6
+track_total = 15
+duration_ms = 228826
+
+[[raw_tags]]
+file_path = "Green Apelsin/Северный ветер [2021]/05 Green Apelsin - CD-01 - Okhota na lisitsu.flac"
+album = "Severniy veter"
+artists = ["Green Apelsin"]
+title = "Okhota na lisitsu"
+genre = "Pop"
+track = 5
+track_total = 15
+duration_ms = 192380
+
+[[raw_tags]]
+file_path = "Green Apelsin/Северный ветер [2021]/04 Green Apelsin - CD-01 - Chelovechek.flac"
+album = "Severniy veter"
+artists = ["Green Apelsin"]
+title = "Chelovechek"
+genre = "Pop"
+track = 4
+track_total = 15
+duration_ms = 114947
+
+[[raw_tags]]
+file_path = "Green Apelsin/Северный ветер [2021]/03 Green Apelsin - CD-01 - Ya tebya naidu.flac"
+album = "Severniy veter"
+artists = ["Green Apelsin"]
+title = "Ya tebya najdu"
+genre = "Pop"
+track = 3
+track_total = 15
+duration_ms = 273893
+
+[[raw_tags]]
+file_path = "Green Apelsin/Северный ветер [2021]/02 Green Apelsin - CD-01 - Proklyatie rusalki.flac"
+album = "Severniy veter"
+artists = ["Green Apelsin"]
+title = "Proklyatue rusalki"
+genre = "Pop"
+track = 2
+track_total = 15
+duration_ms = 222435
+
+[[raw_tags]]
+file_path = "Green Apelsin/Северный ветер [2021]/01 Green Apelsin - CD-01 - Severniy veter.flac"
+album = "Severniy veter"
+artists = ["Green Apelsin"]
+title = "Severnyj veter"
+genre = "Pop"
+track = 1
+track_total = 15
+duration_ms = 192702
+
+[expect.release]
+ids = { release_group_id = "bf693850-d767-4cad-86eb-ae5a792dd8af", release_id = "9f713b5b-678c-48f1-8eee-b7253bf92f91" }
+fields = { release_title = "Северный ветер", release_date = "2021-10-29" }
+
+[expect.tracks."123725e6-3a14-4a30-a5fa-d69ce40fb369"]
+fields = { disc = 1, track = 1, track_title = "Северный ветер" }
+
+[expect.tracks."c4d3c10b-ed17-448a-97ee-420f144460e2"]
+fields = { disc = 1, track = 2, track_title = "Проклятье русалки" }
+
+[expect.tracks."760d31c0-01f7-4fc4-9ea8-3c0e9f789703"]
+fields = { disc = 1, track = 3, track_title = "Я тебя найду" }
+
+[expect.tracks."dd986e9c-a3a1-4a51-99b4-1a416bfb7339"]
+fields = { disc = 1, track = 4, track_title = "Человек" }
+
+[expect.tracks."70392dba-13da-4e87-8c67-37a85a9e90f6"]
+fields = { disc = 1, track = 5, track_title = "Охота на лисицу" }
+
+[expect.tracks."acc76232-86cd-4632-ba74-86088c5622ea"]
+fields = { disc = 1, track = 6, track_title = "Жду тебя" }
+
+[expect.tracks."d58aea36-077d-476b-b44c-f8f8bf23ff9d"]
+fields = { disc = 1, track = 7, track_title = "Труп невесты" }
+
+[expect.tracks."2e1d9d0d-5e6f-4481-9697-a710b2979b1c"]
+fields = { disc = 1, track = 8, track_title = "Летит" }
+
+[expect.tracks."d056eb11-44f7-4e39-b026-15286cac6008"]
+fields = { disc = 1, track = 9, track_title = "Это все ты" }
+
+[expect.tracks."215483b2-a7ab-4102-b35f-8b7b0d0ad739"]
+fields = { disc = 1, track = 10, track_title = "Оружие убийства" }
+
+[expect.tracks."dac869ae-6304-4c40-b9e5-e4d56142fce1"]
+fields = { disc = 1, track = 11, track_title = "Вальхалла" }
+
+[expect.tracks."62293723-7b16-477e-9394-286df161e0c0"]
+fields = { disc = 1, track = 12, track_title = "Слаще мёда (acoustic)" }
+
+[expect.tracks."852a7cfe-6e3c-4bd9-8b76-7d3ed728acc9"]
+fields = { disc = 1, track = 13, track_title = "Проклятье русалки (acoustic)" }
+
+[expect.tracks."37e08327-d42b-4b7a-89b1-541c2aebf656"]
+fields = { disc = 1, track = 14, track_title = "Я тебя найду (acoustic)" }
+
+[expect.tracks."c536fabe-3b42-4df0-8bb7-05921dd9236d"]
+fields = { disc = 1, track = 15, track_title = "Охота на лисицу (acoustic)" }
