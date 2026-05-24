@@ -39,6 +39,7 @@ use crate::{
     routes::{
         covers as route_covers,
         deserialize_inc,
+        releases as route_releases,
         responses::{
             ArtistRelationResponse,
             ArtistResponse,
@@ -55,6 +56,7 @@ use crate::{
             require_authenticated,
         },
         covers,
+        releases as release_service,
     },
 };
 
@@ -64,7 +66,7 @@ struct ArtistQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: releases, tracks, relations, covers."
+            description = "Comma-separated or repeated values: releases, tracks, relations, covers, release_artists, release_covers."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -77,7 +79,7 @@ struct ArtistListQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: releases, tracks, relations, covers."
+            description = "Comma-separated or repeated values: releases, tracks, relations, covers, release_artists, release_covers."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -125,10 +127,22 @@ pub struct ArtistCoverSearchResponse {
 struct ArtistRouteIncludes {
     service: artist_service::ArtistIncludes,
     covers: bool,
+    release_artists: bool,
+    release_covers: bool,
 }
 
 fn parse_inc(inc: Option<Vec<String>>) -> Result<ArtistRouteIncludes, AppError> {
-    let values = super::parse_inc_values(inc, &["releases", "tracks", "relations", "covers"])?;
+    let values = super::parse_inc_values(
+        inc,
+        &[
+            "releases",
+            "tracks",
+            "relations",
+            "covers",
+            "release_artists",
+            "release_covers",
+        ],
+    )?;
     let mut result = ArtistRouteIncludes {
         service: artist_service::ArtistIncludes {
             releases: false,
@@ -136,6 +150,8 @@ fn parse_inc(inc: Option<Vec<String>>) -> Result<ArtistRouteIncludes, AppError> 
             relations: false,
         },
         covers: false,
+        release_artists: false,
+        release_covers: false,
     };
     for value in values {
         match value.as_str() {
@@ -143,6 +159,8 @@ fn parse_inc(inc: Option<Vec<String>>) -> Result<ArtistRouteIncludes, AppError> 
             "tracks" => result.service.tracks = true,
             "relations" => result.service.relations = true,
             "covers" => result.covers = true,
+            "release_artists" => result.release_artists = true,
+            "release_covers" => result.release_covers = true,
             _ => {}
         }
     }
@@ -157,19 +175,48 @@ fn default_artist_sort() -> Vec<SortSpec> {
 }
 
 fn artist_detail_to_response(
-    db: &impl db::DbAccess,
+    db: &agdb::DbAny,
     detail: artist_service::ArtistDetails,
-    include_covers: bool,
+    includes: ArtistRouteIncludes,
 ) -> anyhow::Result<ArtistResponse> {
     let artist_db_id = detail.artist.db_id.clone().map(agdb::DbId::from);
     let cover = match artist_db_id {
-        Some(artist_db_id) => route_covers::build_cover_response(db, artist_db_id, include_covers)?,
-        None if include_covers => Some(None),
+        Some(artist_db_id) => {
+            route_covers::build_cover_response(db, artist_db_id, includes.covers)?
+        }
+        None if includes.covers => Some(None),
         None => None,
     };
-    let releases = detail
-        .releases
-        .map(|v| v.into_iter().map(ReleaseResponse::from).collect());
+    let releases = match detail.releases {
+        Some(releases) if includes.release_artists || includes.release_covers => {
+            let release_details = release_service::list_details_for_releases(
+                db,
+                release_service::ReleaseIncludes {
+                    artists: includes.release_artists,
+                    tracks: false,
+                    track_artists: false,
+                    entries: false,
+                },
+                releases,
+            )?;
+            Some(
+                release_details
+                    .into_iter()
+                    .map(|detail| {
+                        route_releases::detail_to_release_response(
+                            db,
+                            detail,
+                            includes.release_covers,
+                            false,
+                            false,
+                        )
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?,
+            )
+        }
+        Some(releases) => Some(releases.into_iter().map(ReleaseResponse::from).collect()),
+        None => None,
+    };
     let relations = detail.relations.map(|v| {
         v.into_iter()
             .map(|r| ArtistRelationResponse {
@@ -265,7 +312,7 @@ pub(crate) async fn list_artist_responses(
 
     let mut items = Vec::with_capacity(details.len());
     for detail in details {
-        items.push(artist_detail_to_response(db, detail, includes.covers)?);
+        items.push(artist_detail_to_response(db, detail, includes)?);
     }
     Ok(PageResponse { items, next_cursor })
 }
@@ -285,7 +332,7 @@ pub(crate) async fn get_artist_response(
     let detail = artist_service::get_details(db, artist_db_id, includes.service)?
         .ok_or_else(|| AppError::not_found(format!("Artist not found: {}", id)))?;
 
-    Ok(artist_detail_to_response(db, detail, includes.covers)?)
+    Ok(artist_detail_to_response(db, detail, includes)?)
 }
 
 async fn get_artists(
@@ -413,14 +460,14 @@ async fn update_artist(
 #[cfg(feature = "docgen")]
 fn list_artists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List artists").description(
-        "Returns artists as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `limit`, `cursor`. `library_id` scopes results to artists credited by releases or tracks belonging to that public library ID. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against artist names. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, cover metadata includes a public image URL. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
+        "Returns artists as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `limit`, `cursor`. `library_id` scopes results to artists credited by releases or tracks belonging to that public library ID. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against artist names. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, artist cover metadata includes a public image URL. When `inc=releases`, use `release_artists` and/or `release_covers` to hydrate those nested release fields. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn get_artist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get artist by ID").description(
-        "Returns a single artist. 404 if not found. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, cover metadata includes a public image URL. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
+        "Returns a single artist. 404 if not found. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, artist cover metadata includes a public image URL. When `inc=releases`, use `release_artists` and/or `release_covers` to hydrate those nested release fields. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
     )
 }
 
@@ -484,7 +531,10 @@ mod tests {
             runtime_test_lock,
         },
     };
-    use agdb::DbId;
+    use agdb::{
+        DbAny,
+        DbId,
+    };
     use axum::{
         Json,
         extract::Path,
@@ -493,6 +543,7 @@ mod tests {
             header::AUTHORIZATION,
         },
     };
+    use nanoid::nanoid;
     use std::{
         collections::HashSet,
         path::PathBuf,
@@ -557,6 +608,21 @@ mod tests {
         }
     }
 
+    fn insert_cover_for(db: &mut DbAny, owner_db_id: DbId) -> anyhow::Result<db::Cover> {
+        db::covers::upsert(
+            db,
+            owner_db_id,
+            db::Cover {
+                db_id: None,
+                id: nanoid!(),
+                path: "/music/cover.jpg".to_string(),
+                mime_type: "image/jpeg".to_string(),
+                hash: "a".repeat(64),
+                blurhash: Some("LKO2?U%2Tw=w]~RBVZRi};RPxuwH".to_string()),
+            },
+        )
+    }
+
     #[test]
     fn parse_inc_accepts_covers() {
         let parsed = match parse_inc(Some(vec!["releases,covers".to_string()])) {
@@ -568,6 +634,64 @@ mod tests {
         assert!(!parsed.service.tracks);
         assert!(!parsed.service.relations);
         assert!(parsed.covers);
+        assert!(!parsed.release_artists);
+        assert!(!parsed.release_covers);
+    }
+
+    #[tokio::test]
+    async fn get_artist_response_keeps_cover_includes_separate() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let _test_dir = initialize_test_runtime().await?;
+
+        let artist_public_id = {
+            let mut db = STATE.db.write().await;
+            let release_id = insert_release(&mut db, "Covered Release")?;
+            let artist_id = insert_artist(&mut db, "Release Artist")?;
+            connect_artist(&mut db, release_id, artist_id)?;
+            insert_cover_for(&mut db, release_id)?;
+
+            db::artists::get_by_id(&db, artist_id)?
+                .ok_or_else(|| anyhow::anyhow!("artist should exist"))?
+                .id
+        };
+        let principal = admin_principal(HashSet::new());
+
+        let shallow = get_artist_response(
+            &principal,
+            artist_public_id.clone(),
+            Some(vec!["releases,covers".to_string()]),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert!(matches!(shallow.cover, Some(None)));
+
+        let shallow_releases = shallow.releases.expect("releases included");
+        assert_eq!(shallow_releases.len(), 1);
+        assert!(shallow_releases[0].artists.is_none());
+        assert!(shallow_releases[0].cover.is_none());
+
+        let hydrated = get_artist_response(
+            &principal,
+            artist_public_id,
+            Some(vec!["releases,release_artists,release_covers".to_string()]),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert!(hydrated.cover.is_none());
+
+        let hydrated_releases = hydrated.releases.expect("releases included");
+        assert_eq!(hydrated_releases.len(), 1);
+        let release = &hydrated_releases[0];
+        let artists = release.artists.as_ref().expect("release artists included");
+        assert_eq!(artists.len(), 1);
+        assert_eq!(artists[0].name, "Release Artist");
+        let cover = release
+            .cover
+            .as_ref()
+            .and_then(Option::as_ref)
+            .expect("release cover included");
+        assert_eq!(cover.mime_type, "image/jpeg");
+        Ok(())
     }
 
     #[tokio::test]
