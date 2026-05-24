@@ -812,7 +812,6 @@ dependencies = [
 name = "harmony-crypt"
 version = "0.0.1"
 dependencies = [
- "anyhow",
  "base64",
  "harmony-core",
  "harmony-luau",
@@ -845,7 +844,6 @@ dependencies = [
  "percent-encoding",
  "reqwest",
  "rustls",
- "serde_json",
  "tokio",
  "tracing",
  "url",
@@ -855,7 +853,6 @@ dependencies = [
 name = "harmony-json"
 version = "0.0.1"
 dependencies = [
- "anyhow",
  "harmony-core",
  "harmony-luau",
  "serde_json",
@@ -894,7 +891,6 @@ dependencies = [
 name = "harmony-net"
 version = "0.0.1"
 dependencies = [
- "anyhow",
  "harmony-core",
  "harmony-luau",
  "harmony-macros",
@@ -905,7 +901,6 @@ dependencies = [
 name = "harmony-task"
 version = "0.0.1"
 dependencies = [
- "anyhow",
  "harmony-core",
  "harmony-luau",
 ]
