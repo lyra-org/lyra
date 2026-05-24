@@ -1,0 +1,48 @@
+{
+  "test_name": "bed_in_wonderland_ぜったくん",
+  "scenario_id": "1182194dd5c3e922",
+  "responses": [
+    {
+      "cache_key": "3415d22b99d7b3d8",
+      "url": "https://musicbrainz.org/ws/2/work/d23f10af-494b-4432-8c1e-0bda7aa49e5c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5595e66ed665fe30"
+    },
+    {
+      "cache_key": "4e730536f93e4287",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ABed%20in%20Wonderland&limit=100",
+      "status_code": 200,
+      "body_hash": "2dc346d3116b730c"
+    },
+    {
+      "cache_key": "7e44604c5783c56f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%9C%E3%81%A3%E3%81%9F%E3%81%8F%E3%82%93",
+      "status_code": 200,
+      "body_hash": "140bd617d07caf7c"
+    },
+    {
+      "cache_key": "879406fd8db09137",
+      "url": "https://musicbrainz.org/ws/2/work/f9f96f12-14dd-4fba-a971-e466a9149e66?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1e7c71f2ad9bc1e1"
+    },
+    {
+      "cache_key": "996227ab199e947c",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=b36f52bb-a1a2-4760-81fb-33247cc24481&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "9acce3e532fe29e0"
+    },
+    {
+      "cache_key": "dd08057bf31bb8b2",
+      "url": "https://musicbrainz.org/ws/2/work/c8f0499f-863f-44fb-8861-0fb8ce26355c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "44c6872abb90b2ae"
+    },
+    {
+      "cache_key": "edb1f1f5bae93f27",
+      "url": "https://musicbrainz.org/ws/2/work/d3d1cfd1-9bef-4df4-b97c-a10efe8f60cb?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e8e8017a2f7af95a"
+    }
+  ]
+}
