@@ -1,0 +1,205 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Da-iCE - SCENE (2023-05-24) [WEB FLAC]/1.12. Answers.flac"
+album = "SCENE"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Answers"
+copyright = "℗ 2023 AVEX ENTERTAINMENT INC."
+disc = 1
+disc_total = 1
+track = 12
+track_total = 12
+duration_ms = 253005
+
+[[raw_tags]]
+file_path = "Da-iCE - SCENE (2023-05-24) [WEB FLAC]/1.11. ハイボールブギ.flac"
+album = "SCENE"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "ハイボールブギ"
+copyright = "℗ 2023 AVEX ENTERTAINMENT INC."
+disc = 1
+disc_total = 1
+track = 11
+track_total = 12
+duration_ms = 221899
+
+[[raw_tags]]
+file_path = "Da-iCE - SCENE (2023-05-24) [WEB FLAC]/1.10. コメディアン.flac"
+album = "SCENE"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "コメディアン"
+copyright = "℗ 2023 AVEX ENTERTAINMENT INC."
+disc = 1
+disc_total = 1
+track = 10
+track_total = 12
+duration_ms = 243288
+
+[[raw_tags]]
+file_path = "Da-iCE - SCENE (2023-05-24) [WEB FLAC]/1.09. 濡れたバラード.flac"
+album = "SCENE"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "濡れたバラード"
+copyright = "℗ 2023 AVEX ENTERTAINMENT INC."
+disc = 1
+disc_total = 1
+track = 9
+track_total = 12
+duration_ms = 236062
+
+[[raw_tags]]
+file_path = "Da-iCE - SCENE (2023-05-24) [WEB FLAC]/1.08. HNTO.flac"
+album = "SCENE"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "H?NTO"
+copyright = "℗ 2023 AVEX ENTERTAINMENT INC."
+disc = 1
+disc_total = 1
+track = 8
+track_total = 12
+duration_ms = 252478
+
+[[raw_tags]]
+file_path = "Da-iCE - SCENE (2023-05-24) [WEB FLAC]/1.07. 絢爛なフィナーレ.flac"
+album = "SCENE"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "絢爛なフィナーレ"
+copyright = "℗ 2023 AVEX ENTERTAINMENT INC."
+disc = 1
+disc_total = 1
+track = 7
+track_total = 12
+duration_ms = 206813
+
+[[raw_tags]]
+file_path = "Da-iCE - SCENE (2023-05-24) [WEB FLAC]/1.06. スターマイン.flac"
+album = "SCENE"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "スターマイン"
+copyright = "℗ 2023 AVEX ENTERTAINMENT INC."
+disc = 1
+disc_total = 1
+track = 6
+track_total = 12
+duration_ms = 227833
+
+[[raw_tags]]
+file_path = "Da-iCE - SCENE (2023-05-24) [WEB FLAC]/1.05. Pioneer.flac"
+album = "SCENE"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Pioneer"
+copyright = "℗ 2023 AVEX ENTERTAINMENT INC."
+disc = 1
+disc_total = 1
+track = 5
+track_total = 12
+duration_ms = 188798
+
+[[raw_tags]]
+file_path = "Da-iCE - SCENE (2023-05-24) [WEB FLAC]/1.04. Chase.flac"
+album = "SCENE"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Chase"
+copyright = "℗ 2023 AVEX ENTERTAINMENT INC."
+disc = 1
+disc_total = 1
+track = 4
+track_total = 12
+duration_ms = 219864
+
+[[raw_tags]]
+file_path = "Da-iCE - SCENE (2023-05-24) [WEB FLAC]/1.03. ダンデライオン.flac"
+album = "SCENE"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "ダンデライオン"
+copyright = "℗ 2023 AVEX ENTERTAINMENT INC."
+disc = 1
+disc_total = 1
+track = 3
+track_total = 12
+duration_ms = 243428
+
+[[raw_tags]]
+file_path = "Da-iCE - SCENE (2023-05-24) [WEB FLAC]/1.02. Funky Jumping.flac"
+album = "SCENE"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Funky Jumping"
+copyright = "℗ 2023 AVEX ENTERTAINMENT INC."
+disc = 1
+disc_total = 1
+track = 2
+track_total = 12
+duration_ms = 198262
+
+[[raw_tags]]
+file_path = "Da-iCE - SCENE (2023-05-24) [WEB FLAC]/1.01. Scene.flac"
+album = "SCENE"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Scene"
+copyright = "℗ 2023 AVEX ENTERTAINMENT INC."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 12
+duration_ms = 215492
+
+[expect.release]
+ids = { release_id = "313884d7-eb67-4cc7-8c61-aea3a09ce5e4" }
+fields = { release_title = "SCENE", release_date = "2023-05-24" }
+
+[expect.artists."2fc5c58a-711b-4a11-9b7a-7b5ba1f58e04"]
+fields = { artist_name = "Da‐iCE", sort_name = "Da‐iCE" }
+
+[expect.tracks."05cba1bb-d4cc-453a-a26d-41ee857dddd9"]
+fields = { disc = 1, track = 4, track_title = "Chase" }
+
+[expect.tracks."0fe10ca6-1b1c-4eae-af9b-82b14f629d9a"]
+fields = { disc = 1, track = 2, track_title = "Funky Jumping" }
+
+[expect.tracks."215d2e8d-6390-4dcd-aeb9-00852f73e920"]
+fields = { disc = 1, track = 8, track_title = "H?NTO" }
+
+[expect.tracks."3261b452-c9d9-4c8b-8097-78a994ab6210"]
+fields = { disc = 1, track = 7, track_title = "絢爛なフィナーレ" }
+
+[expect.tracks."44a79fdc-021a-47ca-85db-7e30b2e8dbd7"]
+fields = { disc = 1, track = 6, track_title = "スターマイン" }
+
+[expect.tracks."6d2b4e96-5ddd-473f-85ee-18e6543c3fbf"]
+fields = { disc = 1, track = 3, track_title = "ダンデライオン" }
+
+[expect.tracks."6e86b12d-50b9-4b96-bbc4-d8698878a21d"]
+fields = { disc = 1, track = 5, track_title = "Pioneer" }
+
+[expect.tracks."8f452d50-6b1d-4095-a283-646bb063a0fb"]
+fields = { disc = 1, track = 9, track_title = "濡れたバラード" }
+
+[expect.tracks."a1f166e0-9543-4fc8-9350-aa92436f2f1d"]
+fields = { disc = 1, track = 1, track_title = "Scene" }
+
+[expect.tracks."bd66ae6a-18eb-4855-af02-2e493a2e60b3"]
+fields = { disc = 1, track = 12, track_title = "Answers" }
+
+[expect.tracks."bd8bc8d3-9c22-4859-be65-1d4d4336e2b8"]
+fields = { disc = 1, track = 10, track_title = "コメディアン" }
+
+[expect.tracks."cac7dd62-7cbe-4e8f-af77-1a117201abba"]
+fields = { disc = 1, track = 11, track_title = "ハイボールブギ" }
