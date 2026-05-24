@@ -1,0 +1,36 @@
+{
+  "test_name": "212_ボカロvercd_nameless_とあ",
+  "scenario_id": "3eb8878dce8eef49",
+  "responses": [
+    {
+      "cache_key": "15535a812c2e01d6",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Abf506ba1-c5a0-4a04-90d8-1b40fcceb87a%20AND%20(release%3A212%20%E3%83%9C%E3%82%AB%E3%83%ADver.CD%20OR%20recording%3A%E3%83%AA%E3%82%B0%E3%83%AC%E3%83%83%E3%83%88%20%5C(%E3%83%9C%E3%82%AB%E3%83%ADver.%5C))",
+      "status_code": 200,
+      "body_hash": "4fecb0585625a08a"
+    },
+    {
+      "cache_key": "25c031ee2287546d",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A212%20%E3%83%9C%E3%82%AB%E3%83%ADver.CD&limit=100",
+      "status_code": 200,
+      "body_hash": "1a152e8291dcb2b9"
+    },
+    {
+      "cache_key": "52a267d594538ace",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=2f2f6d22-eec8-4bcc-ae1f-afe31477baac&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "00d930d2ad6a7c0b"
+    },
+    {
+      "cache_key": "9c7d069635da3acd",
+      "url": "https://musicbrainz.org/ws/2/artist/130d679a-9a92-4373-8348-0800b6b93a30?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "662d50e2b10ae544"
+    },
+    {
+      "cache_key": "a2a78faf4d9d7e62",
+      "url": "https://musicbrainz.org/ws/2/artist?query=nameless%3B%20%E3%81%A8%E3%81%82",
+      "status_code": 200,
+      "body_hash": "d1d39c609fc321e3"
+    }
+  ]
+}
