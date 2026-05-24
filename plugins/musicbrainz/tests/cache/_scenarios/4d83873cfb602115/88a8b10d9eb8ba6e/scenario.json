@@ -1,0 +1,36 @@
+{
+  "test_name": "泥の分際で私だけの大切を奪おうだなんて_ツユ",
+  "scenario_id": "88a8b10d9eb8ba6e",
+  "responses": [
+    {
+      "cache_key": "383568b2984357a3",
+      "url": "https://musicbrainz.org/ws/2/artist/2b0a8be6-bfb8-4f62-b21d-f47a3104157e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "369511a26ca43719"
+    },
+    {
+      "cache_key": "4f00c44fba590d06",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%84%E3%83%A6",
+      "status_code": 200,
+      "body_hash": "b65133efc764b009"
+    },
+    {
+      "cache_key": "91c1c016afd74d4f",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%B3%A5%E3%81%AE%E5%88%86%E9%9A%9B%E3%81%A7%E7%A7%81%E3%81%A0%E3%81%91%E3%81%AE%E5%A4%A7%E5%88%87%E3%82%92%E5%A5%AA%E3%81%8A%E3%81%86%E3%81%A0%E3%81%AA%E3%82%93%E3%81%A6&limit=100",
+      "status_code": 200,
+      "body_hash": "954504650a3b1401"
+    },
+    {
+      "cache_key": "c2f582ad6e15173f",
+      "url": "https://musicbrainz.org/ws/2/work/e24ebcfb-c37c-4458-bda8-b3ab07d03c8e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2be49249f9fbe615"
+    },
+    {
+      "cache_key": "dd8695232ebada1f",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=7feef392-bc82-4c64-bc59-c902ed1c874d&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "e8f5e74abbc31635"
+    }
+  ]
+}
