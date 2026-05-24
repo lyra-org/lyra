@@ -61,7 +61,7 @@ Use container paths in `config.json`. A minimal persistent setup looks like this
 Cargo installation is still useful for local development:
 
 ```bash
-cargo +nightly install --locked --git https://git.lyra.pub/lyra/lyra lyra-server
+cargo install --locked --git https://git.lyra.pub/lyra/lyra lyra-server
 ```
 
 You may then run the installed binary to start the server with `serve`:

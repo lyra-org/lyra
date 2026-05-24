@@ -4,7 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 //! Lyra server application crate.
-#![cfg_attr(test, feature(test))]
+#![cfg_attr(all(test, feature = "nightly"), feature(test))]
 
 use std::sync::{
     Arc,

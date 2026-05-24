@@ -10,6 +10,8 @@ name = "lyra"
 path = "src/main.rs"
 
 [features]
+# Enables code paths that require a nightly compiler, such as libtest benchmarks.
+nightly = []
 docgen = [
 	"dep:aide",
 	"dep:asyncapi-rust",
