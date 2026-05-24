@@ -1,0 +1,66 @@
+{
+  "test_name": "two_鹿乃",
+  "scenario_id": "ecab691481bf2b6c",
+  "responses": [
+    {
+      "cache_key": "06510de154c57b54",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A487cda72-0633-46d5-a80e-f9ee94080080%20AND%20(release%3Atwo%20OR%20recording%3A%E6%9B%96%E6%98%A7%E5%8A%A3%E6%83%85Lover)",
+      "status_code": 200,
+      "body_hash": "2106e7089128b142"
+    },
+    {
+      "cache_key": "1f991aef7315725f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E9%B9%BF%E4%B9%83",
+      "status_code": 200,
+      "body_hash": "16f493fd923d421d"
+    },
+    {
+      "cache_key": "249358b081d2f400",
+      "url": "https://musicbrainz.org/ws/2/work/66316643-965a-47cc-871a-ab82e52748f7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d03131a6fe49dc5d"
+    },
+    {
+      "cache_key": "3010586a9439ca34",
+      "url": "https://musicbrainz.org/ws/2/work/08b0a368-a735-4b39-947b-a74fb0ff2f73?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0ed8074349a77d02"
+    },
+    {
+      "cache_key": "3372978c4c3b8f42",
+      "url": "https://musicbrainz.org/ws/2/work/399bdce6-ea9b-4890-b402-02e31afe0353?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7aae4145556454b7"
+    },
+    {
+      "cache_key": "48fa7de1c24328aa",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3Atwo&limit=100",
+      "status_code": 200,
+      "body_hash": "66e927eacc182a1f"
+    },
+    {
+      "cache_key": "ab30a05813cf2ec3",
+      "url": "https://musicbrainz.org/ws/2/work/b97dc56b-c7e1-403e-a20a-8b3966e379c6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "03076ab6ec4894c1"
+    },
+    {
+      "cache_key": "b83d599669958e15",
+      "url": "https://musicbrainz.org/ws/2/work/8dab5003-3a63-4c9f-9e68-be8e6c8f79e4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1ad9521a4f40d459"
+    },
+    {
+      "cache_key": "d83f4251a06c9eb4",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=dc94ecbe-8a85-4c85-ba93-774fa2a5f23f&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "41fd22ce559dc114"
+    },
+    {
+      "cache_key": "ed4cc2319270cdb4",
+      "url": "https://musicbrainz.org/ws/2/work/e879c6f4-4c97-48c6-9fdb-311fe257a4d2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ffca1dbd4f424ad8"
+    }
+  ]
+}
