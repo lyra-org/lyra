@@ -1,0 +1,22 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Andora - Moonrise (2023) [WEB FLAC]/01. Moonrise.flac"
+album = "Moonrise"
+artists = ["Andora;Wami"]
+title = "Moonrise"
+disc = 1
+track = 1
+duration_ms = 184439
+
+[expect.release]
+ids = { release_id = "1a42f401-1913-468c-bd57-2b36ea2ca0cf" }
+fields = { release_title = "Moonrise", release_date = "2023-10-27" }
+
+[expect.tracks."6a0db141-9ee2-48b8-a050-0a0c9c3c65c2"]
+fields = { disc = 1, track = 1, track_title = "Moonrise" }

@@ -1,0 +1,90 @@
+{
+  "test_name": "緑黄色社会_緑黄色社会",
+  "scenario_id": "9022dca32bbf9302",
+  "responses": [
+    {
+      "cache_key": "0a56439a3cb75f9e",
+      "url": "https://musicbrainz.org/ws/2/work/cbf4c99b-ec62-4d30-88f5-6d6fb23ce258?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "60a8f66af231037c"
+    },
+    {
+      "cache_key": "0dda4350497eba9a",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%B7%91%E9%BB%84%E8%89%B2%E7%A4%BE%E4%BC%9A",
+      "status_code": 200,
+      "body_hash": "fb87396a633bd46c"
+    },
+    {
+      "cache_key": "161230a29d71dfc3",
+      "url": "https://musicbrainz.org/ws/2/artist/3ed40054-97ab-4783-b3c3-15c2c7b06546?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "011c7b7b5ce7b3d2"
+    },
+    {
+      "cache_key": "4693fdb959ea1ece",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%B7%91%E9%BB%84%E8%89%B2%E7%A4%BE%E4%BC%9A&limit=100",
+      "status_code": 200,
+      "body_hash": "f9b40ee5214ec3c5"
+    },
+    {
+      "cache_key": "8deecb9e84986841",
+      "url": "https://musicbrainz.org/ws/2/work/178f2a67-1662-45d4-af35-a940b0e21746?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "70c2a4879b89309f"
+    },
+    {
+      "cache_key": "b64cef14647063c1",
+      "url": "https://musicbrainz.org/ws/2/work/1ab41ab1-b14e-42b4-97b1-076c89d4c26b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9e87532029dfec49"
+    },
+    {
+      "cache_key": "b9938a41366ec63b",
+      "url": "https://musicbrainz.org/ws/2/work/e7346aa0-a408-4422-9892-af6b81a075ea?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cdf5b2d365d45580"
+    },
+    {
+      "cache_key": "ba952b1b38e8252b",
+      "url": "https://musicbrainz.org/ws/2/work/bd09b2ad-8eeb-4585-adb5-01de53f0a695?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6fd2e883e57459e9"
+    },
+    {
+      "cache_key": "c834b80cb334759b",
+      "url": "https://musicbrainz.org/ws/2/work/68faa9bd-ea48-4779-acbc-7fa943b7d097?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "14e878be96da70a7"
+    },
+    {
+      "cache_key": "cc13e32f01cd8b93",
+      "url": "https://musicbrainz.org/ws/2/work/6a9efc46-1929-4b3b-a01b-948164cee833?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c1ccc12934da1eac"
+    },
+    {
+      "cache_key": "cca94f29dc6e87cc",
+      "url": "https://musicbrainz.org/ws/2/work/275498b9-a6fc-4537-a4d5-80a4106f3c70?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "63a1126cda850f3e"
+    },
+    {
+      "cache_key": "cf96d1b810505809",
+      "url": "https://musicbrainz.org/ws/2/work/457595cf-6c37-4e55-9d2d-de7c3cf08d37?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d8e7ba5069c12afd"
+    },
+    {
+      "cache_key": "f4539446eff43abd",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=cd161094-0246-4105-96a6-31e701124270&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "cc01acc62646725f"
+    },
+    {
+      "cache_key": "fbe9657203f90ceb",
+      "url": "https://musicbrainz.org/ws/2/work/e8366580-f4c6-4410-82f5-c84869c7328a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2e45693662010db5"
+    }
+  ]
+}
