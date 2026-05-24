@@ -1,0 +1,30 @@
+{
+  "test_name": "grace_藤井風",
+  "scenario_id": "8ff10ade060f65c1",
+  "responses": [
+    {
+      "cache_key": "5598174b44b6cf51",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3Agrace&limit=100",
+      "status_code": 200,
+      "body_hash": "ab2d6e90ca4f58da"
+    },
+    {
+      "cache_key": "7cf6fabeff6b6f15",
+      "url": "https://musicbrainz.org/ws/2/work/336a496b-3a00-4986-9cae-e7ab3e69be54?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3f7bb4a106d9988b"
+    },
+    {
+      "cache_key": "8930aa404f936a31",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=9f966aa7-fab6-4887-976c-95c931cdf468&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "43939961dbe68159"
+    },
+    {
+      "cache_key": "bd96934d5d4d2fa7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E8%97%A4%E4%BA%95%E9%A2%A8",
+      "status_code": 200,
+      "body_hash": "379c7170bade508f"
+    }
+  ]
+}
