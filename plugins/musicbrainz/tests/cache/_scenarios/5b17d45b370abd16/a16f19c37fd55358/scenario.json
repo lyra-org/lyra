@@ -1,0 +1,36 @@
+{
+  "test_name": "彗星_星街すいせい",
+  "scenario_id": "a16f19c37fd55358",
+  "responses": [
+    {
+      "cache_key": "3ee072c4bf7e2322",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E6%98%9F%E8%A1%97%E3%81%99%E3%81%84%E3%81%9B%E3%81%84",
+      "status_code": 200,
+      "body_hash": "d92dba14b86a4c95"
+    },
+    {
+      "cache_key": "50f5062fc9473eda",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=47204e2e-7c0a-4e0b-bcdc-0522fd534feb&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "5482645eb0f699ff"
+    },
+    {
+      "cache_key": "ac83348a5564a030",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E5%BD%97%E6%98%9F&limit=100",
+      "status_code": 200,
+      "body_hash": "2098981777dcef62"
+    },
+    {
+      "cache_key": "cfbaf84da135f9eb",
+      "url": "https://musicbrainz.org/ws/2/artist/8eeb59f4-0071-4261-b1f8-91d8294622d2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "bc70fbdc13647be9"
+    },
+    {
+      "cache_key": "f8245f0de3a312a4",
+      "url": "https://musicbrainz.org/ws/2/work/57de1caa-0df0-43ac-bc5f-5afce660c1ec?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9cabdc651304a5e5"
+    }
+  ]
+}
