@@ -1,0 +1,30 @@
+{
+  "test_name": "scene_da_ice",
+  "scenario_id": "af41176f2dae0efe",
+  "responses": [
+    {
+      "cache_key": "1ebac8df2fe9da16",
+      "url": "https://musicbrainz.org/ws/2/artist/2fc5c58a-711b-4a11-9b7a-7b5ba1f58e04?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1ad895c642158307"
+    },
+    {
+      "cache_key": "2d8fd80f16cf0a34",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=1272d59c-e5fe-494f-99fb-2e9a4fe3ad16&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "c786363cbe60f864"
+    },
+    {
+      "cache_key": "94091b2dceb78412",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Da-iCE",
+      "status_code": 200,
+      "body_hash": "0e8bcfd37cf59721"
+    },
+    {
+      "cache_key": "d7380a047cc08432",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ASCENE&limit=100",
+      "status_code": 200,
+      "body_hash": "cb2f55bedc8bdbca"
+    }
+  ]
+}
