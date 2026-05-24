@@ -1,0 +1,26 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "YOASOBI - アイドル (2023-04-12) [WEB FLAC]/1.01. アイドル.flac"
+album = "アイドル"
+album_artists = ["YOASOBI"]
+artists = ["YOASOBI"]
+title = "アイドル"
+disc = 1
+track = 1
+duration_ms = 213233
+
+[expect.release]
+ids = { release_group_id = "4c84aae8-4b9b-4205-83e8-5d8d67879c28", release_id = ["4c84aae8-4b9b-4205-83e8-5d8d67879c28", "83a84c4c-7ec5-4f5c-9f86-bd0f00c96ed4"] }
+fields = { release_title = "アイドル", release_date = "2023-04-12" }
+
+[expect.artists."df6c619f-4334-43e2-8b6a-4a32af1e4f85"]
+fields = { artist_name = "YOASOBI", sort_name = "YOASOBI" }
+
+[expect.tracks."c4b0920b-70f3-42c5-8377-25ff30f19d79"]
+fields = { disc = 1, track = 1, track_title = "アイドル", work_id = "16552e75-ba89-4ff7-ab45-0fd1246205ac" }
