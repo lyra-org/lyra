@@ -26,6 +26,7 @@ mod roles;
 mod search;
 mod serve;
 mod server;
+mod sorting;
 mod tags;
 mod tracks;
 mod users;
@@ -84,6 +85,11 @@ pub use serve::{
     stream_routes,
 };
 pub use server::server_routes;
+pub(crate) use sorting::{
+    RouteSortSpec,
+    paginate_entries,
+    parse_route_sort_specs,
+};
 pub use tags::tag_routes;
 pub use tracks::track_routes;
 pub use users::{

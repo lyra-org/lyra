@@ -233,10 +233,10 @@ pub(crate) enum SortKey {
 impl SortKey {
     pub(crate) fn from_token(token: &str) -> Option<Self> {
         match token {
-            "sortname" => Some(Self::SortName),
+            "sort_name" => Some(Self::SortName),
             "name" => Some(Self::Name),
-            "datecreated" => Some(Self::DateCreated),
-            "releasedate" => Some(Self::ReleaseDate),
+            "date_created" => Some(Self::DateCreated),
+            "release_date" => Some(Self::ReleaseDate),
             "track" => Some(Self::TrackNumber),
             "disc" => Some(Self::DiscNumber),
             "duration" => Some(Self::Duration),

@@ -176,6 +176,65 @@ pub(crate) fn get_stats(
     Ok(stats)
 }
 
+pub(crate) fn get_stats_for_user_tracks(
+    db: &DbAny,
+    track_db_ids: &[DbId],
+    user_db_id: DbId,
+) -> anyhow::Result<Vec<ListenStats>> {
+    let unique_ids = super::dedup_positive_ids(track_db_ids);
+    if unique_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let track_public_ids = super::lookup::find_ids_by_db_ids(db, &unique_ids)?;
+    let track_ids_by_public_id = track_public_ids
+        .iter()
+        .map(|(db_id, public_id)| (public_id.clone(), *db_id))
+        .collect::<HashMap<_, _>>();
+    if track_ids_by_public_id.is_empty() {
+        return Ok(unique_ids
+            .into_iter()
+            .map(|db_id| ListenStats {
+                db_id,
+                count: 0,
+                last_played: None,
+            })
+            .collect());
+    }
+
+    let listen_ids = get_listen_ids_for_target(db, user_db_id)?;
+    let listens = super::graph::bulk_fetch_typed::<Listen>(db, listen_ids, "Listen")?;
+    let mut stats_by_track = HashMap::<DbId, ListenStats>::new();
+    for listen in listens.into_values() {
+        if listen.track_public_id.is_empty() {
+            continue;
+        }
+        let Some(track_db_id) = track_ids_by_public_id.get(&listen.track_public_id).copied() else {
+            continue;
+        };
+        let entry = stats_by_track.entry(track_db_id).or_insert(ListenStats {
+            db_id: track_db_id,
+            count: 0,
+            last_played: None,
+        });
+        entry.count = entry.count.saturating_add(1);
+        if listen.listened_at_ms > entry.last_played.unwrap_or(0) {
+            entry.last_played = Some(listen.listened_at_ms);
+        }
+    }
+
+    Ok(unique_ids
+        .into_iter()
+        .map(|db_id| {
+            stats_by_track.remove(&db_id).unwrap_or(ListenStats {
+                db_id,
+                count: 0,
+                last_played: None,
+            })
+        })
+        .collect())
+}
+
 pub(crate) fn get_counts(
     db: &DbAny,
     track_db_ids: &[DbId],
@@ -660,6 +719,36 @@ mod tests {
             assert_eq!(stats.count, 0, "snapshot {snapshot:?} should elide");
             assert_eq!(stats.last_played, None, "snapshot {snapshot:?}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn get_stats_for_user_tracks_preserves_requested_track_rows() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user = create_user(&mut db)?;
+        let other_user = create_user(&mut db)?;
+        let track_one = create_track(&mut db, "tr-one")?;
+        let track_two = create_track(&mut db, "tr-two")?;
+
+        record_listen(&mut db, user, track_one, "tr-one", 1_000)?;
+        record_listen(&mut db, user, track_one, "tr-one", 3_000)?;
+        record_listen(&mut db, user, track_two, "tr-old", 5_000)?;
+        record_listen(&mut db, other_user, track_two, "tr-two", 7_000)?;
+
+        let stats = get_stats_for_user_tracks(&db, &[track_one, track_two, track_one], user)?;
+        assert_eq!(stats.len(), 2);
+        let by_track = stats
+            .into_iter()
+            .map(|stat| (stat.db_id, stat))
+            .collect::<HashMap<_, _>>();
+
+        let one = by_track.get(&track_one).expect("track one stats");
+        assert_eq!(one.count, 2);
+        assert_eq!(one.last_played, Some(3_000));
+
+        let two = by_track.get(&track_two).expect("track two stats");
+        assert_eq!(two.count, 0);
+        assert_eq!(two.last_played, None);
         Ok(())
     }
 }
