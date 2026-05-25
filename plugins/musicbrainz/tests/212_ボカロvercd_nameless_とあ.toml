@@ -1,0 +1,25 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[TBS] nameless x TOA - 212 [FLAC]/Bonus/02 アイシテ (nameless×ボカロデュエットver.).flac"
+album = "212 ボカロver.CD"
+artists = ["nameless; とあ"]
+title = "アイシテ (nameless×ボカロデュエットver.)"
+track = 2
+duration_ms = 210026
+
+[[raw_tags]]
+file_path = "[TBS] nameless x TOA - 212 [FLAC]/Bonus/01 リグレット (ボカロver.).flac"
+album = "212 ボカロver.CD"
+artists = ["nameless; とあ"]
+title = "リグレット (ボカロver.)"
+track = 1
+duration_ms = 283106
+
+[expect.release]
+ids = { release_group_id = "2f2f6d22-eec8-4bcc-ae1f-afe31477baac", release_id = "0f315b3b-5495-4ba3-8943-570292cd34c8" }
