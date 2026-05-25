@@ -39,5 +39,10 @@ tracing = "0.1"
 url = "2"
 xxh3 = { git = "https://github.com/cberner/xxh3", rev = "73c81b90a5d42c6e48c1c26b75ac4bdf1fe1113f" }
 
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
 [profile.dev.package."*"]
 opt-level = 2
