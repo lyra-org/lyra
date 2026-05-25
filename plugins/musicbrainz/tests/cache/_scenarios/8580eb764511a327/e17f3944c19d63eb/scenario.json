@@ -1,0 +1,30 @@
+{
+  "test_name": "風と私の物語_ado",
+  "scenario_id": "e17f3944c19d63eb",
+  "responses": [
+    {
+      "cache_key": "53974038e883834b",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E9%A2%A8%E3%81%A8%E7%A7%81%E3%81%AE%E7%89%A9%E8%AA%9E&limit=100",
+      "status_code": 200,
+      "body_hash": "e8f667fdfa3b2a4a"
+    },
+    {
+      "cache_key": "684f19acbb2c4c74",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=f8739b6f-8e2a-48b7-967d-c6370e026f7f&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "9f3dfbe200601688"
+    },
+    {
+      "cache_key": "797949b60f6346dc",
+      "url": "https://musicbrainz.org/ws/2/work/032abf80-b212-44e2-8b77-f7d2547dca77?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9cf36c1e78ecf44a"
+    },
+    {
+      "cache_key": "9540247bcbf53f6b",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Ado",
+      "status_code": 200,
+      "body_hash": "eaf14f08d5842088"
+    }
+  ]
+}
