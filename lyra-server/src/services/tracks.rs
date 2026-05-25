@@ -10,7 +10,7 @@ use agdb::{
 
 use super::entities::{
     ResolvedCreditedArtist,
-    resolve_track_credited_artists,
+    relations,
 };
 use crate::db::{
     self,
@@ -35,23 +35,21 @@ pub(crate) fn list_details_for_tracks(
     includes: TrackIncludes,
     tracks: Vec<Track>,
 ) -> anyhow::Result<Vec<TrackDetails>> {
-    let track_ids: Vec<DbId> = tracks
-        .iter()
-        .filter_map(|track| track.db_id.clone().map(DbId::from))
-        .collect();
+    let track_ids = relations::db_ids_from_tracks(&tracks);
 
     let releases_by_track = if includes.releases {
-        Some(db::releases::get_by_tracks(db, &track_ids)?)
+        Some(relations::track_releases_by_track(db, &track_ids)?)
     } else {
         None
     };
     let artists_by_track = if includes.artists {
-        let ctx = super::entities::TrackCreditedArtistContext {
-            releases_by_track: releases_by_track.as_ref(),
-            credited_artists_by_release: None,
-            scope_release_id: None,
-        };
-        Some(super::entities::resolve_track_credited_artists_with_context(db, &track_ids, &ctx)?)
+        Some(relations::track_credited_artists_by_track(
+            db,
+            &track_ids,
+            releases_by_track.as_ref(),
+            None,
+            None,
+        )?)
     } else {
         None
     };
@@ -89,22 +87,9 @@ pub(crate) fn get_details(
         return Ok(None);
     };
 
-    let releases = if includes.releases {
-        Some(db::releases::get_by_track(db, track_db_id)?)
-    } else {
-        None
-    };
-    let artists = if includes.artists {
-        Some(resolve_track_credited_artists(db, track_db_id)?)
-    } else {
-        None
-    };
-
-    Ok(Some(TrackDetails {
-        track,
-        releases,
-        artists,
-    }))
+    Ok(list_details_for_tracks(db, includes, vec![track])?
+        .into_iter()
+        .next())
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@
 
 mod context;
 mod projection;
+pub(crate) mod relations;
 
 use std::collections::{
     BTreeMap,
@@ -838,6 +839,8 @@ fn dedupe_db_ids(ids: &[DbId]) -> Vec<DbId> {
 pub(crate) struct TrackArtistContext<'a> {
     pub(crate) releases_by_track: Option<&'a HashMap<DbId, Vec<Release>>>,
     pub(crate) artists_by_release: Option<&'a HashMap<DbId, Vec<Artist>>>,
+    /// When set, fallback artists come from this specific release only.
+    pub(crate) scope_release_id: Option<DbId>,
 }
 
 #[derive(Default)]
@@ -867,6 +870,34 @@ pub(crate) fn resolve_track_artists_with_context(
         .collect();
 
     if unresolved.is_empty() {
+        return Ok(artists_by_track);
+    }
+
+    if let Some(scope_id) = ctx.scope_release_id {
+        let fetched;
+        let scope_artists: Option<&Vec<Artist>> =
+            match ctx.artists_by_release.and_then(|pre| pre.get(&scope_id)) {
+                Some(artists) => Some(artists),
+                None => {
+                    fetched = db::artists::get(db, scope_id)?;
+                    Some(&fetched)
+                }
+            };
+
+        for track_id in unresolved {
+            let mut artists = artists_by_track.remove(&track_id).unwrap_or_default();
+            if artists.is_empty()
+                && let Some(release_artists) = scope_artists
+            {
+                artists.extend(release_artists.clone());
+            }
+            artists_by_track.insert(track_id, dedupe_artists(artists));
+        }
+
+        for track_id in track_ids {
+            artists_by_track.entry(track_id).or_default();
+        }
+
         return Ok(artists_by_track);
     }
 

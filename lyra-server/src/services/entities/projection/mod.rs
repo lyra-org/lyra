@@ -6,7 +6,6 @@
 mod credits;
 
 use std::collections::{
-    BTreeMap,
     HashMap,
     HashSet,
 };
@@ -24,6 +23,7 @@ use lyra_metadata::LookupHints;
 use crate::db::{
     self,
     Artist,
+    Entry,
     Release,
     Track,
 };
@@ -45,8 +45,7 @@ use super::{
     TrackProjectionIncludes,
     TrackProjectionInfo,
     TrackProjectionKind,
-    dedupe_artists,
-    resolve_track_artists,
+    relations,
 };
 
 pub(super) enum DetectedEntityType {
@@ -65,8 +64,11 @@ enum ResolvedEntity {
 pub(super) struct PreFetchedIncludes {
     pub(super) external_ids: Option<HashMap<DbId, ExternalIdsByProvider>>,
     pub(super) artists_by_owner: Option<HashMap<DbId, Vec<Artist>>>,
+    pub(super) release_tracks: Option<HashMap<DbId, Vec<Track>>>,
     pub(super) releases_by_track: Option<HashMap<DbId, Vec<Release>>>,
     pub(super) track_artists: Option<HashMap<DbId, Vec<Artist>>>,
+    pub(super) entries_by_track: Option<HashMap<DbId, Vec<Entry>>>,
+    pub(super) artist_releases: Option<HashMap<DbId, Vec<Release>>>,
     pub(super) artist_tracks: Option<HashMap<DbId, Vec<Track>>>,
     pub(super) credits_by_owner: Option<HashMap<DbId, Vec<CreditedArtistProjectionInfo>>>,
 }
@@ -92,76 +94,44 @@ fn resolve_entity_id(db: &DbAny, query_id: QueryId) -> anyhow::Result<DbId> {
     }
 }
 
-fn build_external_ids_map(db: &DbAny, entity_id: DbId) -> anyhow::Result<ExternalIdsByProvider> {
-    let ids = db::external_ids::get_for_entity(db, entity_id)?;
-    let mut map = BTreeMap::new();
-    for id in ids {
-        map.entry(id.provider_id)
-            .or_insert_with(BTreeMap::new)
-            .insert(id.id_type, id.id_value);
-    }
-
-    Ok(map)
-}
-
-fn track_sort_key(track: &Track) -> (u32, u32, String, i64) {
-    let disc = track.disc.unwrap_or(1);
-    let track_number = track.track.unwrap_or(u32::MAX);
-    let title = track.track_title.to_ascii_lowercase();
-    let db_id = track
-        .db_id
-        .clone()
-        .map(|id| {
-            let id: DbId = id.into();
-            id.0
-        })
-        .unwrap_or(i64::MAX);
-
-    (disc, track_number, title, db_id)
-}
-
-fn sorted_release_tracks(db: &DbAny, release_id: DbId) -> anyhow::Result<Vec<Track>> {
-    let mut tracks = db::tracks::get(db, release_id)?;
-    tracks.sort_by_key(track_sort_key);
-    Ok(tracks)
-}
-
-fn select_track_file_path(db: &DbAny, track_id: DbId) -> anyhow::Result<Option<String>> {
-    Ok(db::entries::get_by_track(db, track_id)?
-        .into_iter()
-        .filter(|entry| entry.kind == crate::db::entries::EntryKind::File)
-        .map(|entry| entry.full_path.to_string_lossy().to_string())
-        .min())
-}
-
 fn build_release_tracks_with_external_ids(
     db: &DbAny,
     release_id: DbId,
     library_root: Option<&str>,
+    prefetched: &PreFetchedIncludes,
 ) -> anyhow::Result<(Vec<ReleaseProjectionTrack>, LookupHints)> {
-    let tracks = sorted_release_tracks(db, release_id)?;
+    let tracks = lookup_or_fetch(prefetched.release_tracks.as_ref(), release_id, || {
+        relations::release_tracks(db, release_id)
+    })?;
+    let track_ids = relations::db_ids_from_tracks(&tracks);
+    let artists_by_track = relations::track_artists_for_release(
+        db,
+        &track_ids,
+        release_id,
+        prefetched.artists_by_owner.as_ref(),
+    )?;
     let mut projected = Vec::with_capacity(tracks.len());
     let mut track_lookup_hints = Vec::with_capacity(tracks.len());
 
     for track in tracks {
         let track_db_id = track.db_id.clone().map(Into::<DbId>::into);
         let (external_ids, artists, lookup_hints) = if let Some(track_id) = track_db_id {
-            let file_path = select_track_file_path(db, track_id)?;
+            let entries = lookup_or_fetch(prefetched.entries_by_track.as_ref(), track_id, || {
+                relations::track_entries(db, track_id)
+            })?;
             (
-                build_external_ids_map(db, track_id)?,
-                resolve_track_artists_for_release(db, track_id, release_id)?,
-                file_path
-                    .as_deref()
-                    .map(|path| {
-                        lyra_metadata::extract_lookup_hints_from_file_path_with_library_root(
-                            path,
-                            library_root,
-                        )
-                    })
-                    .unwrap_or_default(),
+                lookup_or_fetch(prefetched.external_ids.as_ref(), track_id, || {
+                    relations::external_ids_for_entity(db, track_id)
+                })?,
+                artists_by_track.get(&track_id).cloned().unwrap_or_default(),
+                relations::lookup_hints_for_entries(&entries, library_root),
             )
         } else {
-            (BTreeMap::new(), Vec::new(), LookupHints::default())
+            (
+                ExternalIdsByProvider::new(),
+                Vec::new(),
+                LookupHints::default(),
+            )
         };
         track_lookup_hints.push(lookup_hints.clone());
         projected.push(ReleaseProjectionTrack::from_track(
@@ -188,19 +158,6 @@ fn lookup_or_fetch<T: Clone>(
     } else {
         fetch()
     }
-}
-
-fn resolve_track_artists_for_release(
-    db: &DbAny,
-    track_id: DbId,
-    release_id: DbId,
-) -> anyhow::Result<Vec<Artist>> {
-    let direct = db::artists::get(db, track_id)?;
-    if !direct.is_empty() {
-        return Ok(dedupe_artists(direct));
-    }
-
-    Ok(dedupe_artists(db::artists::get(db, release_id)?))
 }
 
 fn include_not_supported(entity_type: &str, include: EntityInclude) -> anyhow::Error {
@@ -277,19 +234,26 @@ pub(super) fn project_release(
                 projection.includes.external_ids = Some(lookup_or_fetch(
                     prefetched.external_ids.as_ref(),
                     release_id,
-                    || build_external_ids_map(db, release_id),
+                    || relations::external_ids_for_entity(db, release_id),
                 )?);
             }
             EntityInclude::Artists => {
                 projection.includes.artists = Some(lookup_or_fetch(
                     prefetched.artists_by_owner.as_ref(),
                     release_id,
-                    || db::artists::get(db, release_id),
+                    || {
+                        relations::raw_artists_by_owner(db, &[release_id])
+                            .map(|mut map| map.remove(&release_id).unwrap_or_default())
+                    },
                 )?);
             }
             EntityInclude::Tracks => {
-                let (tracks, lookup_hints) =
-                    build_release_tracks_with_external_ids(db, release_id, library_root)?;
+                let (tracks, lookup_hints) = build_release_tracks_with_external_ids(
+                    db,
+                    release_id,
+                    library_root,
+                    prefetched,
+                )?;
                 release_lookup_hints = lookup_hints;
                 projection.includes.tracks = Some(tracks);
             }
@@ -328,25 +292,34 @@ fn project_track(
                 projection.includes.external_ids = Some(lookup_or_fetch(
                     prefetched.external_ids.as_ref(),
                     track_id,
-                    || build_external_ids_map(db, track_id),
+                    || relations::external_ids_for_entity(db, track_id),
                 )?);
             }
             EntityInclude::Releases => {
                 projection.includes.releases = Some(lookup_or_fetch(
                     prefetched.releases_by_track.as_ref(),
                     track_id,
-                    || db::releases::get_by_track(db, track_id),
+                    || {
+                        relations::track_releases_by_track(db, &[track_id])
+                            .map(|mut map| map.remove(&track_id).unwrap_or_default())
+                    },
                 )?);
             }
             EntityInclude::Artists => {
                 projection.includes.artists = Some(lookup_or_fetch(
                     prefetched.track_artists.as_ref(),
                     track_id,
-                    || resolve_track_artists(db, track_id),
+                    || {
+                        relations::track_artists_by_track(db, &[track_id], None, None)
+                            .map(|mut map| map.remove(&track_id).unwrap_or_default())
+                    },
                 )?);
             }
             EntityInclude::Entries => {
-                let entries = db::entries::get_by_track(db, track_id)?;
+                let entries =
+                    lookup_or_fetch(prefetched.entries_by_track.as_ref(), track_id, || {
+                        relations::track_entries(db, track_id)
+                    })?;
                 projection.includes.entries =
                     Some(entries.into_iter().map(ProjectionEntryInfo::from).collect());
             }
@@ -384,19 +357,28 @@ fn project_artist(
                 projection.includes.external_ids = Some(lookup_or_fetch(
                     prefetched.external_ids.as_ref(),
                     artist_id,
-                    || build_external_ids_map(db, artist_id),
+                    || relations::external_ids_for_entity(db, artist_id),
                 )?);
             }
             EntityInclude::Releases => {
-                projection.includes.releases = Some(db::releases::get_by_artist(db, artist_id)?);
+                projection.includes.releases = Some(lookup_or_fetch(
+                    prefetched.artist_releases.as_ref(),
+                    artist_id,
+                    || {
+                        relations::artist_releases_by_artist(db, &[artist_id])
+                            .map(|mut map| map.remove(&artist_id).unwrap_or_default())
+                    },
+                )?);
             }
             EntityInclude::Tracks => {
-                let mut tracks =
-                    lookup_or_fetch(prefetched.artist_tracks.as_ref(), artist_id, || {
-                        db::tracks::get_by_artist(db, artist_id)
-                    })?;
-                tracks.sort_by_key(track_sort_key);
-                projection.includes.tracks = Some(tracks);
+                projection.includes.tracks = Some(lookup_or_fetch(
+                    prefetched.artist_tracks.as_ref(),
+                    artist_id,
+                    || {
+                        relations::artist_tracks_by_artist(db, &[artist_id])
+                            .map(|mut map| map.remove(&artist_id).unwrap_or_default())
+                    },
+                )?);
             }
             EntityInclude::Artists | EntityInclude::Entries | EntityInclude::Credits => {
                 return Err(include_not_supported("artist", *include));
@@ -536,26 +518,44 @@ pub(crate) fn project_entities(
         None
     };
 
-    let artists_by_owner = if has_include(EntityInclude::Artists) && !release_ids.is_empty() {
-        Some(db::artists::get_many_by_owner(db, &release_ids)?)
+    let release_tracks = if has_include(EntityInclude::Tracks) && !release_ids.is_empty() {
+        Some(relations::release_tracks_by_release(db, &release_ids)?)
+    } else {
+        None
+    };
+    let release_track_ids = release_tracks
+        .as_ref()
+        .map(|tracks_by_release| {
+            tracks_by_release
+                .values()
+                .flat_map(|tracks| relations::db_ids_from_tracks(tracks))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let needs_release_artists = (has_include(EntityInclude::Artists)
+        || has_include(EntityInclude::Tracks))
+        && !release_ids.is_empty();
+    let artists_by_owner = if needs_release_artists {
+        Some(relations::raw_artists_by_owner(db, &release_ids)?)
     } else {
         None
     };
     let needs_releases_by_track = (has_include(EntityInclude::Releases)
+        || has_include(EntityInclude::Artists)
         || has_include(EntityInclude::Credits))
         && !track_ids.is_empty();
     let releases_by_track = if needs_releases_by_track {
-        Some(db::releases::get_by_tracks(db, &track_ids)?)
+        Some(relations::track_releases_by_track(db, &track_ids)?)
     } else {
         None
     };
     let track_artists = if has_include(EntityInclude::Artists) && !track_ids.is_empty() {
-        let ctx = super::TrackArtistContext {
-            releases_by_track: releases_by_track.as_ref(),
-            artists_by_release: artists_by_owner.as_ref(),
-        };
-        Some(super::resolve_track_artists_with_context(
-            db, &track_ids, &ctx,
+        Some(relations::track_artists_by_track(
+            db,
+            &track_ids,
+            releases_by_track.as_ref(),
+            artists_by_owner.as_ref(),
         )?)
     } else {
         None
@@ -570,25 +570,51 @@ pub(crate) fn project_entities(
     } else {
         None
     };
+    let mut external_id_ids = Vec::new();
+    if has_include(EntityInclude::ExternalIds) {
+        external_id_ids.extend(unique_entity_ids.iter().copied());
+    }
+    if has_include(EntityInclude::Tracks) {
+        external_id_ids.extend(release_track_ids.iter().copied());
+    }
+
+    let mut entry_track_ids = Vec::new();
+    if has_include(EntityInclude::Entries) {
+        entry_track_ids.extend(track_ids.iter().copied());
+    }
+    if has_include(EntityInclude::Tracks) {
+        entry_track_ids.extend(release_track_ids.iter().copied());
+    }
+
+    let artist_owned_entities = relations::artist_owned_entities_by_artist(
+        db,
+        &artist_ids,
+        has_include(EntityInclude::Releases),
+        has_include(EntityInclude::Tracks),
+    )?;
+
     let prefetched = PreFetchedIncludes {
-        external_ids: if has_include(EntityInclude::ExternalIds) {
-            let mut map = HashMap::new();
-            for entity_id in &unique_entity_ids {
-                map.insert(*entity_id, build_external_ids_map(db, *entity_id)?);
-            }
-            Some(map)
+        external_ids: if external_id_ids.is_empty() {
+            None
+        } else {
+            Some(relations::external_ids_by_entity(db, &external_id_ids)?)
+        },
+        artists_by_owner,
+        release_tracks,
+        releases_by_track,
+        track_artists,
+        entries_by_track: if entry_track_ids.is_empty() {
+            None
+        } else {
+            Some(relations::entries_by_track(db, &entry_track_ids)?)
+        },
+        artist_releases: if has_include(EntityInclude::Releases) && !artist_ids.is_empty() {
+            Some(artist_owned_entities.releases_by_artist)
         } else {
             None
         },
-        artists_by_owner,
-        releases_by_track,
-        track_artists,
         artist_tracks: if has_include(EntityInclude::Tracks) && !artist_ids.is_empty() {
-            let mut map = db::tracks::get_direct_many(db, &artist_ids)?;
-            for tracks in map.values_mut() {
-                tracks.sort_by_key(track_sort_key);
-            }
-            Some(map)
+            Some(artist_owned_entities.tracks_by_artist)
         } else {
             None
         },
@@ -636,7 +662,10 @@ pub(crate) fn project_entities(
 mod tests {
     use super::*;
     use crate::db::test_db::{
+        connect_artist,
+        insert_artist,
         insert_release,
+        insert_track,
         new_test_db,
     };
 
@@ -666,6 +695,29 @@ mod tests {
         .expect_err("release projections should reject entry includes");
 
         assert!(err.to_string().contains("not supported"));
+        Ok(())
+    }
+
+    #[test]
+    fn project_entities_prefetches_artist_tracks_through_credits() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let artist_id = insert_artist(&mut db, "Track Artist")?;
+        let track_id = insert_track(&mut db, "Credited Track")?;
+        connect_artist(&mut db, track_id, artist_id)?;
+
+        let projections = project_entities(
+            &db,
+            vec![QueryId::Id(artist_id)],
+            &[EntityInclude::Tracks],
+            None,
+        )?;
+        let EntityProjectionInfo::Artist(artist) = &projections[0] else {
+            panic!("expected artist projection");
+        };
+        let tracks = artist.includes.tracks.as_ref().expect("tracks included");
+
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].track_title, "Credited Track");
         Ok(())
     }
 }
