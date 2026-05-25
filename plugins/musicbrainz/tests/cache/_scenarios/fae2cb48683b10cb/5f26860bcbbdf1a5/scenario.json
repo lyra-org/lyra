@@ -1,0 +1,54 @@
+{
+  "test_name": "lose_loose_day_美波",
+  "scenario_id": "5f26860bcbbdf1a5",
+  "responses": [
+    {
+      "cache_key": "430e396475643002",
+      "url": "https://musicbrainz.org/ws/2/work/0927485e-cffb-4984-92f4-dacb31803de7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6b35755c20772579"
+    },
+    {
+      "cache_key": "7ccf7f2ae5dd2177",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ALOSE%20LOOSE%20Day&limit=100",
+      "status_code": 200,
+      "body_hash": "d2d16291722d5eec"
+    },
+    {
+      "cache_key": "93b8e88df6c39175",
+      "url": "https://musicbrainz.org/ws/2/work/9d654c4f-5265-4a93-a161-d6d02bbfbe98?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "295ce5bec140fb29"
+    },
+    {
+      "cache_key": "b2d7cff76676b508",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=29549ef3-a8c6-4b6d-857a-6666ef6a142c&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "a714c52955f4014d"
+    },
+    {
+      "cache_key": "b97a1d52561f119d",
+      "url": "https://musicbrainz.org/ws/2/work/39dec7d2-ad21-4824-8127-a015202b10e1?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "71745e04476a16bb"
+    },
+    {
+      "cache_key": "d4fbe52ba00fc675",
+      "url": "https://musicbrainz.org/ws/2/work/ac624eb6-4090-4b3a-be59-b7eac2114ad3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f7e7632084905447"
+    },
+    {
+      "cache_key": "dc37494d359c9e7a",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%BE%8E%E6%B3%A2",
+      "status_code": 200,
+      "body_hash": "1206f45ab37170b5"
+    },
+    {
+      "cache_key": "f4fe7d6122a2f2cf",
+      "url": "https://musicbrainz.org/ws/2/work/29ac9fbd-474b-47e2-8f3c-8d44f0f9e7c9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8f0c3a4bc64cd3bc"
+    }
+  ]
+}
