@@ -1,0 +1,30 @@
+{
+  "test_name": "iris_out_米津玄師",
+  "scenario_id": "9a95699a6ef42a58",
+  "responses": [
+    {
+      "cache_key": "63b574329b32ed9a",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=36aa4a46-5ce3-453b-8306-7c33062a95ea&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "3d7752dba399eb5b"
+    },
+    {
+      "cache_key": "646845505ace9d80",
+      "url": "https://musicbrainz.org/ws/2/work/a814dbc6-cf26-4116-ac14-8635d997825b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "823e4cc107cd80fe"
+    },
+    {
+      "cache_key": "c15e52a69d5ab899",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A09d4a85c-4916-4b4e-bc96-c4cfcf371046%20AND%20(release%3AIRIS%20OUT%20OR%20recording%3AIRIS%20OUT)&limit=100",
+      "status_code": 200,
+      "body_hash": "6076faade6896dca"
+    },
+    {
+      "cache_key": "e4e1d482d3625ce7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%B1%B3%E6%B4%A5%E7%8E%84%E5%B8%AB",
+      "status_code": 200,
+      "body_hash": "12fd4b4f200676c3"
+    }
+  ]
+}
