@@ -1,0 +1,152 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Da-iCE - (2014) FIGHT BACK [FLAC.WEB]/11 Lost Love.flac"
+album = "FIGHT BACK"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "LOST LOVE"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 11
+duration_ms = 191173
+
+[[raw_tags]]
+file_path = "Da-iCE - (2014) FIGHT BACK [FLAC.WEB]/10 Startin' Up.flac"
+album = "FIGHT BACK"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Startin' Up"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 11
+duration_ms = 219680
+
+[[raw_tags]]
+file_path = "Da-iCE - (2014) FIGHT BACK [FLAC.WEB]/9 I Still Love You.flac"
+album = "FIGHT BACK"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "I still love you"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 11
+duration_ms = 289866
+
+[[raw_tags]]
+file_path = "Da-iCE - (2014) FIGHT BACK [FLAC.WEB]/8 Stay.flac"
+album = "FIGHT BACK"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Stay"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 11
+duration_ms = 267173
+
+[[raw_tags]]
+file_path = "Da-iCE - (2014) FIGHT BACK [FLAC.WEB]/7 Did You Know-.flac"
+album = "FIGHT BACK"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Did you know?"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 11
+duration_ms = 223173
+
+[[raw_tags]]
+file_path = "Da-iCE - (2014) FIGHT BACK [FLAC.WEB]/6 Hush Hush.flac"
+album = "FIGHT BACK"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "ハッシュ ハッシュ"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 11
+duration_ms = 214760
+
+[[raw_tags]]
+file_path = "Da-iCE - (2014) FIGHT BACK [FLAC.WEB]/5 Toki.flac"
+album = "FIGHT BACK"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "TOKI"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 11
+duration_ms = 238426
+
+[[raw_tags]]
+file_path = "Da-iCE - (2014) FIGHT BACK [FLAC.WEB]/4 Noise.flac"
+album = "FIGHT BACK"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "Noise"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 11
+duration_ms = 195266
+
+[[raw_tags]]
+file_path = "Da-iCE - (2014) FIGHT BACK [FLAC.WEB]/3 Bomb.flac"
+album = "FIGHT BACK"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "BOMB"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 11
+duration_ms = 187080
+
+[[raw_tags]]
+file_path = "Da-iCE - (2014) FIGHT BACK [FLAC.WEB]/2 Shout It Out.flac"
+album = "FIGHT BACK"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "SHOUT IT OUT"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 11
+duration_ms = 228826
+
+[[raw_tags]]
+file_path = "Da-iCE - (2014) FIGHT BACK [FLAC.WEB]/1 Fight Back.flac"
+album = "FIGHT BACK"
+album_artists = ["Da-iCE"]
+artists = ["Da-iCE"]
+title = "FIGHT BACK"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 11
+duration_ms = 220600
+
+[expect.release]
+ids = { release_id = "2faed80b-8f96-4b30-bbd0-0d97980ad6f4" }
