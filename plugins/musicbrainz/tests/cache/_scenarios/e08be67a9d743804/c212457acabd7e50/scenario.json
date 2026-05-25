@@ -1,0 +1,30 @@
+{
+  "test_name": "アタシは問題作_ado",
+  "scenario_id": "c212457acabd7e50",
+  "responses": [
+    {
+      "cache_key": "27a330d7c002df9d",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=cb11e47f-6496-411c-849d-48b8dbf0bbdc&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "beff9e452b8e1712"
+    },
+    {
+      "cache_key": "9540247bcbf53f6b",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Ado",
+      "status_code": 200,
+      "body_hash": "bceff4bc462d8653"
+    },
+    {
+      "cache_key": "a5d7fcd8ac9511f3",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%A2%E3%82%BF%E3%82%B7%E3%81%AF%E5%95%8F%E9%A1%8C%E4%BD%9C&limit=100",
+      "status_code": 200,
+      "body_hash": "3337fc26516e9ec3"
+    },
+    {
+      "cache_key": "fe637d9db347d6d3",
+      "url": "https://musicbrainz.org/ws/2/work/6a77ad9f-baf7-4fd0-b3c1-5830b24a22ae?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6b95cdfc0b3fab54"
+    }
+  ]
+}
