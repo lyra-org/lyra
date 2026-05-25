@@ -1,0 +1,30 @@
+{
+  "test_name": "utopia_andora",
+  "scenario_id": "690a4ea742e44bdc",
+  "responses": [
+    {
+      "cache_key": "2bba42df6524ec0e",
+      "url": "https://musicbrainz.org/ws/2/work/702a92a8-14ce-4281-8b68-5f16947f2f85?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5f58cd012c344fb7"
+    },
+    {
+      "cache_key": "a1e5f862125ffcbb",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Andora",
+      "status_code": 200,
+      "body_hash": "9161bbe200a2af5d"
+    },
+    {
+      "cache_key": "afa9d9ffbfecdb57",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=dc48efce-9d99-4902-a5d2-1a76cbfc4c8c&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "8a795a5a7e3dcaca"
+    },
+    {
+      "cache_key": "d0b07974396e63e0",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A1c07f1e6-66f6-4bbf-a75b-e99a733d16f1%20AND%20(release%3AUtopia%20OR%20recording%3AUtopia)&limit=100",
+      "status_code": 200,
+      "body_hash": "7701349ae74631b3"
+    }
+  ]
+}
