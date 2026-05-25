@@ -15,7 +15,6 @@ use std::time::{
 use agdb::{
     DbAny,
     DbId,
-    DbType,
     QueryBuilder,
 };
 use nanoid::nanoid;
@@ -36,7 +35,6 @@ use crate::db::{
     DbAccess,
     Release,
     Track,
-    artists::relations::ArtistRelation,
     graph::{
         ensure_owned_edge,
         remove_edges_between,
@@ -149,40 +147,6 @@ fn set_artist_type_if_missing(
     Ok(())
 }
 
-fn ensure_artist_relation(
-    db: &mut impl DbAccess,
-    source_artist_id: DbId,
-    target_artist_id: DbId,
-    relation_type: ArtistRelationType,
-) -> anyhow::Result<()> {
-    let edge_ids = db::graph::direct_edge_ids(db, source_artist_id, target_artist_id)?;
-    if !edge_ids.is_empty() {
-        let result = db.exec(QueryBuilder::select().ids(edge_ids).query())?;
-        for element in result.elements {
-            if let Ok(existing) = ArtistRelation::from_db_element(&element) {
-                if existing.relation_type == relation_type {
-                    return Ok(());
-                }
-            }
-        }
-    }
-
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
-            .from(source_artist_id)
-            .to(target_artist_id)
-            .values_uniform(ArtistRelation {
-                db_id: None,
-                relation_type,
-                attributes: None,
-            })
-            .query(),
-    )?;
-
-    Ok(())
-}
-
 fn sync_scanned_artist_relations(
     db: &mut impl DbAccess,
     relations: &[lyra_metadata::ArtistRelationMetadata],
@@ -202,11 +166,12 @@ fn sync_scanned_artist_relations(
 
         set_artist_type_if_missing(db, source_artist_id, relation.source_artist_type)?;
         set_artist_type_if_missing(db, target_artist_id, relation.target_artist_type)?;
-        ensure_artist_relation(
+        db::artists::relations::link(
             db,
             source_artist_id,
             target_artist_id,
             parsed_relation_type_to_db(relation.relation_type),
+            None,
         )?;
     }
 
