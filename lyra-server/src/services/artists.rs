@@ -27,6 +27,7 @@ use crate::db::{
 use crate::services::entities::{
     ResolvedCreditedArtist,
     TrackCreditedArtistContext,
+    relations,
     resolve_release_credited_artists_map,
     resolve_track_credited_artists_with_context,
 };
@@ -266,6 +267,21 @@ pub(crate) fn list_details_for_artists(
     includes: ArtistIncludes,
     artists: Vec<Artist>,
 ) -> anyhow::Result<Vec<ArtistDetails>> {
+    let artist_ids = relations::db_ids_from_artists(&artists);
+    let owned_entities = relations::artist_owned_entities_by_artist(
+        db,
+        &artist_ids,
+        includes.releases,
+        includes.tracks,
+    )?;
+    let mut releases_by_artist = owned_entities.releases_by_artist;
+    let mut tracks_by_artist = owned_entities.tracks_by_artist;
+    let mut relations_by_artist = if includes.relations {
+        get_relations_many(db, &artist_ids)?
+    } else {
+        HashMap::new()
+    };
+
     let mut details = Vec::with_capacity(artists.len());
 
     for artist in artists {
@@ -275,17 +291,21 @@ pub(crate) fn list_details_for_artists(
             .map(DbId::from)
             .ok_or_else(|| anyhow::anyhow!("artist missing db id"))?;
         let releases = if includes.releases {
-            Some(db::releases::get_by_artist(db, artist_db_id)?)
+            Some(releases_by_artist.remove(&artist_db_id).unwrap_or_default())
         } else {
             None
         };
         let tracks = if includes.tracks {
-            Some(db::tracks::get_by_artist(db, artist_db_id)?)
+            Some(tracks_by_artist.remove(&artist_db_id).unwrap_or_default())
         } else {
             None
         };
         let relations = if includes.relations {
-            Some(get_relations(db, artist_db_id)?)
+            Some(
+                relations_by_artist
+                    .remove(&artist_db_id)
+                    .unwrap_or_default(),
+            )
         } else {
             None
         };
@@ -310,28 +330,9 @@ pub(crate) fn get_details(
         return Ok(None);
     };
 
-    let releases = if includes.releases {
-        Some(db::releases::get_by_artist(db, artist_db_id)?)
-    } else {
-        None
-    };
-    let tracks = if includes.tracks {
-        Some(db::tracks::get_by_artist(db, artist_db_id)?)
-    } else {
-        None
-    };
-    let relations = if includes.relations {
-        Some(get_relations(db, artist_db_id)?)
-    } else {
-        None
-    };
-
-    Ok(Some(ArtistDetails {
-        artist,
-        releases,
-        tracks,
-        relations,
-    }))
+    Ok(list_details_for_artists(db, includes, vec![artist])?
+        .into_iter()
+        .next())
 }
 
 pub(crate) fn update(

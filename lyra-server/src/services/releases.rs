@@ -3,10 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::{
-    HashMap,
-    HashSet,
-};
+use std::collections::HashMap;
 
 use agdb::{
     DbAny,
@@ -25,8 +22,7 @@ use crate::db::{
 
 use super::entities::{
     ResolvedCreditedArtist,
-    resolve_release_credited_artists,
-    resolve_release_credited_artists_map,
+    relations,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -44,78 +40,6 @@ pub(crate) struct ReleaseDetails {
     pub(crate) tracks: Option<Vec<Track>>,
     pub(crate) track_artists: Option<HashMap<DbId, Vec<ResolvedCreditedArtist>>>,
     pub(crate) entries: Option<Vec<Entry>>,
-}
-
-fn collect_entries(db: &DbAny, tracks: &[Track]) -> anyhow::Result<Vec<Entry>> {
-    let mut entries = Vec::new();
-    let mut seen = HashSet::new();
-
-    for track in tracks {
-        let Some(track_db_id) = track.db_id.clone() else {
-            continue;
-        };
-        let track_db_id: DbId = track_db_id.into();
-        for entry in db::entries::get_by_track(db, track_db_id)? {
-            let Some(entry_db_id) = entry.db_id else {
-                continue;
-            };
-            if seen.insert(entry_db_id) {
-                entries.push(entry);
-            }
-        }
-    }
-
-    Ok(entries)
-}
-
-fn hydrate_release(
-    db: &DbAny,
-    release_db_id: DbId,
-    release: Release,
-    includes: ReleaseIncludes,
-) -> anyhow::Result<ReleaseDetails> {
-    let tracks = db::tracks::get(db, release_db_id)?;
-    let artists = if includes.artists {
-        Some(resolve_release_credited_artists(db, release_db_id)?)
-    } else {
-        None
-    };
-    let track_artists = if includes.track_artists {
-        let track_ids: Vec<DbId> = tracks
-            .iter()
-            .filter_map(|t| t.db_id.clone().map(DbId::from))
-            .collect();
-        let releases_map: HashMap<DbId, Vec<Release>> = track_ids
-            .iter()
-            .map(|&tid| (tid, vec![release.clone()]))
-            .collect();
-        let artists_map = artists
-            .as_ref()
-            .map(|a| HashMap::from([(release_db_id, a.clone())]));
-        let ctx = super::entities::TrackCreditedArtistContext {
-            releases_by_track: Some(&releases_map),
-            credited_artists_by_release: artists_map.as_ref(),
-            scope_release_id: Some(release_db_id),
-        };
-        Some(super::entities::resolve_track_credited_artists_with_context(db, &track_ids, &ctx)?)
-    } else {
-        None
-    };
-    let entries = if includes.entries {
-        Some(collect_entries(db, &tracks)?)
-    } else {
-        None
-    };
-    let tracks = if includes.tracks { Some(tracks) } else { None };
-
-    Ok(ReleaseDetails {
-        release_db_id,
-        release,
-        artists,
-        tracks,
-        track_artists,
-        entries,
-    })
 }
 
 pub(crate) fn get(db: &DbAny, id: Option<QueryId>) -> anyhow::Result<Vec<Release>> {
@@ -213,14 +137,20 @@ pub(crate) fn list_details_for_releases(
     includes: ReleaseIncludes,
     releases: Vec<Release>,
 ) -> anyhow::Result<Vec<ReleaseDetails>> {
-    let release_ids: Vec<DbId> = releases
-        .iter()
-        .filter_map(|release| release.db_id.clone().map(DbId::from))
-        .collect();
+    let release_ids = relations::db_ids_from_releases(&releases);
+    let needs_release_tracks = includes.tracks || includes.track_artists || includes.entries;
+    let needs_release_artists = includes.artists || includes.track_artists;
 
-    let mut tracks_by_release = db::tracks::get_direct_many(db, &release_ids)?;
-    let artists_by_release = if includes.artists {
-        Some(resolve_release_credited_artists_map(db, &release_ids)?)
+    let mut tracks_by_release = if needs_release_tracks {
+        relations::release_tracks_by_release(db, &release_ids)?
+    } else {
+        HashMap::new()
+    };
+    let artists_by_release = if needs_release_artists {
+        Some(relations::release_credited_artists_by_release(
+            db,
+            &release_ids,
+        )?)
     } else {
         None
     };
@@ -232,28 +162,29 @@ pub(crate) fn list_details_for_releases(
             .map(DbId::from)
             .ok_or_else(|| anyhow::anyhow!("release missing db id"))?;
 
-        let release_tracks = tracks_by_release.remove(&release_db_id).unwrap_or_default();
+        let release_tracks = if needs_release_tracks {
+            tracks_by_release.remove(&release_db_id).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let artists = artists_by_release
             .as_ref()
+            .filter(|_| includes.artists)
             .map(|m| m.get(&release_db_id).cloned().unwrap_or_default());
         let track_artists = if includes.track_artists {
-            let track_ids: Vec<DbId> = release_tracks
-                .iter()
-                .filter_map(|t| t.db_id.clone().map(DbId::from))
-                .collect();
-            let ctx = super::entities::TrackCreditedArtistContext {
-                releases_by_track: None,
-                credited_artists_by_release: artists_by_release.as_ref(),
-                scope_release_id: Some(release_db_id),
-            };
-            Some(
-                super::entities::resolve_track_credited_artists_with_context(db, &track_ids, &ctx)?,
-            )
+            let track_ids = relations::db_ids_from_tracks(&release_tracks);
+            Some(relations::track_credited_artists_by_track(
+                db,
+                &track_ids,
+                None,
+                artists_by_release.as_ref(),
+                Some(release_db_id),
+            )?)
         } else {
             None
         };
         let entries = if includes.entries {
-            Some(collect_entries(db, &release_tracks)?)
+            Some(relations::unique_entries_for_tracks(db, &release_tracks)?)
         } else {
             None
         };
@@ -285,7 +216,9 @@ pub(crate) fn get_details(
         return Ok(None);
     };
 
-    Ok(Some(hydrate_release(db, release_db_id, release, includes)?))
+    Ok(list_details_for_releases(db, includes, vec![release])?
+        .into_iter()
+        .next())
 }
 
 #[cfg(test)]
