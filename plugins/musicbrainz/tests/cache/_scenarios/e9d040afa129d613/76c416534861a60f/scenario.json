@@ -1,0 +1,30 @@
+{
+  "test_name": "クリームで会いにいけますか_ずっと真夜中でいいのに",
+  "scenario_id": "76c416534861a60f",
+  "responses": [
+    {
+      "cache_key": "0e3d849852cb0267",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=d2fb099b-628f-4bfb-9942-f3e98650ef1f&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "71716efc4a27d899"
+    },
+    {
+      "cache_key": "811f6fd695c139b9",
+      "url": "https://musicbrainz.org/ws/2/artist/14d2a235-30e2-489f-b490-f9dc7d2c0861?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d47fde87dd77c993"
+    },
+    {
+      "cache_key": "9be382afba414c0e",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%AF%E3%83%AA%E3%83%BC%E3%83%A0%E3%81%A7%E4%BC%9A%E3%81%84%E3%81%AB%E3%81%84%E3%81%91%E3%81%BE%E3%81%99%E3%81%8B&limit=100",
+      "status_code": 200,
+      "body_hash": "a4eb9d29d891480d"
+    },
+    {
+      "cache_key": "b55c2c8f136cd473",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%9A%E3%81%A3%E3%81%A8%E7%9C%9F%E5%A4%9C%E4%B8%AD%E3%81%A7%E3%81%84%E3%81%84%E3%81%AE%E3%81%AB%E3%80%82",
+      "status_code": 200,
+      "body_hash": "1aa5805a9fbc3188"
+    }
+  ]
+}
