@@ -1,0 +1,48 @@
+{
+  "test_name": "これからもウォルピス社の提供でお送りします_ウォルピスカーター",
+  "scenario_id": "9ba49ef99be8816b",
+  "responses": [
+    {
+      "cache_key": "32c385a80d1d17cf",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%82%A6%E3%82%A9%E3%83%AB%E3%83%94%E3%82%B9%E3%82%AB%E3%83%BC%E3%82%BF%E3%83%BC",
+      "status_code": 200,
+      "body_hash": "031ea4052d13f787"
+    },
+    {
+      "cache_key": "7faea7cc49d310bc",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=e3e7ead0-d791-474e-9bdb-713752206471&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "039b4f5ac6df3240"
+    },
+    {
+      "cache_key": "7fdb1110fa7b1bb3",
+      "url": "https://musicbrainz.org/ws/2/work/a649e22b-76ad-45b2-b5f5-82ec4fda51c8?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "569d7638b1ed4c19"
+    },
+    {
+      "cache_key": "9ac81036869d6f17",
+      "url": "https://musicbrainz.org/ws/2/work/61392e5b-d180-4ed9-a86f-7b57c7c3fdf8?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "220fcd505f154867"
+    },
+    {
+      "cache_key": "9e13178aea86923d",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%93%E3%82%8C%E3%81%8B%E3%82%89%E3%82%82%E3%82%A6%E3%82%A9%E3%83%AB%E3%83%94%E3%82%B9%E7%A4%BE%E3%81%AE%E6%8F%90%E4%BE%9B%E3%81%A7%E3%81%8A%E9%80%81%E3%82%8A%E3%81%97%E3%81%BE%E3%81%99%E3%80%82&limit=100",
+      "status_code": 200,
+      "body_hash": "fa5031d8bbb702e2"
+    },
+    {
+      "cache_key": "b6ee80e7151943ab",
+      "url": "https://musicbrainz.org/ws/2/work/60da557a-eab5-30e1-afc9-8b3d47cd6877?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e3d595ac8e7811da"
+    },
+    {
+      "cache_key": "f08b75fdc2341343",
+      "url": "https://musicbrainz.org/ws/2/work/3a509c98-16ae-4ebc-a119-7789fbbdf7e4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9034519b5a319fb8"
+    }
+  ]
+}
