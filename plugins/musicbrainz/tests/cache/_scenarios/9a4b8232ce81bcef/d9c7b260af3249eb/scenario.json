@@ -1,0 +1,42 @@
+{
+  "test_name": "蕾_コブクロ",
+  "scenario_id": "d9c7b260af3249eb",
+  "responses": [
+    {
+      "cache_key": "0fc723ca5cf10306",
+      "url": "https://musicbrainz.org/ws/2/artist/1ca30529-e9b1-4478-8455-c885974cb1d7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8e2f8ef246ae4fef"
+    },
+    {
+      "cache_key": "2aa0da912a3a2079",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E8%95%BE&limit=100",
+      "status_code": 200,
+      "body_hash": "31b02049b32f6721"
+    },
+    {
+      "cache_key": "8939f7f703fba917",
+      "url": "https://musicbrainz.org/ws/2/work/025238d5-7cda-4455-a248-c00035e9b48e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f1c554a57623b95e"
+    },
+    {
+      "cache_key": "9cec83560e668cce",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%82%B3%E3%83%96%E3%82%AF%E3%83%AD",
+      "status_code": 200,
+      "body_hash": "5774e5bdb40af4ba"
+    },
+    {
+      "cache_key": "9fa0f2f92c47c17f",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=dc0ff565-b15a-4d06-879f-1fd4d2343579&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "4a9046fda4bf6c08"
+    },
+    {
+      "cache_key": "d2a4b462bef8d843",
+      "url": "https://musicbrainz.org/ws/2/work/b0a8ab20-f8ef-46fc-86ca-01fee9149397?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "67edfb1acaf07760"
+    }
+  ]
+}

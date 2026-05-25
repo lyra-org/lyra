@@ -1,0 +1,42 @@
+{
+  "test_name": "level_sawanohiroyukinzk",
+  "scenario_id": "7abfdc5b4bfa884b",
+  "responses": [
+    {
+      "cache_key": "2cfd5f6916914bb2",
+      "url": "https://musicbrainz.org/ws/2/work/0bb7c140-7ad4-4746-b4d5-6d9a99763b54?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b1d1ca9c64a6ac4c"
+    },
+    {
+      "cache_key": "78b78544e7543a31",
+      "url": "https://musicbrainz.org/ws/2/work/54a8fe8b-7a42-48ba-a1cf-f4a841e1aea6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0ba57622609cbd3f"
+    },
+    {
+      "cache_key": "8839727bcf471880",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=c48b183e-2697-4f95-9652-36ee8058cff6&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "d54a52a6793d1570"
+    },
+    {
+      "cache_key": "ac6c94578eda256e",
+      "url": "https://musicbrainz.org/ws/2/artist?query=SawanoHiroyuki%5BnZk%5D",
+      "status_code": 200,
+      "body_hash": "61128ccb055b731c"
+    },
+    {
+      "cache_key": "fb26b203263f4ceb",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ALEveL&limit=100",
+      "status_code": 200,
+      "body_hash": "f2f79660980409f1"
+    },
+    {
+      "cache_key": "fe9366d4bb6dbc55",
+      "url": "https://musicbrainz.org/ws/2/artist/9d027d72-790e-40ec-bbb7-61aa613457de?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "37aa5250bc75e23d"
+    }
+  ]
+}
