@@ -1,0 +1,302 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[Flying Dog] Sound Holic - Rockman Holic -The 25th Anniversary- (2012) [CD] [FLAC]/16 - Nana Takahashi & 709sec. - Reloaded.flac"
+album = "Rockman Holic -The 25th Anniversary-"
+album_artists = ["Sound Holic"]
+artists = ["Nana Takahashi & 709sec."]
+title = "Reloaded"
+genre = "Eurobeat"
+disc = 1
+disc_total = 1
+track = 16
+track_total = 16
+duration_ms = 256200
+
+[[raw_tags]]
+file_path = "[Flying Dog] Sound Holic - Rockman Holic -The 25th Anniversary- (2012) [CD] [FLAC]/15 - 岸尾だいすけ - 太陽はいつも君のそばに.flac"
+album = "Rockman Holic -The 25th Anniversary-"
+album_artists = ["Sound Holic"]
+artists = ["岸尾だいすけ"]
+title = "太陽はいつも君のそばに"
+genre = "Pop Rock"
+disc = 1
+disc_total = 1
+track = 15
+track_total = 16
+duration_ms = 275493
+
+[[raw_tags]]
+file_path = "[Flying Dog] Sound Holic - Rockman Holic -The 25th Anniversary- (2012) [CD] [FLAC]/14 - 花たん - エアーマンが倒せない (Sound Holic Ver.).flac"
+album = "Rockman Holic -The 25th Anniversary-"
+album_artists = ["Sound Holic"]
+artists = ["花たん"]
+title = "エアーマンが倒せない (Sound Holic Ver.)"
+genre = "JRock"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 16
+duration_ms = 267133
+
+[[raw_tags]]
+file_path = "[Flying Dog] Sound Holic - Rockman Holic -The 25th Anniversary- (2012) [CD] [FLAC]/13 - Zikee - The Last Battle.flac"
+album = "Rockman Holic -The 25th Anniversary-"
+album_artists = ["Sound Holic"]
+artists = ["Zikee"]
+title = "The Last Battle"
+genre = "Trance"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 16
+duration_ms = 285666
+
+[[raw_tags]]
+file_path = "[Flying Dog] Sound Holic - Rockman Holic -The 25th Anniversary- (2012) [CD] [FLAC]/12 - ナノ - Together As One.flac"
+album = "Rockman Holic -The 25th Anniversary-"
+album_artists = ["Sound Holic"]
+artists = ["ナノ"]
+title = "Together As One"
+genre = "Hard Rock"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 16
+duration_ms = 284000
+
+[[raw_tags]]
+file_path = "[Flying Dog] Sound Holic - Rockman Holic -The 25th Anniversary- (2012) [CD] [FLAC]/11 - 森田成一 - Flash In The Dark.flac"
+album = "Rockman Holic -The 25th Anniversary-"
+album_artists = ["Sound Holic"]
+artists = ["森田成一"]
+title = "Flash In The Dark"
+genre = "Metal"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 16
+duration_ms = 225706
+
+[[raw_tags]]
+file_path = "[Flying Dog] Sound Holic - Rockman Holic -The 25th Anniversary- (2012) [CD] [FLAC]/10 - 隣人 - Dr. Wily Number 022.flac"
+album = "Rockman Holic -The 25th Anniversary-"
+album_artists = ["Sound Holic"]
+artists = ["隣人"]
+title = "Dr. Wily Number 022"
+genre = "Trance"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 16
+duration_ms = 340866
+
+[[raw_tags]]
+file_path = "[Flying Dog] Sound Holic - Rockman Holic -The 25th Anniversary- (2012) [CD] [FLAC]/09 - 野沢雅子 - カットマンブルース.flac"
+album = "Rockman Holic -The 25th Anniversary-"
+album_artists = ["Sound Holic"]
+artists = ["野沢雅子"]
+title = "カットマンブルース"
+genre = "JPop"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 16
+duration_ms = 232493
+
+[[raw_tags]]
+file_path = "[Flying Dog] Sound Holic - Rockman Holic -The 25th Anniversary- (2012) [CD] [FLAC]/08 - ゴム - Galaxy Fantasy.flac"
+album = "Rockman Holic -The 25th Anniversary-"
+album_artists = ["Sound Holic"]
+artists = ["ゴム"]
+title = "Galaxy Fantasy"
+genre = "JRock"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 16
+duration_ms = 235706
+
+[[raw_tags]]
+file_path = "[Flying Dog] Sound Holic - Rockman Holic -The 25th Anniversary- (2012) [CD] [FLAC]/07 - Aki - We're The Robots.flac"
+album = "Rockman Holic -The 25th Anniversary-"
+album_artists = ["Sound Holic"]
+artists = ["Aki"]
+title = "We're The Robots"
+genre = "Hard Rock"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 16
+duration_ms = 262640
+
+[[raw_tags]]
+file_path = "[Flying Dog] Sound Holic - Rockman Holic -The 25th Anniversary- (2012) [CD] [FLAC]/06 - 8Style - Blizzard.flac"
+album = "Rockman Holic -The 25th Anniversary-"
+album_artists = ["Sound Holic"]
+artists = ["8Style"]
+title = "Blizzard"
+genre = "Trance"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 16
+duration_ms = 311586
+
+[[raw_tags]]
+file_path = "[Flying Dog] Sound Holic - Rockman Holic -The 25th Anniversary- (2012) [CD] [FLAC]/05 - A～Ya - Napalm Jazz.flac"
+album = "Rockman Holic -The 25th Anniversary-"
+album_artists = ["Sound Holic"]
+artists = ["A～Ya"]
+title = "Napalm Jazz"
+genre = "Jazz"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 16
+duration_ms = 260266
+
+[[raw_tags]]
+file_path = "[Flying Dog] Sound Holic - Rockman Holic -The 25th Anniversary- (2012) [CD] [FLAC]/04 - 709sec. - 黄昏ロンリネス.flac"
+album = "Rockman Holic -The 25th Anniversary-"
+album_artists = ["Sound Holic"]
+artists = ["709sec."]
+title = "黄昏ロンリネス"
+genre = "Hard Rock"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 16
+duration_ms = 230733
+
+[[raw_tags]]
+file_path = "[Flying Dog] Sound Holic - Rockman Holic -The 25th Anniversary- (2012) [CD] [FLAC]/03 - Anporin - Shooting Star.flac"
+album = "Rockman Holic -The 25th Anniversary-"
+album_artists = ["Sound Holic"]
+artists = ["Anporin"]
+title = "Shooting Star"
+genre = "Hard Rock"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 16
+duration_ms = 262000
+
+[[raw_tags]]
+file_path = "[Flying Dog] Sound Holic - Rockman Holic -The 25th Anniversary- (2012) [CD] [FLAC]/02 - Team. Rockman Holic - X-Buster.flac"
+album = "Rockman Holic -The 25th Anniversary-"
+album_artists = ["Sound Holic"]
+artists = ["Team. Rockman Holic"]
+title = "X-Buster"
+genre = "Hard Rock"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 16
+duration_ms = 287200
+
+[[raw_tags]]
+file_path = "[Flying Dog] Sound Holic - Rockman Holic -The 25th Anniversary- (2012) [CD] [FLAC]/01 - Sound Holic - Game Start.flac"
+album = "Rockman Holic -The 25th Anniversary-"
+album_artists = ["Sound Holic"]
+artists = ["Sound Holic"]
+title = "Game Start"
+genre = "Synthpop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 16
+duration_ms = 175840
+
+[expect.release]
+ids = { release_group_id = "a8cecb89-606f-4d71-bd6e-83f183318f5c", release_id = "e0c1597d-e87b-4a4f-8571-55b0a475c513" }
+fields = { release_title = "ROCKMAN HOLIC -the 25th Anniversary-", release_date = "2012-12-19" }
+
+[expect.artists."129a56b7-dc28-4117-8672-6b8e41f554d0"]
+fields = { artist_name = "森田成一", sort_name = "Morita, Masakazu" }
+
+[expect.artists."2592ecf7-cb4e-486b-8af7-4f97731e01b5"]
+fields = { artist_name = "高橋菜々", sort_name = "Takahashi, Nana" }
+
+[expect.artists."3e46dcce-77fe-4fa3-965b-f513189e97e3"]
+fields = { artist_name = "SOUND HOLIC", sort_name = "SOUND HOLIC" }
+
+[expect.artists."7ed5d274-e957-4f04-a6e0-998337e14d53"]
+fields = { artist_name = "aki", sort_name = "aki" }
+
+[expect.artists."8b089567-8879-4d0e-bf24-6f8352b63a16"]
+fields = { artist_name = "ナノ", sort_name = "nano" }
+
+[expect.artists."d53eb473-7906-47a4-b2cd-33d18b06a0ac"]
+fields = { artist_name = "YURiCa/花たん", sort_name = "YURiCa / Hanatan" }
+
+[expect.artists."dbd0f795-da22-415d-ab53-5aa6a6f02a29"]
+fields = { artist_name = "ゴム", sort_name = "Gom" }
+
+[expect.artists."e54e8c7b-503b-4a02-a365-63fc5341daf9"]
+fields = { artist_name = "岸尾だいすけ", sort_name = "Kishio, Daisuke" }
+
+[expect.artists."e5fcad6b-8b77-460e-9a06-c73385716687"]
+fields = { artist_name = "709sec.", sort_name = "709sec." }
+
+[expect.artists."e817ff9d-3e64-4d6a-a27a-47353602617b"]
+fields = { artist_name = "野沢雅子", sort_name = "Nozawa, Masako" }
+
+[expect.artists."e913c383-41cc-414a-a4a6-96745e7d6555"]
+fields = { artist_name = "anporin", sort_name = "anporin" }
+
+[expect.artists."f9513b98-98e1-43ef-baef-f2e4eceba57b"]
+fields = { artist_name = "team. ROCKMAN HOLIC", sort_name = "team. ROCKMAN HOLIC" }
+
+[expect.tracks."04beba40-30d9-4acc-9dfc-05df91ea7ccb"]
+fields = { disc = 1, track = 16, track_title = "RELOADED" }
+
+[expect.tracks."2158acaa-483a-43b8-b02f-15960432103d"]
+fields = { disc = 1, track = 5, track_title = "NAPALM JAZZ" }
+
+[expect.tracks."23884a59-d6bd-4c9c-ad1b-abf62d0654f3"]
+fields = { disc = 1, track = 2, track_title = "X-Buster" }
+
+[expect.tracks."25291cf6-4dbb-4743-a0de-756a3bb2af1f"]
+fields = { disc = 1, track = 6, track_title = "BLIZZARD" }
+
+[expect.tracks."295e754b-960f-4488-a61c-a522e2027893"]
+fields = { disc = 1, track = 1, track_title = "GAME START" }
+
+[expect.tracks."296a4e99-901c-4082-8526-de04cfa29a41"]
+fields = { disc = 1, track = 15, track_title = "太陽はいつも君のそばに" }
+
+[expect.tracks."2fb5f55d-be1c-41b4-9777-5f5230802621"]
+fields = { disc = 1, track = 7, track_title = "We're The Robots" }
+
+[expect.tracks."30264dfe-683e-4e51-85e2-01434baba382"]
+fields = { disc = 1, track = 12, track_title = "Together As One" }
+
+[expect.tracks."5ace505b-f42e-478e-a37b-54d12a23f9f0"]
+fields = { disc = 1, track = 13, track_title = "THE LAST BATTLE" }
+
+[expect.tracks."99c716ad-651d-42e6-a53e-334d56ab8bbb"]
+fields = { disc = 1, track = 11, track_title = "Flash in the Dark" }
+
+[expect.tracks."cdf913df-a996-4a14-88e2-e9aea5097c0f"]
+fields = { disc = 1, track = 3, track_title = "Shooting Star" }
+
+[expect.tracks."cfad504e-123a-431b-ae80-de3bfc005133"]
+fields = { disc = 1, track = 10, track_title = "Dr.Wily Numbers 022" }
+
+[expect.tracks."d7cf0027-d9f9-44ad-9c7c-48ca0d9d5d89"]
+fields = { disc = 1, track = 8, track_title = "GALAXY FANTASY" }
+
+[expect.tracks."d9ea61af-bbda-4b70-addb-1a6b3413877b"]
+fields = { disc = 1, track = 14, track_title = "エアーマンが倒せない (SOUND HOLIC Ver.)" }
+
+[expect.tracks."e89b1ca6-9c02-4452-9fe2-f3802e215735"]
+fields = { disc = 1, track = 4, track_title = "黄昏ロンリネス" }
+
+[expect.tracks."ff841e8e-cb92-4f5a-93c9-33e1749f9551"]
+fields = { disc = 1, track = 9, track_title = "カットマンブルース" }

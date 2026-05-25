@@ -1,0 +1,42 @@
+{
+  "test_name": "just_awakeacceleration_fear",
+  "scenario_id": "20220d18fdc93c29",
+  "responses": [
+    {
+      "cache_key": "17fca5eb835c14aa",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Fear%2C%20And%20Loathing%20In%20Las%20Vegas",
+      "status_code": 200,
+      "body_hash": "27badf00505623ce"
+    },
+    {
+      "cache_key": "4a7c715648643d5f",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=bf345755-3a22-4031-8383-61055d27a85a&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "bd746924b341a5c4"
+    },
+    {
+      "cache_key": "4b40fd254dffc03a",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AJust%20Awake%5C%2FAcceleration&limit=100",
+      "status_code": 200,
+      "body_hash": "beaf907b917d7a03"
+    },
+    {
+      "cache_key": "4ce6aa9219e6dfa0",
+      "url": "https://musicbrainz.org/ws/2/work/cb8b6eb8-2d18-4642-85a6-9e4a9743fa7a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c95faec73e6b2518"
+    },
+    {
+      "cache_key": "6ac511aeb53ca13a",
+      "url": "https://musicbrainz.org/ws/2/artist/6356a6dd-8fa4-4477-8306-a43540d6dfe2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fd70c957567f1747"
+    },
+    {
+      "cache_key": "fb6d1a818bb92b3e",
+      "url": "https://musicbrainz.org/ws/2/work/52c96191-1286-40a5-bf35-eec68ad0be9f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6721e6d0628547b0"
+    }
+  ]
+}
