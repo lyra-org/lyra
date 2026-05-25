@@ -1,0 +1,42 @@
+{
+  "test_name": "starry_night_serenade_エマヴェルデ_cv指出毬亜",
+  "scenario_id": "3942ff068f3c0481",
+  "responses": [
+    {
+      "cache_key": "60bebb3d5c3afb93",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=602049d7-8998-4f80-a9da-44b9ad88bd34&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "823dae10d0e01c05"
+    },
+    {
+      "cache_key": "6d0ffa85945f0505",
+      "url": "https://musicbrainz.org/ws/2/work/67456907-9e82-44ca-ab90-84f6363b72f2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "47ac955cd5df314e"
+    },
+    {
+      "cache_key": "748f41f58b7f6074",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AStarry%20Night%20Serenade&limit=100",
+      "status_code": 200,
+      "body_hash": "cd60761b4db36943"
+    },
+    {
+      "cache_key": "e66ea80a0fb28a27",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%82%A8%E3%83%9E%E3%83%BB%E3%83%B4%E3%82%A7%E3%83%AB%E3%83%87",
+      "status_code": 200,
+      "body_hash": "a6b783be25e0a4c6"
+    },
+    {
+      "cache_key": "e6f1dd203f294e43",
+      "url": "https://musicbrainz.org/ws/2/work/b108ab86-e28c-4a73-a34c-c1e50228704a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d3e88a424951878e"
+    },
+    {
+      "cache_key": "fbfe7de5a37196e5",
+      "url": "https://musicbrainz.org/ws/2/artist/1566c0b0-3a75-4751-9ba3-598447ff484c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cba8e16152ead1dc"
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "test_name": "devil_ビッケブランカ",
+  "scenario_id": "c856d35e04153106",
+  "responses": [
+    {
+      "cache_key": "07120b9ae5aaf82e",
+      "url": "https://musicbrainz.org/ws/2/work/cda87104-0031-4c20-b16e-c6837a36d816?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "68dce8f910cbe8b3"
+    },
+    {
+      "cache_key": "130654c38620640c",
+      "url": "https://musicbrainz.org/ws/2/work/3b961bbd-4428-4f58-a7db-1e96456166be?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b808adf127e3322a"
+    },
+    {
+      "cache_key": "1322059838b1e77a",
+      "url": "https://musicbrainz.org/ws/2/work/1439566e-1009-41fe-989c-63c5eb803a67?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c1f3dd8f4cb31358"
+    },
+    {
+      "cache_key": "1ddd266ecbda1df3",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%93%E3%83%83%E3%82%B1%E3%83%96%E3%83%A9%E3%83%B3%E3%82%AB",
+      "status_code": 200,
+      "body_hash": "3b351def00e3e380"
+    },
+    {
+      "cache_key": "2ca666e6d3b8437d",
+      "url": "https://musicbrainz.org/ws/2/work/0d975f28-83de-4437-9e8a-55601ba9f116?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5f13c4d734c2475d"
+    },
+    {
+      "cache_key": "4a7cc3275858df43",
+      "url": "https://musicbrainz.org/ws/2/work/427dfc5a-8ae0-4be6-b2d9-2f9f2f2ae669?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3dffff92ad634284"
+    },
+    {
+      "cache_key": "7189c2a485adf815",
+      "url": "https://musicbrainz.org/ws/2/work/335d148a-d092-467b-a63b-916356dfd074?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "836303d4db0a72af"
+    },
+    {
+      "cache_key": "7e10a03ee62b4b48",
+      "url": "https://musicbrainz.org/ws/2/work/b1862a0d-b008-422a-83d4-32d6bae4cd05?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2a4a4d8d3c161bdd"
+    },
+    {
+      "cache_key": "825d209fdf9344ff",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ADevil&limit=100",
+      "status_code": 200,
+      "body_hash": "f5c17a2a9f872d58"
+    },
+    {
+      "cache_key": "86f3eeb07ec02e44",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=d231b054-0710-4639-bb29-d7a11cf7648a&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "e3b5bad80ecb8ae0"
+    },
+    {
+      "cache_key": "87cc244a2dd51a60",
+      "url": "https://musicbrainz.org/ws/2/work/7161a1e8-2601-4e0c-a659-d362d85d1ad9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7865cd32c1aa661c"
+    },
+    {
+      "cache_key": "9b2cb6f60ecf66eb",
+      "url": "https://musicbrainz.org/ws/2/work/08468d9b-d52e-475f-9e4e-3fdd6e3c5718?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "402e10717a3b5ae5"
+    },
+    {
+      "cache_key": "c3de79f9a522d758",
+      "url": "https://musicbrainz.org/ws/2/work/d19f3f61-eed5-4a66-a2f4-76d0a1b1308a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f3d0e48dd55e000e"
+    },
+    {
+      "cache_key": "f3612e78b375639b",
+      "url": "https://musicbrainz.org/ws/2/work/1777b926-aedb-4e5f-ad94-d9cc426e074c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6947709e713db53e"
+    }
+  ]
+}
