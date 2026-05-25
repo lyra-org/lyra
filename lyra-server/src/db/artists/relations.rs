@@ -24,6 +24,7 @@ use serde::{
 };
 
 use super::super::{
+    DbAccess,
     DbAny,
     NodeId,
 };
@@ -106,12 +107,61 @@ impl_luau_record_userdata!(
 );
 
 pub(crate) fn link(
-    db: &mut DbAny,
+    db: &mut impl DbAccess,
     from_artist_id: DbId,
     to_artist_id: DbId,
     relation_type: ArtistRelationType,
     attributes: Option<String>,
 ) -> anyhow::Result<DbId> {
+    let edge_ids = super::super::graph::direct_edge_ids(db, from_artist_id, to_artist_id)?;
+    let mut existing_edge_id = None;
+    let mut duplicate_edge_ids = Vec::new();
+
+    if !edge_ids.is_empty() {
+        let result = db.exec(QueryBuilder::select().ids(&edge_ids).query())?;
+        for element in result.elements {
+            let Ok(existing) = ArtistRelation::from_db_element(&element) else {
+                continue;
+            };
+            if existing.relation_type != relation_type {
+                continue;
+            }
+            if existing_edge_id.is_some() {
+                duplicate_edge_ids.push(element.id);
+            } else {
+                existing_edge_id = Some(element.id);
+            }
+        }
+    }
+
+    if let Some(edge_id) = existing_edge_id {
+        if !duplicate_edge_ids.is_empty() {
+            db.exec_mut(QueryBuilder::remove().ids(&duplicate_edge_ids).query())?;
+        }
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .ids(edge_id)
+                .from(from_artist_id)
+                .to(to_artist_id)
+                .values_uniform(ArtistRelation {
+                    db_id: None,
+                    relation_type,
+                    attributes: attributes.clone(),
+                })
+                .query(),
+        )?;
+        if attributes.is_none() {
+            db.exec_mut(
+                QueryBuilder::remove()
+                    .values(["attributes".to_string()])
+                    .ids(edge_id)
+                    .query(),
+            )?;
+        }
+        return Ok(edge_id);
+    }
+
     let result = db.exec_mut(
         QueryBuilder::insert()
             .edges()
@@ -229,6 +279,87 @@ mod tests {
         insert_artist,
         new_test_db,
     };
+
+    #[test]
+    fn link_reuses_existing_relation_edge() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let voice_actor_id = insert_artist(&mut db, "Voice Actor")?;
+        let character_id = insert_artist(&mut db, "Character")?;
+
+        let first_edge_id = link(
+            &mut db,
+            voice_actor_id,
+            character_id,
+            ArtistRelationType::VoiceActor,
+            Some("lead".to_string()),
+        )?;
+        let second_edge_id = link(
+            &mut db,
+            voice_actor_id,
+            character_id,
+            ArtistRelationType::VoiceActor,
+            Some("main".to_string()),
+        )?;
+
+        assert_eq!(second_edge_id, first_edge_id);
+        let relations =
+            get_relations_from(&db, voice_actor_id, Some(ArtistRelationType::VoiceActor))?;
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].0.attributes.as_deref(), Some("main"));
+
+        let third_edge_id = link(
+            &mut db,
+            voice_actor_id,
+            character_id,
+            ArtistRelationType::VoiceActor,
+            None,
+        )?;
+
+        assert_eq!(third_edge_id, first_edge_id);
+        let relations =
+            get_relations_from(&db, voice_actor_id, Some(ArtistRelationType::VoiceActor))?;
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].0.attributes, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn link_removes_duplicate_relation_edges() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let voice_actor_id = insert_artist(&mut db, "Voice Actor")?;
+        let character_id = insert_artist(&mut db, "Character")?;
+
+        for attributes in [Some("first".to_string()), Some("second".to_string())] {
+            db.exec_mut(
+                QueryBuilder::insert()
+                    .edges()
+                    .from(voice_actor_id)
+                    .to(character_id)
+                    .values_uniform(ArtistRelation {
+                        db_id: None,
+                        relation_type: ArtistRelationType::VoiceActor,
+                        attributes,
+                    })
+                    .query(),
+            )?;
+        }
+
+        link(
+            &mut db,
+            voice_actor_id,
+            character_id,
+            ArtistRelationType::VoiceActor,
+            Some("canonical".to_string()),
+        )?;
+
+        let relations =
+            get_relations_from(&db, voice_actor_id, Some(ArtistRelationType::VoiceActor))?;
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].0.attributes.as_deref(), Some("canonical"));
+
+        Ok(())
+    }
 
     #[test]
     fn get_related_targets_from_many_filters_by_relation_and_target() -> anyhow::Result<()> {
