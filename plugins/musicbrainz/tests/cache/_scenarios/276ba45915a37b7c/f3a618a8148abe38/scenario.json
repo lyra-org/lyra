@@ -1,0 +1,30 @@
+{
+  "test_name": "road_of_resistance_babymetal",
+  "scenario_id": "f3a618a8148abe38",
+  "responses": [
+    {
+      "cache_key": "13748eb7ddaf994e",
+      "url": "https://musicbrainz.org/ws/2/artist/27e2997f-f7a1-4353-bcc4-57b9274fa9a4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "76fe2a6df35ae52e"
+    },
+    {
+      "cache_key": "18f223720a28e673",
+      "url": "https://musicbrainz.org/ws/2/artist?query=BABYMETAL",
+      "status_code": 200,
+      "body_hash": "78eecfe2d4100614"
+    },
+    {
+      "cache_key": "18fc4d9dd0241800",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A27e2997f-f7a1-4353-bcc4-57b9274fa9a4%20AND%20(release%3ARoad%20of%20Resistance%20OR%20recording%3ARoad%20of%20Resistance)&limit=100",
+      "status_code": 200,
+      "body_hash": "fcb33b4917f796b0"
+    },
+    {
+      "cache_key": "2051c82d51d276e3",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=11494d05-7a5d-45f0-8f02-33162f8fc782&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "eaa626ba45e4c42c"
+    }
+  ]
+}
