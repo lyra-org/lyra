@@ -2528,10 +2528,10 @@ function helpers.needs_artist_relation_enrichment(options: ItemsQueryOptions): b
 end
 
 local RUST_SORT_TOKEN_MAP: { [string]: string? } = {
-	sortname = "sortname",
+	sortname = "sort_name",
 	name = "name",
-	datecreated = "datecreated",
-	premieredate = "releasedate",
+	datecreated = "date_created",
+	premieredate = "release_date",
 	indexnumber = "track",
 	parentindexnumber = "disc",
 	runtime = "duration",

@@ -364,22 +364,6 @@ pub(crate) fn get_aliases(db: &impl DbAccess, genre_id: DbId) -> anyhow::Result<
     Ok(aliases)
 }
 
-pub(crate) fn get_all(db: &impl DbAccess) -> anyhow::Result<Vec<Genre>> {
-    let genres: Vec<Genre> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<Genre>()
-                .search()
-                .from("genres")
-                .where_()
-                .distance(agdb::CountComparison::Equal(2))
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
-    Ok(genres)
-}
-
 /// Get a single genre by its database ID.
 pub(crate) fn get_by_id(db: &impl DbAccess, genre_id: DbId) -> anyhow::Result<Option<Genre>> {
     super::graph::fetch_typed_by_id(db, genre_id, "Genre")
@@ -396,16 +380,29 @@ pub(crate) fn get_names_for_release(
     Ok(Some(genres.into_iter().map(|g| g.name).collect()))
 }
 
+#[cfg(test)]
 pub(crate) fn release_ids_matching_genres(
     db: &impl DbAccess,
     genre_names: &[String],
 ) -> anyhow::Result<HashSet<DbId>> {
-    let mut release_ids = HashSet::new();
+    let mut genre_ids = Vec::new();
     for name in genre_names {
         let genre_id = find_by_name(db, name)?.or(find_by_alias(db, name)?);
         let Some(genre_id) = genre_id else {
             continue;
         };
+        genre_ids.push(genre_id);
+    }
+
+    release_ids_matching_genre_ids(db, &genre_ids)
+}
+
+pub(crate) fn release_ids_matching_genre_ids(
+    db: &impl DbAccess,
+    genre_ids: &[DbId],
+) -> anyhow::Result<HashSet<DbId>> {
+    let mut release_ids = HashSet::new();
+    for genre_id in super::dedup_positive_ids(genre_ids) {
         let releases: Vec<super::Release> = db
             .exec(
                 QueryBuilder::select()
@@ -512,9 +509,6 @@ pub(crate) fn get_for_releases_many(
         let mut release_genre_ids = Vec::new();
         for edge in edges.elements {
             let genre_id = edge.from;
-            if genre_id.0 == 0 {
-                continue;
-            }
             if genre_id.0 <= 0 {
                 continue;
             }

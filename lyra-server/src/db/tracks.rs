@@ -440,7 +440,7 @@ fn compare_track_field(a: &TrackSortEntry, b: &TrackSortEntry, key: SortKey) -> 
         SortKey::Name => a.lower_title.cmp(&b.lower_title),
         SortKey::DateCreated => compare_option(&a.date_created, &b.date_created),
         SortKey::TrackNumber => compare_option(&a.track_number, &b.track_number),
-        SortKey::DiscNumber => compare_option(&a.disc_number, &b.disc_number),
+        SortKey::DiscNumber => a.disc_number.unwrap_or(1).cmp(&b.disc_number.unwrap_or(1)),
         SortKey::Duration => compare_option(&a.duration, &b.duration),
         SortKey::DbId => compare_option(&a.db_id, &b.db_id),
         SortKey::ReleaseDate => Ordering::Equal,
