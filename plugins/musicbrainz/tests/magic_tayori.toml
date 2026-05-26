@@ -1,0 +1,223 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2025.10.08] tayori - magic [FLAC+CUE+LOG][WPZL-32251]/14 砂の城.flac"
+album = "magic"
+album_artists = ["tayori"]
+artists = ["tayori"]
+title = "砂の城"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 14
+duration_ms = 241453
+
+[[raw_tags]]
+file_path = "[2025.10.08] tayori - magic [FLAC+CUE+LOG][WPZL-32251]/13 薔薇の下で.flac"
+album = "magic"
+album_artists = ["tayori"]
+artists = ["tayori"]
+title = "薔薇の下で"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 14
+duration_ms = 272560
+
+[[raw_tags]]
+file_path = "[2025.10.08] tayori - magic [FLAC+CUE+LOG][WPZL-32251]/12 琥珀の国.flac"
+album = "magic"
+album_artists = ["tayori"]
+artists = ["tayori"]
+title = "琥珀の国"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 14
+duration_ms = 243626
+
+[[raw_tags]]
+file_path = "[2025.10.08] tayori - magic [FLAC+CUE+LOG][WPZL-32251]/11 ユートピア.flac"
+album = "magic"
+album_artists = ["tayori"]
+artists = ["tayori"]
+title = "ユートピア"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 14
+duration_ms = 216346
+
+[[raw_tags]]
+file_path = "[2025.10.08] tayori - magic [FLAC+CUE+LOG][WPZL-32251]/10 方舟.flac"
+album = "magic"
+album_artists = ["tayori"]
+artists = ["tayori"]
+title = "方舟"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 14
+duration_ms = 256600
+
+[[raw_tags]]
+file_path = "[2025.10.08] tayori - magic [FLAC+CUE+LOG][WPZL-32251]/09 Stargazer.flac"
+album = "magic"
+album_artists = ["tayori"]
+artists = ["tayori"]
+title = "Stargazer"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 14
+duration_ms = 210746
+
+[[raw_tags]]
+file_path = "[2025.10.08] tayori - magic [FLAC+CUE+LOG][WPZL-32251]/08 月の唄.flac"
+album = "magic"
+album_artists = ["tayori"]
+artists = ["tayori"]
+title = "月の唄"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 14
+duration_ms = 244333
+
+[[raw_tags]]
+file_path = "[2025.10.08] tayori - magic [FLAC+CUE+LOG][WPZL-32251]/07 ポケットサイズロケット.flac"
+album = "magic"
+album_artists = ["tayori"]
+artists = ["tayori"]
+title = "ポケットサイズロケット"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 14
+duration_ms = 168866
+
+[[raw_tags]]
+file_path = "[2025.10.08] tayori - magic [FLAC+CUE+LOG][WPZL-32251]/06 ワンダー.flac"
+album = "magic"
+album_artists = ["tayori"]
+artists = ["tayori"]
+title = "ワンダー"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 14
+duration_ms = 227053
+
+[[raw_tags]]
+file_path = "[2025.10.08] tayori - magic [FLAC+CUE+LOG][WPZL-32251]/05 遠雷.flac"
+album = "magic"
+album_artists = ["tayori"]
+artists = ["tayori"]
+title = "遠雷"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 14
+duration_ms = 225706
+
+[[raw_tags]]
+file_path = "[2025.10.08] tayori - magic [FLAC+CUE+LOG][WPZL-32251]/04 可惜夜.flac"
+album = "magic"
+album_artists = ["tayori"]
+artists = ["tayori"]
+title = "可惜夜"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 14
+duration_ms = 241026
+
+[[raw_tags]]
+file_path = "[2025.10.08] tayori - magic [FLAC+CUE+LOG][WPZL-32251]/03 ゴースト.flac"
+album = "magic"
+album_artists = ["tayori"]
+artists = ["tayori"]
+title = "ゴースト"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 14
+duration_ms = 230640
+
+[[raw_tags]]
+file_path = "[2025.10.08] tayori - magic [FLAC+CUE+LOG][WPZL-32251]/02 魔法.flac"
+album = "magic"
+album_artists = ["tayori"]
+artists = ["tayori"]
+title = "魔法"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 14
+duration_ms = 274026
+
+[[raw_tags]]
+file_path = "[2025.10.08] tayori - magic [FLAC+CUE+LOG][WPZL-32251]/01 envision.flac"
+album = "magic"
+album_artists = ["tayori"]
+artists = ["tayori"]
+title = "envision"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 14
+duration_ms = 119586
+
+[expect.release]
+ids = { release_id = "f010b5c8-d535-4487-8022-050ebe09ac04" }
+fields = { release_title = "magic", release_date = "2025-09-24" }
+
+[expect.artists."fdfd04bd-f124-4d38-a219-1ad1e8714b9c"]
+fields = { artist_name = "tayori", sort_name = "tayori" }
+
+[expect.tracks."012aa512-ea8f-4f97-831a-c361b0754028"]
+fields = { disc = 1, track = 3, track_title = "ゴースト" }
+
+[expect.tracks."1a35d1cb-4cc0-4287-90a5-827e3c977ec4"]
+fields = { disc = 1, track = 13, track_title = "薔薇の下で" }
+
+[expect.tracks."3578cc86-1b4d-4204-b4aa-5aee6cc84f6c"]
+fields = { disc = 1, track = 1, track_title = "envision" }
+
+[expect.tracks."471e0d03-f168-4e4e-99d0-e47545a2cdfd"]
+fields = { disc = 1, track = 4, track_title = "可惜夜" }
+
+[expect.tracks."513c1906-65a8-48a7-b782-b8a9401fde2f"]
+fields = { disc = 1, track = 12, track_title = "琥珀の国" }
+
+[expect.tracks."536c7939-ca0c-4414-86cc-5621bb3e775c"]
+fields = { disc = 1, track = 7, track_title = "ポケットサイズロケット" }
+
+[expect.tracks."7bbff0c4-a7d0-4524-b009-af703ba17e28"]
+fields = { disc = 1, track = 5, track_title = "遠雷" }
+
+[expect.tracks."9be3153e-fe37-46a0-816d-92e12f497dd9"]
+fields = { disc = 1, track = 10, track_title = "方舟" }
+
+[expect.tracks."ab4f785c-458e-47f0-921e-3d2e1b4bba38"]
+fields = { disc = 1, track = 14, track_title = "砂の城" }
+
+[expect.tracks."b280c69e-cfc1-40c2-aa09-1208453ed3c3"]
+fields = { disc = 1, track = 11, track_title = "ユートピア" }
+
+[expect.tracks."b82409f7-a0cb-4c49-9cfd-d9a1d272e79a"]
+fields = { disc = 1, track = 6, track_title = "ワンダー" }
+
+[expect.tracks."e33567eb-f1da-475e-9caf-31809c608d33"]
+fields = { disc = 1, track = 9, track_title = "Stargazer" }
+
+[expect.tracks."e4b9c6e9-9e6a-47d1-a381-ced010a49f22"]
+fields = { disc = 1, track = 8, track_title = "月の唄" }
+
+[expect.tracks."f069c35e-3bd2-407a-88c6-078b675c87c4"]
+fields = { disc = 1, track = 2, track_title = "魔法" }
