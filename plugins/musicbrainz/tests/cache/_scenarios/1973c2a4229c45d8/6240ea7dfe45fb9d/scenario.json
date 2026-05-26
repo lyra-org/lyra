@@ -1,0 +1,66 @@
+{
+  "test_name": "メリー_鹿乃",
+  "scenario_id": "6240ea7dfe45fb9d",
+  "responses": [
+    {
+      "cache_key": "01fb91c036722296",
+      "url": "https://musicbrainz.org/ws/2/work/6aebfbb7-924a-47fb-afa4-3830f5f512bd?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "952b24de2277d8fa"
+    },
+    {
+      "cache_key": "0f88ef22951c767f",
+      "url": "https://musicbrainz.org/ws/2/work/e61a320d-ae09-4ce4-a469-a87f0f4e7ef5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f9c02b18dcbcc7bb"
+    },
+    {
+      "cache_key": "1f991aef7315725f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E9%B9%BF%E4%B9%83",
+      "status_code": 200,
+      "body_hash": "16f493fd923d421d"
+    },
+    {
+      "cache_key": "354c117571819af2",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=1a910ac7-e646-4e80-a01e-56d9ce08ec91&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "1310e8a26669338f"
+    },
+    {
+      "cache_key": "513783b66b53ff5c",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%83%A1%E3%83%AA%E3%83%BC&limit=100",
+      "status_code": 200,
+      "body_hash": "22d02cbe76a9eb0d"
+    },
+    {
+      "cache_key": "5332ac9d0db235c1",
+      "url": "https://musicbrainz.org/ws/2/work/6c327fcb-62d7-4025-b6d9-51e86fa40c48?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "dc6297d09e3a8389"
+    },
+    {
+      "cache_key": "6a3046da54f4a747",
+      "url": "https://musicbrainz.org/ws/2/work/df9dfdac-1778-4359-877e-6a19a00e3504?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "724cd5da6d3d01de"
+    },
+    {
+      "cache_key": "8677fab6f7508fe0",
+      "url": "https://musicbrainz.org/ws/2/work/e22787d1-a53b-487f-b1ba-ab54b2611496?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5725d17215fa7266"
+    },
+    {
+      "cache_key": "cfc9553cf9a96a82",
+      "url": "https://musicbrainz.org/ws/2/work/5f75a985-91af-466f-969e-f374f6a514dd?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0e2df8f72d44c765"
+    },
+    {
+      "cache_key": "fcc8a92f762720b3",
+      "url": "https://musicbrainz.org/ws/2/work/dbb876bd-264f-47de-a672-a343b032b269?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e3ec4693beaaa7cc"
+    }
+  ]
+}
