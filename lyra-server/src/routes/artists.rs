@@ -802,6 +802,7 @@ pub fn artist_routes() -> Router {
     Router::new()
         .route("/", get(get_artists))
         .route("/{id}", get(get_artist))
+        .route("/{id}/mix", get(super::mix::get_artist_mix))
         .route("/{id}/covers/search", post(search_artist_covers))
         .route("/{id}", patch(update_artist))
 }
@@ -817,6 +818,10 @@ pub(crate) fn artist_openapi_routes() -> aide::axum::ApiRouter {
     aide::axum::ApiRouter::new()
         .api_route("/", get_with(get_artists, list_artists_docs))
         .api_route("/{id}", get_with(get_artist, get_artist_docs))
+        .api_route(
+            "/{id}/mix",
+            get_with(super::mix::get_artist_mix, super::mix::artist_mix_docs),
+        )
         .api_route(
             "/{id}/covers/search",
             post_with(search_artist_covers, search_artist_covers_docs),

@@ -9,12 +9,11 @@ use std::collections::HashMap;
 use aide::transform::TransformOperation;
 use axum::{
     Json,
-    extract::Query,
+    extract::{
+        Path,
+        Query,
+    },
     http::HeaderMap,
-};
-use axum::{
-    Router,
-    routing::get,
 };
 use serde::Deserialize;
 
@@ -28,46 +27,21 @@ use crate::{
         tracks as route_tracks,
     },
     services::{
-        auth::require_principal,
-        mix,
+        auth::{
+            Principal,
+            require_principal,
+        },
+        mix::{
+            self,
+            MixSeed,
+        },
         tracks as track_service,
     },
 };
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
-struct MixQuery {
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Seed track ID to generate a mix from.")
-    )]
-    seed_track: Option<String>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Seed release ID to generate a mix from.")
-    )]
-    seed_release: Option<String>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Seed artist ID to generate a mix from.")
-    )]
-    seed_artist: Option<String>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Seed genre ID to generate a mix from.")
-    )]
-    seed_genre: Option<String>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Seed playlist ID to generate a mix from.")
-    )]
-    seed_playlist: Option<String>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Seed from recent listen history.")
-    )]
-    #[serde(default)]
-    seed_recent: bool,
+pub(crate) struct MixQueryParams {
     #[cfg_attr(
         feature = "docgen",
         schemars(description = "Maximum number of tracks to return (default 200).")
@@ -81,16 +55,23 @@ struct MixQuery {
     )]
     #[serde(default, deserialize_with = "routes::deserialize_inc")]
     inc: Option<Vec<String>>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(
-            description = "When seeding from a track, pin the seed at index 0 (default true). Ignored for other seed types. Pass `false` for an unpinned shuffled mix."
-        )
-    )]
-    instant: Option<bool>,
     #[serde(flatten)]
     #[cfg_attr(feature = "docgen", schemars(skip))]
     extra: HashMap<String, String>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+pub(crate) struct TrackMixQueryParams {
+    #[serde(flatten)]
+    base: MixQueryParams,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Pin the seed track at index 0 (default true). Pass `false` for a fully shuffled unpinned mix."
+        )
+    )]
+    instant: Option<bool>,
 }
 
 /// Track-seeded mixes default to instant (seed pinned first).
@@ -98,30 +79,8 @@ fn track_seed_use_instant(instant: Option<bool>) -> bool {
     instant.unwrap_or(true)
 }
 
-async fn get_mix(
-    headers: HeaderMap,
-    Query(query): Query<MixQuery>,
-) -> Result<Json<Vec<TrackResponse>>, AppError> {
-    let principal = require_principal(&headers).await?;
-
-    let seed_count = query.seed_track.is_some() as u8
-        + query.seed_release.is_some() as u8
-        + query.seed_artist.is_some() as u8
-        + query.seed_genre.is_some() as u8
-        + query.seed_playlist.is_some() as u8
-        + query.seed_recent as u8;
-    if seed_count == 0 {
-        return Err(AppError::bad_request(
-            "one of seed_track, seed_release, seed_artist, seed_genre, seed_playlist, or seed_recent is required".to_string(),
-        ));
-    }
-    if seed_count > 1 {
-        return Err(AppError::bad_request(
-            "provide exactly one of seed_track, seed_release, seed_artist, seed_genre, seed_playlist, or seed_recent"
-                .to_string(),
-        ));
-    }
-    if let Some(limit) = query.limit {
+fn validate_limit(limit: Option<usize>) -> Result<(), AppError> {
+    if let Some(limit) = limit {
         if limit == 0 {
             return Err(AppError::bad_request("limit must be > 0".to_string()));
         }
@@ -132,74 +91,145 @@ async fn get_mix(
             )));
         }
     }
+    Ok(())
+}
 
-    let options = mix::MixOptions {
+fn mix_options(query: &MixQueryParams, principal: &Principal) -> mix::MixOptions {
+    mix::MixOptions {
         limit: query.limit,
         viewer: Some(principal.user_db_id),
-        extra: sanitize_extra(query.extra),
-    };
+        extra: sanitize_extra(query.extra.clone()),
+    }
+}
 
-    // Service enforces existence + type; `verify_id_stable` catches DbId reuse.
-    let result = if let Some(ref id) = query.seed_track {
-        let db_id = resolve_accessible_seed_id(id, "track", &principal).await?;
-        let mix_result = if track_seed_use_instant(query.instant) {
-            mix::instant_mix_from_audio(db_id, &options).await?
-        } else {
-            mix::from_seed(mix::MixSeed::Track(db_id), &options).await?
-        };
-        verify_id_stable(id, db_id, "track").await?;
-        mix_result.ok_or_else(|| AppError::not_found(format!("track not found: {id}")))?
-    } else if let Some(ref id) = query.seed_release {
-        let db_id = resolve_accessible_seed_id(id, "release", &principal).await?;
-        let mix_result = mix::from_seed(mix::MixSeed::Release(db_id), &options).await?;
-        verify_id_stable(id, db_id, "release").await?;
-        mix_result.ok_or_else(|| AppError::not_found(format!("release not found: {id}")))?
-    } else if let Some(ref id) = query.seed_artist {
-        let db_id = resolve_accessible_seed_id(id, "artist", &principal).await?;
-        let mix_result = mix::from_seed(mix::MixSeed::Artist(db_id), &options).await?;
-        verify_id_stable(id, db_id, "artist").await?;
-        mix_result.ok_or_else(|| AppError::not_found(format!("artist not found: {id}")))?
-    } else if let Some(ref id) = query.seed_genre {
-        let db_id = resolve_seed_id(id, "genre").await?;
-        let mix_result = mix::from_seed(mix::MixSeed::Genre(db_id), &options).await?;
-        verify_id_stable(id, db_id, "genre").await?;
-        mix_result.ok_or_else(|| AppError::not_found(format!("genre not found: {id}")))?
-    } else if let Some(ref id) = query.seed_playlist {
-        let db_id = resolve_seed_id(id, "playlist").await?;
-        {
-            let db = STATE.db.read().await;
-            if !routes::playlist_accessible_to_principal(&*db, &principal, db_id)? {
-                return Err(AppError::not_found(format!("playlist not found: {id}")));
-            }
-        }
-        let mix_result = mix::from_seed(mix::MixSeed::Playlist(db_id), &options).await?;
-        verify_id_stable(id, db_id, "playlist").await?;
-        mix_result.ok_or_else(|| AppError::not_found(format!("playlist not found: {id}")))?
-    } else if query.seed_recent {
-        // Seed is the authenticated user — no public-id round-trip.
-        mix::from_seed(
-            mix::MixSeed::Recent {
-                user_db_id: principal.user_db_id,
-            },
-            &options,
-        )
-        .await?
-        .ok_or_else(|| AppError::not_found("user not found".to_string()))?
-    } else {
-        unreachable!()
-    };
-
-    let result = filter_accessible_tracks(&principal, result).await?;
-    let includes = route_tracks::parse_inc(query.inc)?;
+async fn render_mix_response(
+    principal: &Principal,
+    query: &MixQueryParams,
+    tracks: Vec<db::Track>,
+) -> Result<Json<Vec<TrackResponse>>, AppError> {
+    let tracks = filter_accessible_tracks(principal, tracks).await?;
+    let includes = route_tracks::parse_inc(query.inc.clone())?;
     let responses: Vec<TrackResponse> = {
         let db = &*STATE.db.read().await;
-        let details = track_service::list_details_for_tracks(db, includes.service, result)?;
+        let details = track_service::list_details_for_tracks(db, includes.service, tracks)?;
         details
             .into_iter()
             .map(|detail| route_tracks::track_detail_to_response(db, detail, includes))
             .collect::<anyhow::Result<Vec<_>>>()?
     };
     Ok(Json(responses))
+}
+
+pub(crate) async fn get_track_mix(
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(query): Query<TrackMixQueryParams>,
+) -> Result<Json<Vec<TrackResponse>>, AppError> {
+    let principal = require_principal(&headers).await?;
+    validate_limit(query.base.limit)?;
+
+    let db_id = resolve_accessible_seed_id(&id, "track", &principal).await?;
+    let options = mix_options(&query.base, &principal);
+    let mix_result = if track_seed_use_instant(query.instant) {
+        mix::instant_mix_from_audio(db_id, &options).await?
+    } else {
+        mix::from_seed(MixSeed::Track(db_id), &options).await?
+    };
+    verify_id_stable(&id, db_id, "track").await?;
+    let tracks = mix_result.ok_or_else(|| AppError::not_found(format!("track not found: {id}")))?;
+    render_mix_response(&principal, &query.base, tracks).await
+}
+
+pub(crate) async fn get_release_mix(
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(query): Query<MixQueryParams>,
+) -> Result<Json<Vec<TrackResponse>>, AppError> {
+    let principal = require_principal(&headers).await?;
+    validate_limit(query.limit)?;
+
+    let db_id = resolve_accessible_seed_id(&id, "release", &principal).await?;
+    let options = mix_options(&query, &principal);
+    let mix_result = mix::from_seed(MixSeed::Release(db_id), &options).await?;
+    verify_id_stable(&id, db_id, "release").await?;
+    let tracks =
+        mix_result.ok_or_else(|| AppError::not_found(format!("release not found: {id}")))?;
+    render_mix_response(&principal, &query, tracks).await
+}
+
+pub(crate) async fn get_artist_mix(
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(query): Query<MixQueryParams>,
+) -> Result<Json<Vec<TrackResponse>>, AppError> {
+    let principal = require_principal(&headers).await?;
+    validate_limit(query.limit)?;
+
+    let db_id = resolve_accessible_seed_id(&id, "artist", &principal).await?;
+    let options = mix_options(&query, &principal);
+    let mix_result = mix::from_seed(MixSeed::Artist(db_id), &options).await?;
+    verify_id_stable(&id, db_id, "artist").await?;
+    let tracks =
+        mix_result.ok_or_else(|| AppError::not_found(format!("artist not found: {id}")))?;
+    render_mix_response(&principal, &query, tracks).await
+}
+
+pub(crate) async fn get_genre_mix(
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(query): Query<MixQueryParams>,
+) -> Result<Json<Vec<TrackResponse>>, AppError> {
+    let principal = require_principal(&headers).await?;
+    validate_limit(query.limit)?;
+
+    let db_id = resolve_seed_id(&id, "genre").await?;
+    let options = mix_options(&query, &principal);
+    let mix_result = mix::from_seed(MixSeed::Genre(db_id), &options).await?;
+    verify_id_stable(&id, db_id, "genre").await?;
+    let tracks = mix_result.ok_or_else(|| AppError::not_found(format!("genre not found: {id}")))?;
+    render_mix_response(&principal, &query, tracks).await
+}
+
+pub(crate) async fn get_playlist_mix(
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(query): Query<MixQueryParams>,
+) -> Result<Json<Vec<TrackResponse>>, AppError> {
+    let principal = require_principal(&headers).await?;
+    validate_limit(query.limit)?;
+
+    let db_id = resolve_seed_id(&id, "playlist").await?;
+    {
+        let db = STATE.db.read().await;
+        if !routes::playlist_accessible_to_principal(&*db, &principal, db_id)? {
+            return Err(AppError::not_found(format!("playlist not found: {id}")));
+        }
+    }
+    let options = mix_options(&query, &principal);
+    let mix_result = mix::from_seed(MixSeed::Playlist(db_id), &options).await?;
+    verify_id_stable(&id, db_id, "playlist").await?;
+    let tracks =
+        mix_result.ok_or_else(|| AppError::not_found(format!("playlist not found: {id}")))?;
+    render_mix_response(&principal, &query, tracks).await
+}
+
+pub(crate) async fn get_me_mix(
+    headers: HeaderMap,
+    Query(query): Query<MixQueryParams>,
+) -> Result<Json<Vec<TrackResponse>>, AppError> {
+    let principal = require_principal(&headers).await?;
+    validate_limit(query.limit)?;
+
+    let options = mix_options(&query, &principal);
+    let tracks = mix::from_seed(
+        MixSeed::Recent {
+            user_db_id: principal.user_db_id,
+        },
+        &options,
+    )
+    .await?
+    .ok_or_else(|| AppError::not_found("user not found".to_string()))?;
+    render_mix_response(&principal, &query, tracks).await
 }
 
 /// 404s on unknown public id. Type-mismatch is the service layer's job.
@@ -212,7 +242,7 @@ async fn resolve_seed_id(id: &str, label: &str) -> Result<agdb::DbId, AppError> 
 async fn resolve_accessible_seed_id(
     id: &str,
     label: &str,
-    principal: &crate::services::auth::Principal,
+    principal: &Principal,
 ) -> Result<agdb::DbId, AppError> {
     let db = &*STATE.db.read().await;
     let db_id = db::lookup::find_node_id_by_id(db, id)?
@@ -224,7 +254,7 @@ async fn resolve_accessible_seed_id(
 }
 
 async fn filter_accessible_tracks(
-    principal: &crate::services::auth::Principal,
+    principal: &Principal,
     tracks: Vec<db::Track>,
 ) -> anyhow::Result<Vec<db::Track>> {
     let db = &*STATE.db.read().await;
@@ -256,17 +286,7 @@ async fn verify_id_stable(
     }
 }
 
-const KNOWN_QUERY_KEYS: &[&str] = &[
-    "seed_track",
-    "seed_release",
-    "seed_artist",
-    "seed_genre",
-    "seed_playlist",
-    "seed_recent",
-    "limit",
-    "inc",
-    "instant",
-];
+const KNOWN_QUERY_KEYS: &[&str] = &["limit", "inc", "instant"];
 const MAX_EXTRA_KEYS: usize = 20;
 const MAX_EXTRA_KEY_LEN: usize = 64;
 const MAX_EXTRA_VALUE_LEN: usize = 256;
@@ -285,20 +305,48 @@ fn sanitize_extra(mut extra: HashMap<String, String>) -> HashMap<String, String>
 }
 
 #[cfg(feature = "docgen")]
-fn mix_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Generate mix")
-        .description("Returns a shuffled list of tracks that share genres with the seed item. Provide exactly one of seed_track, seed_release, seed_artist, seed_genre, seed_playlist, or seed_recent. Track seeds default to instant mode (`instant=true`): the seed track is pinned at index 0, then similar tracks follow; pass `instant=false` for a fully shuffled unpinned mix. The `instant` parameter is ignored for non-track seeds. Use `inc` to hydrate nested data: `releases`, `artists`, and `release_covers` (covers require `releases`).")
-}
+const MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Use `inc` to hydrate nested data: `releases`, `artists`, and `release_covers` (covers require `releases`).";
 
-pub fn mix_routes() -> Router {
-    Router::new().route("/", get(get_mix))
+#[cfg(feature = "docgen")]
+const TRACK_MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Use `inc` to hydrate nested data: `releases`, `artists`, and `release_covers` (covers require `releases`). Defaults to instant mode (`instant=true`): the seed track is pinned at index 0, then similar tracks follow; pass `instant=false` for a fully shuffled unpinned mix.";
+
+#[cfg(feature = "docgen")]
+const ME_MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Use `inc` to hydrate nested data: `releases`, `artists`, and `release_covers` (covers require `releases`). Seeds from the authenticated user's recent listen history.";
+
+#[cfg(feature = "docgen")]
+pub(crate) fn track_mix_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Generate mix from track")
+        .description(TRACK_MIX_DESCRIPTION)
 }
 
 #[cfg(feature = "docgen")]
-pub(crate) fn mix_openapi_routes() -> aide::axum::ApiRouter {
-    use aide::axum::routing::get_with;
+pub(crate) fn release_mix_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Generate mix from release")
+        .description(MIX_DESCRIPTION)
+}
 
-    aide::axum::ApiRouter::new().api_route("/", get_with(get_mix, mix_docs))
+#[cfg(feature = "docgen")]
+pub(crate) fn artist_mix_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Generate mix from artist")
+        .description(MIX_DESCRIPTION)
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn genre_mix_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Generate mix from genre")
+        .description(MIX_DESCRIPTION)
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn playlist_mix_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Generate mix from playlist")
+        .description(MIX_DESCRIPTION)
+}
+
+#[cfg(feature = "docgen")]
+pub(crate) fn me_mix_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Generate mix from recent listens")
+        .description(ME_MIX_DESCRIPTION)
 }
 
 #[cfg(test)]

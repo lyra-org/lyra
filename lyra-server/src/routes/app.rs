@@ -46,7 +46,6 @@ pub(crate) fn build_core_api() -> Result<CoreApi> {
         .nest("/api/providers", super::provider_routes())
         .nest("/api/entities", super::entity_routes())
         .nest("/api/plugins", super::plugin_routes())
-        .nest("/api/mix", super::mix_routes())
         .nest("/api/search", super::search_routes());
 
     let (app, ws_reserved) = super::install_websocket(app);
@@ -100,7 +99,6 @@ pub(crate) fn build_openapi_spec() -> OpenApi {
         )
         .nest("/api/entities", super::providers::entity_openapi_routes())
         .nest("/api/plugins", super::plugins::plugin_openapi_routes())
-        .nest("/api/mix", super::mix::mix_openapi_routes())
         .nest("/api/search", super::search::search_openapi_routes())
         .finish_api(&mut api);
 
@@ -216,6 +214,7 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("POST", "/api/users/login"),
     ("GET", "/api/me/"),
     ("PATCH", "/api/me/"),
+    ("GET", "/api/me/mix"),
     ("GET", "/api/me/api-keys"),
     ("POST", "/api/me/api-keys"),
     ("DELETE", "/api/me/api-keys/{api_key_id}"),
@@ -240,15 +239,18 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/covers/{id}"),
     ("GET", "/api/releases/"),
     ("GET", "/api/releases/{id}"),
+    ("GET", "/api/releases/{id}/mix"),
     ("POST", "/api/releases/{id}/covers/search"),
     ("GET", "/api/artists/"),
     ("GET", "/api/artists/{id}"),
     ("PATCH", "/api/artists/{id}"),
+    ("GET", "/api/artists/{id}/mix"),
     ("POST", "/api/artists/{id}/covers/search"),
     ("GET", "/api/entries/"),
     ("GET", "/api/entries/{id}"),
     ("GET", "/api/genres/"),
     ("GET", "/api/genres/{id}"),
+    ("GET", "/api/genres/{id}/mix"),
     ("GET", "/api/labels/"),
     ("GET", "/api/labels/{id}"),
     ("GET", "/api/favorites/"),
@@ -269,6 +271,7 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("DELETE", "/api/tags/{id}/targets/{target_id}"),
     ("GET", "/api/tracks/"),
     ("GET", "/api/tracks/{id}"),
+    ("GET", "/api/tracks/{id}/mix"),
     ("POST", "/api/tracks/{id}/playback-url"),
     ("GET", "/api/tracks/{id}/lyrics"),
     ("PUT", "/api/tracks/{id}/lyrics"),
@@ -285,6 +288,7 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/playlists/"),
     ("POST", "/api/playlists/"),
     ("GET", "/api/playlists/{id}"),
+    ("GET", "/api/playlists/{id}/mix"),
     ("PATCH", "/api/playlists/{id}"),
     ("DELETE", "/api/playlists/{id}"),
     ("POST", "/api/playlists/{id}/tracks"),
@@ -313,7 +317,6 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/plugins/{plugin_id}/settings"),
     ("PATCH", "/api/plugins/{plugin_id}/settings"),
     ("DELETE", "/api/plugins/{plugin_id}/settings"),
-    ("GET", "/api/mix/"),
     ("GET", "/api/search/"),
 ];
 

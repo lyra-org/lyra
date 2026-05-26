@@ -704,6 +704,7 @@ pub fn playlist_routes() -> Router {
         .route("/{id}", get(get_playlist))
         .route("/{id}", patch(update_playlist))
         .route("/{id}", delete(delete_playlist))
+        .route("/{id}/mix", get(super::mix::get_playlist_mix))
         .route("/{id}/tracks", post(add_playlist_tracks))
         .route("/{id}/tracks/remove", post(remove_playlist_tracks))
         .route("/{id}/tracks/{entry_id}", delete(delete_playlist_track))
@@ -725,6 +726,10 @@ pub(crate) fn playlist_openapi_routes() -> aide::axum::ApiRouter {
         .api_route("/{id}", get_with(get_playlist, get_playlist_docs))
         .api_route("/{id}", patch_with(update_playlist, update_playlist_docs))
         .api_route("/{id}", delete_with(delete_playlist, delete_playlist_docs))
+        .api_route(
+            "/{id}/mix",
+            get_with(super::mix::get_playlist_mix, super::mix::playlist_mix_docs),
+        )
         .api_route(
             "/{id}/tracks",
             post_with(add_playlist_tracks, add_tracks_docs),

@@ -717,6 +717,7 @@ pub fn release_routes() -> Router {
     Router::new()
         .route("/", get(get_releases))
         .route("/{id}", get(get_release))
+        .route("/{id}/mix", get(super::mix::get_release_mix))
         .route("/{id}/covers/search", post(search_release_covers))
 }
 
@@ -730,6 +731,10 @@ pub(crate) fn release_openapi_routes() -> aide::axum::ApiRouter {
     aide::axum::ApiRouter::new()
         .api_route("/", get_with(get_releases, list_releases_docs))
         .api_route("/{id}", get_with(get_release, get_release_docs))
+        .api_route(
+            "/{id}/mix",
+            get_with(super::mix::get_release_mix, super::mix::release_mix_docs),
+        )
         .api_route(
             "/{id}/covers/search",
             post_with(search_release_covers, search_release_covers_docs),
