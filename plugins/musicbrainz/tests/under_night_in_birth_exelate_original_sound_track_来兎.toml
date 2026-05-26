@@ -1,0 +1,607 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/39. 赤い闇には幾千の (アーケード版OP) [feat. 東 圭人].flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "赤い闇には幾千の (アーケード版OP) [feat. 東 圭人]"
+disc = 1
+disc_total = 1
+track = 39
+track_total = 39
+duration_ms = 257013
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/38. 終焉の揺り籠 -short mix-（ビャクヤED） (feat. 手登根優貴).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "終焉の揺り籠 -short mix-（ビャクヤED） (feat. 手登根優貴)"
+disc = 1
+disc_total = 1
+track = 38
+track_total = 39
+duration_ms = 119746
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/37. 遠く蒼空の下 -short mix- （ナナセED） (feat. 手登根優貴).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "遠く蒼空の下 -short mix- （ナナセED） (feat. 手登根優貴)"
+disc = 1
+disc_total = 1
+track = 37
+track_total = 39
+duration_ms = 124586
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/36. 赫、わたしが画く孤のセカイ。 (バッドED) [feat. 金城のえる].flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "赫、わたしが画く孤のセカイ。 (バッドED) [feat. 金城のえる]"
+disc = 1
+disc_total = 1
+track = 36
+track_total = 39
+duration_ms = 231693
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/35. heart beat breaker. (グッドED) [feat. 東 圭人].flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "heart beat breaker. (グッドED) [feat. 東 圭人]"
+disc = 1
+disc_total = 1
+track = 35
+track_total = 39
+duration_ms = 251026
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/34. Good sleeping this night... (ゲームオーバー).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Good sleeping this night... (ゲームオーバー)"
+disc = 1
+disc_total = 1
+track = 34
+track_total = 39
+duration_ms = 10333
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/33. Evil Eyes (おわり２).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Evil Eyes (おわり２)"
+disc = 1
+disc_total = 1
+track = 33
+track_total = 39
+duration_ms = 99933
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/32. Good Moning End (おわり１).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Good Moning End (おわり１)"
+disc = 1
+disc_total = 1
+track = 32
+track_total = 39
+duration_ms = 63426
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/31. Paradox Altar (祭壇前).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Paradox Altar (祭壇前)"
+disc = 1
+disc_total = 1
+track = 31
+track_total = 39
+duration_ms = 120306
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/30. Silent Moonlight (はじまり2).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Silent Moonlight (はじまり2)"
+disc = 1
+disc_total = 1
+track = 30
+track_total = 39
+duration_ms = 66773
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/29. Agitation Signs (はじまり1).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Agitation Signs (はじまり1)"
+disc = 1
+disc_total = 1
+track = 29
+track_total = 39
+duration_ms = 113346
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/28. Break Omen (一息).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Break Omen (一息)"
+disc = 1
+disc_total = 1
+track = 28
+track_total = 39
+duration_ms = 74586
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/27. Heavy Noise（エンカウント2）.flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Heavy Noise（エンカウント2）"
+disc = 1
+disc_total = 1
+track = 27
+track_total = 39
+duration_ms = 127844
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/26. Traveller's Journal (エンカウント1).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Traveller's Journal (エンカウント1)"
+disc = 1
+disc_total = 1
+track = 26
+track_total = 39
+duration_ms = 120053
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/25. Who are you (乱入).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Who are you (乱入)"
+disc = 1
+disc_total = 1
+track = 25
+track_total = 39
+duration_ms = 5840
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/24. Wayside Stone (勝利デモ).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Wayside Stone (勝利デモ)"
+disc = 1
+disc_total = 1
+track = 24
+track_total = 39
+duration_ms = 46640
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/23. Access Connect（ネットワークメニュー）.flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Access Connect（ネットワークメニュー）"
+disc = 1
+disc_total = 1
+track = 23
+track_total = 39
+duration_ms = 135328
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/22. Welcome to this Lateshow（メインメニュー）.flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Welcome to this Lateshow（メインメニュー）"
+disc = 1
+disc_total = 1
+track = 22
+track_total = 39
+duration_ms = 162161
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/21. Last Sentence (コンティニュー).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Last Sentence (コンティニュー)"
+disc = 1
+disc_total = 1
+track = 21
+track_total = 39
+duration_ms = 13346
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/20. Gallant Girl ''Sora yori Nagare, Hasiru Kaze''（ナナセ）.flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Gallant Girl \"Sora yori Nagare, Hasiru Kaze\"（ナナセ）"
+disc = 1
+disc_total = 1
+track = 20
+track_total = 39
+duration_ms = 216095
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/19. Beat Eat Nest（ビャクヤ）.flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Beat Eat Nest（ビャクヤ）"
+disc = 1
+disc_total = 1
+track = 19
+track_total = 39
+duration_ms = 219254
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/18. 開戦 -Again-（アカツキ）.flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "開戦 -Again-（アカツキ）"
+disc = 1
+disc_total = 1
+track = 18
+track_total = 39
+duration_ms = 255823
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/17. Cross Thought（ゴルドーvsケイアス）.flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Cross Thought（ゴルドーvsケイアス）"
+disc = 1
+disc_total = 1
+track = 17
+track_total = 39
+duration_ms = 259453
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/16. Erudite Eyes（ケイアス）.flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Erudite Eyes（ケイアス）"
+disc = 1
+disc_total = 1
+track = 16
+track_total = 39
+duration_ms = 286212
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/15. Blood Drain -Again- (エルトナム).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Blood Drain -Again- (エルトナム)"
+disc = 1
+disc_total = 1
+track = 15
+track_total = 39
+duration_ms = 227973
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/14. Overwhelm Despair (ヒルダ).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Overwhelm Despair (ヒルダ)"
+disc = 1
+disc_total = 1
+track = 14
+track_total = 39
+duration_ms = 281106
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/13. 歩く姿は百合の花♪ (ユズリハ).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "歩く姿は百合の花♪ (ユズリハ)"
+disc = 1
+disc_total = 1
+track = 13
+track_total = 39
+duration_ms = 237920
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/12. Monochrome Memory (セト).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Monochrome Memory (セト)"
+disc = 1
+disc_total = 1
+track = 12
+track_total = 39
+duration_ms = 290280
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/11. Snow Sisters (バティスタ).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Snow Sisters (バティスタ)"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 39
+duration_ms = 276960
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/10. Unseen Entities (メルカヴァ).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Unseen Entities (メルカヴァ)"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 39
+duration_ms = 259440
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/09. Rushing Heart (ゴルドー).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Rushing Heart (ゴルドー)"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 39
+duration_ms = 262186
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/08. Purity & Strictly (オリエ).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Purity & Strictly (オリエ)"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 39
+duration_ms = 230880
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/07. Bad Surface (カーマイン).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Bad Surface (カーマイン)"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 39
+duration_ms = 244760
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/06. Maximize Power! (ワレン).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Maximize Power! (ワレン)"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 39
+duration_ms = 260560
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/05. Night Walker (リンネ).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Night Walker (リンネ)"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 39
+duration_ms = 299800
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/04. Scraper Sky High (ハイド).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Scraper Sky High (ハイド)"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 39
+duration_ms = 250613
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/03. Touch & Go (vsデモ).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Touch & Go (vsデモ)"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 39
+duration_ms = 12146
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/02. Gathers Under Night... (キャラクターセレクト).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "Gathers Under Night... (キャラクターセレクト)"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 39
+duration_ms = 97333
+
+[[raw_tags]]
+file_path = "UNDER NIGHT IN-BIRTH Exe_Late Original Sound Track/01. 夜天の檻 -Recurrence Starry night- short mix (feat. 手登根優貴).flac"
+album = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track"
+album_artists = ["来兎"]
+artists = ["来兎"]
+title = "夜天の檻 -Recurrence Starry night- short mix (feat. 手登根優貴)"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 39
+duration_ms = 86413
+
+[expect.release]
+ids = { release_group_id = "ea1e8e67-3489-48ad-b86c-881f721e6c35", release_id = "a0e3a2bd-a68e-42c0-bada-7892b2f6a5b4" }
+fields = { release_title = "UNDER NIGHT IN-BIRTH Exe:Late Original Sound Track", release_date = "2014-09-19" }
+
+[expect.artists."203bf4c6-d81d-46ad-9a08-54974b61a3b8"]
+fields = { artist_name = "金城のえる", sort_name = "Kinjo, Noel" }
+
+[expect.artists."4fcc66a0-c2e6-4086-942a-6f23c6d9aa40"]
+fields = { artist_name = "東 圭人", sort_name = "Azuma, Keito" }
+
+[expect.artists."b1fd3a0b-0a7c-402b-bca8-98af7c6b3d42"]
+fields = { artist_name = "来兎", sort_name = "Raito" }
+
+[expect.artists."c9475a8e-e7bf-48ff-825f-4d67da3b9613"]
+fields = { artist_name = "手登根優貴", sort_name = "Tedokon, Yūki" }
+
+[expect.tracks."020b80bf-6e57-41e3-92ab-181c520d4273"]
+fields = { disc = 1, track = 5, track_title = "Night Walker （リンネ）" }
+
+[expect.tracks."02e90dfe-12ee-4171-a76a-55ba6b923e33"]
+fields = { disc = 1, track = 25, track_title = "Who are you （乱入）" }
+
+[expect.tracks."0b93e1a0-eeab-4633-aee3-c4b6eb2e4cb6"]
+fields = { disc = 1, track = 2, track_title = "Gathers Under Night… （キャラクターセレクト）" }
+
+[expect.tracks."0dd9fba9-4f08-4e4b-8e14-e91a23da2dcf"]
+fields = { disc = 1, track = 10, track_title = "Unseen Entities （メルカヴァ）" }
+
+[expect.tracks."0df9df9b-b13a-47e8-9134-e024943d82f8"]
+fields = { disc = 1, track = 29, track_title = "Agitation Signs （はじまり1）" }
+
+[expect.tracks."0e147873-070f-470f-9599-c9045116b3a7"]
+fields = { disc = 1, track = 15, track_title = "Blood Drain -Again- （エルトナム）" }
+
+[expect.tracks."0feb344c-24e2-462d-998a-c31824fad329"]
+fields = { disc = 1, track = 30, track_title = "Silent Moonlight （はじまり2）" }
+
+[expect.tracks."1545e381-3343-4de8-a372-1c9f4d24e530"]
+fields = { disc = 1, track = 34, track_title = "Good sleeping this night... （ゲームオーバー）" }
+
+[expect.tracks."21b9b85c-a302-40ff-83e7-abc4a1ba13c8"]
+fields = { disc = 1, track = 37, track_title = "遠く蒼空の下 -short mix- （ナナセED）" }
+
+[expect.tracks."2340a169-6087-482f-a714-0c31883ebd51"]
+fields = { disc = 1, track = 33, track_title = "Evil Eyes （おわり２）" }
+
+[expect.tracks."3810918c-d1b6-4b93-b975-62b2ca688d64"]
+fields = { disc = 1, track = 32, track_title = "Good Moning End （おわり１）" }
+
+[expect.tracks."4747e744-a95e-4a7d-97f6-1a47990fcfd5"]
+fields = { disc = 1, track = 20, track_title = "Gallant Girl “Sora yori Nagare, Hasiru Kaze”（ナナセ）" }
+
+[expect.tracks."4f4c57f7-adf7-48c4-b2a4-592ea834eaab"]
+fields = { disc = 1, track = 19, track_title = "Beat Eat Nest（ビャクヤ）" }
+
+[expect.tracks."571c0eda-2576-4c68-a73a-c3151f0233bb"]
+fields = { disc = 1, track = 27, track_title = "Heavy Noise（エンカウント2）" }
+
+[expect.tracks."6019cd4a-ae2a-4a45-8834-9016d1bfaf3e"]
+fields = { disc = 1, track = 22, track_title = "Welcome to this Lateshow（メインメニュー）" }
+
+[expect.tracks."6391371e-3acf-45f3-a8ba-9ab9d63fc745"]
+fields = { disc = 1, track = 11, track_title = "Snow Sisters （バティスタ）" }
+
+[expect.tracks."674cb529-b3a3-4459-a930-a0746f7d616d"]
+fields = { disc = 1, track = 39, track_title = "赤い闇には幾千の （アーケード版OP）" }
+
+[expect.tracks."7a56d66b-657b-41e5-aaca-7b27729a514f"]
+fields = { disc = 1, track = 4, track_title = "Scraper Sky High （ハイド）" }
+
+[expect.tracks."7af2f72a-1de8-48c7-9267-5262f9da9af9"]
+fields = { disc = 1, track = 35, track_title = "heart beat breaker. （グッドED）" }
+
+[expect.tracks."7c3d970b-720a-4971-9147-93a66718a922"]
+fields = { disc = 1, track = 12, track_title = "Monochrome Memory （セト）" }
+
+[expect.tracks."80bbc54c-cdd8-4540-adff-c646e6984b42"]
+fields = { disc = 1, track = 31, track_title = "Paradox Altar （祭壇前）" }
+
+[expect.tracks."812f052c-2c29-4a2d-b4fa-1dd865cc5641"]
+fields = { disc = 1, track = 28, track_title = "Break Omen （一息）" }
+
+[expect.tracks."891be11e-7111-4249-9b33-4f8b69ee502a"]
+fields = { disc = 1, track = 13, track_title = "歩く姿は百合の花♪ （ユズリハ）" }
+
+[expect.tracks."8cba5a69-2cbe-4b24-be85-09b69b5a46c9"]
+fields = { disc = 1, track = 17, track_title = "Cross Thought（ゴルドーvsケイアス）" }
+
+[expect.tracks."9653f7e0-054f-4a9a-ac21-292e1354fa58"]
+fields = { disc = 1, track = 14, track_title = "Overwhelm Despair （ヒルダ）" }
+
+[expect.tracks."9759e692-fb27-4be7-99ab-951290b1ad0e"]
+fields = { disc = 1, track = 23, track_title = "Access Connect（ネットワークメニュー）" }
+
+[expect.tracks."9d4c466e-0688-425b-9d98-437ac53dc1e6"]
+fields = { disc = 1, track = 38, track_title = "終焉の揺り籠 -short mix-（ビャクヤED）" }
+
+[expect.tracks."a152346c-ac7d-4091-a701-83eb9f0ce4ad"]
+fields = { disc = 1, track = 18, track_title = "開戦 -Again-（アカツキ）" }
+
+[expect.tracks."a8eeb2c3-3a08-4476-880c-aabe63e193bf"]
+fields = { disc = 1, track = 36, track_title = "赫、わたしが画く孤のセカイ。 （バッドED）" }
+
+[expect.tracks."ab6debca-7f5a-47c4-b41d-643c549fa5b3"]
+fields = { disc = 1, track = 3, track_title = "Touch & Go （vsデモ）" }
+
+[expect.tracks."b927bd45-9edc-47ef-87af-542856df6ea2"]
+fields = { disc = 1, track = 26, track_title = "Traveller's Journal （エンカウント1）" }
+
+[expect.tracks."c7df4840-3b9c-43a2-81ff-1272e902ffdc"]
+fields = { disc = 1, track = 9, track_title = "Rushing Heart （ゴルドー）" }
+
+[expect.tracks."cf831c1d-6626-45b0-9564-76d8bb07db6e"]
+fields = { disc = 1, track = 8, track_title = "Purity & Strictly （オリエ）" }
+
+[expect.tracks."e3bb5629-67bf-4736-961a-2e4b659a7ed8"]
+fields = { disc = 1, track = 16, track_title = "Erudite Eyes（ケイアス）" }
+
+[expect.tracks."f1c1810b-440d-4893-8a08-70de30cb32d6"]
+fields = { disc = 1, track = 24, track_title = "Wayside Stone （勝利デモ）" }
+
+[expect.tracks."f46ee04b-5c92-454d-89e4-dd6198589f39"]
+fields = { disc = 1, track = 6, track_title = "Maximize Power! （ワレン）" }
+
+[expect.tracks."f792eb69-69d1-40a2-9c84-77d4bcae0acc"]
+fields = { disc = 1, track = 21, track_title = "Last Sentence （コンティニュー）" }
+
+[expect.tracks."fbc978cb-d611-4dd9-9384-cb2735c63e35"]
+fields = { disc = 1, track = 7, track_title = "Bad Surface （カーマイン）" }
+
+[expect.tracks."fdd52965-c6d5-45ed-839e-46156f8d8a50"]
+fields = { disc = 1, track = 1, track_title = "夜天の檻 -Recurrence Starry night- short mix" }

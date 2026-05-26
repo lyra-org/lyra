@@ -1,0 +1,48 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "MIMiNARI - インスタント・ラヴ (feat. natsumi) (2025-01-15) [WEB FLAC]/1.02. インスタント・ラヴ (feat. natsumi) [Instrumental].flac"
+album = "インスタント・ラヴ (feat. natsumi)"
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "インスタント・ラヴ (feat. natsumi) [Instrumental]"
+copyright = "℗ 2025 Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 2
+track_total = 2
+duration_ms = 184065
+
+[[raw_tags]]
+file_path = "MIMiNARI - インスタント・ラヴ (feat. natsumi) (2025-01-15) [WEB FLAC]/1.01. インスタント・ラヴ (feat. natsumi).flac"
+album = "インスタント・ラヴ (feat. natsumi)"
+album_artists = ["MIMiNARI"]
+artists = ["MIMiNARI"]
+title = "インスタント・ラヴ (feat. natsumi)"
+copyright = "℗ 2025 Sony Music Labels Inc."
+disc = 1
+disc_total = 1
+track = 1
+track_total = 2
+duration_ms = 184065
+
+[expect.release]
+ids = { release_group_id = "089b6849-d232-47cb-8882-70e0094356fd", release_id = "6a039e08-2486-4e91-ac32-7bf4e4acfef6" }
+fields = { release_title = "インスタント・ラヴ", release_date = "2025-01-15" }
+
+[expect.artists."04490e5c-f43e-43f5-9963-4a3a4701ad80"]
+fields = { artist_name = "MIMiNARI", sort_name = "MIMiNARI" }
+
+[expect.artists."cf0c317e-f489-4082-b41a-e86354b1a91c"]
+fields = { artist_name = "natsumi", sort_name = "natsumi" }
+
+[expect.tracks."3458efa1-e6c9-4a7d-8e0f-401698173dd5"]
+fields = { disc = 1, track = 2, track_title = "インスタント・ラヴ (instrumental)" }
+
+[expect.tracks."ccfdca4f-780a-4a60-8c4b-5a84f6f38d93"]
+fields = { disc = 1, track = 1, track_title = "インスタント・ラヴ" }
