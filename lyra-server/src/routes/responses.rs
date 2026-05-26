@@ -321,6 +321,8 @@ pub struct RelatedArtistResponse {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artist_type: Option<db::ArtistType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover: Option<Option<CoverResponse>>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
