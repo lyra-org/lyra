@@ -50,14 +50,17 @@ use crate::{
         SortKey,
     },
     routes::AppError,
-    routes::deserialize_inc,
-    routes::responses::{
-        LyricsLineResponse,
-        LyricsResponse,
-        LyricsWordResponse,
-        PageResponse,
-        ReleaseResponse,
-        TrackResponse,
+    routes::{
+        covers as route_covers,
+        deserialize_inc,
+        responses::{
+            LyricsLineResponse,
+            LyricsResponse,
+            LyricsWordResponse,
+            PageResponse,
+            ReleaseResponse,
+            TrackResponse,
+        },
     },
     services::{
         auth::{
@@ -84,7 +87,9 @@ use std::{
 struct TrackQuery {
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "Comma-separated or repeated values: releases, artists.")
+        schemars(
+            description = "Comma-separated or repeated values: releases, artists, release_covers."
+        )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     inc: Option<Vec<String>>,
@@ -95,7 +100,9 @@ struct TrackQuery {
 struct TrackListQuery {
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "Comma-separated or repeated values: releases, artists.")
+        schemars(
+            description = "Comma-separated or repeated values: releases, artists, release_covers."
+        )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     inc: Option<Vec<String>>,
@@ -131,16 +138,26 @@ struct TrackListQuery {
     page: super::PageQuery,
 }
 
-fn parse_inc(inc: Option<Vec<String>>) -> Result<track_service::TrackIncludes, AppError> {
-    let values = super::parse_inc_values(inc, &["releases", "artists"])?;
-    let mut result = track_service::TrackIncludes {
-        releases: false,
-        artists: false,
+#[derive(Clone, Copy)]
+pub(crate) struct TrackRouteIncludes {
+    pub(crate) service: track_service::TrackIncludes,
+    pub(crate) release_covers: bool,
+}
+
+pub(crate) fn parse_inc(inc: Option<Vec<String>>) -> Result<TrackRouteIncludes, AppError> {
+    let values = super::parse_inc_values(inc, &["releases", "artists", "release_covers"])?;
+    let mut result = TrackRouteIncludes {
+        service: track_service::TrackIncludes {
+            releases: false,
+            artists: false,
+        },
+        release_covers: false,
     };
     for value in values {
         match value.as_str() {
-            "releases" => result.releases = true,
-            "artists" => result.artists = true,
+            "releases" => result.service.releases = true,
+            "artists" => result.service.artists = true,
+            "release_covers" => result.release_covers = true,
             _ => {}
         }
     }
@@ -393,13 +410,38 @@ fn query_track_route_items(
     ))
 }
 
-fn track_detail_to_response(
-    _db: &impl db::DbAccess,
+fn release_to_response(
+    db: &impl db::DbAccess,
+    release: db::Release,
+    include_cover: bool,
+) -> anyhow::Result<ReleaseResponse> {
+    let cover = if include_cover {
+        match release.db_id.clone().map(DbId::from) {
+            Some(release_db_id) => route_covers::build_cover_response(db, release_db_id, true)?,
+            None => Some(None),
+        }
+    } else {
+        None
+    };
+    let mut response = ReleaseResponse::from(release);
+    response.cover = cover;
+    Ok(response)
+}
+
+pub(crate) fn track_detail_to_response(
+    db: &impl db::DbAccess,
     detail: track_service::TrackDetails,
+    includes: TrackRouteIncludes,
 ) -> anyhow::Result<TrackResponse> {
     let releases = detail
         .releases
-        .map(|v| v.into_iter().map(ReleaseResponse::from).collect());
+        .map(|releases| {
+            releases
+                .into_iter()
+                .map(|release| release_to_response(db, release, includes.release_covers))
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .transpose()?;
     Ok(TrackResponse {
         id: detail.track.id.clone(),
         title: detail.track.track_title,
@@ -470,11 +512,11 @@ pub(crate) async fn list_track_responses(
         principal.user_db_id,
     )?;
     let next_cursor = super::next_page_cursor(page.offset, page.entries.len(), page.total_count);
-    let details = track_service::list_details_for_tracks(db, includes, page.entries)?;
+    let details = track_service::list_details_for_tracks(db, includes.service, page.entries)?;
 
     let mut items = Vec::with_capacity(details.len());
     for detail in details {
-        items.push(track_detail_to_response(db, detail)?);
+        items.push(track_detail_to_response(db, detail, includes)?);
     }
     Ok(PageResponse { items, next_cursor })
 }
@@ -491,10 +533,10 @@ pub(crate) async fn get_track_response(
     super::require_entity_accessible(db, principal, track_db_id, || {
         AppError::not_found(format!("Track not found: {id}"))
     })?;
-    let detail = track_service::get_details(db, track_db_id, includes)?
+    let detail = track_service::get_details(db, track_db_id, includes.service)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {}", id)))?;
 
-    Ok(track_detail_to_response(db, detail)?)
+    Ok(track_detail_to_response(db, detail, includes)?)
 }
 
 fn add_optional_query_pair<T: ToString>(
@@ -681,14 +723,14 @@ async fn get_track(
 #[cfg(feature = "docgen")]
 fn list_tracks_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tracks").description(
-        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `limit`, `cursor`. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `duration`, and `id`; when `release_id` is present it also supports `disc` and `track`. `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles. Use `inc` to include releases and/or artists. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
+        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `limit`, `cursor`. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `duration`, and `id`; when `release_id` is present it also supports `disc` and `track`. `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn get_track_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get track by ID").description(
-        "Returns a single track. 404 if not found. Use `inc` to include releases and/or artists. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
+        "Returns a single track. 404 if not found. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 
@@ -1214,6 +1256,32 @@ mod tests {
         db::listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
     }
 
+    fn insert_cover_for_release(db: &mut DbAny, release_db_id: DbId) -> anyhow::Result<db::Cover> {
+        db::covers::upsert(
+            db,
+            release_db_id,
+            db::Cover {
+                db_id: None,
+                id: nanoid!(),
+                path: "/music/release/cover.jpg".to_string(),
+                mime_type: "image/jpeg".to_string(),
+                hash: "a".repeat(64),
+                blurhash: Some("LKO2?U%2Tw=w]~RBVZRi};RPxuwH".to_string()),
+            },
+        )
+    }
+
+    #[test]
+    fn parse_inc_accepts_release_covers() -> anyhow::Result<()> {
+        let includes = parse_inc(Some(vec!["artists,releases,release_covers".to_string()]))
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        assert!(includes.service.artists);
+        assert!(includes.service.releases);
+        assert!(includes.release_covers);
+        Ok(())
+    }
+
     #[test]
     fn parse_track_sort_specs_accepts_global_supported_values() -> anyhow::Result<()> {
         let specs = match parse_track_sort_specs(
@@ -1369,6 +1437,95 @@ mod tests {
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].title, "Visible Track");
         assert!(page.next_cursor.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_track_responses_hydrates_release_covers() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let cover_id = {
+            let mut db = STATE.db.write().await;
+            let release = insert_release(&mut db, "Covered Release")?;
+            let track = insert_track(&mut db, "Covered Track")?;
+            connect(&mut db, release, track)?;
+            insert_cover_for_release(&mut db, release)?.id
+        };
+        let principal = admin_principal(HashSet::new());
+
+        let page = list_track_responses(
+            &principal,
+            Some(vec!["releases,release_covers".to_string()]),
+            None,
+            None,
+            None,
+            None,
+            None,
+            super::super::PageOptions {
+                limit: 100,
+                offset: 0,
+            },
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        assert_eq!(page.items.len(), 1);
+        let release = page.items[0]
+            .releases
+            .as_ref()
+            .and_then(|releases| releases.first())
+            .ok_or_else(|| anyhow::anyhow!("expected nested release"))?;
+        let cover = release
+            .cover
+            .as_ref()
+            .and_then(|cover| cover.as_ref())
+            .ok_or_else(|| anyhow::anyhow!("expected nested release cover"))?;
+        assert_eq!(cover.id, cover_id);
+        assert_eq!(
+            cover.url,
+            format!("/api/covers/{}?v={}", cover.id, cover.hash)
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_track_response_hydrates_release_covers() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let (track_public_id, cover_id) = {
+            let mut db = STATE.db.write().await;
+            let release = insert_release(&mut db, "Detail Covered Release")?;
+            let track = insert_track(&mut db, "Detail Covered Track")?;
+            connect(&mut db, release, track)?;
+            let cover_id = insert_cover_for_release(&mut db, release)?.id;
+            let track_public_id = db::tracks::get_by_id(&db, track)?
+                .ok_or_else(|| anyhow::anyhow!("track missing"))?
+                .id;
+            (track_public_id, cover_id)
+        };
+        let principal = admin_principal(HashSet::new());
+
+        let track = get_track_response(
+            &principal,
+            track_public_id,
+            Some(vec!["releases,release_covers".to_string()]),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        let release = track
+            .releases
+            .as_ref()
+            .and_then(|releases| releases.first())
+            .ok_or_else(|| anyhow::anyhow!("expected nested release"))?;
+        let cover = release
+            .cover
+            .as_ref()
+            .and_then(|cover| cover.as_ref())
+            .ok_or_else(|| anyhow::anyhow!("expected nested release cover"))?;
+        assert_eq!(cover.id, cover_id);
         Ok(())
     }
 
