@@ -88,7 +88,7 @@ struct TrackQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: releases, artists, release_covers."
+            description = "Comma-separated or repeated values: releases, artists, release_covers, artist_covers."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -101,7 +101,7 @@ struct TrackListQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: releases, artists, release_covers."
+            description = "Comma-separated or repeated values: releases, artists, release_covers, artist_covers."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -142,22 +142,28 @@ struct TrackListQuery {
 pub(crate) struct TrackRouteIncludes {
     pub(crate) service: track_service::TrackIncludes,
     pub(crate) release_covers: bool,
+    pub(crate) artist_covers: bool,
 }
 
 pub(crate) fn parse_inc(inc: Option<Vec<String>>) -> Result<TrackRouteIncludes, AppError> {
-    let values = super::parse_inc_values(inc, &["releases", "artists", "release_covers"])?;
+    let values = super::parse_inc_values(
+        inc,
+        &["releases", "artists", "release_covers", "artist_covers"],
+    )?;
     let mut result = TrackRouteIncludes {
         service: track_service::TrackIncludes {
             releases: false,
             artists: false,
         },
         release_covers: false,
+        artist_covers: false,
     };
     for value in values {
         match value.as_str() {
             "releases" => result.service.releases = true,
             "artists" => result.service.artists = true,
             "release_covers" => result.release_covers = true,
+            "artist_covers" => result.artist_covers = true,
             _ => {}
         }
     }
@@ -433,6 +439,13 @@ pub(crate) fn track_detail_to_response(
     detail: track_service::TrackDetails,
     includes: TrackRouteIncludes,
 ) -> anyhow::Result<TrackResponse> {
+    let artist_covers = match detail.artists.as_ref() {
+        Some(artists) if includes.artist_covers => Some(db::covers::get_many(
+            db,
+            &super::db_ids_from_credited_artists(artists),
+        )?),
+        _ => None,
+    };
     let releases = detail
         .releases
         .map(|releases| {
@@ -455,7 +468,7 @@ pub(crate) fn track_detail_to_response(
         releases,
         artists: detail
             .artists
-            .map(|v| v.into_iter().map(Into::into).collect()),
+            .map(|v| super::credited_artist_responses(v, artist_covers.as_ref())),
     })
 }
 
@@ -723,14 +736,14 @@ async fn get_track(
 #[cfg(feature = "docgen")]
 fn list_tracks_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tracks").description(
-        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `limit`, `cursor`. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `duration`, and `id`; when `release_id` is present it also supports `disc` and `track`. `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
+        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `limit`, `cursor`. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `duration`, and `id`; when `release_id` is present it also supports `disc` and `track`. `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn get_track_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get track by ID").description(
-        "Returns a single track. 404 if not found. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
+        "Returns a single track. 404 if not found. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 
@@ -1180,6 +1193,8 @@ mod tests {
     use crate::{
         db::test_db::{
             connect,
+            connect_artist,
+            insert_artist,
             insert_library,
             insert_release,
             insert_track,
@@ -1261,10 +1276,10 @@ mod tests {
         db::listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
     }
 
-    fn insert_cover_for_release(db: &mut DbAny, release_db_id: DbId) -> anyhow::Result<db::Cover> {
+    fn insert_cover_for(db: &mut DbAny, owner_db_id: DbId) -> anyhow::Result<db::Cover> {
         db::covers::upsert(
             db,
-            release_db_id,
+            owner_db_id,
             db::Cover {
                 db_id: None,
                 id: nanoid!(),
@@ -1277,13 +1292,16 @@ mod tests {
     }
 
     #[test]
-    fn parse_inc_accepts_release_covers() -> anyhow::Result<()> {
-        let includes = parse_inc(Some(vec!["artists,releases,release_covers".to_string()]))
-            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+    fn parse_inc_accepts_nested_covers() -> anyhow::Result<()> {
+        let includes = parse_inc(Some(vec![
+            "artists,releases,release_covers,artist_covers".to_string(),
+        ]))
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
 
         assert!(includes.service.artists);
         assert!(includes.service.releases);
         assert!(includes.release_covers);
+        assert!(includes.artist_covers);
         Ok(())
     }
 
@@ -1455,7 +1473,7 @@ mod tests {
             let release = insert_release(&mut db, "Covered Release")?;
             let track = insert_track(&mut db, "Covered Track")?;
             connect(&mut db, release, track)?;
-            insert_cover_for_release(&mut db, release)?.id
+            insert_cover_for(&mut db, release)?.id
         };
         let principal = admin_principal(HashSet::new());
 
@@ -1504,7 +1522,7 @@ mod tests {
             let release = insert_release(&mut db, "Detail Covered Release")?;
             let track = insert_track(&mut db, "Detail Covered Track")?;
             connect(&mut db, release, track)?;
-            let cover_id = insert_cover_for_release(&mut db, release)?.id;
+            let cover_id = insert_cover_for(&mut db, release)?.id;
             let track_public_id = db::tracks::get_by_id(&db, track)?
                 .ok_or_else(|| anyhow::anyhow!("track missing"))?
                 .id;
@@ -1530,6 +1548,46 @@ mod tests {
             .as_ref()
             .and_then(|cover| cover.as_ref())
             .ok_or_else(|| anyhow::anyhow!("expected nested release cover"))?;
+        assert_eq!(cover.id, cover_id);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_track_response_hydrates_artist_covers() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let (track_public_id, cover_id) = {
+            let mut db = STATE.db.write().await;
+            let track = insert_track(&mut db, "Artist Covered Track")?;
+            let artist = insert_artist(&mut db, "Covered Artist")?;
+            connect_artist(&mut db, track, artist)?;
+            let cover_id = insert_cover_for(&mut db, artist)?.id;
+            let track_public_id = db::tracks::get_by_id(&db, track)?
+                .ok_or_else(|| anyhow::anyhow!("track missing"))?
+                .id;
+            (track_public_id, cover_id)
+        };
+        let principal = admin_principal(HashSet::new());
+
+        let track = get_track_response(
+            &principal,
+            track_public_id,
+            Some(vec!["artists,artist_covers".to_string()]),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        let artist = track
+            .artists
+            .as_ref()
+            .and_then(|artists| artists.first())
+            .ok_or_else(|| anyhow::anyhow!("expected nested artist"))?;
+        let cover = artist
+            .cover
+            .as_ref()
+            .and_then(Option::as_ref)
+            .ok_or_else(|| anyhow::anyhow!("expected nested artist cover"))?;
         assert_eq!(cover.id, cover_id);
         Ok(())
     }

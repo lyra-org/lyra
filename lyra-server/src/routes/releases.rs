@@ -77,7 +77,7 @@ pub(crate) struct ReleaseListQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: artists, tracks, track_artists, entries, covers, genres."
+            description = "Comma-separated or repeated values: artists, tracks, track_artists, entries, covers, artist_covers, genres."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -126,7 +126,7 @@ pub(crate) struct ReleaseQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: artists, tracks, entries, covers, genres."
+            description = "Comma-separated or repeated values: artists, tracks, track_artists, entries, covers, artist_covers, genres."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -140,6 +140,7 @@ pub(crate) struct ReleaseInc {
     pub(crate) track_artists: bool,
     pub(crate) entries: bool,
     pub(crate) covers: bool,
+    pub(crate) artist_covers: bool,
     pub(crate) genres: bool,
 }
 
@@ -152,6 +153,7 @@ pub(crate) fn parse_inc(inc: Option<Vec<String>>) -> Result<ReleaseInc, AppError
             "track_artists",
             "entries",
             "covers",
+            "artist_covers",
             "genres",
         ],
     )?;
@@ -161,6 +163,7 @@ pub(crate) fn parse_inc(inc: Option<Vec<String>>) -> Result<ReleaseInc, AppError
         track_artists: false,
         entries: false,
         covers: false,
+        artist_covers: false,
         genres: false,
     };
     for value in values {
@@ -170,6 +173,7 @@ pub(crate) fn parse_inc(inc: Option<Vec<String>>) -> Result<ReleaseInc, AppError
             "track_artists" => result.track_artists = true,
             "entries" => result.entries = true,
             "covers" => result.covers = true,
+            "artist_covers" => result.artist_covers = true,
             "genres" => result.genres = true,
             _ => {}
         }
@@ -179,7 +183,7 @@ pub(crate) fn parse_inc(inc: Option<Vec<String>>) -> Result<ReleaseInc, AppError
 
 pub(crate) fn parse_release_includes(
     inc: Option<Vec<String>>,
-) -> Result<(releases::ReleaseIncludes, bool, bool), AppError> {
+) -> Result<(releases::ReleaseIncludes, bool, bool, bool), AppError> {
     let parsed = parse_inc(inc)?;
     let includes = releases::ReleaseIncludes {
         artists: parsed.artists,
@@ -188,7 +192,7 @@ pub(crate) fn parse_release_includes(
         entries: parsed.entries,
     };
 
-    Ok((includes, parsed.covers, parsed.genres))
+    Ok((includes, parsed.covers, parsed.genres, parsed.artist_covers))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -473,9 +477,24 @@ pub(crate) fn detail_to_release_response(
     db: &DbAny,
     detail: releases::ReleaseDetails,
     include_covers: bool,
+    include_artist_covers: bool,
     include_genres: bool,
     include_entry_paths: bool,
 ) -> anyhow::Result<ReleaseResponse> {
+    let artist_covers = if include_artist_covers {
+        let mut artist_db_ids = Vec::new();
+        if let Some(artists) = detail.artists.as_ref() {
+            artist_db_ids.extend(super::db_ids_from_credited_artists(artists));
+        }
+        if let Some(track_artists) = detail.track_artists.as_ref() {
+            for artists in track_artists.values() {
+                artist_db_ids.extend(super::db_ids_from_credited_artists(artists));
+            }
+        }
+        Some(db::covers::get_many(db, &artist_db_ids)?)
+    } else {
+        None
+    };
     let entries = detail.entries.map(|entries| {
         entries
             .into_iter()
@@ -499,14 +518,17 @@ pub(crate) fn detail_to_release_response(
         cover,
         artists: detail
             .artists
-            .map(|v| v.into_iter().map(Into::into).collect()),
+            .map(|v| super::credited_artist_responses(v, artist_covers.as_ref())),
         tracks: detail.tracks.map(|tracks| {
             tracks
                 .into_iter()
                 .map(|track| {
                     let artists = detail.track_artists.as_ref().and_then(|m| {
                         let db_id = track.db_id.clone().map(DbId::from)?;
-                        Some(m.get(&db_id)?.iter().cloned().map(Into::into).collect())
+                        Some(super::credited_artist_responses(
+                            m.get(&db_id)?.clone(),
+                            artist_covers.as_ref(),
+                        ))
                     });
                     let mut resp = TrackResponse::from(track);
                     resp.artists = artists;
@@ -538,7 +560,8 @@ async fn get_releases(
         db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
 
     let db = &*STATE.db.read().await;
-    let (includes, include_covers, include_genres) = parse_release_includes(inc)?;
+    let (includes, include_covers, include_genres, include_artist_covers) =
+        parse_release_includes(inc)?;
     let search_term = super::parse_text_query(query);
     let mut sort = parse_sort_specs(sort_by, sort_order)?;
     if sort.is_empty() {
@@ -619,6 +642,7 @@ async fn get_releases(
             db,
             detail,
             include_covers,
+            include_artist_covers,
             include_genres,
             include_entry_paths,
         )?);
@@ -637,7 +661,8 @@ async fn get_release(
         db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
 
     let db = &*STATE.db.read().await;
-    let (includes, include_covers, include_genres) = parse_release_includes(query.inc)?;
+    let (includes, include_covers, include_genres, include_artist_covers) =
+        parse_release_includes(query.inc)?;
     let release_db_id = db::lookup::find_node_id_by_id(db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
     super::require_entity_accessible(db, &principal, release_db_id, || {
@@ -650,6 +675,7 @@ async fn get_release(
         db,
         detail,
         include_covers,
+        include_artist_covers,
         include_genres,
         include_entry_paths,
     )?))
@@ -693,14 +719,14 @@ async fn search_release_covers(
 #[cfg(feature = "docgen")]
 fn list_releases_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List releases").description(
-        "Returns releases as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `year`, `library_id`, `genre_id`, `sort_by`, `sort_order`, `limit`, `cursor`. `library_id` scopes results to releases belonging to that public library ID. `genre_id` filters by one or more public genre IDs. `sort_by` supports `sort_name`, `name`, `date_created`, `release_date`, `last_played_at`, `listen_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `inc` values: `artists`, `tracks`, `track_artists`, `entries`, `covers`, `genres`. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits (for example, artist and producer). Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
+        "Returns releases as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `year`, `library_id`, `genre_id`, `sort_by`, `sort_order`, `limit`, `cursor`. `library_id` scopes results to releases belonging to that public library ID. `genre_id` filters by one or more public genre IDs. `sort_by` supports `sort_name`, `name`, `date_created`, `release_date`, `last_played_at`, `listen_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `inc` values: `artists`, `tracks`, `track_artists`, `entries`, `covers`, `artist_covers`, `genres`. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits (for example, artist and producer). Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn get_release_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get release by ID").description(
-        "Returns a single release. 404 if not found. Use `inc` to include artists, tracks, track_artists, entries, covers, and/or genres. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`. An artist may appear multiple times with different credits. Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
+        "Returns a single release. 404 if not found. Use `inc` to include artists, tracks, track_artists, entries, covers, artist_covers, and/or genres. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
     )
 }
 
@@ -858,7 +884,7 @@ mod tests {
 
     #[test]
     fn parse_inc_accepts_covers() {
-        let parsed = match parse_inc(Some(vec!["artists,covers".to_string()])) {
+        let parsed = match parse_inc(Some(vec!["artists,covers,artist_covers".to_string()])) {
             Ok(value) => value,
             Err(_) => panic!("covers inc should parse"),
         };
@@ -866,6 +892,7 @@ mod tests {
         assert!(!parsed.tracks);
         assert!(!parsed.entries);
         assert!(parsed.covers);
+        assert!(parsed.artist_covers);
     }
 
     #[tokio::test]

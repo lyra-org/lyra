@@ -51,7 +51,7 @@ pub(crate) struct MixQueryParams {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: releases, artists, release_covers."
+            description = "Comma-separated or repeated values: releases, artists, release_covers, artist_covers."
         )
     )]
     #[serde(default, deserialize_with = "routes::deserialize_inc")]
@@ -306,13 +306,13 @@ fn sanitize_extra(mut extra: HashMap<String, String>) -> HashMap<String, String>
 }
 
 #[cfg(feature = "docgen")]
-const MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Use `inc` to hydrate nested data: `releases`, `artists`, and `release_covers` (covers require `releases`).";
+const MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Use `inc` to hydrate nested data: `releases`, `artists`, `release_covers` (covers require `releases`), and `artist_covers` (covers require `artists`).";
 
 #[cfg(feature = "docgen")]
-const TRACK_MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Use `inc` to hydrate nested data: `releases`, `artists`, and `release_covers` (covers require `releases`). Defaults to instant mode (`instant=true`): the seed track is pinned at index 0, then similar tracks follow; pass `instant=false` for a fully shuffled unpinned mix.";
+const TRACK_MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Use `inc` to hydrate nested data: `releases`, `artists`, `release_covers` (covers require `releases`), and `artist_covers` (covers require `artists`). Defaults to instant mode (`instant=true`): the seed track is pinned at index 0, then similar tracks follow; pass `instant=false` for a fully shuffled unpinned mix.";
 
 #[cfg(feature = "docgen")]
-const ME_MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Use `inc` to hydrate nested data: `releases`, `artists`, and `release_covers` (covers require `releases`). Seeds from the authenticated user's recent listen history.";
+const ME_MIX_DESCRIPTION: &str = "Returns a shuffled list of tracks similar to the seed. Use `inc` to hydrate nested data: `releases`, `artists`, `release_covers` (covers require `releases`), and `artist_covers` (covers require `artists`). Seeds from the authenticated user's recent listen history.";
 
 #[cfg(feature = "docgen")]
 pub(crate) fn track_mix_docs(op: TransformOperation) -> TransformOperation {

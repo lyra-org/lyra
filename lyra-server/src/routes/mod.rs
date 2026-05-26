@@ -37,11 +37,13 @@ use serde::{
     Deserializer,
     de,
 };
+use std::collections::HashMap;
 use time::{
     OffsetDateTime,
     format_description::well_known::Rfc3339,
 };
 
+use agdb::DbId;
 use base64::{
     Engine as _,
     engine::general_purpose::URL_SAFE_NO_PAD,
@@ -49,7 +51,10 @@ use base64::{
 
 use crate::{
     db,
-    services::auth::Principal,
+    services::{
+        auth::Principal,
+        entities::ResolvedCreditedArtist,
+    },
 };
 
 pub(crate) use app::build_core_api;
@@ -79,6 +84,7 @@ pub(crate) use serve::{
     serve_hls_playlist_for_track,
     stream_track_response,
 };
+
 pub use serve::{
     download_routes,
     stream_routes,
@@ -99,6 +105,36 @@ pub(crate) use websocket::install as install_websocket;
 
 #[cfg(feature = "docgen")]
 pub(crate) use app::build_openapi_spec;
+
+pub(crate) fn db_ids_from_credited_artists<'a>(
+    artists: impl IntoIterator<Item = &'a ResolvedCreditedArtist>,
+) -> Vec<DbId> {
+    artists
+        .into_iter()
+        .filter_map(|artist| artist.artist.db_id.clone().map(DbId::from))
+        .collect()
+}
+
+pub(crate) fn credited_artist_responses(
+    artists: Vec<ResolvedCreditedArtist>,
+    artist_covers: Option<&HashMap<DbId, db::Cover>>,
+) -> Vec<responses::ArtistResponse> {
+    artists
+        .into_iter()
+        .map(|artist| {
+            let artist_db_id = artist.artist.db_id.clone().map(DbId::from);
+            let mut response = responses::ArtistResponse::from(artist);
+            if let Some(artist_covers) = artist_covers {
+                response.cover = Some(
+                    artist_db_id
+                        .and_then(|id| artist_covers.get(&id).cloned())
+                        .map(covers::cover_to_response),
+                );
+            }
+            response
+        })
+        .collect()
+}
 
 const DEFAULT_PAGE_LIMIT: u64 = 100;
 pub(crate) const PAGE_HARD_LIMIT: u64 = 500;
