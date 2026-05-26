@@ -1,0 +1,91 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Kano - two [FLAC]/06 夜明けと蛍.flac"
+album = "two"
+album_artists = ["鹿乃"]
+artists = ["ルワン feat. 鹿乃"]
+title = "夜明けと蛍"
+genre = "Pop"
+track = 6
+duration_ms = 327093
+
+[[raw_tags]]
+file_path = "Kano - two [FLAC]/05 雨き声残響.flac"
+album = "two"
+album_artists = ["鹿乃"]
+artists = ["ルワン feat. 鹿乃"]
+title = "雨き声残響"
+genre = "Pop"
+track = 5
+duration_ms = 179786
+
+[[raw_tags]]
+file_path = "Kano - two [FLAC]/04 キササゲ.flac"
+album = "two"
+album_artists = ["鹿乃"]
+artists = ["ルワン feat. 鹿乃"]
+title = "キササゲ"
+genre = "Pop"
+track = 4
+duration_ms = 276666
+
+[[raw_tags]]
+file_path = "Kano - two [FLAC]/03 嘘つきの世界.flac"
+album = "two"
+album_artists = ["鹿乃"]
+artists = ["ルワン feat. 鹿乃"]
+title = "嘘つきの世界"
+genre = "Pop"
+track = 3
+duration_ms = 208133
+
+[[raw_tags]]
+file_path = "Kano - two [FLAC]/02 いかないで.flac"
+album = "two"
+album_artists = ["鹿乃"]
+artists = ["ルワン feat. 鹿乃"]
+title = "いかないで"
+genre = "Pop"
+track = 2
+duration_ms = 182706
+
+[[raw_tags]]
+file_path = "Kano - two [FLAC]/01 曖昧劣情Lover.flac"
+album = "two"
+album_artists = ["鹿乃"]
+artists = ["ルワン feat. 鹿乃"]
+title = "曖昧劣情Lover"
+genre = "Pop"
+track = 1
+duration_ms = 216000
+
+[expect.release]
+ids = { release_id = "953145c3-ebf4-424c-9b2b-c073f08a5d98" }
+fields = { release_title = "two", release_date = "2018-08-10" }
+
+[expect.artists."487cda72-0633-46d5-a80e-f9ee94080080"]
+fields = { artist_name = "鹿乃", sort_name = "Kano" }
+
+[expect.tracks."35344ede-5ee2-49c1-b2e9-93e6826d774d"]
+fields = { disc = 1, track = 5, track_title = "雨き声残響" }
+
+[expect.tracks."5ef0f646-bd1c-40d1-a0a2-837e15709fcd"]
+fields = { disc = 1, track = 6, track_title = "夜明けと蛍" }
+
+[expect.tracks."691a6032-26af-4c7f-a864-d0486a4f4080"]
+fields = { disc = 1, track = 3, track_title = "嘘つきの世界" }
+
+[expect.tracks."78919697-9483-45da-a210-78bd42111ede"]
+fields = { disc = 1, track = 1, track_title = "曖昧劣情Lover" }
+
+[expect.tracks."ec24611d-3579-46ce-9635-8dc15fa3b93c"]
+fields = { disc = 1, track = 2, track_title = "いかないで" }
+
+[expect.tracks."f3244c9c-2838-4b27-9f2b-70e78b3b040e"]
+fields = { disc = 1, track = 4, track_title = "キササゲ" }
