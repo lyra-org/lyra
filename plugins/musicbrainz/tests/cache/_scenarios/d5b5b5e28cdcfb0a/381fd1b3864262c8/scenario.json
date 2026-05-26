@@ -1,0 +1,30 @@
+{
+  "test_name": "いつのまに_feat_aimer_和ぬか_maisondes",
+  "scenario_id": "381fd1b3864262c8",
+  "responses": [
+    {
+      "cache_key": "4e9bb9c58d1d90c4",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=c7a4bb84-82bf-42f1-be49-9baa6e884f5d&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "d7cbe8c80d7c4efd"
+    },
+    {
+      "cache_key": "5081658924dc1f2d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=MAISONdes",
+      "status_code": 200,
+      "body_hash": "c039dffc927966cf"
+    },
+    {
+      "cache_key": "841fd4743de5cf4f",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%84%E3%81%A4%E3%81%AE%E3%81%BE%E3%81%AB%20%5C(feat.%20Aimer%20%26%20%E5%92%8C%E3%81%AC%E3%81%8B%5C)&limit=100",
+      "status_code": 200,
+      "body_hash": "2f0490ad5dab4fe1"
+    },
+    {
+      "cache_key": "c2b4d7b77c7023a5",
+      "url": "https://musicbrainz.org/ws/2/artist/5005beb6-9da2-48ba-bfd9-aa8ddc6d0117?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "73769eefda621a75"
+    }
+  ]
+}
