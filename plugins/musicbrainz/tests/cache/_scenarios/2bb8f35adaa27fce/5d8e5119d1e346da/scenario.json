@@ -1,0 +1,30 @@
+{
+  "test_name": "next_phase_da_ice",
+  "scenario_id": "5d8e5119d1e346da",
+  "responses": [
+    {
+      "cache_key": "1ebac8df2fe9da16",
+      "url": "https://musicbrainz.org/ws/2/artist/2fc5c58a-711b-4a11-9b7a-7b5ba1f58e04?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "dd605ab11ef62a07"
+    },
+    {
+      "cache_key": "94091b2dceb78412",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Da-iCE",
+      "status_code": 200,
+      "body_hash": "1f9fd8c1b9cf9406"
+    },
+    {
+      "cache_key": "afd171881273a826",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ANext%20Phase&limit=100",
+      "status_code": 200,
+      "body_hash": "4c04bcab0258d966"
+    },
+    {
+      "cache_key": "f09ccba380095d6d",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=995ae212-0c22-42da-a7b3-222386d641ab&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "0aaeb7f281c7d406"
+    }
+  ]
+}

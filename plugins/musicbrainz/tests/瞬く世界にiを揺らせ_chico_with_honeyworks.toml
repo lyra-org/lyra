@@ -1,0 +1,177 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "CHiCO with HoneyWorks - 瞬く世界にiを揺らせ (2020-09-16) [WEB FLAC]/1.14. 乙女どもよ。.flac"
+album = "瞬く世界にiを揺らせ"
+album_artists = ["CHiCO with HoneyWorks"]
+artists = ["CHiCO with HoneyWorks"]
+title = "乙女どもよ。"
+copyright = "(P) 2018(2,7,10),2019(8,14),2020(1,3-6,9,11-13) MusicRay'n Inc."
+disc = 1
+track = 14
+track_total = 14
+duration_ms = 252240
+
+[[raw_tags]]
+file_path = "CHiCO with HoneyWorks - 瞬く世界にiを揺らせ (2020-09-16) [WEB FLAC]/1.13. 私を殺さないで.flac"
+album = "瞬く世界にiを揺らせ"
+album_artists = ["CHiCO with HoneyWorks"]
+artists = ["CHiCO with HoneyWorks"]
+title = "私を殺さないで"
+copyright = "(P) 2018(2,7,10),2019(8,14),2020(1,3-6,9,11-13) MusicRay'n Inc."
+disc = 1
+track = 13
+track_total = 14
+duration_ms = 209280
+
+[[raw_tags]]
+file_path = "CHiCO with HoneyWorks - 瞬く世界にiを揺らせ (2020-09-16) [WEB FLAC]/1.12. ヒロイン育成計画.flac"
+album = "瞬く世界にiを揺らせ"
+album_artists = ["CHiCO with HoneyWorks"]
+artists = ["CHiCO with HoneyWorks"]
+title = "ヒロイン育成計画"
+copyright = "(P) 2018(2,7,10),2019(8,14),2020(1,3-6,9,11-13) MusicRay'n Inc."
+disc = 1
+track = 12
+track_total = 14
+duration_ms = 220200
+
+[[raw_tags]]
+file_path = "CHiCO with HoneyWorks - 瞬く世界にiを揺らせ (2020-09-16) [WEB FLAC]/1.11. Marie.flac"
+album = "瞬く世界にiを揺らせ"
+album_artists = ["CHiCO with HoneyWorks"]
+artists = ["CHiCO with HoneyWorks"]
+title = "Marie"
+copyright = "(P) 2018(2,7,10),2019(8,14),2020(1,3-6,9,11-13) MusicRay'n Inc."
+disc = 1
+track = 11
+track_total = 14
+duration_ms = 249466
+
+[[raw_tags]]
+file_path = "CHiCO with HoneyWorks - 瞬く世界にiを揺らせ (2020-09-16) [WEB FLAC]/1.10. ギミギミコール.flac"
+album = "瞬く世界にiを揺らせ"
+album_artists = ["CHiCO with HoneyWorks"]
+artists = ["CHiCO with HoneyWorks meets スカイピース"]
+title = "ギミギミコール"
+copyright = "(P) 2018(2,7,10),2019(8,14),2020(1,3-6,9,11-13) MusicRay'n Inc."
+disc = 1
+track = 10
+track_total = 14
+duration_ms = 245773
+
+[[raw_tags]]
+file_path = "CHiCO with HoneyWorks - 瞬く世界にiを揺らせ (2020-09-16) [WEB FLAC]/1.09. Alive.flac"
+album = "瞬く世界にiを揺らせ"
+album_artists = ["CHiCO with HoneyWorks"]
+artists = ["CHiCO with HoneyWorks"]
+title = "Alive"
+copyright = "(P) 2018(2,7,10),2019(8,14),2020(1,3-6,9,11-13) MusicRay'n Inc."
+disc = 1
+track = 9
+track_total = 14
+duration_ms = 186413
+
+[[raw_tags]]
+file_path = "CHiCO with HoneyWorks - 瞬く世界にiを揺らせ (2020-09-16) [WEB FLAC]/1.08. 恋人ツナギ.flac"
+album = "瞬く世界にiを揺らせ"
+album_artists = ["CHiCO with HoneyWorks"]
+artists = ["CHiCO with HoneyWorks"]
+title = "恋人ツナギ"
+copyright = "(P) 2018(2,7,10),2019(8,14),2020(1,3-6,9,11-13) MusicRay'n Inc."
+disc = 1
+track = 8
+track_total = 14
+duration_ms = 277640
+
+[[raw_tags]]
+file_path = "CHiCO with HoneyWorks - 瞬く世界にiを揺らせ (2020-09-16) [WEB FLAC]/1.07. ヒカリ証明論.flac"
+album = "瞬く世界にiを揺らせ"
+album_artists = ["CHiCO with HoneyWorks"]
+artists = ["CHiCO with HoneyWorks"]
+title = "ヒカリ証明論"
+copyright = "(P) 2018(2,7,10),2019(8,14),2020(1,3-6,9,11-13) MusicRay'n Inc."
+disc = 1
+track = 7
+track_total = 14
+duration_ms = 273773
+
+[[raw_tags]]
+file_path = "CHiCO with HoneyWorks - 瞬く世界にiを揺らせ (2020-09-16) [WEB FLAC]/1.06. 胸キュンライト　~フリフリ隊mix~.flac"
+album = "瞬く世界にiを揺らせ"
+album_artists = ["CHiCO with HoneyWorks"]
+artists = ["CHiCO with HoneyWorks"]
+title = "胸キュンライト　~フリフリ隊mix~"
+copyright = "(P) 2018(2,7,10),2019(8,14),2020(1,3-6,9,11-13) MusicRay'n Inc."
+disc = 1
+track = 6
+track_total = 14
+duration_ms = 294346
+
+[[raw_tags]]
+file_path = "CHiCO with HoneyWorks - 瞬く世界にiを揺らせ (2020-09-16) [WEB FLAC]/1.05. ぐる恋.flac"
+album = "瞬く世界にiを揺らせ"
+album_artists = ["CHiCO with HoneyWorks"]
+artists = ["CHiCO with HoneyWorks"]
+title = "ぐる恋"
+copyright = "(P) 2018(2,7,10),2019(8,14),2020(1,3-6,9,11-13) MusicRay'n Inc."
+disc = 1
+track = 5
+track_total = 14
+duration_ms = 240213
+
+[[raw_tags]]
+file_path = "CHiCO with HoneyWorks - 瞬く世界にiを揺らせ (2020-09-16) [WEB FLAC]/1.04. ワタシノテンシ.flac"
+album = "瞬く世界にiを揺らせ"
+album_artists = ["CHiCO with HoneyWorks"]
+artists = ["CHiCO with HoneyWorks"]
+title = "ワタシノテンシ"
+copyright = "(P) 2018(2,7,10),2019(8,14),2020(1,3-6,9,11-13) MusicRay'n Inc."
+disc = 1
+track = 4
+track_total = 14
+duration_ms = 262013
+
+[[raw_tags]]
+file_path = "CHiCO with HoneyWorks - 瞬く世界にiを揺らせ (2020-09-16) [WEB FLAC]/1.03. 幸せ。.flac"
+album = "瞬く世界にiを揺らせ"
+album_artists = ["CHiCO with HoneyWorks"]
+artists = ["CHiCO with HoneyWorks"]
+title = "幸せ。"
+copyright = "(P) 2018(2,7,10),2019(8,14),2020(1,3-6,9,11-13) MusicRay'n Inc."
+disc = 1
+track = 3
+track_total = 14
+duration_ms = 250360
+
+[[raw_tags]]
+file_path = "CHiCO with HoneyWorks - 瞬く世界にiを揺らせ (2020-09-16) [WEB FLAC]/1.02. ミスター・ダーリン.flac"
+album = "瞬く世界にiを揺らせ"
+album_artists = ["CHiCO with HoneyWorks"]
+artists = ["CHiCO with HoneyWorks meets 中川翔子"]
+title = "ミスター・ダーリン"
+copyright = "(P) 2018(2,7,10),2019(8,14),2020(1,3-6,9,11-13) MusicRay'n Inc."
+disc = 1
+track = 2
+track_total = 14
+duration_ms = 245640
+
+[[raw_tags]]
+file_path = "CHiCO with HoneyWorks - 瞬く世界にiを揺らせ (2020-09-16) [WEB FLAC]/1.01. 決戦スピリット.flac"
+album = "瞬く世界にiを揺らせ"
+album_artists = ["CHiCO with HoneyWorks"]
+artists = ["CHiCO with HoneyWorks"]
+title = "決戦スピリット"
+copyright = "(P) 2018(2,7,10),2019(8,14),2020(1,3-6,9,11-13) MusicRay'n Inc."
+disc = 1
+track = 1
+track_total = 14
+duration_ms = 270306
+
+[expect.release]
+ids = { release_group_id = "c342fecf-8f69-4584-8a18-69d96f492c87" }
