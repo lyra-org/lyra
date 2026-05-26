@@ -1,0 +1,54 @@
+{
+  "test_name": "chameleon_end_of_the_world",
+  "scenario_id": "1fe3a82e821569e8",
+  "responses": [
+    {
+      "cache_key": "069e9dd4444a3f5f",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AChameleon&limit=100",
+      "status_code": 200,
+      "body_hash": "4449790d5f900b47"
+    },
+    {
+      "cache_key": "1caf3d1dd6068074",
+      "url": "https://musicbrainz.org/ws/2/artist/dacc2d64-7e59-42a8-87a9-10c53919aff2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9a687bf5b4ea58bc"
+    },
+    {
+      "cache_key": "1f6ed30ff70709e3",
+      "url": "https://musicbrainz.org/ws/2/artist/d9dbfe6a-8346-4337-8614-fe96aab63927?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "89f5694e7e5068a2"
+    },
+    {
+      "cache_key": "635db1604f4620df",
+      "url": "https://musicbrainz.org/ws/2/artist?query=End%20Of%20The%20World",
+      "status_code": 200,
+      "body_hash": "5a06bfa9921d4999"
+    },
+    {
+      "cache_key": "8a3d599fab60af62",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=ff00c5c0-d0bb-4e28-99bc-613ab98fcf4f&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "b0a4a7526c6bf039"
+    },
+    {
+      "cache_key": "d3ba80892a385969",
+      "url": "https://musicbrainz.org/ws/2/artist/b02dc689-7859-461d-b70e-9fe1f64fddce?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cdf05c2e0985599a"
+    },
+    {
+      "cache_key": "db60129ffdb84ac1",
+      "url": "https://musicbrainz.org/ws/2/work/6e8edf2e-b6c0-4b34-957e-87327a976945?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "650d205b93d5d15f"
+    },
+    {
+      "cache_key": "ebba2edd509381f3",
+      "url": "https://musicbrainz.org/ws/2/work/51d23892-cd08-4db6-a199-fb08dbefd91e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e12cac0830b90051"
+    }
+  ]
+}
