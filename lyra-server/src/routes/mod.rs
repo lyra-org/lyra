@@ -242,6 +242,16 @@ where
     }
 }
 
+pub(crate) fn deserialize_optional_usize<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_optional_u64(deserializer)?
+        .map(usize::try_from)
+        .transpose()
+        .map_err(|_| de::Error::custom("number is too large"))
+}
+
 pub(crate) fn parse_inc_values(
     inc: Option<Vec<String>>,
     supported: &[&str],
