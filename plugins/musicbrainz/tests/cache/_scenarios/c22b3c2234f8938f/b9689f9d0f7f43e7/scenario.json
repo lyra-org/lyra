@@ -1,0 +1,36 @@
+{
+  "test_name": "planetary_penthouse",
+  "scenario_id": "b9689f9d0f7f43e7",
+  "responses": [
+    {
+      "cache_key": "2e91d2be4318aa6e",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Aea284958-7074-46c1-9355-360fb39b8353%20AND%20(release%3APlanetary%20OR%20recording%3APlanetary)&limit=100",
+      "status_code": 200,
+      "body_hash": "4cafc6401fd71385"
+    },
+    {
+      "cache_key": "746e6ba744e1a729",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Penthouse",
+      "status_code": 200,
+      "body_hash": "86b12f019303035e"
+    },
+    {
+      "cache_key": "b6b2484525f6e7c7",
+      "url": "https://musicbrainz.org/ws/2/artist/9604bb00-65c5-4b67-a174-c46c063ba794?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c8f4900b9c6566a0"
+    },
+    {
+      "cache_key": "e0f3fcf334ee9777",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3APlanetary&limit=100",
+      "status_code": 200,
+      "body_hash": "f28dab4dc4e1e13f"
+    },
+    {
+      "cache_key": "fe7c1a21bc72169a",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=d2caeaab-90c7-4fdf-98ff-92d57231a179&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "74de1b201228a240"
+    }
+  ]
+}
