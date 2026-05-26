@@ -1,0 +1,36 @@
+{
+  "test_name": "これだからやめらんない_ツユ",
+  "scenario_id": "6d7014a03cc95409",
+  "responses": [
+    {
+      "cache_key": "383568b2984357a3",
+      "url": "https://musicbrainz.org/ws/2/artist/2b0a8be6-bfb8-4f62-b21d-f47a3104157e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e6afda27e6cd266f"
+    },
+    {
+      "cache_key": "45dd4d142983b247",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%93%E3%82%8C%E3%81%A0%E3%81%8B%E3%82%89%E3%82%84%E3%82%81%E3%82%89%E3%82%93%E3%81%AA%E3%81%84%5C!&limit=100",
+      "status_code": 200,
+      "body_hash": "193a302a539b8428"
+    },
+    {
+      "cache_key": "4f00c44fba590d06",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%84%E3%83%A6",
+      "status_code": 200,
+      "body_hash": "c94a444412bb61a7"
+    },
+    {
+      "cache_key": "5027d9adc45a96a5",
+      "url": "https://musicbrainz.org/ws/2/work/52f1d117-7b11-4d2a-aa4b-bf3fae73daf4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "43e88d557e6d04e7"
+    },
+    {
+      "cache_key": "58cf535233f9cf69",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=badb391e-6e34-4b79-99f8-f38ddba8caee&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "7dacf0c07feb2c1d"
+    }
+  ]
+}

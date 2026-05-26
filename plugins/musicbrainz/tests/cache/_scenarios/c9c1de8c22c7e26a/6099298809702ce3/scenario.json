@@ -1,0 +1,30 @@
+{
+  "test_name": "jane_doe_宇多田ヒカル",
+  "scenario_id": "6099298809702ce3",
+  "responses": [
+    {
+      "cache_key": "35d17a9297fd33fe",
+      "url": "https://musicbrainz.org/ws/2/work/5f5df03f-0407-4191-936a-a990d791c5b4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5a1c304a616636d1"
+    },
+    {
+      "cache_key": "3bb818107c1e2447",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%B1%B3%E6%B4%A5%E7%8E%84%E5%B8%AB%2C%20%E5%AE%87%E5%A4%9A%E7%94%B0%E3%83%92%E3%82%AB%E3%83%AB",
+      "status_code": 200,
+      "body_hash": "e0ff1e5b9877ffb4"
+    },
+    {
+      "cache_key": "63b574329b32ed9a",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=36aa4a46-5ce3-453b-8306-7c33062a95ea&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "c6d72f0557393659"
+    },
+    {
+      "cache_key": "765f5e4e4e308bd1",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A09d4a85c-4916-4b4e-bc96-c4cfcf371046%20AND%20(release%3AJANE%20DOE%20OR%20recording%3AJANE%20DOE)&limit=100",
+      "status_code": 200,
+      "body_hash": "b818fdcc8521a6c9"
+    }
+  ]
+}
