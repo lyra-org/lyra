@@ -46,6 +46,7 @@ pub(crate) struct MixQueryParams {
         feature = "docgen",
         schemars(description = "Maximum number of tracks to return (default 200).")
     )]
+    #[serde(default, deserialize_with = "routes::deserialize_optional_usize")]
     limit: Option<usize>,
     #[cfg_attr(
         feature = "docgen",
@@ -352,11 +353,35 @@ pub(crate) fn me_mix_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::Uri;
 
     #[test]
     fn track_seed_use_instant_defaults_true() {
         assert!(track_seed_use_instant(None));
         assert!(track_seed_use_instant(Some(true)));
         assert!(!track_seed_use_instant(Some(false)));
+    }
+
+    #[test]
+    fn mix_query_parses_limit_with_flattened_extra_options() {
+        let uri: Uri = "/mix?limit=5&provider_knob=wide".parse().unwrap();
+        let axum::extract::Query(query) =
+            axum::extract::Query::<MixQueryParams>::try_from_uri(&uri).unwrap();
+
+        assert_eq!(query.limit, Some(5));
+        assert_eq!(
+            query.extra.get("provider_knob").map(String::as_str),
+            Some("wide")
+        );
+    }
+
+    #[test]
+    fn track_mix_query_parses_nested_limit_with_instant_flag() {
+        let uri: Uri = "/mix?limit=5&instant=false".parse().unwrap();
+        let axum::extract::Query(query) =
+            axum::extract::Query::<TrackMixQueryParams>::try_from_uri(&uri).unwrap();
+
+        assert_eq!(query.base.limit, Some(5));
+        assert_eq!(query.instant, Some(false));
     }
 }
