@@ -1,0 +1,114 @@
+{
+  "test_name": "ambitions_one_ok_rock",
+  "scenario_id": "de368ed4032814b2",
+  "responses": [
+    {
+      "cache_key": "00ab65c819f023f2",
+      "url": "https://musicbrainz.org/ws/2/work/9a080a13-0766-40d7-9b79-8a860d20ff19?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4f39b29eb34c441c"
+    },
+    {
+      "cache_key": "0af32da99d3333a1",
+      "url": "https://musicbrainz.org/ws/2/work/a6c1c48c-b017-47fd-b1f1-5ebaab28dcd3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fca19ccca09025f7"
+    },
+    {
+      "cache_key": "0c24a81864c952c5",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=42200f44-a175-4ce1-9286-0fc0db1d5ab4&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "89584e8bea9d6885"
+    },
+    {
+      "cache_key": "12f19606a877c4ec",
+      "url": "https://musicbrainz.org/ws/2/work/e23d2e18-959c-43b4-a9ce-21ae40bed7c8?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e807196c41c7c36e"
+    },
+    {
+      "cache_key": "148a72336924d205",
+      "url": "https://musicbrainz.org/ws/2/work/248f1630-0ef1-4d40-bfb7-be51f4cb6396?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "59914ac5632671b4"
+    },
+    {
+      "cache_key": "387b9a8be6a5078a",
+      "url": "https://musicbrainz.org/ws/2/work/1522bd62-7169-4be1-9ff7-ef78038bbbc4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c80e134acf6c5e36"
+    },
+    {
+      "cache_key": "398e6f445ea0a2f9",
+      "url": "https://musicbrainz.org/ws/2/work/6b450f17-771e-4993-8981-2f0f2260bce7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ff05333dfc137b06"
+    },
+    {
+      "cache_key": "62806c38842cc300",
+      "url": "https://musicbrainz.org/ws/2/work/2b2e810a-9df4-4e3c-b380-06ee0f5cf401?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ff358f669596707e"
+    },
+    {
+      "cache_key": "64ca984385996069",
+      "url": "https://musicbrainz.org/ws/2/artist?query=ONE%20OK%20ROCK",
+      "status_code": 200,
+      "body_hash": "128f2e758a976389"
+    },
+    {
+      "cache_key": "7027df7e6d7f9402",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AAmbitions&limit=100",
+      "status_code": 200,
+      "body_hash": "436499736f17e67b"
+    },
+    {
+      "cache_key": "71aa3d9a292ca53b",
+      "url": "https://musicbrainz.org/ws/2/work/b24398d2-1d71-4e8a-a328-e15cd6bfa3d7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6694fb9aef1e958c"
+    },
+    {
+      "cache_key": "71fdc079ac239332",
+      "url": "https://musicbrainz.org/ws/2/work/901c48a7-5cbe-4939-be17-9f0b30b4a1b6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c1f6f466c5f20d58"
+    },
+    {
+      "cache_key": "740eb35a94faffe2",
+      "url": "https://musicbrainz.org/ws/2/artist/830e5c4e-6b7d-431d-86ab-00c751281dc5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2a148f322fead18a"
+    },
+    {
+      "cache_key": "96b1e64127772765",
+      "url": "https://musicbrainz.org/ws/2/work/2e5b8142-d6ff-492d-b01f-a4e986a225a7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "90e82b1bd36b8da8"
+    },
+    {
+      "cache_key": "af6e307345d5e5bf",
+      "url": "https://musicbrainz.org/ws/2/work/3c85cdb1-a4f1-4479-a456-72d28dd8e8ed?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "389135040056593a"
+    },
+    {
+      "cache_key": "c1c3c60e457d2bbf",
+      "url": "https://musicbrainz.org/ws/2/work/2f5d47b2-5018-4a88-a68e-32626ff25d3d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "033e7416c1986e72"
+    },
+    {
+      "cache_key": "ce695d4b46931372",
+      "url": "https://musicbrainz.org/ws/2/artist/6ef00829-fa94-4fee-a5a6-b28e1208e96a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9a8da003f539ca28"
+    },
+    {
+      "cache_key": "ea599c4ccdb208ac",
+      "url": "https://musicbrainz.org/ws/2/work/2b675d5d-a3f1-4342-a7db-5e9879f99710?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e091fa2055de096e"
+    }
+  ]
+}
