@@ -1,0 +1,42 @@
+{
+  "test_name": "the_noise_contains_a_samples_of_夜に駆ける_yoasobi",
+  "scenario_id": "d6b36fa276e25d9e",
+  "responses": [
+    {
+      "cache_key": "0aa4b4861ff0f301",
+      "url": "https://musicbrainz.org/ws/2/artist?query=LE%20SSERAFIM%20%26%20YOASOBI",
+      "status_code": 200,
+      "body_hash": "60534836b88df7b2"
+    },
+    {
+      "cache_key": "11c8047fb23e4209",
+      "url": "https://musicbrainz.org/ws/2/artist/1ee37742-1e3d-4e61-84d2-bc85f4c1459a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a37402f7592754f7"
+    },
+    {
+      "cache_key": "52a497a70ee5743a",
+      "url": "https://musicbrainz.org/ws/2/artist/df6c619f-4334-43e2-8b6a-4a32af1e4f85?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5d78ef7b0087a500"
+    },
+    {
+      "cache_key": "5a71746ea4bea7f1",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A1ee37742-1e3d-4e61-84d2-bc85f4c1459a%20AND%20(release%3Athe%20NOISE%20%5C(Contains%20a%20Samples%20of%20%E5%A4%9C%E3%81%AB%E9%A7%86%E3%81%91%E3%82%8B%5C)%20OR%20recording%3Athe%20NOISE%20%5C(Contains%20a%20Samples%20of%20%E5%A4%9C%E3%81%AB%E9%A7%86%E3%81%91%E3%82%8B%5C))",
+      "status_code": 200,
+      "body_hash": "b83d9ed1dd3920c1"
+    },
+    {
+      "cache_key": "a92e262e808eb133",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=24962998-431e-4790-bafd-a34124919115&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "ecb7bb4c2a897544"
+    },
+    {
+      "cache_key": "ba53b4640f049ca5",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3Athe%20NOISE&limit=100",
+      "status_code": 200,
+      "body_hash": "29477ed59c780d37"
+    }
+  ]
+}
