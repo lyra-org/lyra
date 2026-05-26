@@ -1,0 +1,60 @@
+{
+  "test_name": "ienai_ep_limited_edition_miminari",
+  "scenario_id": "e3f7c4cba28a922b",
+  "responses": [
+    {
+      "cache_key": "15f727183c7501fe",
+      "url": "https://musicbrainz.org/ws/2/work/f2b7f422-cf89-4480-999e-c80d8a63e79b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7b6634293fd210fb"
+    },
+    {
+      "cache_key": "6093477c6c39a4b2",
+      "url": "https://musicbrainz.org/ws/2/artist/04490e5c-f43e-43f5-9963-4a3a4701ad80?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "654c301871de9a00"
+    },
+    {
+      "cache_key": "6e8edba31ae93462",
+      "url": "https://musicbrainz.org/ws/2/work/15711794-4894-4ebe-af83-4ad70d6592ed?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "738d67fdfb0a2213"
+    },
+    {
+      "cache_key": "78c2e520dfca339d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=MIMiNARI",
+      "status_code": 200,
+      "body_hash": "ab703c0a3c680cce"
+    },
+    {
+      "cache_key": "910cc9a2d9a64e00",
+      "url": "https://musicbrainz.org/ws/2/work/b982742d-6381-466d-9331-e1965bdf0404?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "da42392fd719c859"
+    },
+    {
+      "cache_key": "b887bd4111a94f8d",
+      "url": "https://musicbrainz.org/ws/2/recording?query=alias%3AIenai%20EP%20AND%20arid%3A04490e5c-f43e-43f5-9963-4a3a4701ad80",
+      "status_code": 200,
+      "body_hash": "5f3c7e5987cc1325"
+    },
+    {
+      "cache_key": "be45872a15c9b7b7",
+      "url": "https://musicbrainz.org/ws/2/release/c48fbd2c-da95-4a15-b3f9-ae0e542bbd47?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels",
+      "status_code": 200,
+      "body_hash": "4bc5458adc3d117e"
+    },
+    {
+      "cache_key": "f3797700163b426f",
+      "url": "https://musicbrainz.org/ws/2/work/b5cf2525-610e-4b86-ad9e-2a112c608ad5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0a8e6d9ac935703a"
+    },
+    {
+      "cache_key": "fae541211bfc1378",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AIenai%20EP&limit=100",
+      "status_code": 200,
+      "body_hash": "a29b5cf420a4cef5"
+    }
+  ]
+}
