@@ -6,7 +6,13 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use harmony_core::LocalScheduler;
+use harmony_core::{
+    LocalScheduler,
+    luau::{
+        ThreadDriveOptions,
+        drive_thread,
+    },
+};
 use harmony_luau as luau;
 
 use super::{
@@ -17,7 +23,6 @@ use super::{
         ApiResponseBody,
         ApiResponseKind,
     },
-    runner::drive_luau_thread,
 };
 
 impl PluginExecutor {
@@ -37,7 +42,12 @@ impl PluginExecutor {
         }
         let scheduler = self.vm.data().get::<LocalScheduler>()?;
         scheduler.spawn_luau_thread(context, self.vm.clone(), thread.clone(), vec![ctx]);
-        let values = drive_luau_thread(&self.tokio_runtime, &scheduler, &thread)?;
+        let values = drive_thread(
+            &self.tokio_runtime,
+            &scheduler,
+            &thread,
+            ThreadDriveOptions::default(),
+        )?;
         parse_api_response(&self.vm, &request, values)
     }
 }

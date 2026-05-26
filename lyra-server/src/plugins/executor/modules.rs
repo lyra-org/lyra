@@ -8,16 +8,9 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Result;
-use harmony_core::{
-    LuauRequireRuntime,
-    ModuleSpec,
-};
+use harmony_core::ModuleSpec;
 
-pub(super) fn register_generic_modules(
-    require: &LuauRequireRuntime,
-    module_overrides: Vec<ModuleSpec>,
-) -> Result<()> {
+pub(super) fn generic_module_specs(module_overrides: Vec<ModuleSpec>) -> Vec<ModuleSpec> {
     let mut specs = crate::plugins::module_specs();
     for override_spec in module_overrides {
         if let Some(existing) = specs.iter_mut().find(|spec| spec.id == override_spec.id) {
@@ -26,11 +19,7 @@ pub(super) fn register_generic_modules(
             specs.push(override_spec);
         }
     }
-
-    for spec in specs {
-        require.register(spec)?;
-    }
-    Ok(())
+    specs
 }
 
 pub(super) fn plugin_scope_ids() -> HashSet<Arc<str>> {

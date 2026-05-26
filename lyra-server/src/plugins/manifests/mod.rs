@@ -23,19 +23,19 @@ mod tests;
 
 #[derive(Clone, Default)]
 pub(crate) struct PluginManifestModuleStore {
-    manifests: Arc<[harmony_core::PluginManifest]>,
+    manifests: Arc<[harmony_core::plugin::PluginManifest]>,
 }
 
 impl PluginManifestModuleStore {
-    pub(crate) fn new(manifests: Arc<[harmony_core::PluginManifest]>) -> Self {
+    pub(crate) fn new(manifests: Arc<[harmony_core::plugin::PluginManifest]>) -> Self {
         Self { manifests }
     }
 
-    fn iter(&self) -> impl Iterator<Item = &harmony_core::PluginManifest> {
+    fn iter(&self) -> impl Iterator<Item = &harmony_core::plugin::PluginManifest> {
         self.manifests.iter()
     }
 
-    fn find(&self, id: &str) -> Option<&harmony_core::PluginManifest> {
+    fn find(&self, id: &str) -> Option<&harmony_core::plugin::PluginManifest> {
         self.manifests.iter().find(|manifest| manifest.id == id)
     }
 }
@@ -135,7 +135,7 @@ fn plugin_get_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<
     Ok(())
 }
 
-fn manifest_table(manifest: &harmony_core::PluginManifest) -> luau::OwnedTable {
+fn manifest_table(manifest: &harmony_core::plugin::PluginManifest) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(0, 6);
     table.set_field(
         "schema_version",

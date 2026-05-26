@@ -1461,7 +1461,7 @@ mod tests {
         let vm = harmony_luau::Vm::new()?;
         let spec = module_spec();
         let table =
-            harmony_core::install_luau_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
+            harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
         vm.set_global_table("http", &table)?;
 
         let values = vm.eval(
@@ -1489,7 +1489,7 @@ mod tests {
             ..harmony_core::ChunkOrigin::default()
         };
         let spec = module_spec();
-        let table = harmony_core::install_luau_module(&vm, &origin, &spec)?;
+        let table = harmony_core::luau::install_module(&vm, &origin, &spec)?;
         vm.set_global_table("http", &table)?;
 
         let root = vm.load_chunk(&harmony_luau::Chunk::new(

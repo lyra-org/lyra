@@ -138,7 +138,7 @@ async fn reset_runtime_state() -> anyhow::Result<()> {
     crate::plugins::settings::initialize_registry().await;
     STATE
         .plugin_manifests
-        .replace(Arc::from(Vec::<harmony_core::PluginManifest>::new()));
+        .replace(Arc::from(Vec::<harmony_core::plugin::PluginManifest>::new()));
     crate::services::playback_sessions::reset_callback_registry_for_test().await;
     crate::services::mix::reset_mix_registry_for_test().await;
     crate::services::providers::reset_provider_registry_for_test().await;
@@ -332,7 +332,7 @@ pub async fn run_luau_plugin_test_file(test_root: &Path, test_path: &Path) -> an
     let relative_path_text = relative_path.to_string_lossy().replace('\\', "/");
 
     let fixture = TempLuauPluginTestDir::new(&test_root)?;
-    let manifest = harmony_core::PluginManifest {
+    let manifest = harmony_core::plugin::PluginManifest {
         schema_version: 1,
         id: "test".to_string(),
         name: "Luau Test".to_string(),

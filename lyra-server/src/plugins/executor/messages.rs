@@ -16,7 +16,7 @@ use std::{
 };
 
 use anyhow::Result;
-use harmony_core::PluginManifest;
+use harmony_core::plugin::PluginManifest;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) struct TaskIdKey(pub(super) u64);

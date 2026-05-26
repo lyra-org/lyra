@@ -316,7 +316,7 @@ mod tests {
         let vm = harmony_luau::Vm::new()?;
         let spec = module_spec();
         let table =
-            harmony_core::install_luau_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
+            harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
         vm.set_global_table("crypt", &table)?;
 
         let values = vm.eval(
@@ -348,7 +348,7 @@ mod tests {
         let vm = harmony_luau::Vm::new()?;
         let spec = module_spec();
         let table =
-            harmony_core::install_luau_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
+            harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
         vm.set_global_table("crypt", &table)?;
 
         let values = vm.eval(

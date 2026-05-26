@@ -4,12 +4,15 @@
 // www.meshiplaw.com/lyra.
 
 use anyhow::Result;
-use harmony_core::LocalScheduler;
-
-use super::{
-    PluginExecutor,
-    runner::drive_luau_thread,
+use harmony_core::{
+    LocalScheduler,
+    luau::{
+        ThreadDriveOptions,
+        drive_thread,
+    },
 };
+
+use super::PluginExecutor;
 
 impl PluginExecutor {
     pub(crate) fn dispatch_playback_update(
@@ -35,7 +38,12 @@ impl PluginExecutor {
                 thread.clone(),
                 vec![payload_value.clone()],
             );
-            if let Err(error) = drive_luau_thread(&self.tokio_runtime, &scheduler, &thread) {
+            if let Err(error) = drive_thread(
+                &self.tokio_runtime,
+                &scheduler,
+                &thread,
+                ThreadDriveOptions::default(),
+            ) {
                 tracing::warn!(
                     playback_session_public_id = %payload.playback_session_public_id,
                     event = %payload.event,

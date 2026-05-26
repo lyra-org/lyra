@@ -4,7 +4,13 @@
 // www.meshiplaw.com/lyra.
 
 use anyhow::Result;
-use harmony_core::LocalScheduler;
+use harmony_core::{
+    LocalScheduler,
+    luau::{
+        ThreadDriveOptions,
+        drive_thread,
+    },
+};
 
 use super::{
     PluginExecutor,
@@ -12,7 +18,6 @@ use super::{
         MetadataRefreshRequest,
         MetadataRefreshResult,
     },
-    runner::drive_luau_thread,
 };
 
 impl PluginExecutor {
@@ -36,10 +41,15 @@ impl PluginExecutor {
             thread.clone(),
             vec![ctx],
         );
-        let values = drive_luau_thread(&self.tokio_runtime, &scheduler, &thread)?
-            .iter()
-            .map(|value| harmony_json::luau_to_json(&self.vm, value, 0).map_err(anyhow::Error::new))
-            .collect::<Result<Vec<_>>>()?;
+        let values = drive_thread(
+            &self.tokio_runtime,
+            &scheduler,
+            &thread,
+            ThreadDriveOptions::default(),
+        )?
+        .iter()
+        .map(|value| harmony_json::luau_to_json(&self.vm, value, 0).map_err(anyhow::Error::new))
+        .collect::<Result<Vec<_>>>()?;
         Ok(MetadataRefreshResult { values })
     }
 }

@@ -5,10 +5,13 @@ use anyhow::{
 };
 use harmony_core::{
     CallContext,
-    LuauRequireRuntime,
     MemorySourceLoader,
     ModuleSpec,
-    PluginLoadError,
+    luau::RequireRuntime,
+    plugin::{
+        PluginLoadError,
+        PluginManifest,
+    },
 };
 
 fn default_server_info() -> crate::plugins::server::ServerInfo {
@@ -24,12 +27,12 @@ fn default_server_info() -> crate::plugins::server::ServerInfo {
 }
 
 impl PluginExecutor {
-    pub(crate) fn with_manifests(manifests: Arc<[harmony_core::PluginManifest]>) -> Result<Self> {
+    pub(crate) fn with_manifests(manifests: Arc<[PluginManifest]>) -> Result<Self> {
         Self::with_runtime_state(manifests, default_server_info())
     }
 
     pub(crate) fn with_runtime_state(
-        manifests: Arc<[harmony_core::PluginManifest]>,
+        manifests: Arc<[PluginManifest]>,
         server_info: crate::plugins::server::ServerInfo,
     ) -> Result<Self> {
         Self::with_loader(
@@ -41,7 +44,7 @@ impl PluginExecutor {
     }
 
     pub(crate) fn with_database(
-        manifests: Arc<[harmony_core::PluginManifest]>,
+        manifests: Arc<[PluginManifest]>,
         server_info: crate::plugins::server::ServerInfo,
         db: crate::plugins::db::DbAsync,
     ) -> Result<Self> {
@@ -99,8 +102,8 @@ fn runtime_with_scopes(scopes: &[&str]) -> Result<PluginExecutor> {
     PluginExecutor::with_manifests(Arc::from(vec![manifest("demo", scopes)]))
 }
 
-fn manifest(id: &str, scopes: &[&str]) -> harmony_core::PluginManifest {
-    harmony_core::PluginManifest {
+fn manifest(id: &str, scopes: &[&str]) -> PluginManifest {
+    PluginManifest {
         schema_version: 1,
         id: id.to_string(),
         name: format!("{id} Plugin"),
@@ -115,7 +118,7 @@ fn manifest(id: &str, scopes: &[&str]) -> harmony_core::PluginManifest {
 #[test]
 fn plugin_executor_preserves_typed_call_context_across_luau_yield() -> Result<()> {
     let runtime = runtime_with_scopes(&["harmony.task", "test.context"])?;
-    let require = runtime.vm.data().get::<LuauRequireRuntime>()?;
+    let require = runtime.vm.data().get::<RequireRuntime>()?;
     require.register(
         ModuleSpec::new("test/context")
             .capability("test.context")

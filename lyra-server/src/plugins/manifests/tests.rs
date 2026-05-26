@@ -5,8 +5,8 @@ use harmony_luau as luau;
 
 use crate::plugins::executor::PluginExecutor;
 
-fn manifest(id: &str, scopes: &[&str]) -> harmony_core::PluginManifest {
-    harmony_core::PluginManifest {
+fn manifest(id: &str, scopes: &[&str]) -> harmony_core::plugin::PluginManifest {
+    harmony_core::plugin::PluginManifest {
         schema_version: 1,
         id: id.to_string(),
         name: format!("{id} Plugin"),
@@ -22,7 +22,7 @@ fn manifest(id: &str, scopes: &[&str]) -> harmony_core::PluginManifest {
 fn plugins_manifest_access_reads_vm_context_store() -> Result<()> {
     let runtime = PluginExecutor::with_manifests(Arc::from(vec![
         manifest("demo", &["lyra.plugins"]),
-        harmony_core::PluginManifest {
+        harmony_core::plugin::PluginManifest {
             schema_version: 1,
             id: "other".to_string(),
             name: "Other Plugin".to_string(),

@@ -6,53 +6,43 @@
 use std::{
     cell::RefCell,
     collections::HashMap,
-    fs,
     path::PathBuf,
     sync::Arc,
-    time::Duration,
 };
 
-use anyhow::{
-    Context,
-    Result,
-};
+use anyhow::Result;
+#[cfg(test)]
+use harmony_core::CallContext;
 use harmony_core::{
-    CallContext,
-    ChunkOrigin,
     FilesystemSourceLoader,
-    LoadedPlugin,
-    LocalScheduler,
-    LuauRequireRuntime,
-    ManifestCapabilityPolicy,
     ModuleSpec,
-    PluginLoadError,
-    PluginManager,
-    PluginManifest,
     SourceLoader,
-    TokioRuntimeContext,
-    install_luau_globals,
-    install_luau_require,
+    plugin::{
+        LoadedPlugin,
+        PluginLoadError,
+        PluginManager,
+        PluginManifest,
+        RuntimeBuilder,
+    },
 };
+#[cfg(test)]
 use harmony_luau as luau;
 
 use super::{
     PluginExecutor,
     WebSocketState,
     default_auth_capabilities,
-    luau_origin,
     messages::TaskIdKey,
     modules::{
+        generic_module_specs,
         plugin_scope_ids,
-        register_generic_modules,
     },
-    plugin_origin,
-    runner::drive_luau_thread,
     stores::PluginModuleStores,
 };
 
 impl PluginExecutor {
     pub(crate) fn with_filesystem_sources(
-        manifests: Arc<[harmony_core::PluginManifest]>,
+        manifests: Arc<[PluginManifest]>,
         server_info: crate::plugins::server::ServerInfo,
         source_root: impl Into<std::path::PathBuf>,
         plugins_dir: impl Into<std::path::PathBuf>,
@@ -107,7 +97,7 @@ impl PluginExecutor {
     }
 
     pub(super) fn with_loader<L>(
-        manifests: Arc<[harmony_core::PluginManifest]>,
+        manifests: Arc<[PluginManifest]>,
         server_info: crate::plugins::server::ServerInfo,
         stores: PluginModuleStores,
         loader: L,
@@ -126,7 +116,7 @@ impl PluginExecutor {
     }
 
     fn with_loader_and_plugins<L>(
-        manifests: Arc<[harmony_core::PluginManifest]>,
+        manifests: Arc<[PluginManifest]>,
         server_info: crate::plugins::server::ServerInfo,
         loader: L,
         plugins: Arc<[LoadedPlugin]>,
@@ -136,104 +126,57 @@ impl PluginExecutor {
     where
         L: SourceLoader + 'static,
     {
-        let vm =
-            luau::Vm::with_options(luau::VmOptions::default().memory_limit(256 * 1024 * 1024))?;
-        vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
-        let scheduler = LocalScheduler::new();
-        scheduler.set_luau_resume_budget(Some(Duration::from_secs(300)));
-        vm.data().insert(scheduler)?;
-        vm.data()
-            .insert(crate::plugins::manifests::PluginManifestModuleStore::new(
-                manifests.clone(),
-            ))?;
-        vm.data()
-            .insert(crate::plugins::server::ServerInfoModuleStore::new(
-                server_info,
-            ))?;
-        vm.data()
-            .insert(crate::plugins::auth::AuthCapabilitiesModuleStore::new(
-                default_auth_capabilities(),
-            ))?;
-        stores.install_into(&vm)?;
-        vm.data()
-            .insert(crate::plugins::metadata::MetadataCallbackRegistry::new())?;
-        vm.data()
-            .insert(crate::plugins::mix::MixCallbackRegistry::new())?;
-        vm.data()
-            .insert(crate::plugins::playback_sessions::PlaybackUpdateCallbackStore::new())?;
-
-        let require = LuauRequireRuntime::new(
-            loader,
-            ManifestCapabilityPolicy::from_manifests(manifests.clone()),
-        );
-        register_generic_modules(&require, module_overrides)?;
-        vm.data().insert(require)?;
-        vm.data()
-            .insert(crate::plugins::api::ApiRouteStore::new())?;
-
-        for globals in harmony_globals::plugin_log_global_specs() {
-            install_luau_globals(&vm, &ChunkOrigin::default(), &globals)?;
-        }
-        install_luau_require(&vm, &ChunkOrigin::default())?;
-
-        let tokio_runtime = TokioRuntimeContext::new()?;
+        let runtime = RuntimeBuilder::new(loader, manifests.clone())
+            .plugins(plugins)
+            .module_specs(generic_module_specs(module_overrides))
+            .global_specs(harmony_globals::plugin_log_global_specs())
+            .configure_vm(move |vm| {
+                vm.data()
+                    .insert(crate::plugins::manifests::PluginManifestModuleStore::new(
+                        manifests.clone(),
+                    ))?;
+                vm.data()
+                    .insert(crate::plugins::server::ServerInfoModuleStore::new(
+                        server_info,
+                    ))?;
+                vm.data()
+                    .insert(crate::plugins::auth::AuthCapabilitiesModuleStore::new(
+                        default_auth_capabilities(),
+                    ))?;
+                stores.install_into(vm)?;
+                vm.data()
+                    .insert(crate::plugins::metadata::MetadataCallbackRegistry::new())?;
+                vm.data()
+                    .insert(crate::plugins::mix::MixCallbackRegistry::new())?;
+                vm.data().insert(
+                    crate::plugins::playback_sessions::PlaybackUpdateCallbackStore::new(),
+                )?;
+                vm.data()
+                    .insert(crate::plugins::api::ApiRouteStore::new())?;
+                Ok(())
+            })
+            .build()?;
 
         Ok(Self {
-            vm,
-            plugins,
-            tokio_runtime,
+            runtime,
             websocket_tasks: RefCell::new(HashMap::<TaskIdKey, Arc<WebSocketState>>::new()),
         })
     }
 
     pub(crate) fn plugin_manifests(&self) -> Vec<PluginManifest> {
-        let mut manifests = self
-            .plugins
-            .iter()
-            .map(|plugin| plugin.manifest.clone())
-            .collect::<Vec<_>>();
-        manifests.sort_by(|left, right| left.id.cmp(&right.id));
-        manifests
+        self.runtime.plugin_manifests()
     }
 
     pub(crate) fn has_plugin(&self, plugin_id: &str) -> bool {
-        self.plugins
-            .iter()
-            .any(|plugin| plugin.manifest.id == plugin_id)
+        self.runtime.has_plugin(plugin_id)
     }
 
     pub(crate) fn exec_plugin(&self, plugin_id: &str) -> Result<()> {
-        let plugin = self
-            .plugins
-            .iter()
-            .find(|plugin| plugin.manifest.id == plugin_id)
-            .ok_or_else(|| anyhow::anyhow!("plugin not found: {plugin_id}"))?;
-        self.exec_loaded_plugin(plugin)
+        self.runtime.exec_plugin(plugin_id)
     }
 
     pub(crate) fn exec_all(&self) -> Result<()> {
-        for plugin in self.plugins.iter() {
-            match self.exec_loaded_plugin(plugin) {
-                Ok(()) => tracing::debug!("plugin '{}' executed", plugin.manifest.id),
-                Err(error) => tracing::warn!("plugin '{}' error: {error}", plugin.manifest.id),
-            }
-        }
-        Ok(())
-    }
-
-    fn exec_loaded_plugin(&self, plugin: &LoadedPlugin) -> Result<()> {
-        let bytes = fs::read(&plugin.entrypoint_path).with_context(|| {
-            format!(
-                "load plugin '{}' entrypoint from {}",
-                plugin.manifest.id,
-                plugin.entrypoint_path.display()
-            )
-        })?;
-        self.run_plugin_source(
-            plugin.manifest.id.as_str(),
-            plugin.manifest.entrypoint.as_str(),
-            bytes,
-        )
+        self.runtime.exec_all()
     }
 
     pub(crate) fn run_plugin_source(
@@ -242,16 +185,10 @@ impl PluginExecutor {
         path: impl Into<Arc<str>>,
         source: impl Into<Arc<[u8]>>,
     ) -> Result<()> {
-        let origin = plugin_origin(plugin_id, path);
-        self.run_plugin_source_with_call_context(
-            source,
-            CallContext {
-                origin,
-                ..CallContext::default()
-            },
-        )
+        self.runtime.run_plugin_source(plugin_id, path, source)
     }
 
+    #[cfg(test)]
     pub(super) fn run_plugin_source_with_call_context(
         &self,
         source: impl Into<Arc<[u8]>>,
@@ -261,20 +198,12 @@ impl PluginExecutor {
             .map(|_| ())
     }
 
+    #[cfg(test)]
     pub(super) fn eval_plugin_source_with_call_context(
         &self,
         source: impl Into<Arc<[u8]>>,
         context: CallContext,
     ) -> Result<Vec<luau::Value>> {
-        let origin = context.origin.clone();
-
-        let function = self
-            .vm
-            .load_chunk(&luau::Chunk::new(source, luau_origin(&origin)))?;
-        let thread = self.vm.create_thread(&function)?;
-        self.vm.sandbox_thread(&thread)?;
-        let scheduler = self.vm.data().get::<LocalScheduler>()?;
-        scheduler.spawn_luau_thread(context, self.vm.clone(), thread.clone(), Vec::new());
-        drive_luau_thread(&self.tokio_runtime, &scheduler, &thread)
+        self.runtime.eval_source_with_context(source, context)
     }
 }
