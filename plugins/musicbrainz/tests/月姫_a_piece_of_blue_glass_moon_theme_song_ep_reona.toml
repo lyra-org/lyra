@@ -1,0 +1,133 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2021.09.01] ReoNa - Tsukihime -A piece of blue glass moon- THEME SONG E.P. (digital release) [FLAC]/08. Believer (Instrumental).flac"
+album = "月姫 -A piece of blue glass moon- THEME SONG E.P."
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "Believer (Instrumental)"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 8
+duration_ms = 259853
+
+[[raw_tags]]
+file_path = "[2021.09.01] ReoNa - Tsukihime -A piece of blue glass moon- THEME SONG E.P. (digital release) [FLAC]/07. Lost (Instrumental).flac"
+album = "月姫 -A piece of blue glass moon- THEME SONG E.P."
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "Lost (Instrumental)"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 8
+duration_ms = 315893
+
+[[raw_tags]]
+file_path = "[2021.09.01] ReoNa - Tsukihime -A piece of blue glass moon- THEME SONG E.P. (digital release) [FLAC]/06. ジュブナイル (Instrumental).flac"
+album = "月姫 -A piece of blue glass moon- THEME SONG E.P."
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "ジュブナイル (Instrumental)"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 8
+duration_ms = 263320
+
+[[raw_tags]]
+file_path = "[2021.09.01] ReoNa - Tsukihime -A piece of blue glass moon- THEME SONG E.P. (digital release) [FLAC]/05. 生命線 (Instrumental).flac"
+album = "月姫 -A piece of blue glass moon- THEME SONG E.P."
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "生命線 (Instrumental)"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 8
+duration_ms = 255520
+
+[[raw_tags]]
+file_path = "[2021.09.01] ReoNa - Tsukihime -A piece of blue glass moon- THEME SONG E.P. (digital release) [FLAC]/04. Believer.flac"
+album = "月姫 -A piece of blue glass moon- THEME SONG E.P."
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "Believer"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 8
+duration_ms = 259174
+
+[[raw_tags]]
+file_path = "[2021.09.01] ReoNa - Tsukihime -A piece of blue glass moon- THEME SONG E.P. (digital release) [FLAC]/03. Lost.flac"
+album = "月姫 -A piece of blue glass moon- THEME SONG E.P."
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "Lost"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 8
+duration_ms = 315897
+
+[[raw_tags]]
+file_path = "[2021.09.01] ReoNa - Tsukihime -A piece of blue glass moon- THEME SONG E.P. (digital release) [FLAC]/02. ジュブナイル.flac"
+album = "月姫 -A piece of blue glass moon- THEME SONG E.P."
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "ジュブナイル"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 8
+duration_ms = 263321
+
+[[raw_tags]]
+file_path = "[2021.09.01] ReoNa - Tsukihime -A piece of blue glass moon- THEME SONG E.P. (digital release) [FLAC]/01. 生命線.flac"
+album = "月姫 -A piece of blue glass moon- THEME SONG E.P."
+album_artists = ["ReoNa"]
+artists = ["ReoNa"]
+title = "生命線"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 8
+duration_ms = 255520
+
+[expect.release]
+ids = { release_group_id = "780963ed-e092-45dd-a302-d3dfbc5d8200", release_id = ["1c7e31d0-421d-4d5e-9788-3d8dd35685d4", "6d99d9d5-12e8-4d61-9b3f-6bfec885e547", "3ad1e1f8-4522-464f-83d4-ab3c5ff327b0", "8852fd54-e92c-457c-b89c-24d0c9b5b499"] }
+fields = { release_title = "月姫 -A piece of blue glass moon- THEME SONG E.P.", genres = ["asian rock", "j-pop", "j-rock", "pop", "pop rock", "rock"] }
+
+[expect.artists."4da158cc-4d03-48d6-aefc-6726e4f9a149"]
+fields = { artist_name = "ReoNa", sort_name = "ReoNa" }
+
+[expect.tracks."317d7dc1-f093-4721-8448-10c1b8813750"]
+fields = { disc = 1, track = 4, track_title = "Believer" }
+
+[expect.tracks."53c68659-04b2-4442-83af-41389707e396"]
+fields = { disc = 1, track = 3, track_title = "Lost" }
+
+[expect.tracks."5a046d8f-2671-41fe-87ce-19ba9c4362e7"]
+fields = { disc = 1, track = 6, track_title = "ジュブナイル (Instrumental)" }
+
+[expect.tracks."6c77ec7a-ee78-464b-8d89-5a21fdd33595"]
+fields = { disc = 1, track = 2, track_title = "ジュブナイル" }
+
+[expect.tracks."7691a65a-d5bc-473e-8a94-02fe29f72690"]
+fields = { disc = 1, track = 8, track_title = "Believer (Instrumental)" }
+
+[expect.tracks."9530956c-1257-4da3-9fc0-144ef69559c4"]
+fields = { disc = 1, track = 5, track_title = "生命線 (Instrumental)" }
+
+[expect.tracks."b46e6f22-829f-4424-9c8d-97ff1bd675b4"]
+fields = { disc = 1, track = 1, track_title = "生命線" }
+
+[expect.tracks."c7f931c0-52b0-4426-ab08-5e91b8171c05"]
+fields = { disc = 1, track = 7, track_title = "Lost (Instrumental)" }
