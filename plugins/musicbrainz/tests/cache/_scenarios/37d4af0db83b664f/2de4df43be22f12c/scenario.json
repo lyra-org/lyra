@@ -1,0 +1,30 @@
+{
+  "test_name": "02_various_artists",
+  "scenario_id": "2de4df43be22f12c",
+  "responses": [
+    {
+      "cache_key": "5c495c6cb471a87c",
+      "url": "https://musicbrainz.org/ws/2/artist/e959608b-e13f-42a9-8fa3-4977d44c77f2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f58a85c0849bf9ce"
+    },
+    {
+      "cache_key": "9752d8bf5adcfbcf",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=44efe26a-c654-4119-9548-4c670de19c15&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "18e18c0ee180c420"
+    },
+    {
+      "cache_key": "f6b84540c1c36c06",
+      "url": "https://musicbrainz.org/ws/2/artist?query=KANKAN",
+      "status_code": 200,
+      "body_hash": "5bc63ab0dab23266"
+    },
+    {
+      "cache_key": "fab363d61e361c54",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A02&limit=100",
+      "status_code": 200,
+      "body_hash": "11db341e48c91fe8"
+    }
+  ]
+}
