@@ -63,7 +63,6 @@ pub use labels::label_routes;
 pub use libraries::library_routes;
 pub use listens::listen_routes;
 pub use metadata::metadata_routes;
-pub use mix::mix_routes;
 pub use playback_sessions::playback_session_routes;
 pub use playlists::playlist_routes;
 pub use plugins::plugin_routes;

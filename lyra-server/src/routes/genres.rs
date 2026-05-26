@@ -489,6 +489,7 @@ pub fn genre_routes() -> Router {
     Router::new()
         .route("/", get(list_genres))
         .route("/{id}", get(get_genre))
+        .route("/{id}/mix", get(super::mix::get_genre_mix))
 }
 
 #[cfg(test)]
@@ -866,4 +867,8 @@ pub(crate) fn genre_openapi_routes() -> aide::axum::ApiRouter {
     aide::axum::ApiRouter::new()
         .api_route("/", get_with(list_genres, list_genres_docs))
         .api_route("/{id}", get_with(get_genre, get_genre_docs))
+        .api_route(
+            "/{id}/mix",
+            get_with(super::mix::get_genre_mix, super::mix::genre_mix_docs),
+        )
 }

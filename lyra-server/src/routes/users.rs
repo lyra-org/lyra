@@ -827,6 +827,7 @@ pub(crate) fn user_openapi_routes() -> aide::axum::ApiRouter {
 pub fn me_routes() -> Router {
     Router::new()
         .route("/", get(get_me).patch(update_me))
+        .route("/mix", get(super::mix::get_me_mix))
         .route("/api-keys", get(list_api_keys).post(create_api_key))
         .route("/api-keys/{api_key_id}", delete(delete_api_key))
         .route("/listens", get(super::listens::get_me_listens))
@@ -844,6 +845,10 @@ pub(crate) fn me_openapi_routes() -> aide::axum::ApiRouter {
         .api_route(
             "/",
             get_with(get_me, get_me_docs).patch_with(update_me, update_me_docs),
+        )
+        .api_route(
+            "/mix",
+            get_with(super::mix::get_me_mix, super::mix::me_mix_docs),
         )
         .api_route(
             "/api-keys",
