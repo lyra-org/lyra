@@ -1,0 +1,30 @@
+{
+  "test_name": "月を見ていた_米津玄師",
+  "scenario_id": "5ad19cf57103f0fd",
+  "responses": [
+    {
+      "cache_key": "7554eb3cb05ae246",
+      "url": "https://musicbrainz.org/ws/2/work/01e12332-44d8-49b2-ad1d-a22b2b4287f3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "42045dfef98e054d"
+    },
+    {
+      "cache_key": "96f1465f8b54a00c",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%9C%88%E3%82%92%E8%A6%8B%E3%81%A6%E3%81%84%E3%81%9F&limit=100",
+      "status_code": 200,
+      "body_hash": "7f066c6467df3bab"
+    },
+    {
+      "cache_key": "a38e43e8fed3e5db",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=b285ad16-f46b-42b4-86af-fe177c05b8d3&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "7017f9fd1e386129"
+    },
+    {
+      "cache_key": "e4e1d482d3625ce7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%B1%B3%E6%B4%A5%E7%8E%84%E5%B8%AB",
+      "status_code": 200,
+      "body_hash": "02bd2655774023c0"
+    }
+  ]
+}
