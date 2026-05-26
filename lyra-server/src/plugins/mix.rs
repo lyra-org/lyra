@@ -51,6 +51,7 @@ use crate::{
         self as mix_service,
         MAX_LIMIT,
         MixOptions,
+        MixSeed,
         MixSeedType,
     },
     services::options::{
@@ -379,69 +380,49 @@ fn ensure_registration_open(
     })
 }
 
-fn from_track_callback(
+fn consumer_callback(
     mut frame: luau::AsyncCallFrame<'_>,
+    label: &'static str,
+    variant: fn(DbId) -> MixSeed,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let seed = parse_seed_id(frame.args.read_named("seed_id")?, "from_track")?;
+    let seed = parse_seed_id(frame.args.read_named("seed_id")?, label)?;
     let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
     Ok(luau::ScheduledFuture::new(async move {
-        let tracks = mix_service::from_track(seed, &options)
+        let tracks = mix_service::from_seed(variant(seed), &options)
             .await
             .map_err(crate::plugins::runtime_error)?;
         Ok(tracks_to_luau(tracks)?)
     }))
+}
+
+fn from_track_callback(
+    frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    consumer_callback(frame, "from_track", MixSeed::Track)
 }
 
 fn from_release_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
+    frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let seed = parse_seed_id(frame.args.read_named("seed_id")?, "from_release")?;
-    let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
-    Ok(luau::ScheduledFuture::new(async move {
-        let tracks = mix_service::from_release(seed, &options)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
-        Ok(tracks_to_luau(tracks)?)
-    }))
+    consumer_callback(frame, "from_release", MixSeed::Release)
 }
 
 fn from_artist_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
+    frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let seed = parse_seed_id(frame.args.read_named("seed_id")?, "from_artist")?;
-    let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
-    Ok(luau::ScheduledFuture::new(async move {
-        let tracks = mix_service::from_artist(seed, &options)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
-        Ok(tracks_to_luau(tracks)?)
-    }))
+    consumer_callback(frame, "from_artist", MixSeed::Artist)
 }
 
 fn from_genre_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
+    frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let seed = parse_seed_id(frame.args.read_named("seed_id")?, "from_genre")?;
-    let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
-    Ok(luau::ScheduledFuture::new(async move {
-        let tracks = mix_service::from_genre(seed, &options)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
-        Ok(tracks_to_luau(tracks)?)
-    }))
+    consumer_callback(frame, "from_genre", MixSeed::Genre)
 }
 
 fn from_playlist_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
+    frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let seed = parse_seed_id(frame.args.read_named("seed_id")?, "from_playlist")?;
-    let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
-    Ok(luau::ScheduledFuture::new(async move {
-        let tracks = mix_service::from_playlist(seed, &options)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
-        Ok(tracks_to_luau(tracks)?)
-    }))
+    consumer_callback(frame, "from_playlist", MixSeed::Playlist)
 }
 
 fn instant_mix_from_audio_callback(
@@ -486,7 +467,7 @@ fn parse_consumer_options(
             )));
         }
     }
-    let user_db_id = object
+    let viewer = object
         .get("user_id")
         .map(|value| parse_positive_i64(value, "user_id").map(DbId))
         .transpose()?;
@@ -512,7 +493,7 @@ fn parse_consumer_options(
 
     Ok(MixOptions {
         limit,
-        user_db_id,
+        viewer,
         extra,
     })
 }

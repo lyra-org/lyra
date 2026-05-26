@@ -42,141 +42,97 @@ const MIXER_HANDLER_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MixOptions {
     pub(crate) limit: Option<usize>,
-    pub(crate) user_db_id: Option<DbId>,
+    /// User the mix is rendered for: used by the built-in algorithm for the
+    /// unheard/heard partition and forwarded to plugins as `ctx.user_id`.
+    /// Distinct from the seed identity — see `MixSeed`.
+    pub(crate) viewer: Option<DbId>,
     /// Query-param options coerced via `declare_option` for `ctx.options`.
     pub(crate) extra: HashMap<String, String>,
 }
 
-/// `Ok(None)` = missing/wrong-type seed (route 404s); validated before and after
-/// dispatch. Other `from_*` wrappers share this shape.
-pub(crate) async fn from_track(
-    track_db_id: DbId,
-    options: &MixOptions,
-) -> anyhow::Result<Option<Vec<Track>>> {
-    {
-        let db = STATE.db.read().await;
-        if db::tracks::get_by_id(&*db, track_db_id)?.is_none() {
-            return Ok(None);
-        }
-    }
-    let dispatched = dispatch_mixer(MixSeedType::Track, track_db_id, options).await?;
-    let db = STATE.db.read().await;
-    if db::tracks::get_by_id(&*db, track_db_id)?.is_none() {
-        return Ok(None);
-    }
-    let tracks = match dispatched {
-        Some(tracks) => filter_existing_tracks(&*db, tracks)?,
-        None => builtin_from_track(&*db, track_db_id, options)?,
-    };
-    Ok(Some(tracks))
+/// Seed identity for a mix request. Carries the seed's `DbId` and, for
+/// `Recent`, the user whose listen history seeds the mix — kept separate
+/// from `MixOptions::viewer` so the two are never confused.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum MixSeed {
+    Track(DbId),
+    Release(DbId),
+    Artist(DbId),
+    Genre(DbId),
+    Playlist(DbId),
+    Recent { user_db_id: DbId },
 }
 
-pub(crate) async fn from_release(
-    release_db_id: DbId,
-    options: &MixOptions,
-) -> anyhow::Result<Option<Vec<Track>>> {
-    {
-        let db = STATE.db.read().await;
-        if db::releases::get_by_id(&*db, release_db_id)?.is_none() {
-            return Ok(None);
+impl MixSeed {
+    fn seed_type(&self) -> MixSeedType {
+        match self {
+            MixSeed::Track(_) => MixSeedType::Track,
+            MixSeed::Release(_) => MixSeedType::Release,
+            MixSeed::Artist(_) => MixSeedType::Artist,
+            MixSeed::Genre(_) => MixSeedType::Genre,
+            MixSeed::Playlist(_) => MixSeedType::Playlist,
+            MixSeed::Recent { .. } => MixSeedType::RecentListens,
         }
     }
-    let dispatched = dispatch_mixer(MixSeedType::Release, release_db_id, options).await?;
-    let db = STATE.db.read().await;
-    if db::releases::get_by_id(&*db, release_db_id)?.is_none() {
-        return Ok(None);
+
+    fn seed_id(&self) -> DbId {
+        match self {
+            MixSeed::Track(id)
+            | MixSeed::Release(id)
+            | MixSeed::Artist(id)
+            | MixSeed::Genre(id)
+            | MixSeed::Playlist(id) => *id,
+            MixSeed::Recent { user_db_id } => *user_db_id,
+        }
     }
-    let tracks = match dispatched {
-        Some(tracks) => filter_existing_tracks(&*db, tracks)?,
-        None => builtin_from_release(&*db, release_db_id, options)?,
-    };
-    Ok(Some(tracks))
 }
 
-pub(crate) async fn from_artist(
-    artist_db_id: DbId,
-    options: &MixOptions,
-) -> anyhow::Result<Option<Vec<Track>>> {
-    {
-        let db = STATE.db.read().await;
-        if db::artists::get_by_id(&*db, artist_db_id)?.is_none() {
-            return Ok(None);
-        }
-    }
-    let dispatched = dispatch_mixer(MixSeedType::Artist, artist_db_id, options).await?;
-    let db = STATE.db.read().await;
-    if db::artists::get_by_id(&*db, artist_db_id)?.is_none() {
-        return Ok(None);
-    }
-    let tracks = match dispatched {
-        Some(tracks) => filter_existing_tracks(&*db, tracks)?,
-        None => builtin_from_artist(&*db, artist_db_id, options)?,
-    };
-    Ok(Some(tracks))
+fn seed_exists(db: &DbAny, seed: &MixSeed) -> anyhow::Result<bool> {
+    Ok(match seed {
+        MixSeed::Track(id) => db::tracks::get_by_id(db, *id)?.is_some(),
+        MixSeed::Release(id) => db::releases::get_by_id(db, *id)?.is_some(),
+        MixSeed::Artist(id) => db::artists::get_by_id(db, *id)?.is_some(),
+        MixSeed::Genre(id) => db::genres::get_by_id(db, *id)?.is_some(),
+        MixSeed::Playlist(id) => db::playlists::get_by_id(db, *id)?.is_some(),
+        MixSeed::Recent { user_db_id } => db::users::get_by_id(db, *user_db_id)?.is_some(),
+    })
 }
 
-pub(crate) async fn from_recent_listens(
-    user_db_id: DbId,
+fn builtin_from_seed(
+    db: &DbAny,
+    seed: &MixSeed,
     options: &MixOptions,
-) -> anyhow::Result<Option<Vec<Track>>> {
-    {
-        let db = STATE.db.read().await;
-        if db::users::get_by_id(&*db, user_db_id)?.is_none() {
-            return Ok(None);
-        }
+) -> anyhow::Result<Vec<Track>> {
+    match seed {
+        MixSeed::Track(id) => builtin_from_track(db, *id, options),
+        MixSeed::Release(id) => builtin_from_release(db, *id, options),
+        MixSeed::Artist(id) => builtin_from_artist(db, *id, options),
+        MixSeed::Genre(id) => builtin_from_genre(db, *id, options),
+        MixSeed::Playlist(id) => builtin_from_playlist(db, *id, options),
+        MixSeed::Recent { user_db_id } => builtin_from_recent_listens(db, *user_db_id, options),
     }
-    let dispatched = dispatch_recent_listens_mixer(user_db_id, options).await?;
-    let db = STATE.db.read().await;
-    if db::users::get_by_id(&*db, user_db_id)?.is_none() {
-        return Ok(None);
-    }
-    let tracks = match dispatched {
-        Some(tracks) => filter_existing_tracks(&*db, tracks)?,
-        None => builtin_from_recent_listens(&*db, user_db_id, options)?,
-    };
-    Ok(Some(tracks))
 }
 
-pub(crate) async fn from_genre(
-    genre_db_id: DbId,
+/// `Ok(None)` = missing/wrong-type seed (route 404s); validated before and
+/// after dispatch to close the agdb DbId recycle window.
+pub(crate) async fn from_seed(
+    seed: MixSeed,
     options: &MixOptions,
 ) -> anyhow::Result<Option<Vec<Track>>> {
     {
         let db = STATE.db.read().await;
-        if db::genres::get_by_id(&*db, genre_db_id)?.is_none() {
+        if !seed_exists(&*db, &seed)? {
             return Ok(None);
         }
     }
-    let dispatched = dispatch_mixer(MixSeedType::Genre, genre_db_id, options).await?;
+    let dispatched = dispatch_mixer(&seed, options).await?;
     let db = STATE.db.read().await;
-    if db::genres::get_by_id(&*db, genre_db_id)?.is_none() {
+    if !seed_exists(&*db, &seed)? {
         return Ok(None);
     }
     let tracks = match dispatched {
         Some(tracks) => filter_existing_tracks(&*db, tracks)?,
-        None => builtin_from_genre(&*db, genre_db_id, options)?,
-    };
-    Ok(Some(tracks))
-}
-
-pub(crate) async fn from_playlist(
-    playlist_db_id: DbId,
-    options: &MixOptions,
-) -> anyhow::Result<Option<Vec<Track>>> {
-    {
-        let db = STATE.db.read().await;
-        if db::playlists::get_by_id(&*db, playlist_db_id)?.is_none() {
-            return Ok(None);
-        }
-    }
-    let dispatched = dispatch_mixer(MixSeedType::Playlist, playlist_db_id, options).await?;
-    let db = STATE.db.read().await;
-    if db::playlists::get_by_id(&*db, playlist_db_id)?.is_none() {
-        return Ok(None);
-    }
-    let tracks = match dispatched {
-        Some(tracks) => filter_existing_tracks(&*db, tracks)?,
-        None => builtin_from_playlist(&*db, playlist_db_id, options)?,
+        None => builtin_from_seed(&*db, &seed, options)?,
     };
     Ok(Some(tracks))
 }
@@ -216,7 +172,7 @@ pub(crate) async fn instant_mix_from_audio(
             return Ok(None);
         }
     }
-    let dispatched = dispatch_mixer(MixSeedType::Track, track_db_id, options).await?;
+    let dispatched = dispatch_mixer(&MixSeed::Track(track_db_id), options).await?;
 
     let db = STATE.db.read().await;
     let Some(seed) = db::tracks::get_by_id(&*db, track_db_id)? else {
@@ -282,15 +238,24 @@ enum HandlerOutcome {
 
 /// Runs on a separate Lua thread so timeout can cancel the coroutine, not
 /// just drop the future. Cooperative — bounded by sync-binding timeouts.
+/// For `MixSeed::Recent`, pre-resolves the user's recent track ids so plugin
+/// handlers don't have to re-query listen history.
 async fn dispatch_mixer(
-    seed_type: MixSeedType,
-    seed_id: DbId,
+    seed: &MixSeed,
     options: &MixOptions,
 ) -> anyhow::Result<Option<Vec<Track>>> {
+    let seed_type = seed.seed_type();
     let mixer_ids = prioritized_mixer_ids(seed_type).await?;
     if mixer_ids.is_empty() {
         return Ok(None);
     }
+
+    let recent_track_ids = if let MixSeed::Recent { user_db_id } = seed {
+        let db = STATE.db.read().await;
+        recent_listen_track_ids(&db, *user_db_id)?
+    } else {
+        Vec::new()
+    };
 
     let deadline = tokio::time::Instant::now() + MIX_DISPATCH_BUDGET;
 
@@ -317,69 +282,7 @@ async fn dispatch_mixer(
 
         match run_callback_with_timeout(
             handler_id,
-            seed_id,
-            None,
-            Vec::new(),
-            options,
-            handler_timeout,
-            mixer_id,
-        )
-        .await?
-        {
-            HandlerOutcome::Tracks(mut tracks) => {
-                let limit = options.limit.unwrap_or(DEFAULT_LIMIT);
-                tracks.truncate(limit);
-                return Ok(Some(tracks));
-            }
-            HandlerOutcome::FellThrough => {}
-        }
-    }
-
-    Ok(None)
-}
-
-/// `dispatch_mixer` variant; context carries pre-resolved recent track IDs.
-async fn dispatch_recent_listens_mixer(
-    user_db_id: DbId,
-    options: &MixOptions,
-) -> anyhow::Result<Option<Vec<Track>>> {
-    let mixer_ids = prioritized_mixer_ids(MixSeedType::RecentListens).await?;
-    if mixer_ids.is_empty() {
-        return Ok(None);
-    }
-
-    let recent_track_ids = {
-        let db = STATE.db.read().await;
-        recent_listen_track_ids(&db, user_db_id)?
-    };
-
-    let deadline = tokio::time::Instant::now() + MIX_DISPATCH_BUDGET;
-
-    for mixer_id in &mixer_ids {
-        let now = tokio::time::Instant::now();
-        if now >= deadline {
-            tracing::warn!(
-                remaining = ?mixer_ids
-                    .iter()
-                    .skip_while(|id| *id != mixer_id)
-                    .count(),
-                "mix dispatch budget exhausted, falling through to builtin"
-            );
-            break;
-        }
-        let handler_timeout = (deadline - now).min(MIXER_HANDLER_TIMEOUT);
-        let handler_id = {
-            let registry = MIX_REGISTRY.read().await;
-            registry.get_seed_callback(mixer_id, MixSeedType::RecentListens)
-        };
-        let Some(handler_id) = handler_id else {
-            continue;
-        };
-
-        match run_callback_with_timeout(
-            handler_id,
-            user_db_id,
-            Some(user_db_id),
+            seed.seed_id(),
             recent_track_ids.clone(),
             options,
             handler_timeout,
@@ -403,7 +306,6 @@ async fn dispatch_recent_listens_mixer(
 async fn run_callback_with_timeout(
     handler_id: u64,
     seed_id: DbId,
-    user_db_id: Option<DbId>,
     recent_track_ids: Vec<DbId>,
     options: &MixOptions,
     timeout: std::time::Duration,
@@ -416,7 +318,7 @@ async fn run_callback_with_timeout(
         handler_id,
         seed_id: seed_id.0,
         limit: options.limit,
-        user_id: user_db_id.or(options.user_db_id).map(|id| id.0),
+        user_id: options.viewer.map(|id| id.0),
         recent_track_ids: recent_track_ids.into_iter().map(|id| id.0).collect(),
         options: coerced_extra_options(mixer_id, &options.extra).await?,
     };
@@ -734,7 +636,7 @@ fn tracks_for_genres(
     }
 
     // Partition into unheard and heard, preserving score order within each
-    let (unheard, heard) = partition_by_listen_history(db, all_tracks, options.user_db_id)?;
+    let (unheard, heard) = partition_by_listen_history(db, all_tracks, options.viewer)?;
 
     let mut combined = unheard;
     combined.extend(heard);
@@ -1262,7 +1164,7 @@ mod tests {
             &db,
             seed_track,
             &MixOptions {
-                user_db_id: Some(user_id),
+                viewer: Some(user_id),
                 ..Default::default()
             },
         )?;
@@ -1367,7 +1269,7 @@ mod tests {
         connect(&mut db, jazz_release, jazz_track)?;
 
         let options = MixOptions {
-            user_db_id: Some(user_id),
+            viewer: Some(user_id),
             ..Default::default()
         };
         let result = builtin_from_recent_listens(&db, user_id, &options)?;
@@ -1386,7 +1288,7 @@ mod tests {
         let user_id = insert_user(&mut db)?;
 
         let options = MixOptions {
-            user_db_id: Some(user_id),
+            viewer: Some(user_id),
             ..Default::default()
         };
         let result = builtin_from_recent_listens(&db, user_id, &options)?;
