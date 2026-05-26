@@ -1188,7 +1188,7 @@ mod tests {
         let scheduler = vm.data().get::<harmony_core::LocalScheduler>()?;
         let spec = module_spec();
         let table =
-            harmony_core::install_luau_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
+            harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
         vm.set_global_table("net", &table)?;
 
         let root = vm.load_chunk(&harmony_luau::Chunk::new(
@@ -1251,7 +1251,7 @@ mod tests {
         let scheduler = vm.data().get::<harmony_core::LocalScheduler>()?;
         let spec = module_spec();
         let table =
-            harmony_core::install_luau_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
+            harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
         vm.set_global_table("net", &table)?;
 
         let root = vm.load_chunk(&harmony_luau::Chunk::new(

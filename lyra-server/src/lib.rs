@@ -19,7 +19,7 @@ use anyhow::{
     Context,
     Result,
 };
-use harmony_core::PluginManifest;
+use harmony_core::plugin::PluginManifest;
 use tokio::sync::{
     OwnedRwLockReadGuard,
     OwnedRwLockWriteGuard,

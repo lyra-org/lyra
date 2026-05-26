@@ -10,7 +10,6 @@ mod metadata;
 mod mix;
 mod modules;
 mod playback;
-mod runner;
 mod stores;
 mod vm;
 mod websocket;
@@ -37,21 +36,27 @@ use std::{
     time::Duration,
 };
 
+#[cfg(test)]
+use harmony_core::ModuleId;
 use harmony_core::{
     ChunkOrigin,
-    LoadedPlugin,
     LocalScheduler,
-    ModuleId,
     TaskState,
-    TokioRuntimeContext,
+    plugin::Runtime,
 };
 use harmony_luau as luau;
 
 pub(crate) struct PluginExecutor {
-    vm: luau::Vm,
-    plugins: Arc<[LoadedPlugin]>,
-    tokio_runtime: TokioRuntimeContext,
+    runtime: Runtime,
     websocket_tasks: RefCell<HashMap<TaskIdKey, Arc<WebSocketState>>>,
+}
+
+impl std::ops::Deref for PluginExecutor {
+    type Target = Runtime;
+
+    fn deref(&self) -> &Self::Target {
+        &self.runtime
+    }
 }
 
 impl PluginExecutor {
@@ -100,6 +105,7 @@ fn default_auth_capabilities() -> crate::plugins::auth::AuthCapabilities {
     }
 }
 
+#[cfg(test)]
 fn plugin_origin(plugin_id: impl Into<Arc<str>>, path: impl Into<Arc<str>>) -> ChunkOrigin {
     let plugin = plugin_id.into();
     let path = path.into();

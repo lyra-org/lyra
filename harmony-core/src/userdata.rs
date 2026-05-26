@@ -250,7 +250,7 @@ where
                 let callback = callback.clone();
                 vm.create_function_with_options(
                     options,
-                    crate::modules::async_luau_callback(Arc::new(move |mut frame| {
+                    crate::luau::async_callback(Arc::new(move |mut frame| {
                         let this = read_self(&mut frame.args, frame.vm, tag)?;
                         callback(this, frame)
                     })),

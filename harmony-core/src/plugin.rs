@@ -15,8 +15,26 @@ use std::path::{
     PathBuf,
 };
 use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::Context;
+use harmony_luau as luau;
 
 use crate::{
+    CallContext,
+    GlobalSpec,
+    LocalScheduler,
+    ModuleId,
+    ModuleSpec,
+    SourceLoader,
+    TokioRuntimeContext,
+    luau::{
+        RequireRuntime,
+        ThreadDriveOptions,
+        drive_thread,
+        install_globals,
+        install_require,
+    },
     modules::CapabilityPolicy,
     scheduler::{
         CapabilityId,
@@ -855,6 +873,240 @@ impl PluginManager {
     }
 }
 
+type VmConfigurator = Box<dyn FnOnce(&luau::Vm) -> anyhow::Result<()> + 'static>;
+
+pub struct RuntimeBuilder<L> {
+    loader: L,
+    manifests: Arc<[PluginManifest]>,
+    plugins: Arc<[LoadedPlugin]>,
+    module_specs: Vec<ModuleSpec>,
+    global_specs: Vec<GlobalSpec>,
+    memory_limit: usize,
+    luau_resume_budget: Option<Duration>,
+    configure_vm: Vec<VmConfigurator>,
+}
+
+impl<L> RuntimeBuilder<L>
+where
+    L: SourceLoader + 'static,
+{
+    pub fn new(loader: L, manifests: Arc<[PluginManifest]>) -> Self {
+        Self {
+            loader,
+            manifests,
+            plugins: Arc::from(Vec::<LoadedPlugin>::new()),
+            module_specs: Vec::new(),
+            global_specs: Vec::new(),
+            memory_limit: 256 * 1024 * 1024,
+            luau_resume_budget: Some(Duration::from_secs(300)),
+            configure_vm: Vec::new(),
+        }
+    }
+
+    pub fn plugins(mut self, plugins: Arc<[LoadedPlugin]>) -> Self {
+        self.plugins = plugins;
+        self
+    }
+
+    pub fn module_specs(mut self, specs: Vec<ModuleSpec>) -> Self {
+        self.module_specs = specs;
+        self
+    }
+
+    pub fn global_specs(mut self, specs: Vec<GlobalSpec>) -> Self {
+        self.global_specs = specs;
+        self
+    }
+
+    pub fn memory_limit(mut self, bytes: usize) -> Self {
+        self.memory_limit = bytes;
+        self
+    }
+
+    pub fn luau_resume_budget(mut self, budget: Option<Duration>) -> Self {
+        self.luau_resume_budget = budget;
+        self
+    }
+
+    pub fn configure_vm<F>(mut self, configure: F) -> Self
+    where
+        F: FnOnce(&luau::Vm) -> anyhow::Result<()> + 'static,
+    {
+        self.configure_vm.push(Box::new(configure));
+        self
+    }
+
+    pub fn build(self) -> anyhow::Result<Runtime> {
+        let vm =
+            luau::Vm::with_options(luau::VmOptions::default().memory_limit(self.memory_limit))?;
+        vm.open_standard_libraries(luau::StandardLibraries::all_supported())?;
+
+        let scheduler = LocalScheduler::new();
+        scheduler.set_luau_resume_budget(self.luau_resume_budget);
+        vm.data().insert(scheduler)?;
+
+        for configure in self.configure_vm {
+            configure(&vm)?;
+        }
+
+        let require = RequireRuntime::new(
+            self.loader,
+            ManifestCapabilityPolicy::from_manifests(self.manifests),
+        );
+        for spec in self.module_specs {
+            require.register(spec)?;
+        }
+        vm.data().insert(require)?;
+
+        for globals in self.global_specs {
+            install_globals(&vm, &ChunkOrigin::default(), &globals)?;
+        }
+        install_require(&vm, &ChunkOrigin::default())?;
+
+        Ok(Runtime {
+            vm,
+            plugins: self.plugins,
+            tokio_runtime: TokioRuntimeContext::new()?,
+        })
+    }
+}
+
+pub struct Runtime {
+    pub vm: luau::Vm,
+    pub plugins: Arc<[LoadedPlugin]>,
+    pub tokio_runtime: TokioRuntimeContext,
+}
+
+impl Runtime {
+    pub fn plugin_manifests(&self) -> Vec<PluginManifest> {
+        let mut manifests = self
+            .plugins
+            .iter()
+            .map(|plugin| plugin.manifest.clone())
+            .collect::<Vec<_>>();
+        manifests.sort_by(|left, right| left.id.cmp(&right.id));
+        manifests
+    }
+
+    pub fn has_plugin(&self, plugin_id: &str) -> bool {
+        self.plugins
+            .iter()
+            .any(|plugin| plugin.manifest.id == plugin_id)
+    }
+
+    pub fn exec_plugin(&self, plugin_id: &str) -> anyhow::Result<()> {
+        let plugin = self
+            .plugins
+            .iter()
+            .find(|plugin| plugin.manifest.id == plugin_id)
+            .ok_or_else(|| anyhow::anyhow!("plugin not found: {plugin_id}"))?;
+        self.exec_loaded_plugin(plugin)
+    }
+
+    pub fn exec_all(&self) -> anyhow::Result<()> {
+        for plugin in self.plugins.iter() {
+            match self.exec_loaded_plugin(plugin) {
+                Ok(()) => tracing::debug!("plugin '{}' executed", plugin.manifest.id),
+                Err(error) => tracing::warn!("plugin '{}' error: {error}", plugin.manifest.id),
+            }
+        }
+        Ok(())
+    }
+
+    fn exec_loaded_plugin(&self, plugin: &LoadedPlugin) -> anyhow::Result<()> {
+        let bytes = std::fs::read(&plugin.entrypoint_path).with_context(|| {
+            format!(
+                "load plugin '{}' entrypoint from {}",
+                plugin.manifest.id,
+                plugin.entrypoint_path.display()
+            )
+        })?;
+        self.run_plugin_source(
+            plugin.manifest.id.as_str(),
+            plugin.manifest.entrypoint.as_str(),
+            bytes,
+        )
+    }
+
+    pub fn run_plugin_source(
+        &self,
+        plugin_id: impl Into<Arc<str>>,
+        path: impl Into<Arc<str>>,
+        source: impl Into<Arc<[u8]>>,
+    ) -> anyhow::Result<()> {
+        let origin = plugin_origin(plugin_id, path);
+        self.eval_source_with_context(
+            source,
+            CallContext {
+                origin,
+                ..CallContext::default()
+            },
+        )
+        .map(|_| ())
+    }
+
+    pub fn eval_source_with_context(
+        &self,
+        source: impl Into<Arc<[u8]>>,
+        context: CallContext,
+    ) -> anyhow::Result<Vec<luau::Value>> {
+        let origin = context.origin.clone();
+        let function = self
+            .vm
+            .load_chunk(&luau::Chunk::new(source, luau_origin(&origin)))?;
+        let thread = self.vm.create_thread(&function)?;
+        self.vm.sandbox_thread(&thread)?;
+        let scheduler = self.vm.data().get::<LocalScheduler>()?;
+        scheduler.spawn_luau_thread(context, self.vm.clone(), thread.clone(), Vec::new());
+        drive_thread(
+            &self.tokio_runtime,
+            &scheduler,
+            &thread,
+            ThreadDriveOptions::default(),
+        )
+    }
+
+    pub fn poll_background_tasks(&self) -> usize {
+        let Ok(scheduler) = self.vm.data().get::<LocalScheduler>() else {
+            return 0;
+        };
+        {
+            let _guard = self.tokio_runtime.enter();
+            scheduler.poll_ready();
+        }
+        scheduler.remove_finished()
+    }
+
+    pub fn next_scheduler_delay(&self) -> Option<Duration> {
+        let scheduler = self.vm.data().get::<LocalScheduler>().ok()?;
+        if !scheduler.has_pending() {
+            return None;
+        }
+        scheduler.next_wake_delay()
+    }
+}
+
+fn plugin_origin(plugin_id: impl Into<Arc<str>>, path: impl Into<Arc<str>>) -> ChunkOrigin {
+    let plugin = plugin_id.into();
+    let path = path.into();
+    ChunkOrigin {
+        module: Some(ModuleId(Arc::from(format!("plugins/{plugin}/{path}")))),
+        plugin: Some(plugin.clone()),
+        path: Some(Arc::from(format!("plugins/{plugin}/{path}"))),
+    }
+}
+
+fn luau_origin(origin: &ChunkOrigin) -> luau::ChunkOrigin {
+    luau::ChunkOrigin {
+        module: origin
+            .module
+            .as_ref()
+            .map(|module| luau::ModuleId(module.0.clone())),
+        plugin: origin.plugin.clone(),
+        path: origin.path.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -865,11 +1117,50 @@ mod tests {
         PluginLoadError,
         PluginManager,
         PluginManifest,
+        RuntimeBuilder,
         normalize_dependencies,
         validate_plugin_id,
     };
+    use crate::{
+        CallContext,
+        ChunkOrigin,
+        FunctionSpec,
+        GlobalSpec,
+        MemorySourceLoader,
+        ModuleExport,
+        ModuleSpec,
+    };
+    use harmony_luau as luau;
     use std::collections::HashSet;
     use std::path::PathBuf;
+    use std::sync::{
+        Arc,
+        Mutex,
+        atomic::{
+            AtomicUsize,
+            Ordering,
+        },
+    };
+
+    #[derive(Clone)]
+    struct TestStore(&'static str);
+
+    fn manifest(id: &str, scopes: &[&str]) -> PluginManifest {
+        PluginManifest {
+            schema_version: super::PLUGIN_SCHEMA_VERSION,
+            id: id.to_string(),
+            name: id.to_string(),
+            version: "1.0.0".to_string(),
+            description: String::new(),
+            entrypoint: "init.luau".to_string(),
+            scopes: scopes.iter().map(|scope| scope.to_string()).collect(),
+            dependencies: Vec::new(),
+        }
+    }
+
+    fn manifest_arc(manifests: Vec<PluginManifest>) -> Arc<[PluginManifest]> {
+        Arc::from(manifests)
+    }
 
     #[test]
     fn accepts_well_formed_ids() {
@@ -1154,5 +1445,211 @@ mod tests {
         );
         assert!(mgr.get_plugin("a").is_none());
         assert!(mgr.get_plugin("b").is_none());
+    }
+
+    #[test]
+    fn runtime_builder_installs_require_and_loads_memory_sources() -> anyhow::Result<()> {
+        let mut loader = MemorySourceLoader::new();
+        loader.insert("alias:demo/util", b"return { answer = 42 }".as_slice());
+        let runtime = RuntimeBuilder::new(loader, manifest_arc(Vec::new())).build()?;
+
+        let values = runtime.eval_source_with_context(
+            Arc::<[u8]>::from(
+                &br#"
+                    local util = require("@demo/util")
+                    return util.answer
+                "#[..],
+            ),
+            CallContext::default(),
+        )?;
+
+        assert_eq!(values, vec![luau::Value::Number(42.0)]);
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_builder_enforces_manifest_capability_policy() -> anyhow::Result<()> {
+        let runtime = RuntimeBuilder::new(
+            MemorySourceLoader::new(),
+            manifest_arc(vec![manifest("demo", &[])]),
+        )
+        .module_specs(vec![
+            ModuleSpec::new("demo/secret")
+                .capability("demo.secret")
+                .function(FunctionSpec::sync_fn("value").call(|mut frame| {
+                    frame.returns.write("secret")?;
+                    Ok(())
+                })),
+        ])
+        .build()?;
+
+        let error = runtime
+            .eval_source_with_context(
+                Arc::<[u8]>::from(&b"return require('@demo/secret').value()"[..]),
+                CallContext {
+                    origin: ChunkOrigin {
+                        plugin: Some(Arc::from("demo")),
+                        ..ChunkOrigin::default()
+                    },
+                    ..CallContext::default()
+                },
+            )
+            .expect_err("capability should be denied");
+
+        assert!(error.to_string().contains("demo.secret"));
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_builder_registers_native_modules() -> anyhow::Result<()> {
+        let runtime = RuntimeBuilder::new(
+            MemorySourceLoader::new(),
+            manifest_arc(vec![manifest("demo", &["demo.math"])]),
+        )
+        .module_specs(vec![
+            ModuleSpec::new("demo/math")
+                .capability("demo.math")
+                .function(FunctionSpec::sync_fn("answer").call(|mut frame| {
+                    frame.returns.write(42_i64)?;
+                    Ok(())
+                })),
+        ])
+        .build()?;
+
+        let values = runtime.eval_source_with_context(
+            Arc::<[u8]>::from(&b"return require('@demo/math').answer()"[..]),
+            CallContext {
+                origin: ChunkOrigin {
+                    plugin: Some(Arc::from("demo")),
+                    ..ChunkOrigin::default()
+                },
+                ..CallContext::default()
+            },
+        )?;
+
+        assert_eq!(values, vec![luau::Value::Integer(42)]);
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_builder_configure_vm_inserts_host_data() -> anyhow::Result<()> {
+        let runtime = RuntimeBuilder::new(
+            MemorySourceLoader::new(),
+            manifest_arc(vec![manifest("demo", &["demo.store"])]),
+        )
+        .configure_vm(|vm| {
+            vm.data().insert(TestStore("configured"))?;
+            Ok(())
+        })
+        .module_specs(vec![
+            ModuleSpec::new("demo/store")
+                .capability("demo.store")
+                .function(FunctionSpec::sync_fn("value").call(|mut frame| {
+                    let store = frame.vm.data().get::<TestStore>()?;
+                    frame.returns.write(store.0)?;
+                    Ok(())
+                })),
+        ])
+        .build()?;
+
+        let values = runtime.eval_source_with_context(
+            Arc::<[u8]>::from(&b"return require('@demo/store').value()"[..]),
+            CallContext {
+                origin: ChunkOrigin {
+                    plugin: Some(Arc::from("demo")),
+                    ..ChunkOrigin::default()
+                },
+                ..CallContext::default()
+            },
+        )?;
+
+        assert_eq!(values, vec![luau::Value::String(b"configured".to_vec())]);
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_eval_source_returns_values_and_propagates_errors() -> anyhow::Result<()> {
+        let runtime = RuntimeBuilder::new(MemorySourceLoader::new(), manifest_arc(Vec::new()))
+            .global_specs(vec![GlobalSpec::new("test/noop")])
+            .build()?;
+
+        let values = runtime.eval_source_with_context(
+            Arc::<[u8]>::from(&b"return 'ok'"[..]),
+            CallContext::default(),
+        )?;
+        assert_eq!(values, vec![luau::Value::String(b"ok".to_vec())]);
+
+        let error = runtime
+            .eval_source_with_context(
+                Arc::<[u8]>::from(&b"error('source failed')"[..]),
+                CallContext::default(),
+            )
+            .expect_err("source should fail");
+        assert!(error.to_string().contains("source failed"));
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_exec_all_runs_loaded_plugins_in_runtime_order() -> anyhow::Result<()> {
+        static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+
+        let order = Arc::new(Mutex::new(Vec::<String>::new()));
+        let order_for_module = order.clone();
+        let module = ModuleSpec::new("test/order")
+            .capability("test.order")
+            .function(FunctionSpec::sync_fn("record").call(move |mut frame| {
+                let id: String = frame.args.read_named("id")?;
+                order_for_module
+                    .lock()
+                    .expect("order mutex poisoned")
+                    .push(id);
+                Ok(())
+            }))
+            .install(|_| Ok(ModuleExport::new(())));
+
+        let root = std::env::temp_dir().join(format!(
+            "harmony-core-runtime-test-{}-{}",
+            std::process::id(),
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let alpha_dir = root.join("alpha");
+        let beta_dir = root.join("beta");
+        std::fs::create_dir_all(&alpha_dir)?;
+        std::fs::create_dir_all(&beta_dir)?;
+        let alpha_entrypoint = alpha_dir.join("init.luau");
+        let beta_entrypoint = beta_dir.join("init.luau");
+        std::fs::write(&alpha_entrypoint, "require('@test/order').record('alpha')")?;
+        std::fs::write(&beta_entrypoint, "require('@test/order').record('beta')")?;
+
+        let alpha = LoadedPlugin {
+            manifest: manifest("alpha", &["test.order"]),
+            directory: alpha_dir,
+            entrypoint_path: alpha_entrypoint,
+            declared_scopes: HashSet::new(),
+            dependencies: Vec::new(),
+        };
+        let beta = LoadedPlugin {
+            manifest: manifest("beta", &["test.order"]),
+            directory: beta_dir,
+            entrypoint_path: beta_entrypoint,
+            declared_scopes: HashSet::new(),
+            dependencies: Vec::new(),
+        };
+        let runtime = RuntimeBuilder::new(
+            MemorySourceLoader::new(),
+            manifest_arc(vec![alpha.manifest.clone(), beta.manifest.clone()]),
+        )
+        .plugins(Arc::from(vec![alpha, beta]))
+        .module_specs(vec![module])
+        .build()?;
+
+        runtime.exec_all()?;
+
+        assert_eq!(
+            *order.lock().expect("order mutex poisoned"),
+            vec!["alpha".to_string(), "beta".to_string()]
+        );
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
     }
 }

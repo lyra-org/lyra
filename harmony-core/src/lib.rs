@@ -3,9 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+pub mod luau;
 mod luaurc;
 mod modules;
-mod plugin;
+pub mod plugin;
 mod scheduler;
 mod tokio_runtime;
 mod userdata;
@@ -15,6 +16,7 @@ pub use modules::{
     AllowAllCapabilities,
     CapabilityPolicy,
     FilesystemSourceLoader,
+    FunctionCallback,
     FunctionSpec,
     GlobalSpec,
     MemorySourceLoader,
@@ -30,22 +32,6 @@ pub use modules::{
     SourceLoader,
     SourceRequest,
     UserDataSpec,
-};
-pub use modules::{
-    FunctionCallback,
-    LuauRequireRuntime,
-    LuauSourceCache,
-    async_luau_callback,
-    install_luau_globals,
-    install_luau_module,
-    install_luau_require,
-};
-pub use plugin::{
-    LoadedPlugin,
-    ManifestCapabilityPolicy,
-    PluginLoadError,
-    PluginManager,
-    PluginManifest,
 };
 pub use scheduler::LocalScheduler;
 pub use scheduler::{

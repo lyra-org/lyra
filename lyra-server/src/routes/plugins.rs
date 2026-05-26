@@ -195,7 +195,9 @@ struct UpdateSettingsRequest {
     values: HashMap<String, serde_json::Value>,
 }
 
-fn manifest_responses(manifests: &[harmony_core::PluginManifest]) -> Vec<PluginManifestResponse> {
+fn manifest_responses(
+    manifests: &[harmony_core::plugin::PluginManifest],
+) -> Vec<PluginManifestResponse> {
     manifests
         .iter()
         .map(|manifest| PluginManifestResponse {

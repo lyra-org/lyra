@@ -4,7 +4,13 @@
 // www.meshiplaw.com/lyra.
 
 use anyhow::Result;
-use harmony_core::LocalScheduler;
+use harmony_core::{
+    LocalScheduler,
+    luau::{
+        ThreadDriveOptions,
+        drive_thread,
+    },
+};
 use harmony_luau as luau;
 
 use super::{
@@ -13,7 +19,6 @@ use super::{
         MixHandlerRequest,
         MixHandlerResult,
     },
-    runner::drive_luau_thread,
 };
 
 impl PluginExecutor {
@@ -37,7 +42,12 @@ impl PluginExecutor {
             thread.clone(),
             vec![ctx],
         );
-        let values = drive_luau_thread(&self.tokio_runtime, &scheduler, &thread)?;
+        let values = drive_thread(
+            &self.tokio_runtime,
+            &scheduler,
+            &thread,
+            ThreadDriveOptions::default(),
+        )?;
         parse_mix_result(&self.vm, &handler.mixer_id, values)
     }
 }

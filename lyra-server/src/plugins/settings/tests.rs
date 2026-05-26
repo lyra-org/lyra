@@ -5,8 +5,8 @@ use harmony_luau as luau;
 
 use crate::plugins::executor::PluginExecutor;
 
-fn manifest(id: &str, scopes: &[&str]) -> harmony_core::PluginManifest {
-    harmony_core::PluginManifest {
+fn manifest(id: &str, scopes: &[&str]) -> harmony_core::plugin::PluginManifest {
+    harmony_core::plugin::PluginManifest {
         schema_version: 1,
         id: id.to_string(),
         name: format!("{id} Plugin"),

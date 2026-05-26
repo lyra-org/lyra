@@ -530,7 +530,7 @@ mod tests {
             path: Some(std::sync::Arc::from("plugins/demo/init.luau")),
             ..harmony_core::ChunkOrigin::default()
         };
-        let table = harmony_core::install_luau_module(&vm, &origin, &spec)?;
+        let table = harmony_core::luau::install_module(&vm, &origin, &spec)?;
         vm.set_global_table("json", &table)?;
 
         let encoded = vm.eval(
@@ -581,7 +581,7 @@ mod tests {
         let vm = harmony_luau::Vm::new()?;
         let spec = module_spec();
         let table =
-            harmony_core::install_luau_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
+            harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
         vm.set_global_table("json", &table)?;
 
         let values = vm.eval(

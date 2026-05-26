@@ -16,8 +16,10 @@ use anyhow::{
 };
 use harmony_core::{
     ModuleSpec,
-    PluginLoadError,
-    PluginManifest,
+    plugin::{
+        PluginLoadError,
+        PluginManifest,
+    },
 };
 
 use super::messages::PluginExecutorCommand;
