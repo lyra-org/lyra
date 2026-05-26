@@ -1,0 +1,13 @@
+[package]
+name = "lyra-docs"
+version = "0.0.1"
+edition = "2024"
+license-file = "../LICENSE"
+
+[[bin]]
+name = "lyra-docs"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+lyra-server = { path = "../lyra-server", features = ["docgen"] }
