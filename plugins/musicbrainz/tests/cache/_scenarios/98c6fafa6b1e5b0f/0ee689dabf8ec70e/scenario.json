@@ -1,0 +1,42 @@
+{
+  "test_name": "セレナーデ_なとり",
+  "scenario_id": "0ee689dabf8ec70e",
+  "responses": [
+    {
+      "cache_key": "18d08ba2032e12d1",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=b5a32f71-5bcc-4eb0-89de-b68af9edbb46&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "593de92b111cfec8"
+    },
+    {
+      "cache_key": "1eda84b84e8191cb",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%AA%E3%81%A8%E3%82%8A",
+      "status_code": 200,
+      "body_hash": "6694dfca520ef243"
+    },
+    {
+      "cache_key": "3df5e6d1a031e0c5",
+      "url": "https://musicbrainz.org/ws/2/work/06c5eddc-8435-48a5-adc4-8976691dd10c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "39ab9f236eaffebd"
+    },
+    {
+      "cache_key": "498d4df90d3a7eb5",
+      "url": "https://musicbrainz.org/ws/2/work/ec3c1140-a18c-4c67-9333-be36d7f07bfd?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a9390659f7ef53a0"
+    },
+    {
+      "cache_key": "6900fe410f98c865",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%82%BB%E3%83%AC%E3%83%8A%E3%83%BC%E3%83%87&limit=100",
+      "status_code": 200,
+      "body_hash": "893cf67d4b30bd47"
+    },
+    {
+      "cache_key": "b8d2af2dca64f461",
+      "url": "https://musicbrainz.org/ws/2/work/a82f8ecc-7ed1-4476-b8e3-effc31fa2d55?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0b45c11cbbb12833"
+    }
+  ]
+}
