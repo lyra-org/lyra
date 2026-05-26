@@ -7,7 +7,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::extract::ws::{
+    CloseFrame,
     Message,
+    Utf8Bytes,
     WebSocket,
 };
 use tokio::sync::{
@@ -22,6 +24,8 @@ use tokio::time::{
 
 use super::constants::{
     AUTH_CHECK_INTERVAL,
+    CLOSE_CODE_DUPLICATE_SESSION,
+    CLOSE_REASON_DUPLICATE_SESSION,
     PING_INTERVAL,
     PONG_TIMEOUT,
     RemoteAction,
@@ -57,6 +61,17 @@ async fn send_message(socket: &mut WebSocket, msg: Message) -> bool {
     tokio::time::timeout(WRITE_TIMEOUT, socket.send(msg))
         .await
         .is_ok_and(|r| r.is_ok())
+}
+
+async fn send_close(socket: &mut WebSocket, code: u16, reason: &'static str) -> bool {
+    send_message(
+        socket,
+        Message::Close(Some(CloseFrame {
+            code,
+            reason: Utf8Bytes::from_static(reason),
+        })),
+    )
+    .await
 }
 
 async fn send(socket: &mut WebSocket, msg: OutgoingMessage) -> bool {
@@ -420,7 +435,12 @@ pub(crate) async fn run(
 
             _ = cancel.notified() => {
                 tracing::info!(connection_id, "connection evicted by duplicate session_key");
-                let _ = send_message(&mut socket, Message::Close(None)).await;
+                let _ = send_close(
+                    &mut socket,
+                    CLOSE_CODE_DUPLICATE_SESSION,
+                    CLOSE_REASON_DUPLICATE_SESSION,
+                )
+                .await;
                 break;
             }
 

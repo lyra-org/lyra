@@ -11,6 +11,11 @@ use axum::{
     extract::{
         Query,
         WebSocketUpgrade,
+        ws::{
+            CloseFrame,
+            Message,
+            Utf8Bytes,
+        },
     },
     http::HeaderMap,
     response::Response,
@@ -24,7 +29,11 @@ use crate::services::{
     origin,
     remote::{
         connection,
-        constants::MAX_MESSAGE_SIZE,
+        constants::{
+            CLOSE_CODE_REGISTRATION_REJECTED,
+            CLOSE_REASON_REGISTRATION_REJECTED,
+            MAX_MESSAGE_SIZE,
+        },
         registry,
     },
 };
@@ -69,7 +78,7 @@ async fn ws_upgrade(
 
     Ok(ws
         .max_message_size(MAX_MESSAGE_SIZE)
-        .on_upgrade(move |socket| async move {
+        .on_upgrade(move |mut socket| async move {
             let cancel = Arc::new(Notify::new());
             let result = match registry::register(
                 user_db_id,
@@ -88,6 +97,12 @@ async fn ws_upgrade(
                         error = %err,
                         "websocket registration rejected"
                     );
+                    let _ = socket
+                        .send(Message::Close(Some(CloseFrame {
+                            code: CLOSE_CODE_REGISTRATION_REJECTED,
+                            reason: Utf8Bytes::from_static(CLOSE_REASON_REGISTRATION_REJECTED),
+                        })))
+                        .await;
                     return;
                 }
             };
