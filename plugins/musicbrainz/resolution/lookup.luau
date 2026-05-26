@@ -71,6 +71,7 @@ type Layer = metadata.Layer
 type EnsureArtistRequest = metadata.EnsureArtistRequest
 type ArtistType = metadata.ArtistType
 type Provider = metadata.Provider
+type ArtistRefreshContext = metadata.ArtistRefreshContext
 
 local ArtistType = metadata.ArtistType
 local provider: Provider? = nil
@@ -107,6 +108,15 @@ local function musicbrainz_external_ids(external_ids: ExternalIdsByProvider?): R
 		return nil
 	end
 	return ids :: ReleaseIds
+end
+
+local function musicbrainz_artist_id(external_ids: ExternalIdsByProvider?): string?
+	local ids = metadata.ids.for_provider(external_ids, "musicbrainz")
+	if ids == nil then
+		return nil
+	end
+	local artist_id = ids.artist_id
+	return if type(artist_id) == "string" and artist_id ~= "" then artist_id else nil
 end
 
 local function json_string_field(object: JsonObject?, key: string): string?
@@ -1139,23 +1149,47 @@ local MB_ARTIST_RELATION_MAP: { [string]: ArtistRelationType? } = {
 	["member of band"] = ArtistRelationType.MemberOf,
 }
 
-local function fetch_and_link_artist_relations(
+type PendingArtistRelation = {
 	from_artist_db_id: number,
-	mb_artist_id: string,
-	mb_artist_type: string?
-): boolean
+	to_artist_db_id: number,
+	relation_type: ArtistRelationType,
+	attributes: { [string]: string },
+}
+
+local function musicbrainz_artist_type_has_imported_relations(mb_artist_type: string?): boolean
+	local normalized_type = if mb_artist_type then string.lower(mb_artist_type) else nil
+	return normalized_type == "character" or normalized_type == "group"
+end
+
+local function collect_artist_relation_attributes(target: { [string]: string }, attributes: any)
+	if type(attributes) ~= "table" then
+		return
+	end
+	for _, raw_attr in attributes :: { any } do
+		if type(raw_attr) == "string" then
+			local attr = trim_text(raw_attr)
+			if attr ~= "" then
+				target[attr] = attr
+			end
+		end
+	end
+end
+
+local function artist_relation_attributes_string(attributes: { [string]: string }): string?
+	local parts: { string } = {}
+	for _, attr in attributes do
+		table.insert(parts, attr)
+	end
+	table.sort(parts)
+	if #parts == 0 then
+		return nil
+	end
+	return table.concat(parts, ", ")
+end
+
+local function import_artist_relations_from_response(current_artist_db_id: number, response: JsonObject): boolean
 	local current_provider = provider
 	if current_provider == nil then
-		return false
-	end
-
-	local normalized_type = if mb_artist_type then string.lower(mb_artist_type) else nil
-	if normalized_type ~= "character" and normalized_type ~= "group" then
-		return false
-	end
-
-	local response = mb_get(`/artist/{mb_artist_id}?inc=artist-rels`)
-	if response == nil then
 		return false
 	end
 
@@ -1164,7 +1198,7 @@ local function fetch_and_link_artist_relations(
 		return false
 	end
 
-	local linked_count = 0
+	local pending_relations: { [string]: PendingArtistRelation } = {}
 	for _, relation in relations :: { any } do
 		if type(relation) ~= "table" then
 			continue
@@ -1183,6 +1217,11 @@ local function fetch_and_link_artist_relations(
 			continue
 		end
 
+		local direction = relation.direction
+		if direction ~= "forward" and direction ~= "backward" then
+			continue
+		end
+
 		local related_artist = relation.artist
 		if type(related_artist) ~= "table" or not related_artist.id or not related_artist.name then
 			continue
@@ -1193,26 +1232,38 @@ local function fetch_and_link_artist_relations(
 			continue
 		end
 
-		local attributes = relation.attributes
-		local attributes_str: string? = nil
-		if type(attributes) == "table" and #attributes > 0 then
-			local attr_parts: { string } = {}
-			for _, attr in attributes :: { any } do
-				if type(attr) == "string" then
-					table.insert(attr_parts, attr)
-				end
-			end
-			if #attr_parts > 0 then
-				attributes_str = table.concat(attr_parts, ", ")
-			end
+		local from_artist_db_id = if direction == "forward" then current_artist_db_id else related_artist_db_id
+		local to_artist_db_id = if direction == "forward" then related_artist_db_id else current_artist_db_id
+		local relation_key = `{from_artist_db_id}:{to_artist_db_id}:{string.lower(relation_type_str)}`
+		local pending = pending_relations[relation_key]
+		if pending == nil then
+			pending = {
+				from_artist_db_id = from_artist_db_id,
+				to_artist_db_id = to_artist_db_id,
+				relation_type = relation_type,
+				attributes = {},
+			}
+			pending_relations[relation_key] = pending
 		end
+		collect_artist_relation_attributes(pending.attributes, relation.attributes)
+	end
 
+	local relation_keys: { string } = {}
+	for relation_key in pending_relations do
+		table.insert(relation_keys, relation_key)
+	end
+	table.sort(relation_keys)
+
+	local linked_count = 0
+	for _, relation_key in relation_keys do
+		local pending = pending_relations[relation_key]
+		local attributes_str = artist_relation_attributes_string(pending.attributes)
 		local link_ok = pcall(
 			current_provider.link_artist_relation,
 			current_provider,
-			related_artist_db_id,
-			from_artist_db_id,
-			relation_type,
+			pending.from_artist_db_id,
+			pending.to_artist_db_id,
+			pending.relation_type,
 			attributes_str
 		)
 		if link_ok then
@@ -1221,6 +1272,33 @@ local function fetch_and_link_artist_relations(
 	end
 
 	return linked_count > 0
+end
+
+local function fetch_and_link_artist_relations(
+	from_artist_db_id: number,
+	mb_artist_id: string,
+	mb_artist_type: string?
+): boolean
+	if not musicbrainz_artist_type_has_imported_relations(mb_artist_type) then
+		return false
+	end
+
+	local response = mb_get(`/artist/{mb_artist_id}?inc=artist-rels`)
+	if response == nil then
+		return false
+	end
+
+	return import_artist_relations_from_response(from_artist_db_id, response)
+end
+
+local function refresh_artist_by_id(artist_db_id: number, mb_artist_id: string): boolean
+	local response = mb_get(`/artist/{mb_artist_id}?inc=artist-rels`)
+	if response == nil then
+		return false
+	end
+
+	set_artist_metadata(artist_db_id, normalize_release_artist(response))
+	return import_artist_relations_from_response(artist_db_id, response)
 end
 
 local function extract_track_work_id_from_relations(relations: { Relation }?): string?
@@ -2780,6 +2858,23 @@ type AcoustIdConfig = {
 
 function module.register_refresh(provider_instance: Provider, acoustid_config: AcoustIdConfig?): ()
 	provider = provider_instance
+	provider_instance:refresh(metadata.EntityType.Artist, function(ctx: ArtistRefreshContext)
+		local artist_db_id = ctx.db_id
+		if artist_db_id == nil then
+			return nil
+		end
+
+		local artist_id = musicbrainz_artist_id(ctx.external_ids)
+		if artist_id == nil then
+			return nil
+		end
+
+		refresh_artist_by_id(artist_db_id, artist_id)
+		return nil
+	end, function(ctx: ArtistRefreshContext): boolean
+		return musicbrainz_artist_id(ctx.external_ids) ~= nil
+	end)
+
 	provider_instance:refresh(metadata.EntityType.Release, function(ctx: metadata.ReleaseRefreshContext)
 		local release: ReleaseContext = ctx :: ReleaseContext
 		local lookup_input = release_lookup_inputs(release)
