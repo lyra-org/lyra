@@ -1,0 +1,104 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Novelbright - SKYWALK [WEB FLAC]/07 We are calling you.flac"
+album = "SKYWALK"
+artists = ["Novelbright"]
+title = "We are calling you"
+genre = "Japanese Rock"
+track = 7
+track_total = 7
+duration_ms = 284440
+
+[[raw_tags]]
+file_path = "Novelbright - SKYWALK [WEB FLAC]/06 My Savior.flac"
+album = "SKYWALK"
+artists = ["Novelbright"]
+title = "My Savior"
+genre = "Japanese Rock"
+track = 6
+track_total = 7
+duration_ms = 210560
+
+[[raw_tags]]
+file_path = "Novelbright - SKYWALK [WEB FLAC]/05 また明日.flac"
+album = "SKYWALK"
+artists = ["Novelbright"]
+title = "また明日"
+genre = "Japanese Rock"
+track = 5
+track_total = 7
+duration_ms = 242453
+
+[[raw_tags]]
+file_path = "Novelbright - SKYWALK [WEB FLAC]/04 Count on me.flac"
+album = "SKYWALK"
+artists = ["Novelbright"]
+title = "Count on me"
+genre = "Japanese Rock"
+track = 4
+track_total = 7
+duration_ms = 218173
+
+[[raw_tags]]
+file_path = "Novelbright - SKYWALK [WEB FLAC]/03 ヒカリへ.flac"
+album = "SKYWALK"
+artists = ["Novelbright"]
+title = "ヒカリへ"
+genre = "Japanese Rock"
+track = 3
+track_total = 7
+duration_ms = 260813
+
+[[raw_tags]]
+file_path = "Novelbright - SKYWALK [WEB FLAC]/02 Morning Light.flac"
+album = "SKYWALK"
+artists = ["Novelbright"]
+title = "Morning Light"
+genre = "Japanese Rock"
+track = 2
+track_total = 7
+duration_ms = 227373
+
+[[raw_tags]]
+file_path = "Novelbright - SKYWALK [WEB FLAC]/01 Walking with you.flac"
+album = "SKYWALK"
+artists = ["Novelbright"]
+title = "Walking with you"
+genre = "Japanese Rock"
+track = 1
+track_total = 7
+duration_ms = 223186
+
+[expect.release]
+ids = { release_group_id = "09111fab-6b71-4228-884d-8b338c3bf089", release_id = "dc76c0f7-9714-4fbc-9ef5-fd6c99527d48" }
+fields = { release_title = "SKYWALK", release_date = "2018-10-03" }
+
+[expect.artists."f1d9bc16-a8a2-4733-9b9d-2e101e010ea0"]
+fields = { artist_name = "Novelbright", sort_name = "Novelbright" }
+
+[expect.tracks."13b06fe6-0364-4548-a741-cea1ffd3c4b9"]
+fields = { disc = 1, track = 7, track_title = "We are calling you" }
+
+[expect.tracks."32aac00b-0a1d-4978-be50-308c06906233"]
+fields = { disc = 1, track = 5, track_title = "また明日" }
+
+[expect.tracks."43dcfa30-97c2-45f9-9ea5-2df64656217f"]
+fields = { disc = 1, track = 1, track_title = "Walking with you" }
+
+[expect.tracks."55169379-927a-4e4f-8e07-5d1ed2517202"]
+fields = { disc = 1, track = 4, track_title = "Count on me" }
+
+[expect.tracks."952ffc41-ea5a-4f15-99de-665b577e805d"]
+fields = { disc = 1, track = 6, track_title = "My Savior" }
+
+[expect.tracks."a6d110e1-e701-4dc6-8410-d25a23219cc9"]
+fields = { disc = 1, track = 3, track_title = "ヒカリへ" }
+
+[expect.tracks."fa732c44-7ecb-484f-81bc-d17ef1ebfa7b"]
+fields = { disc = 1, track = 2, track_title = "Morning Light" }

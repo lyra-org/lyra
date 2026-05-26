@@ -1,0 +1,36 @@
+{
+  "test_name": "requiem_feat_hoshimachi_suisei_kanaria",
+  "scenario_id": "a19a2ce02803884b",
+  "responses": [
+    {
+      "cache_key": "00350abd85b04817",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A1c9e6e0e-b05a-447d-b1ad-ded2aa6d0b6b%20AND%20(release%3ARequiem%20%5C(feat.%20Hoshimachi%20Suisei%5C)%20OR%20recording%3ARequiem%20%5C(feat.%20Hoshimachi%20Suisei%5C))&limit=100",
+      "status_code": 200,
+      "body_hash": "ab0148bd106231ed"
+    },
+    {
+      "cache_key": "01a33edc36ab9057",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=7b0e05f9-1aa5-4981-b289-273011d40ecc&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "416f3180c091e598"
+    },
+    {
+      "cache_key": "bb9519ae1fb4559f",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Kanaria",
+      "status_code": 200,
+      "body_hash": "d768491d8663726f"
+    },
+    {
+      "cache_key": "cfbaf84da135f9eb",
+      "url": "https://musicbrainz.org/ws/2/artist/8eeb59f4-0071-4261-b1f8-91d8294622d2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "101a5d50df20aed1"
+    },
+    {
+      "cache_key": "d9ea6b8b9857eec3",
+      "url": "https://musicbrainz.org/ws/2/work/19671e69-4607-40d1-a70a-3a13c8d343c3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "18a942a00bb71f7d"
+    }
+  ]
+}
