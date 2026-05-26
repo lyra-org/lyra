@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "lrclib",
+  "name": "LRCLIB Lyrics Provider",
+  "version": "0.0.1",
+  "description": "Fetches lyrics from the LRCLIB community database",
+  "entrypoint": "init.luau",
+  "scopes": [
+    "harmony.http",
+    "harmony.json",
+    "lyra.metadata",
+    "lyra.lyrics",
+    "lyra.datastore"
+  ]
+}
