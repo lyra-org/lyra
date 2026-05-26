@@ -1,0 +1,74 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "YU-KA [2022-02-18] Reveal [FLAC] [16bit-44.1kHz]/5. Hyacinth.flac"
+album = "Reveal"
+album_artists = ["YU-KA"]
+artists = ["YU-KA"]
+title = "Hyacinth"
+genre = "J-pop"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 5
+duration_ms = 298500
+
+[[raw_tags]]
+file_path = "YU-KA [2022-02-18] Reveal [FLAC] [16bit-44.1kHz]/4. Yesterday.flac"
+album = "Reveal"
+album_artists = ["YU-KA"]
+artists = ["YU-KA"]
+title = "Yesterday"
+genre = "J-pop"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 5
+duration_ms = 214500
+
+[[raw_tags]]
+file_path = "YU-KA [2022-02-18] Reveal [FLAC] [16bit-44.1kHz]/3. Kaze.flac"
+album = "Reveal"
+album_artists = ["YU-KA"]
+artists = ["YU-KA"]
+title = "Kaze"
+genre = "J-pop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 5
+duration_ms = 317000
+
+[[raw_tags]]
+file_path = "YU-KA [2022-02-18] Reveal [FLAC] [16bit-44.1kHz]/2. Leon.flac"
+album = "Reveal"
+album_artists = ["YU-KA"]
+artists = ["YU-KA"]
+title = "Leon"
+genre = "J-pop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 5
+duration_ms = 213166
+
+[[raw_tags]]
+file_path = "YU-KA [2022-02-18] Reveal [FLAC] [16bit-44.1kHz]/1. Fish.flac"
+album = "Reveal"
+album_artists = ["YU-KA"]
+artists = ["YU-KA"]
+title = "Fish"
+genre = "J-pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 5
+duration_ms = 289100
+
+[expect.release]
+ids = { release_group_id = "1f002bf7-abdc-4267-99c4-9b9b5e494d25", release_id = "47a262ff-1c49-418f-96fb-ad283249fb7e" }
