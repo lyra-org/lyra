@@ -15,12 +15,6 @@ use serde::{
 };
 use serde_json::Value;
 
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum IncomingMessage {
-    Command(ClientCommand),
-}
-
 /// Typed command envelope — each action carries its own payload shape.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "docgen", derive(ToAsyncApiMessage))]
@@ -231,24 +225,19 @@ mod tests {
 
     #[test]
     fn parse_pause_command() {
-        let json = r#"{"type":"command","action":"pause","id":"abc","target":"2"}"#;
-        let msg: IncomingMessage = serde_json::from_str(json).unwrap();
-        match msg {
-            IncomingMessage::Command(cmd) => {
-                assert_eq!(cmd.id(), "abc");
-                assert_eq!(cmd.remote_action(), Some(RemoteAction::Pause));
-                assert_eq!(cmd.target(), Some("2"));
-            }
-        }
+        let json = r#"{"action":"pause","id":"abc","target":"2"}"#;
+        let cmd: ClientCommand = serde_json::from_str(json).unwrap();
+        assert_eq!(cmd.id(), "abc");
+        assert_eq!(cmd.remote_action(), Some(RemoteAction::Pause));
+        assert_eq!(cmd.target(), Some("2"));
     }
 
     #[test]
     fn parse_seek_command() {
-        let json =
-            r#"{"type":"command","action":"seek","id":"1","target":"2","position_ms":30000}"#;
-        let msg: IncomingMessage = serde_json::from_str(json).unwrap();
+        let json = r#"{"action":"seek","id":"1","target":"2","position_ms":30000}"#;
+        let msg: ClientCommand = serde_json::from_str(json).unwrap();
         match msg {
-            IncomingMessage::Command(ClientCommand::Seek(cmd)) => {
+            ClientCommand::Seek(cmd) => {
                 assert_eq!(cmd.id, "1");
                 assert_eq!(cmd.target, "2");
                 assert_eq!(cmd.position_ms, 30000);
@@ -259,10 +248,10 @@ mod tests {
 
     #[test]
     fn parse_set_volume_command() {
-        let json = r#"{"type":"command","action":"set_volume","id":"1","target":"2","level":0.75}"#;
-        let msg: IncomingMessage = serde_json::from_str(json).unwrap();
+        let json = r#"{"action":"set_volume","id":"1","target":"2","level":0.75}"#;
+        let msg: ClientCommand = serde_json::from_str(json).unwrap();
         match msg {
-            IncomingMessage::Command(ClientCommand::SetVolume(cmd)) => {
+            ClientCommand::SetVolume(cmd) => {
                 assert_eq!(cmd.level, 0.75);
             }
             _ => panic!("expected SetVolume"),
@@ -271,10 +260,11 @@ mod tests {
 
     #[test]
     fn parse_declare_capabilities() {
-        let json = r#"{"type":"command","action":"declare_capabilities","id":"1","commands":["play","pause","seek"]}"#;
-        let msg: IncomingMessage = serde_json::from_str(json).unwrap();
+        let json =
+            r#"{"action":"declare_capabilities","id":"1","commands":["play","pause","seek"]}"#;
+        let msg: ClientCommand = serde_json::from_str(json).unwrap();
         match msg {
-            IncomingMessage::Command(ClientCommand::DeclareCapabilities { commands, .. }) => {
+            ClientCommand::DeclareCapabilities { commands, .. } => {
                 assert_eq!(commands.len(), 3);
                 assert!(commands.contains(&RemoteAction::Play));
                 assert!(commands.contains(&RemoteAction::Seek));
@@ -285,8 +275,8 @@ mod tests {
 
     #[test]
     fn parse_rejects_unknown_action() {
-        let json = r#"{"type":"command","action":"teleport","id":"1"}"#;
-        assert!(serde_json::from_str::<IncomingMessage>(json).is_err());
+        let json = r#"{"action":"teleport","id":"1"}"#;
+        assert!(serde_json::from_str::<ClientCommand>(json).is_err());
     }
 
     #[test]

@@ -32,7 +32,6 @@ use super::messages::{
     EventMessage,
     ForwardedCommand,
     ForwardedCommandData,
-    IncomingMessage,
     OutgoingMessage,
     ResponseMessage,
 };
@@ -79,13 +78,9 @@ fn extract_id(text: &str) -> String {
         .unwrap_or_default()
 }
 
-async fn handle_message(msg: IncomingMessage, connection_id: ConnectionId) -> OutgoingMessage {
-    match msg {
-        IncomingMessage::Command(cmd) => {
-            let response = handle_command(cmd, connection_id).await;
-            OutgoingMessage::Response(response)
-        }
-    }
+async fn handle_message(cmd: ClientCommand, connection_id: ConnectionId) -> OutgoingMessage {
+    let response = handle_command(cmd, connection_id).await;
+    OutgoingMessage::Response(response)
 }
 
 async fn handle_command(cmd: ClientCommand, connection_id: ConnectionId) -> ResponseMessage {
@@ -322,7 +317,7 @@ pub(crate) async fn run(
                         break;
                     }
                     Some(Ok(Message::Text(text))) => {
-                        let response = match serde_json::from_str::<IncomingMessage>(&text) {
+                        let response = match serde_json::from_str::<ClientCommand>(&text) {
                             Ok(msg) => handle_message(msg, connection_id).await,
                             Err(err) => {
                                 let id = extract_id(&text);
