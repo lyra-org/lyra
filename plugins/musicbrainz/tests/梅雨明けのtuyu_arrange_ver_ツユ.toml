@@ -1,0 +1,29 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2021.07.14] ツユ - 梅雨明けの(TUYU arrange ver.) [CD]/01 - 梅雨明けの(TUYU arrange ver.).flac"
+album = "梅雨明けの(TUYU arrange ver.)"
+album_artists = ["ツユ"]
+artists = ["ツユ"]
+title = "梅雨明けの(TUYU arrange ver.)"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 201426
+
+[expect.release]
+ids = { release_group_id = "7eecfb07-efb0-470d-b700-f49635ddde4b", release_id = "b748be68-c2e9-4eab-8c9b-85afe45e89e0" }
+fields = { release_title = "梅雨明けの(TUYU arrange ver.)", release_date = "2021-07-14" }
+
+[expect.artists."2b0a8be6-bfb8-4f62-b21d-f47a3104157e"]
+fields = { artist_name = "ツユ", sort_name = "TUYU" }
+
+[expect.tracks."6dee29a1-4708-45e9-b18c-a239a9069613"]
+fields = { disc = 1, track = 1, track_title = "梅雨明けの(TUYU arrange ver.)" }
