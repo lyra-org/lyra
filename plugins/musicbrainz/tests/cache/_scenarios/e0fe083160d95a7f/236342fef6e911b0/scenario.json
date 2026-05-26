@@ -1,0 +1,30 @@
+{
+  "test_name": "re_wonder_bentham",
+  "scenario_id": "236342fef6e911b0",
+  "responses": [
+    {
+      "cache_key": "678e505f07fc0ebb",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=a4ea13bb-d28b-4b03-9f1f-6fde7cce682c&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "29d45d817acc36c4"
+    },
+    {
+      "cache_key": "e0e8a3886bf908fc",
+      "url": "https://musicbrainz.org/ws/2/artist/b6d37a3d-77a2-4659-996c-a880cde56a67?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2eae04f9bed00ce3"
+    },
+    {
+      "cache_key": "e364229ac1c0e629",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ARe%5C%3A%20Wonder&limit=100",
+      "status_code": 200,
+      "body_hash": "4f414852d106f714"
+    },
+    {
+      "cache_key": "f20a716b40a0eb2a",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Bentham",
+      "status_code": 200,
+      "body_hash": "fd98850b54394bd6"
+    }
+  ]
+}
