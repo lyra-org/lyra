@@ -443,6 +443,9 @@ fn builtin_from_release(
     options: &MixOptions,
 ) -> anyhow::Result<Vec<Track>> {
     let seed_genres = db::genres::get_for_release(db, release_db_id)?;
+    if seed_genres.is_empty() {
+        return fallback_from_seed_tracks(db, db::tracks::get_direct(db, release_db_id)?, options);
+    }
     let weighted = expand_and_weight(db, &seed_genres)?;
     tracks_for_genres(db, &weighted, options)
 }
@@ -454,6 +457,17 @@ fn builtin_from_artist(
 ) -> anyhow::Result<Vec<Track>> {
     let releases = db::releases::get_by_artist(db, artist_db_id)?;
     let seed_genres = collect_genres_from_releases(db, &releases)?;
+    if seed_genres.is_empty() {
+        let release_ids: Vec<DbId> = releases
+            .into_iter()
+            .filter_map(|release| release.db_id.map(DbId::from))
+            .collect();
+        return fallback_from_seed_tracks(
+            db,
+            db::tracks::get_by_releases(db, &release_ids)?,
+            options,
+        );
+    }
     let weighted = expand_and_weight(db, &seed_genres)?;
     tracks_for_genres(db, &weighted, options)
 }
@@ -495,6 +509,14 @@ fn builtin_from_playlist(
         })
         .collect();
     let seed_genres = collect_genres_from_releases(db, &all_releases)?;
+    if seed_genres.is_empty() {
+        let tracks_by_id = db::tracks::get_by_ids(db, &track_ids)?;
+        let tracks = track_ids
+            .into_iter()
+            .filter_map(|id| tracks_by_id.get(&id).cloned())
+            .collect();
+        return fallback_from_seed_tracks(db, tracks, options);
+    }
     let weighted = expand_and_weight(db, &seed_genres)?;
     tracks_for_genres(db, &weighted, options)
 }
@@ -524,6 +546,14 @@ fn builtin_from_recent_listens(
         })
         .collect();
     let seed_genres = collect_genres_from_releases(db, &all_releases)?;
+    if seed_genres.is_empty() {
+        let tracks_by_id = db::tracks::get_by_ids(db, &track_ids)?;
+        let tracks = track_ids
+            .into_iter()
+            .filter_map(|id| tracks_by_id.get(&id).cloned())
+            .collect();
+        return fallback_from_seed_tracks(db, tracks, options);
+    }
     let weighted = expand_and_weight(db, &seed_genres)?;
 
     tracks_for_genres(db, &weighted, options)
@@ -644,6 +674,22 @@ fn tracks_for_genres(
     let result = cap_per_artist(db, combined, limit)?;
 
     Ok(result)
+}
+
+fn fallback_from_seed_tracks(
+    db: &DbAny,
+    mut tracks: Vec<Track>,
+    options: &MixOptions,
+) -> anyhow::Result<Vec<Track>> {
+    if tracks.is_empty() {
+        return Ok(tracks);
+    }
+
+    tracks.shuffle(&mut rand::rng());
+    let (unheard, heard) = partition_by_listen_history(db, tracks, options.viewer)?;
+    let mut combined = unheard;
+    combined.extend(heard);
+    cap_per_artist(db, combined, options.limit.unwrap_or(DEFAULT_LIMIT))
 }
 
 fn release_weighted_scores(
@@ -837,6 +883,25 @@ mod tests {
     }
 
     #[test]
+    fn from_release_without_genres_returns_seed_tracks() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+
+        let release = insert_release(&mut db, "No Genre Release")?;
+        let track_a = insert_track(&mut db, "Seed A")?;
+        let track_b = insert_track(&mut db, "Seed B")?;
+        connect(&mut db, release, track_a)?;
+        connect(&mut db, release, track_b)?;
+
+        let result = builtin_from_release(&db, release, &MixOptions::default())?;
+        let titles: HashSet<&str> = result.iter().map(|t| t.track_title.as_str()).collect();
+        assert_eq!(titles.len(), 2);
+        assert!(titles.contains("Seed A"));
+        assert!(titles.contains("Seed B"));
+
+        Ok(())
+    }
+
+    #[test]
     fn from_artist_returns_genre_matched_tracks() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
@@ -856,6 +921,27 @@ mod tests {
 
         let result = builtin_from_artist(&db, artist, &MixOptions::default())?;
         assert_eq!(result.len(), 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn from_artist_without_genres_returns_artist_release_tracks() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+
+        let artist = insert_artist(&mut db, "No Genre Artist")?;
+        let release = insert_release(&mut db, "No Genre Release")?;
+        connect_artist(&mut db, release, artist)?;
+        let track_a = insert_track(&mut db, "Artist A")?;
+        let track_b = insert_track(&mut db, "Artist B")?;
+        connect(&mut db, release, track_a)?;
+        connect(&mut db, release, track_b)?;
+
+        let result = builtin_from_artist(&db, artist, &MixOptions::default())?;
+        let titles: HashSet<&str> = result.iter().map(|t| t.track_title.as_str()).collect();
+        assert_eq!(titles.len(), 2);
+        assert!(titles.contains("Artist A"));
+        assert!(titles.contains("Artist B"));
 
         Ok(())
     }
