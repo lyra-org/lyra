@@ -1,0 +1,30 @@
+{
+  "test_name": "judgement_ash_da_hero",
+  "scenario_id": "f5025e65e8f665c6",
+  "responses": [
+    {
+      "cache_key": "3292991b994d5678",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=60761a4c-82f7-4cf8-97c7-03bafd899d4a&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "2ccd1b96cfbcf6e9"
+    },
+    {
+      "cache_key": "4c3aba788e2e5f87",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AJudgement&limit=100",
+      "status_code": 200,
+      "body_hash": "580643d955a8bbfa"
+    },
+    {
+      "cache_key": "7704911878d49741",
+      "url": "https://musicbrainz.org/ws/2/artist?query=ASH%20DA%20HERO",
+      "status_code": 200,
+      "body_hash": "fa37598888acda4b"
+    },
+    {
+      "cache_key": "fbb509dd2c98929e",
+      "url": "https://musicbrainz.org/ws/2/artist/9334e28f-c454-4e8c-83e5-e9139dc4bccb?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f8fe1ae7b9e4cda6"
+    }
+  ]
+}
