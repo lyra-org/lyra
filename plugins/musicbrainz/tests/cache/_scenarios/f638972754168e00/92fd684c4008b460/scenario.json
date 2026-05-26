@@ -1,0 +1,30 @@
+{
+  "test_name": "natsuzora_ナツソラ_honeycomebear",
+  "scenario_id": "92fd684c4008b460",
+  "responses": [
+    {
+      "cache_key": "1034cd7bc811a9e8",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=7d9acadb-9e02-4bce-9390-422d283d0cbb&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "348dd46aa195dbcf"
+    },
+    {
+      "cache_key": "a02f01cf95df07d7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=HoneyComeBear",
+      "status_code": 200,
+      "body_hash": "559495c3eacabf87"
+    },
+    {
+      "cache_key": "c62c56a0126b4ae9",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ANatsuzora%20%5C-%20%E3%83%8A%E3%83%84%E3%82%BE%E3%83%A9&limit=100",
+      "status_code": 200,
+      "body_hash": "e45e8c084b95834e"
+    },
+    {
+      "cache_key": "dc1bb1d99c928239",
+      "url": "https://musicbrainz.org/ws/2/artist/85b9d988-53ca-466d-b2d4-a57eb97bc514?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "fcf83c38449ef5d9"
+    }
+  ]
+}
