@@ -1,0 +1,625 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5396/10. ポラリス (カラオケ).flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木 雅之"]
+title = "ポラリス (カラオケ)"
+disc = 3
+disc_total = 3
+track = 10
+track_total = 10
+duration_ms = 288960
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5396/09. たとえ世界がそっぽ向いても (カラオケ).flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木 雅之"]
+title = "たとえ世界がそっぽ向いても (カラオケ)"
+disc = 3
+disc_total = 3
+track = 9
+track_total = 10
+duration_ms = 267226
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5396/08. DADDY ! DADDY ! DO ! feat. 鈴木愛理 (カラオケ).flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木 雅之"]
+title = "DADDY ! DADDY ! DO ! feat. 鈴木愛理 (カラオケ)"
+disc = 3
+disc_total = 3
+track = 8
+track_total = 10
+duration_ms = 254626
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5396/07. Motivation (カラオケ).flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木 雅之"]
+title = "Motivation (カラオケ)"
+disc = 3
+disc_total = 3
+track = 7
+track_total = 10
+duration_ms = 177093
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5396/06. 息もできないくらい (カラオケ).flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木 雅之"]
+title = "息もできないくらい (カラオケ)"
+disc = 3
+disc_total = 3
+track = 6
+track_total = 10
+duration_ms = 304560
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5396/05. ポラリス.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木 雅之"]
+title = "ポラリス"
+disc = 3
+disc_total = 3
+track = 5
+track_total = 10
+duration_ms = 291253
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5396/04. たとえ世界がそっぽ向いても.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木 雅之"]
+title = "たとえ世界がそっぽ向いても"
+disc = 3
+disc_total = 3
+track = 4
+track_total = 10
+duration_ms = 267226
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5396/03. DADDY ! DADDY ! DO ! feat. 鈴木愛理.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木 雅之"]
+title = "DADDY ! DADDY ! DO ! feat. 鈴木愛理"
+disc = 3
+disc_total = 3
+track = 3
+track_total = 10
+duration_ms = 254640
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5396/02. Motivation.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木 雅之"]
+title = "Motivation"
+disc = 3
+disc_total = 3
+track = 2
+track_total = 10
+duration_ms = 177080
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5396/01. 息もできないくらい.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木 雅之"]
+title = "息もできないくらい"
+disc = 3
+disc_total = 3
+track = 1
+track_total = 10
+duration_ms = 304560
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/20. Pap-Pi-Doo-Bi-Doo-Ba 物語.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["ゴスペラッツ"]
+title = "Pap-Pi-Doo-Bi-Doo-Ba 物語"
+disc = 2
+disc_total = 3
+track = 20
+track_total = 20
+duration_ms = 233586
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/19. 熱帯夜-真夏のエクスタシー.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["ラッツ & スター"]
+title = "熱帯夜/真夏のエクスタシー"
+disc = 2
+disc_total = 3
+track = 19
+track_total = 20
+duration_ms = 253760
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/18. レディ・エキセントリック.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["ラッツ & スター"]
+title = "レディ・エキセントリック"
+disc = 2
+disc_total = 3
+track = 18
+track_total = 20
+duration_ms = 252133
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/17. マドンナはお前だけ.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["ラッツ & スター"]
+title = "マドンナはお前だけ"
+disc = 2
+disc_total = 3
+track = 17
+track_total = 20
+duration_ms = 227306
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/16. グラマーGuy (12inch-Single Version).flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["ラッツ & スター"]
+title = "グラマーGuy (12inch-Single Version)"
+disc = 2
+disc_total = 3
+track = 16
+track_total = 20
+duration_ms = 418413
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/15. Miss You.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["ラッツ & スター"]
+title = "Miss You"
+disc = 2
+disc_total = 3
+track = 15
+track_total = 20
+duration_ms = 276373
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/14. Tシャツに口紅.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["ラッツ & スター"]
+title = "Tシャツに口紅"
+disc = 2
+disc_total = 3
+track = 14
+track_total = 20
+duration_ms = 276946
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/13. め組のひと.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["ラッツ & スター"]
+title = "め組のひと"
+disc = 2
+disc_total = 3
+track = 13
+track_total = 20
+duration_ms = 205000
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/12. 星空のサーカス (口笛Version).flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["ラッツ & スター"]
+title = "星空のサーカス (口笛Version)"
+disc = 2
+disc_total = 3
+track = 12
+track_total = 20
+duration_ms = 177293
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/11. 週末ダイナマイト.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["シャネルズ"]
+title = "週末ダイナマイト"
+disc = 2
+disc_total = 3
+track = 11
+track_total = 20
+duration_ms = 188293
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/10. サマー・ホリデー.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["シャネルズ"]
+title = "サマー・ホリデー"
+disc = 2
+disc_total = 3
+track = 10
+track_total = 20
+duration_ms = 201786
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/09. 憧れのスレンダー・ガール.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["シャネルズ"]
+title = "憧れのスレンダー・ガール"
+disc = 2
+disc_total = 3
+track = 9
+track_total = 20
+duration_ms = 204826
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/08. ラブ・ミー・ドゥ.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["シャネルズ"]
+title = "ラブ・ミー・ドゥ"
+disc = 2
+disc_total = 3
+track = 8
+track_total = 20
+duration_ms = 220400
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/07. 夢見る16歳.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["シャネルズ"]
+title = "夢見る16歳"
+disc = 2
+disc_total = 3
+track = 7
+track_total = 20
+duration_ms = 227066
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/06. 涙のスウィート・チェリー.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["シャネルズ"]
+title = "涙のスウィート・チェリー"
+disc = 2
+disc_total = 3
+track = 6
+track_total = 20
+duration_ms = 213160
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/05. ハリケーン.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["シャネルズ"]
+title = "ハリケーン"
+disc = 2
+disc_total = 3
+track = 5
+track_total = 20
+duration_ms = 170693
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/04. 街角トワイライト.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["シャネルズ"]
+title = "街角トワイライト"
+disc = 2
+disc_total = 3
+track = 4
+track_total = 20
+duration_ms = 190093
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/03. トゥナイト.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["シャネルズ"]
+title = "トゥナイト"
+disc = 2
+disc_total = 3
+track = 3
+track_total = 20
+duration_ms = 147520
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/02. ランナウェイ.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["シャネルズ"]
+title = "ランナウェイ"
+disc = 2
+disc_total = 3
+track = 2
+track_total = 20
+duration_ms = 185853
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5395/01. TAKE THE ''A'' TRAIN～ハーレム・エクスプレス (Short Version).flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["シャネルズ"]
+title = "TAKE THE \"A\" TRAIN～ハーレム・エクスプレス (Short Version)"
+disc = 2
+disc_total = 3
+track = 1
+track_total = 20
+duration_ms = 174373
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5394/10. 魂のブラザー.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木雅之"]
+title = "魂のブラザー"
+disc = 1
+disc_total = 3
+track = 10
+track_total = 10
+duration_ms = 231533
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5394/09. 夢で逢えたら.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木雅之"]
+title = "夢で逢えたら"
+disc = 1
+disc_total = 3
+track = 9
+track_total = 10
+duration_ms = 280866
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5394/08. Daddy's Home.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木雅之"]
+title = "Daddy's Home"
+disc = 1
+disc_total = 3
+track = 8
+track_total = 10
+duration_ms = 126480
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5394/07. Tears On My Pillow.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木雅之"]
+title = "Tears On My Pillow"
+disc = 1
+disc_total = 3
+track = 7
+track_total = 10
+duration_ms = 132466
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5394/06. 涙のスウィート・チェリー.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木雅之"]
+title = "涙のスウィート・チェリー"
+disc = 1
+disc_total = 3
+track = 6
+track_total = 10
+duration_ms = 230560
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5394/05. ランナウェイ.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木雅之"]
+title = "ランナウェイ"
+disc = 1
+disc_total = 3
+track = 5
+track_total = 10
+duration_ms = 191266
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5394/04. 街角トワイライト feat. 岡崎体育.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木雅之"]
+title = "街角トワイライト feat. 岡崎体育"
+disc = 1
+disc_total = 3
+track = 4
+track_total = 10
+duration_ms = 167613
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5394/03. Good Times, Rock and Roll.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木雅之"]
+title = "Good Times, Rock and Roll"
+disc = 1
+disc_total = 3
+track = 3
+track_total = 10
+duration_ms = 174720
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5394/02. Crazy Little Thing Called Love.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木雅之"]
+title = "Crazy Little Thing Called Love"
+disc = 1
+disc_total = 3
+track = 2
+track_total = 10
+duration_ms = 137293
+
+[[raw_tags]]
+file_path = "鈴木雅之 - ALL TIME ROCK 'N' ROLL [FLAC]/ESCL-5394/01. Ultra Chu Chu Medley.flac"
+album = "ALL TIME ROCK 'N' ROLL"
+album_artists = ["鈴木雅之"]
+artists = ["鈴木雅之"]
+title = "Ultra Chu Chu Medley"
+disc = 1
+disc_total = 3
+track = 1
+track_total = 10
+duration_ms = 299813
+
+[expect.release]
+ids = { release_group_id = "f976fa04-a47b-404a-acd3-615091d484be", release_id = "dabfe379-2e89-4ae0-9d9d-a2959140866e" }
+fields = { release_title = "ALL TIME ROCK 'N' ROLL", release_date = "2020-04-15" }
+
+[expect.artists."2f79df84-a6b5-4b2c-a515-42b2821cf1a2"]
+fields = { artist_name = "ゴスペラッツ", sort_name = "Gospe Rats" }
+
+[expect.artists."30f851bb-dba3-4e9b-811c-5f27f595c86a"]
+fields = { artist_name = "鈴木雅之", sort_name = "Suzuki, Masayuki" }
+
+[expect.artists."3c3e122d-25f1-4bfb-a60c-ced6e45703b7"]
+fields = { artist_name = "岡崎体育", sort_name = "Okazaki, Taiiku" }
+
+[expect.artists."5c281371-5d95-43ae-9019-6375707648de"]
+fields = { artist_name = "RATS & STAR", sort_name = "RATS & STAR" }
+
+[expect.artists."7a39929d-eea2-4ac3-879a-e7e74e4f78eb"]
+fields = { artist_name = "鈴木愛理", sort_name = "Suzuki, Airi" }
+
+[expect.tracks."04c90448-5bdf-4ff0-bf0f-3b0071ee5f3f"]
+fields = { disc = 2, track = 1, track_title = "TAKE THE “A” TRAIN〜ハーレム・エクスプレス (Short Version)" }
+
+[expect.tracks."10bb92ba-7056-46be-bed8-cd2181ea914d"]
+fields = { disc = 2, track = 12, track_title = "星空のサーカス (口笛Version)" }
+
+[expect.tracks."11e289f5-26d7-4ba3-85d5-e7cc5e2dc386"]
+fields = { disc = 2, track = 16, track_title = "グラマーGuy (12inch-Single Version)" }
+
+[expect.tracks."157abd18-fcf6-4d35-8d9c-78b94f2967d4"]
+fields = { disc = 1, track = 8, track_title = "Daddy's Home" }
+
+[expect.tracks."271aa4ed-d43c-498b-a125-861740b6c31a"]
+fields = { disc = 2, track = 10, track_title = "サマー・ホリデー" }
+
+[expect.tracks."2b1c898c-060d-44bb-8fde-e644c8c5c13a"]
+fields = { disc = 3, track = 8, track_title = "DADDY ! DADDY ! DO ! (カラオケ)" }
+
+[expect.tracks."37c2ed28-de46-4fd4-afba-4e5d1b18a068"]
+fields = { disc = 1, track = 3, track_title = "Good Times, Rock and Roll" }
+
+[expect.tracks."38d786bb-f87f-4e6a-840f-0771e898e135"]
+fields = { disc = 2, track = 8, track_title = "ラブ・ミー・ドゥ" }
+
+[expect.tracks."41f2f11f-db59-4c98-8c8c-451849cf1cf7"]
+fields = { disc = 3, track = 7, track_title = "Motivation (カラオケ)" }
+
+[expect.tracks."43b083f1-58ba-4c33-b4b8-01b3cfed359a"]
+fields = { disc = 3, track = 6, track_title = "息もできないくらい (カラオケ)" }
+
+[expect.tracks."4af055b1-2216-424f-91be-35d1e056e794"]
+fields = { disc = 3, track = 1, track_title = "息もできないくらい" }
+
+[expect.tracks."503ad92b-01f6-43e3-b4e2-937e5426bc21"]
+fields = { disc = 2, track = 2, track_title = "ランナウェイ" }
+
+[expect.tracks."50df8cf1-d799-4d7d-a378-a0673df3ce71"]
+fields = { disc = 3, track = 2, track_title = "Motivation" }
+
+[expect.tracks."520b5849-588c-4be5-95c2-0a2a75b96174"]
+fields = { disc = 2, track = 14, track_title = "Tシャツに口紅" }
+
+[expect.tracks."53531f05-496a-44fa-9644-f17cad919dfb"]
+fields = { disc = 2, track = 11, track_title = "週末ダイナマイト" }
+
+[expect.tracks."578792f2-9e67-4137-bc77-099cda0e82ff"]
+fields = { disc = 2, track = 15, track_title = "Miss You" }
+
+[expect.tracks."72d8a9d3-7a56-4e9d-ae5e-8d269fdfd619"]
+fields = { disc = 2, track = 17, track_title = "マドンナはお前だけ" }
+
+[expect.tracks."776b9735-e7d1-4b57-9939-e02f9ef7ddb8"]
+fields = { disc = 3, track = 9, track_title = "たとえ世界がそっぽ向いても (カラオケ)" }
+
+[expect.tracks."7c79a6f0-6d8b-42b2-9c76-de6334a6e555"]
+fields = { disc = 2, track = 3, track_title = "トゥナイト" }
+
+[expect.tracks."827054ae-53e5-4893-bb4b-83ac02adbbfe"]
+fields = { disc = 3, track = 4, track_title = "たとえ世界がそっぽ向いても" }
+
+[expect.tracks."90222b4b-cc80-4791-80c6-320736b201fb"]
+fields = { disc = 2, track = 4, track_title = "街角トワイライト" }
+
+[expect.tracks."ab165883-bdaa-461f-860a-2ae54f2e0e23"]
+fields = { disc = 1, track = 7, track_title = "Tears On My Pillow" }
+
+[expect.tracks."ac2cc9b9-394e-4790-b6fc-aff68f416dd3"]
+fields = { disc = 2, track = 13, track_title = "め組のひと" }
+
+[expect.tracks."b2fb67e7-9c1c-47c6-a7d3-6c127deda998"]
+fields = { disc = 3, track = 10, track_title = "ポラリス (カラオケ)" }
+
+[expect.tracks."b3fd75fd-57c7-46e2-b50c-9f72534c22d9"]
+fields = { disc = 1, track = 2, track_title = "Crazy Little Thing Called Love" }
+
+[expect.tracks."c41eead0-45f8-416b-84ab-e39cb615daa1"]
+fields = { disc = 2, track = 9, track_title = "憧れのスレンダー・ガール" }
+
+[expect.tracks."c48b6041-23be-4551-81f2-33b202a0915d"]
+fields = { disc = 1, track = 6, track_title = "涙のスウィート・チェリー" }
+
+[expect.tracks."ced006f7-bd61-4bcc-96b1-156dd8a8d417"]
+fields = { disc = 2, track = 20, track_title = "Pap-Pi-Doo-Bi-Doo-Ba 物語" }
+
+[expect.tracks."d1edbf54-8bb3-40aa-8659-26bd2bec48b3"]
+fields = { disc = 2, track = 5, track_title = "ハリケーン" }
+
+[expect.tracks."d4251364-c363-4196-8e17-c33ac4df25ae"]
+fields = { disc = 1, track = 5, track_title = "ランナウェイ" }
+
+[expect.tracks."d7f980b4-5905-4c56-b5a4-31cee5a9beaa"]
+fields = { disc = 2, track = 7, track_title = "夢見る16歳" }
+
+[expect.tracks."d81c6cc9-e5f4-4bfa-88b5-2a72aa3e81a5"]
+fields = { disc = 3, track = 5, track_title = "ポラリス" }
+
+[expect.tracks."db0a1a58-2d02-4a74-ba01-ed11e57d7b5d"]
+fields = { disc = 2, track = 19, track_title = "熱帯夜/真夏のエクスタシー" }
+
+[expect.tracks."dfcaaf63-b1ab-449b-87d8-32841a90c132"]
+fields = { disc = 1, track = 1, track_title = "Ultra Chu Chu Medley" }
+
+[expect.tracks."e4a6144a-ad01-48fd-ac22-2e6b7aeb37d3"]
+fields = { disc = 2, track = 6, track_title = "涙のスウィート・チェリー" }
+
+[expect.tracks."e5be0c90-b83f-4088-a036-08eef8f5b2a7"]
+fields = { disc = 1, track = 10, track_title = "魂のブラザー" }
+
+[expect.tracks."e5ded7d9-0adf-4260-84e4-7d9d5528947c"]
+fields = { disc = 3, track = 3, track_title = "DADDY ! DADDY ! DO !" }
+
+[expect.tracks."f4451fab-14e8-4ae2-b988-6128b99ff951"]
+fields = { disc = 1, track = 4, track_title = "街角トワイライト" }
+
+[expect.tracks."f871012f-38aa-4f81-bb39-587710dee6fd"]
+fields = { disc = 1, track = 9, track_title = "夢で逢えたら" }
+
+[expect.tracks."fda6a7ad-c9fd-4f6a-923b-f0ffa67c67d4"]
+fields = { disc = 2, track = 18, track_title = "レディ・エキセントリック" }

@@ -1,0 +1,90 @@
+{
+  "test_name": "the_book_3_yoasobi",
+  "scenario_id": "6baabba63389a5a6",
+  "responses": [
+    {
+      "cache_key": "0f9a11b200905cc5",
+      "url": "https://musicbrainz.org/ws/2/work/3571cee6-80f7-42d4-b8ac-4c78571922cb?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2cbcccca5578a2ce"
+    },
+    {
+      "cache_key": "116ee2e28a7c0bca",
+      "url": "https://musicbrainz.org/ws/2/work/d1352955-29a3-4c64-ad3d-27a7b145a47c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "faf3b451d3b95453"
+    },
+    {
+      "cache_key": "47c63d7b5829d42d",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=763ff344-f4ea-4bf9-9429-930ca03fddb9&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "792403dadaa2bd65"
+    },
+    {
+      "cache_key": "5168d9622bad1ff6",
+      "url": "https://musicbrainz.org/ws/2/work/c23fc12c-b646-46d8-896b-ad550c8ab6bd?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "22c5136ef80b0be0"
+    },
+    {
+      "cache_key": "52a497a70ee5743a",
+      "url": "https://musicbrainz.org/ws/2/artist/df6c619f-4334-43e2-8b6a-4a32af1e4f85?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5d78ef7b0087a500"
+    },
+    {
+      "cache_key": "723fea5f25123b30",
+      "url": "https://musicbrainz.org/ws/2/work/c0c2032e-c08f-4969-8c0b-9d641652c132?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "79d8ad1befcc8ba5"
+    },
+    {
+      "cache_key": "734c977be7cbb9e1",
+      "url": "https://musicbrainz.org/ws/2/work/39319331-ab9d-4599-a3ef-a622f9f7e8aa?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5935774ec560828a"
+    },
+    {
+      "cache_key": "74c8ff0983ddde1b",
+      "url": "https://musicbrainz.org/ws/2/work/af2d44fe-dc49-4b4a-9816-4db4104091fd?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "db5d5e61ab31a6de"
+    },
+    {
+      "cache_key": "9f896e1e04fd8bb2",
+      "url": "https://musicbrainz.org/ws/2/artist?query=YOASOBI",
+      "status_code": 200,
+      "body_hash": "ea0513612b58ff2f"
+    },
+    {
+      "cache_key": "b81693e0ae41dd89",
+      "url": "https://musicbrainz.org/ws/2/work/c4122ab2-c55b-4104-9049-3523a14241d9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d9f7066be85ed5c0"
+    },
+    {
+      "cache_key": "d544ff4c13467246",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ATHE%20BOOK%203&limit=100",
+      "status_code": 200,
+      "body_hash": "87cb0d0470faa6b3"
+    },
+    {
+      "cache_key": "f06289c2afcfbcf6",
+      "url": "https://musicbrainz.org/ws/2/work/16552e75-ba89-4ff7-ab45-0fd1246205ac?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "02a856844f61b8ad"
+    },
+    {
+      "cache_key": "f70c41f75602055a",
+      "url": "https://musicbrainz.org/ws/2/work/bc40222f-094d-4e56-9562-7bdbc71e41cd?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "906a9b95aac53bc5"
+    },
+    {
+      "cache_key": "f74f227cf6d2e998",
+      "url": "https://musicbrainz.org/ws/2/work/62dd8680-62bd-498c-85ed-a3509edb534e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "93a809f508d8ccc0"
+    }
+  ]
+}
