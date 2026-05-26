@@ -1,0 +1,556 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/20. トドメの一撃.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy feat. Cory Wong"]
+title = "トドメの一撃"
+disc = 2
+disc_total = 2
+track = 20
+track_total = 20
+duration_ms = 310453
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/19. そんなbitterな話.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "そんなbitterな話"
+disc = 2
+disc_total = 2
+track = 19
+track_total = 20
+duration_ms = 276226
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/18. まぶた.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "まぶた"
+disc = 2
+disc_total = 2
+track = 18
+track_total = 20
+duration_ms = 256893
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/17. 置き手紙.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "置き手紙"
+disc = 2
+disc_total = 2
+track = 17
+track_total = 20
+duration_ms = 240866
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/16. 忘れ物.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "忘れ物"
+disc = 2
+disc_total = 2
+track = 16
+track_total = 20
+duration_ms = 198573
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/15. 瞳惚れ.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "瞳惚れ"
+disc = 2
+disc_total = 2
+track = 15
+track_total = 20
+duration_ms = 259200
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/14. CHAINSAW BLOOD.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "CHAINSAW BLOOD"
+disc = 2
+disc_total = 2
+track = 14
+track_total = 20
+duration_ms = 202800
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/13. mabataki.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "mabataki"
+disc = 2
+disc_total = 2
+track = 13
+track_total = 20
+duration_ms = 246053
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/12. 走馬灯.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "走馬灯"
+disc = 2
+disc_total = 2
+track = 12
+track_total = 20
+duration_ms = 297520
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/11. 恋風邪にのせて.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "恋風邪にのせて"
+disc = 2
+disc_total = 2
+track = 11
+track_total = 20
+duration_ms = 255933
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/10. 裸の勇者.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "裸の勇者"
+disc = 2
+disc_total = 2
+track = 10
+track_total = 20
+duration_ms = 202026
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/09. 踊り子.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "踊り子"
+disc = 2
+disc_total = 2
+track = 9
+track_total = 20
+duration_ms = 229320
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/08. 泣き地蔵.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "泣き地蔵"
+disc = 2
+disc_total = 2
+track = 8
+track_total = 20
+duration_ms = 151706
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/07. Tokimeki.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "Tokimeki"
+disc = 2
+disc_total = 2
+track = 7
+track_total = 20
+duration_ms = 212493
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/06. 花占い.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "花占い"
+disc = 2
+disc_total = 2
+track = 6
+track_total = 20
+duration_ms = 207493
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/05. benefits.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "benefits"
+disc = 2
+disc_total = 2
+track = 5
+track_total = 20
+duration_ms = 246146
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/04. しわあわせ.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "しわあわせ"
+disc = 2
+disc_total = 2
+track = 4
+track_total = 20
+duration_ms = 273546
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/03. 融解sink.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "融解sink"
+disc = 2
+disc_total = 2
+track = 3
+track_total = 20
+duration_ms = 243213
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/02. 世界の秘密.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "世界の秘密"
+disc = 2
+disc_total = 2
+track = 2
+track_total = 20
+duration_ms = 220866
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 2/01. Audio 003.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "Audio 003"
+disc = 2
+disc_total = 2
+track = 1
+track_total = 20
+duration_ms = 108106
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 1/16. pained.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "pained"
+disc = 1
+disc_total = 2
+track = 16
+track_total = 16
+duration_ms = 252760
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 1/15. replica.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "replica"
+disc = 1
+disc_total = 2
+track = 15
+track_total = 16
+duration_ms = 323973
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 1/14. Audio 008.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "Audio 008"
+disc = 1
+disc_total = 2
+track = 14
+track_total = 16
+duration_ms = 22026
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 1/13. 怪獣の花唄 - replica -.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "怪獣の花唄 - replica -"
+disc = 1
+disc_total = 2
+track = 13
+track_total = 16
+duration_ms = 222880
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 1/12. 呼吸のように.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "呼吸のように"
+disc = 1
+disc_total = 2
+track = 12
+track_total = 16
+duration_ms = 345146
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 1/11. NEO JAPAN.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "NEO JAPAN"
+disc = 1
+disc_total = 2
+track = 11
+track_total = 16
+duration_ms = 253120
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 1/10. 逆光 - replica -.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "逆光 - replica -"
+disc = 1
+disc_total = 2
+track = 10
+track_total = 16
+duration_ms = 237920
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 1/09. 黒子.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "黒子"
+disc = 1
+disc_total = 2
+track = 9
+track_total = 16
+duration_ms = 248986
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 1/08. 宮.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "宮"
+disc = 1
+disc_total = 2
+track = 8
+track_total = 16
+duration_ms = 315160
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 1/07. Audio 006.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "Audio 006"
+disc = 1
+disc_total = 2
+track = 7
+track_total = 16
+duration_ms = 74933
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 1/06. 常熱.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "常熱"
+disc = 1
+disc_total = 2
+track = 6
+track_total = 16
+duration_ms = 239600
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 1/05. 1リッター分の愛をこめて.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "1リッター分の愛をこめて"
+disc = 1
+disc_total = 2
+track = 5
+track_total = 16
+duration_ms = 190333
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 1/04. カーニバル.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "カーニバル"
+disc = 1
+disc_total = 2
+track = 4
+track_total = 16
+duration_ms = 203946
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 1/03. 美電球.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "美電球"
+disc = 1
+disc_total = 2
+track = 3
+track_total = 16
+duration_ms = 176933
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 1/02. ZERO.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "ZERO"
+disc = 1
+disc_total = 2
+track = 2
+track_total = 16
+duration_ms = 232306
+
+[[raw_tags]]
+file_path = "Vaundy - replica (2023) {Vaundy_ART Work Studio, VVCV 6-8, CD} [FLAC]/Disc 1/01. Audio 007.flac"
+album = "replica"
+album_artists = ["Vaundy"]
+artists = ["Vaundy"]
+title = "Audio 007"
+disc = 1
+disc_total = 2
+track = 1
+track_total = 16
+duration_ms = 71413
+
+[expect.release]
+ids = { release_id = ["daf40175-031a-4a58-bf32-6cc208795a26", "b38d2bc3-2089-4b80-9a60-42cea3e11fb1"] }
+fields = { release_title = "replica", release_date = "2023-11-15" }
+
+[expect.artists."114b26ff-a1fe-41f3-9df8-5c093afe9c56"]
+fields = { artist_name = "Vaundy", sort_name = "Vaundy" }
+
+[expect.artists."ead26d19-20b3-49ac-92e9-3d8a25ca9462"]
+fields = { artist_name = "Cory Wong", sort_name = "Wong, Cory" }
+
+[expect.tracks."13d686e0-fdcf-4b15-8d2e-71654e5cb016"]
+fields = { disc = 1, track = 9, track_title = "黒子" }
+
+[expect.tracks."166d9276-a56b-46a1-be33-f6d0870c6183"]
+fields = { disc = 1, track = 1, track_title = "Audio 007" }
+
+[expect.tracks."1be60ae2-79fd-4deb-ae8c-fea025c291c6"]
+fields = { disc = 1, track = 16, track_title = "pained" }
+
+[expect.tracks."33fdd4f2-5762-4d9d-80cd-81c40a6d1aeb"]
+fields = { disc = 2, track = 4, track_title = "しわあわせ" }
+
+[expect.tracks."3ceea264-553d-420f-a8ba-a137cb87bfa4"]
+fields = { disc = 2, track = 16, track_title = "忘れ物" }
+
+[expect.tracks."4a2c4cfb-c430-4325-8c0f-d9bb14204a92"]
+fields = { disc = 1, track = 8, track_title = "宮" }
+
+[expect.tracks."4de3bcae-c02f-4520-ae67-3addafd16283"]
+fields = { disc = 2, track = 20, track_title = "トドメの一撃" }
+
+[expect.tracks."5421d358-31d8-4a70-a253-5284e1552a87"]
+fields = { disc = 2, track = 1, track_title = "Audio 003" }
+
+[expect.tracks."58632bd5-33a0-4611-b2a9-c7fa38ba138e"]
+fields = { disc = 2, track = 2, track_title = "世界の秘密" }
+
+[expect.tracks."5b8a4a14-c9b7-4a37-b013-5b990a379ad7"]
+fields = { disc = 2, track = 17, track_title = "置き手紙" }
+
+[expect.tracks."6acb644e-85d0-49fc-ba92-37388b6d8f8a"]
+fields = { disc = 2, track = 7, track_title = "Tokimeki" }
+
+[expect.tracks."6c8925b8-ee23-4bf3-9f2e-6d8da644150e"]
+fields = { disc = 2, track = 19, track_title = "そんなbitterな話" }
+
+[expect.tracks."818d279c-d458-4eb3-b026-23c6840bedd7"]
+fields = { disc = 2, track = 18, track_title = "まぶた" }
+
+[expect.tracks."8561a3ef-efb6-4e4e-a8dc-f8a1138546b9"]
+fields = { disc = 2, track = 6, track_title = "花占い" }
+
+[expect.tracks."863d54a2-32d4-425e-a47f-f8283fe36207"]
+fields = { disc = 2, track = 5, track_title = "benefits" }
+
+[expect.tracks."8e21d23b-6108-4fd5-b066-5ea46f34a061"]
+fields = { disc = 2, track = 8, track_title = "泣き地蔵" }
+
+[expect.tracks."988dcf44-e302-408d-9bb3-0e9e03e4e665"]
+fields = { disc = 1, track = 7, track_title = "Audio 006" }
+
+[expect.tracks."9a70226b-0bc6-4bfb-859f-0e2640afeddb"]
+fields = { disc = 1, track = 3, track_title = "美電球" }
+
+[expect.tracks."a13bc86e-9c68-4123-8fec-9c8840b46abf"]
+fields = { disc = 1, track = 2, track_title = "ZERO" }
+
+[expect.tracks."a770e3bc-977f-4607-bebe-3ffcc5ebc49f"]
+fields = { disc = 1, track = 11, track_title = "NEO JAPAN" }
+
+[expect.tracks."b62e53d5-e3f7-48bf-b22b-2e2ed2981f72"]
+fields = { disc = 2, track = 10, track_title = "裸の勇者" }
+
+[expect.tracks."b7b20593-7d52-4181-a072-e53aee37e6af"]
+fields = { disc = 2, track = 13, track_title = "mabataki" }
+
+[expect.tracks."b8a9e307-f686-47a4-8380-f31ffbf6d486"]
+fields = { disc = 1, track = 5, track_title = "1リッター分の愛をこめて" }
+
+[expect.tracks."bd09a525-86d8-46dc-85a5-4b305170c789"]
+fields = { disc = 2, track = 9, track_title = "踊り子" }
+
+[expect.tracks."c0653a86-45a4-4867-b0f8-a7ace2459905"]
+fields = { disc = 2, track = 11, track_title = "恋風邪にのせて" }
+
+[expect.tracks."c06904d3-5783-4739-ad56-6960071641bb"]
+fields = { disc = 2, track = 14, track_title = "CHAINSAW BLOOD" }
+
+[expect.tracks."c378218d-9b32-4801-a86f-c4d8950daf5b"]
+fields = { disc = 1, track = 6, track_title = "常熱" }
+
+[expect.tracks."c6b5a5f8-fa5a-4dc3-8eff-5c267d093094"]
+fields = { disc = 1, track = 12, track_title = "呼吸のように" }
+
+[expect.tracks."d2e10251-e9e4-4d64-a867-8cf3927aa730"]
+fields = { disc = 1, track = 4, track_title = "カーニバル" }
+
+[expect.tracks."d49b7df8-26ec-4d23-af35-24725002e58a"]
+fields = { disc = 2, track = 12, track_title = "走馬灯" }
+
+[expect.tracks."e9b8ea9a-a70d-48c9-9b9c-1d577b4fb8f2"]
+fields = { disc = 2, track = 3, track_title = "融解sink" }
+
+[expect.tracks."ef97d500-717a-455f-8eae-0d2ee3d84ea0"]
+fields = { disc = 1, track = 15, track_title = "replica" }
+
+[expect.tracks."f0ecfa77-5647-4650-a930-8abf716a4b78"]
+fields = { disc = 2, track = 15, track_title = "瞳惚れ" }
+
+[expect.tracks."f40c38ac-d778-4905-9783-a64e2cd10fe0"]
+fields = { disc = 1, track = 13, track_title = "怪獣の花唄 - replica -" }
+
+[expect.tracks."fce12c2a-771f-4479-9646-ab853b1ad4be"]
+fields = { disc = 1, track = 10, track_title = "逆光 - replica -" }
+
+[expect.tracks."feebe1ac-4ced-4793-958b-2d06cc2a45e0"]
+fields = { disc = 1, track = 14, track_title = "Audio 008" }
