@@ -1,0 +1,90 @@
+{
+  "test_name": "help_ever_hurt_never_藤井風",
+  "scenario_id": "cd85de9899408ca5",
+  "responses": [
+    {
+      "cache_key": "27682d8d51dd5b1c",
+      "url": "https://musicbrainz.org/ws/2/work/1c064c8a-053c-4fd4-af2f-bc89176b988f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cee8bb5739f4c37a"
+    },
+    {
+      "cache_key": "36f26883663d2894",
+      "url": "https://musicbrainz.org/ws/2/work/e33b0d9f-757d-43c6-a206-126f0ca1c0c6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d96906b869095db3"
+    },
+    {
+      "cache_key": "3def19b055235e97",
+      "url": "https://musicbrainz.org/ws/2/work/52d07324-b440-461f-bbc9-c7502977be20?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "49ef77afcbe2e9d1"
+    },
+    {
+      "cache_key": "3e0e2ba150eeb163",
+      "url": "https://musicbrainz.org/ws/2/work/eba287e5-835f-44ef-b952-5b0e1d210ec1?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7ce2009002986159"
+    },
+    {
+      "cache_key": "4b9828094e89d599",
+      "url": "https://musicbrainz.org/ws/2/work/32b166d6-ae2a-4dbe-9ebc-06db4d655155?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "65f8815f3bc1aa3e"
+    },
+    {
+      "cache_key": "4ed04fa686cc4d96",
+      "url": "https://musicbrainz.org/ws/2/work/732700a3-737e-4abd-a8cc-8f74537ed74e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ade31ccd0824bea4"
+    },
+    {
+      "cache_key": "610cf21c18c41af2",
+      "url": "https://musicbrainz.org/ws/2/work/d818e0d0-2c53-49e3-a3ea-73a242a4f398?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "be8a299f1b05bfd3"
+    },
+    {
+      "cache_key": "9203f834da440729",
+      "url": "https://musicbrainz.org/ws/2/work/57e47712-f912-43e3-a211-fccc54377cec?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c08ae7d3d26056b6"
+    },
+    {
+      "cache_key": "9c844f9d6c3968b8",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=77b3bbd2-a07e-4580-b6c9-ac90c91078cc&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "152372b321a89ae3"
+    },
+    {
+      "cache_key": "9fe8ae471e54f260",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AHELP%20EVER%20HURT%20NEVER&limit=100",
+      "status_code": 200,
+      "body_hash": "42a5eb0c2e292067"
+    },
+    {
+      "cache_key": "bd96934d5d4d2fa7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E8%97%A4%E4%BA%95%E9%A2%A8",
+      "status_code": 200,
+      "body_hash": "379c7170bade508f"
+    },
+    {
+      "cache_key": "d9026f627a516d24",
+      "url": "https://musicbrainz.org/ws/2/work/f896c5d0-6ebc-40d7-a88d-4bc402e43499?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f83fffe0e9321ce0"
+    },
+    {
+      "cache_key": "e2c288bbb16d4af9",
+      "url": "https://musicbrainz.org/ws/2/work/4d22a543-0ed4-438b-8668-3ab2f692f040?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9f708fabba00c308"
+    },
+    {
+      "cache_key": "fdd0337ce43c41a2",
+      "url": "https://musicbrainz.org/ws/2/work/6e1bcd0c-60ab-441c-ba0d-5106b88223ad?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "80b8a5c9eccfa87e"
+    }
+  ]
+}

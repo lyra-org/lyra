@@ -1,0 +1,48 @@
+  stages:
+    - build
+
+  docker:
+    stage: build
+    image:
+      name: gcr.io/kaniko-project/executor:debug
+      entrypoint: [""]
+    variables:
+      INTERNAL_REGISTRY: gitlab:5380
+      IMAGE: gitlab:5380/$CI_PROJECT_PATH
+      BUILDCACHE: gitlab:5380/$CI_PROJECT_PATH/cache
+    before_script:
+      - mkdir -p /kaniko/.docker
+      - |
+        AUTH=$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')
+        cat > /kaniko/.docker/config.json <<EOF
+        {
+          "auths": {
+            "$INTERNAL_REGISTRY": { "auth": "$AUTH" }
+          }
+        }
+        EOF
+    script:
+      - |
+        DESTS="--destination=$IMAGE:sha-$CI_COMMIT_SHA"
+        if [ -n "$CI_COMMIT_TAG" ]; then
+          DESTS="$DESTS --destination=$IMAGE:$CI_COMMIT_TAG"
+        fi
+        if [ -n "$CI_COMMIT_BRANCH" ]; then
+          SAFE_BRANCH=$(echo "$CI_COMMIT_BRANCH" | tr '/' '-')
+          DESTS="$DESTS --destination=$IMAGE:$SAFE_BRANCH"
+        fi
+        if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+          DESTS="$DESTS --destination=$IMAGE:latest"
+        fi
+        /kaniko/executor \
+          --context "$CI_PROJECT_DIR" \
+          --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
+          $DESTS \
+          --build-arg LYRA_GIT_HASH=$CI_COMMIT_SHA \
+          --cache=true \
+          --cache-repo=$BUILDCACHE \
+          --insecure-registry=$INTERNAL_REGISTRY
+    rules:
+      - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      - if: $CI_COMMIT_TAG =~ /^v/
+      - if: $CI_PIPELINE_SOURCE == "web"
