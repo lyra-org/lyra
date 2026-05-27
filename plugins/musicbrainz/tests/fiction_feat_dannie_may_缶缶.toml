@@ -1,0 +1,22 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Fiction (feat. Dannie May)/01. Fiction (feat. Dannie May).flac"
+album = "Fiction (feat. Dannie May)"
+album_artists = ["缶缶", "缶缶"]
+artists = ["缶缶, Dannie May"]
+title = "Fiction (feat. Dannie May)"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 179100
+
+[expect.release]
+ids = { release_group_id = "fc06b4e2-0563-43c2-8f17-72af1f7a0b79", release_id = "c44318f0-9ae7-4615-ad71-8521a83e8614" }
+fields = { release_title = "Fiction", release_date = "2024-03-08" }
