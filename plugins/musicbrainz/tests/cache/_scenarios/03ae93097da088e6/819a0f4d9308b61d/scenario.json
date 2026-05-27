@@ -1,0 +1,36 @@
+{
+  "test_name": "終点の先が在るとするならば_ツユ",
+  "scenario_id": "819a0f4d9308b61d",
+  "responses": [
+    {
+      "cache_key": "271aec096ae8b6ed",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%B5%82%E7%82%B9%E3%81%AE%E5%85%88%E3%81%8C%E5%9C%A8%E3%82%8B%E3%81%A8%E3%81%99%E3%82%8B%E3%81%AA%E3%82%89%E3%81%B0%E3%80%82&limit=100",
+      "status_code": 200,
+      "body_hash": "64e125c57fd805b4"
+    },
+    {
+      "cache_key": "383568b2984357a3",
+      "url": "https://musicbrainz.org/ws/2/artist/2b0a8be6-bfb8-4f62-b21d-f47a3104157e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c3d17be8c5a9f542"
+    },
+    {
+      "cache_key": "4f00c44fba590d06",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%84%E3%83%A6",
+      "status_code": 200,
+      "body_hash": "b65133efc764b009"
+    },
+    {
+      "cache_key": "54840dfe988ae25d",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=4bbc9d27-b177-4d77-956c-1fde0345cc02&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "935332b5b6341795"
+    },
+    {
+      "cache_key": "a55cdf6e3ec3f36d",
+      "url": "https://musicbrainz.org/ws/2/work/ad713227-4188-45a6-88f5-28ee73457e55?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0ef32a68ffe30366"
+    }
+  ]
+}
