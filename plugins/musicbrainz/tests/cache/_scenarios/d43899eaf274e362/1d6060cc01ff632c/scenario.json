@@ -1,0 +1,42 @@
+{
+  "test_name": "capsule_hoshimachi_suisei",
+  "scenario_id": "1d6060cc01ff632c",
+  "responses": [
+    {
+      "cache_key": "15062605917d6c11",
+      "url": "https://musicbrainz.org/ws/2/work/4b8dac46-eabd-468c-9c82-393d23ee3b21?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6d2f08d3a5c1989b"
+    },
+    {
+      "cache_key": "1fb6cc03f2fa632e",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Mori%20Calliope%20%26%20Hoshimachi%20Suisei",
+      "status_code": 200,
+      "body_hash": "797af25ccb02592e"
+    },
+    {
+      "cache_key": "778a6d05979b0ec5",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A8eeb59f4-0071-4261-b1f8-91d8294622d2%20AND%20(release%3ACapSule%20OR%20recording%3ACapSule)&limit=100",
+      "status_code": 200,
+      "body_hash": "d727c752cbe62ba6"
+    },
+    {
+      "cache_key": "b70b5caf67f5f971",
+      "url": "https://musicbrainz.org/ws/2/artist/8a9d0b90-951e-4ab8-b2dc-9d3618af3d28?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "26dda556efe2e132"
+    },
+    {
+      "cache_key": "cfbaf84da135f9eb",
+      "url": "https://musicbrainz.org/ws/2/artist/8eeb59f4-0071-4261-b1f8-91d8294622d2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "88c42cb305c1147d"
+    },
+    {
+      "cache_key": "d75f909f7ff74c53",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=60fc5048-61bd-4352-b801-7027e11895d1&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "588c2cde4da24bfb"
+    }
+  ]
+}
