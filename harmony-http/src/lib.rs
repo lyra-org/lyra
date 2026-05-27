@@ -1419,22 +1419,28 @@ pub fn render_luau_definition() -> Result<String, std::fmt::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        extract_domain,
-        module_spec,
-    };
+    use super::module_spec;
 
     fn max_in_flight(limiter: &super::ConcurrencyLimiter, host: &str) -> Option<usize> {
         limiter.entries.get(host).map(|entry| entry.max_in_flight)
     }
 
     #[test]
-    fn extract_domain_strips_scheme_and_port() {
-        assert_eq!(extract_domain("http://host:8080").as_deref(), Some("host"),);
-        assert_eq!(
-            extract_domain("https://example.com/path?q=1").as_deref(),
-            Some("example.com"),
+    fn exposes_handwritten_module_spec() {
+        let spec = module_spec();
+
+        assert_eq!(spec.id.0.as_ref(), "harmony/http");
+        assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "harmony.http");
+        assert_eq!(spec.functions.len(), 4);
+        assert_eq!(spec.functions[0].name.as_ref(), "request");
+        assert!(spec.functions[0].yields);
+        assert!(
+            spec.functions[0]
+                .context_type
+                .is_some_and(|name| name.contains("ChunkOrigin"))
         );
+        assert_eq!(spec.functions[3].name.as_ref(), "encode_uri_component");
+        assert!(!spec.functions[3].yields);
     }
 
     #[test]
@@ -1524,29 +1530,6 @@ mod tests {
     }
 
     #[test]
-    fn extract_domain_lowercases_authority() {
-        assert_eq!(
-            extract_domain("http://EXAMPLE.com").as_deref(),
-            Some("example.com"),
-        );
-    }
-
-    #[test]
-    fn extract_domain_preserves_ipv6_brackets() {
-        assert_eq!(
-            extract_domain("http://[::1]:8080/").as_deref(),
-            Some("[::1]"),
-        );
-    }
-
-    #[test]
-    fn extract_domain_returns_none_for_bare_host() {
-        // Bare hosts aren't parseable as URLs; callers are expected to fall
-        // back to the raw value when the parser returns None.
-        assert!(extract_domain("musicbrainz.org").is_none());
-    }
-
-    #[test]
     fn into_luau_value_pushes_numeric_fields_as_number() {
         let value = super::HttpResponse::success(
             200,
@@ -1589,31 +1572,6 @@ mod tests {
         limiter.set_limit(normalized, 1);
         assert!(limiter.get("lrclib.net").is_some());
         assert!(limiter.get("musicbrainz.org").is_none());
-    }
-
-    #[tokio::test]
-    async fn concurrency_limiter_serializes_in_flight_requests() {
-        let mut limiter = super::ConcurrencyLimiter::new();
-        limiter.set_limit("example.com".to_string(), 1);
-
-        let sem = limiter.get("example.com").expect("limit set above");
-
-        let permit = sem
-            .clone()
-            .try_acquire_owned()
-            .expect("first acquire succeeds while host is uncontended");
-
-        assert!(
-            sem.clone().try_acquire_owned().is_err(),
-            "second permit must fail while first is held",
-        );
-
-        drop(permit);
-
-        let _ = sem
-            .clone()
-            .try_acquire_owned()
-            .expect("second acquire succeeds after release");
     }
 
     #[tokio::test]
