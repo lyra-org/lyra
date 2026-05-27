@@ -1,0 +1,23 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "すんひ - アルコール、アンコール。 [FLAC] [16B-44.1kHz]/01. すんひ - アルコール、アンコール。.flac"
+album = "アルコール、アンコール"
+album_artists = ["すんひ"]
+artists = ["すんひ"]
+title = "アルコール、アンコール"
+copyright = "℗ 2021 UNIVERSAL MUSIC LLC"
+genre = "Asian Music"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 253128
+
+[expect.release]
+ids = { release_group_id = "cdb82ba1-c714-4d41-99e8-ee8889b56492" }
