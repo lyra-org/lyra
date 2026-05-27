@@ -1,0 +1,36 @@
+{
+  "test_name": "どんな結末がお望みだい_ツユ",
+  "scenario_id": "8d9d1a1fd3de0f38",
+  "responses": [
+    {
+      "cache_key": "11b4a1da8ee77ed1",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%A9%E3%82%93%E3%81%AA%E7%B5%90%E6%9C%AB%E3%81%8C%E3%81%8A%E6%9C%9B%E3%81%BF%E3%81%A0%E3%81%84%5C%3F&limit=100",
+      "status_code": 200,
+      "body_hash": "7b5ea59acc00088a"
+    },
+    {
+      "cache_key": "37fd94dfd23d850f",
+      "url": "https://musicbrainz.org/ws/2/work/ca74908f-30e9-4f80-a53e-a4b4636225e0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "84445f1aca555b38"
+    },
+    {
+      "cache_key": "383568b2984357a3",
+      "url": "https://musicbrainz.org/ws/2/artist/2b0a8be6-bfb8-4f62-b21d-f47a3104157e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3b5382f73c70ae12"
+    },
+    {
+      "cache_key": "4f00c44fba590d06",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%84%E3%83%A6",
+      "status_code": 200,
+      "body_hash": "c94a444412bb61a7"
+    },
+    {
+      "cache_key": "c33f08a39abfdd76",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=b3125500-2707-4d81-abdc-87b1f8201ee2&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "5cdfc81e5e1c5d65"
+    }
+  ]
+}
