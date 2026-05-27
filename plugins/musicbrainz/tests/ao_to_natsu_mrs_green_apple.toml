@@ -1,0 +1,48 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Mrs. Green Apple - Ao To Natsu (FLAC)/03 A Priori.flac"
+album = "Ao To Natsu"
+album_artists = ["Mrs. Green Apple"]
+artists = ["Mrs. Green Apple", "Motoki Ohmori", "Hiroto Wakai", "Kiyokazu Takano", "Ayaka Yamanaka", "Ryoka Fujisawa"]
+title = "A Priori"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 3
+duration_ms = 202866
+
+[[raw_tags]]
+file_path = "Mrs. Green Apple - Ao To Natsu (FLAC)/02 Tenbyouno Uta.flac"
+album = "Ao To Natsu"
+album_artists = ["Mrs. Green Apple"]
+artists = ["Mrs. Green Apple", "Motoki Ohmori", "Hiroto Wakai", "Kiyokazu Takano", "Ayaka Yamanaka", "Ryoka Fujisawa", "Sonoko Inoue"]
+title = "Tenbyouno Uta"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 3
+duration_ms = 307066
+
+[[raw_tags]]
+file_path = "Mrs. Green Apple - Ao To Natsu (FLAC)/01 Ao To Natsu.flac"
+album = "Ao To Natsu"
+album_artists = ["Mrs. Green Apple"]
+artists = ["Mrs. Green Apple", "Motoki Ohmori", "Hiroto Wakai", "Kiyokazu Takano", "Ayaka Yamanaka", "Ryoka Fujisawa"]
+title = "Ao To Natsu"
+genre = "Rock"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 3
+duration_ms = 270506
+
+[expect.release]
+ids = { release_id = ["be5a5d23-c15c-4521-a22f-ca5fdb776b9a", "a05c2be5-ebd5-49ec-a425-47d1234e8c46"] }
