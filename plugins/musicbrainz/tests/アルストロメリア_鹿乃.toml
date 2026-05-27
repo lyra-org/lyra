@@ -1,0 +1,169 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "鹿乃ーアルストロメリア/12. シュガーソングとビターステップ.flac"
+album = "アルストロメリア"
+artists = ["鹿乃"]
+title = "シュガーソングとビターステップ"
+genre = "JPop"
+track = 12
+track_total = 12
+duration_ms = 268186
+
+[[raw_tags]]
+file_path = "鹿乃ーアルストロメリア/11. Sharry Baby.flac"
+album = "アルストロメリア"
+artists = ["鹿乃"]
+title = "Sharry Baby"
+genre = "JPop"
+track = 11
+track_total = 12
+duration_ms = 238480
+
+[[raw_tags]]
+file_path = "鹿乃ーアルストロメリア/10. Iberis Song.flac"
+album = "アルストロメリア"
+artists = ["鹿乃"]
+title = "Iberis Song"
+genre = "JPop"
+track = 10
+track_total = 12
+duration_ms = 258786
+
+[[raw_tags]]
+file_path = "鹿乃ーアルストロメリア/09. Haruzion.flac"
+album = "アルストロメリア"
+artists = ["鹿乃"]
+title = "Haruzion"
+genre = "JPop"
+track = 9
+track_total = 12
+duration_ms = 268026
+
+[[raw_tags]]
+file_path = "鹿乃ーアルストロメリア/08. RERE.flac"
+album = "アルストロメリア"
+artists = ["鹿乃"]
+title = "RERE"
+genre = "JPop"
+track = 8
+track_total = 12
+duration_ms = 212800
+
+[[raw_tags]]
+file_path = "鹿乃ーアルストロメリア/07. nameless.flac"
+album = "アルストロメリア"
+artists = ["鹿乃"]
+title = "nameless"
+genre = "JPop"
+track = 7
+track_total = 12
+duration_ms = 235853
+
+[[raw_tags]]
+file_path = "鹿乃ーアルストロメリア/06. Ivy.flac"
+album = "アルストロメリア"
+artists = ["鹿乃"]
+title = "Ivy"
+genre = "JPop"
+track = 6
+track_total = 12
+duration_ms = 277386
+
+[[raw_tags]]
+file_path = "鹿乃ーアルストロメリア/05. 29-Q.flac"
+album = "アルストロメリア"
+artists = ["鹿乃"]
+title = "29-Q"
+genre = "JPop"
+track = 5
+track_total = 12
+duration_ms = 241173
+
+[[raw_tags]]
+file_path = "鹿乃ーアルストロメリア/04. Linaria Girl.flac"
+album = "アルストロメリア"
+artists = ["鹿乃"]
+title = "Linaria Girl"
+genre = "JPop"
+track = 4
+track_total = 12
+duration_ms = 280506
+
+[[raw_tags]]
+file_path = "鹿乃ーアルストロメリア/03. Melodic Aster＊.flac"
+album = "アルストロメリア"
+artists = ["鹿乃"]
+title = "Melodic Aster*"
+genre = "JPop"
+track = 3
+track_total = 12
+duration_ms = 262440
+
+[[raw_tags]]
+file_path = "鹿乃ーアルストロメリア/02. Daisy Blue.flac"
+album = "アルストロメリア"
+artists = ["鹿乃"]
+title = "Daisy Blue"
+genre = "JPop"
+track = 2
+track_total = 12
+duration_ms = 254346
+
+[[raw_tags]]
+file_path = "鹿乃ーアルストロメリア/01. day by day.flac"
+album = "アルストロメリア"
+artists = ["鹿乃"]
+title = "day by day"
+genre = "JPop"
+track = 1
+track_total = 12
+duration_ms = 266026
+
+[expect.release]
+ids = { release_group_id = "dae53b9b-8a68-4bba-9b15-b685e5c55d3f", release_id = ["677ae097-6138-4875-a62a-e4b60bcb3e8f", "1f54fcef-b7e3-4a0e-9aea-41e601d5ebb2"] }
+fields = { release_title = "アルストロメリア", release_date = "2017-12-20" }
+
+[expect.artists."487cda72-0633-46d5-a80e-f9ee94080080"]
+fields = { artist_name = "鹿乃", sort_name = "Kano" }
+
+[expect.tracks."0772a653-2272-4f8f-87b4-4ccc47ef79b1"]
+fields = { disc = 1, track = 10, track_title = "Iberis Song" }
+
+[expect.tracks."2d8a3a73-9f5c-4257-8256-efe9b47e6791"]
+fields = { disc = 1, track = 8, track_title = "RERE" }
+
+[expect.tracks."509eddbb-36ec-43d2-a824-8c4a62833c0e"]
+fields = { disc = 1, track = 4, track_title = "Linaria Girl" }
+
+[expect.tracks."609a2f5d-7df9-411d-b5bf-88aca2e36198"]
+fields = { disc = 1, track = 11, track_title = "Sharry Baby!" }
+
+[expect.tracks."6509b0d0-23a1-4bf0-903a-d0dc7aa4d4e7"]
+fields = { disc = 1, track = 3, track_title = "Melodic Aster*" }
+
+[expect.tracks."70d06cb6-df45-4a2d-af42-b982077ae30b"]
+fields = { disc = 1, track = 1, track_title = "day by day" }
+
+[expect.tracks."8d22001f-524e-40fa-93fd-f6ada6f08a63"]
+fields = { disc = 1, track = 12, track_title = "シュガーソングとビターステップ" }
+
+[expect.tracks."9eb2ae7a-1c5c-44a0-8a2b-fe92919b07d9"]
+fields = { disc = 1, track = 5, track_title = "29-Q" }
+
+[expect.tracks."bf0c1eb1-7a4e-489a-ac3e-c689367f6d49"]
+fields = { disc = 1, track = 7, track_title = "nameless" }
+
+[expect.tracks."d75a25bd-ff18-4065-b59f-5762e03089c5"]
+fields = { disc = 1, track = 6, track_title = "Ivy" }
+
+[expect.tracks."e1f81c0d-7e09-44fc-af7b-d1619b8c45ac"]
+fields = { disc = 1, track = 9, track_title = "Haruzion" }
+
+[expect.tracks."ff983303-4b4e-4711-995c-c79714374388"]
+fields = { disc = 1, track = 2, track_title = "Daisy Blue" }

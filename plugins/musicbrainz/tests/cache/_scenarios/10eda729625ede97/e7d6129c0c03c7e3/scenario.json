@@ -1,0 +1,30 @@
+{
+  "test_name": "speed_なとり",
+  "scenario_id": "e7d6129c0c03c7e3",
+  "responses": [
+    {
+      "cache_key": "19c7ff46dba9c3d7",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3Acad9e169-893d-4432-a23f-3aa16beb9f0e%20AND%20(release%3ASPEED%20OR%20recording%3ASPEED)&limit=100",
+      "status_code": 200,
+      "body_hash": "c7ad46bbe40416f0"
+    },
+    {
+      "cache_key": "1eda84b84e8191cb",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%AA%E3%81%A8%E3%82%8A",
+      "status_code": 200,
+      "body_hash": "6694dfca520ef243"
+    },
+    {
+      "cache_key": "2accb64f9b2237c8",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=9dd48962-aa2f-4183-86a0-498f7fbc6869&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "79ce0fdfa6f2271c"
+    },
+    {
+      "cache_key": "e842d3a6a5793e61",
+      "url": "https://musicbrainz.org/ws/2/work/b688b18f-826b-48ab-a4b4-08c23ed4cb3a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6db800de639d5e80"
+    }
+  ]
+}
