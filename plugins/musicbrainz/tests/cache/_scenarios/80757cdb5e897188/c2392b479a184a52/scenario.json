@@ -1,0 +1,36 @@
+{
+  "test_name": "ルバート_ヨルシカ",
+  "scenario_id": "c2392b479a184a52",
+  "responses": [
+    {
+      "cache_key": "266c2bc5c6705fb3",
+      "url": "https://musicbrainz.org/ws/2/artist/dfc6a151-3792-4695-8fda-f64723eaa788?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "31ca08c6bb7bac29"
+    },
+    {
+      "cache_key": "594e578ad093a31d",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=65008fc5-ebe3-4cd1-8918-fdff8a5de4d1&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "d4faae45092b3362"
+    },
+    {
+      "cache_key": "60d6695dae209348",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%83%AB%E3%83%90%E3%83%BC%E3%83%88&limit=100",
+      "status_code": 200,
+      "body_hash": "ecce635af5f1ed62"
+    },
+    {
+      "cache_key": "781e5a6d34dc95ea",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%A8%E3%83%AB%E3%82%B7%E3%82%AB",
+      "status_code": 200,
+      "body_hash": "103ccacd0cd2663f"
+    },
+    {
+      "cache_key": "bb56c18bd08f74c4",
+      "url": "https://musicbrainz.org/ws/2/work/72c6ab23-00c7-4f27-b279-bd9a20ea961e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "22b8c4a62960ffdf"
+    }
+  ]
+}

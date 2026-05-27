@@ -1,0 +1,157 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "UNISON SQUARE GARDEN - MODE MOOD MODE [2018.01.24]/12 君の瞳に恋してない.flac"
+album = "MODE MOOD MODE"
+artists = ["UNISON SQUARE GARDEN"]
+title = "君の瞳に恋してない"
+track = 12
+track_total = 12
+duration_ms = 253440
+
+[[raw_tags]]
+file_path = "UNISON SQUARE GARDEN - MODE MOOD MODE [2018.01.24]/11 10% roll, 10% romance.flac"
+album = "MODE MOOD MODE"
+artists = ["UNISON SQUARE GARDEN"]
+title = "10% roll, 10% romance"
+track = 11
+track_total = 12
+duration_ms = 277813
+
+[[raw_tags]]
+file_path = "UNISON SQUARE GARDEN - MODE MOOD MODE [2018.01.24]/10 夢が覚めたら(at that river).flac"
+album = "MODE MOOD MODE"
+artists = ["UNISON SQUARE GARDEN"]
+title = "夢が覚めたら(at that river)"
+track = 10
+track_total = 12
+duration_ms = 256013
+
+[[raw_tags]]
+file_path = "UNISON SQUARE GARDEN - MODE MOOD MODE [2018.01.24]/09 Invisible Sensation.flac"
+album = "MODE MOOD MODE"
+artists = ["UNISON SQUARE GARDEN"]
+title = "Invisible Sensation"
+track = 9
+track_total = 12
+duration_ms = 255986
+
+[[raw_tags]]
+file_path = "UNISON SQUARE GARDEN - MODE MOOD MODE [2018.01.24]/08 フィクションフリーククライシス.flac"
+album = "MODE MOOD MODE"
+artists = ["UNISON SQUARE GARDEN"]
+title = "フィクションフリーククライシス"
+track = 8
+track_total = 12
+duration_ms = 195133
+
+[[raw_tags]]
+file_path = "UNISON SQUARE GARDEN - MODE MOOD MODE [2018.01.24]/07 MIDNIGHT JUNGLE.flac"
+album = "MODE MOOD MODE"
+artists = ["UNISON SQUARE GARDEN"]
+title = "MIDNIGHT JUNGLE"
+track = 7
+track_total = 12
+duration_ms = 218560
+
+[[raw_tags]]
+file_path = "UNISON SQUARE GARDEN - MODE MOOD MODE [2018.01.24]/06 Silent Libre Mirage.flac"
+album = "MODE MOOD MODE"
+artists = ["UNISON SQUARE GARDEN"]
+title = "Silent Libre Mirage"
+track = 6
+track_total = 12
+duration_ms = 233600
+
+[[raw_tags]]
+file_path = "UNISON SQUARE GARDEN - MODE MOOD MODE [2018.01.24]/05 静謐甘美秋暮抒情.flac"
+album = "MODE MOOD MODE"
+artists = ["UNISON SQUARE GARDEN"]
+title = "静謐甘美秋暮抒情"
+track = 5
+track_total = 12
+duration_ms = 243786
+
+[[raw_tags]]
+file_path = "UNISON SQUARE GARDEN - MODE MOOD MODE [2018.01.24]/04 fake town baby.flac"
+album = "MODE MOOD MODE"
+artists = ["UNISON SQUARE GARDEN"]
+title = "fake town baby"
+track = 4
+track_total = 12
+duration_ms = 263560
+
+[[raw_tags]]
+file_path = "UNISON SQUARE GARDEN - MODE MOOD MODE [2018.01.24]/03 オーケストラを観にいこう.flac"
+album = "MODE MOOD MODE"
+artists = ["UNISON SQUARE GARDEN"]
+title = "オーケストラを観にいこう"
+track = 3
+track_total = 12
+duration_ms = 274186
+
+[[raw_tags]]
+file_path = "UNISON SQUARE GARDEN - MODE MOOD MODE [2018.01.24]/02 Dizzy Trickster.flac"
+album = "MODE MOOD MODE"
+artists = ["UNISON SQUARE GARDEN"]
+title = "Dizzy Trickster"
+track = 2
+track_total = 12
+duration_ms = 263666
+
+[[raw_tags]]
+file_path = "UNISON SQUARE GARDEN - MODE MOOD MODE [2018.01.24]/01 Own Civilization (nano‐mile met).flac"
+album = "MODE MOOD MODE"
+artists = ["UNISON SQUARE GARDEN"]
+title = "Own Civilization (nano‐mile met)"
+track = 1
+track_total = 12
+duration_ms = 168333
+
+[expect.release]
+ids = { release_group_id = "13dcd942-f069-4f56-9634-0a17f4c265ad", release_id = "5a9bd44d-defd-4827-b738-2df721ee6273" }
+fields = { release_title = "MODE MOOD MODE", release_date = "2018-01-24" }
+
+[expect.artists."265a2fb6-dde5-48d3-9e6e-47708aa5e10a"]
+fields = { artist_name = "UNISON SQUARE GARDEN", sort_name = "UNISON SQUARE GARDEN" }
+
+[expect.tracks."0ba8b337-6a50-49a8-8e61-5bf52db06a47"]
+fields = { disc = 1, track = 7, track_title = "MIDNIGHT JUNGLE" }
+
+[expect.tracks."1a075e1d-2098-4dda-95c8-b06af8f0a0e1"]
+fields = { disc = 1, track = 8, track_title = "フィクションフリーククライシス" }
+
+[expect.tracks."35c121ad-c9a2-4525-bfc0-5edc8f027bbd"]
+fields = { disc = 1, track = 9, track_title = "Invisible Sensation" }
+
+[expect.tracks."381e214c-ff92-4006-bb3e-6ec4e0fb2630"]
+fields = { disc = 1, track = 6, track_title = "Silent Libre Mirage" }
+
+[expect.tracks."53ebc6c8-a7a9-4dc1-885e-def4dab70647"]
+fields = { disc = 1, track = 10, track_title = "夢が覚めたら(at that river)" }
+
+[expect.tracks."56ad1046-6341-4f0a-89a9-2e1be429ea50"]
+fields = { disc = 1, track = 5, track_title = "静謐甘美秋暮抒情" }
+
+[expect.tracks."6848bda3-3846-4ef4-a308-5f40811b2513"]
+fields = { disc = 1, track = 2, track_title = "Dizzy Trickster" }
+
+[expect.tracks."820d0d67-9bb3-4313-848e-133dd371772a"]
+fields = { disc = 1, track = 1, track_title = "Own Civilization (nano‐mile met)" }
+
+[expect.tracks."ace2d8f2-b87c-438e-9436-816063d8f2c5"]
+fields = { disc = 1, track = 11, track_title = "10% roll, 10% romance" }
+
+[expect.tracks."b07b26e5-b992-4102-876c-13a54bd5f9d8"]
+fields = { disc = 1, track = 4, track_title = "fake town baby" }
+
+[expect.tracks."ceab492e-7f15-405e-a792-e9aabd586860"]
+fields = { disc = 1, track = 12, track_title = "君の瞳に恋してない" }
+
+[expect.tracks."d7665713-71b2-4b1b-9b55-5d0e25a5ba42"]
+fields = { disc = 1, track = 3, track_title = "オーケストラを観にいこう" }
