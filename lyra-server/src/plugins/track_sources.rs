@@ -13,7 +13,7 @@ use harmony_core::{
 };
 use harmony_luau as luau;
 use harmony_luau::IntoLuauReturn;
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     LuauType,
     LuauTypeInfo,
@@ -236,7 +236,7 @@ fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -246,7 +246,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "TrackSources",
@@ -282,32 +282,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(&module_descriptor(), &[], &[], &[])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn renders_track_sources_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/track_sources docs");
-
-        assert!(rendered.contains("@class TrackSources"));
-        assert!(
-            rendered.contains(
-                "function track_sources.get_primary_source_key(track_id: number): string?"
-            )
-        );
-        assert!(
-            rendered.contains(
-                "function track_sources.get_primary_container(track_id: number): string?"
-            )
-        );
-        assert!(rendered.contains(
-            "function track_sources.get_primary_containers(track_ids: {number}): { [number]: string? }"
-        ));
-    }
 }

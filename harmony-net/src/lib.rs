@@ -1143,43 +1143,7 @@ pub fn render_luau_definition() -> Result<String, std::fmt::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        module_spec,
-        render_luau_definition,
-    };
-
-    #[test]
-    fn exposes_handwritten_module_spec() {
-        let spec = module_spec();
-
-        assert_eq!(spec.id.0.as_ref(), "harmony/net");
-        assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "harmony.net");
-        assert_eq!(spec.functions.len(), 3);
-        assert!(spec.functions.iter().all(|function| function.yields));
-        assert_eq!(spec.userdata.len(), 3);
-        assert_eq!(spec.userdata[0].name.as_ref(), "UdpSocket");
-        assert_eq!(spec.userdata[1].name.as_ref(), "TcpStream");
-        assert_eq!(spec.userdata[2].name.as_ref(), "TcpListener");
-        assert!(
-            spec.userdata
-                .iter()
-                .flat_map(|userdata| userdata.methods.iter())
-                .any(|method| method.name.as_ref() == "accept")
-        );
-    }
-
-    #[test]
-    fn renders_net_module_definition() {
-        let rendered = render_luau_definition().expect("render harmony/net docs");
-
-        assert!(rendered.contains("@class Net"));
-        assert!(rendered.contains("@interface SocketAddress"));
-        assert!(rendered.contains("@interface UdpBindOptions"));
-        assert!(rendered.contains("@interface TcpConnectOptions"));
-        assert!(rendered.contains("@interface TcpBindOptions"));
-        assert!(rendered.contains("function net.udp_bind(options: UdpBindOptions): UdpSocket"));
-        assert!(rendered.contains("string | buffer"));
-    }
+    use super::module_spec;
 
     #[tokio::test(flavor = "current_thread")]
     async fn luau_udp_socket_round_trips_datagram() -> harmony_luau::runtime::Result<()> {

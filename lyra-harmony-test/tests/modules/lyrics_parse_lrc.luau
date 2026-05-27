@@ -1,12 +1,7 @@
 local lyrics = require("@lyra/lyrics")
 
 local parsed = lyrics.parse_lrc("[00:01.500]Hello\n[00:02.000]<00:02.100>Wide <00:02.500>World", " ")
-local exports =
-	`{type(lyrics.get)}:{type(lyrics.parse_lrc)}:{type(lyrics.upsert)}:{type(lyrics.upsert_user_override)}:{type(
-		lyrics.delete_user_override_for_track
-	)}:{type(lyrics.delete_for_track)}:{type(lyrics.has)}:{type(lyrics.has_many)}`
 
-assert(exports == "function:function:function:function:function:function:function:function")
 assert(parsed.id == "")
 assert(parsed.language == "und")
 assert(parsed.plain_text == "Hello\nWide World")

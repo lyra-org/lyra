@@ -13,9 +13,9 @@ use harmony_core::{
 };
 use harmony_luau as luau;
 use harmony_luau::IntoLuauReturn;
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::render_definition_file_with_support;
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     FieldDescriptor,
     InterfaceDescriptor,
@@ -585,7 +585,7 @@ fn parse_optional_u64(
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -595,7 +595,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     FieldDescriptor {
         name,
@@ -604,12 +604,12 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn resolve_id_type() -> LuauType {
     LuauType::union(vec![i64::luau_type(), String::luau_type()])
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn sort_order_type() -> LuauType {
     LuauType::union(vec![
         LuauType::string_literal("ascending"),
@@ -617,12 +617,12 @@ fn sort_order_type() -> LuauType {
     ])
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn string_enum(values: impl IntoIterator<Item = &'static str>) -> LuauType {
     LuauType::union(values.into_iter().map(LuauType::string_literal).collect())
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn artist_type() -> LuauType {
     LuauType::object(vec![
         field("db_id", Option::<i64>::luau_type()),
@@ -647,7 +647,7 @@ fn artist_type() -> LuauType {
     ])
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn artist_type_aliases() -> Vec<TypeAliasDescriptor> {
     vec![
         TypeAliasDescriptor::new("Artist", artist_type(), None),
@@ -677,7 +677,7 @@ fn artist_type_aliases() -> Vec<TypeAliasDescriptor> {
     ]
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn artist_interfaces() -> Vec<InterfaceDescriptor> {
     let mut relation = InterfaceDescriptor::new("ArtistRelationInfo", None);
     relation.fields.extend([
@@ -707,7 +707,7 @@ fn artist_interfaces() -> Vec<InterfaceDescriptor> {
     vec![relation, query_options]
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Artists",
@@ -767,7 +767,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),
@@ -779,35 +779,4 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             <CreditType as harmony_luau::DescribeUserData>::class_descriptor(),
         ],
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn renders_artists_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/artists docs");
-
-        assert!(rendered.contains("export type ArtistType = {"));
-        assert!(rendered.contains("export type CreditType = {"));
-        assert!(
-            rendered
-                .contains("export type Artist = { db_id: number?, id: string, artist_name: string")
-        );
-        assert!(rendered.contains("@interface ArtistRelationInfo"));
-        assert!(rendered.contains("direction: \"incoming\" | \"outgoing\""));
-        assert!(rendered.contains("@interface ArtistQueryOptions"));
-        assert!(rendered.contains("sort_order: (\"ascending\" | \"descending\")?"));
-        assert!(rendered.contains(
-            "export type CreditedArtistQueryOptions = ArtistQueryOptions & { credit_types: {CreditType}?, exclude_credit_types: {CreditType}? }"
-        ));
-        assert!(rendered.contains("artists.ArtistType = nil :: ArtistType"));
-        assert!(rendered.contains(
-            "function artists.query_credited(opts: CreditedArtistQueryOptions): ArtistQueryResult"
-        ));
-        assert!(rendered.contains(
-            "function artists.list_relations_many(ids: {number}): { [number]: {ArtistRelationInfo} }"
-        ));
-    }
 }

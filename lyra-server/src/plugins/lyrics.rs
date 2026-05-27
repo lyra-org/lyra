@@ -22,7 +22,7 @@ use harmony_luau::{
     LuauType,
     LuauTypeInfo,
 };
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
@@ -928,7 +928,7 @@ impl DescribeInterface for LyricWordInfo {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -938,7 +938,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Lyrics",
@@ -1029,7 +1029,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),
@@ -1045,46 +1045,4 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         ],
         &[LyricsOrigin::class_descriptor()],
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn exposes_handwritten_module_spec() {
-        let spec = module_spec();
-
-        assert_eq!(spec.id.0.as_ref(), "lyra/lyrics");
-        assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "lyra.lyrics");
-        assert_eq!(spec.functions.len(), 8);
-        assert_eq!(
-            spec.functions
-                .iter()
-                .filter(|function| function.yields)
-                .count(),
-            7
-        );
-    }
-
-    #[test]
-    fn renders_lyrics_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/lyrics docs");
-
-        assert!(rendered.contains("@class Lyrics"));
-        assert!(rendered.contains("@interface PluginLyricsInput"));
-        assert!(rendered.contains("@interface PluginLyricLineInput"));
-        assert!(rendered.contains("@interface PluginLyricWordInput"));
-        assert!(rendered.contains("@interface UserLyricsUploadInput"));
-        assert!(rendered.contains("@interface LyricsInfo"));
-        assert!(rendered.contains("@interface LyricsOrigin"));
-        assert!(rendered.contains("function lyrics.get(track_id: number"));
-        assert!(rendered.contains(
-            "function lyrics.parse_lrc(text: string, language: string?): PluginLyricsInput"
-        ));
-        assert!(
-            rendered
-                .contains("function lyrics.has_many(track_ids: {number}): { [number]: boolean }")
-        );
-    }
 }

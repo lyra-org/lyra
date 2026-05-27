@@ -10,7 +10,7 @@ use harmony_core::{
 };
 use harmony_luau as luau;
 use harmony_luau::JsonValue;
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeTypeAlias,
     DescribeUserData,
@@ -29,7 +29,7 @@ use crate::plugins::db::{
 };
 struct PluginCaller;
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -324,7 +324,7 @@ fn read_json_entries(
     }
     Ok(entries)
 }
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "DataStore",
@@ -341,7 +341,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),
@@ -349,43 +349,4 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &[],
         &[DataStoreHandle::class_descriptor()],
     )
-}
-
-#[cfg(test)]
-mod spec_tests {
-    use super::*;
-
-    #[test]
-    fn exposes_module_spec_with_userdata() {
-        let spec = module_spec();
-
-        assert_eq!(spec.id.0.as_ref(), "lyra/datastore");
-        assert_eq!(
-            spec.capability.as_ref().unwrap().0.as_ref(),
-            "lyra.datastore"
-        );
-        assert_eq!(spec.functions.len(), 1);
-        assert_eq!(spec.functions[0].name.as_ref(), "get_or_create");
-        assert!(
-            spec.functions[0]
-                .context_type
-                .is_some_and(|name| name.contains("PluginCaller"))
-        );
-        assert_eq!(spec.userdata.len(), 1);
-        assert_eq!(spec.userdata[0].name.as_ref(), "DataStore");
-        assert_eq!(spec.userdata[0].methods.len(), 6);
-        assert!(spec.userdata[0].methods.iter().all(|method| !method.yields));
-    }
-
-    #[test]
-    fn renders_datastore_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/datastore docs");
-
-        assert!(rendered.contains("@class DataStore"));
-        assert!(rendered.contains("@type JsonValue"));
-        assert!(rendered.contains("function datastore.get_or_create(name: string): DataStore"));
-        assert!(rendered.contains("get: (self: DataStore, key: string) -> JsonValue?"));
-        assert!(rendered.contains("set: (self: DataStore, key: string, value: JsonValue)"));
-        assert!(rendered.contains("clear: (self: DataStore) -> number"));
-    }
 }

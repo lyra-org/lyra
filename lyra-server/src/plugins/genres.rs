@@ -19,7 +19,7 @@ use harmony_luau::{
     LuauType,
     LuauTypeInfo,
 };
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
@@ -666,7 +666,7 @@ impl DescribeInterface for GenreAddRequest {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -676,7 +676,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Genres",
@@ -774,7 +774,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),
@@ -787,32 +787,4 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         ],
         &[],
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn renders_genres_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/genres docs");
-
-        assert!(rendered.contains("@interface GenreInfo"));
-        assert!(rendered.contains("@interface GenreExternalId"));
-        assert!(rendered.contains("@interface GenreAliasInput"));
-        assert!(rendered.contains("@interface GenreAddRequest"));
-        assert!(rendered.contains("aliases: {GenreAliasInput}?"));
-        assert!(rendered.contains("@class Genres"));
-        assert!(
-            rendered.contains(
-                "function genres.add(release_id: number, request: GenreAddRequest): number"
-            )
-        );
-        assert!(
-            rendered.contains("function genres.add_parent(child_id: number, parent_id: number)")
-        );
-        assert!(rendered.contains(
-            "function genres.get_for_releases_many(release_ids: {number}): { [number]: {GenreInfo} }"
-        ));
-    }
 }

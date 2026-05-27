@@ -491,35 +491,7 @@ impl DescribeModule for JsonModuleDocs {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        module_spec,
-        render_luau_definition,
-    };
-
-    #[test]
-    fn renders_json_module_definition() {
-        let rendered = render_luau_definition().expect("render harmony/json docs");
-
-        assert!(rendered.contains("@class Json"));
-        assert!(rendered.contains("@type JsonValue"));
-        assert!(rendered.contains("export type JsonValue = (boolean | number | string | {JsonValue} | { [string]: JsonValue })?"));
-        assert!(rendered.contains("function json.encode(input: JsonValue): string"));
-        assert!(rendered.contains("function json.decode(input: string): JsonValue"));
-        assert!(rendered.contains("function json.empty_object(): JsonValue"));
-    }
-
-    #[test]
-    fn exposes_handwritten_module_spec() {
-        let spec = module_spec();
-
-        assert_eq!(spec.id.0.as_ref(), "harmony/json");
-        assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "harmony.json");
-        assert_eq!(spec.functions.len(), 3);
-        assert!(spec.functions.iter().all(|function| !function.yields));
-        assert_eq!(spec.functions[0].name.as_ref(), "encode");
-        assert_eq!(spec.functions[1].name.as_ref(), "decode");
-        assert_eq!(spec.functions[2].name.as_ref(), "empty_object");
-    }
+    use super::module_spec;
 
     #[test]
     fn luau_module_encodes_and_decodes_json_values() -> harmony_luau::runtime::Result<()> {

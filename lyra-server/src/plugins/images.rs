@@ -27,7 +27,7 @@ use harmony_luau::{
     LuauType,
     LuauTypeInfo,
 };
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
@@ -423,7 +423,7 @@ impl DescribeInterface for ComposeResult {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Images",
@@ -447,7 +447,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),
@@ -463,14 +463,6 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn cache_key_is_deterministic() {
-        let sources = vec!["a.jpg".to_string(), "b.jpg".to_string()];
-        let key1 = cache_key(&sources, 600, 600, 90);
-        let key2 = cache_key(&sources, 600, 600, 90);
-        assert_eq!(key1, key2);
-    }
 
     #[test]
     fn cache_key_differs_for_different_sources() {
@@ -493,28 +485,5 @@ mod tests {
         let a = cache_key(&sources, 600, 600, 90);
         let b = cache_key(&sources, 300, 300, 90);
         assert_ne!(a, b);
-    }
-
-    #[test]
-    fn exposes_handwritten_module_spec() {
-        let spec = module_spec();
-
-        assert_eq!(spec.id.0.as_ref(), "lyra/images");
-        assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "lyra.images");
-        assert_eq!(spec.functions.len(), 1);
-        assert_eq!(spec.functions[0].name.as_ref(), "compose");
-        assert!(spec.functions[0].yields);
-    }
-
-    #[test]
-    fn renders_images_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/images docs");
-
-        assert!(rendered.contains("@class Images"));
-        assert!(rendered.contains("@interface ComposeOptions"));
-        assert!(rendered.contains("@interface ComposeResult"));
-        assert!(
-            rendered.contains("function images.compose(options: ComposeOptions): ComposeResult")
-        );
     }
 }

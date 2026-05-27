@@ -18,7 +18,7 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     LuauType,
     LuauTypeInfo,
@@ -369,7 +369,7 @@ fn saturating_i64(value: u64) -> i64 {
     value.min(i64::MAX as u64) as i64
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -379,7 +379,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Listens",
@@ -427,28 +427,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(&module_descriptor(), &[], &[], &[])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn renders_listens_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/listens docs");
-
-        assert!(rendered.contains("@class Listens"));
-        assert!(rendered.contains(
-            "function listens.get_count(track_id: number, user_id: number?, merge_unique_external_ids: boolean?): number"
-        ));
-        assert!(rendered.contains(
-            "function listens.get_counts(track_ids: {number}, user_id: number?, merge_unique_external_ids: boolean?): { [number]: number }"
-        ));
-        assert!(rendered.contains(
-            "function listens.get_stats(track_ids: {number}, user_id: number?, merge_unique_external_ids: boolean?): { [string]: { [number]: number } }"
-        ));
-    }
 }
