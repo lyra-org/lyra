@@ -1,0 +1,61 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Kuchizuke Diamond (Yamada-kun and the Seven Witches OP) - WEAVER/04. Time Piece.flac"
+album = "くちづけDiamond　【初回限定盤】"
+artists = ["WEAVER"]
+title = "Time Piece"
+track = 4
+track_total = 4
+duration_ms = 351600
+
+[[raw_tags]]
+file_path = "Kuchizuke Diamond (Yamada-kun and the Seven Witches OP) - WEAVER/03. Inception.flac"
+album = "くちづけDiamond　【初回限定盤】"
+artists = ["WEAVER"]
+title = "Inception"
+track = 3
+track_total = 4
+duration_ms = 312253
+
+[[raw_tags]]
+file_path = "Kuchizuke Diamond (Yamada-kun and the Seven Witches OP) - WEAVER/02. Beloved.flac"
+album = "くちづけDiamond　【初回限定盤】"
+artists = ["WEAVER"]
+title = "Beloved"
+track = 2
+track_total = 4
+duration_ms = 286853
+
+[[raw_tags]]
+file_path = "Kuchizuke Diamond (Yamada-kun and the Seven Witches OP) - WEAVER/01. くちづけDiamond.flac"
+album = "くちづけDiamond　【初回限定盤】"
+artists = ["WEAVER"]
+title = "くちづけDiamond"
+track = 1
+track_total = 4
+duration_ms = 237586
+
+[expect.release]
+ids = { release_id = "85fa006e-e37a-40b3-a0a7-eecc3156c54f" }
+fields = { release_title = "くちづけDiamond", release_date = "2015-05-20" }
+
+[expect.artists."db71e39f-e829-46b5-9c62-e76900b979f3"]
+fields = { artist_name = "WEAVER", sort_name = "WEAVER" }
+
+[expect.tracks."10f20c56-d7f6-4f9b-897e-684831c05d8d"]
+fields = { disc = 1, track = 3, track_title = "Inception" }
+
+[expect.tracks."438c5302-dfa2-4a9c-bc90-2f8ccbce9e26"]
+fields = { disc = 1, track = 4, track_title = "Time Piece" }
+
+[expect.tracks."c92907ef-843f-434c-b199-eceb759c911d"]
+fields = { disc = 1, track = 1, track_title = "くちづけDiamond" }
+
+[expect.tracks."cfa22348-a1c2-4d2b-a8c5-ab79fdf6b3bd"]
+fields = { disc = 1, track = 2, track_title = "Beloved" }
