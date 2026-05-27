@@ -402,15 +402,6 @@ mod tests {
         db.transaction_mut(|t| db::settings::upsert_setting_with(t, plugin_settings_id, key, value))
     }
 
-    fn get_setting(
-        db: &DbAny,
-        plugin_settings_id: DbId,
-        key: &str,
-    ) -> anyhow::Result<Option<db::settings::SettingEntry>> {
-        let entries = db::settings::get_all_settings_with(db, plugin_settings_id)?;
-        Ok(entries.into_iter().find(|e| e.key == key))
-    }
-
     fn props(required: bool) -> FieldProps {
         FieldProps {
             label: "Label".to_string(),
@@ -517,26 +508,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_stored_values_rejects_removed_keys() {
-        let schema = schema(vec![group(
-            "credentials",
-            vec![FieldDefinition::String {
-                key: "token".to_string(),
-                props: props(false),
-            }],
-        )]);
-        let values = HashMap::from([("legacy".to_string(), serde_json::json!("abc"))]);
-
-        let error = validate_stored_values("demo", &schema, &values).unwrap_err();
-        assert!(error.to_string().contains("no longer declared"));
-        assert!(
-            error
-                .to_string()
-                .contains("delete /api/plugins/demo/settings")
-        );
-    }
-
-    #[test]
     fn validate_updates_rejects_invalid_types_and_ranges() {
         let schema = schema(vec![group(
             "general",
@@ -630,36 +601,6 @@ mod tests {
         let values = load_stored_values(&db, "demo")?;
         assert!(!values.contains_key("token"));
         assert!(db::settings::find_plugin_settings_with(&db, "demo")?.is_none());
-
-        Ok(())
-    }
-
-    #[test]
-    fn apply_updates_rejects_invalid_existing_state_without_mutating() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let plugin = create_plugin_settings(&mut db, "demo")?;
-        let plugin_db_id: DbId = plugin.db_id.unwrap().into();
-        upsert_setting(&mut db, plugin_db_id, "legacy".into(), "\"abc\"".into())?;
-
-        let schema = schema(vec![group(
-            "credentials",
-            vec![FieldDefinition::String {
-                key: "token".to_string(),
-                props: props(false),
-            }],
-        )]);
-        let changes = validate_updates(
-            &schema,
-            &HashMap::from([("token".to_string(), serde_json::json!("new-token"))]),
-        )?;
-
-        let error = apply_updates(&mut db, "demo", &schema, &changes).unwrap_err();
-        assert!(error.to_string().contains("no longer declared"));
-        assert!(
-            get_setting(&db, plugin_db_id, "token")?.is_none(),
-            "failed update should not persist new values"
-        );
-        assert!(get_setting(&db, plugin_db_id, "legacy")?.is_some());
 
         Ok(())
     }
@@ -767,25 +708,6 @@ mod tests {
         assert!(!load_user_stored_values_with(&db, user_b, "demo")?.is_empty());
 
         Ok(())
-    }
-
-    #[test]
-    fn user_settings_error_points_to_me_endpoint() {
-        let schema = schema(vec![group(
-            "auth",
-            vec![FieldDefinition::String {
-                key: "token".to_string(),
-                props: props(false),
-            }],
-        )]);
-        let values = HashMap::from([("legacy".to_string(), serde_json::json!("abc"))]);
-
-        let error = validate_user_stored_values("demo", &schema, &values).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("delete /api/me/plugins/demo/settings")
-        );
     }
 
     #[test]

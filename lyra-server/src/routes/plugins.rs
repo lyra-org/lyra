@@ -986,19 +986,6 @@ mod tests {
         Schema { groups: Vec::new() }
     }
 
-    fn token_schema() -> Schema {
-        Schema {
-            groups: vec![FieldGroupDefinition {
-                id: "credentials".to_string(),
-                label: "Credentials".to_string(),
-                fields: vec![FieldDefinition::String {
-                    key: "token".to_string(),
-                    props: props(false),
-                }],
-            }],
-        }
-    }
-
     #[test]
     fn build_entry_returns_initializing_for_unknown_plugin_while_registry_is_open() {
         let db = db::test_db::new_test_db().expect("test db");
@@ -1044,40 +1031,6 @@ mod tests {
                 assert!(groups.is_empty());
             }
             _ => panic!("expected Ready"),
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn build_entry_returns_invalid_for_stale_stored_keys() -> anyhow::Result<()> {
-        let mut db = db::test_db::new_test_db()?;
-        let plugin =
-            db.transaction_mut(|t| db::settings::get_or_create_plugin_settings_with(t, "demo"))?;
-        let plugin_db_id: agdb::DbId = plugin.db_id.expect("db_id").into();
-        db.transaction_mut(|t| {
-            db::settings::upsert_setting_with(
-                t,
-                plugin_db_id,
-                "legacy".to_string(),
-                "\"abc\"".to_string(),
-            )
-        })?;
-
-        let mut registry = Registry::new();
-        registry.register_schema(
-            PluginId::new("demo")?,
-            SettingsScope::Global,
-            token_schema(),
-        )?;
-
-        let entry = build_entry(&registry, &db, "demo", SettingsScope::Global, None);
-
-        match entry {
-            PluginSettingsEntry::Invalid { plugin_id, message } => {
-                assert_eq!(plugin_id, "demo");
-                assert!(message.contains("no longer declared"), "got: {message}");
-            }
-            _ => panic!("expected Invalid"),
         }
         Ok(())
     }

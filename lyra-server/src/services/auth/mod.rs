@@ -1037,7 +1037,7 @@ mod tests {
             let db = STATE.db.read().await;
             assert!(
                 !stale_principal.revalidate(&db),
-                "deleted-user public id must no longer resolve"
+                "deleted-user public id must fail revalidation"
             );
         }
 

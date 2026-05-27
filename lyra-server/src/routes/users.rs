@@ -1084,7 +1084,7 @@ mod tests {
             .expect("session auth should delete its api key");
         let Json(listed) = list_api_keys(headers)
             .await
-            .expect("deleted api key should no longer be listed");
+            .expect("session auth should list api keys after delete");
         assert!(listed.is_empty());
 
         let _ = std::fs::remove_dir_all(test_dir);

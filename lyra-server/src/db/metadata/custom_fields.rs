@@ -209,7 +209,7 @@ mod tests {
     }
 
     #[test]
-    fn versions_coexist_and_can_be_removed() -> anyhow::Result<()> {
+    fn versions_coexist_and_delete_targets_one_version() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let node_id = insert_entity(&mut db)?;
 

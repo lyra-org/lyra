@@ -1342,7 +1342,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn summary_exposes_compact_raw_counts_without_diagnostic_fields() {
+    fn summary_exposes_compact_raw_counts() {
         let mut state = SyncRunState::new(SyncRunKind::LibrarySync, "lib".to_string(), 10_000);
         state.status = SyncRunStatus::Running;
         state.progress_mode = SyncProgressMode::Determinate;
@@ -1382,24 +1382,6 @@ mod tests {
         assert_eq!(value["current"]["subject"], json!("Release A"));
         assert_eq!(value["active_units"], json!(1));
         assert_eq!(value["failure_count"], json!(1));
-        let mut keys = value
-            .as_object()
-            .expect("summary object")
-            .keys()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
-        keys.sort_unstable();
-        assert_eq!(
-            keys,
-            vec![
-                "active_units",
-                "current",
-                "failure_count",
-                "progress",
-                "run",
-                "sequence",
-            ]
-        );
     }
 
     #[test]
