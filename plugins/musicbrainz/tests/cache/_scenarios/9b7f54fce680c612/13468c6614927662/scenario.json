@@ -1,0 +1,36 @@
+{
+  "test_name": "deal_with_the_devil_tia",
+  "scenario_id": "13468c6614927662",
+  "responses": [
+    {
+      "cache_key": "082288b337069636",
+      "url": "https://musicbrainz.org/ws/2/work/53c858a8-add6-49cd-bed8-39e0f25a0681?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "917ee0d3a4dfd841"
+    },
+    {
+      "cache_key": "0e6a603a86872f37",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Tia",
+      "status_code": 200,
+      "body_hash": "d564fef6f09f46c4"
+    },
+    {
+      "cache_key": "44480296f663864e",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ADeal%20with%20the%20devil&limit=100",
+      "status_code": 200,
+      "body_hash": "646a16505206c270"
+    },
+    {
+      "cache_key": "906448a09cdc345d",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=e900ef1a-5c84-47c0-a414-0d6f0977ba01&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "166f0e41bf89bdc0"
+    },
+    {
+      "cache_key": "ec4f2c8c1abf18ce",
+      "url": "https://musicbrainz.org/ws/2/work/2d94b38c-6a04-4046-b3d6-db850329a102?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8d1974958550c1aa"
+    }
+  ]
+}
