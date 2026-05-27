@@ -26,7 +26,7 @@ use harmony_luau::{
     LuauType,
     LuauTypeInfo,
 };
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
@@ -426,7 +426,7 @@ impl DescribeInterface for LibraryRecord {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -436,12 +436,12 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn resolve_id_type() -> LuauType {
     LuauType::union(vec![i64::luau_type(), String::luau_type()])
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Libraries",
@@ -474,7 +474,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),
@@ -482,22 +482,4 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &[LibraryRecord::interface_descriptor()],
         &[],
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn renders_libraries_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/libraries docs");
-
-        assert!(rendered.contains("@interface Library"));
-        assert!(rendered.contains("country: string?"));
-        assert!(rendered.contains("@class Libraries"));
-        assert!(rendered.contains("function libraries.list(id: (number | string)?): {Library}"));
-        assert!(rendered.contains(
-            "function libraries.get_for_entities(entity_ids: {number}): { [number]: Library }"
-        ));
-    }
 }

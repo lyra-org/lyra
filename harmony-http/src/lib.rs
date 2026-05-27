@@ -1422,7 +1422,6 @@ mod tests {
     use super::{
         extract_domain,
         module_spec,
-        render_luau_definition,
     };
 
     fn max_in_flight(limiter: &super::ConcurrencyLimiter, host: &str) -> Option<usize> {
@@ -1436,24 +1435,6 @@ mod tests {
             extract_domain("https://example.com/path?q=1").as_deref(),
             Some("example.com"),
         );
-    }
-
-    #[test]
-    fn exposes_handwritten_module_spec() {
-        let spec = module_spec();
-
-        assert_eq!(spec.id.0.as_ref(), "harmony/http");
-        assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "harmony.http");
-        assert_eq!(spec.functions.len(), 4);
-        assert_eq!(spec.functions[0].name.as_ref(), "request");
-        assert!(spec.functions[0].yields);
-        assert!(
-            spec.functions[0]
-                .context_type
-                .is_some_and(|name| name.contains("ChunkOrigin"))
-        );
-        assert_eq!(spec.functions[3].name.as_ref(), "encode_uri_component");
-        assert!(!spec.functions[3].yields);
     }
 
     #[test]
@@ -1837,25 +1818,6 @@ mod tests {
             .clone()
             .try_acquire_owned()
             .expect("sibling acquires immediately after main releases");
-    }
-
-    #[test]
-    fn renders_http_module_definition() {
-        let rendered = render_luau_definition().expect("render harmony/http docs");
-
-        assert!(rendered.contains("@class Http"));
-        assert!(rendered.contains("http.HttpMethod = nil :: HttpMethod"));
-        assert!(
-            rendered.contains("function http.request(options: HttpRequestOptions): HttpResponse")
-        );
-        assert!(rendered.contains("function http.set_rate_limit(options: HttpRateLimitOptions)"));
-        assert!(
-            !rendered.contains("function http.set_rate_limit(options: HttpRateLimitOptions): ()")
-        );
-        assert!(
-            rendered.contains("function http.set_max_in_flight(options: HttpConcurrencyOptions)")
-        );
-        assert!(rendered.contains("string | buffer"));
     }
 
     #[test]

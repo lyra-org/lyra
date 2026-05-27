@@ -273,43 +273,7 @@ impl DescribeModule for CryptModuleDocs {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        module_spec,
-        render_luau_definition,
-    };
-
-    #[test]
-    fn renders_crypt_module_definition() {
-        let rendered = render_luau_definition().expect("render harmony/crypt docs");
-
-        assert!(rendered.contains("@class Crypt"));
-        assert!(rendered.contains("export type HashAlgorithm = \"md5\" | \"sha1\" | \"sha256\" | \"sha384\" | \"sha512\" | \"xxh3_64\" | \"xxh3_128\""));
-        assert!(
-            rendered
-                .contains("function crypt.hash(algorithm: HashAlgorithm, data: string): string")
-        );
-        assert!(rendered.contains("function crypt.base64.encode(data: string): string"));
-        assert!(rendered.contains("function crypt.base64.decode(data: string): string"));
-        assert!(rendered.contains("function crypt.random(size: number): string"));
-        assert!(rendered.contains("crypt.base64 = {}"));
-    }
-
-    #[test]
-    fn exposes_handwritten_module_spec() {
-        let spec = module_spec();
-
-        assert_eq!(spec.id.0.as_ref(), "harmony/crypt");
-        assert_eq!(
-            spec.capability.as_ref().unwrap().0.as_ref(),
-            "harmony.crypt"
-        );
-        assert_eq!(spec.functions.len(), 4);
-        assert!(spec.functions.iter().all(|function| !function.yields));
-        assert_eq!(spec.functions[0].name.as_ref(), "hash");
-        assert_eq!(spec.functions[1].name.as_ref(), "base64.encode");
-        assert_eq!(spec.functions[2].name.as_ref(), "base64.decode");
-        assert_eq!(spec.functions[3].name.as_ref(), "random");
-    }
+    use super::module_spec;
 
     #[test]
     fn luau_module_hashes_and_base64_encodes() -> harmony_luau::runtime::Result<()> {

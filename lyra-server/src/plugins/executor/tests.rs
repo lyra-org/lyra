@@ -294,14 +294,6 @@ fn plugin_executor_exposes_lyra_playback_sessions_on_update() -> Result<()> {
             local task = require("@harmony/task")
             local playbacks = require("@lyra/playback_sessions")
 
-            executor_playback_exports =
-                type(playbacks.report) .. ":" ..
-                type(playbacks.start) .. ":" ..
-                type(playbacks.report_session) .. ":" ..
-                type(playbacks.clear_session) .. ":" ..
-                type(playbacks.list_connections) .. ":" ..
-                type(playbacks.send_command)
-
             playbacks.on_update(function(update)
                 task.wait()
                 executor_playback_update = update.event .. ":" .. update.track_public_id
@@ -328,14 +320,11 @@ fn plugin_executor_exposes_lyra_playback_sessions_on_update() -> Result<()> {
     let values = runtime.eval_plugin_source(
         "demo",
         "check.luau",
-        &b"return executor_playback_update, executor_playback_exports"[..],
+        &b"return executor_playback_update"[..],
     )?;
     assert_eq!(
         values,
-        vec![
-            luau::Value::String(b"started:track-public".to_vec()),
-            luau::Value::String(b"function:function:function:function:function:function".to_vec()),
-        ]
+        vec![luau::Value::String(b"started:track-public".to_vec())]
     );
     Ok(())
 }

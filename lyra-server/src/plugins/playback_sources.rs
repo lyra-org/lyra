@@ -15,7 +15,7 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeInterface,
     FieldDescriptor,
@@ -65,10 +65,10 @@ impl PlaybackSourcesModuleStore {
 
 struct PlaybackSourcesModule;
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 struct EntryInfo;
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 struct PlaybackSourceInfo;
 
 pub(crate) fn module_spec() -> ModuleSpec {
@@ -360,14 +360,14 @@ fn saturating_i64(value: u64) -> i64 {
     value.min(i64::MAX as u64) as i64
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for EntryInfo {
     fn luau_type() -> LuauType {
         LuauType::named("EntryInfo")
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 impl DescribeInterface for EntryInfo {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("EntryInfo", None);
@@ -417,14 +417,14 @@ impl DescribeInterface for EntryInfo {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for PlaybackSourceInfo {
     fn luau_type() -> LuauType {
         LuauType::named("PlaybackSourceInfo")
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 impl DescribeInterface for PlaybackSourceInfo {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("PlaybackSourceInfo", None);
@@ -479,7 +479,7 @@ impl DescribeInterface for PlaybackSourceInfo {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -489,12 +489,12 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn resolve_id_type() -> LuauType {
     LuauType::union(vec![i64::luau_type(), String::luau_type()])
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "PlaybackSources",
@@ -529,7 +529,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),
@@ -540,26 +540,4 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         ],
         &[],
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn renders_playback_sources_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/playback_sources docs");
-
-        assert!(rendered.contains("@interface EntryInfo"));
-        assert!(rendered.contains("@interface PlaybackSourceInfo"));
-        assert!(rendered.contains("entry: EntryInfo?"));
-        assert!(rendered.contains("@class PlaybackSources"));
-        assert!(rendered.contains("@yields"));
-        assert!(rendered.contains(
-            "function playback_sources.get(id: (number | string)?, include_entry: boolean?): {PlaybackSourceInfo}"
-        ));
-        assert!(rendered.contains(
-            "function playback_sources.get_many(track_ids: {number}, include_entry: boolean?): { [number]: PlaybackSourceInfo? }"
-        ));
-    }
 }

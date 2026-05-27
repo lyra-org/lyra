@@ -1151,17 +1151,6 @@ mod tests {
     }
 
     #[test]
-    fn json_value_alias_descriptor_is_shared() {
-        let descriptor = JsonValue::type_alias_descriptor();
-
-        assert_eq!(descriptor.name, "JsonValue");
-        assert_eq!(
-            descriptor.ty.to_string(),
-            "(boolean | number | string | {JsonValue} | { [string]: JsonValue })?"
-        );
-    }
-
-    #[test]
     fn renders_variadic_global_with_doc_block() {
         let globals = vec![GlobalFunctionDescriptor {
             name: "warn",

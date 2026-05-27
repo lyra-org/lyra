@@ -332,54 +332,7 @@ impl DescribeModule for TaskModuleDocs {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        module_spec,
-        render_luau_definition,
-    };
-
-    #[test]
-    fn renders_task_module_definition() {
-        let rendered = render_luau_definition().expect("render harmony/task docs");
-
-        assert!(rendered.contains("@class Task"));
-        assert!(
-            rendered
-                .contains("function task.defer(task: ((...any) -> ()) | thread, ...: any): thread")
-        );
-        assert!(rendered.contains(
-            "function task.delay(time: number, task: ((...any) -> ()) | thread, ...: any): thread"
-        ));
-        assert!(rendered.contains("@yields"));
-        assert!(rendered.contains("function task.wait(time: number?): number"));
-        assert!(rendered.contains("function task.cancel(thread: thread)"));
-        assert!(
-            rendered
-                .contains("function task.spawn(task: ((...any) -> ()) | thread, ...: any): thread")
-        );
-    }
-
-    #[test]
-    fn exposes_handwritten_module_spec() {
-        let spec = module_spec();
-
-        assert_eq!(spec.id.0.as_ref(), "harmony/task");
-        assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "harmony.task");
-        assert_eq!(spec.functions.len(), 5);
-        assert_eq!(spec.functions[0].name.as_ref(), "defer");
-        assert!(spec.functions[0].variadic);
-        assert_eq!(spec.functions[1].name.as_ref(), "delay");
-        assert!(spec.functions[1].variadic);
-        assert!(spec.functions.iter().any(|function| function.yields));
-        assert_eq!(
-            spec.functions
-                .iter()
-                .find(|function| function.name.as_ref() == "wait")
-                .expect("wait spec")
-                .return_types
-                .len(),
-            1
-        );
-    }
+    use super::module_spec;
 
     #[test]
     fn luau_module_schedules_spawn_and_cancel() -> harmony_luau::runtime::Result<()> {

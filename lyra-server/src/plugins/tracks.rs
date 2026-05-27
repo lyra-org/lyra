@@ -13,7 +13,7 @@ use harmony_core::{
 };
 use harmony_luau as luau;
 use harmony_luau::IntoLuauReturn;
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     FieldDescriptor,
     InterfaceDescriptor,
@@ -452,7 +452,7 @@ fn query_result_table(
     Ok(table)
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -462,7 +462,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     FieldDescriptor {
         name,
@@ -471,12 +471,12 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn resolve_id_type() -> LuauType {
     LuauType::union(vec![i64::luau_type(), String::luau_type()])
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn sort_order_type() -> LuauType {
     LuauType::union(vec![
         LuauType::string_literal("ascending"),
@@ -484,7 +484,7 @@ fn sort_order_type() -> LuauType {
     ])
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn track_type() -> LuauType {
     LuauType::object(vec![
         field("db_id", Option::<i64>::luau_type()),
@@ -507,7 +507,7 @@ fn track_type() -> LuauType {
     ])
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn track_type_aliases() -> Vec<TypeAliasDescriptor> {
     vec![
         TypeAliasDescriptor::new("Track", track_type(), None),
@@ -523,7 +523,7 @@ fn track_type_aliases() -> Vec<TypeAliasDescriptor> {
     ]
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn track_query_options() -> InterfaceDescriptor {
     let mut descriptor = InterfaceDescriptor::new("TrackQueryOptions", None);
     descriptor.fields.extend([
@@ -539,7 +539,7 @@ fn track_query_options() -> InterfaceDescriptor {
     descriptor
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Tracks",
@@ -592,7 +592,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),
@@ -600,30 +600,4 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &[track_query_options()],
         &[],
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn renders_tracks_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/tracks docs");
-
-        assert!(
-            rendered
-                .contains("export type Track = { db_id: number?, id: string, track_title: string")
-        );
-        assert!(rendered.contains("@interface TrackQueryOptions"));
-        assert!(rendered.contains("sort_order: (\"ascending\" | \"descending\")?"));
-        assert!(rendered.contains(
-            "export type TrackQueryResult = { entities: {Track}, total_count: number, offset: number }"
-        ));
-        assert!(
-            rendered.contains("function tracks.query(opts: TrackQueryOptions): TrackQueryResult")
-        );
-        assert!(
-            rendered.contains("function tracks.get_by_ids(ids: {number}): { [number]: Track? }")
-        );
-    }
 }

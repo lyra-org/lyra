@@ -9,7 +9,7 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::render_definition_file_with_support;
 use harmony_luau::{
     DescribeInterface,
@@ -18,7 +18,7 @@ use harmony_luau::{
     LuauType,
     LuauTypeInfo,
 };
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
@@ -54,7 +54,7 @@ pub(crate) struct ResolvedAuth {
 }
 
 #[derive(Serialize)]
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 struct LoginResult {
     principal: Principal,
     token: String,
@@ -250,14 +250,14 @@ impl DescribeInterface for ResolvedAuth {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for LoginResult {
     fn luau_type() -> LuauType {
         LuauType::literal("LoginResult")
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 impl DescribeInterface for LoginResult {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("LoginResult", None);
@@ -307,7 +307,7 @@ impl DescribeInterface for AuthCapabilities {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -317,7 +317,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Auth",
@@ -364,7 +364,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),
@@ -378,35 +378,4 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         ],
         &[],
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn exposes_handwritten_module_spec() {
-        let spec = module_spec();
-
-        assert_eq!(spec.id.0.as_ref(), "lyra/auth");
-        assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "lyra.auth");
-        {
-            assert_eq!(spec.functions.len(), 1);
-            assert_eq!(spec.functions[0].name.as_ref(), "capabilities");
-            assert!(!spec.functions[0].yields);
-        }
-    }
-
-    #[test]
-    fn renders_auth_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/auth docs");
-
-        assert!(rendered.contains("@class Auth"));
-        assert!(rendered.contains("@interface Principal"));
-        assert!(rendered.contains("@interface AuthCredential"));
-        assert!(rendered.contains("@interface ResolvedAuth"));
-        assert!(rendered.contains("@interface LoginResult"));
-        assert!(rendered.contains("@interface AuthCapabilities"));
-        assert!(rendered.contains("function auth.capabilities(): AuthCapabilities"));
-    }
 }

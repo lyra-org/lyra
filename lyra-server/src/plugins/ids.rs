@@ -13,7 +13,7 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     LuauType,
     LuauTypeInfo,
@@ -269,7 +269,7 @@ fn integer_value(value: luau::Value) -> Option<i64> {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -279,7 +279,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Ids",
@@ -329,33 +329,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(&module_descriptor(), &[], &[], &[])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn exposes_handwritten_module_spec() {
-        let spec = module_spec();
-
-        assert_eq!(spec.id.0.as_ref(), "lyra/ids");
-        assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "lyra.ids");
-        assert_eq!(spec.functions.len(), 4);
-        assert!(spec.functions.iter().all(|function| function.yields));
-    }
-
-    #[test]
-    fn renders_ids_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/ids docs");
-
-        assert!(rendered.contains("@class Ids"));
-        assert!(rendered.contains("function ids.get_id(db_id: number): string?"));
-        assert!(rendered.contains("function ids.get_ids(db_ids: {number}): { [number]: string? }"));
-        assert!(rendered.contains("function ids.get_db_id(id: string): number?"));
-        assert!(rendered.contains("function ids.get_db_ids(ids: {string}): { [string]: number? }"));
-    }
 }

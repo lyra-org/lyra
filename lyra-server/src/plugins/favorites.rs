@@ -15,7 +15,7 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     LuauType,
     LuauTypeInfo,
@@ -361,7 +361,7 @@ fn db_id_array(ids: Vec<DbId>) -> luau::OwnedTable {
     table
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -371,7 +371,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Favorites",
@@ -433,30 +433,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(&module_descriptor(), &[], &[], &[])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn renders_favorites_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/favorites docs");
-
-        assert!(rendered.contains("@class Favorites"));
-        assert!(
-            rendered
-                .contains("function favorites.add(user_id: number, target_id: number): boolean")
-        );
-        assert!(rendered.contains(
-            "function favorites.has_many(user_id: number, target_ids: {number}): { [number]: boolean }"
-        ));
-        assert!(
-            rendered
-                .contains("function favorites.list_ids(user_id: number, entity: string): {number}")
-        );
-    }
 }

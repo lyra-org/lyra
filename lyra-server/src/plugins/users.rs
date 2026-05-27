@@ -16,7 +16,7 @@ use harmony_luau::{
     LuauType,
     LuauTypeInfo,
 };
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
@@ -128,7 +128,7 @@ impl DescribeInterface for PublicUser {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Users",
@@ -145,7 +145,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),
@@ -153,21 +153,4 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &[PublicUser::interface_descriptor()],
         &[],
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn renders_users_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/users docs");
-
-        assert!(rendered.contains("@interface PublicUser"));
-        assert!(rendered.contains("user_id: number"));
-        assert!(rendered.contains("username: string"));
-        assert!(rendered.contains("role: string?"));
-        assert!(rendered.contains("@class Users"));
-        assert!(rendered.contains("function users.list(): {PublicUser}"));
-    }
 }

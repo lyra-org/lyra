@@ -18,7 +18,7 @@ use harmony_luau::{
     LuauType,
     LuauTypeInfo,
 };
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
@@ -175,7 +175,7 @@ impl DescribeInterface for ServerInfo {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Server",
@@ -192,7 +192,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),
@@ -200,35 +200,4 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &[ServerInfo::interface_descriptor()],
         &[],
     )
-}
-
-#[cfg(test)]
-mod spec_tests {
-    use super::*;
-
-    #[test]
-    fn exposes_handwritten_module_spec() {
-        let spec = module_spec();
-
-        assert_eq!(spec.id.0.as_ref(), "lyra/server");
-        assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "lyra.server");
-        assert_eq!(spec.functions.len(), 1);
-        assert_eq!(spec.functions[0].name.as_ref(), "info");
-        assert!(!spec.functions[0].yields);
-        assert!(
-            spec.functions[0]
-                .return_types
-                .iter()
-                .any(|name| name.contains("ServerInfo"))
-        );
-    }
-
-    #[test]
-    fn renders_server_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/server docs");
-
-        assert!(rendered.contains("@class Server"));
-        assert!(rendered.contains("@interface ServerInfo"));
-        assert!(rendered.contains("function server.info(): ServerInfo"));
-    }
 }

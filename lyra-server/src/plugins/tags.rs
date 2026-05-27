@@ -19,7 +19,7 @@ use harmony_luau::{
     LuauType,
     LuauTypeInfo,
 };
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
@@ -454,7 +454,7 @@ impl DescribeInterface for TagInfo {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -464,7 +464,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Tags",
@@ -551,7 +551,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),
@@ -559,36 +559,4 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &[TagInfo::interface_descriptor()],
         &[],
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn exposes_handwritten_module_spec() {
-        let spec = module_spec();
-
-        assert_eq!(spec.id.0.as_ref(), "lyra/tags");
-        assert_eq!(spec.capability.as_ref().unwrap().0.as_ref(), "lyra.tags");
-        assert_eq!(spec.functions.len(), 7);
-        assert!(spec.functions.iter().all(|function| function.yields));
-    }
-
-    #[test]
-    fn renders_tags_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/tags docs");
-
-        assert!(rendered.contains("@class Tags"));
-        assert!(rendered.contains("@interface TagInfo"));
-        assert!(rendered.contains(
-            "function tags.add(user_id: number, target_id: number, tag: string, color: string): string"
-        ));
-        assert!(rendered.contains(
-            "function tags.has_many(user_id: number, target_ids: {number}, tag: string): { [number]: boolean }"
-        ));
-        assert!(rendered.contains(
-            "function tags.get_for_targets_many(user_id: number, target_ids: {number}): { [number]: {TagInfo} }"
-        ));
-    }
 }

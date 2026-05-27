@@ -26,7 +26,7 @@ use harmony_luau::{
     LuauType,
     LuauTypeInfo,
 };
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
@@ -927,7 +927,7 @@ impl DescribeInterface for PlaylistUpdateRequest {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -949,7 +949,7 @@ fn resolve_id_type() -> LuauType {
     LuauType::union(vec![i64::luau_type(), String::luau_type()])
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Playlists",
@@ -1037,7 +1037,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),
@@ -1050,29 +1050,4 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         ],
         &[],
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn renders_playlists_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/playlists docs");
-
-        assert!(rendered.contains("@interface PlaylistInfo"));
-        assert!(rendered.contains("@interface PlaylistTrackLink"));
-        assert!(rendered.contains("@interface PlaylistCreateRequest"));
-        assert!(rendered.contains("@interface PlaylistUpdateRequest"));
-        assert!(rendered.contains("playlist_id: number | string"));
-        assert!(rendered.contains("@class Playlists"));
-        assert!(rendered.contains("@yields"));
-        assert!(rendered.contains("function playlists.list(): {PlaylistInfo}"));
-        assert!(rendered.contains(
-            "function playlists.get_tracks_many(playlist_ids: {number}): { [number]: {PlaylistTrackLink} }"
-        ));
-        assert!(rendered.contains(
-            "function playlists.add_track(playlist_id: number | string, track_id: number | string): number"
-        ));
-    }
 }

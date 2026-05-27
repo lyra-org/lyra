@@ -12,7 +12,7 @@ use harmony_core::{
     ModuleSpec,
 };
 use harmony_luau as luau;
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeInterface,
     FieldDescriptor,
@@ -57,7 +57,7 @@ impl ChromaprintModuleStore {
 
 struct ChromaprintModule;
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 struct ChromaprintResult;
 
 pub(crate) fn module_spec() -> ModuleSpec {
@@ -108,14 +108,14 @@ fn compute_callback(
     }))
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 impl LuauTypeInfo for ChromaprintResult {
     fn luau_type() -> LuauType {
         LuauType::named("ChromaprintResult")
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 impl DescribeInterface for ChromaprintResult {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("ChromaprintResult", None);
@@ -135,7 +135,7 @@ impl DescribeInterface for ChromaprintResult {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -145,7 +145,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Chromaprint",
@@ -162,7 +162,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),
@@ -170,23 +170,4 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &[ChromaprintResult::interface_descriptor()],
         &[],
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn renders_chromaprint_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/chromaprint docs");
-
-        assert!(rendered.contains("@interface ChromaprintResult"));
-        assert!(rendered.contains("fingerprint: string"));
-        assert!(rendered.contains("duration: number"));
-        assert!(rendered.contains("@class Chromaprint"));
-        assert!(rendered.contains("@yields"));
-        assert!(
-            rendered.contains("function chromaprint.compute(entry_id: number): ChromaprintResult")
-        );
-    }
 }

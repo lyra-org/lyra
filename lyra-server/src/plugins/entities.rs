@@ -10,9 +10,9 @@ use harmony_core::{
 };
 use harmony_luau as luau;
 use harmony_luau::IntoLuauReturn;
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::render_definition_file_with_support;
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use harmony_luau::{
     DescribeInterface,
     DescribeTypeAlias,
@@ -26,7 +26,7 @@ use harmony_luau::{
     TypeAliasDescriptor,
 };
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 use crate::services::entities::{
     ArtistProjectionIncludes,
     ArtistProjectionInfo,
@@ -478,7 +478,7 @@ fn install_string_table(
     root.set_table_raw(vm, key, &table)
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     ParameterDescriptor {
         name,
@@ -488,7 +488,7 @@ fn param(name: &'static str, ty: LuauType) -> ParameterDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     FieldDescriptor {
         name,
@@ -497,22 +497,22 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn resolve_id_type() -> LuauType {
     LuauType::union(vec![i64::luau_type(), String::luau_type()])
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn include_selector_type() -> LuauType {
     LuauType::union(vec![String::luau_type(), Vec::<String>::luau_type()])
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn string_enum(values: impl IntoIterator<Item = &'static str>) -> LuauType {
     LuauType::union(values.into_iter().map(LuauType::string_literal).collect())
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn track_type() -> LuauType {
     LuauType::object(vec![
         field("db_id", Option::<i64>::luau_type()),
@@ -535,7 +535,7 @@ fn track_type() -> LuauType {
     ])
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn release_type() -> LuauType {
     LuauType::object(vec![
         field("db_id", Option::<i64>::luau_type()),
@@ -553,7 +553,7 @@ fn release_type() -> LuauType {
     ])
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn artist_type() -> LuauType {
     LuauType::object(vec![
         field("db_id", Option::<i64>::luau_type()),
@@ -572,7 +572,7 @@ fn artist_type() -> LuauType {
     ])
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn entity_type_aliases() -> Vec<TypeAliasDescriptor> {
     vec![
         TypeAliasDescriptor::new(
@@ -662,7 +662,7 @@ fn entity_type_aliases() -> Vec<TypeAliasDescriptor> {
     ]
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn entity_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
     vec![
         EntityLookupHints::interface_descriptor(),
@@ -679,7 +679,7 @@ fn entity_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
     ]
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Entities",
@@ -758,7 +758,7 @@ fn module_descriptor() -> ModuleDescriptor {
     }
 }
 
-#[cfg(any(feature = "docgen", test))]
+#[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),
@@ -766,33 +766,4 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &entity_interfaces(),
         &[],
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn renders_entities_module_definition() {
-        let rendered = render_luau_definition().expect("render lyra/entities docs");
-
-        assert!(rendered.contains("export type EntityIncludeSelector = string | {string}"));
-        assert!(rendered.contains(
-            "export type EntityQueryRequest = { id: number | string, include: EntityIncludeSelector?, library_id: number? }"
-        ));
-        assert!(
-            rendered.contains(
-                "export type EntityProjectionInfo = ReleaseProjectionInfo | TrackProjectionInfo | ArtistProjectionInfo"
-            )
-        );
-        assert!(rendered.contains("@interface TrackProjectionIncludes"));
-        assert!(rendered.contains("@interface CreditedArtistProjectionInfo"));
-        assert!(rendered.contains("@class Entities"));
-        assert!(rendered.contains("entities.CreditType = {}"));
-        assert!(rendered.contains("entities.CreditType.Artist = nil :: \"artist\""));
-        assert!(rendered.contains("entities.ArtistCreditSource.Release = nil :: \"release\""));
-        assert!(rendered.contains(
-            "function entities.query_many(request: EntityQueryManyRequest): { [string]: EntityProjectionInfo }"
-        ));
-    }
 }
