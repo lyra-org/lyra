@@ -1,0 +1,102 @@
+{
+  "test_name": "leo_nine_lisa",
+  "scenario_id": "a88dd3780d1c4bbd",
+  "responses": [
+    {
+      "cache_key": "0567c87370b25359",
+      "url": "https://musicbrainz.org/ws/2/work/1b0949d3-b9de-4052-b033-cef039cb23f7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6f07bf6988743611"
+    },
+    {
+      "cache_key": "064fc23606353743",
+      "url": "https://musicbrainz.org/ws/2/work/2ea8f875-3a70-4885-bee0-d7e719508758?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "60c4fcf366498ff1"
+    },
+    {
+      "cache_key": "0b786c7669578c8e",
+      "url": "https://musicbrainz.org/ws/2/work/cc846930-fb15-45ee-a507-be86f7fda159?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4dce53519a2e6a19"
+    },
+    {
+      "cache_key": "16a0ace401e99a40",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=8cacc1ab-799a-484c-af26-c1c1bf3af7c7&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "d03211cd1b45dbc8"
+    },
+    {
+      "cache_key": "3c2fd666daa8bebe",
+      "url": "https://musicbrainz.org/ws/2/work/bec50da6-7597-4612-8b45-11cbf66b760b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "326c33fd89c3eaed"
+    },
+    {
+      "cache_key": "40e1a0435dfd274e",
+      "url": "https://musicbrainz.org/ws/2/work/15767504-d22e-4a7f-a0df-ab7abdfe8293?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2eba60e0d08ca06c"
+    },
+    {
+      "cache_key": "42b39e074811a9a1",
+      "url": "https://musicbrainz.org/ws/2/work/8b030792-fe94-436f-bafe-2f314e927e54?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6e062bd2d0cd82c2"
+    },
+    {
+      "cache_key": "45f5a6d94ba3e88f",
+      "url": "https://musicbrainz.org/ws/2/work/88a58548-8496-436f-a54a-f15780b1f197?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ba58f0c052fc0dfe"
+    },
+    {
+      "cache_key": "67d5e33b8078980e",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ALEO%5C-NiNE&limit=100",
+      "status_code": 200,
+      "body_hash": "14d9a31f0a065f02"
+    },
+    {
+      "cache_key": "9ca4c9275e415a49",
+      "url": "https://musicbrainz.org/ws/2/work/3d3f7b73-4a96-4e97-bf74-88645c4d7492?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6936dbd2d175494b"
+    },
+    {
+      "cache_key": "af9519ce0afb6f21",
+      "url": "https://musicbrainz.org/ws/2/work/cfeccf31-ac50-4f8c-bbf9-8f15a3c8fd49?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "707d63c9e32f9b02"
+    },
+    {
+      "cache_key": "dad43952d33bcdf9",
+      "url": "https://musicbrainz.org/ws/2/work/61ed5733-2900-4d56-a702-270a51367e46?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "dbbd7f706502516d"
+    },
+    {
+      "cache_key": "e0c0aa371e6cda29",
+      "url": "https://musicbrainz.org/ws/2/artist?query=LiSA",
+      "status_code": 200,
+      "body_hash": "bf242bde19289aea"
+    },
+    {
+      "cache_key": "e73634d080f5fcca",
+      "url": "https://musicbrainz.org/ws/2/work/c1c48fbe-f8e0-499c-958c-f4d9c0b8c611?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f9d87147c537cc91"
+    },
+    {
+      "cache_key": "f5326831df4e859a",
+      "url": "https://musicbrainz.org/ws/2/work/a9f97818-33a0-45fc-b2a5-ceb6096d0bba?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "85ba6eebc5f0f225"
+    },
+    {
+      "cache_key": "fbb29dcaf03c00c4",
+      "url": "https://musicbrainz.org/ws/2/work/e19ddfe8-195b-4577-a2a0-504089fbd760?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7e3289aba5ff175b"
+    }
+  ]
+}
