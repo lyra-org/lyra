@@ -1,0 +1,52 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "KenYSECL-2670flac/03. 死神.flac"
+album = "Pale Blue"
+artists = ["米津玄師"]
+title = "死神"
+genre = "Pop"
+track = 3
+track_total = 3
+duration_ms = 180760
+
+[[raw_tags]]
+file_path = "KenYSECL-2670flac/02. ゆめうつつ.flac"
+album = "Pale Blue"
+artists = ["米津玄師"]
+title = "ゆめうつつ"
+genre = "Pop"
+track = 2
+track_total = 3
+duration_ms = 304693
+
+[[raw_tags]]
+file_path = "KenYSECL-2670flac/01. Pale Blue.flac"
+album = "Pale Blue"
+artists = ["米津玄師"]
+title = "Pale Blue"
+genre = "Pop"
+track = 1
+track_total = 3
+duration_ms = 296546
+
+[expect.release]
+ids = { release_group_id = "cedbb601-1520-4d4b-a056-7bdab9732a54", release_id = "6cd2b02d-99d5-4228-b294-7817d05dd69a" }
+fields = { release_title = "Pale Blue", release_date = "2021-06-16" }
+
+[expect.artists."09d4a85c-4916-4b4e-bc96-c4cfcf371046"]
+fields = { artist_name = "米津玄師", sort_name = "Yonezu, Kenshi" }
+
+[expect.tracks."c4fcecb3-99de-4937-9bf0-dde2ccf0837b"]
+fields = { disc = 1, track = 3, track_title = "死神" }
+
+[expect.tracks."cf3bc9d8-c959-4d78-ac38-9656ff05c143"]
+fields = { disc = 1, track = 2, track_title = "ゆめうつつ" }
+
+[expect.tracks."d7db893b-eef0-40a6-bde2-3bcb50af3798"]
+fields = { disc = 1, track = 1, track_title = "Pale Blue" }
