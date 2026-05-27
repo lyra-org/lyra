@@ -1,0 +1,30 @@
+{
+  "test_name": "梅雨明けのtuyu_arrange_ver_ツユ",
+  "scenario_id": "7b15ffa97dd22c78",
+  "responses": [
+    {
+      "cache_key": "383568b2984357a3",
+      "url": "https://musicbrainz.org/ws/2/artist/2b0a8be6-bfb8-4f62-b21d-f47a3104157e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6e6dcb0469c2fb93"
+    },
+    {
+      "cache_key": "4f00c44fba590d06",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%84%E3%83%A6",
+      "status_code": 200,
+      "body_hash": "b65133efc764b009"
+    },
+    {
+      "cache_key": "934dfd206929df2d",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%A2%85%E9%9B%A8%E6%98%8E%E3%81%91%E3%81%AE%5C(TUYU%20arrange%20ver.%5C)&limit=100",
+      "status_code": 200,
+      "body_hash": "f259349e63f9fd6b"
+    },
+    {
+      "cache_key": "d326f471937c77f1",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=7eecfb07-efb0-470d-b700-f49635ddde4b&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "f59b6fcba96a2396"
+    }
+  ]
+}

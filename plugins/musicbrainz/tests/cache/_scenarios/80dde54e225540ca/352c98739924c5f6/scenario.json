@@ -1,0 +1,30 @@
+{
+  "test_name": "kick_back_米津玄師_kenshi_yonezu",
+  "scenario_id": "352c98739924c5f6",
+  "responses": [
+    {
+      "cache_key": "1f7f208082576ec0",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=0b296997-8d20-4406-ae30-90b08a8ddeff&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "0f54f3f66ef478b5"
+    },
+    {
+      "cache_key": "bfe94a9076e1f589",
+      "url": "https://musicbrainz.org/ws/2/work/c81cf639-6e92-4132-bd5d-c460a71f72b0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1d4621b82fcc92d7"
+    },
+    {
+      "cache_key": "e766c3c03ad24d10",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E7%B1%B3%E6%B4%A5%E7%8E%84%E5%B8%AB%20(Kenshi%20Yonezu)",
+      "status_code": 200,
+      "body_hash": "5db13d91f85e2eae"
+    },
+    {
+      "cache_key": "f5aca1971abd919e",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A09d4a85c-4916-4b4e-bc96-c4cfcf371046%20AND%20(release%3AKICK%20BACK%20OR%20recording%3AKICK%20BACK)&limit=100",
+      "status_code": 200,
+      "body_hash": "b0d8923b9c7d0bb0"
+    }
+  ]
+}
