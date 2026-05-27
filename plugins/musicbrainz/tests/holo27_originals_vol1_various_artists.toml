@@ -1,0 +1,139 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Various Artists - holox27 Originals Vol.1 (2023-03-15) [WEB FLAC]/1.10. プラネタリウム.flac"
+album = "holo*27 Originals Vol.1"
+album_artists = ["Various Artists"]
+artists = ["星街すいせい"]
+title = "プラネタリウム"
+copyright = "℗ 2023 VIA/TOY'S FACTORY"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 10
+duration_ms = 230865
+
+[[raw_tags]]
+file_path = "Various Artists - holox27 Originals Vol.1 (2023-03-15) [WEB FLAC]/1.09. エンドロール.flac"
+album = "holo*27 Originals Vol.1"
+album_artists = ["Various Artists"]
+artists = ["猫又おかゆ"]
+title = "エンドロール"
+copyright = "℗ 2023 VIA/TOY'S FACTORY"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 10
+duration_ms = 168140
+
+[[raw_tags]]
+file_path = "Various Artists - holox27 Originals Vol.1 (2023-03-15) [WEB FLAC]/1.08. Baby Don't Stop.flac"
+album = "holo*27 Originals Vol.1"
+album_artists = ["Various Artists"]
+artists = ["雪花ラミィ & 鷹嶺ルイ"]
+title = "Baby Don't Stop"
+copyright = "℗ 2023 VIA/TOY'S FACTORY"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 10
+duration_ms = 177169
+
+[[raw_tags]]
+file_path = "Various Artists - holox27 Originals Vol.1 (2023-03-15) [WEB FLAC]/1.07. 夢嵐.flac"
+album = "holo*27 Originals Vol.1"
+album_artists = ["Various Artists"]
+artists = ["風真いろは"]
+title = "夢嵐"
+copyright = "℗ 2023 VIA/TOY'S FACTORY"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 10
+duration_ms = 192659
+
+[[raw_tags]]
+file_path = "Various Artists - holox27 Originals Vol.1 (2023-03-15) [WEB FLAC]/1.06. モッシュレース.flac"
+album = "holo*27 Originals Vol.1"
+album_artists = ["Various Artists"]
+artists = ["さくらみこ & 兎田ぺこら"]
+title = "モッシュレース"
+copyright = "℗ 2023 VIA/TOY'S FACTORY"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 10
+duration_ms = 193255
+
+[[raw_tags]]
+file_path = "Various Artists - holox27 Originals Vol.1 (2023-03-15) [WEB FLAC]/1.05. ビビビ.flac"
+album = "holo*27 Originals Vol.1"
+album_artists = ["Various Artists"]
+artists = ["百鬼あやめ"]
+title = "ビビビ"
+copyright = "℗ 2023 VIA/TOY'S FACTORY"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 10
+duration_ms = 171546
+
+[[raw_tags]]
+file_path = "Various Artists - holox27 Originals Vol.1 (2023-03-15) [WEB FLAC]/1.04. P.E.T..flac"
+album = "holo*27 Originals Vol.1"
+album_artists = ["Various Artists"]
+artists = ["沙花叉クロヱ"]
+title = "P.E.T."
+copyright = "℗ 2023 VIA/TOY'S FACTORY"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 10
+duration_ms = 184726
+
+[[raw_tags]]
+file_path = "Various Artists - holox27 Originals Vol.1 (2023-03-15) [WEB FLAC]/1.03. ヒル.flac"
+album = "holo*27 Originals Vol.1"
+album_artists = ["Various Artists"]
+artists = ["天音かなた"]
+title = "ヒル"
+copyright = "℗ 2023 VIA/TOY'S FACTORY"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 10
+duration_ms = 185641
+
+[[raw_tags]]
+file_path = "Various Artists - holox27 Originals Vol.1 (2023-03-15) [WEB FLAC]/1.02. Sweet Appetite.flac"
+album = "holo*27 Originals Vol.1"
+album_artists = ["Various Artists"]
+artists = ["Gawr Gura & Hakos Baelz"]
+title = "Sweet Appetite"
+copyright = "℗ 2023 VIA/TOY'S FACTORY"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 10
+duration_ms = 165242
+
+[[raw_tags]]
+file_path = "Various Artists - holox27 Originals Vol.1 (2023-03-15) [WEB FLAC]/1.01. リップシンク.flac"
+album = "holo*27 Originals Vol.1"
+album_artists = ["Various Artists"]
+artists = ["紫咲シオン & ラプラス・ダークネス"]
+title = "リップシンク"
+copyright = "℗ 2023 VIA/TOY'S FACTORY"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 10
+duration_ms = 171086
+
+[expect.release]
+ids = { release_group_id = "304f842a-f428-4b16-979f-b87e562ad963" }

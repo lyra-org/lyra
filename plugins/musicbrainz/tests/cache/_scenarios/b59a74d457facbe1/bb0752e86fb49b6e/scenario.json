@@ -1,0 +1,108 @@
+{
+  "test_name": "狂言_ado",
+  "scenario_id": "bb0752e86fb49b6e",
+  "responses": [
+    {
+      "cache_key": "0debc097c3cb1f02",
+      "url": "https://musicbrainz.org/ws/2/work/ea1ffb78-0f0d-4013-940e-d89676883819?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "26d125567812d25b"
+    },
+    {
+      "cache_key": "351f80fcdd607cd1",
+      "url": "https://musicbrainz.org/ws/2/work/a4246b57-6a6f-4b47-bf96-a3c2405fb6ee?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ccf4ae20956703f2"
+    },
+    {
+      "cache_key": "4917e5088506ce13",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=000b747c-a83b-4b00-aa47-a839f6527a92&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "7b47d54791c4aad1"
+    },
+    {
+      "cache_key": "5332c05b3a5f1e6b",
+      "url": "https://musicbrainz.org/ws/2/work/1fe876a3-e594-4a0a-8520-b0ede81dda01?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c9d8d260c0fb701d"
+    },
+    {
+      "cache_key": "55f7226a0cbf1015",
+      "url": "https://musicbrainz.org/ws/2/work/77ac4300-40c1-4d70-b680-f957f47f9a51?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "9221373f4d5bf95f"
+    },
+    {
+      "cache_key": "62db801f4aac2b52",
+      "url": "https://musicbrainz.org/ws/2/work/2d0680e5-2730-4304-b56d-48aae873d9cc?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "288f040dae5ec167"
+    },
+    {
+      "cache_key": "72bd0c4493cd1fcc",
+      "url": "https://musicbrainz.org/ws/2/work/fc842ef1-bea8-4894-93b7-a0caac1c3fb2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d599daf6e61ab6bd"
+    },
+    {
+      "cache_key": "7a507d4ee4164ef3",
+      "url": "https://musicbrainz.org/ws/2/work/58a9cf57-e8a5-4743-bc65-56d70922519a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "698db6b738758d9f"
+    },
+    {
+      "cache_key": "8b4b3a067f7030ad",
+      "url": "https://musicbrainz.org/ws/2/work/ac1adfb3-e534-41b4-b91b-f9d8203a81a9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "53a9996f729cc49f"
+    },
+    {
+      "cache_key": "9540247bcbf53f6b",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Ado",
+      "status_code": 200,
+      "body_hash": "bceff4bc462d8653"
+    },
+    {
+      "cache_key": "a51df6a79794775c",
+      "url": "https://musicbrainz.org/ws/2/work/7f15cbe6-d32c-4c97-95ca-848bed0fe638?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "665960b2ad86e637"
+    },
+    {
+      "cache_key": "ad142837f27e60fd",
+      "url": "https://musicbrainz.org/ws/2/work/4d0e4cd8-a191-4d0a-bb97-ad866285a632?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cd12ff5264b44703"
+    },
+    {
+      "cache_key": "b7808c5c86c3339d",
+      "url": "https://musicbrainz.org/ws/2/work/b9da6175-0fed-4ed5-8b4d-3edf28b247f1?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5cb80d3d545cfd18"
+    },
+    {
+      "cache_key": "cc2df5b27abb0638",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E7%8B%82%E8%A8%80&limit=100",
+      "status_code": 200,
+      "body_hash": "5a7c7f651205f3fb"
+    },
+    {
+      "cache_key": "e0a0fd41cc2544d0",
+      "url": "https://musicbrainz.org/ws/2/work/4d3fac2c-763b-4f97-a156-83604d27faf6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0be3a93d23e460c0"
+    },
+    {
+      "cache_key": "e63fa639aead78a5",
+      "url": "https://musicbrainz.org/ws/2/work/f580287a-223a-4d53-9774-d7e6d03b89fe?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b21b4b78c930d144"
+    },
+    {
+      "cache_key": "e856eb8c12e6498e",
+      "url": "https://musicbrainz.org/ws/2/work/69c9225a-fef4-45c5-af94-921ea42c4983?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "dbdee9babbad331c"
+    }
+  ]
+}
