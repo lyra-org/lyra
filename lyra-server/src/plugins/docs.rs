@@ -49,6 +49,12 @@ enum DocOutputLayout {
     Module,
 }
 
+#[derive(Clone, Copy)]
+enum ApiDocKind {
+    OpenApi,
+    AsyncApi,
+}
+
 struct Surface {
     id: &'static str,
     render_docs: RenderDocsFn,
@@ -80,6 +86,13 @@ pub(crate) fn render_doc_source(id: &str) -> Result<String> {
     }
 
     bail!("unknown docs source `{id}`")
+}
+
+fn render_api_doc(kind: ApiDocKind) -> Result<String> {
+    match kind {
+        ApiDocKind::OpenApi => render_pretty_json(&routes::build_openapi_spec(), "OpenAPI docs"),
+        ApiDocKind::AsyncApi => render_pretty_json(&WsApiSpec::asyncapi_spec(), "AsyncAPI docs"),
+    }
 }
 
 pub(crate) fn generate_docs(out_dir: &Path) -> Result<()> {
@@ -149,7 +162,11 @@ pub(crate) fn run_command(args: &[String]) -> Result<()> {
             Ok(())
         }
         [command, source] if command == "print" => {
-            print!("{}", render_doc_source(source)?);
+            let contents = match ApiDocKind::parse(source) {
+                Some(kind) => render_api_doc(kind)?,
+                None => render_doc_source(source)?,
+            };
+            print!("{contents}");
             Ok(())
         }
         [command, flag, path] if command == "generate" && flag == "--out-dir" => {
@@ -161,7 +178,7 @@ pub(crate) fn run_command(args: &[String]) -> Result<()> {
 }
 
 fn docs_command_usage() -> &'static str {
-    "usage:\n  lyra-docs list\n  lyra-docs print <source>\n  lyra-docs generate --out-dir <dir>\n  lyra-docs setup"
+    "usage:\n  lyra-docs list\n  lyra-docs print <source|openapi|asyncapi>\n  lyra-docs generate --out-dir <dir>\n  lyra-docs setup"
 }
 
 fn write_api_docs(out_dir: &Path, print_paths: bool) -> Result<()> {
@@ -185,11 +202,25 @@ fn write_api_docs(out_dir: &Path, print_paths: bool) -> Result<()> {
     Ok(())
 }
 
+impl ApiDocKind {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "openapi" | OPENAPI_FILENAME => Some(Self::OpenApi),
+            "asyncapi" | ASYNCAPI_FILENAME => Some(Self::AsyncApi),
+            _ => None,
+        }
+    }
+}
+
+fn render_pretty_json(value: &impl serde::Serialize, description: &str) -> Result<String> {
+    let contents =
+        serde_json::to_string_pretty(value).with_context(|| format!("serialize {description}"))?;
+    Ok(format!("{contents}\n"))
+}
+
 fn write_pretty_json(path: &Path, value: &impl serde::Serialize) -> Result<()> {
-    let contents = serde_json::to_string_pretty(value)
-        .with_context(|| format!("serialize {}", path.display()))?;
-    fs::write(path, format!("{contents}\n"))
-        .with_context(|| format!("write API docs output {}", path.display()))
+    let contents = render_pretty_json(value, &path.display().to_string())?;
+    fs::write(path, contents).with_context(|| format!("write API docs output {}", path.display()))
 }
 
 fn generate_setup_docs(out_dir: &Path) -> Result<()> {
@@ -318,5 +349,32 @@ fn ensure_gitignore_entry(path: &Path, entry: &str) -> Result<()> {
 
             fs::write(path, contents).with_context(|| format!("failed to write {}", path.display()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn render_api_doc_json(kind: ApiDocKind) -> serde_json::Value {
+        let output = render_api_doc(kind).expect("render API docs");
+        assert!(output.ends_with('\n'));
+        serde_json::from_str(&output).expect("valid API docs JSON")
+    }
+
+    #[test]
+    fn render_api_doc_outputs_openapi_json() {
+        let json = render_api_doc_json(ApiDocKind::OpenApi);
+
+        assert!(json.get("openapi").is_some());
+        assert_eq!(json["info"]["title"], "Lyra Server REST API");
+    }
+
+    #[test]
+    fn render_api_doc_outputs_asyncapi_json() {
+        let json = render_api_doc_json(ApiDocKind::AsyncApi);
+
+        assert!(json.get("asyncapi").is_some());
+        assert_eq!(json["info"]["title"], "Lyra WebSocket Remote Control");
     }
 }
