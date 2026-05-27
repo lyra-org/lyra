@@ -1,0 +1,26 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ヨルシカ - 火星人 (2025-05-09) [WEB FLAC]/1.01. 火星人.flac"
+album = "火星人"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "火星人"
+disc = 1
+track = 1
+duration_ms = 234929
+
+[expect.release]
+ids = { release_group_id = "c1aee57f-4e11-4591-b8a0-ad55f894a129", release_id = ["9db68ac1-9085-497f-9ca0-7138958103d5", "ea4b5868-65b1-4c54-9480-e82ba5959fb1"] }
+fields = { release_title = "火星人", release_date = "2025-05-09" }
+
+[expect.artists."dfc6a151-3792-4695-8fda-f64723eaa788"]
+fields = { artist_name = "ヨルシカ", sort_name = "Yorushika" }
+
+[expect.tracks."9228ceda-efee-45cb-9f08-773cc12d7d87"]
+fields = { disc = 1, track = 1, track_title = "火星人" }
