@@ -1,0 +1,36 @@
+{
+  "test_name": "雨模様_ツユ",
+  "scenario_id": "427b601445e38421",
+  "responses": [
+    {
+      "cache_key": "09e6639261ae89ee",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E9%9B%A8%E6%A8%A1%E6%A7%98&limit=100",
+      "status_code": 200,
+      "body_hash": "7809b4b5b78fc9f4"
+    },
+    {
+      "cache_key": "383568b2984357a3",
+      "url": "https://musicbrainz.org/ws/2/artist/2b0a8be6-bfb8-4f62-b21d-f47a3104157e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "25b9fb9f9fb9c578"
+    },
+    {
+      "cache_key": "4f00c44fba590d06",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%83%84%E3%83%A6",
+      "status_code": 200,
+      "body_hash": "b65133efc764b009"
+    },
+    {
+      "cache_key": "50d5bc35b2ee3335",
+      "url": "https://musicbrainz.org/ws/2/work/0a42de86-a165-4a58-9c33-1249cd58de13?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "906bdc190bcdba6e"
+    },
+    {
+      "cache_key": "a05d127f5d99c398",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=2f7ef48d-9403-4859-8439-6d872bf6365c&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "00383616b20731a0"
+    }
+  ]
+}
