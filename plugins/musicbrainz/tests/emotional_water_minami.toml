@@ -1,0 +1,73 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Minami - Emotional Water (2017) [FLAC]/04 Shoujiki Nikki.flac"
+album = "Emotional Water"
+album_artists = ["Minami"]
+artists = ["Minami"]
+title = "Shoujiki Nikki"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 383133
+
+[[raw_tags]]
+file_path = "Minami - Emotional Water (2017) [FLAC]/03 Umi to Natsu to Kimi to.flac"
+album = "Emotional Water"
+album_artists = ["Minami"]
+artists = ["Minami"]
+title = "Umi to Natsu to Kimi to"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 266000
+
+[[raw_tags]]
+file_path = "Minami - Emotional Water (2017) [FLAC]/02 Sensei, Ano ne.flac"
+album = "Emotional Water"
+album_artists = ["Minami"]
+artists = ["Minami"]
+title = "Sensei, Ano ne"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 274000
+
+[[raw_tags]]
+file_path = "Minami - Emotional Water (2017) [FLAC]/01 Suichuu Reflection.flac"
+album = "Emotional Water"
+album_artists = ["Minami"]
+artists = ["Minami"]
+title = "Suichuu Reflection"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 358973
+
+[expect.release]
+ids = { release_group_id = "67ac452d-4eca-40b3-b2f3-69d8b622e00c", release_id = "948c1d4e-178a-4e5b-9830-b442a969d059" }
+fields = { release_title = "Emotional Water", release_date = "2017-06-21" }
+
+[expect.artists."be5ae183-78b6-4564-93e1-553d752d3b84"]
+fields = { artist_name = "美波", sort_name = "Minami" }
+
+[expect.tracks."7f16ca73-fee6-49cd-9681-eff633ac146a"]
+fields = { disc = 1, track = 4, track_title = "正直日記" }
+
+[expect.tracks."a09bb02d-a5ed-4869-a463-5ae958863a12"]
+fields = { disc = 1, track = 2, track_title = "先生、あのね" }
+
+[expect.tracks."cbce65ce-8da3-47f3-a480-b2e152607bd5"]
+fields = { disc = 1, track = 3, track_title = "海と夏と君と" }
+
+[expect.tracks."e8659436-28f8-4813-b240-39456155ad80"]
+fields = { disc = 1, track = 1, track_title = "水中リフレクション" }
