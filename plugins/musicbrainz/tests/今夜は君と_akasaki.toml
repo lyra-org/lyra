@@ -1,0 +1,77 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "今夜は君と/04.今夜は君と (Instrumental).flac"
+album = "今夜は君と"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "今夜は君と (Instrumental)"
+copyright = "℗© 2024 AKASAKI"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 4
+duration_ms = 230572
+
+[[raw_tags]]
+file_path = "今夜は君と/03.今夜は君と (Slowed Down).flac"
+album = "今夜は君と"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "今夜は君と (Slowed Down)"
+copyright = "℗© 2024 AKASAKI"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 4
+duration_ms = 278142
+
+[[raw_tags]]
+file_path = "今夜は君と/02.今夜は君と (Sped Up).flac"
+album = "今夜は君と"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "今夜は君と (Sped Up)"
+copyright = "℗© 2024 AKASAKI"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 4
+duration_ms = 195983
+
+[[raw_tags]]
+file_path = "今夜は君と/01.今夜は君と.flac"
+album = "今夜は君と"
+album_artists = ["AKASAKI"]
+artists = ["AKASAKI"]
+title = "今夜は君と"
+copyright = "℗© 2024 AKASAKI"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 4
+duration_ms = 232141
+
+[expect.release]
+ids = { release_group_id = "dac9c646-6197-4cc8-9fb9-11683567c853", release_id = "e95db454-b3c3-4f38-9711-d972d69230e4" }
+fields = { release_title = "今夜は君と", release_date = "2024-11-04" }
+
+[expect.artists."7d915528-c29f-4cec-9575-37212e4936ad"]
+fields = { artist_name = "AKASAKI", sort_name = "AKASAKI" }
+
+[expect.tracks."229108ec-e70c-45bd-8f6c-ec01bf17eca7"]
+fields = { disc = 1, track = 2, track_title = "今夜は君と - Sped Up" }
+
+[expect.tracks."d1e2fabd-3d5d-4292-9702-ae77db094634"]
+fields = { disc = 1, track = 3, track_title = "今夜は君と - Slowed Down" }
+
+[expect.tracks."e241913e-ef21-48ca-a53c-03258de93941"]
+fields = { disc = 1, track = 1, track_title = "今夜は君と" }
+
+[expect.tracks."f4cc9ae0-f1c9-4936-ad8b-afdaf37e83bf"]
+fields = { disc = 1, track = 4, track_title = "今夜は君と - Instrumental" }

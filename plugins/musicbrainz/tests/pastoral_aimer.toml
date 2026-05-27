@@ -1,0 +1,28 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Aimer — Pastoral (2025) [WEB-FLAC]/01. Pastoral.flac"
+album = "Pastoral"
+album_artists = ["Aimer"]
+artists = ["Aimer"]
+title = "Pastoral"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 245065
+
+[expect.release]
+ids = { release_group_id = "f192bf60-24f9-44db-9937-e79016861a1c", release_id = "2c441c7a-0581-4820-b147-a427844bcb1a" }
+fields = { release_title = "Pastoral", release_date = "2025-10-06" }
+
+[expect.artists."9388cee2-7d57-4598-905f-106019b267d3"]
+fields = { artist_name = "Aimer", sort_name = "Aimer" }
+
+[expect.tracks."3231ce27-e994-4df8-bba4-499c70a44417"]
+fields = { disc = 1, track = 1, track_title = "Pastoral" }
