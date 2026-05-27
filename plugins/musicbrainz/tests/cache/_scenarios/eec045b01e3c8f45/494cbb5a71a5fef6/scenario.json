@@ -1,0 +1,66 @@
+{
+  "test_name": "憎まれっ子世に憚る_あいみょん",
+  "scenario_id": "494cbb5a71a5fef6",
+  "responses": [
+    {
+      "cache_key": "0a05e4947d65e1ee",
+      "url": "https://musicbrainz.org/ws/2/work/4eebfbd6-de31-4548-ac08-6931f7eaed5c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e20e85e297b30b31"
+    },
+    {
+      "cache_key": "225462fb8297a5ec",
+      "url": "https://musicbrainz.org/ws/2/work/c77af70f-9b86-47a4-8dcc-dbe6f2825b3a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "212180cf22f82bca"
+    },
+    {
+      "cache_key": "4e7d86f8573f56e5",
+      "url": "https://musicbrainz.org/ws/2/work/34db3875-d6ee-444c-8105-d893e267d311?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d95e83e40688bead"
+    },
+    {
+      "cache_key": "53b702dab0f6f44f",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%86%8E%E3%81%BE%E3%82%8C%E3%81%A3%E5%AD%90%E4%B8%96%E3%81%AB%E6%86%9A%E3%82%8B&limit=100",
+      "status_code": 200,
+      "body_hash": "2107aac01f0196c3"
+    },
+    {
+      "cache_key": "566529eaac894cbb",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%82%E3%81%84%E3%81%BF%E3%82%87%E3%82%93",
+      "status_code": 200,
+      "body_hash": "06dcd99f9e7e93d0"
+    },
+    {
+      "cache_key": "58e6cefd49a36ee7",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=dda838e9-2ea4-45b4-81ef-60dce220e3fc&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "260634c51ad8e0c3"
+    },
+    {
+      "cache_key": "78b0bc0fffa956bc",
+      "url": "https://musicbrainz.org/ws/2/work/ef8abb35-6e87-4e01-b9e9-4bab3f69cdb9?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6741f00c61f488b6"
+    },
+    {
+      "cache_key": "7f9e4d6fab0d2237",
+      "url": "https://musicbrainz.org/ws/2/work/9211ea92-90e2-4e6a-af1d-1a590c370543?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e7421029e31cb1ba"
+    },
+    {
+      "cache_key": "ea41adb03a2cabff",
+      "url": "https://musicbrainz.org/ws/2/work/770ef7eb-2cd4-4f25-af20-6e114f82c995?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "448a3a5b4b3db5f0"
+    },
+    {
+      "cache_key": "f8d8953814e7897e",
+      "url": "https://musicbrainz.org/ws/2/work/918c648a-5353-4e47-af1e-efbcea69f4ff?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "edfa37687c9ca8fc"
+    }
+  ]
+}
