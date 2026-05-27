@@ -904,7 +904,7 @@ mod tests {
         let text = std::str::from_utf8(&body)?;
         assert!(
             text.contains(
-                "Supported values: artists, tracks, track_artists, entries, covers, genres"
+                "Supported values: artists, tracks, track_artists, entries, covers, artist_covers, genres"
             )
         );
         Ok(())

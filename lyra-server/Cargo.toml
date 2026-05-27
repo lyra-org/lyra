@@ -61,7 +61,7 @@ walkdir = "2"
 # async-ffmpeg-sidecar = "0.0"
 blake3 = { workspace = true }
 xxh3 = { workspace = true }
-aide = { version = "0.16.0-alpha.2", features = ["axum", "axum-json", "axum-query"], optional = true }
+aide = { git = "https://github.com/StayBlue/aide", rev = "01dcaca928e5850818dafd29933125d3d28b36f0", features = ["axum", "axum-json", "axum-query"], optional = true }
 asyncapi-rust = { version = "0.2.0", optional = true }
 lofty = "=0.24.0"
 lyra-chromaprint = { path = "../lyra-chromaprint" }

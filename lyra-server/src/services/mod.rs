@@ -65,17 +65,23 @@ pub(crate) mod tracks;
 pub(crate) use system::SystemContext;
 
 pub(crate) use libraries::{
+    LibraryRefreshRunOptions,
     LibrarySyncStatus,
-    StartLibrarySyncResult,
+    SyncRunEvent,
+    SyncRunStartResponse,
+    SyncRunSummary,
+    cancel_sync_run,
     get_library_sync_status,
+    get_sync_run,
+    start_library_refresh,
     start_library_sync,
+    subscribe_sync_run_events,
+    sync_run_events_after,
     wait_for_running_library_syncs,
 };
 pub(crate) use metadata::cleanup::deduplicate_artists_by_external_id;
 pub(crate) use providers::{
     EntityRefreshMode,
-    LibraryRefreshOptions,
-    refresh_library_metadata,
     run_provider_sync,
 };
 

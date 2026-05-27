@@ -115,6 +115,7 @@ pub(crate) mod roles;
 pub(crate) mod search;
 pub(crate) mod server;
 pub(crate) mod settings;
+pub(crate) mod sync_runs;
 pub(crate) mod tags;
 #[cfg(test)]
 pub(crate) mod test_db;
