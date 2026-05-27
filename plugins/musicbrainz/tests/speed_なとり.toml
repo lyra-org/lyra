@@ -1,0 +1,26 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "なとり - SPEED (2025-04-18) [WEB FLAC]/1.01. SPEED.flac"
+album = "SPEED"
+album_artists = ["なとり"]
+artists = ["なとり"]
+title = "SPEED"
+disc = 1
+track = 1
+duration_ms = 122733
+
+[expect.release]
+ids = { release_id = ["f350f67b-4f27-470b-96f3-44c0b852f908", "47252565-3dba-4a74-9f04-4aeec6db8a1c"] }
+fields = { release_title = "SPEED", release_date = "2025-04-18" }
+
+[expect.artists."cad9e169-893d-4432-a23f-3aa16beb9f0e"]
+fields = { artist_name = "なとり", sort_name = "natori" }
+
+[expect.tracks."47dd662f-9051-4a17-a654-6e51c62b1174"]
+fields = { disc = 1, track = 1, track_title = "SPEED" }

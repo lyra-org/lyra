@@ -1,0 +1,53 @@
+plugin = "theaudiodb"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "(2019.05.15) Official髭男dism - Pretender [FLAC]/03 Pretender (Acoustic Ver).flac"
+album = "Pretender"
+album_artists = ["Official髭男dism"]
+artists = ["Official HIGE DANdism"]
+title = "Pretender (Acoustic Ver)"
+genre = "Jpop"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 3
+duration_ms = 223840
+
+[[raw_tags]]
+file_path = "(2019.05.15) Official髭男dism - Pretender [FLAC]/02 Amazing.flac"
+album = "Pretender"
+album_artists = ["Official髭男dism"]
+artists = ["Official HIGE DANdism"]
+title = "Amazing"
+genre = "Jpop"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 3
+duration_ms = 231933
+
+[[raw_tags]]
+file_path = "(2019.05.15) Official髭男dism - Pretender [FLAC]/01 Pretender.flac"
+album = "Pretender"
+album_artists = ["Official髭男dism"]
+artists = ["Official HIGE DANdism"]
+title = "Pretender"
+genre = "Jpop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 3
+duration_ms = 326440
+
+[expect.release]
+ids = { album_id = "2339274" }
+fields = { release_title = "Pretender" }
+
+[expect.artists."159738"]
+ids = { artist_id = "159738" }
+fields = { artist_name = "Official髭男dism" }
