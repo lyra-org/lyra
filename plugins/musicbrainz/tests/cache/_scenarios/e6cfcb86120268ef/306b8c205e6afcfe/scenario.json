@@ -1,0 +1,66 @@
+{
+  "test_name": "introduction_mrs_green_apple",
+  "scenario_id": "306b8c205e6afcfe",
+  "responses": [
+    {
+      "cache_key": "02bd31ced4e76732",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AIntroduction&limit=100",
+      "status_code": 200,
+      "body_hash": "ca828d645d9a67f7"
+    },
+    {
+      "cache_key": "0540a95d3b0dc02a",
+      "url": "https://musicbrainz.org/ws/2/work/37d519d7-f404-4440-bbc1-628977aef835?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e2cb41440a5ef3bf"
+    },
+    {
+      "cache_key": "1ac1bc9547f780d6",
+      "url": "https://musicbrainz.org/ws/2/work/0da06c6b-b122-4874-a7c0-c44151fb3bd4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b3b897222bc919f2"
+    },
+    {
+      "cache_key": "27dddfcc5a781497",
+      "url": "https://musicbrainz.org/ws/2/artist/9ce674b7-5180-41f7-9ac2-95dc0d8a0ed2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c34a4d333adf2674"
+    },
+    {
+      "cache_key": "468ed97b30052778",
+      "url": "https://musicbrainz.org/ws/2/work/cc37177c-50b3-4f62-89d6-0dd5c9283425?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e5c7e166a6ce7ab8"
+    },
+    {
+      "cache_key": "62a68887e6f0f7db",
+      "url": "https://musicbrainz.org/ws/2/work/8a4994c5-ec2e-4633-9e91-b7bb102e762b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "856098b166920d9d"
+    },
+    {
+      "cache_key": "8ccfdebe53454bf3",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=bc48f928-f359-4a14-95f5-0ab7ff7a6039&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "1318cf654349eef8"
+    },
+    {
+      "cache_key": "91beeae230e60cc9",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Mrs.%20GREEN%20APPLE",
+      "status_code": 200,
+      "body_hash": "f857954e86ebfaf6"
+    },
+    {
+      "cache_key": "9a9559a5154b983a",
+      "url": "https://musicbrainz.org/ws/2/work/2d4f58e6-48e0-4dc4-8484-c46c6b5ff9f3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "69a3a58aabcd8454"
+    },
+    {
+      "cache_key": "f090089395f8df53",
+      "url": "https://musicbrainz.org/ws/2/work/e39da12d-bb74-4db5-addc-35cf6819be7b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c971e83942da6272"
+    }
+  ]
+}
