@@ -42,14 +42,15 @@ use crate::{
     },
     routes::AppError,
     services::{
-        LibraryRefreshOptions,
+        LibraryRefreshRunOptions,
+        SyncRunStartResponse,
         auth::{
             require_authenticated,
             require_can_create_library,
             require_manage_libraries_on,
         },
-        get_library_sync_status as get_library_sync_status_snapshot,
-        refresh_library_metadata,
+        get_library_sync_status as get_library_sync_status_summary,
+        start_library_refresh,
         start_library_sync,
     },
 };
@@ -124,20 +125,6 @@ struct LibraryUpdateRequest {
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Serialize)]
-struct LibrarySyncStartResponse {
-    started: bool,
-    run_id: u64,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Serialize)]
-struct LibraryRefreshResponse {
-    refreshed_count: usize,
-    entity_type: String,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Deserialize, Serialize)]
 enum LibraryAccessKind {
     ReadWrite,
@@ -208,27 +195,24 @@ async fn refresh_library(
     headers: HeaderMap,
     Path(library_id): Path<String>,
     Query(query): Query<LibraryRefreshQuery>,
-) -> Result<Json<LibraryRefreshResponse>, AppError> {
+) -> Result<Json<SyncRunStartResponse>, AppError> {
     let _principal = require_manage_libraries_on(&headers, &library_id).await?;
 
-    let library_db_id = {
+    let library = {
         let db = STATE.db.read().await;
-        db::lookup::find_node_id_by_id(&*db, &library_id)?
-            .ok_or_else(|| AppError::not_found(format!("not found: {library_id}")))?
+        let library_db_id = db::lookup::find_node_id_by_id(&*db, &library_id)?
+            .ok_or_else(|| AppError::not_found(format!("not found: {library_id}")))?;
+        db::libraries::get_by_id(&db, library_db_id)?
+            .ok_or_else(|| AppError::not_found(format!("Library not found: {library_id}")))?
     };
 
-    let options = LibraryRefreshOptions {
+    let options = LibraryRefreshRunOptions {
         replace_cover: query.replace_cover,
         force_refresh: query.force_refresh,
-        apply_sync_filters: false,
-        provider_id: None,
     };
-    let refreshed_count = refresh_library_metadata(library_db_id, &options).await?;
-
-    Ok(Json(LibraryRefreshResponse {
-        refreshed_count,
-        entity_type: "release".to_string(),
-    }))
+    Ok(Json(
+        start_library_refresh(STATE.db.get(), library, options).await?,
+    ))
 }
 
 async fn create_library(
@@ -307,18 +291,14 @@ async fn create_library(
         .db_id
         .ok_or_else(|| anyhow!("library insert missing id"))?;
     let response = LibraryResponse::from_library(library.clone(), true);
-    match start_library_sync(STATE.db.get(), library).await? {
-        crate::services::StartLibrarySyncResult::Started { run_id } => {
-            tracing::info!(library_id = library_db_id.0, run_id, "started library sync");
-            Ok((StatusCode::CREATED, Json(response)))
-        }
-        crate::services::StartLibrarySyncResult::AlreadyRunning { run_id } => {
-            Err(AppError::conflict(format!(
-                "library sync already running for id {} (run_id={})",
-                library_db_id.0, run_id
-            )))
-        }
-    }
+    let sync = start_library_sync(STATE.db.get(), library).await?;
+    tracing::info!(
+        library_id = library_db_id.0,
+        run_id = sync.run.run.id.as_deref().unwrap_or(""),
+        started = sync.started,
+        "requested library sync"
+    );
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 async fn update_library(
@@ -468,14 +448,14 @@ async fn get_library_sync_status(
         library_db_id
     };
 
-    let status = get_library_sync_status_snapshot(library_db_id).await;
+    let status = get_library_sync_status_summary(library_db_id).await;
     Ok(Json(status))
 }
 
 async fn start_library_sync_for_library(
     headers: HeaderMap,
     Path(id): Path<String>,
-) -> Result<Json<LibrarySyncStartResponse>, AppError> {
+) -> Result<Json<SyncRunStartResponse>, AppError> {
     let _principal = require_manage_libraries_on(&headers, &id).await?;
     let library = {
         let db = STATE.db.read().await;
@@ -485,26 +465,13 @@ async fn start_library_sync_for_library(
             .ok_or_else(|| AppError::not_found(format!("Library not found: {}", id)))?
     };
 
-    match start_library_sync(STATE.db.get(), library).await? {
-        crate::services::StartLibrarySyncResult::Started { run_id } => {
-            Ok(Json(LibrarySyncStartResponse {
-                started: true,
-                run_id,
-            }))
-        }
-        crate::services::StartLibrarySyncResult::AlreadyRunning { run_id } => {
-            Err(AppError::conflict(format!(
-                "library sync already running for id {} (run_id={})",
-                id, run_id
-            )))
-        }
-    }
+    Ok(Json(start_library_sync(STATE.db.get(), library).await?))
 }
 
 #[cfg(feature = "docgen")]
 fn get_library_sync_status_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get library sync status").description(
-        "Returns a compact sync status for a library, including run state, progress counters, and currently active work. Requires ManageLibraries permission.",
+        "Returns a compact sync status for a library, including run state, aggregate progress, current work, active-unit count, and failure count. Requires ManageLibraries permission.",
     )
 }
 

@@ -46,6 +46,7 @@ pub(crate) fn build_core_api() -> Result<CoreApi> {
         .nest("/api/providers", super::provider_routes())
         .nest("/api/entities", super::entity_routes())
         .nest("/api/plugins", super::plugin_routes())
+        .nest("/api/sync", super::sync_routes())
         .nest("/api/search", super::search_routes());
 
     let (app, ws_reserved) = super::install_websocket(app);
@@ -99,6 +100,7 @@ pub(crate) fn build_openapi_spec() -> OpenApi {
         )
         .nest("/api/entities", super::providers::entity_openapi_routes())
         .nest("/api/plugins", super::plugins::plugin_openapi_routes())
+        .nest("/api/sync", super::sync::sync_openapi_routes())
         .nest("/api/search", super::search::search_openapi_routes())
         .finish_api(&mut api);
 
@@ -317,6 +319,9 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/plugins/{plugin_id}/settings"),
     ("PATCH", "/api/plugins/{plugin_id}/settings"),
     ("DELETE", "/api/plugins/{plugin_id}/settings"),
+    ("GET", "/api/sync/runs/{run_id}"),
+    ("GET", "/api/sync/runs/{run_id}/events"),
+    ("POST", "/api/sync/runs/{run_id}/cancel"),
     ("GET", "/api/search/"),
 ];
 

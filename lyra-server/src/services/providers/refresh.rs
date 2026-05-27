@@ -9,6 +9,7 @@ use std::{
         HashSet,
     },
     path::PathBuf,
+    time::Duration,
 };
 
 use agdb::{
@@ -45,6 +46,12 @@ use crate::{
             build_entity_provider_context,
             build_release_context,
         },
+        libraries::{
+            SyncRunProgress,
+            SyncStageKey,
+            SyncTotalState,
+            SyncWorkDetails,
+        },
         options::coerce_option_value,
         providers::{
             LIBRARY_REFRESH_LOCKS,
@@ -62,6 +69,8 @@ use super::{
     ProviderServiceError,
     dedup::deduplicate_releases_by_external_id,
 };
+
+const DEFAULT_METADATA_REFRESH_TIMEOUT: Duration = Duration::from_secs(60);
 
 struct LibraryRefreshGuard {
     library_db_id: DbId,
@@ -170,18 +179,65 @@ pub(crate) async fn refresh_library_metadata(
     refresh_library_metadata_inner(library_db_id, options).await
 }
 
-pub(crate) async fn refresh_release_metadata_for_scan(
+pub(crate) async fn refresh_library_metadata_with_progress(
     library_db_id: DbId,
-    release_id: DbId,
     options: &LibraryRefreshOptions<'_>,
+    progress: Option<SyncRunProgress>,
 ) -> Result<usize, ProviderServiceError> {
-    refresh_release_metadata_inner(library_db_id, release_id, options).await
+    {
+        let mut locks = LIBRARY_REFRESH_LOCKS.lock().await;
+        if !locks.insert(library_db_id) {
+            return Err(ProviderServiceError::RefreshAlreadyRunning(library_db_id.0));
+        }
+    }
+
+    let _guard = LibraryRefreshGuard { library_db_id };
+    refresh_library_metadata_inner_with_progress(library_db_id, options, progress).await
 }
 
-async fn refresh_release_metadata_inner(
+pub(crate) async fn release_refresh_provider_ids(
+    provider_filter: Option<&str>,
+    include_sync_filters: bool,
+) -> Result<Vec<String>, ProviderServiceError> {
+    let providers = enabled_providers().await?;
+    Ok(refresh_callbacks_for(
+        &providers,
+        EntityType::Release,
+        provider_filter,
+        include_sync_filters,
+    )
+    .await
+    .into_iter()
+    .map(|(provider_id, _, _)| provider_id)
+    .collect())
+}
+
+pub(crate) async fn refresh_release_metadata_for_scan_with_progress(
     library_db_id: DbId,
     release_id: DbId,
     options: &LibraryRefreshOptions<'_>,
+    progress: Option<SyncRunProgress>,
+    release_public_id: Option<String>,
+    release_title: Option<String>,
+) -> Result<usize, ProviderServiceError> {
+    refresh_release_metadata_inner_with_progress(
+        library_db_id,
+        release_id,
+        options,
+        progress,
+        release_public_id,
+        release_title,
+    )
+    .await
+}
+
+async fn refresh_release_metadata_inner_with_progress(
+    library_db_id: DbId,
+    release_id: DbId,
+    options: &LibraryRefreshOptions<'_>,
+    progress: Option<SyncRunProgress>,
+    release_public_id: Option<String>,
+    release_title: Option<String>,
 ) -> Result<usize, ProviderServiceError> {
     {
         let db = STATE.db.read().await;
@@ -205,6 +261,11 @@ async fn refresh_release_metadata_inner(
     let mut dirty = true;
 
     for (provider_id, handler, filter) in &handlers {
+        if let Some(progress) = &progress
+            && let Err(err) = progress.check_cancelled().await
+        {
+            return Err(ProviderServiceError::Internal(err.into()));
+        }
         if dirty || context.is_none() {
             let rebuilt = {
                 let db = STATE.db.read().await;
@@ -234,6 +295,19 @@ async fn refresh_release_metadata_inner(
         let Some(context) = context.as_ref() else {
             continue;
         };
+        let details = SyncWorkDetails::release(
+            "release_provider_refresh",
+            release_public_id.clone(),
+            release_title.clone(),
+        )
+        .provider(provider_id.clone());
+        let work_id = if let Some(progress) = &progress {
+            progress
+                .start_work(SyncStageKey::ProviderRefresh, details.clone())
+                .await
+        } else {
+            0
+        };
         let context = context_with_options(context.clone(), provider_id, &HashMap::new()).await;
         let should_run = if let Some(filter) = filter {
             match dispatch_sync_filter_callback(provider_id, filter.handler_id, context.clone())
@@ -254,6 +328,11 @@ async fn refresh_release_metadata_inner(
             true
         };
         if !should_run {
+            if let Some(progress) = &progress {
+                progress
+                    .skip_work(work_id, SyncStageKey::ProviderRefresh, "sync_filter")
+                    .await;
+            }
             continue;
         }
 
@@ -261,8 +340,23 @@ async fn refresh_release_metadata_inner(
             Ok(()) => {
                 providers_called.push(provider_id.clone());
                 dirty = true;
+                if let Some(progress) = &progress {
+                    progress
+                        .complete_work(work_id, SyncStageKey::ProviderRefresh)
+                        .await;
+                }
             }
             Err(err) => {
+                if let Some(progress) = &progress {
+                    progress
+                        .fail_work(
+                            work_id,
+                            SyncStageKey::ProviderRefresh,
+                            details,
+                            err.to_string(),
+                        )
+                        .await;
+                }
                 tracing::warn!(
                     provider_id,
                     release_db_id = release_id.0,
@@ -289,25 +383,20 @@ async fn refresh_release_metadata_inner(
         );
     }
 
-    if !providers_called.is_empty() {
-        sync_cover_for_refreshed_entity(
-            release_id,
-            EntityType::Release,
-            Some(library_db_id),
-            CoverSyncOptions {
-                replace_existing: options.replace_cover,
-                force_refresh: options.force_refresh,
-            },
-        )
-        .await?;
-    }
-
     Ok(usize::from(!providers_called.is_empty()))
 }
 
 async fn refresh_library_metadata_inner(
     library_db_id: DbId,
     options: &LibraryRefreshOptions<'_>,
+) -> Result<usize, ProviderServiceError> {
+    refresh_library_metadata_inner_with_progress(library_db_id, options, None).await
+}
+
+async fn refresh_library_metadata_inner_with_progress(
+    library_db_id: DbId,
+    options: &LibraryRefreshOptions<'_>,
+    progress: Option<SyncRunProgress>,
 ) -> Result<usize, ProviderServiceError> {
     let releases = {
         let db = STATE.db.read().await;
@@ -324,9 +413,29 @@ async fn refresh_library_metadata_inner(
         options.apply_sync_filters,
     )
     .await;
+    let release_count = releases
+        .iter()
+        .filter(|release| release.db_id.is_some())
+        .count() as u64;
+    if let Some(progress) = &progress {
+        progress
+            .add_stage_total(
+                SyncStageKey::ProviderRefresh,
+                release_count * handlers.len() as u64,
+                SyncTotalState::Final,
+            )
+            .await;
+        if release_count > 0 {
+            progress
+                .add_stage_total(SyncStageKey::ProviderCover, 1, SyncTotalState::Final)
+                .await;
+        }
+        progress.set_determinate().await;
+    }
     let mut refreshed_releases = HashSet::new();
     let mut context_cache: HashMap<DbId, serde_json::Value> = HashMap::new();
     let mut dirty_releases = HashSet::new();
+    let mut release_infos: HashMap<DbId, (Option<String>, Option<String>)> = HashMap::new();
 
     for release in &releases {
         let Some(node_id) = release.db_id.clone().map(Into::<DbId>::into) else {
@@ -334,6 +443,8 @@ async fn refresh_library_metadata_inner(
         };
         let ctx = {
             let db = STATE.db.read().await;
+            let public_id = db::lookup::find_id_by_db_id(&db, node_id)?;
+            release_infos.insert(node_id, (public_id, Some(release.release_title.clone())));
             build_release_context(&db, node_id, Some(library_db_id))?
         };
         context_cache.insert(node_id, ctx);
@@ -345,6 +456,11 @@ async fn refresh_library_metadata_inner(
             let Some(node_id) = release.db_id.clone().map(Into::<DbId>::into) else {
                 continue;
             };
+            if let Some(progress) = &progress
+                && let Err(err) = progress.check_cancelled().await
+            {
+                return Err(ProviderServiceError::Internal(err.into()));
+            }
 
             if dirty_releases.remove(&node_id) {
                 let ctx = {
@@ -355,6 +471,21 @@ async fn refresh_library_metadata_inner(
             }
             let Some(context) = context_cache.get(&node_id) else {
                 continue;
+            };
+            let (release_public_id, release_title) =
+                release_infos.get(&node_id).cloned().unwrap_or_default();
+            let details = SyncWorkDetails::release(
+                "release_provider_refresh",
+                release_public_id,
+                release_title,
+            )
+            .provider(provider_id.clone());
+            let work_id = if let Some(progress) = &progress {
+                progress
+                    .start_work(SyncStageKey::ProviderRefresh, details.clone())
+                    .await
+            } else {
+                0
             };
             let context = context_with_options(context.clone(), provider_id, &HashMap::new()).await;
 
@@ -377,6 +508,11 @@ async fn refresh_library_metadata_inner(
                 true
             };
             if !should_run {
+                if let Some(progress) = &progress {
+                    progress
+                        .skip_work(work_id, SyncStageKey::ProviderRefresh, "sync_filter")
+                        .await;
+                }
                 continue;
             }
 
@@ -385,8 +521,23 @@ async fn refresh_library_metadata_inner(
                     refreshed_releases.insert(node_id);
                     dirty_releases.insert(node_id);
                     pass_touched.insert(node_id);
+                    if let Some(progress) = &progress {
+                        progress
+                            .complete_work(work_id, SyncStageKey::ProviderRefresh)
+                            .await;
+                    }
                 }
                 Err(err) => {
+                    if let Some(progress) = &progress {
+                        progress
+                            .fail_work(
+                                work_id,
+                                SyncStageKey::ProviderRefresh,
+                                details,
+                                err.to_string(),
+                            )
+                            .await;
+                    }
                     tracing::warn!(
                         provider_id,
                         release_db_id = node_id.0,
@@ -416,8 +567,51 @@ async fn refresh_library_metadata_inner(
         );
     }
 
-    if !refreshed_releases.is_empty() {
-        sync_library_covers_after_refresh(library_db_id, options).await?;
+    if release_count > 0 {
+        let work_id = if let Some(progress) = &progress {
+            progress
+                .start_work(
+                    SyncStageKey::ProviderCover,
+                    SyncWorkDetails::new("library_provider_cover_refresh"),
+                )
+                .await
+        } else {
+            0
+        };
+        if refreshed_releases.is_empty() {
+            if let Some(progress) = &progress {
+                progress
+                    .skip_work(
+                        work_id,
+                        SyncStageKey::ProviderCover,
+                        "no_refreshed_releases",
+                    )
+                    .await;
+            }
+        } else {
+            match sync_library_covers_after_refresh(library_db_id, options).await {
+                Ok(_count) => {
+                    if let Some(progress) = &progress {
+                        progress
+                            .complete_work(work_id, SyncStageKey::ProviderCover)
+                            .await;
+                    }
+                }
+                Err(err) => {
+                    if let Some(progress) = &progress {
+                        progress
+                            .fail_work(
+                                work_id,
+                                SyncStageKey::ProviderCover,
+                                SyncWorkDetails::new("library_provider_cover_refresh"),
+                                err.to_string(),
+                            )
+                            .await;
+                    }
+                    return Err(err);
+                }
+            }
+        }
     }
 
     Ok(refreshed_releases.len())
@@ -527,7 +721,7 @@ async fn sync_cover_for_refreshed_entity(
 async fn sync_library_covers_after_refresh(
     library_db_id: DbId,
     options: &LibraryRefreshOptions<'_>,
-) -> Result<(), ProviderServiceError> {
+) -> Result<usize, ProviderServiceError> {
     let (library_root, covers_root) = cover_path_buffers_for_library(Some(library_db_id)).await?;
     let paths = cover_paths(&library_root, &covers_root);
     let cover_options = CoverSyncOptions {
@@ -560,7 +754,7 @@ async fn sync_library_covers_after_refresh(
         artist_count,
         "library cover sync completed after metadata refresh"
     );
-    Ok(())
+    Ok(release_count + artist_count)
 }
 
 async fn enabled_providers() -> anyhow::Result<Vec<ProviderConfig>> {
@@ -655,13 +849,21 @@ async fn dispatch_refresh_callback(
                     return Err(anyhow::anyhow!("plugin runtime is not initialized"));
                 }
             };
-            runtime
-                .dispatch_metadata_refresh(MetadataRefreshRequest {
+            tokio::time::timeout(
+                DEFAULT_METADATA_REFRESH_TIMEOUT,
+                runtime.dispatch_metadata_refresh(MetadataRefreshRequest {
                     handler_id,
                     context,
-                })
-                .await
-                .map(|_| ())
+                }),
+            )
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "metadata refresh handler timed out after {} ms",
+                    DEFAULT_METADATA_REFRESH_TIMEOUT.as_millis()
+                )
+            })?
+            .map(|_| ())
         },
     )
     .await
@@ -681,12 +883,20 @@ async fn dispatch_sync_filter_callback(
                 .plugin_runtime
                 .get()
                 .context("plugin runtime is not initialized")?;
-            let result = runtime
-                .dispatch_metadata_refresh(MetadataRefreshRequest {
+            let result = tokio::time::timeout(
+                DEFAULT_METADATA_REFRESH_TIMEOUT,
+                runtime.dispatch_metadata_refresh(MetadataRefreshRequest {
                     handler_id,
                     context,
-                })
-                .await?;
+                }),
+            )
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "sync filter handler timed out after {} ms",
+                    DEFAULT_METADATA_REFRESH_TIMEOUT.as_millis()
+                )
+            })??;
             Ok(result
                 .values
                 .first()

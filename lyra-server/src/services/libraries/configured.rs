@@ -15,7 +15,6 @@ use crate::{
 };
 
 use super::{
-    StartLibrarySyncResult,
     start_library_sync,
     sync_library,
 };
@@ -125,22 +124,13 @@ async fn sync_configured_library(
         return Ok(());
     }
 
-    match start_library_sync(db, library.clone()).await? {
-        StartLibrarySyncResult::Started { run_id } => {
-            tracing::info!(
-                library_id = library_db_id.0,
-                run_id,
-                "started background library sync"
-            );
-        }
-        StartLibrarySyncResult::AlreadyRunning { run_id } => {
-            tracing::info!(
-                library_id = library_db_id.0,
-                run_id,
-                "library sync already running"
-            );
-        }
-    }
+    let response = start_library_sync(db, library.clone()).await?;
+    tracing::info!(
+        library_id = library_db_id.0,
+        run_id = response.run.run.id.as_deref().unwrap_or(""),
+        started = response.started,
+        "background library sync requested"
+    );
 
     Ok(())
 }

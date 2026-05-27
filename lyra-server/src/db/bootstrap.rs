@@ -64,6 +64,7 @@ pub(crate) const ROOT_COLLECTION_ALIASES: &[&str] = &[
     "user_settings",
     "server",
     "roles",
+    "sync_runs",
 ];
 
 const CORE_INDEXES: &[&str] = &[

@@ -27,6 +27,7 @@ mod search;
 mod serve;
 mod server;
 mod sorting;
+mod sync;
 mod tags;
 mod tracks;
 mod users;
@@ -84,6 +85,7 @@ pub(crate) use serve::{
     serve_hls_playlist_for_track,
     stream_track_response,
 };
+pub use sync::sync_routes;
 
 pub use serve::{
     download_routes,
