@@ -1,0 +1,54 @@
+{
+  "test_name": "tvアニメ推しの子キャラクターソングcd_vol3_有馬かなcv潘めぐみ",
+  "scenario_id": "e1d2cf6a5717dd73",
+  "responses": [
+    {
+      "cache_key": "146f1bd775f8156f",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=c8f6ec2c-e823-4f47-998e-2c2efbc48d84&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "8f0752bf6d43ad78"
+    },
+    {
+      "cache_key": "388c791c31372ad2",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E3%81%B4%E3%81%88%E3%83%A8%E3%83%B3(CV%3A%E6%9D%91%E7%94%B0%E5%A4%AA%E5%BF%97)",
+      "status_code": 200,
+      "body_hash": "58defadc3f9930bc"
+    },
+    {
+      "cache_key": "3eab91a953d382de",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ATV%E3%82%A2%E3%83%8B%E3%83%A1%E3%80%8C%E3%80%90%E6%8E%A8%E3%81%97%E3%81%AE%E5%AD%90%E3%80%91%E3%80%8D%E3%82%AD%E3%83%A3%E3%83%A9%E3%82%AF%E3%82%BF%E3%83%BC%E3%82%BD%E3%83%B3%E3%82%B0CD%20Vol.3&limit=100",
+      "status_code": 200,
+      "body_hash": "ebc1bfcdb883a9f5"
+    },
+    {
+      "cache_key": "7c364f8bb98cdd0a",
+      "url": "https://musicbrainz.org/ws/2/work/01bbca0f-2096-423e-ab7b-bc5fd951d34c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8f01a9936411a06c"
+    },
+    {
+      "cache_key": "8089be17aaaac6a1",
+      "url": "https://musicbrainz.org/ws/2/artist/8bd571ef-baee-4ef6-80d5-a70129ff28a3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "05f4e59e25f985e1"
+    },
+    {
+      "cache_key": "d5d2446321c04c3e",
+      "url": "https://musicbrainz.org/ws/2/work/8e80ffef-cd65-432a-b511-7b80d1b3c29e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a631785de4d07f43"
+    },
+    {
+      "cache_key": "d86a652a3a253409",
+      "url": "https://musicbrainz.org/ws/2/artist/fbadebba-dcfe-4497-a645-ab085b2e5cbb?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "597dace42fbd0f77"
+    },
+    {
+      "cache_key": "fe995443adb9eb1a",
+      "url": "https://musicbrainz.org/ws/2/work/910304ab-8622-4117-87a1-85b0c53f2f10?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "733730010a4d6485"
+    }
+  ]
+}
