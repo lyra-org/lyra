@@ -1,0 +1,163 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "明透 - ray of hope (2025-03-26) [WEB FLAC]/1.10. Aster.flac"
+album = "ray of hope"
+album_artists = ["明透"]
+artists = ["明透"]
+title = "Aster"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 10
+duration_ms = 252152
+
+[[raw_tags]]
+file_path = "明透 - ray of hope (2025-03-26) [WEB FLAC]/1.09. Winter Sparkler.flac"
+album = "ray of hope"
+album_artists = ["明透"]
+artists = ["明透"]
+title = "Winter Sparkler"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 10
+duration_ms = 215140
+
+[[raw_tags]]
+file_path = "明透 - ray of hope (2025-03-26) [WEB FLAC]/1.08. Dazzling.flac"
+album = "ray of hope"
+album_artists = ["明透"]
+artists = ["明透"]
+title = "Dazzling"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 10
+duration_ms = 201874
+
+[[raw_tags]]
+file_path = "明透 - ray of hope (2025-03-26) [WEB FLAC]/1.07. Shiny.flac"
+album = "ray of hope"
+album_artists = ["明透"]
+artists = ["明透"]
+title = "Shiny"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 10
+duration_ms = 208244
+
+[[raw_tags]]
+file_path = "明透 - ray of hope (2025-03-26) [WEB FLAC]/1.06. illumina.flac"
+album = "ray of hope"
+album_artists = ["明透"]
+artists = ["明透"]
+title = "illumina"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 10
+duration_ms = 172576
+
+[[raw_tags]]
+file_path = "明透 - ray of hope (2025-03-26) [WEB FLAC]/1.05. HEAVEN IS GONE.flac"
+album = "ray of hope"
+album_artists = ["明透"]
+artists = ["明透"]
+title = "HEAVEN IS GONE"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 10
+duration_ms = 176365
+
+[[raw_tags]]
+file_path = "明透 - ray of hope (2025-03-26) [WEB FLAC]/1.04. アンメルト・アンブレラ.flac"
+album = "ray of hope"
+album_artists = ["明透"]
+artists = ["明透"]
+title = "アンメルト・アンブレラ"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 10
+duration_ms = 198285
+
+[[raw_tags]]
+file_path = "明透 - ray of hope (2025-03-26) [WEB FLAC]/1.03. ブルーナイトダーリン.flac"
+album = "ray of hope"
+album_artists = ["明透"]
+artists = ["明透"]
+title = "ブルーナイトダーリン"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 10
+duration_ms = 173808
+
+[[raw_tags]]
+file_path = "明透 - ray of hope (2025-03-26) [WEB FLAC]/1.02. 0g.flac"
+album = "ray of hope"
+album_artists = ["明透"]
+artists = ["明透"]
+title = "0g"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 10
+duration_ms = 226464
+
+[[raw_tags]]
+file_path = "明透 - ray of hope (2025-03-26) [WEB FLAC]/1.01. Spiral.flac"
+album = "ray of hope"
+album_artists = ["明透"]
+artists = ["明透"]
+title = "Spiral"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 10
+duration_ms = 166433
+
+[expect.release]
+ids = { release_group_id = "1ef0ae9d-d6f7-47e0-a61a-2656913d4ecb", release_id = "8a69b168-b330-4e4c-a319-6a6959897306" }
+fields = { release_title = "ray of hope", release_date = "2025-03-26" }
+
+[expect.artists."800fb09b-f395-4e26-96b8-3a10e228e8f5"]
+fields = { artist_name = "明透", sort_name = "asu" }
+
+[expect.tracks."053fc2bf-141b-476f-b7fe-a38e770249d9"]
+fields = { disc = 1, track = 6, track_title = "illumina" }
+
+[expect.tracks."43a4992a-9236-41c6-9bc7-c3384ce0fed7"]
+fields = { disc = 1, track = 1, track_title = "Spiral" }
+
+[expect.tracks."5257e160-c6bb-4ac9-9292-662396b0baea"]
+fields = { disc = 1, track = 2, track_title = "0g" }
+
+[expect.tracks."547f6784-d216-4f58-b2a8-26758a267a8b"]
+fields = { disc = 1, track = 7, track_title = "Shiny" }
+
+[expect.tracks."5cabee91-0b08-400b-b2d0-05608995c335"]
+fields = { disc = 1, track = 9, track_title = "Winter Sparkler" }
+
+[expect.tracks."60ac6f77-fccc-4555-b8a9-357d2073e099"]
+fields = { disc = 1, track = 8, track_title = "Dazzling" }
+
+[expect.tracks."7720217e-5f97-4488-843e-a1e41181d1d9"]
+fields = { disc = 1, track = 4, track_title = "アンメルト・アンブレラ" }
+
+[expect.tracks."a2eaf0cc-4578-4899-b37e-2f6a5f5769a5"]
+fields = { disc = 1, track = 3, track_title = "ブルーナイトダーリン" }
+
+[expect.tracks."d1cfab75-1a97-43b0-b1ec-fd651ef34991"]
+fields = { disc = 1, track = 5, track_title = "HEAVEN IS GONE" }
+
+[expect.tracks."efc75ca2-dd79-4592-afdd-68bc18f741cb"]
+fields = { disc = 1, track = 10, track_title = "Aster" }
