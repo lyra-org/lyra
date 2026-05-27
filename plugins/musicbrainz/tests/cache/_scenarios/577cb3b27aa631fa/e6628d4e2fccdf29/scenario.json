@@ -1,0 +1,36 @@
+{
+  "test_name": "same_blue_official髭男dism",
+  "scenario_id": "e6628d4e2fccdf29",
+  "responses": [
+    {
+      "cache_key": "42fb93d0e88dd193",
+      "url": "https://musicbrainz.org/ws/2/work/2f5d4ef2-4dd7-4476-877c-90127c99c98a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7fc4c6cf4b993a8f"
+    },
+    {
+      "cache_key": "ac202f410fb14406",
+      "url": "https://musicbrainz.org/ws/2/artist/6dddd7a2-5583-49d0-a8b2-9ee46d04f27e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "68ce475a09f85ad6"
+    },
+    {
+      "cache_key": "c472da11da57541c",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=501f441c-0e2f-4ba1-8c56-cc5ec8b85d78&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "813ca1cd69f50dc1"
+    },
+    {
+      "cache_key": "d04f53dc9263d370",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A6dddd7a2-5583-49d0-a8b2-9ee46d04f27e%20AND%20(release%3ASame%20Blue%20OR%20recording%3ASame%20Blue)&limit=100",
+      "status_code": 200,
+      "body_hash": "d146b3c8262953c7"
+    },
+    {
+      "cache_key": "e632cd6797fe55ad",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Official%E9%AB%AD%E7%94%B7dism",
+      "status_code": 200,
+      "body_hash": "89d702e5027d7e17"
+    }
+  ]
+}
