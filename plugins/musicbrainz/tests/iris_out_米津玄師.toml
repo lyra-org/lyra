@@ -1,0 +1,28 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "米津玄師 - IRIS OUT (2025-09-15) [WEB FLAC]/1.01. IRIS OUT.flac"
+album = "IRIS OUT"
+album_artists = ["米津玄師"]
+artists = ["米津玄師"]
+title = "IRIS OUT"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 151573
+
+[expect.release]
+ids = { release_group_id = "36aa4a46-5ce3-453b-8306-7c33062a95ea", release_id = "0b5cd086-3bed-4e4d-bc9f-5199994f3b28" }
+fields = { release_title = "IRIS OUT", release_date = "2025-09-15" }
+
+[expect.artists."09d4a85c-4916-4b4e-bc96-c4cfcf371046"]
+fields = { artist_name = "米津玄師", sort_name = "Yonezu, Kenshi" }
+
+[expect.tracks."83dbaf01-8a59-47c8-971c-e0b07cd12c95"]
+fields = { disc = 1, track = 1, track_title = "IRIS OUT", work_id = "a814dbc6-cf26-4116-ac14-8635d997825b" }
