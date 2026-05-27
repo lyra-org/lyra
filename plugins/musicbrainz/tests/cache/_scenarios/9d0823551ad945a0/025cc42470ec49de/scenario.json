@@ -1,0 +1,36 @@
+{
+  "test_name": "dear_honeycomebear",
+  "scenario_id": "025cc42470ec49de",
+  "responses": [
+    {
+      "cache_key": "165b8d550f2c2b1d",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A85b9d988-53ca-466d-b2d4-a57eb97bc514%20AND%20(release%3ADear%20OR%20recording%3ADear)&limit=100",
+      "status_code": 200,
+      "body_hash": "ef195e945be4c93b"
+    },
+    {
+      "cache_key": "28523938b452f13b",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=2fb8466e-4486-4c70-8e69-0f219525dc04&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "4da84829159d29dd"
+    },
+    {
+      "cache_key": "a02f01cf95df07d7",
+      "url": "https://musicbrainz.org/ws/2/artist?query=HoneyComeBear",
+      "status_code": 200,
+      "body_hash": "2961797e4d742ef6"
+    },
+    {
+      "cache_key": "b7aeebc93de3956f",
+      "url": "https://musicbrainz.org/ws/2/work/03d9acbb-fec1-4e1d-bb69-4fd50a5e7759?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "059c4cc368c15d4a"
+    },
+    {
+      "cache_key": "dc1bb1d99c928239",
+      "url": "https://musicbrainz.org/ws/2/artist/85b9d988-53ca-466d-b2d4-a57eb97bc514?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "86f7d4fc2711b2d4"
+    }
+  ]
+}

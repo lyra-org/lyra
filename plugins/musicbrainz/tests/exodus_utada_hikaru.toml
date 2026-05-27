@@ -1,0 +1,135 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "Utada Hikaru - 2004 - Exodus/14 - About Me.flac"
+album = "Exodus"
+artists = ["Utada Hikaru"]
+title = "About Me"
+genre = "Pop"
+track = 14
+duration_ms = 240653
+
+[[raw_tags]]
+file_path = "Utada Hikaru - 2004 - Exodus/13 - Let Me Give You My Love.flac"
+album = "Exodus"
+artists = ["Utada Hikaru"]
+title = "Let Me Give You My Love"
+genre = "Pop"
+track = 13
+duration_ms = 217573
+
+[[raw_tags]]
+file_path = "Utada Hikaru - 2004 - Exodus/12 - Wonder 'Bout.flac"
+album = "Exodus"
+artists = ["Utada Hikaru"]
+title = "Wonder 'Bout"
+genre = "Pop"
+track = 12
+duration_ms = 227840
+
+[[raw_tags]]
+file_path = "Utada Hikaru - 2004 - Exodus/11 - You Make Me Want To Be A Man.flac"
+album = "Exodus"
+artists = ["Utada Hikaru"]
+title = "You Make Me Want To Be A Man"
+genre = "Pop"
+track = 11
+duration_ms = 277466
+
+[[raw_tags]]
+file_path = "Utada Hikaru - 2004 - Exodus/10 - Kremlin Dusk.flac"
+album = "Exodus"
+artists = ["Utada Hikaru"]
+title = "Kremlin Dusk"
+genre = "Pop"
+track = 10
+duration_ms = 313866
+
+[[raw_tags]]
+file_path = "Utada Hikaru - 2004 - Exodus/09 - Crossover Interlude.flac"
+album = "Exodus"
+artists = ["Utada Hikaru"]
+title = "Crossover Interlude"
+genre = "Pop"
+track = 9
+duration_ms = 77546
+
+[[raw_tags]]
+file_path = "Utada Hikaru - 2004 - Exodus/08 - Animato.flac"
+album = "Exodus"
+artists = ["Utada Hikaru"]
+title = "Animato"
+genre = "Pop"
+track = 8
+duration_ms = 271826
+
+[[raw_tags]]
+file_path = "Utada Hikaru - 2004 - Exodus/07 - Hotel Lobby.flac"
+album = "Exodus"
+artists = ["Utada Hikaru"]
+title = "Hotel Lobby"
+genre = "Pop"
+track = 7
+duration_ms = 270933
+
+[[raw_tags]]
+file_path = "Utada Hikaru - 2004 - Exodus/06 - Tippy Toe.flac"
+album = "Exodus"
+artists = ["Utada Hikaru"]
+title = "Tippy Toe"
+genre = "Pop"
+track = 6
+duration_ms = 254600
+
+[[raw_tags]]
+file_path = "Utada Hikaru - 2004 - Exodus/05 - Easy Breezy.flac"
+album = "Exodus"
+artists = ["Utada Hikaru"]
+title = "Easy Breezy"
+genre = "Pop"
+track = 5
+duration_ms = 243200
+
+[[raw_tags]]
+file_path = "Utada Hikaru - 2004 - Exodus/04 - The Workout.flac"
+album = "Exodus"
+artists = ["Utada Hikaru"]
+title = "The Workout"
+genre = "Pop"
+track = 4
+duration_ms = 240680
+
+[[raw_tags]]
+file_path = "Utada Hikaru - 2004 - Exodus/03 - Exodus '04.flac"
+album = "Exodus"
+artists = ["Utada Hikaru"]
+title = "Exodus '04"
+genre = "Pop"
+track = 3
+duration_ms = 272000
+
+[[raw_tags]]
+file_path = "Utada Hikaru - 2004 - Exodus/02 - Devil Inside.flac"
+album = "Exodus"
+artists = ["Utada Hikaru"]
+title = "Devil Inside"
+genre = "Pop"
+track = 2
+duration_ms = 238800
+
+[[raw_tags]]
+file_path = "Utada Hikaru - 2004 - Exodus/01 - Opening.flac"
+album = "Exodus"
+artists = ["Utada Hikaru"]
+title = "Opening"
+genre = "Pop"
+track = 1
+duration_ms = 110733
+
+[expect.release]
+ids = { release_id = "4132dcb6-2d33-4bf3-bae7-ed5734d57fc8" }
