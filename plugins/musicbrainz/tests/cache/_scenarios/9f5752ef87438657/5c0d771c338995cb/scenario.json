@@ -1,0 +1,30 @@
+{
+  "test_name": "まちがいさがし_ep_9624_菅田将暉",
+  "scenario_id": "5c0d771c338995cb",
+  "responses": [
+    {
+      "cache_key": "58e1efe7c8730a35",
+      "url": "https://musicbrainz.org/ws/2/artist?query=%E8%8F%85%E7%94%B0%E5%B0%86%E6%9A%89",
+      "status_code": 200,
+      "body_hash": "8b0ee49b57438db1"
+    },
+    {
+      "cache_key": "59365b2d4468a28f",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=bac9d963-69ec-42a8-a2bd-37b034214a2e&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "c40c5aa1fd738d0a"
+    },
+    {
+      "cache_key": "890732bf8c6e58f8",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%81%BE%E3%81%A1%E3%81%8C%E3%81%84%E3%81%95%E3%81%8C%E3%81%97&limit=100",
+      "status_code": 200,
+      "body_hash": "05867b53f72bb1c6"
+    },
+    {
+      "cache_key": "dee0dae9ad8416ad",
+      "url": "https://musicbrainz.org/ws/2/work/d98dd7a2-6b7f-4889-98a1-333c2e85f3ec?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ded526dbb60a2932"
+    }
+  ]
+}
