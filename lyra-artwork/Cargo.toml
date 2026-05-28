@@ -1,0 +1,12 @@
+[package]
+name = "lyra-artwork"
+version = "0.0.1"
+edition = "2024"
+license-file = "../LICENSE"
+
+[dependencies]
+anyhow = { workspace = true }
+blake3 = { workspace = true }
+blurhash = "0.2.3"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+palette = { version = "0.7.6", default-features = false, features = ["std"] }
