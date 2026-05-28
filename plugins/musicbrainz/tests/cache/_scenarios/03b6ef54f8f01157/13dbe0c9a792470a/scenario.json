@@ -1,0 +1,36 @@
+{
+  "test_name": "ファタール_gemn",
+  "scenario_id": "13dbe0c9a792470a",
+  "responses": [
+    {
+      "cache_key": "6841f8670a51410b",
+      "url": "https://musicbrainz.org/ws/2/work/fca28af1-235b-4b74-adbd-8e6533a434ee?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "64385bd89e62132b"
+    },
+    {
+      "cache_key": "76b579dde68b984c",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%83%95%E3%82%A1%E3%82%BF%E3%83%BC%E3%83%AB&limit=100",
+      "status_code": 200,
+      "body_hash": "46fbba0f2e3341d1"
+    },
+    {
+      "cache_key": "9cb44d0136e49403",
+      "url": "https://musicbrainz.org/ws/2/artist?query=GEMN",
+      "status_code": 200,
+      "body_hash": "6dcd2300edfce9c2"
+    },
+    {
+      "cache_key": "9faf868a75199f01",
+      "url": "https://musicbrainz.org/ws/2/artist/b87e5312-c743-4d1c-a59d-a14274f20206?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a47b294b4a91d3b5"
+    },
+    {
+      "cache_key": "aab986c49e058a9c",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=df2820a9-8c96-4876-b6f4-e35ad931de40&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "15d511aa0c109cf0"
+    }
+  ]
+}
