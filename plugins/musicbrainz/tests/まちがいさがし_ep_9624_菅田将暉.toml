@@ -1,0 +1,30 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "菅田将暉 - まちがいさがし (2019 EP Mora) [96_24]/01 まちがいさがし.flac"
+album = "まちがいさがし (EP) [96/24]"
+album_artists = ["菅田将暉"]
+artists = ["菅田将暉"]
+title = "まちがいさがし"
+copyright = "(P)2019 Epic Records Japan"
+genre = "J-Pop"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 221146
+
+[expect.release]
+ids = { release_group_id = "bac9d963-69ec-42a8-a2bd-37b034214a2e", release_id = "e46adf43-3a11-4aed-9111-d7aedd2879d3" }
+fields = { release_title = "まちがいさがし", release_date = "2019-05-14" }
+
+[expect.artists."264955bb-3412-4ab5-9ba5-4423a28b3641"]
+fields = { artist_name = "菅田将暉", sort_name = "Suda, Masaki" }
+
+[expect.tracks."ff10dec9-8c72-4442-9fb4-09aaa59a616a"]
+fields = { disc = 1, track = 1, track_title = "まちがいさがし" }
