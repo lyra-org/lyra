@@ -1,0 +1,36 @@
+{
+  "test_name": "想い槍_feat_sanghee_miminari",
+  "scenario_id": "ae9d58b1f401c193",
+  "responses": [
+    {
+      "cache_key": "6093477c6c39a4b2",
+      "url": "https://musicbrainz.org/ws/2/artist/04490e5c-f43e-43f5-9963-4a3a4701ad80?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d7128d21519511c5"
+    },
+    {
+      "cache_key": "6d78b088aabcb8c2",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E6%83%B3%E3%81%84%E6%A7%8D%20%5C(feat.%20Sanghee%5C)&limit=100",
+      "status_code": 200,
+      "body_hash": "943d6b834ecc7613"
+    },
+    {
+      "cache_key": "78c2e520dfca339d",
+      "url": "https://musicbrainz.org/ws/2/artist?query=MIMiNARI",
+      "status_code": 200,
+      "body_hash": "562cf20e508acfca"
+    },
+    {
+      "cache_key": "d6c9f5793c23c1ec",
+      "url": "https://musicbrainz.org/ws/2/work/5e4bc07a-0973-48a0-a321-fe7b43674baf?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "47732cceb06ad14b"
+    },
+    {
+      "cache_key": "e071307a9efd4a4e",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=ba95b505-ab02-4606-9f96-65dfd4873038&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "db771400ce65b3c0"
+    }
+  ]
+}
