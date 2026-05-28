@@ -1,0 +1,178 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "稲葉曇 - ウェザーステーション [CD-FLAC]/稲葉曇 - ウェザーステーション/11. 稲葉曇 - きみに回帰線.flac"
+album = "ウェザーステーション"
+album_artists = ["稲葉曇"]
+artists = ["稲葉曇"]
+title = "きみに回帰線"
+disc = 1
+disc_total = 1
+track = 11
+track_total = 11
+duration_ms = 212480
+
+[[raw_tags]]
+file_path = "稲葉曇 - ウェザーステーション [CD-FLAC]/稲葉曇 - ウェザーステーション/10. 稲葉曇 - ポストシェルター.flac"
+album = "ウェザーステーション"
+album_artists = ["稲葉曇"]
+artists = ["稲葉曇"]
+title = "ポストシェルター"
+disc = 1
+disc_total = 1
+track = 10
+track_total = 11
+duration_ms = 203080
+
+[[raw_tags]]
+file_path = "稲葉曇 - ウェザーステーション [CD-FLAC]/稲葉曇 - ウェザーステーション/09. 稲葉曇 - 天泣.flac"
+album = "ウェザーステーション"
+album_artists = ["稲葉曇"]
+artists = ["稲葉曇"]
+title = "天泣"
+disc = 1
+disc_total = 1
+track = 9
+track_total = 11
+duration_ms = 207840
+
+[[raw_tags]]
+file_path = "稲葉曇 - ウェザーステーション [CD-FLAC]/稲葉曇 - ウェザーステーション/08. 稲葉曇 - かたむすび.flac"
+album = "ウェザーステーション"
+album_artists = ["稲葉曇"]
+artists = ["稲葉曇"]
+title = "かたむすび"
+disc = 1
+disc_total = 1
+track = 8
+track_total = 11
+duration_ms = 219373
+
+[[raw_tags]]
+file_path = "稲葉曇 - ウェザーステーション [CD-FLAC]/稲葉曇 - ウェザーステーション/07. 稲葉曇 - レーダー.flac"
+album = "ウェザーステーション"
+album_artists = ["稲葉曇"]
+artists = ["稲葉曇"]
+title = "レーダー"
+disc = 1
+disc_total = 1
+track = 7
+track_total = 11
+duration_ms = 192280
+
+[[raw_tags]]
+file_path = "稲葉曇 - ウェザーステーション [CD-FLAC]/稲葉曇 - ウェザーステーション/06. 稲葉曇 - カゼマチグサ (album ver.).flac"
+album = "ウェザーステーション"
+album_artists = ["稲葉曇"]
+artists = ["稲葉曇"]
+title = "カゼマチグサ (album ver.)"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 11
+duration_ms = 211013
+
+[[raw_tags]]
+file_path = "稲葉曇 - ウェザーステーション [CD-FLAC]/稲葉曇 - ウェザーステーション/05. 稲葉曇 - ハルノ寂寞.flac"
+album = "ウェザーステーション"
+album_artists = ["稲葉曇"]
+artists = ["稲葉曇"]
+title = "ハルノ寂寞"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 11
+duration_ms = 188333
+
+[[raw_tags]]
+file_path = "稲葉曇 - ウェザーステーション [CD-FLAC]/稲葉曇 - ウェザーステーション/04. 稲葉曇 - ラグトレイン.flac"
+album = "ウェザーステーション"
+album_artists = ["稲葉曇"]
+artists = ["稲葉曇"]
+title = "ラグトレイン"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 11
+duration_ms = 252680
+
+[[raw_tags]]
+file_path = "稲葉曇 - ウェザーステーション [CD-FLAC]/稲葉曇 - ウェザーステーション/03. 稲葉曇 - レイニーブーツ.flac"
+album = "ウェザーステーション"
+album_artists = ["稲葉曇"]
+artists = ["稲葉曇"]
+title = "レイニーブーツ"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 11
+duration_ms = 194946
+
+[[raw_tags]]
+file_path = "稲葉曇 - ウェザーステーション [CD-FLAC]/稲葉曇 - ウェザーステーション/02. 稲葉曇 - ハローマリーナ.flac"
+album = "ウェザーステーション"
+album_artists = ["稲葉曇"]
+artists = ["稲葉曇"]
+title = "ハローマリーナ"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 11
+duration_ms = 202386
+
+[[raw_tags]]
+file_path = "稲葉曇 - ウェザーステーション [CD-FLAC]/稲葉曇 - ウェザーステーション/01. 稲葉曇 - ひみつの小学生.flac"
+album = "ウェザーステーション"
+album_artists = ["稲葉曇"]
+artists = ["稲葉曇"]
+title = "ひみつの小学生"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 11
+duration_ms = 203613
+
+[expect.release]
+ids = { release_group_id = "16a3a5f3-5108-442e-9454-990367f5a490", release_id = ["1d133f7d-62f3-463b-a631-34d332c29a11", "0003a1ef-d574-4b04-a4cf-f37b7212d47c"] }
+fields = { release_title = "ウェザーステーション", release_date = "2022-03-23" }
+
+[expect.artists."46196b9c-affa-4616-b53b-e967c8bd70e0"]
+fields = { artist_name = "稲葉曇", sort_name = "inabakumori" }
+
+[expect.tracks."5ac0eb9a-09dd-406c-a993-b03fb9307faa"]
+fields = { disc = 1, track = 3, track_title = "レイニーブーツ" }
+
+[expect.tracks."a1f20b57-6735-4b02-a526-a6cb773b184f"]
+fields = { disc = 1, track = 4, track_title = "ラグトレイン" }
+
+[expect.tracks."b678864f-9798-4fab-aa0c-62ab1b0d3a37"]
+fields = { disc = 1, track = 7, track_title = "レーダー" }
+
+[expect.tracks."bd023b9c-9f1c-41a9-a597-f3f6aba33b33"]
+fields = { disc = 1, track = 8, track_title = "かたむすび" }
+
+[expect.tracks."bfed4043-1413-4cfc-bfaf-4b822da4dcef"]
+fields = { disc = 1, track = 10, track_title = "ポストシェルター" }
+
+[expect.tracks."c427a3b3-b7e3-462f-b961-dde2c6ee14fc"]
+fields = { disc = 1, track = 11, track_title = "きみに回帰線" }
+
+[expect.tracks."d73fe5e5-1a3b-4670-b913-56d47eb44eee"]
+fields = { disc = 1, track = 2, track_title = "ハローマリーナ" }
+
+[expect.tracks."e3add675-6f54-4650-b7c6-7c840c4fb661"]
+fields = { disc = 1, track = 6, track_title = "カゼマチグサ (album ver.)" }
+
+[expect.tracks."e6a04322-4cc7-46c7-a042-1c2b6d4668de"]
+fields = { disc = 1, track = 9, track_title = "天泣" }
+
+[expect.tracks."eee90021-e972-4234-9eef-f9c4de665d79"]
+fields = { disc = 1, track = 1, track_title = "ひみつの小学生" }
+
+[expect.tracks."fb9c7d1d-2136-43f3-8879-96bb46deb9ab"]
+fields = { disc = 1, track = 5, track_title = "ハルノ寂寞" }
