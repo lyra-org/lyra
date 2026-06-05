@@ -43,10 +43,15 @@ use crate::{
     },
     routes::{
         AppError,
+        covers as route_covers,
         deserialize_inc,
         parse_inc_values,
+        responses::CoverResponse,
     },
-    services::auth::require_authenticated,
+    services::{
+        auth::require_authenticated,
+        covers as cover_services,
+    },
 };
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -58,6 +63,8 @@ struct GenreResponse {
     parents: Option<Vec<GenreSummary>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     children: Option<Vec<GenreSummary>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cover: Option<Option<CoverResponse>>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -70,6 +77,12 @@ struct GenreSummary {
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
 struct GenreListQuery {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Comma-separated or repeated values: covers.")
+    )]
+    #[serde(default, deserialize_with = "deserialize_inc")]
+    inc: Option<Vec<String>>,
     #[cfg_attr(
         feature = "docgen",
         schemars(description = "Optional public library ID to scope returned genres.")
@@ -104,18 +117,21 @@ struct GenreQuery {
 struct GenreInc {
     parents: bool,
     children: bool,
+    covers: bool,
 }
 
 fn parse_genre_inc(inc: Option<Vec<String>>) -> Result<GenreInc, AppError> {
-    let values = parse_inc_values(inc, &["parents", "children"])?;
+    let values = parse_inc_values(inc, &["parents", "children", "covers"])?;
     let mut result = GenreInc {
         parents: false,
         children: false,
+        covers: false,
     };
     for value in values {
         match value.as_str() {
             "parents" => result.parents = true,
             "children" => result.children = true,
+            "covers" => result.covers = true,
             _ => {}
         }
     }
@@ -135,6 +151,7 @@ fn genre_to_response(genre: genres::Genre) -> GenreResponse {
         name: genre.name,
         parents: None,
         children: None,
+        cover: None,
     }
 }
 
@@ -409,6 +426,7 @@ async fn list_genres(
     Query(query): Query<GenreListQuery>,
 ) -> Result<Json<Vec<GenreResponse>>, AppError> {
     let principal = require_authenticated(&headers).await?;
+    let inc = parse_genre_inc(query.inc)?;
 
     let db = &*STATE.db.read().await;
     let library_scope =
@@ -422,8 +440,33 @@ async fn list_genres(
         None => release_ids_for_accessible_libraries(db, &principal.accessible_library_ids)?,
     };
     let all_genres = query_genre_route_items(db, &release_ids, &sort, principal.user_db_id)?;
+    let visible_release_ids = release_ids.iter().copied().collect::<HashSet<_>>();
+    let covers = if inc.covers {
+        Some(cover_services::display::genres::covers_for_genres(
+            db,
+            &all_genres,
+            &principal.user_public_id,
+            Some(&visible_release_ids),
+        )?)
+    } else {
+        None
+    };
 
-    let responses: Vec<GenreResponse> = all_genres.into_iter().map(genre_to_response).collect();
+    let responses: Vec<GenreResponse> = all_genres
+        .into_iter()
+        .map(|genre| {
+            let genre_db_id = genre.db_id.clone().map(DbId::from);
+            let mut response = genre_to_response(genre);
+            if inc.covers {
+                response.cover = Some(
+                    genre_db_id
+                        .and_then(|genre_db_id| covers.as_ref()?.get(&genre_db_id).cloned())
+                        .map(route_covers::cover_to_response),
+                );
+            }
+            response
+        })
+        .collect();
 
     Ok(Json(responses))
 }
@@ -433,7 +476,7 @@ async fn get_genre(
     Path(id): Path<String>,
     axum::extract::Query(query): axum::extract::Query<GenreQuery>,
 ) -> Result<Json<GenreResponse>, AppError> {
-    let _principal = require_authenticated(&headers).await?;
+    let principal = require_authenticated(&headers).await?;
     let inc = parse_genre_inc(query.inc)?;
 
     let db = &*STATE.db.read().await;
@@ -463,26 +506,44 @@ async fn get_genre(
     } else {
         None
     };
+    let cover = if inc.covers {
+        let visible_release_ids =
+            release_ids_for_accessible_libraries(db, &principal.accessible_library_ids)?
+                .into_iter()
+                .collect::<HashSet<_>>();
+        Some(
+            cover_services::display::genres::cover_for_genre(
+                db,
+                &genre,
+                &principal.user_public_id,
+                Some(&visible_release_ids),
+            )?
+            .map(route_covers::cover_to_response),
+        )
+    } else {
+        None
+    };
 
     Ok(Json(GenreResponse {
         id: genre.id,
         name: genre.name,
         parents,
         children,
+        cover,
     }))
 }
 
 #[cfg(feature = "docgen")]
 fn list_genres_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List genres").description(
-        "Returns genres attached to releases visible to the authenticated user. `library_id` scopes results to releases belonging to that public library ID. `sort_by` supports `name`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`.",
+        "Returns genres attached to releases visible to the authenticated user. `library_id` scopes results to releases belonging to that public library ID. `inc=covers` includes personalized display cover metadata. `sort_by` supports `name`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`.",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn get_genre_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get genre by ID")
-        .description("Returns a single genre. Use `inc=parents,children` to include hierarchy.")
+        .description("Returns a single genre. Use `inc=parents,children,covers` to include hierarchy and personalized display cover metadata.")
 }
 
 pub fn genre_routes() -> Router {
@@ -498,6 +559,7 @@ mod tests {
         HeaderMap,
         header::AUTHORIZATION,
     };
+    use nanoid::nanoid;
 
     use crate::{
         db::test_db::{
@@ -550,6 +612,59 @@ mod tests {
         Ok(headers)
     }
 
+    fn insert_cover_for_release(
+        db: &mut DbAny,
+        release_db_id: DbId,
+        cover_id: &str,
+    ) -> anyhow::Result<db::Cover> {
+        db::covers::upsert(
+            db,
+            release_db_id,
+            db::Cover {
+                db_id: None,
+                id: cover_id.to_string(),
+                path: format!("/music/{cover_id}.jpg"),
+                mime_type: "image/jpeg".to_string(),
+                hash: "a".repeat(64),
+                blurhash: None,
+            },
+        )
+    }
+
+    fn record_listen(
+        db: &mut DbAny,
+        user_db_id: DbId,
+        track_db_id: DbId,
+        listened_at_ms: u64,
+    ) -> anyhow::Result<()> {
+        let track = db::tracks::get_by_id(db, track_db_id)?
+            .ok_or_else(|| anyhow::anyhow!("track missing"))?;
+        let listen = db::Listen {
+            db_id: None,
+            id: nanoid!(),
+            track_public_id: track.id,
+            position_ms: 0,
+            duration_ms: Some(180_000),
+            activity_ms: 180_000,
+            state: db::PlaybackState::Completed,
+            listened_at_ms,
+            created_at_ms: listened_at_ms,
+        };
+        let session = db::PlaybackSession {
+            db_id: None,
+            id: nanoid!(),
+            position_ms: 0,
+            duration_ms: Some(180_000),
+            activity_ms: Some(180_000),
+            last_position_ms: None,
+            state: db::PlaybackState::Completed,
+            listen_recorded: Some(true),
+            updated_at_ms: listened_at_ms,
+            created_at_ms: listened_at_ms,
+        };
+        db::listens::create_and_mark_recorded(db, &listen, track_db_id, user_db_id, &session)
+    }
+
     #[test]
     fn parse_genre_sort_specs_accepts_supported_values() -> anyhow::Result<()> {
         let specs = parse_genre_sort_specs(
@@ -574,6 +689,17 @@ mod tests {
                 .iter()
                 .all(|spec| matches!(spec.direction, SortDirection::Descending))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn parse_genre_inc_accepts_covers() -> anyhow::Result<()> {
+        let inc = parse_genre_inc(Some(vec!["parents,covers".to_string()]))
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        assert!(inc.parents);
+        assert!(inc.covers);
+        assert!(!inc.children);
         Ok(())
     }
 
@@ -633,6 +759,7 @@ mod tests {
         let Json(genres) = list_genres(
             headers,
             Query(GenreListQuery {
+                inc: None,
                 library_id: Some(visible_library_id),
                 sort_by: None,
                 sort_order: None,
@@ -681,6 +808,7 @@ mod tests {
         let Json(genres) = list_genres(
             headers,
             Query(GenreListQuery {
+                inc: None,
                 library_id: None,
                 sort_by: None,
                 sort_order: None,
@@ -691,6 +819,232 @@ mod tests {
 
         assert_eq!(genres.len(), 1);
         assert_eq!(genres[0].name, "Rock");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_genres_includes_random_cover_when_listens_are_weak() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let (user_db_id, cover_id) = {
+            let mut db = STATE.db.write().await;
+            let user_db_id =
+                db::users::create(&mut db, &db::test_db::test_user("genre-random-cover")?)?;
+            let library = insert_library(&mut db, "Genre Random", "/tmp/lyra-genre-random")?;
+            let release = insert_test_release(&mut db, "Random Rock")?;
+            connect(&mut db, library, release)?;
+            db::libraries::grant_access(
+                &mut *db,
+                user_db_id,
+                library,
+                db::libraries::AccessKind::ReadWrite,
+            )?;
+            db::genres::sync_release_genres(&mut *db, release, &["Rock".to_string()])?;
+            let cover_id = insert_cover_for_release(&mut db, release, "genre-random-cover")?.id;
+            (user_db_id, cover_id)
+        };
+        let headers = create_headers_for_user(user_db_id).await?;
+
+        let Json(genres) = list_genres(
+            headers,
+            Query(GenreListQuery {
+                inc: Some(vec!["covers".to_string()]),
+                library_id: None,
+                sort_by: None,
+                sort_order: None,
+            }),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        assert_eq!(genres.len(), 1);
+        let cover = genres[0]
+            .cover
+            .as_ref()
+            .and_then(|cover| cover.as_ref())
+            .ok_or_else(|| anyhow::anyhow!("expected random cover"))?;
+        assert_eq!(cover.id, cover_id);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_genres_prefers_personal_cover_when_user_signal_is_enough() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let (user_db_id, expected_cover_id) = {
+            let mut db = STATE.db.write().await;
+            let user_db_id =
+                db::users::create(&mut db, &db::test_db::test_user("genre-personal-cover")?)?;
+            let library = insert_library(&mut db, "Genre Personal", "/tmp/lyra-genre-personal")?;
+            let release_a = insert_test_release(&mut db, "Personal A")?;
+            let release_b = insert_test_release(&mut db, "Personal B")?;
+            let track_a = insert_track(&mut db, "Personal A Track")?;
+            let track_b = insert_track(&mut db, "Personal B Track")?;
+            connect(&mut db, library, release_a)?;
+            connect(&mut db, library, release_b)?;
+            connect(&mut db, release_a, track_a)?;
+            connect(&mut db, release_b, track_b)?;
+            db::libraries::grant_access(
+                &mut *db,
+                user_db_id,
+                library,
+                db::libraries::AccessKind::ReadWrite,
+            )?;
+            db::genres::sync_release_genres(&mut *db, release_a, &["Rock".to_string()])?;
+            db::genres::sync_release_genres(&mut *db, release_b, &["Rock".to_string()])?;
+            insert_cover_for_release(&mut db, release_a, "genre-personal-a")?;
+            let expected_cover_id =
+                insert_cover_for_release(&mut db, release_b, "genre-personal-b")?.id;
+            record_listen(&mut db, user_db_id, track_b, 1_000)?;
+            record_listen(&mut db, user_db_id, track_b, 2_000)?;
+            record_listen(&mut db, user_db_id, track_b, 3_000)?;
+            (user_db_id, expected_cover_id)
+        };
+        let headers = create_headers_for_user(user_db_id).await?;
+
+        let Json(genres) = list_genres(
+            headers,
+            Query(GenreListQuery {
+                inc: Some(vec!["covers".to_string()]),
+                library_id: None,
+                sort_by: None,
+                sort_order: None,
+            }),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        let cover = genres[0]
+            .cover
+            .as_ref()
+            .and_then(|cover| cover.as_ref())
+            .ok_or_else(|| anyhow::anyhow!("expected personal cover"))?;
+        assert_eq!(cover.id, expected_cover_id);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_genres_uses_instance_cover_when_user_signal_is_weak() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let (request_user_db_id, expected_cover_id) = {
+            let mut db = STATE.db.write().await;
+            let request_user_db_id =
+                db::users::create(&mut db, &db::test_db::test_user("genre-instance-request")?)?;
+            let library = insert_library(&mut db, "Genre Instance", "/tmp/lyra-genre-instance")?;
+            let release_a = insert_test_release(&mut db, "Instance A")?;
+            let release_b = insert_test_release(&mut db, "Instance B")?;
+            let track_a = insert_track(&mut db, "Instance A Track")?;
+            let track_b = insert_track(&mut db, "Instance B Track")?;
+            connect(&mut db, library, release_a)?;
+            connect(&mut db, library, release_b)?;
+            connect(&mut db, release_a, track_a)?;
+            connect(&mut db, release_b, track_b)?;
+            db::libraries::grant_access(
+                &mut *db,
+                request_user_db_id,
+                library,
+                db::libraries::AccessKind::ReadWrite,
+            )?;
+            db::genres::sync_release_genres(&mut *db, release_a, &["Rock".to_string()])?;
+            db::genres::sync_release_genres(&mut *db, release_b, &["Rock".to_string()])?;
+            insert_cover_for_release(&mut db, release_a, "genre-instance-a")?;
+            let expected_cover_id =
+                insert_cover_for_release(&mut db, release_b, "genre-instance-b")?.id;
+
+            for user_idx in 0..3 {
+                let user_db_id = db::users::create(
+                    &mut db,
+                    &db::test_db::test_user(&format!("genre-instance-listener-{user_idx}"))?,
+                )?;
+                for listen_idx in 0..4 {
+                    record_listen(
+                        &mut db,
+                        user_db_id,
+                        track_b,
+                        1_000 + (user_idx * 10 + listen_idx) as u64,
+                    )?;
+                }
+            }
+
+            (request_user_db_id, expected_cover_id)
+        };
+        let headers = create_headers_for_user(request_user_db_id).await?;
+
+        let Json(genres) = list_genres(
+            headers,
+            Query(GenreListQuery {
+                inc: Some(vec!["covers".to_string()]),
+                library_id: None,
+                sort_by: None,
+                sort_order: None,
+            }),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        let cover = genres[0]
+            .cover
+            .as_ref()
+            .and_then(|cover| cover.as_ref())
+            .ok_or_else(|| anyhow::anyhow!("expected instance cover"))?;
+        assert_eq!(cover.id, expected_cover_id);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_genres_does_not_leak_hidden_display_cover() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let user_db_id = {
+            let mut db = STATE.db.write().await;
+            let user_db_id =
+                db::users::create(&mut db, &db::test_db::test_user("genre-hidden-cover")?)?;
+            let visible_library = insert_library(
+                &mut db,
+                "Genre Visible Covers",
+                "/tmp/lyra-genre-visible-covers",
+            )?;
+            let hidden_library = insert_library(
+                &mut db,
+                "Genre Hidden Covers",
+                "/tmp/lyra-genre-hidden-covers",
+            )?;
+            let visible_release = insert_test_release(&mut db, "Visible Rock")?;
+            let hidden_release = insert_test_release(&mut db, "Hidden Rock")?;
+            connect(&mut db, visible_library, visible_release)?;
+            connect(&mut db, hidden_library, hidden_release)?;
+            db::libraries::grant_access(
+                &mut *db,
+                user_db_id,
+                visible_library,
+                db::libraries::AccessKind::ReadWrite,
+            )?;
+            db::genres::sync_release_genres(&mut *db, visible_release, &["Rock".to_string()])?;
+            db::genres::sync_release_genres(&mut *db, hidden_release, &["Rock".to_string()])?;
+            insert_cover_for_release(&mut db, hidden_release, "genre-hidden-cover")?;
+            user_db_id
+        };
+        let headers = create_headers_for_user(user_db_id).await?;
+
+        let Json(genres) = list_genres(
+            headers,
+            Query(GenreListQuery {
+                inc: Some(vec!["covers".to_string()]),
+                library_id: None,
+                sort_by: None,
+                sort_order: None,
+            }),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        assert_eq!(genres.len(), 1);
+        assert!(matches!(genres[0].cover, Some(None)));
         Ok(())
     }
 }

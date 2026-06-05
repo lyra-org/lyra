@@ -61,6 +61,12 @@ pub(crate) fn create_and_mark_recorded(
                 .to(user_db_id)
                 .query(),
         )?;
+        super::covers::display::record_genre_listen(
+            t,
+            track_db_id,
+            user_db_id,
+            listen.listened_at_ms,
+        )?;
         t.exec_mut(QueryBuilder::insert().element(playback_session).query())?;
 
         Ok(())

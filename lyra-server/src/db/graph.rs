@@ -82,6 +82,7 @@ pub(crate) fn ensure_owned_edge(
                 .values_uniform([("owned", 1).into()])
                 .query(),
         )?;
+        super::covers::display::mark_release_track_link_changed(db, from, to)?;
     }
 
     Ok(())
