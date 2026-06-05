@@ -1,0 +1,108 @@
+{
+  "test_name": "exodus_utada_hikaru",
+  "scenario_id": "d2743886c8a03ca1",
+  "responses": [
+    {
+      "cache_key": "0e6af6e44c8e497b",
+      "url": "https://musicbrainz.org/ws/2/work/474c111d-05b9-4755-bf9c-0a06c835319d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5d1ccc10fe653a99"
+    },
+    {
+      "cache_key": "1495697db1f1aead",
+      "url": "https://musicbrainz.org/ws/2/work/ac5a9246-3c82-4bae-933f-0a9c14e0d9d2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "82e2885ff9051d54"
+    },
+    {
+      "cache_key": "14d7277af4023e96",
+      "url": "https://musicbrainz.org/ws/2/work/85b47326-8d4a-4251-a0eb-390f8a004930?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ea29c118c1671966"
+    },
+    {
+      "cache_key": "25955785d1bebbcf",
+      "url": "https://musicbrainz.org/ws/2/work/2f05d8c3-1cc8-4391-9249-d033a6869d6f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d0044b2b937a8d00"
+    },
+    {
+      "cache_key": "749ee5f4506e032f",
+      "url": "https://musicbrainz.org/ws/2/work/2f77af43-8801-44d9-8ab9-f8e30ab10385?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3083fdbe24bc99cc"
+    },
+    {
+      "cache_key": "79ae8d7317192023",
+      "url": "https://musicbrainz.org/ws/2/work/b6ddb89b-0cf6-4959-a2c2-465e1be706b6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d1a490efb71800d5"
+    },
+    {
+      "cache_key": "814a767fb5b66746",
+      "url": "https://musicbrainz.org/ws/2/work/c3c14790-722e-43d7-9183-d0c5b271a6d3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "488f582605698191"
+    },
+    {
+      "cache_key": "8c955b0fe25ffbdd",
+      "url": "https://musicbrainz.org/ws/2/work/96383ab1-4561-47a8-8cad-67be317ff0f7?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d6e86f199c825f47"
+    },
+    {
+      "cache_key": "8e69f3bebcd6a017",
+      "url": "https://musicbrainz.org/ws/2/work/a3740882-5278-466e-8a6f-fce72b661020?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d3f67a35022b2704"
+    },
+    {
+      "cache_key": "9461bec7da7b9518",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AExodus&limit=100",
+      "status_code": 200,
+      "body_hash": "1d375140d962dcd0"
+    },
+    {
+      "cache_key": "afcf979f559a0bda",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Utada%20Hikaru",
+      "status_code": 200,
+      "body_hash": "c3579dff21b54e8e"
+    },
+    {
+      "cache_key": "b002cff7dfe22b4a",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=9543516d-fee1-3638-b247-2a05cb5c8381&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "8e56ece3b1698fe8"
+    },
+    {
+      "cache_key": "bcc15818843f9583",
+      "url": "https://musicbrainz.org/ws/2/work/2e2a2de8-a8e2-4951-9064-51e51e67beae?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2e030443977ea659"
+    },
+    {
+      "cache_key": "c58b41152a1155b4",
+      "url": "https://musicbrainz.org/ws/2/work/f493d342-dd66-450e-a9ad-f39e4dcd2d90?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "27e4167008a04c0a"
+    },
+    {
+      "cache_key": "c65f2f6f456963c2",
+      "url": "https://musicbrainz.org/ws/2/work/9ab7bcf5-fc99-4778-96e0-e728adbcd312?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2d06a0217a7cbba4"
+    },
+    {
+      "cache_key": "d7e31d62858e4da2",
+      "url": "https://musicbrainz.org/ws/2/work/29cd4ce3-8c02-499d-8e5d-d90047ccf2fe?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2b54019e57863d61"
+    },
+    {
+      "cache_key": "ff52872b064801cd",
+      "url": "https://musicbrainz.org/ws/2/work/f68b32a3-c914-4ba2-ad09-58c4877f4fd6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "60056ca4693429c6"
+    }
+  ]
+}
