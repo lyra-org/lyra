@@ -1,0 +1,21 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2021.07.14] ツユ - ナツノカゼ御来光(TUYU arrange ver.) [CD]/01 - ナツノカゼ御来光(TUYU arrange ver.).flac"
+album = "ナツノカゼ御来光(TUYU arrange ver.)"
+album_artists = ["ツユ"]
+artists = ["ツユ"]
+title = "ナツノカゼ御来光(TUYU arrange ver.)"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 1
+duration_ms = 172560
+
+[expect.release]
+ids = { release_group_id = "b17bf89d-2977-4b64-b3ab-0081cc7e0788", release_id = "f0c16ea8-5189-4d64-a016-2d3b1538b17e" }
