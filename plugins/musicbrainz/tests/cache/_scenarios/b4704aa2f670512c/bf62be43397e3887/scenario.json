@@ -1,0 +1,114 @@
+{
+  "test_name": "breakthrough_poppinparty",
+  "scenario_id": "bf62be43397e3887",
+  "responses": [
+    {
+      "cache_key": "037ba1d8258517ae",
+      "url": "https://musicbrainz.org/ws/2/work/55eebdc5-4594-4623-9476-fabd03ab7515?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cb46a5bde786773d"
+    },
+    {
+      "cache_key": "15cd7e47c2cf260f",
+      "url": "https://musicbrainz.org/ws/2/work/626a37f7-0b51-4637-9085-f06983ee4670?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8616810c085e6ee8"
+    },
+    {
+      "cache_key": "461be11d642b3ea1",
+      "url": "https://musicbrainz.org/ws/2/work/d214e82d-c608-499d-a465-c85469e15c3d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7f8f7f79b59e8d81"
+    },
+    {
+      "cache_key": "75b079807cd69cdb",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ABreakthrough%5C!&limit=100",
+      "status_code": 200,
+      "body_hash": "73c9f33bb5c20e92"
+    },
+    {
+      "cache_key": "75c8181c34f5f7e1",
+      "url": "https://musicbrainz.org/ws/2/work/91839284-fdca-4115-9e6b-2bc87bfb2983?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c1555bace89a2969"
+    },
+    {
+      "cache_key": "7a57e78c940e152c",
+      "url": "https://musicbrainz.org/ws/2/work/eea756f2-3a36-4286-b711-4e48b14608a6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "42ec124a35c94079"
+    },
+    {
+      "cache_key": "84cfdb4118105be6",
+      "url": "https://musicbrainz.org/ws/2/work/5157bd0d-2dad-440f-b38b-18e4ab7c9b5a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "50ac4d22a355687d"
+    },
+    {
+      "cache_key": "9e26685502167f91",
+      "url": "https://musicbrainz.org/ws/2/work/17264f8f-0488-4e37-a2c7-b1739b3ffa6a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "02bfcd127542f66c"
+    },
+    {
+      "cache_key": "b01596d777ab7d83",
+      "url": "https://musicbrainz.org/ws/2/work/c4fa488a-1103-4875-ba23-f46870b5e796?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e5bfdd0270d9de37"
+    },
+    {
+      "cache_key": "b0a679f52dede8c3",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Poppin'Party",
+      "status_code": 200,
+      "body_hash": "12b20616727f8c65"
+    },
+    {
+      "cache_key": "b857f178c9583937",
+      "url": "https://musicbrainz.org/ws/2/work/b40cd55a-a7f9-4eb3-b394-a59f02a94574?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4d34010f9d565a44"
+    },
+    {
+      "cache_key": "bd014aa44363b495",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=70638257-8148-41e6-8ae7-a11772a77754&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "567efbd53bcc14be"
+    },
+    {
+      "cache_key": "c0d3665406278d85",
+      "url": "https://musicbrainz.org/ws/2/work/0f03d75f-37dd-42c1-859d-753284be1712?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d07374f20e899ad6"
+    },
+    {
+      "cache_key": "c88c3f0ac77ba727",
+      "url": "https://musicbrainz.org/ws/2/artist/9cacc8a5-fb40-4584-aea2-591172da6e84?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8af1426884b4e8f8"
+    },
+    {
+      "cache_key": "e9f07696ef006475",
+      "url": "https://musicbrainz.org/ws/2/work/ab4053b1-77e9-43fa-aeed-a57b4d4ba3b2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "de95d50f9738b6be"
+    },
+    {
+      "cache_key": "ef9bb1abf6edb63d",
+      "url": "https://musicbrainz.org/ws/2/work/887ccfb1-da0e-45c9-be8e-0e65a496fd89?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "a508d3fd8af6cc65"
+    },
+    {
+      "cache_key": "fb25185d68e70924",
+      "url": "https://musicbrainz.org/ws/2/work/4dcc329b-52a6-46c4-b627-e8a883c34ad0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1b70381871a69fd0"
+    },
+    {
+      "cache_key": "ff1347cfc575c81f",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A9cacc8a5-fb40-4584-aea2-591172da6e84%20AND%20(release%3ABreakthrough%5C!%20OR%20recording%3ABreakthrough%5C!)",
+      "status_code": 200,
+      "body_hash": "61e92d64aaea0335"
+    }
+  ]
+}
