@@ -1,0 +1,126 @@
+{
+  "test_name": "rockman_holic_the_25th_anniversary_sound_holic",
+  "scenario_id": "b73171325f0f3caa",
+  "responses": [
+    {
+      "cache_key": "22727ff6f27e3774",
+      "url": "https://musicbrainz.org/ws/2/work/bc254087-85e8-4adc-b396-8974e2d931cc?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "785666484032cb42"
+    },
+    {
+      "cache_key": "311b542b132c7623",
+      "url": "https://musicbrainz.org/ws/2/work/4d1966e4-6699-407c-a2a2-aacb51936995?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5c3843af23e66433"
+    },
+    {
+      "cache_key": "317717dfc01e984a",
+      "url": "https://musicbrainz.org/ws/2/work/acf87979-5aed-44d0-b96e-a9afb1cf1d70?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7da87651b3d6e8dd"
+    },
+    {
+      "cache_key": "3a265667c460d30d",
+      "url": "https://musicbrainz.org/ws/2/work/68ec8b3a-c52e-421d-a6b1-382a34b2f1e1?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "164cfb2133c70c07"
+    },
+    {
+      "cache_key": "59d7a80f4589a93f",
+      "url": "https://musicbrainz.org/ws/2/work/5b57c818-bcd6-4c82-9394-bebb53cce69f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "07ffb93fb1750ee4"
+    },
+    {
+      "cache_key": "5fe2b22625a07145",
+      "url": "https://musicbrainz.org/ws/2/work/3e6ffbc2-df53-4414-bc1b-4759594d0a5d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e4c9828e4cbd4a6f"
+    },
+    {
+      "cache_key": "6af9755aac253483",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=a8cecb89-606f-4d71-bd6e-83f183318f5c&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "0f6192c0bea364bf"
+    },
+    {
+      "cache_key": "73621b163e3adcfc",
+      "url": "https://musicbrainz.org/ws/2/work/864ac6a4-9af5-407e-9c21-fd3e91a536d3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0c200ef9a95727ba"
+    },
+    {
+      "cache_key": "7f1f91e85b796747",
+      "url": "https://musicbrainz.org/ws/2/work/a76c35e6-5fa7-4df0-bd7c-8a483e398d10?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "306c8555bf95bbc0"
+    },
+    {
+      "cache_key": "8494460423159e1c",
+      "url": "https://musicbrainz.org/ws/2/work/4a40d142-1d96-46a2-92cf-29cb7a2f9204?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "887793909d84612e"
+    },
+    {
+      "cache_key": "8b24c8693fb6caaf",
+      "url": "https://musicbrainz.org/ws/2/work/82936986-80f9-4679-b999-4ebd777f3e79?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b1ebadadfc0254c5"
+    },
+    {
+      "cache_key": "a3c4d47c71738434",
+      "url": "https://musicbrainz.org/ws/2/work/f63fd06c-1f52-4984-aa30-800c8952266b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "609cb9883bba6a01"
+    },
+    {
+      "cache_key": "a6230ce2bbcedf3f",
+      "url": "https://musicbrainz.org/ws/2/work/7c79ffa9-4ca4-45fd-a5f3-af3a2cac17f0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e62afa02558b424f"
+    },
+    {
+      "cache_key": "b300244c17ab2fc4",
+      "url": "https://musicbrainz.org/ws/2/work/64207a5a-17d6-49d4-bd91-69641c059d4a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "95956e5e927d5a99"
+    },
+    {
+      "cache_key": "b34724c120464095",
+      "url": "https://musicbrainz.org/ws/2/artist/3e46dcce-77fe-4fa3-965b-f513189e97e3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "0f5518d2363613af"
+    },
+    {
+      "cache_key": "b99ff55f9f3b51fc",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ARockman%20Holic%20%5C-The%2025th%20Anniversary%5C-&limit=100",
+      "status_code": 200,
+      "body_hash": "e4cab181cdb53355"
+    },
+    {
+      "cache_key": "d6c10c0da1137bea",
+      "url": "https://musicbrainz.org/ws/2/work/a015f774-4d9f-4292-9f69-f2211aacd2e6?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e22c7aad6c2d5b01"
+    },
+    {
+      "cache_key": "d8be1b0a02a78fe8",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Sound%20Holic",
+      "status_code": 200,
+      "body_hash": "c28ae8991b0323e1"
+    },
+    {
+      "cache_key": "ed79b0a4806328ec",
+      "url": "https://musicbrainz.org/ws/2/work/0a3c2cc4-7d82-4d58-a36b-fc9788e73920?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "f083c1774f6c8903"
+    },
+    {
+      "cache_key": "f98e45a44e0d03d1",
+      "url": "https://musicbrainz.org/ws/2/work/ead1f6d2-4e57-4a83-b1f8-ab0c16d6e8b4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2e85b355cf85532e"
+    }
+  ]
+}

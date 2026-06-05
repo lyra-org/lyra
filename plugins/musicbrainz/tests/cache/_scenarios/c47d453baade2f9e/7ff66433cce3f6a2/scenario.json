@@ -1,0 +1,30 @@
+{
+  "test_name": "official髭男dism_arena_tour_2024_rejoice_live_official髭男dism",
+  "scenario_id": "7ff66433cce3f6a2",
+  "responses": [
+    {
+      "cache_key": "ac202f410fb14406",
+      "url": "https://musicbrainz.org/ws/2/artist/6dddd7a2-5583-49d0-a8b2-9ee46d04f27e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7dd1e9d4912bb0b6"
+    },
+    {
+      "cache_key": "b5e0ab7cf1cd0af3",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=65ae8a97-90f7-4413-ae80-7c167293716f&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "f7cc83814e73ac1e"
+    },
+    {
+      "cache_key": "e632cd6797fe55ad",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Official%E9%AB%AD%E7%94%B7dism",
+      "status_code": 200,
+      "body_hash": "f11c6a7d683b0020"
+    },
+    {
+      "cache_key": "faa3dd2d2b51e17f",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AOfficial%E9%AB%AD%E7%94%B7dism%20Arena%20Tour%202024%20%5C-%20Rejoice%20%5C-%20%5C(Live%5C)&limit=100",
+      "status_code": 200,
+      "body_hash": "a6a9db7ea717d5ef"
+    }
+  ]
+}
