@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+pub(crate) mod display;
+
 use super::DbAccess;
 use agdb::{
     CountComparison,
@@ -107,6 +109,7 @@ pub(crate) fn remove(db: &mut impl DbAccess, release_db_id: DbId) -> anyhow::Res
     if remaining_owners == 0 {
         db.exec_mut(QueryBuilder::remove().ids(cover_id).query())?;
     }
+    display::mark_genre_profiles_dirty_for_release(db, release_db_id)?;
 
     Ok(true)
 }
@@ -124,6 +127,7 @@ pub(crate) fn upsert(
             .ok_or_else(|| anyhow::anyhow!("existing cover missing db_id"))?;
         cover.db_id = Some(existing_id);
         db.exec_mut(QueryBuilder::insert().element(&cover).query())?;
+        display::sync_release_random_candidates(db, release_db_id)?;
         Ok(cover)
     } else {
         let qr = db.exec_mut(QueryBuilder::insert().element(&cover).query())?;
@@ -148,6 +152,7 @@ pub(crate) fn upsert(
                 .to(cover_id)
                 .query(),
         )?;
+        display::sync_release_random_candidates(db, release_db_id)?;
         Ok(cover)
     }
 }

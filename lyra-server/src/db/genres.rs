@@ -264,6 +264,7 @@ pub(crate) fn sync_release_genres(
             continue;
         };
         if !desired_genre_ids.contains(&genre_db_id) {
+            super::covers::display::mark_genre_profiles_dirty_for_release(db, release_id)?;
             super::graph::remove_edges_between(db, genre_db_id, release_id)?;
         }
     }
@@ -285,6 +286,12 @@ pub(crate) fn link_to_release(
                 .query(),
         )?;
     }
+    super::covers::display::ensure_genre_release_random_candidate(
+        db,
+        genre_id,
+        release_id,
+        now_secs().saturating_mul(1000),
+    )?;
     Ok(())
 }
 

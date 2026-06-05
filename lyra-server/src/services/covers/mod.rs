@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+pub(crate) mod display;
 mod image;
 pub(crate) mod providers;
 mod resolve;
