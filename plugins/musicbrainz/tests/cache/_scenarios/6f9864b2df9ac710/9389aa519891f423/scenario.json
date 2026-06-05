@@ -1,0 +1,36 @@
+{
+  "test_name": "ニルバナ_tia",
+  "scenario_id": "9389aa519891f423",
+  "responses": [
+    {
+      "cache_key": "0e6a603a86872f37",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Tia",
+      "status_code": 200,
+      "body_hash": "d564fef6f09f46c4"
+    },
+    {
+      "cache_key": "527861c5be70750f",
+      "url": "https://musicbrainz.org/ws/2/work/41a6d454-1690-403b-a348-1dfe24b6bd11?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8549e516b14143c9"
+    },
+    {
+      "cache_key": "641fff11d7e106cc",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3A%E3%83%8B%E3%83%AB%E3%83%90%E3%83%8A&limit=100",
+      "status_code": 200,
+      "body_hash": "05bd85102959aec3"
+    },
+    {
+      "cache_key": "b7ae05e62bd7fc51",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=5dda6a7a-3fc8-44a8-bff0-c5de5ad0fb4c&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "92afefa31fc1dab0"
+    },
+    {
+      "cache_key": "ce6045cb64d19e8e",
+      "url": "https://musicbrainz.org/ws/2/work/402591e1-48ac-494f-9d7b-f2a1f0553b55?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d6e141a31bd6ab1f"
+    }
+  ]
+}
