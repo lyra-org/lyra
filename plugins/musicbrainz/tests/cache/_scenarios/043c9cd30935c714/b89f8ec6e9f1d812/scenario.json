@@ -1,0 +1,252 @@
+{
+  "test_name": "lovelive_series_15th_anniversary_tribute_album_lovelive_series",
+  "scenario_id": "b89f8ec6e9f1d812",
+  "responses": [
+    {
+      "cache_key": "032a413c203b9365",
+      "url": "https://musicbrainz.org/ws/2/release/ead77d52-55a9-4b90-999b-431d5123e710?inc=recordings+genres+artist-credits+media+release-groups+recording-level-rels+work-rels+artist-rels",
+      "status_code": 200,
+      "body_hash": "f90cfe6d97a05ad7"
+    },
+    {
+      "cache_key": "05c3d5cb9ca259e7",
+      "url": "https://musicbrainz.org/ws/2/artist/d0df5b49-6849-4f8d-b5ed-eed017b622ec?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ea78fd9cc6e00a67"
+    },
+    {
+      "cache_key": "0c2c1aefd43c5c3e",
+      "url": "https://musicbrainz.org/ws/2/artist/277ed31b-20b1-4ea4-913c-bc9d17a1a709?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "56f4d17ff8f9743a"
+    },
+    {
+      "cache_key": "1f9538cf91149826",
+      "url": "https://musicbrainz.org/ws/2/artist/5361671b-d625-4f7c-acd7-558c8a26e5df?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ed472269387bc838"
+    },
+    {
+      "cache_key": "222931b2b9ad9758",
+      "url": "https://musicbrainz.org/ws/2/work/259a7f64-eb13-49ee-9906-c96d7c4cbfca?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "17465cd4bee33a3a"
+    },
+    {
+      "cache_key": "3445162b04f69943",
+      "url": "https://musicbrainz.org/ws/2/artist/cb63e552-b4ae-423a-8916-125713d0d5f2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "71484e8102254626"
+    },
+    {
+      "cache_key": "354e11ec96759a34",
+      "url": "https://musicbrainz.org/ws/2/work/3c7bce60-43b6-4a42-87f5-315557230cff?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "30089bf81375ab4e"
+    },
+    {
+      "cache_key": "3aff0ad72442ce5c",
+      "url": "https://musicbrainz.org/ws/2/artist/85d70dbb-0664-4788-a68a-1d0b93353546?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ab95c29bf7804b14"
+    },
+    {
+      "cache_key": "3c723b089c199859",
+      "url": "https://musicbrainz.org/ws/2/work/7032604c-8062-4a9c-8457-5f81811c51ab?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "d0654c1f1c3dd854"
+    },
+    {
+      "cache_key": "40ad28f544798caa",
+      "url": "https://musicbrainz.org/ws/2/artist/c05d4f1f-ffaa-4682-a646-5a1996bb0dee?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "ae27ae3b2f0bbe6a"
+    },
+    {
+      "cache_key": "423234a14b2f671d",
+      "url": "https://musicbrainz.org/ws/2/artist/957cd6db-b39f-4852-95a7-6835852a1af8?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "1a3281caf4699b62"
+    },
+    {
+      "cache_key": "4fb1670c185c1c09",
+      "url": "https://musicbrainz.org/ws/2/release?query=arid%3A125ec42a-7229-4250-afc5-e057484327fe%20AND%20(release%3ALoveLive%5C!%20Series%2015th%20Anniversary%20Tribute%20Album%20OR%20recording%3A%E6%B1%BA%E3%82%81%E3%81%9F%E3%82%88Hand%20in%20Hand)",
+      "status_code": 200,
+      "body_hash": "0aade2bbcd691f3d"
+    },
+    {
+      "cache_key": "50f3936596a36dca",
+      "url": "https://musicbrainz.org/ws/2/work/be779980-fffc-472a-8283-a20f806e894c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2efcaad2602c029b"
+    },
+    {
+      "cache_key": "515d65cfad9da2a0",
+      "url": "https://musicbrainz.org/ws/2/artist/d86ece76-5d5d-47a2-a6ca-602397949319?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "71564c9f2c1b8e29"
+    },
+    {
+      "cache_key": "5c8b0cc453c392b7",
+      "url": "https://musicbrainz.org/ws/2/artist/d8c77d4f-18b5-4652-9dc5-74f75dcaf9be?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2193abbf1629a004"
+    },
+    {
+      "cache_key": "6073b450c85e74af",
+      "url": "https://musicbrainz.org/ws/2/artist/eb84cc2e-9e1e-42f7-8767-e8d79d9a7a34?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "638e227fbca11ad7"
+    },
+    {
+      "cache_key": "679c5ab7f67b80cd",
+      "url": "https://musicbrainz.org/ws/2/artist?query=LoveLive!%20Series",
+      "status_code": 200,
+      "body_hash": "9f7dbfd30c7858b7"
+    },
+    {
+      "cache_key": "6a8b89105b0e8e91",
+      "url": "https://musicbrainz.org/ws/2/artist/c5540917-428f-4999-aa36-69168b8260f1?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "892d0a931d9febc9"
+    },
+    {
+      "cache_key": "7371d881525d868b",
+      "url": "https://musicbrainz.org/ws/2/artist/cf425c79-dbf9-457f-96d4-556e9667294a?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c7327d8f704c1614"
+    },
+    {
+      "cache_key": "743ebb8dcb53d765",
+      "url": "https://musicbrainz.org/ws/2/artist/d3ac5a86-8dc0-4650-ab9e-21ed002849d5?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "c7c8b5f0c5e53d76"
+    },
+    {
+      "cache_key": "790df077b61931b7",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3ALoveLive%5C!%20Series%2015th%20Anniversary%20Tribute%20Album&limit=100",
+      "status_code": 200,
+      "body_hash": "ae1ffcc263102354"
+    },
+    {
+      "cache_key": "85b57dc3a8dfb650",
+      "url": "https://musicbrainz.org/ws/2/work/614823d1-9881-48b9-bca8-aa0940e170dc?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e5bd8e88e46e8935"
+    },
+    {
+      "cache_key": "8fa2452f8f3ae067",
+      "url": "https://musicbrainz.org/ws/2/work/a288aa8a-5d80-4442-9d09-e24fde8ca84d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "aa17a13388e8ae67"
+    },
+    {
+      "cache_key": "92977379679f06c4",
+      "url": "https://musicbrainz.org/ws/2/work/cc073cb4-14a4-4943-b908-f41f7dcc2014?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "910af1d0ba4c73db"
+    },
+    {
+      "cache_key": "9b24f9678fd653bc",
+      "url": "https://musicbrainz.org/ws/2/artist/486e8819-0244-467a-b040-77076fdbf103?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7a7fc3c66573e3fa"
+    },
+    {
+      "cache_key": "9c7d069635da3acd",
+      "url": "https://musicbrainz.org/ws/2/artist/130d679a-9a92-4373-8348-0800b6b93a30?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2a1d3e6a31d005f3"
+    },
+    {
+      "cache_key": "9de51c61cf1952ab",
+      "url": "https://musicbrainz.org/ws/2/work/8cc8a0ab-ce0b-4c3b-a1b8-84b64ed1a6de?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "4e0ca819f138dcd1"
+    },
+    {
+      "cache_key": "aaffc7e953a2518c",
+      "url": "https://musicbrainz.org/ws/2/artist/d61d8ccc-2b76-4ba0-aa7c-b470c6184627?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "08376efb9007ecf3"
+    },
+    {
+      "cache_key": "b11e1d17119060b7",
+      "url": "https://musicbrainz.org/ws/2/artist/e1613ea6-a7cb-49e3-927e-8b538ffc810b?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "62978de99fd7a894"
+    },
+    {
+      "cache_key": "b8b6203f5662ef12",
+      "url": "https://musicbrainz.org/ws/2/artist/e7258dc4-7b6b-4e73-b1d4-9b9a6958c6ea?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "3064d473ad9ab87b"
+    },
+    {
+      "cache_key": "bb2f6e2d07c0acfa",
+      "url": "https://musicbrainz.org/ws/2/artist/1133979a-046f-4e7b-9aab-ff84e924ca41?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "aa0e97266b6f55f1"
+    },
+    {
+      "cache_key": "c0eef4245ca8fab8",
+      "url": "https://musicbrainz.org/ws/2/artist/343c1314-2e6d-4ec6-a3d9-01679f8ed6db?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "6172b21029a18526"
+    },
+    {
+      "cache_key": "c5cc300f57ec37fd",
+      "url": "https://musicbrainz.org/ws/2/artist/a5543575-524b-45be-b4af-6cb4cc252dd4?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b14c54d85108e978"
+    },
+    {
+      "cache_key": "c88c3f0ac77ba727",
+      "url": "https://musicbrainz.org/ws/2/artist/9cacc8a5-fb40-4584-aea2-591172da6e84?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b221763e8f31d6fc"
+    },
+    {
+      "cache_key": "d1c2694aca65629c",
+      "url": "https://musicbrainz.org/ws/2/work/d0b615ad-f63e-477e-bb06-d35c45c4e1ae?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "b3b36cec90532fae"
+    },
+    {
+      "cache_key": "d3ff3584b67da381",
+      "url": "https://musicbrainz.org/ws/2/artist/721b15d2-4659-4fd6-9ac6-6dcd7bc0b547?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "67eec87f1d85c5d9"
+    },
+    {
+      "cache_key": "d9e9e53393e169b0",
+      "url": "https://musicbrainz.org/ws/2/artist/006b5d9f-cf53-4ed5-9565-d3bc4371e8c3?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e7bc2610d835dfe8"
+    },
+    {
+      "cache_key": "da4cb76d2a0bae82",
+      "url": "https://musicbrainz.org/ws/2/work/30d0e1da-90b4-47a3-80f0-3dd0c92ec01c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "19efd89d01ba1226"
+    },
+    {
+      "cache_key": "dbdb7299917f6b49",
+      "url": "https://musicbrainz.org/ws/2/artist/c1edbb52-a2c5-4a2e-bbc0-524c05c056c2?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "afe6f02a6498c53d"
+    },
+    {
+      "cache_key": "df4d347f9e322a14",
+      "url": "https://musicbrainz.org/ws/2/artist/da27b1b7-e640-4b2e-9060-63e3e363e96d?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "8e07d1726bcc5e21"
+    },
+    {
+      "cache_key": "e0d5b1b0529c9db2",
+      "url": "https://musicbrainz.org/ws/2/work/79bb4b76-bb35-42df-a941-144d4e169a64?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "43311fc88aa804ea"
+    }
+  ]
+}
