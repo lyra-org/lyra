@@ -1,0 +1,36 @@
+{
+  "test_name": "garnet_ガーネット_oku_hanako",
+  "scenario_id": "6d943c6e88c1be5b",
+  "responses": [
+    {
+      "cache_key": "1c6da4131961ee6d",
+      "url": "https://musicbrainz.org/ws/2/work/d53fa428-0794-414c-b6cf-a60205839488?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "cadeedfc3e01a431"
+    },
+    {
+      "cache_key": "3a07f070eeed7786",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=7ea138e9-6901-358c-8498-47a05710273b&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "0d6315e381b5cfcd"
+    },
+    {
+      "cache_key": "4aef041c74476a3d",
+      "url": "https://musicbrainz.org/ws/2/work/d75b13ed-4dd3-4f97-a8ae-be25bf1e73a0?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "211e782769a01dbf"
+    },
+    {
+      "cache_key": "534e84636f41cc01",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Oku%20Hanako",
+      "status_code": 200,
+      "body_hash": "41aff74581ce6228"
+    },
+    {
+      "cache_key": "c73a57ddd22f9c0a",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AGarnet&limit=100",
+      "status_code": 200,
+      "body_hash": "fc80f6163c502714"
+    }
+  ]
+}
