@@ -6,11 +6,12 @@
 
 local datastore = require("@lyra/datastore")
 local http = require("@harmony/http")
-local json = require("@harmony/json")
+local serde = require("@harmony/serde")
+local json = serde.json
 local lyrics_api = require("@lyra/lyrics")
 local metadata = require("@lyra/metadata")
 
-type JsonValue = json.JsonValue
+type JsonValue = serde.JsonValue
 type JsonObject = { [string]: JsonValue }
 type JsonArray = { JsonValue }
 type HttpRequestOptions = http.HttpRequestOptions

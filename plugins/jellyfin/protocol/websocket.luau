@@ -5,7 +5,8 @@
 -- www.meshiplaw.com/lyra.
 
 local api = require("@lyra/api")
-local json = require("@harmony/json")
+local serde = require("@harmony/serde")
+local json = serde.json
 
 type JsonValue = api.JsonValue
 type JsonObject = { [string]: JsonValue }

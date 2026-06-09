@@ -7,7 +7,7 @@
   "entrypoint": "init.luau",
   "scopes": [
     "harmony.crypt",
-    "harmony.json",
+    "harmony.serde",
     "harmony.net",
     "harmony.task",
     "lyra.api",

@@ -419,7 +419,7 @@ fn genre_request_from_table(
     vm: &luau::Vm,
     table: luau::Table,
 ) -> luau::runtime::Result<GenreAddRequest> {
-    let value = harmony_json::luau_to_json(vm, &luau::Value::Table(table), 0)?;
+    let value = harmony_serde::luau_to_json(vm, &luau::Value::Table(table), 0)?;
     serde_json::from_value(value).map_err(crate::plugins::runtime_error)
 }
 

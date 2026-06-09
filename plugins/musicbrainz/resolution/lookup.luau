@@ -6,7 +6,8 @@
 
 local genres = require("@lyra/genres")
 local http = require("@harmony/http")
-local json = require("@harmony/json")
+local serde = require("@harmony/serde")
+local json = serde.json
 local libraries = require("@lyra/libraries")
 local metadata = require("@lyra/metadata")
 
@@ -18,7 +19,7 @@ local track_helpers = require("./track_helpers")
 local BASE_URL = "https://musicbrainz.org"
 local API_BASE = `{BASE_URL}/ws/2`
 
-type JsonValue = json.JsonValue
+type JsonValue = serde.JsonValue
 type JsonObject = { [string]: JsonValue }
 type HttpRequestOptions = http.HttpRequestOptions
 type LookupHints = text_helpers.LookupHints

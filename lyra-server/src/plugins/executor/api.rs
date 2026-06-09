@@ -83,7 +83,7 @@ pub(super) fn api_context_value(request: &ApiHandlerRequest) -> Result<luau::Val
     req.set_field("query", luau::Value::TableData(query_table(&request.query)));
     req.set_field("body_raw", luau::Value::String(request.body.clone()));
     if let Some(json) = parse_json_body(&request.headers, &request.body) {
-        req.set_field("json", harmony_json::json_to_luau_owned(json, 0)?);
+        req.set_field("json", harmony_serde::json_to_luau_owned(json, 0)?);
     } else {
         req.set_field("json", luau::Value::Nil);
     }
@@ -172,19 +172,19 @@ fn parse_api_response(
     };
     let kind = ApiResponseKind::parse(&kind)
         .ok_or_else(|| anyhow::anyhow!("unsupported response kind: {kind}"))?;
-    let headers = harmony_json::optional_string_pairs_field(vm, &table, "headers")?;
+    let headers = harmony_serde::optional_string_pairs_field(vm, &table, "headers")?;
     let body_value = table.get_raw(vm, "body").unwrap_or(luau::Value::Nil);
-    let path = harmony_json::optional_string_field(vm, &table, "path")?;
-    let transform = harmony_json::optional_json_field(vm, &table, "transform")?;
-    let options = harmony_json::optional_json_field(vm, &table, "options")?;
-    let track_id = harmony_json::optional_i64_field(vm, &table, "track_id")?;
+    let path = harmony_serde::optional_string_field(vm, &table, "path")?;
+    let transform = harmony_serde::optional_json_field(vm, &table, "transform")?;
+    let options = harmony_serde::optional_json_field(vm, &table, "options")?;
+    let track_id = harmony_serde::optional_i64_field(vm, &table, "track_id")?;
 
     let body = match kind {
         ApiResponseKind::Json => Some(ApiResponseBody::Json(
             if matches!(body_value, luau::Value::Nil) {
                 serde_json::Value::Null
             } else {
-                harmony_json::luau_to_json(vm, &body_value, 0)?
+                harmony_serde::luau_to_json(vm, &body_value, 0)?
             },
         )),
         ApiResponseKind::Empty => None,

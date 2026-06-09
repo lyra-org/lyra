@@ -71,7 +71,7 @@ fn mix_context_value(request: &MixHandlerRequest) -> Result<luau::Value> {
     if !request.options.is_empty() {
         table.set_field(
             "options",
-            harmony_json::json_to_luau_owned(
+            harmony_serde::json_to_luau_owned(
                 serde_json::Value::Object(request.options.clone()),
                 0,
             )?,

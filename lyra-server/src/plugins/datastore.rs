@@ -64,7 +64,7 @@ impl DataStoreHandle {
         args(key: String, value: JsonValue)
     )]
     fn set(&self, vm: &luau::Vm, key: String, value: luau::Value) -> luau::runtime::Result<()> {
-        let json = harmony_json::luau_to_json(vm, &value, 0)?;
+        let json = harmony_serde::luau_to_json(vm, &value, 0)?;
         self.store.set(self.datastore_id, key, json)
     }
 
@@ -191,7 +191,7 @@ impl DataStoreModuleStore {
         };
         let json: serde_json::Value =
             serde_json::from_str(&stored_value).map_err(crate::plugins::runtime_error)?;
-        harmony_json::json_to_luau(vm, json, 0)
+        harmony_serde::json_to_luau(vm, json, 0)
     }
 
     fn set(
@@ -241,7 +241,7 @@ impl DataStoreModuleStore {
                 Some(stored_value) => {
                     let json: serde_json::Value = serde_json::from_str(&stored_value)
                         .map_err(crate::plugins::runtime_error)?;
-                    harmony_json::json_to_luau(vm, json, 0)?
+                    harmony_serde::json_to_luau(vm, json, 0)?
                 }
                 None => luau::Value::Nil,
             };
@@ -319,7 +319,7 @@ fn read_json_entries(
             ));
         };
         let key = String::from_utf8(key).map_err(crate::plugins::runtime_error)?;
-        let value = harmony_json::luau_to_json(vm, &value, 0)?;
+        let value = harmony_serde::luau_to_json(vm, &value, 0)?;
         entries.push((key, value));
     }
     Ok(entries)

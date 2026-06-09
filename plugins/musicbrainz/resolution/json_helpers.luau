@@ -4,9 +4,10 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
-local json = require("@harmony/json")
+local serde = require("@harmony/serde")
+local json = serde.json
 
-type JsonValue = json.JsonValue
+type JsonValue = serde.JsonValue
 type JsonObject = { [string]: JsonValue }
 type JsonArray = { JsonValue }
 

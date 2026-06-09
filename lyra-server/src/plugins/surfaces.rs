@@ -100,7 +100,7 @@ pub(crate) fn module_specs() -> Vec<ModuleSpec> {
         labels::module_spec(),
         libraries::module_spec(),
         listens::module_spec(),
-        harmony_json::module_spec(),
+        harmony_serde::module_spec(),
         lyrics::module_spec(),
         metadata::module_spec(),
         mix::module_spec(),

@@ -653,7 +653,7 @@ async fn plugin_executor_drives_async_lyra_images_compose() -> Result<()> {
 #[test]
 fn plugin_executor_denies_undeclared_capability_before_cached_module_return() -> Result<()> {
     let runtime = PluginExecutor::with_manifests(Arc::from(vec![
-        manifest("demo", &["harmony.json"]),
+        manifest("demo", &["harmony.serde"]),
         manifest("denied", &[]),
     ]))?;
 
@@ -661,7 +661,8 @@ fn plugin_executor_denies_undeclared_capability_before_cached_module_return() ->
         "demo",
         "init.luau",
         &br#"
-            local json = require("@harmony/json")
+            local serde = require("@harmony/serde")
+            local json = serde.json
             return json.encode({ answer = 42 })
         "#[..],
     )?;
@@ -675,7 +676,8 @@ fn plugin_executor_denies_undeclared_capability_before_cached_module_return() ->
             "denied",
             "init.luau",
             &br#"
-                local json = require("@harmony/json")
+                local serde = require("@harmony/serde")
+                local json = serde.json
                 return json.encode({ answer = 42 })
             "#[..],
         )
@@ -684,7 +686,7 @@ fn plugin_executor_denies_undeclared_capability_before_cached_module_return() ->
     assert!(
         denied
             .to_string()
-            .contains("without capability 'harmony.json'"),
+            .contains("without capability 'harmony.serde'"),
         "{denied}"
     );
     Ok(())
@@ -710,13 +712,14 @@ fn plugin_executor_discovers_and_executes_plugins_from_directory() -> Result<()>
             "version": "1.0.0",
             "description": "Demo plugin",
             "entrypoint": "init.luau",
-            "scopes": ["harmony.json"]
+            "scopes": ["harmony.serde"]
         }"#,
     )?;
     std::fs::write(
         plugin_dir.join("init.luau"),
         br#"
-            local json = require("@harmony/json")
+            local serde = require("@harmony/serde")
+            local json = serde.json
             executor_discovered_output = json.encode({ answer = 42 })
         "#,
     )?;
@@ -789,13 +792,14 @@ fn plugin_executor_handle_discovers_and_executes_on_runtime_thread() -> Result<(
             "version": "1.0.0",
             "description": "Demo plugin",
             "entrypoint": "init.luau",
-            "scopes": ["harmony.json"]
+            "scopes": ["harmony.serde"]
         }"#,
     )?;
     std::fs::write(
         plugin_dir.join("init.luau"),
         br#"
-            local json = require("@harmony/json")
+            local serde = require("@harmony/serde")
+            local json = serde.json
             executor_handle_output = json.encode({ answer = 42 })
         "#,
     )?;

@@ -7,7 +7,8 @@
 local entities = require("@lyra/entities")
 local http = require("@harmony/http")
 local ids = require("@lyra/ids")
-local json = require("@harmony/json")
+local serde = require("@harmony/serde")
+local json = serde.json
 local metadata = require("@lyra/metadata")
 local playbacks = require("@lyra/playback_sessions")
 local plugins = require("@lyra/plugins")
@@ -23,7 +24,7 @@ end)
 local LISTENBRAINZ_SUBMIT_URL = "https://api.listenbrainz.org/1/submit-listens"
 
 type PlaybackUpdatePayload = playbacks.PlaybackUpdatePayload
-type JsonValue = json.JsonValue
+type JsonValue = serde.JsonValue
 type HttpRequestOptions = http.HttpRequestOptions
 type TrackProjection = entities.Track
 type ReleaseProjection = entities.Release

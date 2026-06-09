@@ -57,7 +57,7 @@ COPY harmony-core/Cargo.toml harmony-core/Cargo.toml
 COPY harmony-crypt/Cargo.toml harmony-crypt/Cargo.toml
 COPY harmony-globals/Cargo.toml harmony-globals/Cargo.toml
 COPY harmony-http/Cargo.toml harmony-http/Cargo.toml
-COPY harmony-json/Cargo.toml harmony-json/Cargo.toml
+COPY harmony-serde/Cargo.toml harmony-serde/Cargo.toml
 COPY harmony-luau/Cargo.toml harmony-luau/Cargo.toml
 COPY harmony-net/Cargo.toml harmony-net/Cargo.toml
 COPY harmony-task/Cargo.toml harmony-task/Cargo.toml
@@ -68,7 +68,7 @@ COPY lyra-server/Cargo.toml lyra-server/Cargo.toml
 COPY lyra-harmony-test/Cargo.toml lyra-harmony-test/Cargo.toml
 
 # Stub source files for dependency caching layer.
-RUN for dir in harmony-core harmony-crypt harmony-globals harmony-http harmony-json harmony-luau harmony-net harmony-task lyra-chromaprint lyra-ffmpeg lyra-metadata lyra-harmony-test; do \
+RUN for dir in harmony-core harmony-crypt harmony-globals harmony-http harmony-serde harmony-luau harmony-net harmony-task lyra-chromaprint lyra-ffmpeg lyra-metadata lyra-harmony-test; do \
       mkdir -p "$dir/src" && echo '' > "$dir/src/lib.rs"; \
     done && \
     mkdir -p lyra-server/src && echo 'fn main() {}' > lyra-server/src/main.rs && echo '' > lyra-server/src/lib.rs

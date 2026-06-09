@@ -7,13 +7,14 @@
 local chromaprint = require("@lyra/chromaprint")
 local entries = require("@lyra/entries")
 local http = require("@harmony/http")
-local json = require("@harmony/json")
+local serde = require("@harmony/serde")
+local json = serde.json
 
 local json_helpers = require("./json_helpers")
 local release_search = require("./release_search")
 local track_helpers = require("./track_helpers")
 
-type JsonValue = json.JsonValue
+type JsonValue = serde.JsonValue
 type JsonObject = { [string]: JsonValue }
 type HttpRequestOptions = http.HttpRequestOptions
 type ReleaseContext = release_search.ReleaseContext
