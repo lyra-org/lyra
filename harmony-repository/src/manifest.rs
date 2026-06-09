@@ -286,6 +286,15 @@ pub struct SourceRecord {
 }
 
 impl SourceRecord {
+    /// Human-readable source location: the origin, plus the subpath for
+    /// plugins installed from a repository index's path entry.
+    pub fn location(&self) -> String {
+        match &self.subpath {
+            Some(subpath) => format!("{}/{subpath}", self.origin),
+            None => self.origin.clone(),
+        }
+    }
+
     /// Reads the record from a plugin directory. `Ok(None)` means the
     /// plugin is local.
     pub fn load(plugin_dir: &Path) -> Result<Option<Self>, std::io::Error> {
