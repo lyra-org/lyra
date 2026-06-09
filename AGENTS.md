@@ -28,7 +28,7 @@ cargo run -p lyra-server -- serve
 ```sh
 luau-lsp analyze --no-flags-enabled --flag=LuauSolverV2=true --platform standard --base-luaurc .luaurc --definitions=.lyra/defs/globals.d.luau <file1.luau> <file2.luau>
 ```
-Run `cargo run -p lyra-server -- docs setup` before Luau analysis after changing Rust-defined Luau module surfaces or generated Luau definitions.
+Run `cargo run -p lyra-docs -- setup` before Luau analysis after changing Rust-defined Luau module surfaces or generated Luau definitions.
 
 ## Coding Style & Naming Conventions
 - Format Rust code with `cargo +nightly fmt` and Luau scripts with `stylua`.
