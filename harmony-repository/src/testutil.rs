@@ -83,11 +83,19 @@ pub(crate) struct TestServer {
 
 impl TestServer {
     pub(crate) async fn start(routes: HashMap<String, CannedResponse>) -> Self {
+        Self::start_with(|_| routes).await
+    }
+
+    /// Like [`Self::start`], but the route table may reference the
+    /// server's own base URL.
+    pub(crate) async fn start_with(
+        routes: impl FnOnce(&str) -> HashMap<String, CannedResponse>,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind test server");
         let addr = listener.local_addr().expect("test server addr");
-        let routes = Arc::new(routes);
+        let routes = Arc::new(routes(&format!("http://{addr}")));
 
         let handle = tokio::spawn(async move {
             loop {
@@ -203,4 +211,30 @@ pub(crate) fn targz(files: &[(&str, &str)]) -> Vec<u8> {
         builder.file(path, content);
     }
     builder.finish()
+}
+
+pub(crate) fn plugin_json(id: &str) -> String {
+    format!(
+        r#"{{
+            "schema_version": 1,
+            "id": "{id}",
+            "name": "{id}",
+            "version": "0.0.1",
+            "description": "test plugin",
+            "entrypoint": "init.luau",
+            "scopes": []
+        }}"#
+    )
+}
+
+/// Tarball route for a repository holding a single valid plugin at its
+/// root, downloadable at the `main` ref.
+pub(crate) fn single_plugin_routes(owner_repo: &str, id: &str) -> (String, CannedResponse) {
+    (
+        format!("/{owner_repo}/archive/main.tar.gz"),
+        CannedResponse::targz(targz(&[
+            ("repo/plugin.json", &plugin_json(id)),
+            ("repo/init.luau", "return {}"),
+        ])),
+    )
 }

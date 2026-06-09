@@ -9,7 +9,9 @@
 //! `repository.json` format.
 
 pub mod fetch;
+pub mod install;
 pub mod manifest;
+pub mod resolve;
 
 pub use fetch::{
     FetchError,
@@ -18,11 +20,22 @@ pub use fetch::{
     RepoSpec,
     fetch_repo,
 };
+pub use install::{
+    InstallError,
+    install_candidate,
+    uninstall_plugin,
+};
 pub use manifest::{
     ManifestError,
     RepositoryEntry,
     RepositoryManifest,
     SourceRecord,
+};
+pub use resolve::{
+    PluginCandidate,
+    ResolveError,
+    ResolvedRepository,
+    resolve_plugins,
 };
 
 #[cfg(test)]

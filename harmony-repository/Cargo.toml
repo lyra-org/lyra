@@ -5,6 +5,7 @@ edition = "2024"
 license-file = "../LICENSE"
 
 [dependencies]
+harmony-core = { path = "../harmony-core" }
 flate2 = { workspace = true }
 percent-encoding = { workspace = true }
 reqwest = { workspace = true, default-features = false, features = ["charset", "http2", "json", "rustls-no-provider", "system-proxy"] }
