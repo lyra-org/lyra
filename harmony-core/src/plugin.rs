@@ -42,7 +42,7 @@ use crate::{
     },
 };
 
-pub(crate) const PLUGIN_CONFIG_FILENAME: &str = "plugin.json";
+pub const PLUGIN_CONFIG_FILENAME: &str = "plugin.json";
 pub(crate) const PLUGIN_SCHEMA_VERSION: u32 = 1;
 
 /// Hard caps applied to `plugin.json` before `serde_json` parses it.
@@ -499,6 +499,12 @@ impl PluginManager {
                 continue;
             }
 
+            // Dot-directories (VCS metadata, install staging) are not
+            // plugin candidates.
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+
             match self.load_plugin(&path, valid_scope_ids) {
                 Ok(plugin) => {
                     if self.plugins.contains_key(&plugin.manifest.id) {
@@ -724,6 +730,33 @@ impl PluginManager {
         dir: &Path,
         valid_scope_ids: &HashSet<Arc<str>>,
     ) -> Result<LoadedPlugin, PluginLoadError> {
+        let plugin = Self::load_plugin_dir(dir, valid_scope_ids)?;
+
+        // Runtime identity for required modules comes from the directory
+        // basename (see `parse_plugin_id` in lyra-server). Entrypoint
+        // chunks use `manifest.id`. If these disagree, top-level code
+        // attributes to manifest.id but `require("sub")` modules attribute
+        // to the directory — teardown clears one bucket and the other
+        // leaks forever. Enforce the constraint here rather than audit
+        // every chunk-name call site.
+        let directory_basename = dir.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+        if directory_basename != plugin.manifest.id {
+            return Err(PluginLoadError::DirectoryIdMismatch {
+                plugin_id: plugin.manifest.id,
+                directory: directory_basename.to_string(),
+            });
+        }
+
+        Ok(plugin)
+    }
+
+    /// Parses and validates a plugin directory without binding it to its
+    /// installed location, so install tooling can vet staged candidates
+    /// before they land under `plugins_dir`.
+    pub fn load_plugin_dir(
+        dir: &Path,
+        valid_scope_ids: &HashSet<Arc<str>>,
+    ) -> Result<LoadedPlugin, PluginLoadError> {
         let config_path = dir.join(PLUGIN_CONFIG_FILENAME);
 
         if !config_path.exists() {
@@ -772,21 +805,6 @@ impl PluginManager {
             return Err(PluginLoadError::InvalidPluginId {
                 plugin_id: manifest.id,
                 reason,
-            });
-        }
-
-        // Runtime identity for required modules comes from the directory
-        // basename (see `parse_plugin_id` in lyra-server). Entrypoint
-        // chunks use `manifest.id`. If these disagree, top-level code
-        // attributes to manifest.id but `require("sub")` modules attribute
-        // to the directory — teardown clears one bucket and the other
-        // leaks forever. Enforce the constraint here rather than audit
-        // every chunk-name call site.
-        let directory_basename = dir.file_name().and_then(|s| s.to_str()).unwrap_or_default();
-        if directory_basename != manifest.id {
-            return Err(PluginLoadError::DirectoryIdMismatch {
-                plugin_id: manifest.id,
-                directory: directory_basename.to_string(),
             });
         }
 
