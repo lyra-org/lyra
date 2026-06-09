@@ -9,6 +9,7 @@
 //! `repository.json` format.
 
 pub mod fetch;
+pub mod manifest;
 
 pub use fetch::{
     FetchError,
@@ -16,6 +17,12 @@ pub use fetch::{
     Forge,
     RepoSpec,
     fetch_repo,
+};
+pub use manifest::{
+    ManifestError,
+    RepositoryEntry,
+    RepositoryManifest,
+    SourceRecord,
 };
 
 #[cfg(test)]
