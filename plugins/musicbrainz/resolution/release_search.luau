@@ -4,7 +4,8 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
-local json = require("@harmony/json")
+local serde = require("@harmony/serde")
+local json = serde.json
 local metadata = require("@lyra/metadata")
 
 local text_helpers = require("./text_helpers")
@@ -12,7 +13,7 @@ local track_helpers = require("./track_helpers")
 
 local module = {}
 
-type JsonValue = json.JsonValue
+type JsonValue = serde.JsonValue
 type JsonObject = { [string]: JsonValue }
 type LookupHints = text_helpers.LookupHints
 type LookupArtist = text_helpers.LookupHintArtist

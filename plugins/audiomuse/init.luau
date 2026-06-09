@@ -7,7 +7,8 @@
 local api = require("@lyra/api")
 local http = require("@harmony/http")
 local ids = require("@lyra/ids")
-local json = require("@harmony/json")
+local serde = require("@harmony/serde")
+local json = serde.json
 local mix = require("@lyra/mix")
 local plugins = require("@lyra/plugins")
 local tracks = require("@lyra/tracks")
@@ -16,7 +17,7 @@ local jellyfin_hex = require("@self/jellyfin_hex")
 
 type ApiContext = api.ApiContext
 type ApiResponse = api.ApiResponse
-type JsonValue = json.JsonValue
+type JsonValue = serde.JsonValue
 type JsonObject = { [string]: JsonValue }
 type HttpRequestOptions = http.HttpRequestOptions
 type HttpResponse = http.HttpResponse
@@ -136,9 +137,7 @@ local function query_similar_tracks(item_id: string, n: number): { MixResultTrac
 
 	-- Encoder/version mismatch; escalate above routine orphans.
 	if decode_failed > 0 then
-		warn(
-			`similar_tracks({item_id}): {decode_failed}/{#items} hex decode failed — possible ID format mismatch`
-		)
+		warn(`similar_tracks({item_id}): {decode_failed}/{#items} hex decode failed — possible ID format mismatch`)
 	end
 	if orphaned > 0 then
 		warn(`similar_tracks({item_id}): {#items} returned, {#results} resolved, {orphaned} orphaned`)

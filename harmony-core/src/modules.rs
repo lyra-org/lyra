@@ -1194,12 +1194,12 @@ mod tests {
 
     #[test]
     fn registry_installs_rust_module_once_and_returns_cached_export() {
-        let module_id = ModuleId(Arc::from("harmony/json"));
+        let module_id = ModuleId(Arc::from("harmony/serde"));
         let mut registry = ModuleRegistry::new();
         registry
             .register(
                 ModuleSpec::new(module_id.0.clone())
-                    .capability("harmony.json")
+                    .capability("harmony.serde")
                     .install(|_| Ok(ModuleExport::new(42_u64))),
             )
             .expect("register module");
@@ -1779,23 +1779,23 @@ mod tests {
     #[test]
     fn source_loader_resolves_root_alias_to_module_origin() {
         let mut loader = MemorySourceLoader::new();
-        loader.insert("alias:harmony/json", b"return {}".as_slice());
+        loader.insert("alias:harmony/serde", b"return {}".as_slice());
 
         let resolved = loader
             .resolve(SourceRequest {
-                specifier: "@harmony/json",
+                specifier: "@harmony/serde",
                 origin: &ChunkOrigin::default(),
             })
             .expect("resolve alias");
 
-        assert_eq!(resolved.cache_key.0.as_ref(), "alias:harmony/json");
+        assert_eq!(resolved.cache_key.0.as_ref(), "alias:harmony/serde");
         assert_eq!(
             resolved
                 .origin
                 .module
                 .as_ref()
                 .map(|module| module.0.as_ref()),
-            Some("harmony/json")
+            Some("harmony/serde")
         );
     }
 }

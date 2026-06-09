@@ -448,7 +448,7 @@ fn parse_consumer_options(
     if matches!(opts, luau::Value::Nil) {
         return Ok(MixOptions::default());
     }
-    let json = harmony_json::luau_to_json(vm, &opts, 0)?;
+    let json = harmony_serde::luau_to_json(vm, &opts, 0)?;
     if matches!(&json, serde_json::Value::Array(values) if values.is_empty()) {
         return Ok(MixOptions::default());
     }
@@ -516,7 +516,7 @@ fn parse_option_declaration(
     };
     let default = match config.get_raw(vm, "default")? {
         luau::Value::Nil => serde_json::Value::Null,
-        value => harmony_json::luau_to_json(vm, &value, 0)?,
+        value => harmony_serde::luau_to_json(vm, &value, 0)?,
     };
     let requires_settings = match config.get_raw(vm, "requires_settings")? {
         luau::Value::Nil => Vec::new(),

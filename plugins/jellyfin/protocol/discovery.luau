@@ -4,7 +4,8 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
-local json = require("@harmony/json")
+local serde = require("@harmony/serde")
+local json = serde.json
 local net = require("@harmony/net")
 local task = require("@harmony/task")
 

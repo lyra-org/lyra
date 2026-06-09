@@ -5,7 +5,7 @@
 -- www.meshiplaw.com/lyra.
 
 local api = require("@lyra/api")
-local json = require("@harmony/json")
+local serde = require("@harmony/serde")
 
 local base = require("./common")
 local constants = require("../../constants")
@@ -202,7 +202,7 @@ function module.item_to_json(item: ItemInfo): JsonObject
 		output.DateCreated = item.DateCreated
 	end
 	local image_tags = string_map_to_json(item.ImageTags)
-	output.ImageTags = if image_tags ~= nil then image_tags else json.empty_object()
+	output.ImageTags = if image_tags ~= nil then image_tags else serde.empty_object()
 	if item.LocationType ~= nil then
 		output.LocationType = item.LocationType
 	end
@@ -259,7 +259,7 @@ function module.item_to_json(item: ItemInfo): JsonObject
 		output.AlbumPrimaryImageTag = item.AlbumPrimaryImageTag
 	end
 	local image_blur_hashes = image_blur_hashes_to_json(item.ImageBlurHashes)
-	output.ImageBlurHashes = if image_blur_hashes ~= nil then image_blur_hashes else json.empty_object()
+	output.ImageBlurHashes = if image_blur_hashes ~= nil then image_blur_hashes else serde.empty_object()
 	if item.Container ~= nil then
 		output.Container = item.Container
 	end

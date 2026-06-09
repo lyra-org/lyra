@@ -623,7 +623,7 @@ fn from_luau_json<T>(vm: &luau::Vm, value: &luau::Value) -> luau::runtime::Resul
 where
     T: DeserializeOwned,
 {
-    serde_json::from_value(harmony_json::luau_to_json(vm, value, 0)?)
+    serde_json::from_value(harmony_serde::luau_to_json(vm, value, 0)?)
         .map_err(crate::plugins::runtime_error)
 }
 

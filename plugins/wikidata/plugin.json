@@ -7,7 +7,7 @@
   "entrypoint": "init.luau",
   "scopes": [
     "harmony.http",
-    "harmony.json",
+    "harmony.serde",
     "lyra.datastore",
     "lyra.genres",
     "lyra.metadata",

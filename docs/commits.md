@@ -88,7 +88,7 @@ harmony/core
 harmony/crypt
 harmony/globals
 harmony/http
-harmony/json
+harmony/serde
 harmony/luau
 harmony/macros
 harmony/net

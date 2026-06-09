@@ -6,7 +6,8 @@
 
 local datastore = require("@lyra/datastore")
 local http = require("@harmony/http")
-local json = require("@harmony/json")
+local serde = require("@harmony/serde")
+local json = serde.json
 local metadata = require("@lyra/metadata")
 
 local acoustid = require("@self/resolution/acoustid")
@@ -34,7 +35,7 @@ local COVER_CACHE_KEY_PREFIX = "cover:release:"
 local COVER_CACHE_HIT_TTL = 30 * 24 * 60 * 60
 local COVER_CACHE_MISS_TTL = 7 * 24 * 60 * 60
 
-type JsonValue = json.JsonValue
+type JsonValue = serde.JsonValue
 type JsonObject = { [string]: JsonValue }
 type JsonArray = { JsonValue }
 type HttpRequestOptions = http.HttpRequestOptions

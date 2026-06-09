@@ -272,9 +272,9 @@ fn harmony_surfaces() -> &'static [Surface] {
             harmony_crypt::render_luau_definition
         ),
         surface!(
-            "harmony/json",
-            harmony_json::get_module,
-            harmony_json::render_luau_definition
+            "harmony/serde",
+            harmony_serde::get_module,
+            harmony_serde::render_luau_definition
         ),
         surface!(
             "harmony/http",

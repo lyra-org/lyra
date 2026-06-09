@@ -1127,7 +1127,7 @@ impl MetadataLayer {
                 "duration_ms is read-only and cannot be set by plugins",
             ));
         }
-        let value = harmony_json::luau_to_json(vm, &value, 0)?;
+        let value = harmony_serde::luau_to_json(vm, &value, 0)?;
         self.state
             .lock()
             .expect("metadata layer mutex poisoned")
@@ -1177,7 +1177,7 @@ impl MetadataLayer {
                 "custom field name must be a non-empty string",
             ));
         }
-        let value = harmony_json::luau_to_json(vm, &value, 0)?;
+        let value = harmony_serde::luau_to_json(vm, &value, 0)?;
         let mut layer = self.state.lock().expect("metadata layer mutex poisoned");
         layer.remove_custom_field_versions.remove(&version);
         layer
@@ -1196,7 +1196,7 @@ impl MetadataLayer {
         fields: luau::Value,
     ) -> luau::runtime::Result<()> {
         let version = parse_custom_field_version(&version)?;
-        let JsonValue::Object(fields) = harmony_json::luau_to_json(vm, &fields, 0)? else {
+        let JsonValue::Object(fields) = harmony_serde::luau_to_json(vm, &fields, 0)? else {
             return Err(crate::plugins::runtime_error(
                 "custom fields payload must be a JSON object",
             ));

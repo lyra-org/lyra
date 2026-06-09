@@ -5,7 +5,8 @@
 -- www.meshiplaw.com/lyra.
 
 local http = require("@harmony/http")
-local json = require("@harmony/json")
+local serde = require("@harmony/serde")
+local json = serde.json
 local metadata = require("@lyra/metadata")
 local plugins = require("@lyra/plugins")
 
@@ -16,7 +17,7 @@ local BASE_URL = "https://www.theaudiodb.com"
 local API_BASE = `{BASE_URL}/api/v1/json`
 local DEFAULT_API_KEY = "123"
 
-type JsonValue = json.JsonValue
+type JsonValue = serde.JsonValue
 type JsonObject = { [string]: JsonValue }
 type JsonArray = { JsonValue }
 type HttpRequestOptions = http.HttpRequestOptions

@@ -32,7 +32,7 @@ impl PluginExecutor {
         let handler = handlers
             .get(request.handler_id)
             .ok_or_else(|| anyhow::anyhow!("metadata handler {} not found", request.handler_id))?;
-        let ctx = harmony_json::json_to_luau_owned(request.context, 0)?;
+        let ctx = harmony_serde::json_to_luau_owned(request.context, 0)?;
         let thread = self.vm.create_thread(&handler.function)?;
         let scheduler = self.vm.data().get::<LocalScheduler>()?;
         scheduler.spawn_luau_thread(
@@ -48,7 +48,7 @@ impl PluginExecutor {
             ThreadDriveOptions::default(),
         )?
         .iter()
-        .map(|value| harmony_json::luau_to_json(&self.vm, value, 0).map_err(anyhow::Error::new))
+        .map(|value| harmony_serde::luau_to_json(&self.vm, value, 0).map_err(anyhow::Error::new))
         .collect::<Result<Vec<_>>>()?;
         Ok(MetadataRefreshResult { values })
     }

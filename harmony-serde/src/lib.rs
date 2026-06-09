@@ -22,32 +22,65 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
-const EMPTY_OBJECT_MARKER: &str = "__harmony_json_empty_object";
+const EMPTY_OBJECT_MARKER: &str = "__harmony_serde_empty_object";
 
-struct JsonModuleDocs;
-struct JsonModule;
+struct SerdeModuleDocs;
+struct SerdeModule;
 
 pub fn module_spec() -> ModuleSpec {
-    ModuleSpec::new("harmony/json")
-        .capability("harmony.json")
-        .function(encode_spec())
-        .function(decode_spec())
+    ModuleSpec::new("harmony/serde")
+        .capability("harmony.serde")
+        .function(json_encode_spec())
+        .function(json_decode_spec())
+        .function(yaml_encode_spec())
+        .function(yaml_decode_spec())
+        .function(xml_encode_spec())
+        .function(xml_decode_spec())
         .function(empty_object_spec())
-        .install(|_| Ok(ModuleExport::new(JsonModule)))
+        .install(|_| Ok(ModuleExport::new(SerdeModule)))
 }
 
-fn encode_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("encode")
+fn json_encode_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("json.encode")
         .named_arg::<JsonValue>("input")
         .returns::<String>();
-    spec.call(encode_callback)
+    spec.call(json_encode_callback)
 }
 
-fn decode_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("decode")
+fn json_decode_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("json.decode")
         .named_arg::<String>("input")
         .returns::<JsonValue>();
-    spec.call(decode_callback)
+    spec.call(json_decode_callback)
+}
+
+fn yaml_encode_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("yaml.encode")
+        .named_arg::<JsonValue>("input")
+        .returns::<String>();
+    spec.call(yaml_encode_callback)
+}
+
+fn yaml_decode_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("yaml.decode")
+        .named_arg::<String>("input")
+        .returns::<JsonValue>();
+    spec.call(yaml_decode_callback)
+}
+
+fn xml_encode_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("xml.encode")
+        .named_arg::<String>("root")
+        .named_arg::<JsonValue>("input")
+        .returns::<String>();
+    spec.call(xml_encode_callback)
+}
+
+fn xml_decode_spec() -> FunctionSpec {
+    let spec = FunctionSpec::sync_fn("xml.decode")
+        .named_arg::<String>("input")
+        .returns::<JsonValue>();
+    spec.call(xml_decode_callback)
 }
 
 fn empty_object_spec() -> FunctionSpec {
@@ -55,7 +88,7 @@ fn empty_object_spec() -> FunctionSpec {
     spec.call(empty_object_callback)
 }
 
-fn encode_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+fn json_encode_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
     let value: luau::Value = frame.args.read_named("input")?;
     let json = luau_to_json(frame.vm, &value, 0)?;
     let encoded =
@@ -64,10 +97,47 @@ fn encode_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> 
     Ok(())
 }
 
-fn decode_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+fn json_decode_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
     let input: String = frame.args.read_named("input")?;
     let json: serde_json::Value =
         serde_json::from_str(&input).map_err(|error| runtime_error("JSON decode failed", error))?;
+    let value = json_to_luau(frame.vm, json, 0)?;
+    frame.returns.write(value)?;
+    Ok(())
+}
+
+fn yaml_encode_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let value: luau::Value = frame.args.read_named("input")?;
+    let json = luau_to_json(frame.vm, &value, 0)?;
+    let encoded = serde_saphyr::to_string(&json)
+        .map_err(|error| runtime_error("YAML encode failed", error))?;
+    frame.returns.write(encoded)?;
+    Ok(())
+}
+
+fn yaml_decode_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let input: String = frame.args.read_named("input")?;
+    let json: serde_json::Value = serde_saphyr::from_str(&input)
+        .map_err(|error| runtime_error("YAML decode failed", error))?;
+    let value = json_to_luau(frame.vm, json, 0)?;
+    frame.returns.write(value)?;
+    Ok(())
+}
+
+fn xml_encode_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let root: String = frame.args.read_named("root")?;
+    let value: luau::Value = frame.args.read_named("input")?;
+    let json = luau_to_json(frame.vm, &value, 0)?;
+    let encoded = quick_xml::se::to_string_with_root(&root, &json)
+        .map_err(|error| runtime_error("XML encode failed", error))?;
+    frame.returns.write(encoded)?;
+    Ok(())
+}
+
+fn xml_decode_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+    let input: String = frame.args.read_named("input")?;
+    let json: serde_json::Value = quick_xml::de::from_str(&input)
+        .map_err(|error| runtime_error("XML decode failed", error))?;
     let value = json_to_luau(frame.vm, json, 0)?;
     frame.returns.write(value)?;
     Ok(())
@@ -434,23 +504,23 @@ fn runtime_error(context: &str, error: impl fmt::Display) -> luau::Error {
 
 pub fn render_luau_definition() -> std::result::Result<String, fmt::Error> {
     render_definition_file_with_support(
-        &JsonModuleDocs::module_descriptor(),
+        &SerdeModuleDocs::module_descriptor(),
         &[JsonValue::type_alias_descriptor()],
         &[],
         &[],
     )
 }
 
-impl DescribeModule for JsonModuleDocs {
+impl DescribeModule for SerdeModuleDocs {
     fn module_descriptor() -> ModuleDescriptor {
         ModuleDescriptor {
-            name: "Json",
-            local_name: "json",
-            description: Some("JSON encoding and decoding helpers."),
+            name: "Serde",
+            local_name: "serde",
+            description: Some("Serde-backed JSON, YAML, and XML encoding and decoding helpers."),
             fields: Vec::new(),
             functions: vec![
                 ModuleFunctionDescriptor {
-                    path: vec!["encode"],
+                    path: vec!["json", "encode"],
                     description: Some("Encodes a Lua JSON-compatible value into a JSON string."),
                     params: vec![ParameterDescriptor {
                         name: "input",
@@ -462,8 +532,68 @@ impl DescribeModule for JsonModuleDocs {
                     yields: false,
                 },
                 ModuleFunctionDescriptor {
-                    path: vec!["decode"],
+                    path: vec!["json", "decode"],
                     description: Some("Decodes a JSON string into a Lua JSON-compatible value."),
+                    params: vec![ParameterDescriptor {
+                        name: "input",
+                        ty: String::luau_type(),
+                        description: None,
+                        variadic: false,
+                    }],
+                    returns: vec![JsonValue::luau_type()],
+                    yields: false,
+                },
+                ModuleFunctionDescriptor {
+                    path: vec!["yaml", "encode"],
+                    description: Some("Encodes a Lua JSON-compatible value into a YAML string."),
+                    params: vec![ParameterDescriptor {
+                        name: "input",
+                        ty: JsonValue::luau_type(),
+                        description: None,
+                        variadic: false,
+                    }],
+                    returns: vec![String::luau_type()],
+                    yields: false,
+                },
+                ModuleFunctionDescriptor {
+                    path: vec!["yaml", "decode"],
+                    description: Some("Decodes a YAML string into a Lua JSON-compatible value."),
+                    params: vec![ParameterDescriptor {
+                        name: "input",
+                        ty: String::luau_type(),
+                        description: None,
+                        variadic: false,
+                    }],
+                    returns: vec![JsonValue::luau_type()],
+                    yields: false,
+                },
+                ModuleFunctionDescriptor {
+                    path: vec!["xml", "encode"],
+                    description: Some(
+                        "Encodes a Lua JSON-compatible value into an XML string using the given root element name.",
+                    ),
+                    params: vec![
+                        ParameterDescriptor {
+                            name: "root",
+                            ty: String::luau_type(),
+                            description: None,
+                            variadic: false,
+                        },
+                        ParameterDescriptor {
+                            name: "input",
+                            ty: JsonValue::luau_type(),
+                            description: None,
+                            variadic: false,
+                        },
+                    ],
+                    returns: vec![String::luau_type()],
+                    yields: false,
+                },
+                ModuleFunctionDescriptor {
+                    path: vec!["xml", "decode"],
+                    description: Some(
+                        "Decodes an XML string into a Lua JSON-compatible value using quick-xml conventions.",
+                    ),
                     params: vec![ParameterDescriptor {
                         name: "input",
                         ty: String::luau_type(),
@@ -476,9 +606,9 @@ impl DescribeModule for JsonModuleDocs {
                 ModuleFunctionDescriptor {
                     path: vec!["empty_object"],
                     description: Some(
-                        "Returns a value that serializes as an empty JSON object `{}`. \
-                         Use this instead of `{}` when a JSON object (not array) is required, \
-                         since empty Lua tables serialize as arrays by default.",
+                        "Returns a value that serializes as an empty object `{}`. Use this \
+                         instead of `{}` when an object (not array) is required, since empty \
+                         Lua tables serialize as arrays by default.",
                     ),
                     params: vec![],
                     returns: vec![JsonValue::luau_type()],
@@ -503,12 +633,12 @@ mod tests {
             ..harmony_core::ChunkOrigin::default()
         };
         let table = harmony_core::luau::install_module(&vm, &origin, &spec)?;
-        vm.set_global_table("json", &table)?;
+        vm.set_global_table("serde", &table)?;
 
         let encoded = vm.eval(
             std::sync::Arc::<[u8]>::from(
                 &br#"
-                return json.encode({
+                return serde.json.encode({
                     name = "Lyra",
                     count = 2,
                     tags = { "server", "music" },
@@ -531,7 +661,7 @@ mod tests {
         let decoded = vm.eval(
             std::sync::Arc::<[u8]>::from(
                 &br#"
-                local value = json.decode('{"name":"Lyra","tags":["server"],"active":true}')
+                local value = serde.json.decode('{"name":"Lyra","tags":["server"],"active":true}')
                 return value.name, value.tags[1], value.active
                 "#[..],
             ),
@@ -549,19 +679,110 @@ mod tests {
     }
 
     #[test]
+    fn luau_module_encodes_and_decodes_yaml_values() -> harmony_luau::runtime::Result<()> {
+        let vm = harmony_luau::Vm::new()?;
+        let spec = module_spec();
+        let table =
+            harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
+        vm.set_global_table("serde", &table)?;
+
+        let encoded = vm.eval(
+            std::sync::Arc::<[u8]>::from(
+                &br#"
+                return serde.yaml.encode({
+                    name = "Lyra",
+                    tags = { "server", "music" },
+                })
+                "#[..],
+            ),
+            harmony_luau::ChunkOrigin::default(),
+        )?;
+        let [harmony_luau::Value::String(encoded)] = encoded.as_slice() else {
+            panic!("serde.yaml.encode should return a string");
+        };
+        let encoded = String::from_utf8(encoded.clone()).expect("YAML should be UTF-8");
+        assert!(encoded.contains("name: Lyra"), "{encoded}");
+        assert!(encoded.contains("server"), "{encoded}");
+
+        let decoded = vm.eval(
+            std::sync::Arc::<[u8]>::from(
+                &br#"
+                local value = serde.yaml.decode("name: Lyra\ntags:\n  - server\n")
+                return value.name, value.tags[1]
+                "#[..],
+            ),
+            harmony_luau::ChunkOrigin::default(),
+        )?;
+        assert_eq!(
+            decoded,
+            vec![
+                harmony_luau::Value::String(b"Lyra".to_vec()),
+                harmony_luau::Value::String(b"server".to_vec()),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn luau_module_encodes_and_decodes_xml_values() -> harmony_luau::runtime::Result<()> {
+        let vm = harmony_luau::Vm::new()?;
+        let spec = module_spec();
+        let table =
+            harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
+        vm.set_global_table("serde", &table)?;
+
+        let encoded = vm.eval(
+            std::sync::Arc::<[u8]>::from(
+                &br#"
+                return serde.xml.encode("release", {
+                    ["@id"] = "abc",
+                    title = "Kind of Blue",
+                })
+                "#[..],
+            ),
+            harmony_luau::ChunkOrigin::default(),
+        )?;
+        let [harmony_luau::Value::String(encoded)] = encoded.as_slice() else {
+            panic!("serde.xml.encode should return a string");
+        };
+        let encoded = String::from_utf8(encoded.clone()).expect("XML should be UTF-8");
+        assert!(encoded.contains("<release"), "{encoded}");
+        assert!(encoded.contains("id=\"abc\""), "{encoded}");
+        assert!(encoded.contains("<title>Kind of Blue</title>"), "{encoded}");
+
+        let decoded = vm.eval(
+            std::sync::Arc::<[u8]>::from(
+                &br#"
+                local value = serde.xml.decode('<release id="abc"><title>Kind of Blue</title></release>')
+                return value["@id"], value.title["$text"]
+                "#[..],
+            ),
+            harmony_luau::ChunkOrigin::default(),
+        )?;
+        assert_eq!(
+            decoded,
+            vec![
+                harmony_luau::Value::String(b"abc".to_vec()),
+                harmony_luau::Value::String(b"Kind of Blue".to_vec()),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn luau_empty_object_encodes_as_json_object() -> harmony_luau::runtime::Result<()> {
         let vm = harmony_luau::Vm::new()?;
         let spec = module_spec();
         let table =
             harmony_core::luau::install_module(&vm, &harmony_core::ChunkOrigin::default(), &spec)?;
-        vm.set_global_table("json", &table)?;
+        vm.set_global_table("serde", &table)?;
 
         let values = vm.eval(
             std::sync::Arc::<[u8]>::from(
                 &br#"
                 return
-                    json.encode({ image_tags = json.empty_object() }),
-                    json.encode({ image_tags = {} })
+                    serde.json.encode({ image_tags = serde.empty_object() }),
+                    serde.json.encode({ image_tags = {} })
                 "#[..],
             ),
             harmony_luau::ChunkOrigin::default(),
@@ -584,7 +805,7 @@ mod tests {
         );
         assert!(matches!(
             vm.eval(
-                std::sync::Arc::<[u8]>::from(&b"json.empty_object().extra = true"[..]),
+                std::sync::Arc::<[u8]>::from(&b"serde.empty_object().extra = true"[..]),
                 harmony_luau::ChunkOrigin::default(),
             ),
             Err(harmony_luau::Error::Runtime(_))

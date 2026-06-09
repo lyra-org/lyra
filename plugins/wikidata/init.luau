@@ -7,7 +7,8 @@
 local datastore = require("@lyra/datastore")
 local genres = require("@lyra/genres")
 local http = require("@harmony/http")
-local json = require("@harmony/json")
+local serde = require("@harmony/serde")
+local json = serde.json
 local metadata = require("@lyra/metadata")
 local plugins = require("@lyra/plugins")
 
@@ -34,7 +35,7 @@ end)
 
 local HIERARCHY_DEPTH = (config.hierarchy_depth or 2) :: number
 
-type JsonValue = json.JsonValue
+type JsonValue = serde.JsonValue
 type JsonObject = { [string]: JsonValue }
 type JsonArray = { JsonValue }
 type HttpRequestOptions = http.HttpRequestOptions
