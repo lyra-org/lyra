@@ -1,0 +1,66 @@
+{
+  "test_name": "houkai_amplifier_asian_kung_fu_generation",
+  "scenario_id": "1eb7f31502283a30",
+  "responses": [
+    {
+      "cache_key": "0d55306f2e6d965f",
+      "url": "https://musicbrainz.org/ws/2/work/c57d382c-87dd-4450-a54e-e47b9090231f?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "5f4c8b009691a06e"
+    },
+    {
+      "cache_key": "274949ff5814ddf5",
+      "url": "https://musicbrainz.org/ws/2/artist?query=Asian%20Kung-Fu%20Generation",
+      "status_code": 200,
+      "body_hash": "1549b4e1bbd44a45"
+    },
+    {
+      "cache_key": "3180c3465f4a30f4",
+      "url": "https://musicbrainz.org/ws/2/artist/14e410f5-97f2-48ba-b1f7-a3a44cbea05c?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "91148f5164fd51ce"
+    },
+    {
+      "cache_key": "3f47f55350f04fed",
+      "url": "https://musicbrainz.org/ws/2/work/00bc5645-b986-4a72-9edf-bdbf25910496?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "e11650f7f3e43878"
+    },
+    {
+      "cache_key": "5f885a56e852c325",
+      "url": "https://musicbrainz.org/ws/2/work/190a34da-f68b-4aca-adaf-f96a1b1cd939?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "927c397f04e040e7"
+    },
+    {
+      "cache_key": "ac08d1f50be7e035",
+      "url": "https://musicbrainz.org/ws/2/work/3cee6889-3991-3c61-a5c3-d759373ee178?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7eb5405e3a058061"
+    },
+    {
+      "cache_key": "b49654595e990f5a",
+      "url": "https://musicbrainz.org/ws/2/work/fe35fa52-6df7-4d3f-8e4a-5d757e4f460e?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "7787a235da095750"
+    },
+    {
+      "cache_key": "bfeb2bd08fd2b99c",
+      "url": "https://musicbrainz.org/ws/2/work/edd2934a-a64e-4d4a-b734-fdfcc693a548?inc=artist-rels",
+      "status_code": 200,
+      "body_hash": "2116048de3e26f14"
+    },
+    {
+      "cache_key": "cf5791395a400f7d",
+      "url": "https://musicbrainz.org/ws/2/release?release-group=5dd266a0-9d2e-3e6b-bbd4-55414f7668df&inc=recordings+artist-credits+genres+media+release-groups+recording-level-rels+work-rels+artist-rels&limit=100",
+      "status_code": 200,
+      "body_hash": "9e77cb6ec63c41ba"
+    },
+    {
+      "cache_key": "fa76dbca05d75331",
+      "url": "https://musicbrainz.org/ws/2/release?query=release%3AHoukai%20Amplifier&limit=100",
+      "status_code": 200,
+      "body_hash": "552d8d00b29c91cc"
+    }
+  ]
+}
