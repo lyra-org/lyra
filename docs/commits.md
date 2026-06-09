@@ -92,6 +92,7 @@ harmony/serde
 harmony/luau
 harmony/macros
 harmony/net
+harmony/repository
 harmony/task
 harmony/test
 ```
