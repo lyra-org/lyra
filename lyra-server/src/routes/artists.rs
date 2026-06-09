@@ -64,6 +64,7 @@ use crate::{
         auth::{
             Principal,
             require_authenticated,
+            require_manage_metadata,
         },
         covers,
         releases as release_service,
@@ -743,7 +744,7 @@ async fn update_artist(
     Path(id): Path<String>,
     Json(update): Json<ArtistUpdateRequest>,
 ) -> Result<Json<ArtistResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
+    let principal = require_manage_metadata(&headers).await?;
 
     if update.name.is_none() && update.sort_name.is_none() && update.description.is_none() {
         return Err(AppError::bad_request("no artist fields provided"));
