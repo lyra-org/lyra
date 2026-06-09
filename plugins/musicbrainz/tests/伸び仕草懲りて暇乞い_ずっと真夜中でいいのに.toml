@@ -1,0 +1,103 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "[2022.02.16] Zutto Mayonaka de Ii no ni. - Nobi Shigusa Korite Itomagoi (digital release) [FLAC]/06. ばかじゃないのに.flac"
+album = "伸び仕草懲りて暇乞い"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "ばかじゃないのに"
+disc = 1
+disc_total = 1
+track = 6
+track_total = 6
+duration_ms = 258213
+
+[[raw_tags]]
+file_path = "[2022.02.16] Zutto Mayonaka de Ii no ni. - Nobi Shigusa Korite Itomagoi (digital release) [FLAC]/05. 夜中のキスミ.flac"
+album = "伸び仕草懲りて暇乞い"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "夜中のキスミ"
+disc = 1
+disc_total = 1
+track = 5
+track_total = 6
+duration_ms = 275413
+
+[[raw_tags]]
+file_path = "[2022.02.16] Zutto Mayonaka de Ii no ni. - Nobi Shigusa Korite Itomagoi (digital release) [FLAC]/04. 猫リセット.flac"
+album = "伸び仕草懲りて暇乞い"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "猫リセット"
+disc = 1
+disc_total = 1
+track = 4
+track_total = 6
+duration_ms = 247106
+
+[[raw_tags]]
+file_path = "[2022.02.16] Zutto Mayonaka de Ii no ni. - Nobi Shigusa Korite Itomagoi (digital release) [FLAC]/03. あいつら全員同窓会.flac"
+album = "伸び仕草懲りて暇乞い"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "あいつら全員同窓会"
+disc = 1
+disc_total = 1
+track = 3
+track_total = 6
+duration_ms = 255506
+
+[[raw_tags]]
+file_path = "[2022.02.16] Zutto Mayonaka de Ii no ni. - Nobi Shigusa Korite Itomagoi (digital release) [FLAC]/02. 袖のキルト.flac"
+album = "伸び仕草懲りて暇乞い"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "袖のキルト"
+disc = 1
+disc_total = 1
+track = 2
+track_total = 6
+duration_ms = 255173
+
+[[raw_tags]]
+file_path = "[2022.02.16] Zutto Mayonaka de Ii no ni. - Nobi Shigusa Korite Itomagoi (digital release) [FLAC]/01. 違う曲にしようよ.flac"
+album = "伸び仕草懲りて暇乞い"
+album_artists = ["ずっと真夜中でいいのに。"]
+artists = ["ずっと真夜中でいいのに。"]
+title = "違う曲にしようよ"
+disc = 1
+disc_total = 1
+track = 1
+track_total = 6
+duration_ms = 219693
+
+[expect.release]
+ids = { release_group_id = "c454e7ea-1b68-4a80-a1c9-cf5cbfed59bb", release_id = ["216923fd-5e83-4f90-b920-4237fd2d96be", "2f3dc770-0fcf-421a-b8d8-14d824add09f"] }
+fields = { release_title = "伸び仕草懲りて暇乞い", release_date = "2022-02-16" }
+
+[expect.artists."14d2a235-30e2-489f-b490-f9dc7d2c0861"]
+fields = { artist_name = "ずっと真夜中でいいのに。", sort_name = "Zutto Mayonaka de Iinoni." }
+
+[expect.tracks."5d0e7944-7667-484b-9bbf-5ff2db073451"]
+fields = { disc = 1, track = 3, track_title = "あいつら全員同窓会" }
+
+[expect.tracks."6728a7f0-cff3-447f-961d-159b88f1ab8f"]
+fields = { disc = 1, track = 2, track_title = "袖のキルト" }
+
+[expect.tracks."7423238c-da7a-4c5b-b227-242b8578ad5b"]
+fields = { disc = 1, track = 5, track_title = "夜中のキスミ" }
+
+[expect.tracks."cd5c37b3-dcfd-483f-9f70-5aa95c71936b"]
+fields = { disc = 1, track = 4, track_title = "猫リセット" }
+
+[expect.tracks."d13bd526-1428-4122-b2c1-202058358e38"]
+fields = { disc = 1, track = 1, track_title = "違う曲にしようよ" }
+
+[expect.tracks."eed693d9-c7a9-4063-a417-1273cfd83062"]
+fields = { disc = 1, track = 6, track_title = "ばかじゃないのに" }

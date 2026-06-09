@@ -1,0 +1,12 @@
+[package]
+name = "harmony-serde"
+version = "0.0.1"
+edition = "2024"
+license-file = "../LICENSE"
+
+[dependencies]
+harmony-core = { path = "../harmony-core" }
+harmony-luau = { path = "../harmony-luau" }
+quick-xml = { workspace = true }
+serde_json = { workspace = true }
+serde-saphyr = { workspace = true }
