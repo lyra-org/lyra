@@ -108,6 +108,7 @@ pub(crate) mod mixers;
 pub(crate) mod playback_sessions;
 pub(crate) mod playlists;
 pub(crate) mod plugin;
+pub(crate) mod plugin_repositories;
 pub(crate) mod process_lock;
 pub(crate) mod providers;
 pub(crate) mod releases;

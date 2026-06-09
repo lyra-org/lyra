@@ -174,6 +174,54 @@ impl PluginRegistries {
         self.teardown_in_progress.write().await.remove(plugin_id);
     }
 
+    /// Tears down every loaded plugin, rediscovers `plugins_dir`, and
+    /// executes the freshly discovered set. This is how installs, updates,
+    /// and uninstalls go live without a server restart.
+    pub(crate) async fn reload_all_plugins(&self) -> Result<()> {
+        let _restart = self.restart_lock.lock().await;
+
+        let old_ids: Vec<PluginId> = crate::STATE
+            .plugin_manifests
+            .get()
+            .iter()
+            .filter_map(|manifest| PluginId::new(manifest.id.clone()).ok())
+            .collect();
+
+        // Fresh discovery from disk; replaces STATE.plugin_manifests.
+        let runtime = crate::plugins::bootstrap::initialize_harmony().await?;
+        let new_ids: Vec<PluginId> = crate::STATE
+            .plugin_manifests
+            .get()
+            .iter()
+            .filter_map(|manifest| PluginId::new(manifest.id.clone()).ok())
+            .collect();
+
+        for plugin_id in &old_ids {
+            self.teardown_plugin(plugin_id, true).await;
+        }
+        // Brand-new plugins were never frozen open; exempt them so their
+        // first registrations are accepted.
+        for plugin_id in &new_ids {
+            if !old_ids.contains(plugin_id) {
+                crate::plugins::api::unfreeze_plugin_routes(plugin_id.clone()).await;
+                crate::plugins::settings::unfreeze_plugin_settings(plugin_id.clone()).await;
+            }
+        }
+
+        // Publish before exec: plugin entrypoints dispatch handlers that
+        // resolve STATE.plugin_runtime at call time.
+        crate::plugins::bootstrap::publish_runtime(runtime.clone());
+        let exec_result = runtime.exec_all().await;
+
+        for plugin_id in old_ids.iter().chain(&new_ids) {
+            refreeze_plugin_registration_exemptions(plugin_id).await;
+        }
+
+        exec_result?;
+        crate::plugins::api::rebuild_registered_routes().await?;
+        Ok(())
+    }
+
     pub(crate) async fn restart_plugin(
         &self,
         plugin_id: &PluginId,

@@ -56,9 +56,20 @@ use crate::{
             require_authenticated,
             require_manage_plugins,
         },
+        plugin_repositories as repositories_service,
         plugin_settings as settings_service,
     },
 };
+
+fn map_repository_error(error: repositories_service::PluginRepoError) -> AppError {
+    use repositories_service::PluginRepoError;
+    match error {
+        PluginRepoError::BadRequest(message) => AppError::bad_request(message),
+        PluginRepoError::NotFound(message) => AppError::not_found(message),
+        PluginRepoError::Conflict(message) => AppError::conflict(message),
+        PluginRepoError::Internal(error) => error.into(),
+    }
+}
 
 fn map_settings_state_error(error: anyhow::Error) -> AppError {
     if error
@@ -193,6 +204,163 @@ struct PluginSettingsListResponse {
 #[derive(Deserialize)]
 struct UpdateSettingsRequest {
     values: HashMap<String, serde_json::Value>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+struct RepositoryUrlRequest {
+    url: String,
+    #[serde(default, rename = "ref")]
+    git_ref: Option<String>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+struct InstallPluginsRequest {
+    url: String,
+    #[serde(default, rename = "ref")]
+    git_ref: Option<String>,
+    /// Plugin ids to install; omitted installs everything the
+    /// repository provides.
+    #[serde(default)]
+    plugins: Option<Vec<String>>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct PluginPreviewResponse {
+    id: String,
+    name: String,
+    version: String,
+    description: String,
+    /// Capability scopes the plugin will be granted when installed.
+    scopes: Vec<String>,
+    origin: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subpath: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit: Option<String>,
+    installed: bool,
+    managed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    update_available: Option<bool>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct RepositoryPreviewResponse {
+    origin: String,
+    #[serde(rename = "ref")]
+    git_ref: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    plugins: Vec<PluginPreviewResponse>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct InstalledPluginResponse {
+    id: String,
+    version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit: Option<String>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct FailedInstallResponse {
+    id: String,
+    error: String,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct InstallPluginsResponse {
+    installed: Vec<InstalledPluginResponse>,
+    failed: Vec<FailedInstallResponse>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum UpdatePluginResponse {
+    Updated {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        commit: Option<String>,
+    },
+    UpToDate,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct PluginRepositoryResponse {
+    id: String,
+    origin: String,
+    name: String,
+    description: String,
+    #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
+    git_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_commit: Option<String>,
+    refreshed_at_ms: u64,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct PluginRepositoriesResponse {
+    repositories: Vec<PluginRepositoryResponse>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct RepositoryWithPreviewResponse {
+    repository: PluginRepositoryResponse,
+    preview: RepositoryPreviewResponse,
+}
+
+fn preview_response(preview: repositories_service::RepositoryPreview) -> RepositoryPreviewResponse {
+    RepositoryPreviewResponse {
+        origin: preview.origin,
+        git_ref: preview.git_ref,
+        commit: preview.commit,
+        name: preview.name,
+        description: preview.description,
+        plugins: preview
+            .plugins
+            .into_iter()
+            .map(|plugin| PluginPreviewResponse {
+                id: plugin.id,
+                name: plugin.name,
+                version: plugin.version,
+                description: plugin.description,
+                scopes: plugin.scopes,
+                origin: plugin.origin,
+                subpath: plugin.subpath,
+                commit: plugin.commit,
+                installed: plugin.installed,
+                managed: plugin.managed,
+                update_available: plugin.update_available,
+            })
+            .collect(),
+    }
+}
+
+fn repository_response(
+    record: crate::db::plugin_repositories::PluginRepository,
+) -> PluginRepositoryResponse {
+    PluginRepositoryResponse {
+        id: record.id,
+        origin: record.origin,
+        name: record.name,
+        description: record.description,
+        git_ref: record.git_ref,
+        last_commit: record.last_commit,
+        refreshed_at_ms: record.refreshed_at_ms,
+    }
 }
 
 fn manifest_responses(
@@ -481,6 +649,130 @@ async fn restart_plugin(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn resolve_repository(
+    headers: HeaderMap,
+    Json(request): Json<RepositoryUrlRequest>,
+) -> Result<Json<RepositoryPreviewResponse>, AppError> {
+    let _principal = require_manage_plugins(&headers).await?;
+    let preview = repositories_service::resolve_preview(&request.url, request.git_ref.as_deref())
+        .await
+        .map_err(map_repository_error)?;
+    Ok(Json(preview_response(preview)))
+}
+
+async fn install_plugins(
+    headers: HeaderMap,
+    Json(request): Json<InstallPluginsRequest>,
+) -> Result<Json<InstallPluginsResponse>, AppError> {
+    let _principal = require_manage_plugins(&headers).await?;
+    let report = repositories_service::install(
+        &request.url,
+        request.git_ref.as_deref(),
+        request.plugins.as_deref(),
+    )
+    .await
+    .map_err(map_repository_error)?;
+
+    Ok(Json(InstallPluginsResponse {
+        installed: report
+            .installed
+            .into_iter()
+            .map(|plugin| InstalledPluginResponse {
+                id: plugin.id,
+                version: plugin.version,
+                commit: plugin.commit,
+            })
+            .collect(),
+        failed: report
+            .failed
+            .into_iter()
+            .map(|failure| FailedInstallResponse {
+                id: failure.id,
+                error: failure.error,
+            })
+            .collect(),
+    }))
+}
+
+async fn update_installed_plugin(
+    headers: HeaderMap,
+    Path(plugin_id): Path<String>,
+) -> Result<Json<UpdatePluginResponse>, AppError> {
+    let _principal = require_manage_plugins(&headers).await?;
+    let outcome = repositories_service::update_plugin(&plugin_id)
+        .await
+        .map_err(map_repository_error)?;
+    Ok(Json(match outcome {
+        repositories_service::UpdateOutcome::Updated { commit } => {
+            UpdatePluginResponse::Updated { commit }
+        }
+        repositories_service::UpdateOutcome::UpToDate => UpdatePluginResponse::UpToDate,
+    }))
+}
+
+async fn uninstall_installed_plugin(
+    headers: HeaderMap,
+    Path(plugin_id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let _principal = require_manage_plugins(&headers).await?;
+    repositories_service::uninstall(&plugin_id)
+        .await
+        .map_err(map_repository_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_plugin_repositories(
+    headers: HeaderMap,
+) -> Result<Json<PluginRepositoriesResponse>, AppError> {
+    let _principal = require_manage_plugins(&headers).await?;
+    let repositories = repositories_service::list_repositories()
+        .await
+        .map_err(map_repository_error)?;
+    Ok(Json(PluginRepositoriesResponse {
+        repositories: repositories.into_iter().map(repository_response).collect(),
+    }))
+}
+
+async fn add_plugin_repository(
+    headers: HeaderMap,
+    Json(request): Json<RepositoryUrlRequest>,
+) -> Result<Json<RepositoryWithPreviewResponse>, AppError> {
+    let _principal = require_manage_plugins(&headers).await?;
+    let (record, preview) =
+        repositories_service::add_repository(&request.url, request.git_ref.as_deref())
+            .await
+            .map_err(map_repository_error)?;
+    Ok(Json(RepositoryWithPreviewResponse {
+        repository: repository_response(record),
+        preview: preview_response(preview),
+    }))
+}
+
+async fn refresh_plugin_repository(
+    headers: HeaderMap,
+    Path(repository_id): Path<String>,
+) -> Result<Json<RepositoryWithPreviewResponse>, AppError> {
+    let _principal = require_manage_plugins(&headers).await?;
+    let (record, preview) = repositories_service::refresh_repository(&repository_id)
+        .await
+        .map_err(map_repository_error)?;
+    Ok(Json(RepositoryWithPreviewResponse {
+        repository: repository_response(record),
+        preview: preview_response(preview),
+    }))
+}
+
+async fn delete_plugin_repository(
+    headers: HeaderMap,
+    Path(repository_id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let _principal = require_manage_plugins(&headers).await?;
+    repositories_service::remove_repository(&repository_id)
+        .await
+        .map_err(map_repository_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn get_settings(
     headers: HeaderMap,
     Path(plugin_id): Path<String>,
@@ -605,6 +897,65 @@ fn list_all_user_settings_docs(op: TransformOperation) -> TransformOperation {
 }
 
 #[cfg(feature = "docgen")]
+fn resolve_repository_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Resolve plugin repository").description(
+        "Fetches a Git repository URL and returns the plugins it provides, including the capability scopes each plugin requests, without installing anything.",
+    )
+}
+
+#[cfg(feature = "docgen")]
+fn install_plugins_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Install plugins from repository").description(
+        "Resolves a Git repository URL, installs all (or the selected) plugins it provides, and reloads the plugin runtime. Returns per-plugin results.",
+    )
+}
+
+#[cfg(feature = "docgen")]
+fn update_installed_plugin_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Update installed plugin").description(
+        "Re-resolves the plugin's recorded origin and reinstalls it when the resolved commit differs. Branch refs track new commits; tag and commit refs are pinned.",
+    )
+}
+
+#[cfg(feature = "docgen")]
+fn uninstall_installed_plugin_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Uninstall plugin")
+        .description(
+            "Removes a repository-managed plugin from disk and reloads the plugin runtime. Local plugins without a source record are refused.",
+        )
+        .response::<204, ()>()
+}
+
+#[cfg(feature = "docgen")]
+fn list_plugin_repositories_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("List plugin repositories")
+        .description("Returns the subscribed plugin repositories.")
+}
+
+#[cfg(feature = "docgen")]
+fn add_plugin_repository_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Add plugin repository").description(
+        "Resolves a Git repository URL, remembers it as a subscription, and returns the repository record together with its current plugin listing.",
+    )
+}
+
+#[cfg(feature = "docgen")]
+fn refresh_plugin_repository_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Refresh plugin repository").description(
+        "Re-resolves a subscribed repository and returns its updated record and plugin listing, including per-plugin update availability.",
+    )
+}
+
+#[cfg(feature = "docgen")]
+fn delete_plugin_repository_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Remove plugin repository")
+        .description(
+            "Forgets a subscribed repository. Plugins installed from it stay on disk and remain individually updatable.",
+        )
+        .response::<204, ()>()
+}
+
+#[cfg(feature = "docgen")]
 fn restart_plugin_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Restart plugin").description(
         "Tears down the plugin's current runtime registrations, re-runs its entrypoint, and activates its routes.",
@@ -646,6 +997,20 @@ pub fn plugin_routes() -> Router {
     Router::new()
         .route("/", get(list_plugins))
         .route("/settings", get(list_all_settings))
+        .route("/resolve", post(resolve_repository))
+        .route("/install", post(install_plugins))
+        .route("/repositories", get(list_plugin_repositories))
+        .route("/repositories", post(add_plugin_repository))
+        .route(
+            "/repositories/{repository_id}/refresh",
+            post(refresh_plugin_repository),
+        )
+        .route(
+            "/repositories/{repository_id}",
+            delete(delete_plugin_repository),
+        )
+        .route("/{plugin_id}", delete(uninstall_installed_plugin))
+        .route("/{plugin_id}/update", post(update_installed_plugin))
         .route("/{plugin_id}/restart", post(restart_plugin))
         .route("/{plugin_id}/settings", get(get_settings))
         .route("/{plugin_id}/settings", patch(update_settings))
@@ -666,6 +1031,35 @@ pub(crate) fn plugin_openapi_routes() -> aide::axum::ApiRouter {
         .api_route(
             "/settings",
             get_with(list_all_settings, list_all_settings_docs),
+        )
+        .api_route(
+            "/resolve",
+            post_with(resolve_repository, resolve_repository_docs),
+        )
+        .api_route("/install", post_with(install_plugins, install_plugins_docs))
+        .api_route(
+            "/repositories",
+            get_with(list_plugin_repositories, list_plugin_repositories_docs),
+        )
+        .api_route(
+            "/repositories",
+            post_with(add_plugin_repository, add_plugin_repository_docs),
+        )
+        .api_route(
+            "/repositories/{repository_id}/refresh",
+            post_with(refresh_plugin_repository, refresh_plugin_repository_docs),
+        )
+        .api_route(
+            "/repositories/{repository_id}",
+            delete_with(delete_plugin_repository, delete_plugin_repository_docs),
+        )
+        .api_route(
+            "/{plugin_id}",
+            delete_with(uninstall_installed_plugin, uninstall_installed_plugin_docs),
+        )
+        .api_route(
+            "/{plugin_id}/update",
+            post_with(update_installed_plugin, update_installed_plugin_docs),
         )
         .api_route(
             "/{plugin_id}/restart",

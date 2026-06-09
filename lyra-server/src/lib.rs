@@ -183,6 +183,33 @@ pub fn run_docs_command(args: &[String]) -> Result<()> {
     plugins::docs::run_command(args)
 }
 
+/// Installs plugins from a Git repository into the plugins directory.
+/// Disk-only: the next server start (or a runtime reload through the API)
+/// loads them, so this works whether or not the server is running.
+pub async fn run_plugins_add(url: &str, git_ref: Option<&str>) -> Result<()> {
+    let report = services::plugin_repositories::install_to_disk(url, git_ref, None)
+        .await
+        .map_err(|err| anyhow::anyhow!("{err}"))?;
+
+    for plugin in &report.installed {
+        let commit = plugin
+            .commit
+            .as_deref()
+            .map(|commit| format!(" ({commit})"))
+            .unwrap_or_default();
+        println!("installed {} v{}{commit}", plugin.id, plugin.version);
+    }
+    for failure in &report.failed {
+        eprintln!("failed to install {}: {}", failure.id, failure.error);
+    }
+    if !report.failed.is_empty() {
+        anyhow::bail!("{} plugin(s) failed to install", report.failed.len());
+    }
+
+    println!("restart the server (or reload plugins through the API) to load them");
+    Ok(())
+}
+
 /// Force-compact the DB from the CLI. Reserves the configured port first, opens
 /// in `DbFile` regardless of `config.kind`, and skips schema init.
 pub async fn run_db_optimize() -> Result<()> {

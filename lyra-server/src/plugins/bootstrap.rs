@@ -21,11 +21,15 @@ use anyhow::{
 
 pub(crate) type PluginRuntime = crate::plugins::executor::PluginExecutorHandle;
 
-pub(crate) async fn initialize_harmony() -> Result<PluginRuntime> {
-    let plugins_dir = std::env::var_os("LYRA_PLUGINS_DIR")
+pub(crate) fn plugins_dir() -> PathBuf {
+    std::env::var_os("LYRA_PLUGINS_DIR")
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| PathBuf::from("plugins"));
+        .unwrap_or_else(|| PathBuf::from("plugins"))
+}
+
+pub(crate) async fn initialize_harmony() -> Result<PluginRuntime> {
+    let plugins_dir = plugins_dir();
 
     {
         let server_info = crate::plugins::server::load_server_info()

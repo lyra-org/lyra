@@ -26,6 +26,7 @@ harmony-serde = { path = "../harmony-serde" }
 harmony-http = { path = "../harmony-http" }
 harmony-luau = { path = "../harmony-luau", features = ["serde"] }
 harmony-macros = { path = "../harmony-macros" }
+harmony-repository = { path = "../harmony-repository" }
 harmony-task = { path = "../harmony-task" }
 harmony-net = { path = "../harmony-net" }
 agdb = { version = "0.13.0", features = ["serde"] }
@@ -41,6 +42,8 @@ nanoid = "0.4"
 nucleo-matcher = "0.3"
 rand = "0.9"
 rayon = "1"
+reqwest = { workspace = true, default-features = false, features = ["charset", "http2", "json", "rustls-no-provider", "system-proxy"] }
+rustls = { workspace = true, default-features = false, features = ["ring", "std", "tls12"] }
 blurhash = "0.2.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 serde = { workspace = true }
