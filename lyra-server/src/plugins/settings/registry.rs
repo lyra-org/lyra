@@ -8,10 +8,7 @@ use std::{
         HashMap,
         HashSet,
     },
-    sync::{
-        Arc,
-        LazyLock,
-    },
+    sync::Arc,
 };
 
 use anyhow::bail;
@@ -25,8 +22,15 @@ use crate::plugins::lifecycle::{
 
 use super::Schema;
 
-pub(crate) static REGISTRY: LazyLock<Arc<RwLock<Registry>>> =
-    LazyLock::new(|| Arc::new(RwLock::new(Registry::new())));
+/// Generation-owned plugin settings state: declared schemas plus freeze state.
+#[derive(Default)]
+pub(crate) struct SettingsRegistries {
+    registry: Arc<RwLock<Registry>>,
+}
+
+pub(crate) fn settings_registry() -> Arc<RwLock<Registry>> {
+    crate::STATE.generation().plugin_settings.registry.clone()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum SettingsScope {
@@ -54,10 +58,6 @@ pub(crate) struct Registry {
 }
 
 impl Registry {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
     pub(crate) fn clear(&mut self) {
         self.schemas.clear();
         self.state = FreezeState::Open;
@@ -143,23 +143,29 @@ impl PluginScopedInner for Registry {
 }
 
 pub(crate) async fn initialize_registry() {
-    REGISTRY.write().await.clear();
+    settings_registry().write_owned().await.clear();
 }
 
 pub(crate) async fn freeze_registry() {
-    REGISTRY.write().await.freeze();
+    settings_registry().write_owned().await.freeze();
 }
 
 pub(crate) async fn unfreeze_plugin_settings(plugin_id: PluginId) {
-    REGISTRY.write().await.unfreeze_plugin(plugin_id);
+    settings_registry()
+        .write_owned()
+        .await
+        .unfreeze_plugin(plugin_id);
 }
 
 pub(crate) async fn refreeze_plugin_settings(plugin_id: &PluginId) {
-    REGISTRY.write().await.refreeze_plugin(plugin_id);
+    settings_registry()
+        .write_owned()
+        .await
+        .refreeze_plugin(plugin_id);
 }
 
 pub(crate) async fn teardown_plugin_settings(plugin_id: &PluginId) {
-    ScopedRegistry::from_shared(REGISTRY.clone())
+    ScopedRegistry::from_shared(settings_registry())
         .teardown(plugin_id)
         .await;
 }
@@ -174,7 +180,7 @@ mod tests {
 
     #[test]
     fn register_schema_rejects_duplicate_plugins() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry
             .register_schema(
                 demo_id(),
@@ -195,7 +201,7 @@ mod tests {
 
     #[test]
     fn register_schema_allows_same_plugin_with_different_scopes() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry
             .register_schema(
                 demo_id(),
@@ -215,7 +221,7 @@ mod tests {
 
     #[test]
     fn register_schema_rejects_writes_when_registry_is_frozen() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.freeze();
 
         let error = registry
@@ -230,7 +236,7 @@ mod tests {
 
     #[test]
     fn unfreeze_plugin_permits_writes_for_that_plugin_only() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.freeze();
         registry.unfreeze_plugin(demo_id());
 
@@ -251,7 +257,7 @@ mod tests {
 
     #[test]
     fn refreeze_plugin_restores_rejection() {
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.freeze();
         registry.unfreeze_plugin(demo_id());
         registry.refreeze_plugin(&demo_id());

@@ -24,8 +24,10 @@ const LAST_USED_SWEEP_THRESHOLD: usize = 1024;
 
 // Debounce last_used_at writes to avoid grabbing the DB write lock on every
 // api-key-authed request. Only the in-memory mutex is taken on steady-state auth.
-fn last_used_cache() -> std::sync::MutexGuard<'static, HashMap<DbId, i64>> {
-    STATE
+fn last_used_cache(
+    generation: &crate::GenerationState,
+) -> std::sync::MutexGuard<'_, HashMap<DbId, i64>> {
+    generation
         .auth_caches
         .api_key_last_used
         .lock()
@@ -33,7 +35,8 @@ fn last_used_cache() -> std::sync::MutexGuard<'static, HashMap<DbId, i64>> {
 }
 
 fn should_persist_last_used(api_key_id: DbId, now: i64) -> bool {
-    let cache = last_used_cache();
+    let generation = STATE.generation();
+    let cache = last_used_cache(&generation);
     match cache.get(&api_key_id) {
         Some(&last) if now.saturating_sub(last) < LAST_USED_DEBOUNCE_SECS => false,
         _ => true,
@@ -41,7 +44,8 @@ fn should_persist_last_used(api_key_id: DbId, now: i64) -> bool {
 }
 
 fn record_persisted_last_used(api_key_id: DbId, now: i64) {
-    let mut cache = last_used_cache();
+    let generation = STATE.generation();
+    let mut cache = last_used_cache(&generation);
     if cache.len() >= LAST_USED_SWEEP_THRESHOLD {
         let stale_cutoff = 2 * LAST_USED_DEBOUNCE_SECS;
         cache.retain(|_, last| now.saturating_sub(*last) < stale_cutoff);
@@ -59,11 +63,13 @@ fn record_persisted_last_used(api_key_id: DbId, now: i64) {
 }
 
 fn forget_last_used(api_key_id: DbId) {
-    last_used_cache().remove(&api_key_id);
+    let generation = STATE.generation();
+    last_used_cache(&generation).remove(&api_key_id);
 }
 
 pub(crate) fn forget_last_used_many(ids: impl IntoIterator<Item = DbId>) {
-    let mut cache = last_used_cache();
+    let generation = STATE.generation();
+    let mut cache = last_used_cache(&generation);
     for id in ids {
         cache.remove(&id);
     }
@@ -448,7 +454,8 @@ mod tests {
             record_persisted_last_used(DbId(10_000 + i as i64), 0);
         }
         record_persisted_last_used(DbId(20_000), 10 * LAST_USED_DEBOUNCE_SECS);
-        let cache = last_used_cache();
+        let generation = STATE.generation();
+        let cache = last_used_cache(&generation);
         assert!(cache.contains_key(&DbId(20_000)));
         assert!(!cache.contains_key(&DbId(10_000)));
     }
@@ -460,11 +467,15 @@ mod tests {
         for i in 0..LAST_USED_SWEEP_THRESHOLD {
             record_persisted_last_used(DbId(30_000 + i as i64), i as i64);
         }
-        assert_eq!(last_used_cache().len(), LAST_USED_SWEEP_THRESHOLD);
+        let generation = STATE.generation();
+        assert_eq!(
+            last_used_cache(&generation).len(),
+            LAST_USED_SWEEP_THRESHOLD
+        );
 
         let now = (LAST_USED_SWEEP_THRESHOLD as i64) + 1;
         record_persisted_last_used(DbId(40_000), now);
-        let cache = last_used_cache();
+        let cache = last_used_cache(&generation);
         assert!(cache.len() <= LAST_USED_SWEEP_THRESHOLD);
         assert!(cache.contains_key(&DbId(40_000)));
         assert!(

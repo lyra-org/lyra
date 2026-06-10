@@ -25,6 +25,7 @@ mod sessions;
 mod updates;
 mod workflow;
 
+pub(crate) use self::sessions::PlaybackScopes;
 pub(crate) use self::sessions::{
     PlaybackScopeKey,
     bind_current_playback_session_scope,
@@ -40,7 +41,6 @@ pub(crate) use self::workflow::{
     playback_activity_ms,
     report_playback_session_with_cleanup,
     report_playback_with_cleanup,
-    reset_scopes,
     resolve_merged_track_ids_for_play_count,
     start_playback_with_cleanup,
 };
@@ -48,11 +48,11 @@ pub(crate) use crate::db::PlaybackSession;
 use crate::db::PlaybackState;
 pub(crate) use updates::{
     PlaybackUpdatePayload,
+    PlaybackUpdateRegistries,
     dispatch_evicted_updates,
     dispatch_evicted_updates_for_caller,
     dispatch_playback_update,
     dispatch_playback_update_for_caller,
-    reset_callback_registry,
     subscribe_playback_events,
     teardown_plugin_callbacks,
 };
@@ -308,7 +308,7 @@ mod tests {
 
     async fn new_scoped_test_db() -> anyhow::Result<(DbAny, MutexGuard<'static, ()>)> {
         let guard = crate::testing::runtime_test_lock().await;
-        sessions::clear_all_scopes_for_test();
+        crate::testing::init_default_test_state()?;
         Ok((new_test_db()?, guard))
     }
 

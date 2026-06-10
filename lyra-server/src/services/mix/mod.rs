@@ -25,9 +25,9 @@ mod registry;
 
 use super::options::coerce_option_value;
 pub(crate) use registry::{
-    MIX_REGISTRY,
+    MixRegistries,
     MixSeedType,
-    reset_mix_registry,
+    mix_registry,
     teardown_plugin_mixers,
 };
 
@@ -220,7 +220,7 @@ async fn prioritized_mixer_ids(seed_type: MixSeedType) -> anyhow::Result<Vec<Str
     configs.retain(|c| c.enabled);
     configs.sort_by(|a, b| b.priority.cmp(&a.priority));
 
-    let registry = MIX_REGISTRY.read().await;
+    let registry = mix_registry().read_owned().await;
     let ids: Vec<String> = configs
         .into_iter()
         .filter(|c| registry.has_handler(&c.mixer_id, seed_type))
@@ -273,7 +273,7 @@ async fn dispatch_mixer(
         }
         let handler_timeout = (deadline - now).min(MIXER_HANDLER_TIMEOUT);
         let handler_id = {
-            let registry = MIX_REGISTRY.read().await;
+            let registry = mix_registry().read_owned().await;
             registry.get_seed_callback(mixer_id, seed_type)
         };
         let Some(handler_id) = handler_id else {
@@ -311,7 +311,7 @@ async fn run_callback_with_timeout(
     timeout: std::time::Duration,
     mixer_id: &str,
 ) -> anyhow::Result<HandlerOutcome> {
-    let Some(runtime) = crate::STATE.plugin_runtime.get() else {
+    let Some(runtime) = crate::STATE.generation().plugin_runtime.get() else {
         return Ok(HandlerOutcome::FellThrough);
     };
     let request = crate::plugins::executor::MixHandlerRequest {
@@ -355,7 +355,7 @@ async fn coerced_extra_options(
     if extra.is_empty() {
         return Ok(output);
     }
-    let registry = MIX_REGISTRY.read().await;
+    let registry = mix_registry().read_owned().await;
     let declared = registry.get_options(mixer_id);
     for (key, raw_value) in extra {
         if let Some(decl) = declared.iter().find(|decl| decl.name == *key) {

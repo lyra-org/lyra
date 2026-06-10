@@ -26,16 +26,10 @@ pub(crate) const MEDIA_TOKEN_MAX_TTL_SECONDS: u64 = 8 * 60 * 60;
 const MEDIA_TOKEN_BYTES: usize = 24;
 const MAX_MEDIA_TOKENS: usize = 4096;
 
-/// Opaque grant store held on `AppState` so a state reset drops all
+/// Opaque grant store on the generation state so a reset drops all
 /// outstanding media tokens; grant internals stay private to this module.
 #[derive(Default)]
 pub(crate) struct MediaTokenStore(Mutex<HashMap<String, MediaTokenGrant>>);
-
-impl MediaTokenStore {
-    pub(crate) fn clear(&self) {
-        self.0.lock().expect("media token cache poisoned").clear();
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MediaTokenPurpose {
@@ -67,8 +61,10 @@ pub(crate) enum MediaTokenError {
     Expired,
 }
 
-fn tokens() -> std::sync::MutexGuard<'static, HashMap<String, MediaTokenGrant>> {
-    STATE
+fn tokens(
+    generation: &crate::GenerationState,
+) -> std::sync::MutexGuard<'_, HashMap<String, MediaTokenGrant>> {
+    generation
         .auth_caches
         .media_tokens
         .0
@@ -123,7 +119,8 @@ pub(crate) fn issue_media_token(track_db_id: DbId, purpose: MediaTokenPurpose) -
         expires_at,
     };
 
-    let mut cache = tokens();
+    let generation = STATE.generation();
+    let mut cache = tokens(&generation);
     cleanup_expired_tokens(&mut cache, now, now_secs());
     cache.insert(token.clone(), grant);
     enforce_media_token_cap(&mut cache);
@@ -143,7 +140,8 @@ pub(crate) fn validate_media_token(
 
     let now = Instant::now();
     let now_secs = now_secs();
-    let mut cache = tokens();
+    let generation = STATE.generation();
+    let mut cache = tokens(&generation);
 
     let Some(grant) = cache.get_mut(token) else {
         cleanup_expired_tokens(&mut cache, now, now_secs);

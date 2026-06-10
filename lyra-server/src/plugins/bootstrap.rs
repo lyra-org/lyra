@@ -45,6 +45,7 @@ pub(crate) async fn initialize_harmony() -> Result<PluginRuntime> {
             tracing::warn!(error = %error, "plugin discovery error");
         }
         STATE
+            .generation()
             .plugin_manifests
             .replace(Arc::from(runtime.plugin_manifests().await?));
         Ok(runtime)
@@ -52,7 +53,7 @@ pub(crate) async fn initialize_harmony() -> Result<PluginRuntime> {
 }
 
 pub(crate) fn publish_runtime(runtime: PluginRuntime) {
-    STATE.plugin_runtime.replace(Some(runtime));
+    STATE.generation().plugin_runtime.replace(Some(runtime));
 }
 
 pub(crate) async fn exec_for_capture(runtime: PluginRuntime) -> Result<()> {
@@ -72,11 +73,12 @@ pub(crate) async fn finalize_startup() -> Result<()> {
 }
 
 pub(crate) async fn teardown_loaded_plugins() {
-    for manifest in STATE.plugin_manifests.get().iter() {
+    for manifest in STATE.generation().plugin_manifests.get().iter() {
         match PluginId::new(manifest.id.clone()) {
             Ok(plugin_id) => {
                 tracing::debug!(plugin_id = %plugin_id, "tearing down plugin registries");
                 STATE
+                    .generation()
                     .plugin_registries
                     .teardown_plugin(&plugin_id, false)
                     .await;

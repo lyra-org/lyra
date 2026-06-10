@@ -211,7 +211,7 @@ fn plugin_executor_declares_metadata_provider_ids_and_options() -> Result<()> {
     assert_eq!(values[1], luau::Value::String(b"abc123".to_vec()));
 
     let registry =
-        futures::executor::block_on(crate::services::providers::PROVIDER_REGISTRY.read());
+        futures::executor::block_on(crate::services::providers::provider_registry().read_owned());
     let (id_spec, has_generator) = crate::services::providers::registry_tests::id_registration(
         &registry,
         "raw-provider",
@@ -584,8 +584,8 @@ fn plugin_executor_dispatches_registered_mix_handler() -> Result<()> {
     )?;
 
     let handler_id = futures::executor::block_on(async {
-        crate::services::mix::MIX_REGISTRY
-            .read()
+        crate::services::mix::mix_registry()
+            .read_owned()
             .await
             .get_seed_callback("demo-mixer", crate::services::mix::MixSeedType::Track)
     })

@@ -48,11 +48,26 @@ use db::{
     create,
 };
 use plugins::lifecycle::PluginRegistries;
+use plugins::settings::SettingsRegistries;
 use services::auth::media_tokens::MediaTokenStore;
+use services::hls::cleanup::HlsCleanupState;
+use services::libraries::LibrarySyncRegistries;
+use services::mix::MixRegistries;
+use services::playback_sessions::{
+    PlaybackScopes,
+    PlaybackUpdateRegistries,
+};
+use services::providers::ProviderRegistries;
 
 #[derive(Clone)]
 pub(crate) struct SwapHandle<T: Clone> {
     inner: Arc<StdRwLock<T>>,
+}
+
+impl<T: Clone + Default> Default for SwapHandle<T> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
 }
 
 impl<T: Clone> SwapHandle<T> {
@@ -117,9 +132,9 @@ pub(crate) type ConfigHandle = SwapHandle<Arc<Config>>;
 pub(crate) type PluginManifestHandle = SwapHandle<Arc<[PluginManifest]>>;
 pub(crate) type PluginRuntimeHandle = SwapHandle<Option<crate::plugins::bootstrap::PluginRuntime>>;
 
-/// Auth bookkeeping derived from the current database. Lives on `AppState`
-/// instead of module statics so a DB swap cannot carry ids or grants into the
-/// next database (memory DBs reuse small ids).
+/// Auth bookkeeping derived from the current database. Lives on
+/// [`GenerationState`] instead of module statics so a DB swap cannot carry
+/// ids or grants into the next database (memory DBs reuse small ids).
 #[derive(Default)]
 pub(crate) struct AuthCaches {
     pub(crate) api_key_last_used: StdMutex<HashMap<DbId, i64>>,
@@ -127,27 +142,30 @@ pub(crate) struct AuthCaches {
     pub(crate) media_tokens: MediaTokenStore,
 }
 
-impl AuthCaches {
-    fn clear(&self) {
-        self.api_key_last_used
-            .lock()
-            .expect("api key last_used cache poisoned")
-            .clear();
-        self.session_last_seen
-            .lock()
-            .expect("session last_seen cache poisoned")
-            .clear();
-        self.media_tokens.clear();
-    }
+/// Everything derived from the current database/config generation. A reset
+/// swaps the whole struct for a fresh [`Default`], so generation-bound state
+/// dies with its generation by construction — there is no per-registry reset
+/// list to keep in sync. New DB- or config-derived registries belong here,
+/// never in module statics.
+#[derive(Default)]
+pub(crate) struct GenerationState {
+    pub(crate) plugin_manifests: PluginManifestHandle,
+    pub(crate) plugin_runtime: PluginRuntimeHandle,
+    pub(crate) plugin_registries: PluginRegistries,
+    pub(crate) auth_caches: AuthCaches,
+    pub(crate) plugin_settings: SettingsRegistries,
+    pub(crate) providers: ProviderRegistries,
+    pub(crate) mix: MixRegistries,
+    pub(crate) playback_updates: PlaybackUpdateRegistries,
+    pub(crate) playback_scopes: PlaybackScopes,
+    pub(crate) library_sync: LibrarySyncRegistries,
+    pub(crate) hls_cleanup: HlsCleanupState,
 }
 
 pub(crate) struct AppState {
     pub(crate) db: DbHandle,
     pub(crate) config: ConfigHandle,
-    pub(crate) plugin_manifests: PluginManifestHandle,
-    pub(crate) plugin_runtime: PluginRuntimeHandle,
-    pub(crate) plugin_registries: PluginRegistries,
-    pub(crate) auth_caches: AuthCaches,
+    generation: SwapHandle<Arc<GenerationState>>,
 }
 
 pub(crate) fn build_app_state(config: Config) -> Result<AppState> {
@@ -155,38 +173,24 @@ pub(crate) fn build_app_state(config: Config) -> Result<AppState> {
     Ok(AppState {
         db: DbHandle::new(created),
         config: ConfigHandle::new(Arc::new(config)),
-        plugin_manifests: PluginManifestHandle::new(Arc::from(Vec::<PluginManifest>::new())),
-        plugin_runtime: PluginRuntimeHandle::new(None),
-        plugin_registries: PluginRegistries::new(),
-        auth_caches: AuthCaches::default(),
+        generation: SwapHandle::default(),
     })
 }
 
 impl AppState {
-    pub(crate) async fn reset(&self, config: Config) -> Result<()> {
+    /// Snapshot of the current generation. Callers that must not observe a
+    /// mid-operation reset should hold one snapshot for the whole operation.
+    pub(crate) fn generation(&self) -> Arc<GenerationState> {
+        self.generation.get()
+    }
+
+    pub(crate) fn reset(&self, config: Config) -> Result<()> {
         // Keep `?` before the remaining replacements so a DB reset failure
         // cannot leave Lua/config/plugin state pointed at the wrong database.
         self.db.reset_with(|| create(&config.db))?;
         self.config.replace(Arc::new(config));
-        self.clear_generation_state().await;
+        self.generation.replace(Arc::default());
         Ok(())
-    }
-
-    /// Clears everything derived from the previous database/config
-    /// generation: plugin runtime state and the global registries it fed.
-    /// Any registry holding DB-derived data must be cleared here.
-    async fn clear_generation_state(&self) {
-        self.plugin_manifests
-            .replace(Arc::from(Vec::<PluginManifest>::new()));
-        self.plugin_runtime.replace(None);
-        self.auth_caches.clear();
-        plugins::settings::initialize_registry().await;
-        services::playback_sessions::reset_callback_registry().await;
-        services::playback_sessions::reset_scopes();
-        services::mix::reset_mix_registry().await;
-        services::providers::reset_provider_registry().await;
-        services::libraries::reset_sync_states().await;
-        services::hls::cleanup::reset_cleanup_worker_state();
     }
 }
 
@@ -200,23 +204,17 @@ pub(crate) struct StateCell {
 
 impl StateCell {
     /// First call builds the state from `config`; later calls swap in a fresh
-    /// DB/config via [`AppState::reset`] (test-harness reuse). Both paths end
-    /// on a clean generation. Serialize calls externally (today
-    /// `RUNTIME_TEST_LOCK`).
-    pub(crate) async fn initialize(&self, config: Config) -> Result<()> {
+    /// DB/config/generation via [`AppState::reset`] (test-harness reuse).
+    /// Both paths end on a clean generation. Serialize calls externally
+    /// (today `RUNTIME_TEST_LOCK`).
+    pub(crate) fn initialize(&self, config: Config) -> Result<()> {
         match self.inner.get() {
-            Some(state) => state.reset(config).await,
+            Some(state) => state.reset(config),
             None => {
                 let state = build_app_state(config)?;
                 self.inner
                     .set(state)
-                    .map_err(|_| anyhow::anyhow!("application state initialized concurrently"))?;
-                self.inner
-                    .get()
-                    .expect("application state just initialized")
-                    .clear_generation_state()
-                    .await;
-                Ok(())
+                    .map_err(|_| anyhow::anyhow!("application state initialized concurrently"))
             }
         }
     }
@@ -251,7 +249,7 @@ pub async fn run_server(capture_path: Option<String>) -> Result<()> {
     // Bind first: a port collision with a running server must fail fast
     // instead of blocking on that server's DB process lock.
     let listener = services::startup::bind_configured_listener(config.port).await?;
-    STATE.initialize(config).await?;
+    STATE.initialize(config)?;
     services::startup::run_server(capture_path, listener).await
 }
 

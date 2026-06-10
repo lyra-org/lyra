@@ -236,8 +236,8 @@ impl Mixer {
         ensure_registration_open(&plugin_id)?;
         let option = parse_option_declaration(vm, &config)?;
         futures::executor::block_on(async {
-            mix_service::MIX_REGISTRY
-                .write()
+            mix_service::mix_registry()
+                .write_owned()
                 .await
                 .declare_option(&self.id, option)
         })
@@ -262,8 +262,8 @@ impl Mixer {
             core_call_context(context),
         );
         futures::executor::block_on(async {
-            mix_service::MIX_REGISTRY
-                .write()
+            mix_service::mix_registry()
+                .write_owned()
                 .await
                 .set_seed_callback(&self.id, seed_type, handler_id);
         });
@@ -329,13 +329,14 @@ fn mixer_new_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<(
     let plugin_id = crate::plugins::lifecycle::PluginId::new(plugin_id.to_string())
         .map_err(crate::plugins::runtime_error)?;
     futures::executor::block_on(async {
-        let _registration = STATE
+        let generation = STATE.generation();
+        let _registration = generation
             .plugin_registries
             .ensure_registrations_open(&plugin_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
-        mix_service::MIX_REGISTRY
-            .write()
+        mix_service::mix_registry()
+            .write_owned()
             .await
             .register(plugin_id, id.clone())
             .map_err(crate::plugins::runtime_error)?;
@@ -371,7 +372,8 @@ fn ensure_registration_open(
     plugin_id: &crate::plugins::lifecycle::PluginId,
 ) -> luau::runtime::Result<()> {
     futures::executor::block_on(async {
-        let _registration = STATE
+        let generation = STATE.generation();
+        let _registration = generation
             .plugin_registries
             .ensure_registrations_open(plugin_id)
             .await

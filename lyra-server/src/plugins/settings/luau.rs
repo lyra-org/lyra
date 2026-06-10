@@ -23,7 +23,6 @@ use super::{
     FieldDefinition,
     FieldGroupDefinition,
     FieldProps,
-    REGISTRY,
     Schema,
     SettingsScope,
     descriptors::{
@@ -288,7 +287,7 @@ fn declare_settings_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::R
     .map_err(crate::plugins::runtime_error)?;
     let config = build_config_table(&schema.groups, &builder)?;
 
-    futures::executor::block_on(REGISTRY.write())
+    futures::executor::block_on(super::settings_registry().write_owned())
         .register_schema(plugin_id, SettingsScope::Global, schema)
         .map_err(crate::plugins::runtime_error)?;
 
@@ -317,7 +316,7 @@ fn declare_user_settings_callback(mut frame: luau::CallFrame<'_>) -> luau::runti
     let groups = take_groups(&builder)?;
     let schema = Schema { groups };
 
-    futures::executor::block_on(REGISTRY.write())
+    futures::executor::block_on(super::settings_registry().write_owned())
         .register_schema(plugin_id.clone(), SettingsScope::User, schema.clone())
         .map_err(crate::plugins::runtime_error)?;
 

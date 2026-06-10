@@ -46,7 +46,7 @@ use crate::{
             require_principal,
         },
         playback_sessions as playback_service,
-        providers::PROVIDER_REGISTRY,
+        providers::provider_registry,
     },
 };
 
@@ -375,7 +375,7 @@ async fn resolve_accessible_track_filter(
     merge_unique_external_ids: bool,
 ) -> Result<ResolvedTrackFilter, AppError> {
     let unique_track_id_pairs = if merge_unique_external_ids {
-        let registry = PROVIDER_REGISTRY.read().await;
+        let registry = provider_registry().read_owned().await;
         registry.unique_track_id_pairs()
     } else {
         HashSet::new()

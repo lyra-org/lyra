@@ -7,7 +7,6 @@ use std::{
     collections::HashMap,
     sync::{
         Arc,
-        LazyLock,
         Mutex,
     },
     time::Instant,
@@ -37,19 +36,33 @@ use crate::plugins::lifecycle::{
 };
 use crate::services::playback_sessions as playbacks;
 
-pub(crate) static PLAYBACK_CALLBACK_REGISTRY: LazyLock<Arc<RwLock<PlaybackCallbackRegistry>>> =
-    LazyLock::new(|| Arc::new(RwLock::new(PlaybackCallbackRegistry::new())));
-
 /// Broadcast channel capacity for playback state events pushed to WS clients.
 const EVENT_BROADCAST_CAPACITY: usize = 64;
 const DISPATCH_RATE_PER_SECOND: f64 = 10.0;
 const DISPATCH_BURST: f64 = 50.0;
 const DEFAULT_DISPATCH_CALLER: &str = "route";
 
-static EVENT_BROADCAST: LazyLock<broadcast::Sender<PlaybackUpdatePayload>> =
-    LazyLock::new(|| broadcast::channel(EVENT_BROADCAST_CAPACITY).0);
-static DISPATCH_BUCKETS: LazyLock<Mutex<HashMap<String, DispatchBucket>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Generation-owned playback update state: registered callbacks, the WS
+/// event broadcast channel, and per-caller dispatch rate-limit buckets.
+pub(crate) struct PlaybackUpdateRegistries {
+    callbacks: Arc<RwLock<PlaybackCallbackRegistry>>,
+    event_broadcast: broadcast::Sender<PlaybackUpdatePayload>,
+    dispatch_buckets: Mutex<HashMap<String, DispatchBucket>>,
+}
+
+impl Default for PlaybackUpdateRegistries {
+    fn default() -> Self {
+        Self {
+            callbacks: Arc::default(),
+            event_broadcast: broadcast::channel(EVENT_BROADCAST_CAPACITY).0,
+            dispatch_buckets: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+fn playback_callbacks() -> Arc<RwLock<PlaybackCallbackRegistry>> {
+    crate::STATE.generation().playback_updates.callbacks.clone()
+}
 
 #[derive(Clone, Copy, Debug)]
 struct DispatchBucket {
@@ -79,7 +92,11 @@ impl DispatchBucket {
 }
 
 pub(crate) fn subscribe_playback_events() -> broadcast::Receiver<PlaybackUpdatePayload> {
-    EVENT_BROADCAST.subscribe()
+    crate::STATE
+        .generation()
+        .playback_updates
+        .event_broadcast
+        .subscribe()
 }
 
 /// Callbacks registered via `lyra.playback_sessions.on_update`, bucketed per
@@ -87,14 +104,6 @@ pub(crate) fn subscribe_playback_events() -> broadcast::Receiver<PlaybackUpdateP
 /// an implicit API.
 #[derive(Default)]
 pub(crate) struct PlaybackCallbackRegistry;
-
-impl PlaybackCallbackRegistry {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
-    pub(crate) fn clear_all_handlers(&mut self) {}
-}
 
 impl PluginScopedInner for PlaybackCallbackRegistry {
     fn clear_bucket(&mut self, plugin_id: &PluginId) {
@@ -106,15 +115,8 @@ impl PluginScopedInner for PlaybackCallbackRegistry {
     }
 }
 
-pub(crate) async fn reset_callback_registry() {
-    PLAYBACK_CALLBACK_REGISTRY
-        .write()
-        .await
-        .clear_all_handlers();
-}
-
 pub(crate) async fn teardown_plugin_callbacks(plugin_id: &PluginId) {
-    ScopedRegistry::from_shared(PLAYBACK_CALLBACK_REGISTRY.clone())
+    ScopedRegistry::from_shared(playback_callbacks())
         .teardown(plugin_id)
         .await;
 }
@@ -232,11 +234,16 @@ pub(crate) fn dispatch_update_for_caller(
         return;
     }
 
+    let generation = crate::STATE.generation();
+
     // Fan out to WS broadcast (best-effort, dropped if no subscribers or lagging).
-    let _ = EVENT_BROADCAST.send(payload.clone());
+    let _ = generation
+        .playback_updates
+        .event_broadcast
+        .send(payload.clone());
 
     {
-        if let Some(runtime) = crate::STATE.plugin_runtime.get() {
+        if let Some(runtime) = generation.plugin_runtime.get() {
             if let Err(error) = runtime.dispatch_playback_update(payload) {
                 tracing::warn!(
                     error = %error,
@@ -249,7 +256,10 @@ pub(crate) fn dispatch_update_for_caller(
 
 fn dispatch_allowed(caller: &str) -> bool {
     let now = Instant::now();
-    let mut buckets = DISPATCH_BUCKETS
+    let generation = crate::STATE.generation();
+    let mut buckets = generation
+        .playback_updates
+        .dispatch_buckets
         .lock()
         .expect("dispatch bucket mutex poisoned");
     buckets

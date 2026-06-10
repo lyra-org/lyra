@@ -660,7 +660,7 @@ async fn dispatch_registered_route(
         return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
 
-    let Some(runtime) = crate::STATE.plugin_runtime.get() else {
+    let Some(runtime) = crate::STATE.generation().plugin_runtime.get() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "plugin runtime is not ready",

@@ -54,10 +54,10 @@ use crate::{
         },
         options::coerce_option_value,
         providers::{
-            LIBRARY_REFRESH_LOCKS,
-            PROVIDER_REGISTRY,
             ProviderCallStage,
             ProviderCallbackHandle,
+            library_refresh_locks,
+            provider_registry,
             with_provider_call,
         },
     },
@@ -80,7 +80,10 @@ impl Drop for LibraryRefreshGuard {
     fn drop(&mut self) {
         let library_db_id = self.library_db_id;
         tokio::task::spawn(async move {
-            LIBRARY_REFRESH_LOCKS.lock().await.remove(&library_db_id);
+            library_refresh_locks()
+                .lock_owned()
+                .await
+                .remove(&library_db_id);
         });
     }
 }
@@ -169,7 +172,7 @@ pub(crate) async fn refresh_library_metadata(
     options: &LibraryRefreshOptions<'_>,
 ) -> Result<usize, ProviderServiceError> {
     {
-        let mut locks = LIBRARY_REFRESH_LOCKS.lock().await;
+        let mut locks = library_refresh_locks().lock_owned().await;
         if !locks.insert(library_db_id) {
             return Err(ProviderServiceError::RefreshAlreadyRunning(library_db_id.0));
         }
@@ -185,7 +188,7 @@ pub(crate) async fn refresh_library_metadata_with_progress(
     progress: Option<SyncRunProgress>,
 ) -> Result<usize, ProviderServiceError> {
     {
-        let mut locks = LIBRARY_REFRESH_LOCKS.lock().await;
+        let mut locks = library_refresh_locks().lock_owned().await;
         if !locks.insert(library_db_id) {
             return Err(ProviderServiceError::RefreshAlreadyRunning(library_db_id.0));
         }
@@ -781,7 +784,7 @@ async fn refresh_callbacks_for(
     ProviderCallbackHandle,
     Option<ProviderCallbackHandle>,
 )> {
-    let registry = PROVIDER_REGISTRY.read().await;
+    let registry = provider_registry().read_owned().await;
     providers
         .iter()
         .filter(|provider| provider_filter.is_none_or(|id| provider.provider_id == id))
@@ -811,7 +814,7 @@ async fn context_with_options(
     }
 
     let options = {
-        let registry = PROVIDER_REGISTRY.read().await;
+        let registry = provider_registry().read_owned().await;
         let declared = registry.get_options(provider_id);
         passed_options
             .iter()
@@ -843,7 +846,7 @@ async fn dispatch_refresh_callback(
         provider_id,
         ProviderCallStage::MetadataRefresh,
         || async move {
-            let runtime = match STATE.plugin_runtime.get() {
+            let runtime = match STATE.generation().plugin_runtime.get() {
                 Some(runtime) => runtime,
                 None => {
                     return Err(anyhow::anyhow!("plugin runtime is not initialized"));
@@ -880,6 +883,7 @@ async fn dispatch_sync_filter_callback(
         ProviderCallStage::MetadataRefresh,
         || async move {
             let runtime = STATE
+                .generation()
                 .plugin_runtime
                 .get()
                 .context("plugin runtime is not initialized")?;
@@ -919,7 +923,7 @@ fn deduplicate_release_scope_locked(
     provider_scope: &HashSet<String>,
 ) {
     let (unique_release_id_pairs, unique_track_id_pairs) = {
-        let registry = futures::executor::block_on(PROVIDER_REGISTRY.read());
+        let registry = futures::executor::block_on(provider_registry().read_owned());
         (
             registry.unique_id_pairs(EntityType::Release),
             registry.unique_track_id_pairs(),

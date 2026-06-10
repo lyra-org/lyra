@@ -97,7 +97,7 @@ pub async fn runtime_test_lock() -> MutexGuard<'static, ()> {
 /// [`runtime_test_lock`].
 #[cfg(test)]
 pub(crate) fn init_default_test_state() -> anyhow::Result<()> {
-    futures::executor::block_on(STATE.initialize(Config::default()))
+    STATE.initialize(Config::default())
 }
 
 pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Result<()> {
@@ -127,7 +127,7 @@ pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Resul
         hls: config::HlsConfig::default(),
     };
 
-    STATE.initialize(config).await?;
+    STATE.initialize(config)?;
     {
         let mut db = STATE.db.write().await;
         db::server::ensure(&mut db)?;
@@ -283,6 +283,7 @@ pub async fn exec_plugins(
     }
 
     STATE
+        .generation()
         .plugin_manifests
         .replace(Arc::from(runtime.plugin_manifests().await?));
     crate::plugins::bootstrap::publish_runtime(runtime.clone());

@@ -41,7 +41,7 @@ use crate::{
             require_sync_metadata,
         },
         options::OptionType,
-        providers::PROVIDER_REGISTRY,
+        providers::provider_registry,
         providers::{
             EntityExternalIdRecord,
             SetEntityExternalIdRequest as ProviderSetEntityExternalIdRequest,
@@ -323,7 +323,7 @@ async fn list_providers(headers: HeaderMap) -> Result<Json<Vec<ProviderResponse>
     let _principal = require_manage_metadata(&headers).await?;
 
     let providers = list_provider_configs().await?;
-    let registry = PROVIDER_REGISTRY.read().await;
+    let registry = provider_registry().read_owned().await;
     let db = STATE.db.read().await;
 
     let response: Vec<ProviderResponse> = providers

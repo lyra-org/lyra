@@ -5,10 +5,7 @@
 
 use std::{
     collections::HashMap,
-    sync::{
-        Arc,
-        LazyLock,
-    },
+    sync::Arc,
 };
 
 use anyhow::{
@@ -34,8 +31,15 @@ pub(crate) enum MixSeedType {
     RecentListens,
 }
 
-pub(crate) static MIX_REGISTRY: LazyLock<Arc<RwLock<MixRegistry>>> =
-    LazyLock::new(|| Arc::new(RwLock::new(MixRegistry::new())));
+/// Generation-owned mix state: registered mixers bucketed by plugin.
+#[derive(Default)]
+pub(crate) struct MixRegistries {
+    registry: Arc<RwLock<MixRegistry>>,
+}
+
+pub(crate) fn mix_registry() -> Arc<RwLock<MixRegistry>> {
+    crate::STATE.generation().mix.registry.clone()
+}
 
 /// Registered mixers, bucketed by the plugin that declared them.
 /// `plugin_by_mixer` is the derived O(1) dispatch index rebuilt after
@@ -53,15 +57,6 @@ struct MixProviderState {
 }
 
 impl MixRegistry {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.providers.clear();
-        self.plugin_by_mixer.clear();
-    }
-
     /// Registers a mixer. Rejects duplicate ids across all plugin buckets.
     pub(crate) fn register(&mut self, plugin_id: PluginId, id: String) -> Result<()> {
         if let Some(existing) = self.plugin_by_mixer.get(&id) {
@@ -153,12 +148,8 @@ impl PluginScopedInner for MixRegistry {
     }
 }
 
-pub(crate) async fn reset_mix_registry() {
-    MIX_REGISTRY.write().await.clear();
-}
-
 pub(crate) async fn teardown_plugin_mixers(plugin_id: &PluginId) {
-    ScopedRegistry::from_shared(MIX_REGISTRY.clone())
+    ScopedRegistry::from_shared(mix_registry())
         .teardown(plugin_id)
         .await;
 }

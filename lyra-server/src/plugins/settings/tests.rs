@@ -32,7 +32,8 @@ fn server_info() -> crate::plugins::server::ServerInfo {
 
 #[test]
 fn declare_settings_registers_global_and_user_schemas() -> Result<()> {
-    futures::executor::block_on(super::REGISTRY.write()).clear();
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
     let mut db = crate::plugins::db::test_db::new_test_db()?;
     let user_db_id = crate::plugins::db::users::create(
         &mut db,
@@ -106,7 +107,7 @@ fn declare_settings_registers_global_and_user_schemas() -> Result<()> {
         ]
     );
 
-    let registry = futures::executor::block_on(super::REGISTRY.read());
+    let registry = futures::executor::block_on(super::settings_registry().read_owned());
     assert!(
         registry
             .get_schema("demo", super::SettingsScope::Global)

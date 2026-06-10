@@ -44,16 +44,16 @@ pub(crate) use refresh::{
 #[cfg(test)]
 pub(crate) use registry::tests as registry_tests;
 pub(crate) use registry::{
-    LIBRARY_REFRESH_LOCKS,
-    PROVIDER_REGISTRY,
     ProviderCallStage,
     ProviderCallbackHandle,
     ProviderCoverRequireSpec,
     ProviderCoverSpec,
     ProviderIdSpec,
     ProviderIdUrlGenerator,
-    SYNC_LOCKS,
-    reset_provider_registry,
+    ProviderRegistries,
+    library_refresh_locks,
+    provider_registry,
+    sync_locks,
     teardown_plugin_providers,
     with_provider_call,
 };

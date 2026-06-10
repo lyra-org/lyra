@@ -73,12 +73,12 @@ use crate::services::{
         OptionType,
     },
     providers::{
-        PROVIDER_REGISTRY,
         ProviderCallbackHandle,
         ProviderCoverRequireSpec,
         ProviderCoverSpec,
         ProviderIdSpec,
         ProviderIdUrlGenerator,
+        provider_registry,
     },
 };
 
@@ -185,12 +185,13 @@ fn provider_new_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Resul
         .clone();
 
     futures::executor::block_on(async {
-        let _registration = STATE
+        let generation = STATE.generation();
+        let _registration = generation
             .plugin_registries
             .ensure_registrations_open(&plugin_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
-        let mut registry = PROVIDER_REGISTRY.write().await;
+        let mut registry = provider_registry().write_owned().await;
         registry
             .register(plugin_id.clone(), provider_id.clone())
             .map_err(crate::plugins::runtime_error)?;
@@ -232,7 +233,8 @@ fn provider_new_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Resul
 
 fn ensure_registration_open(plugin_id: &PluginId) -> luau::runtime::Result<()> {
     futures::executor::block_on(async {
-        let _registration = STATE
+        let generation = STATE.generation();
+        let _registration = generation
             .plugin_registries
             .ensure_registrations_open(plugin_id)
             .await
@@ -414,7 +416,7 @@ fn provider_id_callback(
     };
 
     futures::executor::block_on(async {
-        let mut registry = PROVIDER_REGISTRY.write().await;
+        let mut registry = provider_registry().write_owned().await;
         registry.set_id_registration(&provider.provider_id, id_spec, generator);
     });
     Ok(())
@@ -431,7 +433,7 @@ fn declare_option_callback(
     let option = parse_option_declaration(vm, &config)?;
 
     futures::executor::block_on(async {
-        let mut registry = PROVIDER_REGISTRY.write().await;
+        let mut registry = provider_registry().write_owned().await;
         registry
             .declare_option(&provider.provider_id, option)
             .map_err(crate::plugins::runtime_error)
@@ -453,7 +455,7 @@ fn search_callback(
     let handler_id = handlers.register(provider.provider_id.clone(), entity_type, handler, context);
 
     futures::executor::block_on(async {
-        let mut registry = PROVIDER_REGISTRY.write().await;
+        let mut registry = provider_registry().write_owned().await;
         registry.set_search_callback(
             &provider.provider_id,
             entity_type,
@@ -493,7 +495,7 @@ fn cover_callback(
     let handler_id = handlers.register(provider.provider_id.clone(), entity_type, handler, context);
 
     futures::executor::block_on(async {
-        let mut registry = PROVIDER_REGISTRY.write().await;
+        let mut registry = provider_registry().write_owned().await;
         registry.set_cover_handler(
             &provider.provider_id,
             entity_type,
@@ -542,6 +544,7 @@ fn lyrics_callback(
         let provider_id = provider_id_for_handler.clone();
         Box::pin(async move {
             let runtime = STATE
+                .generation()
                 .plugin_runtime
                 .get()
                 .context("plugin runtime is not initialized")?;
@@ -601,7 +604,7 @@ fn refresh_callback(
     });
 
     futures::executor::block_on(async {
-        let mut registry = PROVIDER_REGISTRY.write().await;
+        let mut registry = provider_registry().write_owned().await;
         registry.set_refresh_callback(
             &provider.provider_id,
             entity_type,
@@ -634,7 +637,7 @@ fn ensure_artist_callback(
     let provider_id = provider.provider_id.clone();
     futures::executor::block_on(async {
         let is_registered_artist_id = {
-            let registry = PROVIDER_REGISTRY.read().await;
+            let registry = provider_registry().read_owned().await;
             registry.id_spec_matches_entity(&provider_id, &id_type, EntityType::Artist)
         };
         if !is_registered_artist_id {
@@ -846,7 +849,7 @@ fn mark_unmatched_callback(
             })?;
 
         {
-            let registry = PROVIDER_REGISTRY.read().await;
+            let registry = provider_registry().read_owned().await;
             for id_type in &normalized_id_types {
                 if !registry.id_spec_matches_entity(&provider_id, id_type, entity_type) {
                     return Err(crate::plugins::runtime_error(format!(

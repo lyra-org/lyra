@@ -323,6 +323,7 @@ pub(crate) async fn uninstall(plugin_id: &str) -> Result<(), PluginRepoError> {
 
 async fn reload_runtime() -> Result<(), PluginRepoError> {
     STATE
+        .generation()
         .plugin_registries
         .reload_all_plugins()
         .await
