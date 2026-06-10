@@ -67,6 +67,7 @@ use crate::{
         login_with_password,
         logout_with_token,
         require_auth,
+        require_grantable_permissions,
         require_manage_roles,
         require_manage_users,
         require_permission,
@@ -481,14 +482,10 @@ async fn update_role(
         .db_id
         .ok_or_else(|| AppError::not_found("role has no db_id"))?;
 
+    require_grantable_permissions(&principal, &target_role.permissions)?;
+
     let target_has_admin = target_role.permissions.contains(&Permission::Admin);
     let current_is_admin = db::roles::has_admin_role(&db, user_db_id)?;
-
-    if target_has_admin && !db::roles::has_permission(&principal.permissions, Permission::Admin) {
-        return Err(AppError::forbidden(
-            "Admin permission required to assign an admin role",
-        ));
-    }
 
     if current_is_admin && !target_has_admin {
         if user.username == STATE.config.get().auth.default_username.to_lowercase() {
@@ -1041,6 +1038,44 @@ mod tests {
         )
         .await
         .expect_err("non-admin role manager should not assign admin role")
+        .into_response()
+        .status();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn manage_roles_without_admin_cannot_assign_role_with_unheld_permissions()
+    -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let headers = create_headers_with_role("role-manager", "role-manager").await?;
+        let (target_user_id, _target_db_id) = create_user("listener").await?;
+
+        {
+            let mut db = STATE.db.write().await;
+            db::roles::create(
+                &mut db,
+                &db::roles::Role {
+                    db_id: None,
+                    id: nanoid!(),
+                    name: "escalated".to_string(),
+                    permissions: vec![Permission::ManageUsers, Permission::ManagePlugins],
+                },
+            )?;
+        }
+
+        let status = update_role(
+            headers,
+            Path(target_user_id),
+            Json(UpdateRoleRequest {
+                role: "escalated".to_string(),
+            }),
+        )
+        .await
+        .expect_err("role manager should not assign permissions they do not hold")
         .into_response()
         .status();
         assert_eq!(status, StatusCode::FORBIDDEN);
