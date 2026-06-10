@@ -27,7 +27,7 @@ use super::options::coerce_option_value;
 pub(crate) use registry::{
     MIX_REGISTRY,
     MixSeedType,
-    reset_mix_registry_for_test,
+    reset_mix_registry,
     teardown_plugin_mixers,
 };
 

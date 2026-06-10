@@ -171,7 +171,6 @@ fn plugin_executor_preserves_typed_call_context_across_luau_yield() -> Result<()
 fn plugin_executor_declares_metadata_provider_ids_and_options() -> Result<()> {
     let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
     crate::testing::init_default_test_state()?;
-    futures::executor::block_on(crate::services::providers::reset_provider_registry_for_test());
     let runtime = runtime_with_scopes(&["lyra.metadata"])?;
     let values = runtime.eval_plugin_source(
         "demo",
@@ -334,6 +333,9 @@ fn plugin_executor_exposes_lyra_playback_sessions_on_update() -> Result<()> {
 
 #[test]
 fn plugin_executor_dispatches_registered_api_handler() -> Result<()> {
+    // api::install resets the shared API route registry; serialize with the
+    // other global-registry mutators.
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
     let _ = futures::executor::block_on(crate::plugins::api::install(
         axum::Router::new(),
         std::collections::HashSet::new(),
@@ -399,6 +401,9 @@ fn plugin_executor_dispatches_registered_api_handler() -> Result<()> {
 
 #[test]
 fn plugin_executor_dispatches_registered_websocket_handler() -> Result<()> {
+    // api::install resets the shared API route registry; serialize with the
+    // other global-registry mutators.
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
     let _ = futures::executor::block_on(crate::plugins::api::install(
         axum::Router::new(),
         std::collections::HashSet::new(),
@@ -471,6 +476,9 @@ fn plugin_executor_dispatches_registered_websocket_handler() -> Result<()> {
 
 #[test]
 fn foreground_dispatch_does_not_hide_finished_websocket_cleanup() -> Result<()> {
+    // api::install resets the shared API route registry; serialize with the
+    // other global-registry mutators.
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
     let _ = futures::executor::block_on(crate::plugins::api::install(
         axum::Router::new(),
         std::collections::HashSet::new(),
@@ -550,7 +558,6 @@ fn foreground_dispatch_does_not_hide_finished_websocket_cleanup() -> Result<()> 
 fn plugin_executor_dispatches_registered_mix_handler() -> Result<()> {
     let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
     crate::testing::init_default_test_state()?;
-    futures::executor::block_on(crate::services::mix::reset_mix_registry_for_test());
     let runtime = runtime_with_scopes(&["lyra.mix", "harmony.task"])?;
     runtime.run_plugin_source(
         "demo",
@@ -753,8 +760,6 @@ fn plugin_executor_discovers_and_executes_plugins_from_directory() -> Result<()>
 fn plugin_executor_executes_checked_in_plugins_from_repo() -> Result<()> {
     let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
     crate::testing::init_default_test_state()?;
-    futures::executor::block_on(crate::plugins::settings::REGISTRY.write()).clear();
-    futures::executor::block_on(crate::services::providers::reset_provider_registry_for_test());
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(
         crate::plugins::db::test_db::new_test_db()?,
     ));

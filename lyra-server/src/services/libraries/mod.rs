@@ -22,7 +22,7 @@ pub(crate) use orchestrator::{
     cancel_sync_run,
     get_library_sync_status,
     get_sync_run,
-    reset_sync_states_for_test,
+    reset_sync_states,
     running_library_sync_count,
     start_library_refresh,
     start_library_sync,

@@ -163,16 +163,30 @@ pub(crate) fn build_app_state(config: Config) -> Result<AppState> {
 }
 
 impl AppState {
-    pub(crate) fn reset(&self, config: Config) -> Result<()> {
+    pub(crate) async fn reset(&self, config: Config) -> Result<()> {
         // Keep `?` before the remaining replacements so a DB reset failure
         // cannot leave Lua/config/plugin state pointed at the wrong database.
         self.db.reset_with(|| create(&config.db))?;
         self.config.replace(Arc::new(config));
+        self.clear_generation_state().await;
+        Ok(())
+    }
+
+    /// Clears everything derived from the previous database/config
+    /// generation: plugin runtime state and the global registries it fed.
+    /// Any registry holding DB-derived data must be cleared here.
+    async fn clear_generation_state(&self) {
         self.plugin_manifests
             .replace(Arc::from(Vec::<PluginManifest>::new()));
         self.plugin_runtime.replace(None);
         self.auth_caches.clear();
-        Ok(())
+        plugins::settings::initialize_registry().await;
+        services::playback_sessions::reset_callback_registry().await;
+        services::playback_sessions::reset_scopes();
+        services::mix::reset_mix_registry().await;
+        services::providers::reset_provider_registry().await;
+        services::libraries::reset_sync_states().await;
+        services::hls::cleanup::reset_cleanup_worker_state();
     }
 }
 
@@ -186,16 +200,23 @@ pub(crate) struct StateCell {
 
 impl StateCell {
     /// First call builds the state from `config`; later calls swap in a fresh
-    /// DB/config via [`AppState::reset`] (test-harness reuse). Serialize calls
-    /// externally (today `RUNTIME_TEST_LOCK`).
-    pub(crate) fn initialize(&self, config: Config) -> Result<()> {
+    /// DB/config via [`AppState::reset`] (test-harness reuse). Both paths end
+    /// on a clean generation. Serialize calls externally (today
+    /// `RUNTIME_TEST_LOCK`).
+    pub(crate) async fn initialize(&self, config: Config) -> Result<()> {
         match self.inner.get() {
-            Some(state) => state.reset(config),
+            Some(state) => state.reset(config).await,
             None => {
                 let state = build_app_state(config)?;
                 self.inner
                     .set(state)
-                    .map_err(|_| anyhow::anyhow!("application state initialized concurrently"))
+                    .map_err(|_| anyhow::anyhow!("application state initialized concurrently"))?;
+                self.inner
+                    .get()
+                    .expect("application state just initialized")
+                    .clear_generation_state()
+                    .await;
+                Ok(())
             }
         }
     }
@@ -230,7 +251,7 @@ pub async fn run_server(capture_path: Option<String>) -> Result<()> {
     // Bind first: a port collision with a running server must fail fast
     // instead of blocking on that server's DB process lock.
     let listener = services::startup::bind_configured_listener(config.port).await?;
-    STATE.initialize(config)?;
+    STATE.initialize(config).await?;
     services::startup::run_server(capture_path, listener).await
 }
 

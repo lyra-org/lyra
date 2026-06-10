@@ -40,7 +40,7 @@ pub(crate) use self::workflow::{
     playback_activity_ms,
     report_playback_session_with_cleanup,
     report_playback_with_cleanup,
-    reset_scopes_for_test,
+    reset_scopes,
     resolve_merged_track_ids_for_play_count,
     start_playback_with_cleanup,
 };
@@ -52,7 +52,7 @@ pub(crate) use updates::{
     dispatch_evicted_updates_for_caller,
     dispatch_playback_update,
     dispatch_playback_update_for_caller,
-    reset_callback_registry_for_test,
+    reset_callback_registry,
     subscribe_playback_events,
     teardown_plugin_callbacks,
 };
