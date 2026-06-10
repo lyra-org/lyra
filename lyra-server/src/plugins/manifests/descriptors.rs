@@ -60,7 +60,7 @@ impl DescribeInterface for PluginManifest {
             },
             FieldDescriptor {
                 name: "entrypoint",
-                ty: String::luau_type(),
+                ty: Option::<String>::luau_type(),
                 description: None,
             },
         ]);

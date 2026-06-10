@@ -12,7 +12,7 @@ fn manifest(id: &str, scopes: &[&str]) -> harmony_core::plugin::PluginManifest {
         name: format!("{id} Plugin"),
         version: "1.0.0".to_string(),
         description: "Test manifest".to_string(),
-        entrypoint: "init.luau".to_string(),
+        entrypoint: Some("init.luau".to_string()),
         scopes: scopes.iter().map(|scope| scope.to_string()).collect(),
         dependencies: Vec::new(),
     }
@@ -28,7 +28,7 @@ fn plugins_manifest_access_reads_vm_context_store() -> Result<()> {
             name: "Other Plugin".to_string(),
             version: "2.0.0".to_string(),
             description: "Other manifest".to_string(),
-            entrypoint: "main.luau".to_string(),
+            entrypoint: Some("main.luau".to_string()),
             scopes: Vec::new(),
             dependencies: Vec::new(),
         },

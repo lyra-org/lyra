@@ -99,7 +99,8 @@ struct PluginManifestResponse {
     name: String,
     version: String,
     description: String,
-    entrypoint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    entrypoint: Option<String>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]

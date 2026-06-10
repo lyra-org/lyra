@@ -1,6 +1,9 @@
 use std::{
     any::Any,
-    collections::HashMap,
+    collections::{
+        HashMap,
+        HashSet,
+    },
     fmt,
     fs,
     path::{
@@ -46,6 +49,12 @@ pub struct ModuleCacheKey(pub Arc<str>);
 
 pub trait CapabilityPolicy {
     fn is_allowed(&self, origin: &ChunkOrigin, capability: &CapabilityId) -> bool;
+
+    /// Whether `requester` may require Luau sources from plugin `target`.
+    fn allows_plugin_dependency(&self, requester: &str, target: &str) -> bool {
+        let _ = (requester, target);
+        true
+    }
 }
 
 pub struct AllowAllCapabilities;
@@ -94,24 +103,6 @@ impl MemorySourceLoader {
     }
 
     fn key_for(request: SourceRequest<'_>) -> Result<(ModuleCacheKey, ChunkOrigin)> {
-        if let Some(path) = request.specifier.strip_prefix("@self/") {
-            let plugin = request
-                .origin
-                .plugin
-                .clone()
-                .ok_or_else(|| anyhow::anyhow!("@self require needs plugin origin"))?;
-            let path = normalize_logical_path(path)?;
-            let origin = ChunkOrigin {
-                plugin: Some(plugin.clone()),
-                path: Some(Arc::from(format!("plugins/{plugin}/{path}"))),
-                ..ChunkOrigin::default()
-            };
-            return Ok((
-                ModuleCacheKey(Arc::from(format!("plugin:{plugin}/{path}"))),
-                origin,
-            ));
-        }
-
         if request.specifier.starts_with("./") || request.specifier.starts_with("../") {
             let base_path = request
                 .origin
@@ -121,7 +112,7 @@ impl MemorySourceLoader {
             let parent = Path::new(base_path)
                 .parent()
                 .unwrap_or_else(|| Path::new(""));
-            let path = normalize_logical_path(parent.join(request.specifier))?;
+            let path = canonical_module_path(parent.join(request.specifier))?;
             let cache_path = if let Some(plugin) = request.origin.plugin.as_deref() {
                 let plugin_root = format!("plugins/{plugin}/");
                 path.strip_prefix(&plugin_root).unwrap_or(&path).to_string()
@@ -145,17 +136,34 @@ impl MemorySourceLoader {
             ));
         }
 
-        if let Some(path) = request.specifier.strip_prefix('@') {
-            let path = normalize_logical_path(path)?;
-            let origin = ChunkOrigin {
-                module: Some(ModuleId(Arc::from(path.clone()))),
-                path: Some(Arc::from(path.clone())),
-                ..ChunkOrigin::default()
+        if let Some(target) = request.specifier.strip_prefix('@') {
+            let (plugin_id, module_path) = match target.split_once('/') {
+                Some((plugin_id, module_path)) => (plugin_id, module_path),
+                None => (target, "init"),
             };
-            return Ok((ModuleCacheKey(Arc::from(format!("alias:{path}"))), origin));
+            let plugin_id = if plugin_id == "self" {
+                request
+                    .origin
+                    .plugin
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("@self require needs plugin origin"))?
+            } else {
+                plugin_id
+            };
+            if let Err(reason) = crate::plugin::validate_plugin_id(plugin_id) {
+                anyhow::bail!("invalid plugin id in require '@{target}': {reason}");
+            }
+            return plugin_source_key(plugin_id, module_path);
         }
 
-        let path = normalize_logical_path(request.specifier)?;
+        if let Some(plugin) = request.origin.plugin.as_deref() {
+            anyhow::bail!(
+                "plugin '{plugin}' require '{}' must start with './', '../', '@self', or '@<plugin-id>'",
+                request.specifier
+            );
+        }
+
+        let path = canonical_module_path(request.specifier)?;
         let origin = ChunkOrigin {
             path: Some(Arc::from(path.clone())),
             ..ChunkOrigin::default()
@@ -204,10 +212,6 @@ impl FilesystemSourceLoader {
             return Ok(resolve_luau_source_path(
                 self.plugins_dir.join(plugin).join(relative_path),
             ));
-        }
-
-        if let Some(path) = key.strip_prefix("alias:") {
-            return Ok(resolve_luau_source_path(self.source_root.join(path)));
         }
 
         if let Some(path) = key.strip_prefix("source:") {
@@ -498,14 +502,29 @@ impl FunctionSpec {
 
 #[derive(Debug)]
 pub enum ModuleLoadError {
-    DuplicateModule { module_id: ModuleId },
-    UnknownModule { module_id: ModuleId },
-    MissingInstaller { module_id: ModuleId },
+    DuplicateModule {
+        module_id: ModuleId,
+    },
+    UnknownModule {
+        module_id: ModuleId,
+    },
+    MissingInstaller {
+        module_id: ModuleId,
+    },
     CapabilityDenied(ModuleCapabilityDenied),
     InstallFailed(anyhow::Error),
     SourceResolveFailed(anyhow::Error),
     SourceLoadFailed(anyhow::Error),
-    UnknownSource { cache_key: ModuleCacheKey },
+    UnknownSource {
+        cache_key: ModuleCacheKey,
+    },
+    PluginDependencyDenied {
+        requester: Arc<str>,
+        target: Arc<str>,
+    },
+    RequireCycle {
+        cache_key: ModuleCacheKey,
+    },
 }
 
 impl fmt::Display for ModuleLoadError {
@@ -526,6 +545,16 @@ impl fmt::Display for ModuleLoadError {
             Self::SourceLoadFailed(error) => write!(f, "source load failed: {error}"),
             Self::UnknownSource { cache_key } => {
                 write!(f, "source '{}' is not registered", cache_key.0)
+            }
+            Self::PluginDependencyDenied { requester, target } => {
+                write!(
+                    f,
+                    "plugin '{requester}' requires plugin '{target}' but does not declare it \
+                     as a dependency in plugin.json"
+                )
+            }
+            Self::RequireCycle { cache_key } => {
+                write!(f, "require cycle detected at '{}'", cache_key.0)
             }
         }
     }
@@ -555,6 +584,33 @@ fn normalize_logical_path(path: impl AsRef<Path>) -> Result<String> {
     }
 
     Ok(path.into_owned())
+}
+
+/// Canonical logical module path for cache keys: normalized, with the
+/// implicit `.luau` extension stripped so `foo` and `foo.luau` share one
+/// cache entry (the filesystem loader re-appends it on read).
+fn canonical_module_path(path: impl AsRef<Path>) -> Result<String> {
+    let path = normalize_logical_path(path)?;
+    Ok(match path.strip_suffix(".luau") {
+        Some(stem) => stem.to_owned(),
+        None => path,
+    })
+}
+
+fn plugin_source_key(
+    plugin: &str,
+    path: impl AsRef<Path>,
+) -> Result<(ModuleCacheKey, ChunkOrigin)> {
+    let path = canonical_module_path(path)?;
+    let origin = ChunkOrigin {
+        plugin: Some(Arc::from(plugin)),
+        path: Some(Arc::from(format!("plugins/{plugin}/{path}"))),
+        ..ChunkOrigin::default()
+    };
+    Ok((
+        ModuleCacheKey(Arc::from(format!("plugin:{plugin}/{path}"))),
+        origin,
+    ))
 }
 
 impl std::error::Error for ModuleLoadError {
@@ -671,6 +727,19 @@ impl ModuleRegistry {
         self.modules.contains_key(module_id)
     }
 
+    /// Whether any registered module lives under `namespace` (the first
+    /// `/`-separated component of its id). Registered namespaces are
+    /// reserved: they never fall through to plugin source resolution.
+    pub fn contains_namespace(&self, namespace: &str) -> bool {
+        self.modules.keys().any(|module_id| {
+            let id = module_id.0.as_ref();
+            id == namespace
+                || id
+                    .strip_prefix(namespace)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        })
+    }
+
     pub fn register(&mut self, spec: ModuleSpec) -> std::result::Result<(), ModuleLoadError> {
         if self.modules.contains_key(&spec.id) {
             return Err(ModuleLoadError::DuplicateModule {
@@ -777,6 +846,7 @@ pub struct LuauRequireRuntime {
     source_cache: std::cell::RefCell<LuauSourceCache>,
     active_origins: std::cell::RefCell<HashMap<usize, Vec<ChunkOrigin>>>,
     source_origins: std::cell::RefCell<HashMap<Arc<str>, ChunkOrigin>>,
+    in_flight_sources: std::cell::RefCell<HashSet<Arc<str>>>,
     loader: Box<dyn SourceLoader>,
     policy: Box<dyn CapabilityPolicy>,
 }
@@ -792,6 +862,7 @@ impl LuauRequireRuntime {
             source_cache: std::cell::RefCell::new(LuauSourceCache::new()),
             active_origins: std::cell::RefCell::new(HashMap::new()),
             source_origins: std::cell::RefCell::new(HashMap::new()),
+            in_flight_sources: std::cell::RefCell::new(HashSet::new()),
             loader: Box::new(loader),
             policy: Box::new(policy),
         }
@@ -857,21 +928,74 @@ impl LuauRequireRuntime {
         specifier: &str,
         origin: &ChunkOrigin,
     ) -> std::result::Result<Arc<[luau::Value]>, ModuleLoadError> {
+        self.load_source_cached(vm, specifier, origin, |source| {
+            vm.eval(
+                source_with_bound_require(source.bytes.as_ref(), &source.cache_key.0),
+                luau_origin(&source.origin),
+            )
+            .map_err(anyhow::Error::new)
+        })
+    }
+
+    /// Resolves, gates, and caches a Luau source module; `eval` supplies the
+    /// evaluation strategy (plain `vm.eval` for require, a scheduler-driven
+    /// thread for plugin entrypoints) so both share one cache identity.
+    pub(crate) fn load_source_cached(
+        &self,
+        vm: &luau::Vm,
+        specifier: &str,
+        origin: &ChunkOrigin,
+        eval: impl FnOnce(&ResolvedSource) -> anyhow::Result<Vec<luau::Value>>,
+    ) -> std::result::Result<Arc<[luau::Value]>, ModuleLoadError> {
+        // Registered module namespaces are reserved: `@<ns>/typo` must fail
+        // as an unknown module instead of resolving to a plugin named `<ns>`.
+        if let Some(target) = specifier.strip_prefix('@') {
+            let namespace = target.split('/').next().unwrap_or(target);
+            if namespace != "self" && self.registry.borrow().contains_namespace(namespace) {
+                return Err(ModuleLoadError::UnknownModule {
+                    module_id: ModuleId(Arc::from(target)),
+                });
+            }
+        }
+
         let source = self.loader.resolve(SourceRequest { specifier, origin })?;
+
+        // Dependency gate runs before the cache so an undeclared dependency
+        // fails even when another plugin already materialized the module.
+        if let (Some(requester), Some(target)) =
+            (origin.plugin.as_deref(), source.origin.plugin.as_deref())
+            && requester != target
+            && !self.policy.allows_plugin_dependency(requester, target)
+        {
+            return Err(ModuleLoadError::PluginDependencyDenied {
+                requester: Arc::from(requester),
+                target: Arc::from(target),
+            });
+        }
+
         if let Some(values) = self.source_cache.borrow().get(&source.cache_key) {
             return Ok(values);
+        }
+
+        if !self
+            .in_flight_sources
+            .borrow_mut()
+            .insert(source.cache_key.0.clone())
+        {
+            return Err(ModuleLoadError::RequireCycle {
+                cache_key: source.cache_key,
+            });
         }
 
         self.source_origins
             .borrow_mut()
             .insert(source.cache_key.0.clone(), source.origin.clone());
         let _active_origin = self.push_active_origin(vm.state_id(), source.origin.clone());
-        let result = vm.eval(
-            source_with_bound_require(source.bytes.as_ref(), &source.cache_key.0),
-            luau_origin(&source.origin),
-        );
-        let values =
-            result.map_err(|error| ModuleLoadError::SourceLoadFailed(anyhow::Error::new(error)))?;
+        let result = eval(&source);
+        self.in_flight_sources
+            .borrow_mut()
+            .remove(&source.cache_key.0);
+        let values = result.map_err(ModuleLoadError::SourceLoadFailed)?;
         let values = Arc::<[luau::Value]>::from(values.into_boxed_slice());
         self.source_cache
             .borrow_mut()
@@ -924,7 +1048,7 @@ impl Drop for ActiveOriginGuard<'_> {
     }
 }
 
-fn source_with_bound_require(source: &[u8], source_key: &str) -> Arc<[u8]> {
+pub(crate) fn source_with_bound_require(source: &[u8], source_key: &str) -> Arc<[u8]> {
     let source_key = luau_string_literal(source_key);
     let prefix = format!(
         "local __harmony_global_require = require\nlocal __harmony_require_source = {source_key}\nlocal require = function(specifier)\n\treturn __harmony_global_require(specifier, __harmony_require_source)\nend\n"
@@ -1543,7 +1667,7 @@ mod tests {
     {
         let vm = luau::Vm::new()?;
         let mut loader = MemorySourceLoader::new();
-        loader.insert("plugin:demo/lib/util.luau", b"return 40 + 2".as_slice());
+        loader.insert("plugin:demo/lib/util", b"return 40 + 2".as_slice());
         let origin = ChunkOrigin {
             plugin: Some(Arc::from("demo")),
             path: Some(Arc::from("plugins/demo/init.luau")),
@@ -1556,13 +1680,13 @@ mod tests {
             .expect("first require");
         assert_eq!(first.as_ref(), [luau::Value::Number(42.0)]);
 
-        loader.insert("plugin:demo/lib/util.luau", b"return 99".as_slice());
+        loader.insert("plugin:demo/lib/util", b"return 99".as_slice());
         let second = cache
             .require(&vm, &loader, "@self/lib/util.luau", &origin)
             .expect("cached require");
         assert!(Arc::ptr_eq(&first, &second));
 
-        assert!(cache.invalidate(&ModuleCacheKey(Arc::from("plugin:demo/lib/util.luau"))));
+        assert!(cache.invalidate(&ModuleCacheKey(Arc::from("plugin:demo/lib/util"))));
         let reloaded = cache
             .require(&vm, &loader, "@self/lib/util.luau", &origin)
             .expect("reloaded require");
@@ -1575,7 +1699,7 @@ mod tests {
         let vm = luau::Vm::new()?;
         let mut loader = MemorySourceLoader::new();
         loader.insert(
-            "plugin:demo/lib/module.luau",
+            "plugin:demo/lib/module",
             b"return { answer = 42, get = function() return 7 end }".as_slice(),
         );
         let origin = ChunkOrigin {
@@ -1604,14 +1728,11 @@ mod tests {
         let vm = luau::Vm::new()?;
         let mut loader = MemorySourceLoader::new();
         loader.insert(
-            "plugin:demo/lib/util.luau",
+            "plugin:demo/lib/util",
             b"local child = require(\"./child.luau\"); return { source_answer = child.answer }"
                 .as_slice(),
         );
-        loader.insert(
-            "plugin:demo/lib/child.luau",
-            b"return { answer = 7 }".as_slice(),
-        );
+        loader.insert("plugin:demo/lib/child", b"return { answer = 7 }".as_slice());
         let origin = ChunkOrigin {
             plugin: Some(Arc::from("demo")),
             path: Some(Arc::from("plugins/demo/init.luau")),
@@ -1696,7 +1817,7 @@ mod tests {
     #[test]
     fn source_loader_resolves_self_alias_with_typed_plugin_origin() {
         let mut loader = MemorySourceLoader::new();
-        loader.insert("plugin:demo/lib/util.luau", b"return 1".as_slice());
+        loader.insert("plugin:demo/lib/util", b"return 1".as_slice());
         let origin = ChunkOrigin {
             plugin: Some(Arc::from("demo")),
             path: Some(Arc::from("plugins/demo/init.luau")),
@@ -1710,18 +1831,18 @@ mod tests {
             })
             .expect("resolve @self");
 
-        assert_eq!(resolved.cache_key.0.as_ref(), "plugin:demo/lib/util.luau");
+        assert_eq!(resolved.cache_key.0.as_ref(), "plugin:demo/lib/util");
         assert_eq!(resolved.origin.plugin.as_deref(), Some("demo"));
         assert_eq!(
             resolved.origin.path.as_deref(),
-            Some("plugins/demo/lib/util.luau")
+            Some("plugins/demo/lib/util")
         );
     }
 
     #[test]
     fn source_loader_resolves_relative_paths_without_source_parsing() {
         let mut loader = MemorySourceLoader::new();
-        loader.insert("plugin:demo/lib/shared.luau", b"return 2".as_slice());
+        loader.insert("plugin:demo/lib/shared", b"return 2".as_slice());
         let origin = ChunkOrigin {
             plugin: Some(Arc::from("demo")),
             path: Some(Arc::from("plugins/demo/pages/home.luau")),
@@ -1735,10 +1856,10 @@ mod tests {
             })
             .expect("resolve relative path");
 
-        assert_eq!(resolved.cache_key.0.as_ref(), "plugin:demo/lib/shared.luau");
+        assert_eq!(resolved.cache_key.0.as_ref(), "plugin:demo/lib/shared");
         assert_eq!(
             resolved.origin.path.as_deref(),
-            Some("plugins/demo/lib/shared.luau")
+            Some("plugins/demo/lib/shared")
         );
     }
 
@@ -1777,25 +1898,54 @@ mod tests {
     }
 
     #[test]
-    fn source_loader_resolves_root_alias_to_module_origin() {
+    fn source_loader_resolves_plugin_id_alias_to_plugin_origin() {
         let mut loader = MemorySourceLoader::new();
-        loader.insert("alias:harmony/serde", b"return {}".as_slice());
+        loader.insert("plugin:demo/util", b"return {}".as_slice());
 
         let resolved = loader
             .resolve(SourceRequest {
-                specifier: "@harmony/serde",
+                specifier: "@demo/util",
                 origin: &ChunkOrigin::default(),
             })
-            .expect("resolve alias");
+            .expect("resolve plugin alias");
 
-        assert_eq!(resolved.cache_key.0.as_ref(), "alias:harmony/serde");
-        assert_eq!(
-            resolved
-                .origin
-                .module
-                .as_ref()
-                .map(|module| module.0.as_ref()),
-            Some("harmony/serde")
-        );
+        assert_eq!(resolved.cache_key.0.as_ref(), "plugin:demo/util");
+        assert_eq!(resolved.origin.plugin.as_deref(), Some("demo"));
+        assert_eq!(resolved.origin.path.as_deref(), Some("plugins/demo/util"));
+    }
+
+    #[test]
+    fn source_loader_resolves_bare_plugin_id_to_init_module() {
+        let mut loader = MemorySourceLoader::new();
+        loader.insert("plugin:demo/init", b"return {}".as_slice());
+
+        let resolved = loader
+            .resolve(SourceRequest {
+                specifier: "@demo",
+                origin: &ChunkOrigin::default(),
+            })
+            .expect("resolve bare plugin alias");
+
+        assert_eq!(resolved.cache_key.0.as_ref(), "plugin:demo/init");
+    }
+
+    #[test]
+    fn source_loader_rejects_bare_source_paths_from_plugin_origins() {
+        let mut loader = MemorySourceLoader::new();
+        loader.insert("source:lib/util", b"return 1".as_slice());
+        let origin = ChunkOrigin {
+            plugin: Some(Arc::from("demo")),
+            path: Some(Arc::from("plugins/demo/init")),
+            ..ChunkOrigin::default()
+        };
+
+        let error = loader
+            .resolve(SourceRequest {
+                specifier: "lib/util",
+                origin: &origin,
+            })
+            .expect_err("plugin origins must not require bare source paths");
+
+        assert!(error.to_string().contains("must start with"));
     }
 }
