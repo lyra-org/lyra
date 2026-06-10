@@ -710,7 +710,6 @@ mod tests {
             roles::Role,
         },
         services::auth::{
-            media_tokens::tests::clear_media_tokens,
             media_tokens::{
                 MediaTokenPurpose,
                 issue_media_token,
@@ -839,7 +838,6 @@ mod tests {
     {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
-        clear_media_tokens();
 
         let track_id = agdb::DbId(123);
         let token = issue_media_token(track_id, MediaTokenPurpose::Stream);
@@ -855,7 +853,6 @@ mod tests {
     async fn require_hls_playlist_access_rejects_wrong_media_token_purpose() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
-        clear_media_tokens();
 
         let track_id = agdb::DbId(123);
         let token = issue_media_token(track_id, MediaTokenPurpose::Stream);
