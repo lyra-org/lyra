@@ -8,7 +8,6 @@
 
 use std::sync::{
     Arc,
-    LazyLock,
     Mutex as StdMutex,
     OnceLock,
     RwLock as StdRwLock,
@@ -143,22 +142,44 @@ impl AppState {
     }
 }
 
-fn default_app_state() -> AppState {
-    let config = match INITIAL_CONFIG.get().cloned() {
-        Some(config) => config,
-        None => match load_config() {
-            Ok(config) => config,
-            Err(_) if cfg!(test) => Config::default(),
-            Err(err) => panic!("failed to load config: {err}"),
-        },
-    };
-    build_app_state(config).unwrap_or_else(|err| {
-        panic!("failed to initialize application state: {err}");
-    })
+/// Application state slot with explicit initialization. Entry points that
+/// need state (`run_server`, `testing::initialize_runtime`) must call
+/// [`StateCell::initialize`] before anything dereferences `STATE`; access
+/// before that is a bug and panics.
+pub(crate) struct StateCell {
+    inner: OnceLock<AppState>,
 }
 
-static INITIAL_CONFIG: OnceLock<Config> = OnceLock::new();
-pub(crate) static STATE: LazyLock<AppState> = LazyLock::new(default_app_state);
+impl StateCell {
+    /// First call builds the state from `config`; later calls swap in a fresh
+    /// DB/config via [`AppState::reset`] (test-harness reuse). Serialize calls
+    /// externally (today `RUNTIME_TEST_LOCK`).
+    pub(crate) fn initialize(&self, config: Config) -> Result<()> {
+        match self.inner.get() {
+            Some(state) => state.reset(config),
+            None => {
+                let state = build_app_state(config)?;
+                self.inner
+                    .set(state)
+                    .map_err(|_| anyhow::anyhow!("application state initialized concurrently"))
+            }
+        }
+    }
+}
+
+impl std::ops::Deref for StateCell {
+    type Target = AppState;
+
+    fn deref(&self) -> &AppState {
+        self.inner
+            .get()
+            .expect("application state accessed before STATE.initialize(config)")
+    }
+}
+
+pub(crate) static STATE: StateCell = StateCell {
+    inner: OnceLock::new(),
+};
 
 pub fn outbound_user_agent() -> String {
     let version = env!("CARGO_PKG_VERSION");
@@ -172,9 +193,10 @@ pub fn outbound_user_agent() -> String {
 
 pub async fn run_server(capture_path: Option<String>) -> Result<()> {
     let config = load_config()?;
-    let port = config.port;
-    let listener = services::startup::bind_configured_listener(port).await?;
-    let _ = INITIAL_CONFIG.set(config);
+    // Bind first: a port collision with a running server must fail fast
+    // instead of blocking on that server's DB process lock.
+    let listener = services::startup::bind_configured_listener(config.port).await?;
+    STATE.initialize(config)?;
     services::startup::run_server(capture_path, listener).await
 }
 
