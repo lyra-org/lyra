@@ -43,10 +43,7 @@ use crate::db::{
 };
 use crate::outbound_user_agent;
 use crate::services;
-use crate::services::hls::{
-    cleanup,
-    init as hls_init,
-};
+use crate::services::hls::init as hls_init;
 use tokio::sync::{
     Mutex,
     MutexGuard,
@@ -100,7 +97,7 @@ pub async fn runtime_test_lock() -> MutexGuard<'static, ()> {
 /// [`runtime_test_lock`].
 #[cfg(test)]
 pub(crate) fn init_default_test_state() -> anyhow::Result<()> {
-    STATE.initialize(Config::default())
+    futures::executor::block_on(STATE.initialize(Config::default()))
 }
 
 pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Result<()> {
@@ -130,10 +127,7 @@ pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Resul
         hls: config::HlsConfig::default(),
     };
 
-    // Initialize before reset_runtime_state: it dereferences STATE, which
-    // panics until the first initialize call.
-    STATE.initialize(config)?;
-    reset_runtime_state().await?;
+    STATE.initialize(config).await?;
     {
         let mut db = STATE.db.write().await;
         db::server::ensure(&mut db)?;
@@ -141,20 +135,6 @@ pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Resul
     harmony_http::set_default_user_agent(outbound_user_agent());
     hls_init::initialize_for_config(&STATE.config.get()).await;
 
-    Ok(())
-}
-
-async fn reset_runtime_state() -> anyhow::Result<()> {
-    crate::plugins::settings::initialize_registry().await;
-    STATE
-        .plugin_manifests
-        .replace(Arc::from(Vec::<harmony_core::plugin::PluginManifest>::new()));
-    crate::services::playback_sessions::reset_callback_registry_for_test().await;
-    crate::services::mix::reset_mix_registry_for_test().await;
-    crate::services::providers::reset_provider_registry_for_test().await;
-    crate::services::libraries::reset_sync_states_for_test().await;
-    crate::services::playback_sessions::reset_scopes_for_test();
-    cleanup::reset_cleanup_worker_state();
     Ok(())
 }
 

@@ -53,7 +53,7 @@ pub(crate) use registry::{
     ProviderIdSpec,
     ProviderIdUrlGenerator,
     SYNC_LOCKS,
-    reset_provider_registry_for_test,
+    reset_provider_registry,
     teardown_plugin_providers,
     with_provider_call,
 };

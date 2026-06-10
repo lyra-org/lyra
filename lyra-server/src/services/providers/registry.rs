@@ -466,7 +466,7 @@ struct ProviderState {
     options: Vec<OptionDeclaration>,
 }
 
-pub(crate) async fn reset_provider_registry_for_test() {
+pub(crate) async fn reset_provider_registry() {
     PROVIDER_REGISTRY.write().await.clear();
     SYNC_LOCKS.lock().await.clear();
     LIBRARY_REFRESH_LOCKS.lock().await.clear();

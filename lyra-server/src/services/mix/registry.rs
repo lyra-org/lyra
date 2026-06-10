@@ -153,7 +153,7 @@ impl PluginScopedInner for MixRegistry {
     }
 }
 
-pub(crate) async fn reset_mix_registry_for_test() {
+pub(crate) async fn reset_mix_registry() {
     MIX_REGISTRY.write().await.clear();
 }
 

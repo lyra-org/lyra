@@ -842,7 +842,7 @@ static SYNC_EVENT_TX: LazyLock<broadcast::Sender<SyncRunEvent>> = LazyLock::new(
     tx
 });
 
-pub(crate) async fn reset_sync_states_for_test() {
+pub(crate) async fn reset_sync_states() {
     SYNC_RUN_STATES.write().await.clear();
     SYNC_EVENT_LOGS.write().await.clear();
 }

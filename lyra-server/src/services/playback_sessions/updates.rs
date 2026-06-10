@@ -106,7 +106,7 @@ impl PluginScopedInner for PlaybackCallbackRegistry {
     }
 }
 
-pub(crate) async fn reset_callback_registry_for_test() {
+pub(crate) async fn reset_callback_registry() {
     PLAYBACK_CALLBACK_REGISTRY
         .write()
         .await

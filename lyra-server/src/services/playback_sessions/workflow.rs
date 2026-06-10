@@ -1111,6 +1111,6 @@ pub(crate) fn report_playback_session(
     Ok(playback)
 }
 
-pub(crate) fn reset_scopes_for_test() {
+pub(crate) fn reset_scopes() {
     sessions::clear_all_scopes_for_test();
 }
