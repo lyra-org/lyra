@@ -3,13 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    collections::HashMap,
-    sync::{
-        LazyLock,
-        Mutex,
-    },
-};
+use std::collections::HashMap;
 
 use agdb::DbId;
 
@@ -30,11 +24,10 @@ const LAST_USED_SWEEP_THRESHOLD: usize = 1024;
 
 // Debounce last_used_at writes to avoid grabbing the DB write lock on every
 // api-key-authed request. Only the in-memory mutex is taken on steady-state auth.
-static LAST_USED_CACHE: LazyLock<Mutex<HashMap<DbId, i64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
 fn last_used_cache() -> std::sync::MutexGuard<'static, HashMap<DbId, i64>> {
-    LAST_USED_CACHE
+    STATE
+        .auth_caches
+        .api_key_last_used
         .lock()
         .expect("api key last_used cache poisoned")
 }
@@ -245,26 +238,9 @@ pub(crate) async fn resolve_api_key(key: &str) -> anyhow::Result<Option<Resolved
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Mutex as StdMutex,
-        MutexGuard as StdMutexGuard,
-    };
-
     use super::*;
 
-    static CACHE_TEST_LOCK: StdMutex<()> = StdMutex::new(());
-
-    fn cache_test_guard() -> StdMutexGuard<'static, ()> {
-        CACHE_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
     async fn initialize_api_key_test_runtime() -> anyhow::Result<()> {
-        {
-            let _guard = cache_test_guard();
-            last_used_cache().clear();
-        }
         crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
             directory: std::path::PathBuf::from("."),
             language: None,
@@ -442,16 +418,16 @@ mod tests {
 
     #[test]
     fn should_persist_last_used_returns_true_on_first_call() {
-        let _guard = cache_test_guard();
-        last_used_cache().clear();
+        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+        crate::testing::init_default_test_state().expect("init test state");
         let id = DbId(9_001);
         assert!(should_persist_last_used(id, 1_000));
     }
 
     #[test]
     fn should_persist_last_used_debounces_within_window() {
-        let _guard = cache_test_guard();
-        last_used_cache().clear();
+        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+        crate::testing::init_default_test_state().expect("init test state");
         let id = DbId(9_002);
         record_persisted_last_used(id, 1_000);
         assert!(!should_persist_last_used(
@@ -466,8 +442,8 @@ mod tests {
 
     #[test]
     fn record_persisted_last_used_sweeps_stale_entries() {
-        let _guard = cache_test_guard();
-        last_used_cache().clear();
+        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+        crate::testing::init_default_test_state().expect("init test state");
         for i in 0..=LAST_USED_SWEEP_THRESHOLD {
             record_persisted_last_used(DbId(10_000 + i as i64), 0);
         }
@@ -479,8 +455,8 @@ mod tests {
 
     #[test]
     fn record_persisted_last_used_force_evicts_when_all_entries_are_fresh() {
-        let _guard = cache_test_guard();
-        last_used_cache().clear();
+        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+        crate::testing::init_default_test_state().expect("init test state");
         for i in 0..LAST_USED_SWEEP_THRESHOLD {
             record_persisted_last_used(DbId(30_000 + i as i64), i as i64);
         }

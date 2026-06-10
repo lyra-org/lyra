@@ -6,10 +6,6 @@
 use std::{
     collections::HashMap,
     ops::DerefMut,
-    sync::{
-        LazyLock,
-        Mutex,
-    },
 };
 
 use agdb::DbId;
@@ -71,11 +67,10 @@ const LAST_SEEN_SWEEP_THRESHOLD: usize = 1024;
 
 // Debounce last_seen_at writes to avoid grabbing the DB write lock on every
 // session-authed request. Only the in-memory mutex is taken on steady-state auth.
-static LAST_SEEN_CACHE: LazyLock<Mutex<HashMap<DbId, i64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
 fn last_seen_cache() -> std::sync::MutexGuard<'static, HashMap<DbId, i64>> {
-    LAST_SEEN_CACHE
+    STATE
+        .auth_caches
+        .session_last_seen
         .lock()
         .expect("session last_seen cache poisoned")
 }

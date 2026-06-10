@@ -98,6 +98,7 @@ pub async fn runtime_test_lock() -> MutexGuard<'static, ()> {
 /// Minimal STATE init for tests that exercise application state without a
 /// library fixture: default config, in-memory DB. Call while holding
 /// [`runtime_test_lock`].
+#[cfg(test)]
 pub(crate) fn init_default_test_state() -> anyhow::Result<()> {
     STATE.initialize(Config::default())
 }
