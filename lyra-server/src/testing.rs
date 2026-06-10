@@ -95,6 +95,13 @@ pub async fn runtime_test_lock() -> MutexGuard<'static, ()> {
     RUNTIME_TEST_LOCK.lock().await
 }
 
+/// Minimal STATE init for tests that exercise application state without a
+/// library fixture: default config, in-memory DB. Call while holding
+/// [`runtime_test_lock`].
+pub(crate) fn init_default_test_state() -> anyhow::Result<()> {
+    STATE.initialize(Config::default())
+}
+
 pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Result<()> {
     let unique_db_name = format!(
         "lyra-harmony-test-{}-{}",
@@ -122,8 +129,10 @@ pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Resul
         hls: config::HlsConfig::default(),
     };
 
+    // Initialize before reset_runtime_state: it dereferences STATE, which
+    // panics until the first initialize call.
+    STATE.initialize(config)?;
     reset_runtime_state().await?;
-    STATE.reset(config)?;
     {
         let mut db = STATE.db.write().await;
         db::server::ensure(&mut db)?;
