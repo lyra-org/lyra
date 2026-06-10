@@ -292,7 +292,8 @@ fn on_update_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<(
     let validated_plugin_id =
         PluginId::new(plugin_id.to_string()).map_err(crate::plugins::runtime_error)?;
     futures::executor::block_on(async {
-        let _registration = crate::STATE
+        let generation = crate::STATE.generation();
+        let _registration = generation
             .plugin_registries
             .ensure_registrations_open(&validated_plugin_id)
             .await

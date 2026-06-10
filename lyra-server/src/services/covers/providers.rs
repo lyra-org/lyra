@@ -34,9 +34,9 @@ use crate::{
     },
     plugins::executor::MetadataRefreshRequest,
     services::providers::{
-        PROVIDER_REGISTRY,
         ProviderCallStage,
         ProviderCoverRequireSpec,
+        provider_registry,
         with_provider_call,
     },
 };
@@ -294,7 +294,7 @@ pub(crate) async fn search_provider(
     request: ProviderSearchRequest<'_>,
 ) -> std::result::Result<Vec<NormalizedProviderSearchResult>, ProviderSearchError> {
     let handler_id = {
-        let registry = PROVIDER_REGISTRY.read().await;
+        let registry = provider_registry().read_owned().await;
         registry
             .get_search_callback(request.provider_id, request.entity_type)
             .map(|handler| handler.handler_id)
@@ -319,6 +319,7 @@ pub(crate) async fn search_provider(
             let provider_id = provider_id.clone();
             async move {
                 let runtime = STATE
+                    .generation()
                     .plugin_runtime
                     .get()
                     .context("plugin runtime is not initialized")?;
@@ -758,7 +759,7 @@ async fn search_provider_cover(
     }
 
     let spec = {
-        let registry = PROVIDER_REGISTRY.read().await;
+        let registry = provider_registry().read_owned().await;
         registry
             .get_cover_handler(provider_id, entity_type)
             .cloned()
@@ -783,6 +784,7 @@ async fn search_provider_cover(
             let provider_id = provider_id_owned.clone();
             async move {
                 let runtime = STATE
+                    .generation()
                     .plugin_runtime
                     .get()
                     .context("plugin runtime is not initialized")?;
@@ -1064,7 +1066,7 @@ mod tests {
             Some(&"loveless".to_string())
         );
 
-        crate::STATE.plugin_runtime.replace(None);
+        crate::STATE.generation().plugin_runtime.replace(None);
         Ok(())
     }
 

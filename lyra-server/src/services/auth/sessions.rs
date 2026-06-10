@@ -67,8 +67,10 @@ const LAST_SEEN_SWEEP_THRESHOLD: usize = 1024;
 
 // Debounce last_seen_at writes to avoid grabbing the DB write lock on every
 // session-authed request. Only the in-memory mutex is taken on steady-state auth.
-fn last_seen_cache() -> std::sync::MutexGuard<'static, HashMap<DbId, i64>> {
-    STATE
+fn last_seen_cache(
+    generation: &crate::GenerationState,
+) -> std::sync::MutexGuard<'_, HashMap<DbId, i64>> {
+    generation
         .auth_caches
         .session_last_seen
         .lock()
@@ -76,7 +78,8 @@ fn last_seen_cache() -> std::sync::MutexGuard<'static, HashMap<DbId, i64>> {
 }
 
 fn should_persist_last_seen(session_id: DbId, now: i64) -> bool {
-    let cache = last_seen_cache();
+    let generation = STATE.generation();
+    let cache = last_seen_cache(&generation);
     match cache.get(&session_id) {
         Some(&last) if now.saturating_sub(last) < LAST_SEEN_DEBOUNCE_SECS => false,
         _ => true,
@@ -84,7 +87,8 @@ fn should_persist_last_seen(session_id: DbId, now: i64) -> bool {
 }
 
 fn record_persisted_last_seen(session_id: DbId, now: i64) {
-    let mut cache = last_seen_cache();
+    let generation = STATE.generation();
+    let mut cache = last_seen_cache(&generation);
     if cache.len() >= LAST_SEEN_SWEEP_THRESHOLD {
         let stale_cutoff = 2 * LAST_SEEN_DEBOUNCE_SECS;
         cache.retain(|_, last| now.saturating_sub(*last) < stale_cutoff);
@@ -101,7 +105,8 @@ fn record_persisted_last_seen(session_id: DbId, now: i64) {
 }
 
 fn forget_last_seen(session_id: DbId) {
-    last_seen_cache().remove(&session_id);
+    let generation = STATE.generation();
+    last_seen_cache(&generation).remove(&session_id);
 }
 
 pub(crate) async fn create_session_for_user(

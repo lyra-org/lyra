@@ -18,12 +18,13 @@ pub(crate) use self::luau::{
     user_settings_accessor_spec,
 };
 pub(crate) use self::registry::{
-    REGISTRY,
     Registry,
+    SettingsRegistries,
     SettingsScope,
     freeze_registry,
     initialize_registry,
     refreeze_plugin_settings,
+    settings_registry,
     teardown_plugin_settings,
     unfreeze_plugin_settings,
 };

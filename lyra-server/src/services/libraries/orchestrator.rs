@@ -781,7 +781,7 @@ impl SyncRunProgress {
     }
 
     pub(crate) async fn check_cancelled(&self) -> Result<(), SyncRunControlError> {
-        let states = SYNC_RUN_STATES.read().await;
+        let states = sync_run_states().read_owned().await;
         let Some(state) = states.get(&self.run_id) else {
             return Ok(());
         };
@@ -797,7 +797,7 @@ impl SyncRunProgress {
         F: FnOnce(&mut SyncRunState),
     {
         let Some((summary, record)) = ({
-            let mut states = SYNC_RUN_STATES.write().await;
+            let mut states = sync_run_states().write_owned().await;
             let Some(state) = states.get_mut(&self.run_id) else {
                 return;
             };
@@ -832,19 +832,36 @@ enum WorkOutcome {
     Fail(SyncWorkDetails, String),
 }
 
-static SYNC_RUN_STATES: LazyLock<Arc<RwLock<HashMap<String, SyncRunState>>>> =
-    LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
-static SYNC_EVENT_LOGS: LazyLock<Arc<RwLock<HashMap<String, VecDeque<SyncRunEvent>>>>> =
-    LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
-static SYNC_START_LOCK: LazyLock<Arc<Mutex<()>>> = LazyLock::new(|| Arc::new(Mutex::new(())));
-static SYNC_EVENT_TX: LazyLock<broadcast::Sender<SyncRunEvent>> = LazyLock::new(|| {
-    let (tx, _) = broadcast::channel(512);
-    tx
-});
+const SYNC_EVENT_BROADCAST_CAPACITY: usize = 512;
 
-pub(crate) async fn reset_sync_states() {
-    SYNC_RUN_STATES.write().await.clear();
-    SYNC_EVENT_LOGS.write().await.clear();
+// Pure serialization lock with no DB-derived data; intentionally
+// process-wide rather than generation-owned.
+static SYNC_START_LOCK: LazyLock<Arc<Mutex<()>>> = LazyLock::new(|| Arc::new(Mutex::new(())));
+
+/// Generation-owned library sync tracking: in-flight run states, recent
+/// per-run event logs, and the run event broadcast channel.
+pub(crate) struct LibrarySyncRegistries {
+    run_states: Arc<RwLock<HashMap<String, SyncRunState>>>,
+    event_logs: Arc<RwLock<HashMap<String, VecDeque<SyncRunEvent>>>>,
+    event_tx: broadcast::Sender<SyncRunEvent>,
+}
+
+impl Default for LibrarySyncRegistries {
+    fn default() -> Self {
+        Self {
+            run_states: Arc::default(),
+            event_logs: Arc::default(),
+            event_tx: broadcast::channel(SYNC_EVENT_BROADCAST_CAPACITY).0,
+        }
+    }
+}
+
+fn sync_run_states() -> Arc<RwLock<HashMap<String, SyncRunState>>> {
+    crate::STATE.generation().library_sync.run_states.clone()
+}
+
+fn sync_event_logs() -> Arc<RwLock<HashMap<String, VecDeque<SyncRunEvent>>>> {
+    crate::STATE.generation().library_sync.event_logs.clone()
 }
 
 async fn publish_event(summary: SyncRunSummary) {
@@ -858,18 +875,18 @@ async fn publish_event(summary: SyncRunSummary) {
         summary,
     };
     {
-        let mut logs = SYNC_EVENT_LOGS.write().await;
+        let mut logs = sync_event_logs().write_owned().await;
         let log = logs.entry(run_id).or_default();
         log.push_back(event.clone());
         while log.len() > MAX_SYNC_EVENT_LOG_ITEMS {
             log.pop_front();
         }
     }
-    let _ = SYNC_EVENT_TX.send(event);
+    let _ = crate::STATE.generation().library_sync.event_tx.send(event);
 }
 
 pub(crate) async fn sync_run_events_after(run_id: &str, after: u64) -> Vec<SyncRunEvent> {
-    let logs = SYNC_EVENT_LOGS.read().await;
+    let logs = sync_event_logs().read_owned().await;
     logs.get(run_id)
         .into_iter()
         .flat_map(|events| events.iter())
@@ -879,13 +896,13 @@ pub(crate) async fn sync_run_events_after(run_id: &str, after: u64) -> Vec<SyncR
 }
 
 pub(crate) fn subscribe_sync_run_events() -> broadcast::Receiver<SyncRunEvent> {
-    SYNC_EVENT_TX.subscribe()
+    crate::STATE.generation().library_sync.event_tx.subscribe()
 }
 
 pub(crate) async fn get_sync_run(run_id: &str) -> anyhow::Result<Option<SyncRunSummary>> {
     reconcile_interrupted_runs(&STATE.db.get()).await?;
     if let Some(summary) = {
-        let states = SYNC_RUN_STATES.read().await;
+        let states = sync_run_states().read_owned().await;
         states.get(run_id).map(SyncRunState::summary)
     } {
         return Ok(Some(summary));
@@ -899,7 +916,7 @@ pub(crate) async fn get_sync_run(run_id: &str) -> anyhow::Result<Option<SyncRunS
 pub(crate) async fn cancel_sync_run(run_id: &str) -> anyhow::Result<Option<SyncRunSummary>> {
     reconcile_interrupted_runs(&STATE.db.get()).await?;
     let (summary, record) = {
-        let mut states = SYNC_RUN_STATES.write().await;
+        let mut states = sync_run_states().write_owned().await;
         let Some(state) = states.get_mut(run_id) else {
             drop(states);
             return get_sync_run(run_id).await;
@@ -954,7 +971,7 @@ async fn start_library_run(
     let summary = state.summary();
     let record = state.record(None)?;
     {
-        let mut states = SYNC_RUN_STATES.write().await;
+        let mut states = sync_run_states().write_owned().await;
         states.insert(run_id.clone(), state);
     }
     persist_record(&db, record).await;
@@ -1107,7 +1124,7 @@ async fn mark_terminal(
     error: Option<String>,
 ) -> Option<SyncRunSummary> {
     let (summary, record) = {
-        let mut states = SYNC_RUN_STATES.write().await;
+        let mut states = sync_run_states().write_owned().await;
         let state = states.get_mut(run_id)?;
         let now_ms = now_unix_ms();
         state.status = status;
@@ -1159,7 +1176,7 @@ async fn mark_terminal(
     };
     persist_record(db, record).await;
     publish_event(summary.clone()).await;
-    SYNC_RUN_STATES.write().await.remove(run_id);
+    sync_run_states().write_owned().await.remove(run_id);
     Some(summary)
 }
 
@@ -1205,7 +1222,7 @@ async fn active_run_for_library(
     library_id: &str,
 ) -> anyhow::Result<Option<SyncRunSummary>> {
     if let Some(summary) = {
-        let states = SYNC_RUN_STATES.read().await;
+        let states = sync_run_states().read_owned().await;
         states
             .values()
             .find(|state| state.library_id == library_id && state.status.is_active())
@@ -1220,8 +1237,8 @@ async fn active_run_for_library(
 }
 
 pub(crate) async fn running_library_sync_count() -> usize {
-    SYNC_RUN_STATES
-        .read()
+    sync_run_states()
+        .read_owned()
         .await
         .values()
         .filter(|state| state.status.is_active())
@@ -1239,7 +1256,7 @@ pub(crate) async fn wait_for_running_library_syncs() {
 
 async fn reconcile_interrupted_runs(db: &DbAsync) -> anyhow::Result<()> {
     let live_run_ids = {
-        let states = SYNC_RUN_STATES.read().await;
+        let states = sync_run_states().read_owned().await;
         states.keys().cloned().collect::<Vec<_>>()
     };
     let mut db_write = db.write().await;

@@ -181,15 +181,17 @@ impl PluginRegistries {
         let _restart = self.restart_lock.lock().await;
 
         let old_ids: Vec<PluginId> = crate::STATE
+            .generation()
             .plugin_manifests
             .get()
             .iter()
             .filter_map(|manifest| PluginId::new(manifest.id.clone()).ok())
             .collect();
 
-        // Fresh discovery from disk; replaces STATE.plugin_manifests.
+        // Fresh discovery from disk; replaces STATE.generation().plugin_manifests.
         let runtime = crate::plugins::bootstrap::initialize_harmony().await?;
         let new_ids: Vec<PluginId> = crate::STATE
+            .generation()
             .plugin_manifests
             .get()
             .iter()
@@ -209,7 +211,7 @@ impl PluginRegistries {
         }
 
         // Publish before exec: plugin entrypoints dispatch handlers that
-        // resolve STATE.plugin_runtime at call time.
+        // resolve STATE.generation().plugin_runtime at call time.
         crate::plugins::bootstrap::publish_runtime(runtime.clone());
         let exec_result = runtime.exec_all().await;
 
@@ -248,7 +250,10 @@ impl PluginRegistries {
                     plugin_id: plugin_id.clone(),
                     source: err.context("failed to read plugin manifests"),
                 })?;
-        crate::STATE.plugin_manifests.replace(Arc::from(manifests));
+        crate::STATE
+            .generation()
+            .plugin_manifests
+            .replace(Arc::from(manifests));
 
         self.teardown_plugin(plugin_id, true).await;
 

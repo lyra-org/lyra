@@ -72,7 +72,7 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
     let plugin_runtime = plugin_bootstrap::initialize_harmony().await?;
 
     if let Some(output_path) = capture_path {
-        // sync_library dispatches handlers that resolve STATE.plugin_runtime; publish first.
+        // sync_library dispatches handlers that resolve STATE.generation().plugin_runtime; publish first.
         plugin_bootstrap::exec_for_capture(plugin_runtime.clone()).await?;
         plugin_bootstrap::publish_runtime(plugin_runtime);
         let configured_library =
@@ -105,7 +105,7 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
         }
 
         // Must precede finalize_startup (activates plugin routes) and the library sync
-        // (dispatches handlers that resolve STATE.plugin_runtime at call time).
+        // (dispatches handlers that resolve STATE.generation().plugin_runtime at call time).
         plugin_bootstrap::publish_runtime(plugin_runtime.clone());
 
         if let Err(err) = plugin_bootstrap::finalize_startup().await {

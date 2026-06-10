@@ -245,7 +245,7 @@ pub(crate) async fn register_handler(handler: RegisteredHandler) {
     }
 
     tokio::spawn(async move {
-        // Rescan dispatch closures resolve STATE.plugin_runtime at call time;
+        // Rescan dispatch closures resolve STATE.generation().plugin_runtime at call time;
         // plugin init can register handlers before publish_runtime has run.
         if !wait_for_plugin_runtime(&cancel).await {
             return;
@@ -258,7 +258,7 @@ pub(crate) async fn register_handler(handler: RegisteredHandler) {
 
 async fn wait_for_plugin_runtime(cancel: &CancellationToken) -> bool {
     loop {
-        if crate::STATE.plugin_runtime.get().is_some() {
+        if crate::STATE.generation().plugin_runtime.get().is_some() {
             return true;
         }
         tokio::select! {

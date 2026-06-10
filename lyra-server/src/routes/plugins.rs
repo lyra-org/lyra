@@ -491,7 +491,9 @@ fn group_to_response(
 }
 
 async fn load_registered_schema(plugin_id: &str, scope: SettingsScope) -> Result<Schema, AppError> {
-    let registry = plugin_settings_registry::REGISTRY.read().await;
+    let registry = plugin_settings_registry::settings_registry()
+        .read_owned()
+        .await;
     let typed_id = crate::plugins::lifecycle::PluginId::new(plugin_id.to_string())
         .map_err(|_| AppError::not_found(format!("plugin not found: {plugin_id}")))?;
     if !registry.is_frozen_for_plugin(&typed_id) && registry.get_schema(plugin_id, scope).is_none()
@@ -590,7 +592,7 @@ fn build_entry(
 
 async fn list_plugins(headers: HeaderMap) -> Result<Json<Vec<PluginManifestResponse>>, AppError> {
     let _principal = require_manage_plugins(&headers).await?;
-    let manifests = STATE.plugin_manifests.get();
+    let manifests = STATE.generation().plugin_manifests.get();
     Ok(Json(manifest_responses(manifests.as_ref())))
 }
 
@@ -598,8 +600,10 @@ async fn collect_settings_entries(
     scope: SettingsScope,
     user_db_id: Option<DbId>,
 ) -> PluginSettingsListResponse {
-    let manifests = STATE.plugin_manifests.get();
-    let registry = plugin_settings_registry::REGISTRY.read().await;
+    let manifests = STATE.generation().plugin_manifests.get();
+    let registry = plugin_settings_registry::settings_registry()
+        .read_owned()
+        .await;
     let db = STATE.db.read().await;
 
     let entries = manifests
@@ -637,11 +641,13 @@ async fn restart_plugin(
     let plugin_id = PluginId::new(plugin_id)
         .map_err(|err| AppError::bad_request(format!("invalid plugin id: {err}")))?;
     let harmony = STATE
+        .generation()
         .plugin_runtime
         .get()
         .ok_or_else(|| AppError::service_unavailable("plugin runtime is not ready"))?;
 
     STATE
+        .generation()
         .plugin_registries
         .restart_plugin(&plugin_id, harmony)
         .await
@@ -1351,7 +1357,7 @@ mod tests {
     async fn load_registered_schema_returns_service_unavailable_while_registry_populates() {
         let _guard = REGISTRY_TEST_GUARD.lock().await;
         let _runtime_guard = runtime_test_lock().await;
-        plugin_settings_registry::initialize_registry().await;
+        crate::testing::init_default_test_state().expect("init test state");
 
         let response = load_registered_schema("demo", SettingsScope::Global)
             .await
@@ -1365,7 +1371,7 @@ mod tests {
     async fn load_registered_schema_returns_not_found_after_registry_freezes() {
         let _guard = REGISTRY_TEST_GUARD.lock().await;
         let _runtime_guard = runtime_test_lock().await;
-        plugin_settings_registry::initialize_registry().await;
+        crate::testing::init_default_test_state().expect("init test state");
         plugin_settings_registry::freeze_registry().await;
 
         let response = load_registered_schema("demo", SettingsScope::Global)
@@ -1384,7 +1390,7 @@ mod tests {
     #[test]
     fn build_entry_returns_initializing_for_unknown_plugin_while_registry_is_open() {
         let db = db::test_db::new_test_db().expect("test db");
-        let registry = Registry::new();
+        let registry = Registry::default();
 
         let entry = build_entry(&registry, &db, "demo", SettingsScope::Global, None);
 
@@ -1397,7 +1403,7 @@ mod tests {
     #[test]
     fn build_entry_returns_not_declared_for_unknown_plugin_when_registry_is_frozen() {
         let db = db::test_db::new_test_db().expect("test db");
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.freeze();
 
         let entry = build_entry(&registry, &db, "demo", SettingsScope::Global, None);
@@ -1411,7 +1417,7 @@ mod tests {
     #[test]
     fn build_entry_returns_ready_when_schema_is_registered() -> anyhow::Result<()> {
         let db = db::test_db::new_test_db()?;
-        let mut registry = Registry::new();
+        let mut registry = Registry::default();
         registry.register_schema(
             PluginId::new("demo")?,
             SettingsScope::Global,

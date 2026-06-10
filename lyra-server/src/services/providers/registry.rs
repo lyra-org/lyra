@@ -9,10 +9,7 @@ use std::{
         HashSet,
     },
     future::Future,
-    sync::{
-        Arc,
-        LazyLock,
-    },
+    sync::Arc,
     time::{
         Duration,
         Instant,
@@ -34,18 +31,35 @@ use crate::plugins::lifecycle::{
 use crate::services::EntityType;
 use crate::services::metadata::lyrics::providers::unregister_handlers_for_plugin as unregister_lyrics_handlers_for_plugin;
 
-pub(crate) static PROVIDER_REGISTRY: LazyLock<Arc<RwLock<ProviderRegistry>>> =
-    LazyLock::new(|| Arc::new(RwLock::new(ProviderRegistry::new())));
+/// Generation-owned provider state: the registry itself plus the in-flight
+/// sync/refresh/call locks keyed by provider and library ids.
+#[derive(Default)]
+pub(crate) struct ProviderRegistries {
+    registry: Arc<RwLock<ProviderRegistry>>,
+    sync_locks: Arc<tokio::sync::Mutex<HashSet<String>>>,
+    library_refresh_locks: Arc<tokio::sync::Mutex<HashSet<agdb::DbId>>>,
+    call_locks: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+}
 
-pub(crate) static SYNC_LOCKS: LazyLock<Arc<tokio::sync::Mutex<HashSet<String>>>> =
-    LazyLock::new(|| Arc::new(tokio::sync::Mutex::new(HashSet::new())));
+pub(crate) fn provider_registry() -> Arc<RwLock<ProviderRegistry>> {
+    crate::STATE.generation().providers.registry.clone()
+}
 
-pub(crate) static LIBRARY_REFRESH_LOCKS: LazyLock<Arc<tokio::sync::Mutex<HashSet<agdb::DbId>>>> =
-    LazyLock::new(|| Arc::new(tokio::sync::Mutex::new(HashSet::new())));
+pub(crate) fn sync_locks() -> Arc<tokio::sync::Mutex<HashSet<String>>> {
+    crate::STATE.generation().providers.sync_locks.clone()
+}
 
-static PROVIDER_CALL_LOCKS: LazyLock<
-    Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
-> = LazyLock::new(|| Arc::new(tokio::sync::Mutex::new(HashMap::new())));
+pub(crate) fn library_refresh_locks() -> Arc<tokio::sync::Mutex<HashSet<agdb::DbId>>> {
+    crate::STATE
+        .generation()
+        .providers
+        .library_refresh_locks
+        .clone()
+}
+
+fn provider_call_locks() -> Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> {
+    crate::STATE.generation().providers.call_locks.clone()
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProviderCallStage {
@@ -74,7 +88,7 @@ where
     Fut: Future<Output = T>,
 {
     let lock = {
-        let mut locks = PROVIDER_CALL_LOCKS.lock().await;
+        let mut locks = provider_call_locks().lock_owned().await;
         locks
             .entry(provider_id.to_string())
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
@@ -139,15 +153,6 @@ pub(crate) struct ProviderCoverSpec {
 }
 
 impl ProviderRegistry {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.providers.clear();
-        self.plugin_by_provider.clear();
-    }
-
     pub(crate) fn register(&mut self, plugin_id: PluginId, id: String) -> Result<()> {
         if let Some(existing) = self.plugin_by_provider.get(&id) {
             bail!("provider '{id}' already registered by plugin '{existing}'");
@@ -466,22 +471,20 @@ struct ProviderState {
     options: Vec<OptionDeclaration>,
 }
 
-pub(crate) async fn reset_provider_registry() {
-    PROVIDER_REGISTRY.write().await.clear();
-    SYNC_LOCKS.lock().await.clear();
-    LIBRARY_REFRESH_LOCKS.lock().await.clear();
-    PROVIDER_CALL_LOCKS.lock().await.clear();
-}
-
 pub(crate) async fn teardown_plugin_providers(plugin_id: &PluginId) {
+    // One generation snapshot for the whole teardown so the captured
+    // provider_ids and the purged locks belong to the same registries.
+    let generation = crate::STATE.generation();
+    let providers = &generation.providers;
+
     // Capture the plugin's provider_ids before the registry bucket is
-    // cleared so we can also purge the out-of-band SYNC_LOCKS entries
+    // cleared so we can also purge the out-of-band sync_locks entries
     // they own. Without this, a plugin that crashed mid-sync would see
     // "sync already in progress" forever after restart — the lock
     // lives outside the registry and never hears about teardown
     // otherwise.
     let owned_provider_ids: Vec<String> = {
-        let registry = PROVIDER_REGISTRY.read().await;
+        let registry = providers.registry.read().await;
         registry
             .providers
             .get(plugin_id)
@@ -489,7 +492,7 @@ pub(crate) async fn teardown_plugin_providers(plugin_id: &PluginId) {
             .unwrap_or_default()
     };
 
-    ScopedRegistry::from_shared(PROVIDER_REGISTRY.clone())
+    ScopedRegistry::from_shared(providers.registry.clone())
         .teardown(plugin_id)
         .await;
 
@@ -498,19 +501,19 @@ pub(crate) async fn teardown_plugin_providers(plugin_id: &PluginId) {
     unregister_lyrics_handlers_for_plugin(plugin_id).await;
 
     if !owned_provider_ids.is_empty() {
-        let mut locks = SYNC_LOCKS.lock().await;
+        let mut locks = providers.sync_locks.lock().await;
         for id in &owned_provider_ids {
             locks.remove(id);
         }
         drop(locks);
 
-        let mut call_locks = PROVIDER_CALL_LOCKS.lock().await;
+        let mut call_locks = providers.call_locks.lock().await;
         for id in &owned_provider_ids {
             call_locks.remove(id);
         }
     }
 
-    // LIBRARY_REFRESH_LOCKS is keyed by library db_id (not plugin) and
+    // library_refresh_locks is keyed by library db_id (not plugin) and
     // outlives any single plugin — a library's refresh task owns its
     // own lock lifecycle. Intentionally untouched here.
 }

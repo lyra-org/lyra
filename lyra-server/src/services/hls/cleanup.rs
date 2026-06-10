@@ -10,12 +10,9 @@ use std::{
         Path as FsPath,
         PathBuf,
     },
-    sync::{
-        LazyLock,
-        atomic::{
-            AtomicBool,
-            Ordering,
-        },
+    sync::atomic::{
+        AtomicBool,
+        Ordering,
     },
     time::{
         Duration,
@@ -45,11 +42,20 @@ const HLS_JOB_IDLE_GRACE: Duration = Duration::from_secs(30);
 const HLS_CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
 const HLS_CLEANUP_STARTUP_PURGE_DEFAULT: bool = true;
 
-static HLS_CLEANUP_WORKER_STARTED: AtomicBool = AtomicBool::new(false);
-static HLS_CLEANUP_WORKER_START_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+/// Generation-owned HLS cleanup worker state: the started flag plus the
+/// start lock that serializes worker spawn.
+#[derive(Default)]
+pub(crate) struct HlsCleanupState {
+    worker_started: AtomicBool,
+    start_lock: Mutex<()>,
+}
 
 pub(crate) fn reset_cleanup_worker_state() {
-    HLS_CLEANUP_WORKER_STARTED.store(false, Ordering::Release);
+    crate::STATE
+        .generation()
+        .hls_cleanup
+        .worker_started
+        .store(false, Ordering::Release);
 }
 
 #[derive(Clone)]
@@ -414,12 +420,14 @@ pub(crate) async fn cleanup_stale_hls_sessions() {
 }
 
 pub(crate) async fn ensure_hls_cleanup_worker_started() {
-    if HLS_CLEANUP_WORKER_STARTED.load(Ordering::Acquire) {
+    let generation = crate::STATE.generation();
+    let state = &generation.hls_cleanup;
+    if state.worker_started.load(Ordering::Acquire) {
         return;
     }
 
-    let _start_guard = HLS_CLEANUP_WORKER_START_LOCK.lock().await;
-    if HLS_CLEANUP_WORKER_STARTED.load(Ordering::Acquire) {
+    let _start_guard = state.start_lock.lock().await;
+    if state.worker_started.load(Ordering::Acquire) {
         return;
     }
 
@@ -432,7 +440,7 @@ pub(crate) async fn ensure_hls_cleanup_worker_started() {
         }
     });
 
-    HLS_CLEANUP_WORKER_STARTED.store(true, Ordering::Release);
+    state.worker_started.store(true, Ordering::Release);
 }
 
 #[cfg(test)]

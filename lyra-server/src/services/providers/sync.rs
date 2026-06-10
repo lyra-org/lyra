@@ -22,8 +22,8 @@ use crate::{
         wait_for_running_library_syncs,
     },
     services::providers::{
-        PROVIDER_REGISTRY,
-        SYNC_LOCKS,
+        provider_registry,
+        sync_locks,
     },
 };
 
@@ -34,7 +34,7 @@ use super::{
 
 pub(crate) async fn run_provider_sync(provider_id: &str) -> Result<(), ProviderServiceError> {
     {
-        let registry = PROVIDER_REGISTRY.read().await;
+        let registry = provider_registry().read_owned().await;
         if registry
             .get_refresh_callback(provider_id, EntityType::Release)
             .is_none()
@@ -46,7 +46,7 @@ pub(crate) async fn run_provider_sync(provider_id: &str) -> Result<(), ProviderS
     }
 
     {
-        let mut locks = SYNC_LOCKS.lock().await;
+        let mut locks = sync_locks().lock_owned().await;
         if !locks.insert(provider_id.to_string()) {
             return Err(ProviderServiceError::SyncAlreadyRunning(
                 provider_id.to_string(),
@@ -56,7 +56,7 @@ pub(crate) async fn run_provider_sync(provider_id: &str) -> Result<(), ProviderS
 
     let result = run_provider_sync_inner(provider_id).await;
 
-    SYNC_LOCKS.lock().await.remove(provider_id);
+    sync_locks().lock_owned().await.remove(provider_id);
 
     result
 }
@@ -145,7 +145,7 @@ async fn run_all_provider_syncs() {
     }
 
     let provider_ids = {
-        let registry = PROVIDER_REGISTRY.read().await;
+        let registry = provider_registry().read_owned().await;
         registry.providers_with_refresh_handler(EntityType::Release)
     };
 

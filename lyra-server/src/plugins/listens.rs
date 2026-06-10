@@ -36,7 +36,7 @@ use crate::{
     services::{
         auth::Principal,
         playback_sessions,
-        providers::PROVIDER_REGISTRY,
+        providers::provider_registry,
     },
 };
 
@@ -243,7 +243,7 @@ async fn resolve_stats(
     }
 
     let unique_track_id_pairs = {
-        let registry = PROVIDER_REGISTRY.read().await;
+        let registry = provider_registry().read_owned().await;
         registry.unique_track_id_pairs()
     };
 
