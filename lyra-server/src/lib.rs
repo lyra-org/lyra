@@ -6,14 +6,20 @@
 //! Lyra server application crate.
 #![cfg_attr(all(test, feature = "nightly"), feature(test))]
 
-use std::sync::{
-    Arc,
-    Mutex as StdMutex,
-    OnceLock,
-    RwLock as StdRwLock,
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        Mutex as StdMutex,
+        OnceLock,
+        RwLock as StdRwLock,
+    },
 };
 
-use agdb::DbAny;
+use agdb::{
+    DbAny,
+    DbId,
+};
 use anyhow::{
     Context,
     Result,
@@ -110,12 +116,35 @@ pub(crate) type ConfigHandle = SwapHandle<Arc<Config>>;
 pub(crate) type PluginManifestHandle = SwapHandle<Arc<[PluginManifest]>>;
 pub(crate) type PluginRuntimeHandle = SwapHandle<Option<crate::plugins::bootstrap::PluginRuntime>>;
 
+/// Debounced auth bookkeeping keyed by `DbId`. Lives on `AppState` instead of
+/// module statics so a DB swap cannot carry ids into the next database's
+/// debounce window (memory DBs reuse small ids).
+#[derive(Default)]
+pub(crate) struct AuthDebounceCaches {
+    pub(crate) api_key_last_used: StdMutex<HashMap<DbId, i64>>,
+    pub(crate) session_last_seen: StdMutex<HashMap<DbId, i64>>,
+}
+
+impl AuthDebounceCaches {
+    fn clear(&self) {
+        self.api_key_last_used
+            .lock()
+            .expect("api key last_used cache poisoned")
+            .clear();
+        self.session_last_seen
+            .lock()
+            .expect("session last_seen cache poisoned")
+            .clear();
+    }
+}
+
 pub(crate) struct AppState {
     pub(crate) db: DbHandle,
     pub(crate) config: ConfigHandle,
     pub(crate) plugin_manifests: PluginManifestHandle,
     pub(crate) plugin_runtime: PluginRuntimeHandle,
     pub(crate) plugin_registries: PluginRegistries,
+    pub(crate) auth_caches: AuthDebounceCaches,
 }
 
 pub(crate) fn build_app_state(config: Config) -> Result<AppState> {
@@ -126,6 +155,7 @@ pub(crate) fn build_app_state(config: Config) -> Result<AppState> {
         plugin_manifests: PluginManifestHandle::new(Arc::from(Vec::<PluginManifest>::new())),
         plugin_runtime: PluginRuntimeHandle::new(None),
         plugin_registries: PluginRegistries::new(),
+        auth_caches: AuthDebounceCaches::default(),
     })
 }
 
@@ -138,6 +168,7 @@ impl AppState {
         self.plugin_manifests
             .replace(Arc::from(Vec::<PluginManifest>::new()));
         self.plugin_runtime.replace(None);
+        self.auth_caches.clear();
         Ok(())
     }
 }
