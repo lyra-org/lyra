@@ -338,7 +338,7 @@ pub async fn run_luau_plugin_test_file(test_root: &Path, test_path: &Path) -> an
         name: "Luau Test".to_string(),
         version: "1.0.0".to_string(),
         description: "One-off Luau integration test".to_string(),
-        entrypoint: relative_path_text.clone(),
+        entrypoint: Some(relative_path_text.clone()),
         scopes: crate::plugins::executor::plugin_scope_ids_for_test(),
         dependencies: Vec::new(),
     };

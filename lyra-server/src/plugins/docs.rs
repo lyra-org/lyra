@@ -40,6 +40,7 @@ const LUAURC_FILENAME: &str = ".luaurc";
 const LUAUCONFIG_FILENAME: &str = ".config.luau";
 const GITIGNORE_FILENAME: &str = ".gitignore";
 const GITIGNORE_ENTRY: &str = ".lyra/";
+const PLUGINS_DIR_NAME: &str = "plugins";
 
 type RenderDocsFn = fn() -> Result<String>;
 
@@ -124,7 +125,7 @@ pub(crate) fn setup_docs(project_root: &Path) -> Result<()> {
 
     let luaurc_path = project_root.join(LUAURC_FILENAME);
     let mut luaurc = read_or_create_luaurc(&luaurc_path)?;
-    merge_setup_aliases(&mut luaurc);
+    merge_setup_aliases(project_root, &mut luaurc)?;
     apply_setup_globals(&mut luaurc);
     write_luaurc(&luaurc_path, &luaurc)?;
 
@@ -313,9 +314,38 @@ fn write_luaurc(path: &Path, luaurc: &LuaurcConfig) -> Result<()> {
     fs::write(path, serialized).with_context(|| format!("failed to write {}", path.display()))
 }
 
-fn merge_setup_aliases(luaurc: &mut LuaurcConfig) {
+fn merge_setup_aliases(project_root: &Path, luaurc: &mut LuaurcConfig) -> Result<()> {
     luaurc.insert_alias("harmony", format!("./{DEFAULT_SETUP_DOCS_OUT_DIR}/harmony"));
     luaurc.insert_alias("lyra", format!("./{DEFAULT_SETUP_DOCS_OUT_DIR}/lyra"));
+    merge_plugin_aliases(project_root, luaurc)
+}
+
+/// Aliases every installed plugin id to its directory so `luau-lsp` resolves
+/// cross-plugin requires (`require("@<plugin-id>/...")`) against real source.
+fn merge_plugin_aliases(project_root: &Path, luaurc: &mut LuaurcConfig) -> Result<()> {
+    let plugins_dir = project_root.join(PLUGINS_DIR_NAME);
+    if !plugins_dir.is_dir() {
+        return Ok(());
+    }
+    let entries = fs::read_dir(&plugins_dir)
+        .with_context(|| format!("read plugins directory {}", plugins_dir.display()))?;
+    for entry in entries {
+        let entry = entry.with_context(|| format!("read entry in {}", plugins_dir.display()))?;
+        let manifest_path = entry
+            .path()
+            .join(harmony_core::plugin::PLUGIN_CONFIG_FILENAME);
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let manifest = fs::read_to_string(&manifest_path)
+            .with_context(|| format!("read plugin manifest {}", manifest_path.display()))?;
+        let manifest: harmony_core::plugin::PluginManifest = serde_json::from_str(&manifest)
+            .with_context(|| format!("parse plugin manifest {}", manifest_path.display()))?;
+        let dir_name = entry.file_name();
+        let dir_name = dir_name.to_string_lossy();
+        luaurc.insert_alias(manifest.id, format!("./{PLUGINS_DIR_NAME}/{dir_name}"));
+    }
+    Ok(())
 }
 
 fn apply_setup_globals(luaurc: &mut LuaurcConfig) {

@@ -156,7 +156,10 @@ fn manifest_table(manifest: &harmony_core::plugin::PluginManifest) -> luau::Owne
     );
     table.set_field(
         "entrypoint",
-        luau::Value::String(manifest.entrypoint.clone().into_bytes()),
+        match &manifest.entrypoint {
+            Some(entrypoint) => luau::Value::String(entrypoint.clone().into_bytes()),
+            None => luau::Value::Nil,
+        },
     );
     table
 }

@@ -35,7 +35,10 @@ use crate::{
         install_globals,
         install_require,
     },
-    modules::CapabilityPolicy,
+    modules::{
+        CapabilityPolicy,
+        source_with_bound_require,
+    },
     scheduler::{
         CapabilityId,
         ChunkOrigin,
@@ -60,7 +63,9 @@ pub struct PluginManifest {
     pub name: String,
     pub version: String,
     pub description: String,
-    pub entrypoint: String,
+    /// Library-only plugins omit the entrypoint: nothing runs at startup and
+    /// their modules load lazily via `require("@<plugin-id>/...")`.
+    pub entrypoint: Option<String>,
     /// Scopes (capability ids) the plugin declares. Every gated module
     /// the plugin `require`s must have its scope id listed here.
     /// Required on `schema_version: 1`.
@@ -103,7 +108,6 @@ pub struct NormalizedDependency {
 pub struct LoadedPlugin {
     pub manifest: PluginManifest,
     pub directory: PathBuf,
-    pub entrypoint_path: PathBuf,
     /// Deduplicated, validated copy of `manifest.scopes` kept as `Arc<str>`
     /// so the runtime gate can share allocations across lookups.
     pub declared_scopes: HashSet<Arc<str>>,
@@ -112,23 +116,41 @@ pub struct LoadedPlugin {
 
 pub struct ManifestCapabilityPolicy {
     scopes_by_plugin: HashMap<Arc<str>, HashSet<Arc<str>>>,
+    dependencies_by_plugin: HashMap<Arc<str>, HashSet<Arc<str>>>,
 }
 
 impl ManifestCapabilityPolicy {
     pub fn from_manifests(manifests: Arc<[PluginManifest]>) -> Self {
-        let scopes_by_plugin = manifests
-            .iter()
-            .map(|manifest| {
-                let scopes = manifest
-                    .scopes
-                    .iter()
-                    .map(|scope| Arc::<str>::from(scope.as_str()))
-                    .collect::<HashSet<_>>();
-                (Arc::<str>::from(manifest.id.as_str()), scopes)
-            })
-            .collect();
+        let mut scopes_by_plugin = HashMap::new();
+        let mut dependencies_by_plugin = HashMap::new();
+        for manifest in manifests.iter() {
+            let id = Arc::<str>::from(manifest.id.as_str());
+            let scopes = manifest
+                .scopes
+                .iter()
+                .map(|scope| Arc::<str>::from(scope.as_str()))
+                .collect::<HashSet<_>>();
+            let mut dependencies = HashSet::new();
+            for entry in &manifest.dependencies {
+                match entry {
+                    DependencyEntry::Id(dependency) => {
+                        dependencies.insert(Arc::<str>::from(dependency.as_str()));
+                    }
+                    DependencyEntry::Group(group) => {
+                        for dependency in &group.any_of {
+                            dependencies.insert(Arc::<str>::from(dependency.as_str()));
+                        }
+                    }
+                }
+            }
+            scopes_by_plugin.insert(id.clone(), scopes);
+            dependencies_by_plugin.insert(id, dependencies);
+        }
 
-        Self { scopes_by_plugin }
+        Self {
+            scopes_by_plugin,
+            dependencies_by_plugin,
+        }
     }
 }
 
@@ -140,6 +162,12 @@ impl CapabilityPolicy for ManifestCapabilityPolicy {
         self.scopes_by_plugin
             .get(plugin_id)
             .is_some_and(|scopes| scopes.contains(&capability.0))
+    }
+
+    fn allows_plugin_dependency(&self, requester: &str, target: &str) -> bool {
+        self.dependencies_by_plugin
+            .get(requester)
+            .is_some_and(|dependencies| dependencies.contains(target))
     }
 }
 
@@ -445,7 +473,7 @@ fn normalize_dependencies(
     Ok(result)
 }
 
-fn validate_plugin_id(id: &str) -> Result<(), String> {
+pub(crate) fn validate_plugin_id(id: &str) -> Result<(), String> {
     if id.is_empty() {
         return Err("must not be empty".into());
     }
@@ -455,6 +483,11 @@ fn validate_plugin_id(id: &str) -> Result<(), String> {
                 "must match [A-Za-z0-9_-]+ (invalid character: {c:?})"
             ));
         }
+    }
+    // `@self` is the require keyword for the requesting plugin's own root;
+    // a plugin with this id could never be addressed.
+    if id == "self" {
+        return Err("'self' is a reserved id".into());
     }
     Ok(())
 }
@@ -808,12 +841,14 @@ impl PluginManager {
             });
         }
 
-        let entrypoint_path = dir.join(&manifest.entrypoint);
-        if !entrypoint_path.exists() {
-            return Err(PluginLoadError::EntrypointNotFound {
-                plugin_id: manifest.id,
-                path: entrypoint_path,
-            });
+        if let Some(entrypoint) = manifest.entrypoint.as_deref() {
+            let path = dir.join(entrypoint);
+            if !path.exists() {
+                return Err(PluginLoadError::EntrypointNotFound {
+                    plugin_id: manifest.id,
+                    path,
+                });
+            }
         }
 
         if manifest.scopes.len() > PLUGIN_CONFIG_MAX_SCOPES {
@@ -850,7 +885,6 @@ impl PluginManager {
         Ok(LoadedPlugin {
             manifest,
             directory: dir.to_path_buf(),
-            entrypoint_path,
             declared_scopes,
             dependencies,
         })
@@ -1032,18 +1066,44 @@ impl Runtime {
     }
 
     fn exec_loaded_plugin(&self, plugin: &LoadedPlugin) -> anyhow::Result<()> {
-        let bytes = std::fs::read(&plugin.entrypoint_path).with_context(|| {
-            format!(
-                "load plugin '{}' entrypoint from {}",
-                plugin.manifest.id,
-                plugin.entrypoint_path.display()
-            )
-        })?;
-        self.run_plugin_source(
-            plugin.manifest.id.as_str(),
-            plugin.manifest.entrypoint.as_str(),
-            bytes,
-        )
+        let Some(entrypoint) = plugin.manifest.entrypoint.as_deref() else {
+            return Ok(());
+        };
+        let plugin_id = plugin.manifest.id.as_str();
+        let specifier = format!("@{plugin_id}/{entrypoint}");
+        let require = self.vm.data().get::<RequireRuntime>()?;
+        // Loads through the require source cache so a later
+        // `require("@<plugin-id>")` returns the entrypoint's exports instead
+        // of re-running its side effects; evaluation still happens on a
+        // scheduler-driven thread so entrypoints may yield.
+        require
+            .load_source_cached(&self.vm, &specifier, &ChunkOrigin::default(), |source| {
+                let function = self.vm.load_chunk(&luau::Chunk::new(
+                    source_with_bound_require(source.bytes.as_ref(), &source.cache_key.0),
+                    luau_origin(&source.origin),
+                ))?;
+                let thread = self.vm.create_thread(&function)?;
+                self.vm.sandbox_thread(&thread)?;
+                let scheduler = self.vm.data().get::<LocalScheduler>()?;
+                scheduler.spawn_luau_thread(
+                    CallContext {
+                        origin: source.origin.clone(),
+                        ..CallContext::default()
+                    },
+                    self.vm.clone(),
+                    thread.clone(),
+                    Vec::new(),
+                );
+                drive_thread(
+                    &self.tokio_runtime,
+                    &scheduler,
+                    &thread,
+                    ThreadDriveOptions::default(),
+                )
+            })
+            .map_err(anyhow::Error::new)
+            .with_context(|| format!("run plugin '{plugin_id}' entrypoint '{entrypoint}'"))?;
+        Ok(())
     }
 
     pub fn run_plugin_source(
@@ -1137,6 +1197,7 @@ mod tests {
         PluginManifest,
         RuntimeBuilder,
         normalize_dependencies,
+        plugin_origin,
         validate_plugin_id,
     };
     use crate::{
@@ -1154,10 +1215,6 @@ mod tests {
     use std::sync::{
         Arc,
         Mutex,
-        atomic::{
-            AtomicUsize,
-            Ordering,
-        },
     };
 
     #[derive(Clone)]
@@ -1170,7 +1227,7 @@ mod tests {
             name: id.to_string(),
             version: "1.0.0".to_string(),
             description: String::new(),
-            entrypoint: "init.luau".to_string(),
+            entrypoint: Some("init.luau".to_string()),
             scopes: scopes.iter().map(|scope| scope.to_string()).collect(),
             dependencies: Vec::new(),
         }
@@ -1315,12 +1372,11 @@ mod tests {
                 name: id.to_string(),
                 version: "0.0.0".to_string(),
                 description: String::new(),
-                entrypoint: "init.luau".to_string(),
+                entrypoint: Some("init.luau".to_string()),
                 scopes: Vec::new(),
                 dependencies: Vec::new(),
             },
             directory: PathBuf::from(format!("plugins/{id}")),
-            entrypoint_path: PathBuf::from(format!("plugins/{id}/init.luau")),
             declared_scopes: HashSet::new(),
             dependencies: deps,
         }
@@ -1468,7 +1524,7 @@ mod tests {
     #[test]
     fn runtime_builder_installs_require_and_loads_memory_sources() -> anyhow::Result<()> {
         let mut loader = MemorySourceLoader::new();
-        loader.insert("alias:demo/util", b"return { answer = 42 }".as_slice());
+        loader.insert("plugin:demo/util", b"return { answer = 42 }".as_slice());
         let runtime = RuntimeBuilder::new(loader, manifest_arc(Vec::new())).build()?;
 
         let values = runtime.eval_source_with_context(
@@ -1609,8 +1665,6 @@ mod tests {
 
     #[test]
     fn runtime_exec_all_runs_loaded_plugins_in_runtime_order() -> anyhow::Result<()> {
-        static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
-
         let order = Arc::new(Mutex::new(Vec::<String>::new()));
         let order_for_module = order.clone();
         let module = ModuleSpec::new("test/order")
@@ -1625,36 +1679,30 @@ mod tests {
             }))
             .install(|_| Ok(ModuleExport::new(())));
 
-        let root = std::env::temp_dir().join(format!(
-            "harmony-core-runtime-test-{}-{}",
-            std::process::id(),
-            NEXT_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        let alpha_dir = root.join("alpha");
-        let beta_dir = root.join("beta");
-        std::fs::create_dir_all(&alpha_dir)?;
-        std::fs::create_dir_all(&beta_dir)?;
-        let alpha_entrypoint = alpha_dir.join("init.luau");
-        let beta_entrypoint = beta_dir.join("init.luau");
-        std::fs::write(&alpha_entrypoint, "require('@test/order').record('alpha')")?;
-        std::fs::write(&beta_entrypoint, "require('@test/order').record('beta')")?;
+        let mut loader = MemorySourceLoader::new();
+        loader.insert(
+            "plugin:alpha/init",
+            b"require('@test/order').record('alpha')".as_slice(),
+        );
+        loader.insert(
+            "plugin:beta/init",
+            b"require('@test/order').record('beta')".as_slice(),
+        );
 
         let alpha = LoadedPlugin {
             manifest: manifest("alpha", &["test.order"]),
-            directory: alpha_dir,
-            entrypoint_path: alpha_entrypoint,
+            directory: PathBuf::from("plugins/alpha"),
             declared_scopes: HashSet::new(),
             dependencies: Vec::new(),
         };
         let beta = LoadedPlugin {
             manifest: manifest("beta", &["test.order"]),
-            directory: beta_dir,
-            entrypoint_path: beta_entrypoint,
+            directory: PathBuf::from("plugins/beta"),
             declared_scopes: HashSet::new(),
             dependencies: Vec::new(),
         };
         let runtime = RuntimeBuilder::new(
-            MemorySourceLoader::new(),
+            loader,
             manifest_arc(vec![alpha.manifest.clone(), beta.manifest.clone()]),
         )
         .plugins(Arc::from(vec![alpha, beta]))
@@ -1667,7 +1715,178 @@ mod tests {
             *order.lock().expect("order mutex poisoned"),
             vec!["alpha".to_string(), "beta".to_string()]
         );
-        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_manifest_without_entrypoint_as_library_plugin() {
+        let manifest: PluginManifest = serde_json::from_str(
+            r#"{
+                "schema_version": 1,
+                "id": "lib",
+                "name": "Library",
+                "version": "1.0.0",
+                "description": "",
+                "scopes": []
+            }"#,
+        )
+        .expect("parse library manifest");
+
+        assert!(manifest.entrypoint.is_none());
+    }
+
+    #[test]
+    fn rejects_reserved_self_id() {
+        assert!(validate_plugin_id("self").is_err());
+    }
+
+    #[test]
+    fn cross_plugin_require_needs_declared_dependency() -> anyhow::Result<()> {
+        let mut loader = MemorySourceLoader::new();
+        loader.insert("plugin:lib/init", b"return { answer = 42 }".as_slice());
+
+        let mut lib = manifest("lib", &[]);
+        lib.entrypoint = None;
+        let mut consumer = manifest("consumer", &[]);
+        consumer.dependencies = vec![DependencyEntry::Id("lib".to_string())];
+        let outsider = manifest("outsider", &[]);
+
+        let library_plugin = LoadedPlugin {
+            manifest: lib.clone(),
+            directory: PathBuf::from("plugins/lib"),
+            declared_scopes: HashSet::new(),
+            dependencies: Vec::new(),
+        };
+        let runtime = RuntimeBuilder::new(loader, manifest_arc(vec![lib, consumer, outsider]))
+            .plugins(Arc::from(vec![library_plugin]))
+            .build()?;
+        // Library plugins have no entrypoint; exec_all must skip them.
+        runtime.exec_all()?;
+
+        let values = runtime.eval_source_with_context(
+            Arc::<[u8]>::from(&b"return require('@lib').answer"[..]),
+            CallContext {
+                origin: plugin_origin("consumer", "init.luau"),
+                ..CallContext::default()
+            },
+        )?;
+        assert_eq!(values, vec![luau::Value::Number(42.0)]);
+
+        let error = runtime
+            .eval_source_with_context(
+                Arc::<[u8]>::from(&b"return require('@lib').answer"[..]),
+                CallContext {
+                    origin: plugin_origin("outsider", "init.luau"),
+                    ..CallContext::default()
+                },
+            )
+            .expect_err("undeclared dependency must be denied");
+        assert!(
+            error
+                .to_string()
+                .contains("does not declare it as a dependency"),
+            "unexpected error: {error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn require_of_executed_plugin_returns_entrypoint_exports_without_rerunning()
+    -> anyhow::Result<()> {
+        let runs = Arc::new(Mutex::new(0usize));
+        let runs_for_module = runs.clone();
+        let module = ModuleSpec::new("test/order")
+            .capability("test.order")
+            .function(FunctionSpec::sync_fn("record").call(move |_frame| {
+                *runs_for_module.lock().expect("runs mutex poisoned") += 1;
+                Ok(())
+            }))
+            .install(|_| Ok(ModuleExport::new(())));
+
+        let mut loader = MemorySourceLoader::new();
+        loader.insert(
+            "plugin:dep/init",
+            b"require('@test/order').record()\nreturn { answer = 7 }".as_slice(),
+        );
+
+        let dep = manifest("dep", &["test.order"]);
+        let mut consumer = manifest("consumer", &[]);
+        consumer.dependencies = vec![DependencyEntry::Id("dep".to_string())];
+
+        let dep_plugin = LoadedPlugin {
+            manifest: dep.clone(),
+            directory: PathBuf::from("plugins/dep"),
+            declared_scopes: HashSet::new(),
+            dependencies: Vec::new(),
+        };
+        let runtime = RuntimeBuilder::new(loader, manifest_arc(vec![dep, consumer]))
+            .plugins(Arc::from(vec![dep_plugin]))
+            .module_specs(vec![module])
+            .build()?;
+        runtime.exec_all()?;
+
+        let values = runtime.eval_source_with_context(
+            Arc::<[u8]>::from(&b"return require('@dep').answer"[..]),
+            CallContext {
+                origin: plugin_origin("consumer", "init.luau"),
+                ..CallContext::default()
+            },
+        )?;
+
+        assert_eq!(values, vec![luau::Value::Number(7.0)]);
+        assert_eq!(
+            *runs.lock().expect("runs mutex poisoned"),
+            1,
+            "entrypoint side effects must not re-run on require"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn require_in_registered_namespace_fails_as_unknown_module() -> anyhow::Result<()> {
+        let mut loader = MemorySourceLoader::new();
+        // Even a plugin named like a registered namespace must not resolve.
+        loader.insert("plugin:test/x", b"return 1".as_slice());
+        let runtime = RuntimeBuilder::new(loader, manifest_arc(Vec::new()))
+            .module_specs(vec![
+                ModuleSpec::new("test/order").install(|_| Ok(ModuleExport::new(()))),
+            ])
+            .build()?;
+
+        let error = runtime
+            .eval_source_with_context(
+                Arc::<[u8]>::from(&b"return require('@test/x')"[..]),
+                CallContext::default(),
+            )
+            .expect_err("registered namespaces must not fall through to plugin sources");
+        assert!(
+            error.to_string().contains("is not registered"),
+            "unexpected error: {error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn require_cycle_fails_fast() -> anyhow::Result<()> {
+        let mut loader = MemorySourceLoader::new();
+        loader.insert("plugin:demo/a", b"return require('@self/b')".as_slice());
+        loader.insert("plugin:demo/b", b"return require('@self/a')".as_slice());
+        let runtime =
+            RuntimeBuilder::new(loader, manifest_arc(vec![manifest("demo", &[])])).build()?;
+
+        let error = runtime
+            .eval_source_with_context(
+                Arc::<[u8]>::from(&b"return require('@self/a')"[..]),
+                CallContext {
+                    origin: plugin_origin("demo", "init.luau"),
+                    ..CallContext::default()
+                },
+            )
+            .expect_err("require cycles must fail fast");
+        assert!(
+            error.to_string().contains("require cycle"),
+            "unexpected error: {error}"
+        );
         Ok(())
     }
 }
