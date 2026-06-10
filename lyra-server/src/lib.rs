@@ -48,6 +48,7 @@ use db::{
     create,
 };
 use plugins::lifecycle::PluginRegistries;
+use services::auth::media_tokens::MediaTokenStore;
 
 #[derive(Clone)]
 pub(crate) struct SwapHandle<T: Clone> {
@@ -116,16 +117,17 @@ pub(crate) type ConfigHandle = SwapHandle<Arc<Config>>;
 pub(crate) type PluginManifestHandle = SwapHandle<Arc<[PluginManifest]>>;
 pub(crate) type PluginRuntimeHandle = SwapHandle<Option<crate::plugins::bootstrap::PluginRuntime>>;
 
-/// Debounced auth bookkeeping keyed by `DbId`. Lives on `AppState` instead of
-/// module statics so a DB swap cannot carry ids into the next database's
-/// debounce window (memory DBs reuse small ids).
+/// Auth bookkeeping derived from the current database. Lives on `AppState`
+/// instead of module statics so a DB swap cannot carry ids or grants into the
+/// next database (memory DBs reuse small ids).
 #[derive(Default)]
-pub(crate) struct AuthDebounceCaches {
+pub(crate) struct AuthCaches {
     pub(crate) api_key_last_used: StdMutex<HashMap<DbId, i64>>,
     pub(crate) session_last_seen: StdMutex<HashMap<DbId, i64>>,
+    pub(crate) media_tokens: MediaTokenStore,
 }
 
-impl AuthDebounceCaches {
+impl AuthCaches {
     fn clear(&self) {
         self.api_key_last_used
             .lock()
@@ -135,6 +137,7 @@ impl AuthDebounceCaches {
             .lock()
             .expect("session last_seen cache poisoned")
             .clear();
+        self.media_tokens.clear();
     }
 }
 
@@ -144,7 +147,7 @@ pub(crate) struct AppState {
     pub(crate) plugin_manifests: PluginManifestHandle,
     pub(crate) plugin_runtime: PluginRuntimeHandle,
     pub(crate) plugin_registries: PluginRegistries,
-    pub(crate) auth_caches: AuthDebounceCaches,
+    pub(crate) auth_caches: AuthCaches,
 }
 
 pub(crate) fn build_app_state(config: Config) -> Result<AppState> {
@@ -155,7 +158,7 @@ pub(crate) fn build_app_state(config: Config) -> Result<AppState> {
         plugin_manifests: PluginManifestHandle::new(Arc::from(Vec::<PluginManifest>::new())),
         plugin_runtime: PluginRuntimeHandle::new(None),
         plugin_registries: PluginRegistries::new(),
-        auth_caches: AuthDebounceCaches::default(),
+        auth_caches: AuthCaches::default(),
     })
 }
 

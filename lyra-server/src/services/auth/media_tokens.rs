@@ -5,10 +5,7 @@
 
 use std::{
     collections::HashMap,
-    sync::{
-        LazyLock,
-        Mutex,
-    },
+    sync::Mutex,
     time::{
         Duration,
         Instant,
@@ -17,7 +14,10 @@ use std::{
 
 use agdb::DbId;
 
-use crate::db;
+use crate::{
+    STATE,
+    db,
+};
 
 use super::random_hex_secret;
 
@@ -26,8 +26,16 @@ pub(crate) const MEDIA_TOKEN_MAX_TTL_SECONDS: u64 = 8 * 60 * 60;
 const MEDIA_TOKEN_BYTES: usize = 24;
 const MAX_MEDIA_TOKENS: usize = 4096;
 
-static MEDIA_TOKENS: LazyLock<Mutex<HashMap<String, MediaTokenGrant>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Opaque grant store held on `AppState` so a state reset drops all
+/// outstanding media tokens; grant internals stay private to this module.
+#[derive(Default)]
+pub(crate) struct MediaTokenStore(Mutex<HashMap<String, MediaTokenGrant>>);
+
+impl MediaTokenStore {
+    pub(crate) fn clear(&self) {
+        self.0.lock().expect("media token cache poisoned").clear();
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MediaTokenPurpose {
@@ -60,7 +68,12 @@ pub(crate) enum MediaTokenError {
 }
 
 fn tokens() -> std::sync::MutexGuard<'static, HashMap<String, MediaTokenGrant>> {
-    MEDIA_TOKENS.lock().expect("media token cache poisoned")
+    STATE
+        .auth_caches
+        .media_tokens
+        .0
+        .lock()
+        .expect("media token cache poisoned")
 }
 
 fn now_secs() -> i64 {
@@ -151,16 +164,13 @@ pub(crate) fn validate_media_token(
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-
-    pub(crate) fn clear_media_tokens() {
-        tokens().clear();
-    }
 
     #[test]
     fn media_token_validates_for_matching_track_and_purpose() {
-        clear_media_tokens();
+        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+        crate::testing::init_default_test_state().expect("init test state");
         let issued = issue_media_token(DbId(42), MediaTokenPurpose::Stream);
 
         validate_media_token(&issued.token, MediaTokenPurpose::Stream, DbId(42))
@@ -169,7 +179,8 @@ pub(crate) mod tests {
 
     #[test]
     fn media_token_rejects_wrong_track_or_purpose() {
-        clear_media_tokens();
+        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+        crate::testing::init_default_test_state().expect("init test state");
         let issued = issue_media_token(DbId(42), MediaTokenPurpose::Stream);
 
         assert!(matches!(
