@@ -139,6 +139,24 @@ pub(crate) fn require_permission(
     Ok(())
 }
 
+pub(crate) fn require_grantable_permissions(
+    principal: &Principal,
+    permissions: &[Permission],
+) -> Result<(), AuthError> {
+    let missing: Vec<String> = permissions
+        .iter()
+        .filter(|permission| !db::roles::has_permission(&principal.permissions, **permission))
+        .map(|permission| format!("{permission:?}"))
+        .collect();
+    if !missing.is_empty() {
+        return Err(AuthError::Forbidden(format!(
+            "cannot grant permissions you do not hold: {}",
+            missing.join(", ")
+        )));
+    }
+    Ok(())
+}
+
 async fn require_permission_principal(
     headers: &HeaderMap,
     permission: Permission,

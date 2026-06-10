@@ -39,6 +39,7 @@ use crate::{
     routes::AppError,
     services::auth::{
         Principal,
+        require_grantable_permissions,
         require_manage_roles,
     },
 };
@@ -223,7 +224,7 @@ async fn create_role(
     let principal = require_manage_roles(&headers).await?;
     let name = validate_role_name(&body.name)?;
     let permissions = normalize_permissions(body.permissions);
-    require_admin_for_admin_role(&principal, &permissions, "create")?;
+    require_grantable_permissions(&principal, &permissions)?;
 
     let mut db = STATE.db.write().await;
     if db::roles::get_by_name(&db, &name)?.is_some() {
@@ -269,7 +270,7 @@ async fn update_role_definition(
         .map(normalize_permissions)
         .unwrap_or_else(|| current_role.permissions.clone());
 
-    require_admin_for_admin_role(&principal, &next_permissions, "update")?;
+    require_grantable_permissions(&principal, &next_permissions)?;
     ensure_admin_permission_removal_allowed(
         db.deref(),
         &principal,
@@ -536,6 +537,59 @@ mod tests {
         .into_response()
         .status();
         assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn manage_roles_without_admin_cannot_grant_unheld_permissions() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let headers = create_headers_with_role(
+            "role-manager",
+            "role-manager",
+            vec![Permission::ManageRoles],
+        )
+        .await?;
+
+        let status = create_role(
+            headers.clone(),
+            Json(RoleRequest {
+                name: "escalated".to_string(),
+                permissions: vec![Permission::ManageUsers, Permission::ManagePlugins],
+            }),
+        )
+        .await
+        .expect_err("role manager should not grant permissions they do not hold")
+        .into_response()
+        .status();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        let (status, Json(created)) = create_role(
+            headers.clone(),
+            Json(RoleRequest {
+                name: "delegated".to_string(),
+                permissions: vec![Permission::ManageRoles],
+            }),
+        )
+        .await
+        .expect("role manager should grant permissions they hold");
+        assert_eq!(status, StatusCode::CREATED);
+
+        let update_status = update_role_definition(
+            headers,
+            Path(created.id),
+            Json(UpdateRoleDefinitionRequest {
+                name: None,
+                permissions: Some(vec![Permission::ManageRoles, Permission::ManageUsers]),
+            }),
+        )
+        .await
+        .expect_err("role manager should not add permissions they do not hold")
+        .into_response()
+        .status();
+        assert_eq!(update_status, StatusCode::FORBIDDEN);
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
