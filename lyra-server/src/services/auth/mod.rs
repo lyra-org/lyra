@@ -571,7 +571,18 @@ pub(crate) async fn require_auth(headers: &HeaderMap) -> Result<ResolvedAuth, Au
 
 pub(crate) async fn resolve_optional_auth(headers: &HeaderMap) -> AuthResult<Option<ResolvedAuth>> {
     let bearer = extract_bearer_credential(headers);
-    resolve_auth_from_bearer(bearer.as_deref()).await
+    let Some(auth) = resolve_auth_from_bearer(bearer.as_deref()).await? else {
+        return Ok(None);
+    };
+
+    {
+        let db = STATE.db.read().await;
+        if !auth.principal.revalidate(&db) {
+            return Ok(None);
+        }
+    }
+
+    Ok(Some(auth))
 }
 
 /// The default user is intentionally promoted to admin on every boot. When
