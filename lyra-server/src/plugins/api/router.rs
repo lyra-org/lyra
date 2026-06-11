@@ -109,6 +109,8 @@ pub(crate) struct ApiHandlerRegistration {
 
 pub(super) static API_ROUTE_REGISTRY: LazyLock<Arc<tokio::sync::RwLock<ApiRouteRegistry>>> =
     LazyLock::new(|| Arc::new(tokio::sync::RwLock::new(ApiRouteRegistry::new())));
+static LIMITER_ROUTE_MATCHER: LazyLock<std::sync::RwLock<Arc<matchit::Router<()>>>> =
+    LazyLock::new(|| std::sync::RwLock::new(Arc::new(matchit::Router::new())));
 pub(super) static INSTALLED_ROUTERS: LazyLock<Arc<tokio::sync::RwLock<InstalledRouters>>> =
     LazyLock::new(|| Arc::new(tokio::sync::RwLock::new(InstalledRouters::empty())));
 pub(super) static INSTALLED_STATIC_DIR: LazyLock<Arc<tokio::sync::RwLock<Option<PathBuf>>>> =
@@ -339,6 +341,12 @@ impl ApiRouteRegistry {
     }
 }
 
+pub(super) struct BuiltRouters {
+    main: Router,
+    ci: CaseInsensitiveRouter,
+    limiter_matcher: matchit::Router<()>,
+}
+
 #[derive(Clone)]
 pub(super) struct InstalledRouters {
     main: Router,
@@ -356,6 +364,23 @@ impl InstalledRouters {
 
 pub(super) async fn api_not_found() -> (StatusCode, &'static str) {
     (StatusCode::NOT_FOUND, "Error: not found")
+}
+
+/// Whether the path is served by a registered plugin route, so the rate
+/// limiter can distinguish plugin surfaces from static assets.
+pub(crate) fn is_plugin_route_path(path: &str) -> bool {
+    let matcher = LIMITER_ROUTE_MATCHER
+        .read()
+        .expect("limiter route matcher poisoned")
+        .clone();
+    matches_route_path(&matcher, path)
+}
+
+fn matches_route_path(matcher: &matchit::Router<()>, path: &str) -> bool {
+    if matcher.at(path).is_ok() {
+        return true;
+    }
+    has_ascii_upper(path) && matcher.at(&path.to_ascii_lowercase()).is_ok()
 }
 
 pub(super) fn apply_catchall_and_static(router: Router, static_dir: Option<PathBuf>) -> Router {
@@ -389,6 +414,9 @@ pub(super) async fn initialize_router(static_dir: Option<PathBuf>) {
         main,
         ci: Arc::new(CaseInsensitiveRouter::new()),
     };
+    *LIMITER_ROUTE_MATCHER
+        .write()
+        .expect("limiter route matcher poisoned") = Arc::new(matchit::Router::new());
 }
 
 pub(super) async fn installed_static_dir() -> Option<PathBuf> {
@@ -439,18 +467,20 @@ fn configured_static_dir(value: Option<OsString>) -> Result<Option<PathBuf>> {
     Ok(Some(path))
 }
 
-pub(super) async fn install_router(router: Router, ci_router: CaseInsensitiveRouter) {
+pub(super) async fn install_router(built: BuiltRouters) {
     *INSTALLED_ROUTERS.write().await = InstalledRouters {
-        main: router,
-        ci: Arc::new(ci_router),
+        main: built.main,
+        ci: Arc::new(built.ci),
     };
+    *LIMITER_ROUTE_MATCHER
+        .write()
+        .expect("limiter route matcher poisoned") = Arc::new(built.limiter_matcher);
 }
 
-pub(super) async fn build_router(
-    static_dir: Option<PathBuf>,
-) -> Result<(Router, CaseInsensitiveRouter)> {
-    let (router, ci_router) = build_registered_router().await?;
-    Ok((apply_catchall_and_static(router, static_dir), ci_router))
+pub(super) async fn build_router(static_dir: Option<PathBuf>) -> Result<BuiltRouters> {
+    let mut built = build_registered_router().await?;
+    built.main = apply_catchall_and_static(built.main, static_dir);
+    Ok(built)
 }
 
 pub(super) async fn fallback(mut request: Request) -> Response {
@@ -524,13 +554,14 @@ fn rebuild_uri_with_path(uri: &Uri, new_path: &str) -> Option<Uri> {
     Uri::from_parts(parts).ok()
 }
 
-async fn build_registered_router() -> Result<(Router, CaseInsensitiveRouter)> {
+async fn build_registered_router() -> Result<BuiltRouters> {
     let (routes, ci_router) = {
         let registry = API_ROUTE_REGISTRY.read().await;
         (registry.snapshot(), registry.ci_router_snapshot())
     };
 
     let mut probe: matchit::Router<String> = matchit::Router::new();
+    let mut limiter_matcher: matchit::Router<()> = matchit::Router::new();
     let mut plugin_by_path: HashMap<String, String> = HashMap::new();
     for (reserved, owner) in [("/api", "core"), ("/api/{*path}", "core")] {
         probe
@@ -553,6 +584,9 @@ async fn build_registered_router() -> Result<(Router, CaseInsensitiveRouter)> {
                 &plugin_by_path,
             ));
         }
+        limiter_matcher
+            .insert(path.to_string(), ())
+            .with_context(|| format!("seeding limiter matcher for '{path}'"))?;
         plugin_by_path.insert(path.to_string(), owner);
     }
 
@@ -565,7 +599,11 @@ async fn build_registered_router() -> Result<(Router, CaseInsensitiveRouter)> {
         };
         router = router.route(path.as_ref(), method_router);
     }
-    Ok((router, ci_router))
+    Ok(BuiltRouters {
+        main: router,
+        ci: ci_router,
+        limiter_matcher,
+    })
 }
 
 fn describe_probe_conflict(
@@ -727,5 +765,23 @@ async fn dispatch_registered_route(
             );
             (StatusCode::INTERNAL_SERVER_ERROR, "internal server error").into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod limiter_matcher_tests {
+    use super::*;
+
+    #[test]
+    fn matches_registered_paths_with_case_insensitive_lowering() {
+        let mut matcher: matchit::Router<()> = matchit::Router::new();
+        matcher
+            .insert("/jellyfin/users/{id}", ())
+            .expect("pattern should insert");
+
+        assert!(matches_route_path(&matcher, "/jellyfin/users/abc"));
+        assert!(matches_route_path(&matcher, "/Jellyfin/Users/abc"));
+        assert!(!matches_route_path(&matcher, "/assets/app.js"));
+        assert!(!matches_route_path(&matcher, "/"));
     }
 }
