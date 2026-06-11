@@ -907,7 +907,9 @@ impl DescribeModule for ApiModule {
             },
             ModuleFunctionDescriptor {
                 path: vec!["response", "file"],
-                description: Some("Builds a file response."),
+                description: Some(
+                    "Builds a file response. The path must resolve inside a library root or the configured cover storage root.",
+                ),
                 params: vec![
                     param("status", LuauType::optional(u16::luau_type())),
                     param("path", String::luau_type()),
