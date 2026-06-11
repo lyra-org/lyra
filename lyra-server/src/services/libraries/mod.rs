@@ -5,6 +5,7 @@
 
 mod configured;
 mod orchestrator;
+mod roots;
 pub(crate) mod scanning;
 mod sync;
 
@@ -30,5 +31,6 @@ pub(crate) use orchestrator::{
     sync_run_events_after,
     wait_for_running_library_syncs,
 };
+pub(crate) use roots::library_roots;
 pub(crate) use sync::sync_library;
 pub(crate) use sync::system_context;

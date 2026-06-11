@@ -43,6 +43,26 @@ async fn require_plugin_track_access(
     })
 }
 
+/// Plugins may name any filesystem path in a file response, so resolve the
+/// target (following symlinks) and refuse anything outside the library roots
+/// and the configured cover storage root.
+async fn confine_file_response_path(path: &str) -> Result<PathBuf> {
+    let canonical = tokio::fs::canonicalize(path)
+        .await
+        .with_context(|| format!("failed to resolve file response path '{path}'"))?;
+    let mut roots = crate::services::libraries::library_roots().await?;
+    roots.extend(crate::services::covers::configured_covers_root());
+    for root in roots {
+        let Ok(root) = tokio::fs::canonicalize(&root).await else {
+            continue;
+        };
+        if canonical.starts_with(&root) {
+            return Ok(canonical);
+        }
+    }
+    bail!("file response path '{path}' is outside library and cover roots");
+}
+
 pub(super) async fn plugin_api_response_to_axum(
     response: crate::plugins::executor::ApiHandlerResponse,
     request_headers: &HeaderMap,
@@ -162,8 +182,12 @@ pub(super) async fn plugin_api_response_to_axum(
         if trimmed.is_empty() {
             bail!("file path must not be empty");
         }
+        let confined = confine_file_response_path(trimmed).await?;
         if let Some(transform) = parse_image_transform_options(response.transform.as_ref())? {
-            let owned_path = trimmed.to_owned();
+            let owned_path = confined
+                .to_str()
+                .with_context(|| format!("file response path '{trimmed}' is not valid UTF-8"))?
+                .to_owned();
             let (bytes, format) =
                 tokio::task::spawn_blocking(move || transform_image(&owned_path, &transform))
                     .await
@@ -174,7 +198,7 @@ pub(super) async fn plugin_api_response_to_axum(
             Body::from(bytes)
         } else {
             let ranged = build_ranged_file_body(
-                FsPath::new(trimmed),
+                confined.as_path(),
                 request_headers.get(RANGE),
                 status,
                 None,
@@ -247,7 +271,14 @@ mod tests {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    use super::require_plugin_track_access;
+    use super::{
+        plugin_api_response_to_axum,
+        require_plugin_track_access,
+    };
+    use crate::plugins::executor::{
+        ApiHandlerResponse,
+        ApiResponseKind,
+    };
     use crate::{
         STATE,
         plugins::db::{
@@ -272,14 +303,18 @@ mod tests {
             .map_err(|error| error.into_response().status())
     }
 
+    fn unique_test_dir(prefix: &str) -> anyhow::Result<std::path::PathBuf> {
+        Ok(std::env::temp_dir().join(format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        )))
+    }
+
     #[tokio::test]
     async fn plugin_track_access_enforces_library_access_and_permissions() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
-        let test_dir = std::env::temp_dir().join(format!(
-            "lyra-plugin-bridge-auth-test-{}-{}",
-            std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-        ));
+        let test_dir = unique_test_dir("lyra-plugin-bridge-auth-test")?;
         std::fs::create_dir_all(&test_dir)?;
         initialize_runtime(&LibraryFixtureConfig {
             directory: test_dir.clone(),
@@ -346,6 +381,77 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    fn file_response(path: &std::path::Path) -> ApiHandlerResponse {
+        ApiHandlerResponse {
+            kind: ApiResponseKind::File,
+            status: 200,
+            headers: Vec::new(),
+            body: None,
+            path: Some(path.to_string_lossy().into_owned()),
+            transform: None,
+            track_id: None,
+            options: None,
+            principal: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn plugin_file_responses_are_confined_to_library_roots() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = unique_test_dir("lyra-plugin-bridge-file-test")?;
+        let library_dir = test_dir.join("library");
+        std::fs::create_dir_all(&library_dir)?;
+        let outside_dir = unique_test_dir("lyra-plugin-bridge-file-outside")?;
+        std::fs::create_dir_all(&outside_dir)?;
+        initialize_runtime(&LibraryFixtureConfig {
+            directory: test_dir.clone(),
+            language: None,
+            country: None,
+        })
+        .await?;
+
+        {
+            let mut db = STATE.db.write().await;
+            db::test_db::insert_library(
+                &mut db,
+                "File Bridge Lib",
+                library_dir.to_str().context("library dir is utf-8")?,
+            )?;
+        }
+
+        let inside = library_dir.join("cover.jpg");
+        std::fs::write(&inside, b"inside")?;
+        let outside = outside_dir.join("secret.txt");
+        std::fs::write(&outside, b"outside")?;
+        let escape_link = library_dir.join("escape.jpg");
+        std::os::unix::fs::symlink(&outside, &escape_link)?;
+
+        let headers = axum::http::HeaderMap::new();
+
+        let served = plugin_api_response_to_axum(file_response(&inside), &headers).await?;
+        assert_eq!(
+            served.status(),
+            StatusCode::OK,
+            "files inside a library root must serve"
+        );
+
+        let rejected = plugin_api_response_to_axum(file_response(&outside), &headers).await;
+        assert!(
+            rejected.is_err_and(|err| err.to_string().contains("outside library")),
+            "files outside all roots must be rejected"
+        );
+
+        let symlinked = plugin_api_response_to_axum(file_response(&escape_link), &headers).await;
+        assert!(
+            symlinked.is_err_and(|err| err.to_string().contains("outside library")),
+            "symlinks escaping a library root must be rejected"
+        );
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        let _ = std::fs::remove_dir_all(outside_dir);
         Ok(())
     }
 }
