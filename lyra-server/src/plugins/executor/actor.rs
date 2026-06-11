@@ -43,6 +43,7 @@ impl PluginExecutorHandle {
     pub(crate) fn discover_from_plugins_dir_with_db_and_modules(
         plugins_dir: impl Into<PathBuf>,
         server_info: crate::plugins::server::ServerInfo,
+        auth_capabilities: crate::plugins::auth::AuthCapabilities,
         db: crate::plugins::db::DbAsync,
         module_overrides: Vec<ModuleSpec>,
     ) -> Result<(Self, Vec<PluginLoadError>)> {
@@ -56,6 +57,7 @@ impl PluginExecutorHandle {
                 match PluginExecutor::discover_from_plugins_dir_with_db_and_modules(
                     plugins_dir,
                     server_info,
+                    auth_capabilities,
                     db,
                     module_overrides,
                 ) {

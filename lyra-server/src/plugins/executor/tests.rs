@@ -26,6 +26,14 @@ fn default_server_info() -> crate::plugins::server::ServerInfo {
     }
 }
 
+fn default_auth_capabilities() -> crate::plugins::auth::AuthCapabilities {
+    crate::plugins::auth::AuthCapabilities {
+        enabled: false,
+        allow_default_login_when_disabled: true,
+        default_username: "default".to_string(),
+    }
+}
+
 impl PluginExecutor {
     pub(crate) fn with_manifests(manifests: Arc<[PluginManifest]>) -> Result<Self> {
         Self::with_runtime_state(manifests, default_server_info())
@@ -38,6 +46,7 @@ impl PluginExecutor {
         Self::with_loader(
             manifests,
             server_info,
+            default_auth_capabilities(),
             stores::PluginModuleStores::empty(),
             MemorySourceLoader::new(),
         )
@@ -51,6 +60,7 @@ impl PluginExecutor {
         Self::with_loader(
             manifests,
             server_info,
+            default_auth_capabilities(),
             stores::PluginModuleStores::with_db(db),
             MemorySourceLoader::new(),
         )
@@ -63,6 +73,7 @@ impl PluginExecutor {
         Self::discover_from_plugins_dir_with_stores(
             plugins_dir,
             server_info,
+            default_auth_capabilities(),
             stores::PluginModuleStores::empty(),
             Vec::new(),
         )
@@ -76,6 +87,7 @@ impl PluginExecutor {
         Self::discover_from_plugins_dir_with_db_and_modules(
             plugins_dir,
             server_info,
+            default_auth_capabilities(),
             db,
             Vec::new(),
         )
@@ -922,6 +934,7 @@ fn plugin_executor_handle_discovers_and_executes_on_runtime_thread() -> Result<(
     let (runtime, errors) = PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
         test_dir.join("plugins"),
         default_server_info(),
+        default_auth_capabilities(),
         db,
         Vec::new(),
     )?;
