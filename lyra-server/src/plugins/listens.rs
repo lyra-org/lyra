@@ -79,7 +79,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
 
 fn get_count_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get_count")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("track_id")
         .args::<i64>()
         .arg_name("user_id")
@@ -92,7 +92,7 @@ fn get_count_spec() -> FunctionSpec {
 
 fn get_counts_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get_counts")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("track_ids")
         .args::<luau::Table>()
         .arg_name("user_id")
@@ -105,7 +105,7 @@ fn get_counts_spec() -> FunctionSpec {
 
 fn get_stats_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get_stats")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("track_ids")
         .args::<luau::Table>()
         .arg_name("user_id")
@@ -137,7 +137,7 @@ fn get_count_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = DbId(track_id);
@@ -164,7 +164,7 @@ fn get_counts_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let stats = resolve_stats(db, &track_ids, &principal, user_db_id, merge).await?;
@@ -189,7 +189,7 @@ fn get_stats_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let stats = resolve_stats(db, &track_ids, &principal, user_db_id, merge).await?;

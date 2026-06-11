@@ -37,10 +37,10 @@ impl PluginExecutor {
         let ctx = api_context_value(&request)?;
         let thread = self.vm.create_thread(&handler.handler)?;
         let mut context = handler.context.clone();
-        if let Some(auth) = request.auth.as_ref() {
-            context.caller.insert(auth.principal.clone());
-        }
         let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
+        if let Some(auth) = request.auth.as_ref() {
+            dispatch_auth.record(auth.principal.clone());
+        }
         context.caller.insert(dispatch_auth.clone());
         context.caller.insert(crate::plugins::auth::DispatchClient(
             request.client_key.clone(),

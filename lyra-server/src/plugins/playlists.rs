@@ -174,14 +174,14 @@ pub(crate) fn module_spec() -> ModuleSpec {
 
 fn list_spec() -> FunctionSpec {
     FunctionSpec::async_fn("list")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .returns::<Vec<PlaylistInfo>>()
         .call_async(Arc::new(list_callback))
 }
 
 fn get_by_id_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get_by_id")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("id")
         .args::<ResolveId>()
         .returns::<Option<PlaylistInfo>>()
@@ -190,7 +190,7 @@ fn get_by_id_spec() -> FunctionSpec {
 
 fn get_by_user_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get_by_user")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("user_id")
         .args::<i64>()
         .returns::<Vec<PlaylistInfo>>()
@@ -199,7 +199,7 @@ fn get_by_user_spec() -> FunctionSpec {
 
 fn get_owner_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get_owner")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("playlist_id")
         .args::<ResolveId>()
         .returns::<Option<i64>>()
@@ -208,7 +208,7 @@ fn get_owner_spec() -> FunctionSpec {
 
 fn get_tracks_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get_tracks")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("playlist_id")
         .args::<ResolveId>()
         .returns::<Vec<PlaylistTrackLink>>()
@@ -217,7 +217,7 @@ fn get_tracks_spec() -> FunctionSpec {
 
 fn get_tracks_many_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get_tracks_many")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("playlist_ids")
         .args::<luau::Table>()
         .returns::<luau::Table>()
@@ -226,7 +226,7 @@ fn get_tracks_many_spec() -> FunctionSpec {
 
 fn create_spec() -> FunctionSpec {
     FunctionSpec::async_fn("create")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("request")
         .args::<PlaylistCreateRequest>()
         .returns::<i64>()
@@ -235,7 +235,7 @@ fn create_spec() -> FunctionSpec {
 
 fn update_spec() -> FunctionSpec {
     FunctionSpec::async_fn("update")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("request")
         .args::<PlaylistUpdateRequest>()
         .returns::<Option<PlaylistInfo>>()
@@ -244,7 +244,7 @@ fn update_spec() -> FunctionSpec {
 
 fn add_track_spec() -> FunctionSpec {
     FunctionSpec::async_fn("add_track")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("playlist_id")
         .args::<ResolveId>()
         .arg_name("track_id")
@@ -255,7 +255,7 @@ fn add_track_spec() -> FunctionSpec {
 
 fn remove_track_spec() -> FunctionSpec {
     FunctionSpec::async_fn("remove_track")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("entry_id")
         .args::<ResolveId>()
         .returns::<()>()
@@ -270,7 +270,7 @@ fn list_callback(frame: luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau:
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
@@ -301,7 +301,7 @@ fn get_by_id_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
@@ -339,7 +339,7 @@ fn get_by_user_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         if owner_db_id != principal.user_db_id {
@@ -368,7 +368,7 @@ fn get_owner_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
@@ -405,7 +405,7 @@ fn get_tracks_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
@@ -436,7 +436,7 @@ fn get_tracks_many_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
@@ -477,7 +477,7 @@ fn create_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         if DbId(request.user_id) != principal.user_db_id {
@@ -503,7 +503,7 @@ fn update_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
@@ -541,7 +541,7 @@ fn add_track_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
@@ -590,7 +590,7 @@ fn remove_track_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;

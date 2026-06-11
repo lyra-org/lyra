@@ -353,14 +353,17 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
         origin: plugin_origin("demo", "init.luau"),
         ..CallContext::default()
     };
-    context.caller.insert(crate::services::auth::Principal {
-        user_db_id,
-        user_public_id,
-        username: "listener".to_string(),
-        permissions: vec![crate::plugins::db::Permission::Admin],
-        role_name: Some("admin".to_string()),
-        accessible_library_ids: std::collections::HashSet::new(),
-    });
+    seed_caller_principal(
+        &mut context,
+        crate::services::auth::Principal {
+            user_db_id,
+            user_public_id,
+            username: "listener".to_string(),
+            permissions: vec![crate::plugins::db::Permission::Admin],
+            role_name: Some("admin".to_string()),
+            accessible_library_ids: std::collections::HashSet::new(),
+        },
+    );
     runtime.run_plugin_source_with_call_context(
         format!(
             r#"
@@ -427,14 +430,17 @@ fn plugin_executor_exposes_db_backed_lyra_favorites_module() -> Result<()> {
         origin: plugin_origin("demo", "init.luau"),
         ..CallContext::default()
     };
-    context.caller.insert(crate::services::auth::Principal {
-        user_db_id,
-        user_public_id,
-        username: "favorite-user".to_string(),
-        permissions: Vec::new(),
-        role_name: None,
-        accessible_library_ids: std::collections::HashSet::from([library_public_id]),
-    });
+    seed_caller_principal(
+        &mut context,
+        crate::services::auth::Principal {
+            user_db_id,
+            user_public_id,
+            username: "favorite-user".to_string(),
+            permissions: Vec::new(),
+            role_name: None,
+            accessible_library_ids: std::collections::HashSet::from([library_public_id]),
+        },
+    );
     runtime.run_plugin_source_with_call_context(
         format!(
             r#"
@@ -801,17 +807,20 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
         origin: plugin_origin("demo", "init.luau"),
         ..CallContext::default()
     };
-    context.caller.insert(crate::services::auth::Principal {
-        user_db_id,
-        user_public_id,
-        username: "playback-source-user".to_string(),
-        permissions: vec![
-            crate::plugins::db::Permission::Admin,
-            crate::plugins::db::Permission::ManageLibraries,
-        ],
-        role_name: Some("admin".to_string()),
-        accessible_library_ids: std::collections::HashSet::new(),
-    });
+    seed_caller_principal(
+        &mut context,
+        crate::services::auth::Principal {
+            user_db_id,
+            user_public_id,
+            username: "playback-source-user".to_string(),
+            permissions: vec![
+                crate::plugins::db::Permission::Admin,
+                crate::plugins::db::Permission::ManageLibraries,
+            ],
+            role_name: Some("admin".to_string()),
+            accessible_library_ids: std::collections::HashSet::new(),
+        },
+    );
     runtime.run_plugin_source_with_call_context(
         format!(
             r#"
@@ -895,14 +904,17 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
         origin: plugin_origin("demo", "init.luau"),
         ..CallContext::default()
     };
-    context.caller.insert(crate::services::auth::Principal {
-        user_db_id,
-        user_public_id,
-        username: "playlist-user".to_string(),
-        permissions: vec![crate::plugins::db::Permission::Admin],
-        role_name: Some("admin".to_string()),
-        accessible_library_ids: std::collections::HashSet::new(),
-    });
+    seed_caller_principal(
+        &mut context,
+        crate::services::auth::Principal {
+            user_db_id,
+            user_public_id,
+            username: "playlist-user".to_string(),
+            permissions: vec![crate::plugins::db::Permission::Admin],
+            role_name: Some("admin".to_string()),
+            accessible_library_ids: std::collections::HashSet::new(),
+        },
+    );
     runtime.run_plugin_source_with_call_context(
         format!(
             r#"
@@ -1019,14 +1031,17 @@ fn plugin_executor_exposes_db_backed_lyra_covers_module() -> Result<()> {
         origin: plugin_origin("demo", "init.luau"),
         ..CallContext::default()
     };
-    context.caller.insert(crate::services::auth::Principal {
-        user_db_id,
-        user_public_id,
-        username: "cover-user".to_string(),
-        permissions: vec![crate::plugins::db::Permission::Admin],
-        role_name: Some("admin".to_string()),
-        accessible_library_ids: std::collections::HashSet::new(),
-    });
+    seed_caller_principal(
+        &mut context,
+        crate::services::auth::Principal {
+            user_db_id,
+            user_public_id,
+            username: "cover-user".to_string(),
+            permissions: vec![crate::plugins::db::Permission::Admin],
+            role_name: Some("admin".to_string()),
+            accessible_library_ids: std::collections::HashSet::new(),
+        },
+    );
     runtime.run_plugin_source_with_call_context(
         format!(
             r#"

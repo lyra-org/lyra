@@ -51,7 +51,6 @@ use crate::{
     },
     plugins::lifecycle::PluginId,
     services::{
-        auth::Principal,
         playback_sessions::{
             self as playbacks,
             PlaybackScopeKey,
@@ -233,7 +232,7 @@ fn on_update_spec() -> FunctionSpec {
 
 fn report_spec() -> FunctionSpec {
     FunctionSpec::async_fn("report")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("request")
         .args::<PlaybackReportRequest>()
         .call_async(Arc::new(report_callback))
@@ -241,7 +240,7 @@ fn report_spec() -> FunctionSpec {
 
 fn start_spec() -> FunctionSpec {
     FunctionSpec::async_fn("start")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("request")
         .args::<PlaybackStartRequest>()
         .returns::<i64>()
@@ -250,7 +249,7 @@ fn start_spec() -> FunctionSpec {
 
 fn report_session_spec() -> FunctionSpec {
     FunctionSpec::async_fn("report_session")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("request")
         .args::<PlaybackSessionReportRequest>()
         .returns::<Option<i64>>()
@@ -259,7 +258,7 @@ fn report_session_spec() -> FunctionSpec {
 
 fn clear_session_spec() -> FunctionSpec {
     FunctionSpec::async_fn("clear_session")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("request")
         .args::<PlaybackSessionClearRequest>()
         .call_async(Arc::new(clear_session_callback))
@@ -267,7 +266,7 @@ fn clear_session_spec() -> FunctionSpec {
 
 fn list_connections_spec() -> FunctionSpec {
     FunctionSpec::async_fn("list_connections")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("user_id")
         .args::<i64>()
         .returns::<Vec<ConnectionInfo>>()
@@ -276,7 +275,7 @@ fn list_connections_spec() -> FunctionSpec {
 
 fn send_command_spec() -> FunctionSpec {
     FunctionSpec::async_fn("send_command")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("request")
         .args::<SendCommandRequest>()
         .call_async(Arc::new(send_command_callback))
@@ -322,7 +321,7 @@ fn report_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
         luau::Error::Runtime("playback_sessions.report must be called from plugin Luau code".into())
     })?;
@@ -382,7 +381,7 @@ fn start_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
         luau::Error::Runtime("playback_sessions.start must be called from plugin Luau code".into())
     })?;
@@ -442,7 +441,7 @@ fn report_session_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
         luau::Error::Runtime(
             "playback_sessions.report_session must be called from plugin Luau code".into(),
@@ -511,7 +510,7 @@ fn clear_session_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request_value: luau::Value = frame.args.read_named("request")?;
     let request: PlaybackSessionClearRequest = from_luau_json(frame.vm, &request_value)?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
         luau::Error::Runtime(
             "playback_sessions.clear_session must be called from plugin Luau code".into(),
@@ -546,7 +545,7 @@ fn list_connections_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let user_db_id = require_positive_id(user_id, "user_id")?;
@@ -630,7 +629,7 @@ fn send_command_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let user_db_id = require_positive_id(request.user_id, "user_id")?;

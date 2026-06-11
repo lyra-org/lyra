@@ -512,7 +512,7 @@ fn require_positive_id(value: i64, name: &str) -> luau::runtime::Result<i64> {
 }
 
 fn caller_principal(context: &luau::CallContext) -> Option<Principal> {
-    context.caller.get::<Principal>().ok().map(|p| (*p).clone())
+    crate::plugins::auth::dispatch_principal(context)
 }
 
 fn can_read_entity(

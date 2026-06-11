@@ -114,6 +114,12 @@ fn runtime_with_scopes(scopes: &[&str]) -> Result<PluginExecutor> {
     PluginExecutor::with_manifests(Arc::from(vec![manifest("demo", scopes)]))
 }
 
+fn seed_caller_principal(context: &mut CallContext, principal: crate::services::auth::Principal) {
+    let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
+    dispatch_auth.record(principal);
+    context.caller.insert(dispatch_auth);
+}
+
 fn manifest(id: &str, scopes: &[&str]) -> PluginManifest {
     PluginManifest {
         schema_version: 1,
@@ -138,10 +144,8 @@ fn plugin_executor_preserves_typed_call_context_across_luau_yield() -> Result<()
                 harmony_core::FunctionSpec::sync_fn("username")
                     .returns::<String>()
                     .call(|mut frame| {
-                        let principal = frame
-                            .context
-                            .caller
-                            .get::<crate::services::auth::Principal>()?;
+                        let principal =
+                            crate::plugins::auth::require_dispatch_principal(&frame.context)?;
                         frame.returns.write(principal.username.as_str())
                     }),
             )
@@ -152,14 +156,17 @@ fn plugin_executor_preserves_typed_call_context_across_luau_yield() -> Result<()
         origin: plugin_origin("demo", "init.luau"),
         ..CallContext::default()
     };
-    context.caller.insert(crate::services::auth::Principal {
-        user_db_id: agdb::DbId(7),
-        user_public_id: "user-public-id".to_string(),
-        username: "raw-user".to_string(),
-        permissions: vec![crate::plugins::db::Permission::Admin],
-        role_name: Some("admin".to_string()),
-        accessible_library_ids: std::collections::HashSet::new(),
-    });
+    seed_caller_principal(
+        &mut context,
+        crate::services::auth::Principal {
+            user_db_id: agdb::DbId(7),
+            user_public_id: "user-public-id".to_string(),
+            username: "raw-user".to_string(),
+            permissions: vec![crate::plugins::db::Permission::Admin],
+            role_name: Some("admin".to_string()),
+            accessible_library_ids: std::collections::HashSet::new(),
+        },
+    );
     runtime.run_plugin_source_with_call_context(
         br#"
             local task = require("@harmony/task")
@@ -511,6 +518,19 @@ fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Result<()
         response.principal.is_none(),
         "dispatches that never resolve auth must not carry a principal"
     );
+
+    let boundary_auth = rt
+        .block_on(crate::services::auth::resolve_auth_from_bearer(Some(
+            &token,
+        )))?
+        .context("bearer token should resolve at the boundary")?;
+    let mut seeded = request(anon_handler, "/anon");
+    seeded.auth = Some(boundary_auth);
+    let response = runtime.dispatch_api_handler(seeded)?;
+    let principal = response
+        .principal
+        .context("boundary auth should seed the dispatch principal")?;
+    assert_eq!(principal.user_db_id, user_db_id);
 
     let _ = std::fs::remove_dir_all(test_dir);
     Ok(())

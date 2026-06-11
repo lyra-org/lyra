@@ -31,10 +31,7 @@ use crate::{
         DbAsync,
         favorites::FavoriteKind,
     },
-    services::{
-        auth::Principal,
-        favorites as favorite_service,
-    },
+    services::favorites as favorite_service,
 };
 
 #[derive(Clone, Default)]
@@ -75,7 +72,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
 
 fn add_spec() -> FunctionSpec {
     FunctionSpec::async_fn("add")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("user_id")
         .args::<i64>()
         .arg_name("target_id")
@@ -86,7 +83,7 @@ fn add_spec() -> FunctionSpec {
 
 fn remove_spec() -> FunctionSpec {
     FunctionSpec::async_fn("remove")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("user_id")
         .args::<i64>()
         .arg_name("target_id")
@@ -97,7 +94,7 @@ fn remove_spec() -> FunctionSpec {
 
 fn has_spec() -> FunctionSpec {
     FunctionSpec::async_fn("has")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("user_id")
         .args::<i64>()
         .arg_name("target_id")
@@ -108,7 +105,7 @@ fn has_spec() -> FunctionSpec {
 
 fn has_many_spec() -> FunctionSpec {
     FunctionSpec::async_fn("has_many")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("user_id")
         .args::<i64>()
         .arg_name("target_ids")
@@ -119,7 +116,7 @@ fn has_many_spec() -> FunctionSpec {
 
 fn list_ids_spec() -> FunctionSpec {
     FunctionSpec::async_fn("list_ids")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("user_id")
         .args::<i64>()
         .arg_name("entity")
@@ -140,7 +137,7 @@ fn add_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         if user_id != principal.user_db_id {
@@ -174,7 +171,7 @@ fn remove_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         if user_id != principal.user_db_id {
@@ -203,7 +200,7 @@ fn has_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         if user_id != principal.user_db_id {
@@ -235,7 +232,7 @@ fn has_many_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
@@ -279,7 +276,7 @@ fn list_ids_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         if user_id != principal.user_db_id {

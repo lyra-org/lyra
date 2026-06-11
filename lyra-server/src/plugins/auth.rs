@@ -178,8 +178,11 @@ pub(crate) fn module_spec() -> ModuleSpec {
 #[derive(Clone)]
 pub(crate) struct DispatchClient(pub(crate) Option<String>);
 
-/// Per-dispatch slot recording the principal the host resolved on behalf of
-/// the plugin, so request handling outside the VM can authorize against it.
+/// Per-dispatch slot holding the principal currently acting for the dispatch.
+/// Seeded from boundary bearer auth at dispatch start, overwritten whenever
+/// the host resolves a credential via `auth.resolve_auth`, read by
+/// principal-requiring host functions, and bound to the API response so
+/// request handling outside the VM can authorize against it.
 #[derive(Clone, Default)]
 pub(crate) struct DispatchAuth(Arc<std::sync::Mutex<Option<ServicePrincipal>>>);
 
@@ -191,6 +194,25 @@ impl DispatchAuth {
     pub(crate) fn principal(&self) -> Option<ServicePrincipal> {
         self.0.lock().expect("dispatch auth slot poisoned").clone()
     }
+}
+
+pub(crate) fn dispatch_principal(context: &luau::CallContext) -> Option<ServicePrincipal> {
+    context
+        .caller
+        .get::<DispatchAuth>()
+        .ok()
+        .and_then(|auth| auth.principal())
+}
+
+pub(crate) fn require_dispatch_principal(
+    context: &luau::CallContext,
+) -> luau::runtime::Result<ServicePrincipal> {
+    dispatch_principal(context).ok_or_else(|| {
+        crate::plugins::runtime_error(
+            "no authenticated caller bound to this dispatch; resolve a credential via \
+             lyra/auth first",
+        )
+    })
 }
 
 fn resolve_auth_spec() -> FunctionSpec {

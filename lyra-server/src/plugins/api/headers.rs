@@ -9,7 +9,6 @@ use crate::plugins::executor::ApiResponseKind;
 use crate::routes::AppError;
 use crate::services::auth::{
     Principal,
-    ResolvedAuth,
     require_permission,
 };
 
@@ -47,13 +46,8 @@ async fn require_plugin_track_access(
 pub(super) async fn plugin_api_response_to_axum(
     response: crate::plugins::executor::ApiHandlerResponse,
     request_headers: &HeaderMap,
-    auth: Option<&ResolvedAuth>,
 ) -> Result<Response> {
-    let principal = response
-        .principal
-        .clone()
-        .or_else(|| auth.map(|auth| auth.principal.clone()));
-    let principal = principal.as_ref();
+    let principal = response.principal.as_ref();
     let mut status =
         StatusCode::from_u16(response.status).context("invalid response status code")?;
     match response.kind {
