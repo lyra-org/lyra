@@ -40,6 +40,8 @@ impl PluginExecutor {
         if let Some(auth) = request.auth.as_ref() {
             context.caller.insert(auth.principal.clone());
         }
+        let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
+        context.caller.insert(dispatch_auth.clone());
         let scheduler = self.vm.data().get::<LocalScheduler>()?;
         scheduler.spawn_luau_thread(context, self.vm.clone(), thread.clone(), vec![ctx]);
         let values = drive_thread(
@@ -48,7 +50,9 @@ impl PluginExecutor {
             &thread,
             ThreadDriveOptions::default(),
         )?;
-        parse_api_response(&self.vm, &request, values)
+        let mut response = parse_api_response(&self.vm, &request, values)?;
+        response.principal = dispatch_auth.principal();
+        Ok(response)
     }
 }
 
@@ -220,5 +224,6 @@ fn parse_api_response(
         transform,
         track_id,
         options,
+        principal: None,
     })
 }

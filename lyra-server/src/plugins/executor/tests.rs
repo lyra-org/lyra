@@ -400,6 +400,109 @@ fn plugin_executor_dispatches_registered_api_handler() -> Result<()> {
 }
 
 #[test]
+fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Result<()> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()?;
+    let _guard = rt.block_on(crate::testing::runtime_test_lock());
+    let test_dir = std::env::temp_dir().join(format!(
+        "lyra-dispatch-auth-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&test_dir)?;
+    rt.block_on(crate::testing::initialize_runtime(
+        &crate::testing::LibraryFixtureConfig {
+            directory: test_dir.clone(),
+            language: None,
+            country: None,
+        },
+    ))?;
+
+    let (user_db_id, token) = rt.block_on(async {
+        let user_db_id = {
+            let mut db = crate::STATE.db.write().await;
+            crate::plugins::db::users::create(
+                &mut db,
+                &crate::plugins::db::test_db::test_user("dispatch-auth-user")?,
+            )?
+        };
+        let session = crate::services::auth::sessions::create_session_for_user(
+            user_db_id,
+            Default::default(),
+        )
+        .await?;
+        Ok::<_, anyhow::Error>((user_db_id, session.token))
+    })?;
+
+    let _ = rt.block_on(crate::plugins::api::install(
+        axum::Router::new(),
+        std::collections::HashSet::new(),
+    ))?;
+    let runtime = runtime_with_scopes(&["lyra.api", "lyra.auth"])?;
+    runtime.run_plugin_source(
+        "demo",
+        "init.luau",
+        format!(
+            r#"
+                local api = require("@lyra/api")
+                local auth = require("@lyra/auth")
+
+                api.get("/whoami", function(ctx)
+                    local resolved = auth.resolve_auth("{token}")
+                    return api.response.json(200, {{ resolved = resolved ~= nil }})
+                end, "public")
+
+                api.get("/anon", function(ctx)
+                    return api.response.json(200, {{}})
+                end, "public")
+            "#
+        )
+        .into_bytes(),
+    )?;
+
+    let request = |handler_id: u64, path: &str| ApiHandlerRequest {
+        handler_id,
+        plugin_id: "demo".to_string(),
+        method: "GET".to_string(),
+        path: path.to_string(),
+        headers: Vec::new(),
+        query: HashMap::new(),
+        params: HashMap::new(),
+        body: Vec::new(),
+        auth: None,
+    };
+
+    let whoami_handler = rt
+        .block_on(crate::plugins::api::tests::registered_handler(
+            "GET", "/whoami",
+        ))
+        .context("registered /whoami handler")?;
+    let response = runtime.dispatch_api_handler(request(whoami_handler, "/whoami"))?;
+    let principal = response
+        .principal
+        .context("resolve_auth during dispatch should bind the principal to the response")?;
+    assert_eq!(principal.user_db_id, user_db_id);
+
+    let anon_handler = rt
+        .block_on(crate::plugins::api::tests::registered_handler(
+            "GET", "/anon",
+        ))
+        .context("registered /anon handler")?;
+    let response = runtime.dispatch_api_handler(request(anon_handler, "/anon"))?;
+    assert!(
+        response.principal.is_none(),
+        "dispatches that never resolve auth must not carry a principal"
+    );
+
+    let _ = std::fs::remove_dir_all(test_dir);
+    Ok(())
+}
+
+#[test]
 fn plugin_executor_dispatches_registered_websocket_handler() -> Result<()> {
     // api::install resets the shared API route registry; serialize with the
     // other global-registry mutators.

@@ -128,6 +128,21 @@ pub(crate) fn module_spec() -> ModuleSpec {
     spec
 }
 
+/// Per-dispatch slot recording the principal the host resolved on behalf of
+/// the plugin, so request handling outside the VM can authorize against it.
+#[derive(Clone, Default)]
+pub(crate) struct DispatchAuth(Arc<std::sync::Mutex<Option<ServicePrincipal>>>);
+
+impl DispatchAuth {
+    pub(crate) fn record(&self, principal: ServicePrincipal) {
+        *self.0.lock().expect("dispatch auth slot poisoned") = Some(principal);
+    }
+
+    pub(crate) fn principal(&self) -> Option<ServicePrincipal> {
+        self.0.lock().expect("dispatch auth slot poisoned").clone()
+    }
+}
+
 fn resolve_auth_spec() -> FunctionSpec {
     FunctionSpec::async_fn("resolve_auth")
         .arg_name("bearer")
@@ -140,6 +155,7 @@ fn resolve_auth_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let bearer: Option<String> = frame.args.read_named("bearer")?;
+    let dispatch_auth = frame.context.caller.get::<DispatchAuth>().ok();
     Ok(luau::ScheduledFuture::new(async move {
         let resolved = resolve_auth_from_bearer(bearer.as_deref())
             .await
@@ -152,6 +168,9 @@ fn resolve_auth_callback(
             if !resolved.principal.revalidate(&db) {
                 return Ok(luau::Value::Nil);
             }
+        }
+        if let Some(dispatch_auth) = &dispatch_auth {
+            dispatch_auth.record(resolved.principal.clone());
         }
         harmony_luau::serializable_to_luau_owned(to_plugin_auth(resolved))
     }))
