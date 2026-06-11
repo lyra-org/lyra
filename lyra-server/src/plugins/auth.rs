@@ -25,11 +25,16 @@ use harmony_luau::{
     ParameterDescriptor,
 };
 use serde::Serialize;
+use std::sync::Arc;
 
 use crate::services::auth::{
     AuthCredential as ServiceAuthCredential,
     Principal as ServicePrincipal,
     ResolvedAuth as ServiceResolvedAuth,
+    login_with_password,
+    logout_with_token,
+    resolve_auth_from_bearer,
+    sessions::SessionMetadata,
 };
 
 #[derive(Serialize)]
@@ -54,7 +59,6 @@ pub(crate) struct ResolvedAuth {
 }
 
 #[derive(Serialize)]
-#[cfg(feature = "docgen")]
 struct LoginResult {
     principal: Principal,
     token: String,
@@ -117,8 +121,105 @@ pub(crate) fn module_spec() -> ModuleSpec {
     let spec = ModuleSpec::new("lyra/auth")
         .capability("lyra.auth")
         .function(auth_capabilities_spec())
+        .function(resolve_auth_spec())
+        .function(login_spec())
+        .function(logout_session_spec())
         .install(|_| Ok(ModuleExport::new(AuthModule)));
     spec
+}
+
+fn resolve_auth_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("resolve_auth")
+        .arg_name("bearer")
+        .args::<Option<String>>()
+        .returns::<Option<ResolvedAuth>>()
+        .call_async(Arc::new(resolve_auth_callback))
+}
+
+fn resolve_auth_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let bearer: Option<String> = frame.args.read_named("bearer")?;
+    Ok(luau::ScheduledFuture::new(async move {
+        let resolved = resolve_auth_from_bearer(bearer.as_deref())
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        let Some(resolved) = resolved else {
+            return Ok(luau::Value::Nil);
+        };
+        {
+            let db = crate::STATE.db.read().await;
+            if !resolved.principal.revalidate(&db) {
+                return Ok(luau::Value::Nil);
+            }
+        }
+        harmony_luau::serializable_to_luau_owned(to_plugin_auth(resolved))
+    }))
+}
+
+fn login_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("login")
+        .arg_name("username")
+        .args::<String>()
+        .arg_name("password")
+        .args::<Option<String>>()
+        .arg_name("user_agent")
+        .args::<Option<String>>()
+        .arg_name("client_name")
+        .args::<Option<String>>()
+        .returns::<Option<LoginResult>>()
+        .call_async(Arc::new(login_callback))
+}
+
+fn login_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let username: String = frame.args.read_named("username")?;
+    let password: Option<String> = frame.args.read_named("password")?;
+    let user_agent: Option<String> = frame.args.read_named("user_agent")?;
+    let client_name: Option<String> = frame.args.read_named("client_name")?;
+    Ok(luau::ScheduledFuture::new(async move {
+        let metadata = SessionMetadata {
+            user_agent,
+            client_name,
+        };
+        let login = login_with_password(&username, password.as_deref().unwrap_or(""), metadata)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        let Some(login) = login else {
+            return Ok(luau::Value::Nil);
+        };
+        let resolved = resolve_auth_from_bearer(Some(&login.token))
+            .await
+            .map_err(crate::plugins::runtime_error)?
+            .ok_or_else(|| {
+                crate::plugins::runtime_error("freshly issued session token failed to resolve")
+            })?;
+        harmony_luau::serializable_to_luau_owned(LoginResult {
+            principal: to_plugin_principal(resolved.principal),
+            token: login.token,
+        })
+    }))
+}
+
+fn logout_session_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("logout_session")
+        .arg_name("token")
+        .args::<Option<String>>()
+        .returns::<bool>()
+        .call_async(Arc::new(logout_session_callback))
+}
+
+fn logout_session_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let token: Option<String> = frame.args.read_named("token")?;
+    Ok(luau::ScheduledFuture::new(async move {
+        let revoked = logout_with_token(token.as_deref())
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(luau::Value::Boolean(revoked))
+    }))
 }
 
 fn auth_capabilities_spec() -> FunctionSpec {
@@ -250,7 +351,6 @@ impl DescribeInterface for ResolvedAuth {
     }
 }
 
-#[cfg(feature = "docgen")]
 impl LuauTypeInfo for LoginResult {
     fn luau_type() -> LuauType {
         LuauType::literal("LoginResult")
