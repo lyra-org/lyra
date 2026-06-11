@@ -740,21 +740,19 @@ async fn dispatch_registered_route(
     let result = runtime.dispatch_api_handler(request).await;
 
     match result {
-        Ok(response) => {
-            match plugin_api_response_to_axum(response, &request_headers, auth.as_ref()).await {
-                Ok(response) => response,
-                Err(err) => {
-                    tracing::error!(
-                        plugin_id = %route.plugin_id,
-                        method = %route.key.method,
-                        path = %route.key.path,
-                        error = %err,
-                        "plugin route returned invalid response"
-                    );
-                    (StatusCode::INTERNAL_SERVER_ERROR, "internal server error").into_response()
-                }
+        Ok(response) => match plugin_api_response_to_axum(response, &request_headers).await {
+            Ok(response) => response,
+            Err(err) => {
+                tracing::error!(
+                    plugin_id = %route.plugin_id,
+                    method = %route.key.method,
+                    path = %route.key.path,
+                    error = %err,
+                    "plugin route returned invalid response"
+                );
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal server error").into_response()
             }
-        }
+        },
         Err(err) => {
             tracing::error!(
                 plugin_id = %route.plugin_id,

@@ -34,10 +34,7 @@ use crate::{
         DbAsync,
         ResolveId,
     },
-    services::{
-        auth::Principal,
-        playback_sources as playback_source_service,
-    },
+    services::playback_sources as playback_source_service,
 };
 
 #[derive(Clone, Default)]
@@ -81,7 +78,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
 
 fn get_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("id")
         .args::<Option<ResolveId>>()
         .arg_name("include_entry")
@@ -92,7 +89,7 @@ fn get_spec() -> FunctionSpec {
 
 fn get_many_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get_many")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("track_ids")
         .args::<luau::Table>()
         .arg_name("include_entry")
@@ -121,7 +118,7 @@ fn get_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
@@ -175,7 +172,7 @@ fn get_many_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;

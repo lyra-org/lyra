@@ -48,10 +48,7 @@ use crate::{
             WordInput,
         },
     },
-    services::{
-        auth::Principal,
-        metadata::lyrics as lyrics_service,
-    },
+    services::metadata::lyrics as lyrics_service,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -274,7 +271,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
 
 fn get_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .named_arg::<i64>("track_id")
         .named_arg::<Option<String>>("language")
         .named_arg::<Option<bool>>("require_synced")
@@ -292,7 +289,7 @@ fn parse_lrc_spec() -> FunctionSpec {
 
 fn upsert_spec() -> FunctionSpec {
     FunctionSpec::async_fn("upsert")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .named_arg::<i64>("track_id")
         .named_arg::<PluginLyricsInput>("lyrics")
         .returns::<i64>()
@@ -301,7 +298,7 @@ fn upsert_spec() -> FunctionSpec {
 
 fn upsert_user_override_spec() -> FunctionSpec {
     FunctionSpec::async_fn("upsert_user_override")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .named_arg::<i64>("track_id")
         .named_arg::<UserLyricsUploadInput>("upload")
         .returns::<LyricsInfo>()
@@ -310,7 +307,7 @@ fn upsert_user_override_spec() -> FunctionSpec {
 
 fn delete_user_override_for_track_spec() -> FunctionSpec {
     FunctionSpec::async_fn("delete_user_override_for_track")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("track_id")
         .args::<i64>()
         .returns::<bool>()
@@ -319,7 +316,7 @@ fn delete_user_override_for_track_spec() -> FunctionSpec {
 
 fn delete_for_track_spec() -> FunctionSpec {
     FunctionSpec::async_fn("delete_for_track")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("track_id")
         .args::<i64>()
         .call_async(Arc::new(delete_for_track_callback))
@@ -327,7 +324,7 @@ fn delete_for_track_spec() -> FunctionSpec {
 
 fn has_spec() -> FunctionSpec {
     FunctionSpec::async_fn("has")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("track_id")
         .args::<i64>()
         .returns::<bool>()
@@ -336,7 +333,7 @@ fn has_spec() -> FunctionSpec {
 
 fn has_many_spec() -> FunctionSpec {
     FunctionSpec::async_fn("has_many")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("track_ids")
         .args::<Vec<u64>>()
         .returns::<std::collections::BTreeMap<u64, bool>>()
@@ -349,7 +346,7 @@ fn get_callback(
     let track_id: i64 = frame.args.read_named("track_id")?;
     let language: Option<String> = frame.args.read_optional_named("language")?;
     let require_synced: Option<bool> = frame.args.read_optional_named("require_synced")?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = DbId(track_id);
@@ -393,7 +390,7 @@ fn upsert_callback(
     let track_id: i64 = frame.args.read_named("track_id")?;
     let lyrics_value: luau::Value = frame.args.read_named("lyrics")?;
     let lyrics: PluginLyricsInput = from_luau_json(frame.vm, &lyrics_value)?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
         luau::Error::Runtime("lyrics.upsert must be called from plugin Luau code".into())
     })?;
@@ -428,7 +425,7 @@ fn upsert_user_override_callback(
     let track_id: i64 = frame.args.read_named("track_id")?;
     let upload_value: luau::Value = frame.args.read_named("upload")?;
     let upload: UserLyricsUploadInput = from_luau_json(frame.vm, &upload_value)?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = require_positive_id(track_id, "track_id")?;
@@ -458,7 +455,7 @@ fn delete_user_override_for_track_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_id: i64 = frame.args.read_named("track_id")?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = require_positive_id(track_id, "track_id")?;
@@ -478,7 +475,7 @@ fn delete_for_track_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_id: i64 = frame.args.read_named("track_id")?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = require_positive_id(track_id, "track_id")?;
@@ -498,7 +495,7 @@ fn has_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_id: i64 = frame.args.read_named("track_id")?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = DbId(track_id);
@@ -523,7 +520,7 @@ fn has_many_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_ids_table: luau::Table = frame.args.read_named("track_ids")?;
     let track_ids = parse_db_ids(frame.vm, &track_ids_table)?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = STATE.db.read().await;

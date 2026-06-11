@@ -310,7 +310,7 @@ impl From<db::libraries::LibraryFull> for LibraryRecord {
 }
 
 fn caller_principal(context: &luau::CallContext) -> Option<Principal> {
-    context.caller.get::<Principal>().ok().map(|p| (*p).clone())
+    crate::plugins::auth::dispatch_principal(context)
 }
 
 fn parse_db_ids(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<DbId>> {

@@ -35,14 +35,11 @@ use harmony_luau::{
     render_definition_file_with_support,
 };
 
-use crate::{
-    plugins::db::{
-        self,
-        Cover,
-        DbAsync,
-        ResolveId,
-    },
-    services::auth::Principal,
+use crate::plugins::db::{
+    self,
+    Cover,
+    DbAsync,
+    ResolveId,
 };
 
 #[derive(Clone, Default)]
@@ -87,7 +84,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
 
 fn get_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("id")
         .args::<ResolveId>()
         .returns::<Option<luau::Table>>()
@@ -96,7 +93,7 @@ fn get_spec() -> FunctionSpec {
 
 fn get_many_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get_many")
-        .context::<Principal>()
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("ids")
         .args::<luau::Table>()
         .returns::<luau::Table>()
@@ -109,7 +106,7 @@ fn get_callback(
     let id = parse_resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
     let store = frame.vm.data().get::<CoversModuleStore>()?.as_ref().clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let (resolved_cover, stale_owners) = {
@@ -149,7 +146,7 @@ fn get_many_callback(
     let item_ids = parse_db_ids(frame.vm, &ids)?;
     let store = frame.vm.data().get::<CoversModuleStore>()?.as_ref().clone();
     let db = store.db()?;
-    let principal = (*frame.context.caller.get::<Principal>()?).clone();
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let (resolved, stale_owners) = {
