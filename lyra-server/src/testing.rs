@@ -266,10 +266,13 @@ pub async fn exec_plugins(
     let _ = root_path;
     let isolated_plugins_dir = TempPluginsDir::new(&plugins_dir, enabled_plugin_id)?;
     let server_info = crate::plugins::server::load_server_info().await?;
+    let auth_capabilities =
+        crate::plugins::auth::AuthCapabilities::from_config(&STATE.config.get().auth);
     let (runtime, errors) =
         crate::plugins::executor::PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
             isolated_plugins_dir.path.clone(),
             server_info,
+            auth_capabilities,
             STATE.db.get(),
             vec![http_module],
         )?;
@@ -334,9 +337,12 @@ pub async fn run_luau_plugin_test_file(test_root: &Path, test_path: &Path) -> an
         dependencies: Vec::new(),
     };
     let server_info = crate::plugins::server::load_server_info().await?;
+    let auth_capabilities =
+        crate::plugins::auth::AuthCapabilities::from_config(&STATE.config.get().auth);
     let runtime = crate::plugins::executor::PluginExecutor::with_filesystem_sources(
         Arc::from(vec![manifest]),
         server_info,
+        auth_capabilities,
         fixture.source_root(),
         fixture.plugins_dir(),
     )?;

@@ -71,6 +71,16 @@ pub(crate) struct AuthCapabilities {
     pub(crate) default_username: String,
 }
 
+impl AuthCapabilities {
+    pub(crate) fn from_config(config: &crate::config::AuthConfig) -> Self {
+        Self {
+            enabled: config.enabled,
+            allow_default_login_when_disabled: config.allow_default_login_when_disabled,
+            default_username: config.default_username.clone(),
+        }
+    }
+}
+
 pub(crate) fn to_plugin_principal(principal: ServicePrincipal) -> Principal {
     Principal {
         user_id: principal.user_db_id.0,

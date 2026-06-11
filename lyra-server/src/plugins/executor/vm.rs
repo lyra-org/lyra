@@ -31,7 +31,6 @@ use harmony_luau as luau;
 use super::{
     PluginExecutor,
     WebSocketState,
-    default_auth_capabilities,
     messages::TaskIdKey,
     modules::{
         generic_module_specs,
@@ -44,12 +43,14 @@ impl PluginExecutor {
     pub(crate) fn with_filesystem_sources(
         manifests: Arc<[PluginManifest]>,
         server_info: crate::plugins::server::ServerInfo,
+        auth_capabilities: crate::plugins::auth::AuthCapabilities,
         source_root: impl Into<std::path::PathBuf>,
         plugins_dir: impl Into<std::path::PathBuf>,
     ) -> Result<Self> {
         Self::with_loader(
             manifests,
             server_info,
+            auth_capabilities,
             PluginModuleStores::empty(),
             FilesystemSourceLoader::new(source_root, plugins_dir),
         )
@@ -58,12 +59,14 @@ impl PluginExecutor {
     pub(crate) fn discover_from_plugins_dir_with_db_and_modules(
         plugins_dir: impl Into<PathBuf>,
         server_info: crate::plugins::server::ServerInfo,
+        auth_capabilities: crate::plugins::auth::AuthCapabilities,
         db: crate::plugins::db::DbAsync,
         module_overrides: Vec<ModuleSpec>,
     ) -> Result<(Self, Vec<PluginLoadError>)> {
         Self::discover_from_plugins_dir_with_stores(
             plugins_dir,
             server_info,
+            auth_capabilities,
             PluginModuleStores::with_db(db),
             module_overrides,
         )
@@ -72,6 +75,7 @@ impl PluginExecutor {
     pub(super) fn discover_from_plugins_dir_with_stores(
         plugins_dir: impl Into<PathBuf>,
         server_info: crate::plugins::server::ServerInfo,
+        auth_capabilities: crate::plugins::auth::AuthCapabilities,
         stores: PluginModuleStores,
         module_overrides: Vec<ModuleSpec>,
     ) -> Result<(Self, Vec<PluginLoadError>)> {
@@ -88,6 +92,7 @@ impl PluginExecutor {
         let runtime = Self::with_loader_and_plugins(
             manifests,
             server_info,
+            auth_capabilities,
             FilesystemSourceLoader::new("/", plugins_dir),
             plugins,
             stores,
@@ -99,6 +104,7 @@ impl PluginExecutor {
     pub(super) fn with_loader<L>(
         manifests: Arc<[PluginManifest]>,
         server_info: crate::plugins::server::ServerInfo,
+        auth_capabilities: crate::plugins::auth::AuthCapabilities,
         stores: PluginModuleStores,
         loader: L,
     ) -> Result<Self>
@@ -108,6 +114,7 @@ impl PluginExecutor {
         Self::with_loader_and_plugins(
             manifests,
             server_info,
+            auth_capabilities,
             loader,
             Arc::from(Vec::<LoadedPlugin>::new()),
             stores,
@@ -118,6 +125,7 @@ impl PluginExecutor {
     fn with_loader_and_plugins<L>(
         manifests: Arc<[PluginManifest]>,
         server_info: crate::plugins::server::ServerInfo,
+        auth_capabilities: crate::plugins::auth::AuthCapabilities,
         loader: L,
         plugins: Arc<[LoadedPlugin]>,
         stores: PluginModuleStores,
@@ -141,7 +149,7 @@ impl PluginExecutor {
                     ))?;
                 vm.data()
                     .insert(crate::plugins::auth::AuthCapabilitiesModuleStore::new(
-                        default_auth_capabilities(),
+                        auth_capabilities,
                     ))?;
                 stores.install_into(vm)?;
                 vm.data()

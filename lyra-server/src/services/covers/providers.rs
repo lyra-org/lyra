@@ -1036,10 +1036,13 @@ mod tests {
         .await?;
         let plugins = TempSearchPluginDir::new()?;
         let server_info = crate::plugins::server::load_server_info().await?;
+        let auth_capabilities =
+            crate::plugins::auth::AuthCapabilities::from_config(&STATE.config.get().auth);
         let (runtime, errors) =
             crate::plugins::executor::PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
                 plugins.plugins_dir.clone(),
                 server_info,
+                auth_capabilities,
                 STATE.db.get(),
                 Vec::new(),
             )?;
