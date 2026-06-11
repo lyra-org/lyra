@@ -388,6 +388,7 @@ fn plugin_executor_dispatches_registered_api_handler() -> Result<()> {
         params: HashMap::from([("id".to_string(), "abc".to_string())]),
         body: br#"{"name":"raw"}"#.to_vec(),
         auth: None,
+        client_key: None,
     })?;
 
     assert_eq!(result.kind, ApiResponseKind::Json);
@@ -486,6 +487,7 @@ fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Result<()
         params: HashMap::new(),
         body: Vec::new(),
         auth: None,
+        client_key: None,
     };
 
     let whoami_handler = rt
@@ -655,6 +657,7 @@ fn foreground_dispatch_does_not_hide_finished_websocket_cleanup() -> Result<()> 
         params: HashMap::new(),
         body: Vec::new(),
         auth: None,
+        client_key: None,
     })?;
     assert_eq!(response.kind, ApiResponseKind::Empty);
 

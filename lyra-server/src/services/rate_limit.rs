@@ -14,6 +14,7 @@ use std::{
     },
     sync::{
         Arc,
+        LazyLock,
         Mutex,
         atomic::{
             AtomicBool,
@@ -128,7 +129,6 @@ struct RuntimeConfig {
     trusted_proxies: HashSet<IpAddr>,
     global: Option<Policy>,
     authenticated: Option<Policy>,
-    login: Option<Policy>,
 }
 
 impl RuntimeConfig {
@@ -137,9 +137,97 @@ impl RuntimeConfig {
             trusted_proxies: config.trusted_proxies.iter().copied().collect(),
             global: Policy::new(config.global_per_minute, config.global_burst),
             authenticated: Policy::new(config.authenticated_per_minute, config.authenticated_burst),
-            login: Policy::new(config.login_per_minute, config.login_burst),
         }
     }
+}
+
+/// Client identity resolved once at the HTTP boundary with trusted-proxy
+/// awareness, for consumers below the middleware (e.g. login throttling).
+#[derive(Clone)]
+pub(crate) struct RequestClientKey(pub(crate) Arc<str>);
+
+pub(crate) fn request_client_key(peer: Option<SocketAddr>, headers: &HeaderMap) -> String {
+    let trusted_proxies: HashSet<IpAddr> = crate::STATE
+        .config
+        .get()
+        .rate_limit
+        .trusted_proxies
+        .iter()
+        .copied()
+        .collect();
+    resolve_client_key(peer, headers, &trusted_proxies)
+}
+
+fn resolve_client_key(
+    peer: Option<SocketAddr>,
+    headers: &HeaderMap,
+    trusted_proxies: &HashSet<IpAddr>,
+) -> String {
+    let Some(peer) = peer else {
+        warn_missing_connect_info();
+        return UNKNOWN_CLIENT.to_string();
+    };
+
+    let peer_ip = peer.ip();
+    if trusted_proxies.contains(&peer_ip) {
+        return forwarded_client_ip(headers, trusted_proxies)
+            .unwrap_or(peer_ip)
+            .to_string();
+    }
+
+    if has_forwarded_client_headers(headers) {
+        warn_untrusted_forward_headers(peer_ip);
+    }
+
+    peer_ip.to_string()
+}
+
+static LOGIN_LIMITER: LazyLock<Mutex<LimiterState>> =
+    LazyLock::new(|| Mutex::new(LimiterState::new()));
+
+/// Charges one login attempt against the client's brute-force budget. Lives in
+/// the service layer so every credential-verifying caller is covered, not just
+/// path-matched REST routes.
+pub(crate) fn check_login_rate(client: Option<&str>) -> Result<(), Duration> {
+    let config = crate::STATE.config.get();
+    if !config.rate_limit.enabled {
+        return Ok(());
+    }
+    let Some(policy) = Policy::new(
+        config.rate_limit.login_per_minute,
+        config.rate_limit.login_burst,
+    ) else {
+        return Ok(());
+    };
+
+    check_login_bucket(
+        &LOGIN_LIMITER,
+        policy,
+        client.unwrap_or(UNKNOWN_CLIENT),
+        Instant::now(),
+    )
+}
+
+fn check_login_bucket(
+    limiter: &Mutex<LimiterState>,
+    policy: Policy,
+    client: &str,
+    now: Instant,
+) -> Result<(), Duration> {
+    let mut state = limiter.lock().expect("login rate limiter state poisoned");
+    state.cleanup(now);
+
+    let bucket = state
+        .buckets
+        .entry(BucketKey::Login(client.to_string()))
+        .or_insert_with(|| Bucket::new(policy.capacity(), now));
+    bucket.refill(policy, now);
+    if let Some(retry_after) = policy.retry_after(bucket.tokens) {
+        return Err(retry_after);
+    }
+
+    bucket.tokens -= 1.0;
+    Ok(())
 }
 
 struct RateLimiter {
@@ -212,16 +300,6 @@ impl RateLimiter {
             });
         }
 
-        if is_login_request(method, path) {
-            if let Some(policy) = self.config.login {
-                checks.push(Check {
-                    key: BucketKey::Login(client),
-                    policy,
-                });
-            }
-            return checks;
-        }
-
         if is_media_path(path) {
             return checks;
         }
@@ -239,23 +317,11 @@ impl RateLimiter {
     }
 
     fn client_key(&self, request: &Request) -> String {
-        let Some(peer) = peer_addr(request) else {
-            warn_missing_connect_info();
-            return UNKNOWN_CLIENT.to_string();
-        };
-
-        let peer_ip = peer.ip();
-        if self.config.trusted_proxies.contains(&peer_ip) {
-            return forwarded_client_ip(request.headers(), &self.config.trusted_proxies)
-                .unwrap_or(peer_ip)
-                .to_string();
-        }
-
-        if has_forwarded_client_headers(request.headers()) {
-            warn_untrusted_forward_headers(peer_ip);
-        }
-
-        peer_ip.to_string()
+        resolve_client_key(
+            peer_addr(request),
+            request.headers(),
+            &self.config.trusted_proxies,
+        )
     }
 }
 
@@ -333,10 +399,6 @@ fn is_media_path(path: &str) -> bool {
         || path.starts_with("/api/covers/")
         || path == "/api/download"
         || path.starts_with("/api/download/")
-}
-
-fn is_login_request(method: &Method, path: &str) -> bool {
-    *method == Method::POST && path == "/api/users/login"
 }
 
 fn peer_addr(request: &Request) -> Option<SocketAddr> {
@@ -476,10 +538,7 @@ mod tests {
             StatusCode,
             header,
         },
-        routing::{
-            get,
-            post,
-        },
+        routing::get,
     };
     use tower::ServiceExt;
 
@@ -575,34 +634,18 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn login_limit_returns_retry_after_only() -> anyhow::Result<()> {
-        let mut rate_limit = disabled_rate_limit_config();
-        rate_limit.login_per_minute = 60;
-        rate_limit.login_burst = 1;
-        let app = apply(
-            Router::new().route("/api/users/login", post(|| async { "ok" })),
-            &config_with_rate_limit(rate_limit),
-        );
+    #[test]
+    fn login_bucket_enforces_burst_per_client() {
+        let limiter = Mutex::new(LimiterState::new());
+        let policy = Policy::new(60, 2).expect("policy should be enabled");
+        let now = Instant::now();
 
-        let first = app
-            .clone()
-            .oneshot(request(Method::POST, "/api/users/login"))
-            .await?;
-        assert_eq!(first.status(), StatusCode::OK);
-
-        let second = app
-            .oneshot(request(Method::POST, "/api/users/login"))
-            .await?;
-        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
-        assert_eq!(
-            second.headers().get(header::RETRY_AFTER),
-            Some(&HeaderValue::from_static("1"))
-        );
-        assert!(second.headers().get("x-ratelimit-limit").is_none());
-        assert!(second.headers().get("x-ratelimit-remaining").is_none());
-        assert!(second.headers().get("x-ratelimit-reset").is_none());
-        Ok(())
+        assert!(check_login_bucket(&limiter, policy, "203.0.113.5", now).is_ok());
+        assert!(check_login_bucket(&limiter, policy, "203.0.113.5", now).is_ok());
+        let retry_after = check_login_bucket(&limiter, policy, "203.0.113.5", now)
+            .expect_err("third attempt should throttle");
+        assert_eq!(retry_after, Duration::from_secs(1));
+        assert!(check_login_bucket(&limiter, policy, "203.0.113.6", now).is_ok());
     }
 
     #[tokio::test]

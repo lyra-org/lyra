@@ -119,6 +119,7 @@ pub(crate) struct ApiHandlerRequest {
     pub(crate) params: HashMap<String, String>,
     pub(crate) body: Vec<u8>,
     pub(crate) auth: Option<crate::services::auth::ResolvedAuth>,
+    pub(crate) client_key: Option<String>,
 }
 
 #[derive(Clone, Debug)]
