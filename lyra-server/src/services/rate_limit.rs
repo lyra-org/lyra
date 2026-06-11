@@ -244,7 +244,9 @@ impl RateLimiter {
     }
 
     fn check(&self, request: &Request) -> Result<(), Duration> {
-        let checks = self.checks_for_request(request);
+        let path = request.uri().path();
+        let plugin_route = !is_api_path(path) && crate::plugins::api::is_plugin_route_path(path);
+        let checks = self.checks_for_request(request, plugin_route);
         if checks.is_empty() {
             return Ok(());
         }
@@ -280,10 +282,22 @@ impl RateLimiter {
         Ok(())
     }
 
-    fn checks_for_request(&self, request: &Request) -> Vec<Check> {
+    fn checks_for_request(&self, request: &Request, plugin_route: bool) -> Vec<Check> {
         let method = request.method();
         if *method == Method::OPTIONS {
             return Vec::new();
+        }
+
+        // Plugin surfaces serve media-heavy clients; like core media paths
+        // they get the per-client global policy only.
+        if plugin_route {
+            let Some(policy) = self.config.global else {
+                return Vec::new();
+            };
+            return vec![Check {
+                key: BucketKey::Global(self.client_key(request)),
+                policy,
+            }];
         }
 
         let path = request.uri().path();
@@ -631,6 +645,33 @@ mod tests {
         assert_eq!(
             x_real_ip(&headers),
             Some(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)))
+        );
+    }
+
+    #[test]
+    fn plugin_routes_use_global_limit_only() {
+        let mut rate_limit = disabled_rate_limit_config();
+        rate_limit.global_per_minute = 60;
+        rate_limit.global_burst = 1;
+        rate_limit.authenticated_per_minute = 60;
+        rate_limit.authenticated_burst = 1;
+        let limiter = RateLimiter::new(&rate_limit);
+
+        let mut plugin_request =
+            request_with_peer(Method::GET, "/jellyfin/Users", [203, 0, 113, 20]);
+        plugin_request.headers_mut().insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("MediaBrowser Token=abc"),
+        );
+        let checks = limiter.checks_for_request(&plugin_request, true);
+        assert_eq!(checks.len(), 1);
+        assert!(matches!(checks[0].key, BucketKey::Global(_)));
+
+        let static_request = request_with_peer(Method::GET, "/assets/app.js", [203, 0, 113, 20]);
+        assert!(
+            limiter
+                .checks_for_request(&static_request, false)
+                .is_empty()
         );
     }
 

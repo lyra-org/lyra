@@ -26,7 +26,6 @@ use self::parsing::{
     parse_track_serve_options,
     parse_u32_json,
 };
-pub(crate) use self::router::ApiRouteStore;
 use self::router::{
     API_ROUTE_REGISTRY,
     RegisteredRoute,
@@ -39,6 +38,10 @@ use self::router::{
     initialize_router,
     install_router,
     installed_static_dir,
+};
+pub(crate) use self::router::{
+    ApiRouteStore,
+    is_plugin_route_path,
 };
 #[cfg(feature = "docgen")]
 use self::types::{
@@ -205,8 +208,8 @@ pub(crate) async fn finalize() -> anyhow::Result<()> {
 }
 
 pub(crate) async fn rebuild_registered_routes() -> anyhow::Result<()> {
-    let (router, ci_router) = build_router(installed_static_dir().await).await?;
-    install_router(router, ci_router).await;
+    let built = build_router(installed_static_dir().await).await?;
+    install_router(built).await;
     Ok(())
 }
 
