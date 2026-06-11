@@ -1058,7 +1058,16 @@ api.post(P .. "/Users/AuthenticateByName", function(ctx: ApiContext)
 		return parse_err or base.bad_request("invalid authentication request body")
 	end
 
-	local login_result = auth.login(credentials.username, credentials.password)
+	local outcome = auth.login(credentials.username, credentials.password)
+	if outcome.status == "rate_limited" then
+		local headers: { [string]: string } = {}
+		if outcome.retry_after_seconds then
+			headers["retry-after"] = tostring(outcome.retry_after_seconds)
+		end
+		return api.response.text(429, "Too Many Requests", headers)
+	end
+
+	local login_result = outcome.result
 	if not login_result then
 		return session.unauthorized()
 	end

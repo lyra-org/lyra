@@ -13,8 +13,14 @@ use aide::openapi::{
 };
 #[cfg(feature = "docgen")]
 use aide::operation::OperationOutput;
+use std::time::Duration;
+
 use axum::{
-    http::StatusCode,
+    http::{
+        HeaderValue,
+        StatusCode,
+        header,
+    },
     response::{
         IntoResponse,
         Response,
@@ -38,6 +44,7 @@ use crate::services::{
 pub(crate) struct AppError {
     error: anyhow::Error,
     status_code: StatusCode,
+    retry_after: Option<Duration>,
 }
 
 impl std::fmt::Debug for AppError {
@@ -47,71 +54,76 @@ impl std::fmt::Debug for AppError {
 }
 
 impl AppError {
-    pub fn unauthorized(message: impl Into<String>) -> Self {
+    fn with_status(status_code: StatusCode, message: String) -> Self {
         Self {
-            error: anyhow::anyhow!(message.into()),
-            status_code: StatusCode::UNAUTHORIZED,
+            error: anyhow::anyhow!(message),
+            status_code,
+            retry_after: None,
         }
+    }
+
+    pub fn unauthorized(message: impl Into<String>) -> Self {
+        Self::with_status(StatusCode::UNAUTHORIZED, message.into())
     }
 
     pub fn bad_request(message: impl Into<String>) -> Self {
-        Self {
-            error: anyhow::anyhow!(message.into()),
-            status_code: StatusCode::BAD_REQUEST,
-        }
+        Self::with_status(StatusCode::BAD_REQUEST, message.into())
     }
 
     pub fn forbidden(message: impl Into<String>) -> Self {
-        Self {
-            error: anyhow::anyhow!(message.into()),
-            status_code: StatusCode::FORBIDDEN,
-        }
+        Self::with_status(StatusCode::FORBIDDEN, message.into())
     }
 
     pub fn not_found(message: impl Into<String>) -> Self {
-        Self {
-            error: anyhow::anyhow!(message.into()),
-            status_code: StatusCode::NOT_FOUND,
-        }
+        Self::with_status(StatusCode::NOT_FOUND, message.into())
     }
 
     pub fn conflict(message: impl Into<String>) -> Self {
-        Self {
-            error: anyhow::anyhow!(message.into()),
-            status_code: StatusCode::CONFLICT,
-        }
+        Self::with_status(StatusCode::CONFLICT, message.into())
     }
 
     pub fn service_unavailable(message: impl Into<String>) -> Self {
-        Self {
-            error: anyhow::anyhow!(message.into()),
-            status_code: StatusCode::SERVICE_UNAVAILABLE,
-        }
+        Self::with_status(StatusCode::SERVICE_UNAVAILABLE, message.into())
     }
 
     pub fn not_acceptable(message: impl Into<String>) -> Self {
-        Self {
-            error: anyhow::anyhow!(message.into()),
-            status_code: StatusCode::NOT_ACCEPTABLE,
-        }
+        Self::with_status(StatusCode::NOT_ACCEPTABLE, message.into())
     }
 
     pub fn unsupported_media_type(message: impl Into<String>) -> Self {
+        Self::with_status(StatusCode::UNSUPPORTED_MEDIA_TYPE, message.into())
+    }
+
+    pub fn too_many_requests(retry_after: Duration) -> Self {
         Self {
-            error: anyhow::anyhow!(message.into()),
-            status_code: StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            retry_after: Some(retry_after),
+            ..Self::with_status(
+                StatusCode::TOO_MANY_REQUESTS,
+                "too many requests".to_string(),
+            )
         }
     }
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        if self.status_code == StatusCode::INTERNAL_SERVER_ERROR {
+        let mut response = if self.status_code == StatusCode::INTERNAL_SERVER_ERROR {
             tracing::error!(error = %self.error, "internal server error");
             (self.status_code, "Error: internal server error").into_response()
         } else {
             (self.status_code, format!("Error: {}", self.error)).into_response()
+        };
+
+        if let Some(retry_after) = self.retry_after {
+            let seconds = retry_after.as_secs().max(1).to_string();
+            response.headers_mut().insert(
+                header::RETRY_AFTER,
+                HeaderValue::from_str(&seconds)
+                    .expect("retry-after seconds should be a valid header"),
+            );
         }
+
+        response
     }
 }
 
@@ -143,6 +155,7 @@ impl From<AuthError> for AppError {
             AuthError::SessionExpired => Self::unauthorized("session expired"),
             AuthError::Forbidden(msg) => Self::forbidden(msg),
             AuthError::NotFound(msg) => Self::not_found(msg),
+            AuthError::RateLimited(retry_after) => Self::too_many_requests(retry_after),
             AuthError::Internal(err) => err.into(),
         }
     }
@@ -229,6 +242,7 @@ impl From<anyhow::Error> for AppError {
         Self {
             error: err,
             status_code: StatusCode::INTERNAL_SERVER_ERROR,
+            retry_after: None,
         }
     }
 }

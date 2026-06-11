@@ -20,8 +20,11 @@ use argon2::{
         rand_core::OsRng,
     },
 };
+use std::net::SocketAddr;
+
 use axum::Json;
 use axum::extract::{
+    ConnectInfo,
     Path,
     Query,
 };
@@ -599,6 +602,7 @@ async fn get_me(
 }
 
 async fn login_user(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(body): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, AppError> {
@@ -633,7 +637,9 @@ async fn login_user(
         client_name: body.client_name,
     };
 
-    let Some(login_result) = login_with_password(&body.username, &body.password, metadata).await?
+    let client = crate::services::rate_limit::request_client_key(Some(peer), &headers);
+    let Some(login_result) =
+        login_with_password(&body.username, &body.password, metadata, Some(&client)).await?
     else {
         return Err(AppError::unauthorized("invalid username or password"));
     };
@@ -996,6 +1002,7 @@ mod tests {
         STATE.config.replace(std::sync::Arc::new(config));
 
         let err = match login_user(
+            ConnectInfo(SocketAddr::from(([203, 0, 113, 40], 4746))),
             HeaderMap::new(),
             Json(LoginRequest {
                 username: "listener".to_string(),
@@ -1415,6 +1422,7 @@ mod tests {
         headers.insert(USER_AGENT, "lyra-test/1.0 (integration)".parse()?);
 
         let Json(login) = login_user(
+            ConnectInfo(SocketAddr::from(([203, 0, 113, 41], 4746))),
             headers,
             Json(LoginRequest {
                 username: "session-meta".to_string(),
@@ -1439,6 +1447,53 @@ mod tests {
         assert_eq!(session.last_seen_at, session.created_at);
 
         drop(db);
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn login_rate_limit_returns_retry_after() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let mut config = STATE.config.get().as_ref().clone();
+        config.rate_limit.enabled = true;
+        config.rate_limit.login_per_minute = 60;
+        config.rate_limit.login_burst = 2;
+        STATE.config.replace(std::sync::Arc::new(config));
+
+        let attempt = || {
+            login_user(
+                ConnectInfo(SocketAddr::from(([203, 0, 113, 42], 4746))),
+                HeaderMap::new(),
+                Json(LoginRequest {
+                    username: "rate-limit-probe".to_string(),
+                    password: "wrong-password".to_string(),
+                    client_name: None,
+                }),
+            )
+        };
+
+        for _ in 0..2 {
+            let err = match attempt().await {
+                Ok(_) => panic!("unknown user should fail login"),
+                Err(err) => err,
+            };
+            assert_eq!(err.into_response().status(), StatusCode::UNAUTHORIZED);
+        }
+
+        let err = match attempt().await {
+            Ok(_) => panic!("burst exhaustion should throttle"),
+            Err(err) => err,
+        };
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            response
+                .headers()
+                .get(axum::http::header::RETRY_AFTER)
+                .is_some()
+        );
+
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
     }

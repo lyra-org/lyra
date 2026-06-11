@@ -75,6 +75,8 @@ pub(crate) enum AuthError {
     Forbidden(String),
     #[error("not found: {0}")]
     NotFound(String),
+    #[error("too many requests")]
+    RateLimited(std::time::Duration),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -471,7 +473,12 @@ pub(crate) async fn login_with_password(
     username: &str,
     password: &str,
     metadata: sessions::SessionMetadata,
+    client: Option<&str>,
 ) -> AuthResult<Option<LoginResult>> {
+    if let Err(retry_after) = crate::services::rate_limit::check_login_rate(client) {
+        return Err(AuthError::RateLimited(retry_after));
+    }
+
     let username = username.trim();
     if username.is_empty() {
         return Ok(None);

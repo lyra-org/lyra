@@ -54,6 +54,7 @@ impl PluginExecutor {
             params: request.params,
             body: Vec::new(),
             auth: request.auth,
+            client_key: None,
         })?;
         let thread = self.vm.create_thread(&handler.handler)?;
         let mut context = handler.context.clone();

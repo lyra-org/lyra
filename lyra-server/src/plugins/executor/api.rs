@@ -42,6 +42,9 @@ impl PluginExecutor {
         }
         let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
         context.caller.insert(dispatch_auth.clone());
+        context.caller.insert(crate::plugins::auth::DispatchClient(
+            request.client_key.clone(),
+        ));
         let scheduler = self.vm.data().get::<LocalScheduler>()?;
         scheduler.spawn_luau_thread(context, self.vm.clone(), thread.clone(), vec![ctx]);
         let values = drive_thread(

@@ -29,6 +29,7 @@ use std::sync::Arc;
 
 use crate::services::auth::{
     AuthCredential as ServiceAuthCredential,
+    AuthError,
     Principal as ServicePrincipal,
     ResolvedAuth as ServiceResolvedAuth,
     login_with_password,
@@ -62,6 +63,39 @@ pub(crate) struct ResolvedAuth {
 struct LoginResult {
     principal: Principal,
     token: String,
+}
+
+#[derive(Serialize)]
+struct LoginOutcome {
+    status: &'static str,
+    result: Option<LoginResult>,
+    retry_after_seconds: Option<u64>,
+}
+
+impl LoginOutcome {
+    fn ok(result: LoginResult) -> Self {
+        Self {
+            status: "ok",
+            result: Some(result),
+            retry_after_seconds: None,
+        }
+    }
+
+    fn invalid_credentials() -> Self {
+        Self {
+            status: "invalid_credentials",
+            result: None,
+            retry_after_seconds: None,
+        }
+    }
+
+    fn rate_limited(retry_after: std::time::Duration) -> Self {
+        Self {
+            status: "rate_limited",
+            result: None,
+            retry_after_seconds: Some(retry_after.as_secs().max(1)),
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -138,6 +172,12 @@ pub(crate) fn module_spec() -> ModuleSpec {
     spec
 }
 
+/// Per-dispatch client identity resolved at the HTTP boundary, so host calls
+/// made on behalf of a plugin-served request (e.g. login) can be attributed
+/// to the remote client rather than the server process.
+#[derive(Clone)]
+pub(crate) struct DispatchClient(pub(crate) Option<String>);
+
 /// Per-dispatch slot recording the principal the host resolved on behalf of
 /// the plugin, so request handling outside the VM can authorize against it.
 #[derive(Clone, Default)]
@@ -196,7 +236,7 @@ fn login_spec() -> FunctionSpec {
         .args::<Option<String>>()
         .arg_name("client_name")
         .args::<Option<String>>()
-        .returns::<Option<LoginResult>>()
+        .returns::<LoginOutcome>()
         .call_async(Arc::new(login_callback))
 }
 
@@ -207,16 +247,35 @@ fn login_callback(
     let password: Option<String> = frame.args.read_named("password")?;
     let user_agent: Option<String> = frame.args.read_named("user_agent")?;
     let client_name: Option<String> = frame.args.read_named("client_name")?;
+    let client = frame
+        .context
+        .caller
+        .get::<DispatchClient>()
+        .ok()
+        .and_then(|client| client.0.clone());
     Ok(luau::ScheduledFuture::new(async move {
         let metadata = SessionMetadata {
             user_agent,
             client_name,
         };
-        let login = login_with_password(&username, password.as_deref().unwrap_or(""), metadata)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
+        let login = match login_with_password(
+            &username,
+            password.as_deref().unwrap_or(""),
+            metadata,
+            client.as_deref(),
+        )
+        .await
+        {
+            Ok(login) => login,
+            Err(AuthError::RateLimited(retry_after)) => {
+                return harmony_luau::serializable_to_luau_owned(LoginOutcome::rate_limited(
+                    retry_after,
+                ));
+            }
+            Err(err) => return Err(crate::plugins::runtime_error(err)),
+        };
         let Some(login) = login else {
-            return Ok(luau::Value::Nil);
+            return harmony_luau::serializable_to_luau_owned(LoginOutcome::invalid_credentials());
         };
         let resolved = resolve_auth_from_bearer(Some(&login.token))
             .await
@@ -224,10 +283,10 @@ fn login_callback(
             .ok_or_else(|| {
                 crate::plugins::runtime_error("freshly issued session token failed to resolve")
             })?;
-        harmony_luau::serializable_to_luau_owned(LoginResult {
+        harmony_luau::serializable_to_luau_owned(LoginOutcome::ok(LoginResult {
             principal: to_plugin_principal(resolved.principal),
             token: login.token,
-        })
+        }))
     }))
 }
 
@@ -406,6 +465,37 @@ impl DescribeInterface for LoginResult {
     }
 }
 
+impl LuauTypeInfo for LoginOutcome {
+    fn luau_type() -> LuauType {
+        LuauType::literal("LoginOutcome")
+    }
+}
+
+#[cfg(feature = "docgen")]
+impl DescribeInterface for LoginOutcome {
+    fn interface_descriptor() -> InterfaceDescriptor {
+        let mut descriptor = InterfaceDescriptor::new("LoginOutcome", None);
+        descriptor.fields.extend([
+            FieldDescriptor {
+                name: "status",
+                ty: LuauType::literal("\"ok\" | \"invalid_credentials\" | \"rate_limited\""),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "result",
+                ty: Option::<LoginResult>::luau_type(),
+                description: None,
+            },
+            FieldDescriptor {
+                name: "retry_after_seconds",
+                ty: Option::<u64>::luau_type(),
+                description: None,
+            },
+        ]);
+        descriptor
+    }
+}
+
 impl LuauTypeInfo for AuthCapabilities {
     fn luau_type() -> LuauType {
         LuauType::literal("AuthCapabilities")
@@ -472,14 +562,17 @@ fn module_descriptor() -> ModuleDescriptor {
             },
             ModuleFunctionDescriptor {
                 path: vec!["login"],
-                description: Some("Attempts to log in and returns a principal plus session token."),
+                description: Some(
+                    "Attempts to log in and returns the outcome, including a principal plus \
+                     session token on success.",
+                ),
                 params: vec![
                     param("username", String::luau_type()),
                     param("password", Option::<String>::luau_type()),
                     param("user_agent", Option::<String>::luau_type()),
                     param("client_name", Option::<String>::luau_type()),
                 ],
-                returns: vec![Option::<LoginResult>::luau_type()],
+                returns: vec![LoginOutcome::luau_type()],
                 yields: true,
             },
             ModuleFunctionDescriptor {
@@ -504,6 +597,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             AuthCredential::interface_descriptor(),
             ResolvedAuth::interface_descriptor(),
             LoginResult::interface_descriptor(),
+            LoginOutcome::interface_descriptor(),
         ],
         &[],
     )
