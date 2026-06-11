@@ -187,6 +187,8 @@ pub(crate) struct ApiHandlerResponse {
     pub(crate) transform: Option<serde_json::Value>,
     pub(crate) track_id: Option<i64>,
     pub(crate) options: Option<serde_json::Value>,
+    /// Principal the host resolved during the dispatch via `auth.resolve_auth`.
+    pub(crate) principal: Option<crate::services::auth::Principal>,
 }
 
 pub(crate) struct WebSocketStartRequest {
