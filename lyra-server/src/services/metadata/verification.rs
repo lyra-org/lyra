@@ -111,7 +111,6 @@ mod tests {
         self,
         IdSource,
     };
-    use nanoid::nanoid;
 
     fn artist_verified(db: &DbAny, artist_db_id: DbId) -> anyhow::Result<bool> {
         let artist = db::artists::get_by_id(db, artist_db_id)?
@@ -209,7 +208,6 @@ mod tests {
 
         let first = db::external_ids::ExternalId {
             db_id: None,
-            id: nanoid!(),
             provider_id: "musicbrainz".to_string(),
             id_type: "artist_db_id".to_string(),
             id_value: "artist-a".to_string(),
@@ -225,7 +223,6 @@ mod tests {
 
         let second = db::external_ids::ExternalId {
             db_id: None,
-            id: nanoid!(),
             provider_id: "musicbrainz".to_string(),
             id_type: "artist_db_id".to_string(),
             id_value: "artist-b".to_string(),

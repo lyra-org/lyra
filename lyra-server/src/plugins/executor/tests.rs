@@ -198,7 +198,7 @@ fn plugin_executor_declares_metadata_provider_ids_and_options() -> Result<()> {
             local metadata = require("@lyra/metadata")
             local provider = metadata.Provider.new("raw-provider")
             provider:id({
-                id = "release_id",
+                id_type = "release_id",
                 entity = metadata.EntityType.Release,
                 unique = true,
             }, "https://example.test/release/{id}")
@@ -237,7 +237,7 @@ fn plugin_executor_declares_metadata_provider_ids_and_options() -> Result<()> {
         "release_id",
     )
     .context("provider id registration")?;
-    assert_eq!(id_spec.id, "release_id");
+    assert_eq!(id_spec.id_type, "release_id");
     assert_eq!(id_spec.entity, crate::services::EntityType::Release);
     assert!(id_spec.unique);
     assert!(has_generator);

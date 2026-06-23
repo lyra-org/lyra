@@ -625,7 +625,6 @@ mod tests {
         // Add a metadata layer attached to the track
         let layer = MetadataLayer {
             db_id: None,
-            id: nanoid!(),
             provider_id: "test-provider".to_string(),
             fields: "{}".to_string(),
             updated_at: 0,
@@ -637,7 +636,6 @@ mod tests {
         // Add an external ID attached to the track
         let ext = ExternalId {
             db_id: None,
-            id: nanoid!(),
             provider_id: "test-provider".to_string(),
             id_type: "track_db_id".to_string(),
             id_value: "abc123".to_string(),
@@ -2291,7 +2289,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &mut db,
             &ProviderConfig {
                 db_id: None,
-                id: nanoid!(),
                 provider_id: "test".to_string(),
                 display_name: "Test".to_string(),
                 priority: 100,
@@ -2304,7 +2301,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             track_db_id,
             &MetadataLayer {
                 db_id: None,
-                id: nanoid!(),
                 provider_id: "test".to_string(),
                 fields: serde_json::json!({
                     "track_title": "Provider Track",
@@ -2321,7 +2317,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             release_db_id,
             &MetadataLayer {
                 db_id: None,
-                id: nanoid!(),
                 provider_id: "test".to_string(),
                 fields: serde_json::json!({
                     "release_title": "Provider Release",
@@ -2469,7 +2464,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &mut db,
             &ProviderConfig {
                 db_id: None,
-                id: nanoid!(),
                 provider_id: "test".to_string(),
                 display_name: "Test".to_string(),
                 priority: 100,
@@ -2481,7 +2475,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             release_db_id,
             &MetadataLayer {
                 db_id: None,
-                id: nanoid!(),
                 provider_id: "test".to_string(),
                 fields: serde_json::json!({
                     "labels": [
@@ -2609,7 +2602,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &mut db,
             &ProviderConfig {
                 db_id: None,
-                id: nanoid!(),
                 provider_id: "test".to_string(),
                 display_name: "Test".to_string(),
                 priority: 100,
@@ -2621,7 +2613,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             release_db_id,
             &MetadataLayer {
                 db_id: None,
-                id: nanoid!(),
                 provider_id: "test".to_string(),
                 fields: serde_json::json!({
                     "labels": [

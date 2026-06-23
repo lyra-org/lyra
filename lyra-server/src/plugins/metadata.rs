@@ -205,7 +205,6 @@ fn provider_new_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Resul
             {
                 let provider_config = ProviderConfig {
                     db_id: None,
-                    id: nanoid::nanoid!(),
                     provider_id: provider_id.clone(),
                     display_name: provider_id.clone(),
                     priority: 50,
@@ -1348,10 +1347,14 @@ fn ensure_provider_owner(
 }
 
 fn parse_id_spec(vm: &luau::Vm, spec: &luau::Table) -> luau::runtime::Result<ProviderIdSpec> {
-    let id = required_string(vm, spec, "id")?;
+    let id_type = required_string(vm, spec, "id_type")?;
     let entity = required_entity_type(vm, spec, "entity")?;
     let unique = optional_bool(vm, spec, "unique")?.unwrap_or(false);
-    Ok(ProviderIdSpec { id, entity, unique })
+    Ok(ProviderIdSpec {
+        id_type,
+        entity,
+        unique,
+    })
 }
 
 fn parse_cover_spec(
@@ -1845,7 +1848,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
         interface(
             "ProviderIdRegistration",
             vec![
-                field("id", string()),
+                field("id_type", string()),
                 field("entity", ty("EntityType")),
                 field("unique", opt(boolean())),
             ],

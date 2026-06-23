@@ -416,7 +416,6 @@ mod tests {
         let external_ids = vec![
             db::external_ids::ExternalId {
                 db_id: Some(NodeId::from(DbId(1))),
-                id: nanoid!(),
                 provider_id: "musicbrainz".to_string(),
                 id_type: "recording_id".to_string(),
                 id_value: "abc123".to_string(),
@@ -424,7 +423,6 @@ mod tests {
             },
             db::external_ids::ExternalId {
                 db_id: Some(NodeId::from(DbId(2))),
-                id: nanoid!(),
                 provider_id: "musicbrainz".to_string(),
                 id_type: "release_id".to_string(),
                 id_value: "release-1".to_string(),
@@ -432,7 +430,6 @@ mod tests {
             },
             db::external_ids::ExternalId {
                 db_id: Some(NodeId::from(DbId(3))),
-                id: nanoid!(),
                 provider_id: "discogs".to_string(),
                 id_type: "recording_id".to_string(),
                 id_value: "x".to_string(),
@@ -455,7 +452,6 @@ mod tests {
     fn unique_track_external_id_key_filter_ignores_blank_values() {
         let external_ids = vec![db::external_ids::ExternalId {
             db_id: Some(NodeId::from(DbId(1))),
-            id: nanoid!(),
             provider_id: "musicbrainz".to_string(),
             id_type: "recording_id".to_string(),
             id_value: "   ".to_string(),

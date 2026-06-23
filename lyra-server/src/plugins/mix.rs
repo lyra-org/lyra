@@ -36,17 +36,15 @@ use harmony_luau::{
     LuauType,
     LuauTypeInfo,
 };
-use nanoid::nanoid;
-
-use crate::plugins::db::{
-    self,
-    Track,
-    mixers::MixerConfig,
-};
 
 use crate::{
     STATE,
     plugins::OptionConfig,
+    plugins::db::{
+        self,
+        Track,
+        mixers::MixerConfig,
+    },
     services::mix::{
         self as mix_service,
         MAX_LIMIT,
@@ -348,7 +346,6 @@ fn mixer_new_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<(
         {
             let mixer_config = MixerConfig {
                 db_id: None,
-                id: nanoid!(),
                 mixer_id: id.clone(),
                 display_name: id.clone(),
                 priority: 50,

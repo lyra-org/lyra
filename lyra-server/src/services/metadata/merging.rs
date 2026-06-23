@@ -400,7 +400,6 @@ mod tests {
     fn make_layer(provider_id: &str, fields_json: &str, updated_at: u64) -> MetadataLayer {
         MetadataLayer {
             db_id: None,
-            id: format!("layer-{provider_id}"),
             provider_id: provider_id.to_string(),
             fields: fields_json.to_string(),
             updated_at,
@@ -410,7 +409,6 @@ mod tests {
     fn make_provider(provider_id: &str, priority: u32, enabled: bool) -> ProviderConfig {
         ProviderConfig {
             db_id: None,
-            id: format!("config-{provider_id}"),
             provider_id: provider_id.to_string(),
             display_name: provider_id.to_string(),
             priority,

@@ -493,11 +493,11 @@ async fn update_provider_priority(
 
 async fn get_entity_external_ids(
     headers: HeaderMap,
-    Path(node_id): Path<String>,
+    Path(entity_id): Path<String>,
 ) -> Result<Json<Vec<ExternalIdResponse>>, AppError> {
     let _principal = require_manage_metadata(&headers).await?;
 
-    let response: Vec<ExternalIdResponse> = list_entity_external_ids_service(&node_id)
+    let response: Vec<ExternalIdResponse> = list_entity_external_ids_service(&entity_id)
         .await?
         .into_iter()
         .map(Into::into)
@@ -508,13 +508,13 @@ async fn get_entity_external_ids(
 
 async fn set_entity_external_id(
     headers: HeaderMap,
-    Path((node_id, provider_id, id_type)): Path<(String, String, String)>,
+    Path((entity_id, provider_id, id_type)): Path<(String, String, String)>,
     Json(request): Json<SetExternalIdRequest>,
 ) -> Result<Json<ExternalIdResponse>, AppError> {
     let _principal = require_manage_metadata(&headers).await?;
 
     let record = set_entity_external_id_service(
-        &node_id,
+        &entity_id,
         ProviderSetEntityExternalIdRequest {
             provider_id,
             id_type,
@@ -528,20 +528,20 @@ async fn set_entity_external_id(
 
 async fn lock_entity(
     headers: HeaderMap,
-    Path(node_id): Path<String>,
+    Path(entity_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let _principal = require_manage_metadata(&headers).await?;
-    set_entity_locked(&node_id, true).await?;
+    set_entity_locked(&entity_id, true).await?;
 
     Ok(Json(serde_json::json!({ "locked": true })))
 }
 
 async fn unlock_entity(
     headers: HeaderMap,
-    Path(node_id): Path<String>,
+    Path(entity_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let _principal = require_manage_metadata(&headers).await?;
-    set_entity_locked(&node_id, false).await?;
+    set_entity_locked(&entity_id, false).await?;
 
     Ok(Json(serde_json::json!({ "locked": false })))
 }
@@ -581,14 +581,14 @@ const KNOWN_REFRESH_PARAMS: &[&str] = &["replace_cover", "force_refresh"];
 
 async fn refresh_entity(
     headers: HeaderMap,
-    Path(node_id): Path<String>,
+    Path(entity_id): Path<String>,
     Query(query): Query<RefreshEntityQuery>,
 ) -> Result<Json<RefreshResponse>, AppError> {
     let _principal = require_sync_metadata(&headers).await?;
     let mut options: HashMap<String, String> = query.extra;
     options.retain(|key, _| !KNOWN_REFRESH_PARAMS.contains(&key.as_str()));
     let result = refresh_entity_by_id(
-        &node_id,
+        &entity_id,
         EntityRefreshMode::WithReleaseArtifacts {
             replace_cover: query.replace_cover,
             force_refresh: query.force_refresh,
