@@ -362,7 +362,7 @@ local id_specs: { ProviderIdSpec } = {
 for _, id_spec in id_specs do
 	local field_name = string.gsub(id_spec.id_type, "-", "_") .. "_id"
 	provider:id({
-		id = field_name,
+		id_type = field_name,
 		entity = id_spec.entity,
 		unique = id_spec.unique,
 	}, BASE_URL .. "/" .. id_spec.id_type .. "/{id}")
@@ -498,7 +498,7 @@ local acoustid_deps: acoustid.ResolveDeps = {
 }
 
 provider:id({
-	id = "acoustid_track_id",
+	id_type = "acoustid_track_id",
 	entity = ET.Track,
 }, "https://acoustid.org/track/{id}")
 

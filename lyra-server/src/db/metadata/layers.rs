@@ -18,7 +18,6 @@ use super::super::NodeId;
 pub(crate) struct MetadataLayer {
     #[serde(skip)]
     pub(crate) db_id: Option<NodeId>,
-    pub(crate) id: String,
     pub(crate) provider_id: String,
     pub(crate) fields: String,
     pub(crate) updated_at: u64,
@@ -109,7 +108,6 @@ mod tests {
     use crate::db::test_db::TestDb;
     use agdb::QueryBuilder;
     use anyhow::anyhow;
-    use nanoid::nanoid;
 
     fn new_test_db() -> anyhow::Result<DbAny> {
         Ok(TestDb::new()?.into_inner())
@@ -131,14 +129,12 @@ mod tests {
 
         let first = MetadataLayer {
             db_id: None,
-            id: nanoid!(),
             provider_id: "musicbrainz".to_string(),
             fields: r#"{"release_title":"first"}"#.to_string(),
             updated_at: 100,
         };
         let second = MetadataLayer {
             db_id: None,
-            id: nanoid!(),
             provider_id: "musicbrainz".to_string(),
             fields: r#"{"release_title":"second"}"#.to_string(),
             updated_at: 200,
@@ -165,14 +161,12 @@ mod tests {
 
         let first = MetadataLayer {
             db_id: None,
-            id: nanoid!(),
             provider_id: "musicbrainz".to_string(),
             fields: r#"{"release_title":"same"}"#.to_string(),
             updated_at: 100,
         };
         let second = MetadataLayer {
             db_id: None,
-            id: nanoid!(),
             provider_id: "musicbrainz".to_string(),
             fields: first.fields.clone(),
             updated_at: 200,

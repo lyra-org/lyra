@@ -706,19 +706,19 @@ local function track_search_results(query: string): { SearchResultItem }
 end
 
 provider:id({
-	id = "artist_id",
+	id_type = "artist_id",
 	entity = ET.Artist,
 	unique = true,
 }, redirect_url_generator("artist"))
 
 provider:id({
-	id = "album_id",
+	id_type = "album_id",
 	entity = ET.Release,
 	unique = true,
 }, redirect_url_generator("album"))
 
 provider:id({
-	id = "track_id",
+	id_type = "track_id",
 	entity = ET.Track,
 	unique = true,
 }, redirect_url_generator("track"))

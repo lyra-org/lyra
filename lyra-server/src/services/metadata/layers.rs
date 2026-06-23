@@ -16,7 +16,6 @@ use agdb::{
     DbAny,
     DbId,
 };
-use nanoid::nanoid;
 
 use crate::db::{
     self,
@@ -140,7 +139,6 @@ fn save_provider_custom_fields(
         let fields_json = serde_json::to_string(fields)?;
         let row = ProviderCustomFields {
             db_id: None,
-            id: nanoid!(),
             provider_id: provider_id.to_string(),
             version,
             fields: fields_json,
@@ -180,7 +178,6 @@ pub(crate) fn save_provider_layer(
         if layer_changed {
             let layer = MetadataLayer {
                 db_id: None,
-                id: nanoid!(),
                 provider_id: provider_id.to_string(),
                 fields: fields_json,
                 updated_at: now_secs(),

@@ -1704,7 +1704,7 @@ local function process_release(
 						then {
 							provider_id = "musicbrainz",
 							id_type = "genre_id",
-							id = genre.id,
+							id_value = genre.id,
 						}
 						else nil,
 				})

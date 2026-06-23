@@ -9,7 +9,6 @@ use agdb::{
     DbId,
     QueryBuilder,
 };
-use nanoid::nanoid;
 use serde::Serialize;
 
 use super::super::{
@@ -22,7 +21,6 @@ use super::super::{
 pub(crate) struct ProviderCustomFields {
     #[serde(skip)]
     pub(crate) db_id: Option<NodeId>,
-    pub(crate) id: String,
     pub(crate) provider_id: String,
     pub(crate) version: u64,
     pub(crate) fields: String,
@@ -84,9 +82,6 @@ pub(crate) fn upsert_inside_tx(
 
     let mut row_to_save = row.clone();
     row_to_save.db_id = existing.as_ref().and_then(|row| row.db_id.clone());
-    if row_to_save.id.is_empty() {
-        row_to_save.id = nanoid!();
-    }
 
     let result = db.exec_mut(QueryBuilder::insert().element(&row_to_save).query())?;
     let row_db_id = existing
@@ -182,7 +177,6 @@ mod tests {
     fn row(provider_id: &str, version: u64, fields: &str, updated_at: u64) -> ProviderCustomFields {
         ProviderCustomFields {
             db_id: None,
-            id: nanoid!(),
             provider_id: provider_id.to_string(),
             version,
             fields: fields.to_string(),

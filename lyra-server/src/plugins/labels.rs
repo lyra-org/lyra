@@ -408,18 +408,11 @@ fn optional_external_id(
 ) -> luau::runtime::Result<Option<LabelExternalIdData>> {
     match table.get_raw(vm, "external_id")? {
         luau::Value::Nil => Ok(None),
-        luau::Value::Table(table) => {
-            let id_value = match optional_string(vm, &table, "id")? {
-                Some(value) => value,
-                None => optional_string(vm, &table, "id_value")?
-                    .ok_or_else(|| crate::plugins::runtime_error("external_id requires id"))?,
-            };
-            Ok(Some(LabelExternalIdData {
-                provider_id: required_string(vm, &table, "provider_id")?,
-                id_type: required_string(vm, &table, "id_type")?,
-                id_value,
-            }))
-        }
+        luau::Value::Table(table) => Ok(Some(LabelExternalIdData {
+            provider_id: required_string(vm, &table, "provider_id")?,
+            id_type: required_string(vm, &table, "id_type")?,
+            id_value: required_string(vm, &table, "id_value")?,
+        })),
         other => Err(crate::plugins::runtime_error(format!(
             "external_id must be a table, got {}",
             other.type_name()
@@ -659,7 +652,7 @@ impl DescribeInterface for LabelExternalId {
         descriptor.fields.extend([
             field("provider_id", String::luau_type()),
             field("id_type", String::luau_type()),
-            field("id", String::luau_type()),
+            field("id_value", String::luau_type()),
         ]);
         descriptor
     }

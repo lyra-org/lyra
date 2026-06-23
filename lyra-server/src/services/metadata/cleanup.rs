@@ -472,7 +472,6 @@ mod tests {
             &mut db,
             &db::ProviderConfig {
                 db_id: None,
-                id: nanoid::nanoid!(),
                 provider_id: "musicbrainz".to_string(),
                 display_name: "MusicBrainz".to_string(),
                 priority: 100,
@@ -512,7 +511,6 @@ mod tests {
             artist_b,
             &db::MetadataLayer {
                 db_id: None,
-                id: nanoid::nanoid!(),
                 provider_id: "local-scanner".to_string(),
                 fields: r#"{"artist_name": "Radiohead", "description": "English rock band"}"#
                     .to_string(),
@@ -547,7 +545,6 @@ mod tests {
             &mut db,
             &db::ProviderConfig {
                 db_id: None,
-                id: nanoid::nanoid!(),
                 provider_id: "provider-a".to_string(),
                 display_name: "Provider A".to_string(),
                 priority: 100,
@@ -558,7 +555,6 @@ mod tests {
             &mut db,
             &db::ProviderConfig {
                 db_id: None,
-                id: nanoid::nanoid!(),
                 provider_id: "provider-b".to_string(),
                 display_name: "Provider B".to_string(),
                 priority: 50,

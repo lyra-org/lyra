@@ -55,7 +55,7 @@ http.set_rate_limit({
 })
 
 provider:id({
-	id = "qid",
+	id_type = "qid",
 	entity = ET.Release,
 }, "https://www.wikidata.org/wiki/{id}")
 
@@ -692,7 +692,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 			external_id = {
 				provider_id = "wikidata",
 				id_type = "qid",
-				id = genre.qid,
+				id_value = genre.qid,
 			},
 			aliases = alias_inputs,
 		})
@@ -754,7 +754,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 				external_id = {
 					provider_id = "wikidata",
 					id_type = "qid",
-					id = parent.qid,
+					id_value = parent.qid,
 				},
 				aliases = parent_alias_inputs,
 			}

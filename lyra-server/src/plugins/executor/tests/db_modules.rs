@@ -1265,7 +1265,7 @@ fn plugin_executor_exposes_db_backed_lyra_genres_module() -> Result<()> {
                     external_id = {{
                         provider_id = "wikidata",
                         id_type = "qid",
-                        id = "Q12345",
+                        id_value = "Q12345",
                     }},
                 }})
                 genres.add_parent(child_id, parent_id)

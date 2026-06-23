@@ -158,7 +158,6 @@ mod tests {
     fn provider(provider_id: &str, priority: u32) -> ProviderConfig {
         ProviderConfig {
             db_id: None,
-            id: provider_id.to_string(),
             provider_id: provider_id.to_string(),
             display_name: provider_id.to_string(),
             priority,
@@ -169,7 +168,6 @@ mod tests {
     fn disabled(provider_id: &str, priority: u32) -> ProviderConfig {
         ProviderConfig {
             db_id: None,
-            id: provider_id.to_string(),
             provider_id: provider_id.to_string(),
             display_name: provider_id.to_string(),
             priority,

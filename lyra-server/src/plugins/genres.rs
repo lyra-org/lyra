@@ -399,7 +399,7 @@ fn get_for_releases_many_callback(mut frame: luau::CallFrame<'_>) -> luau::runti
 struct GenreExternalId {
     provider_id: String,
     id_type: String,
-    id: String,
+    id_value: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -444,7 +444,7 @@ fn resolve_genre_from_request(
         .map(|external_id| ResolveExternalId {
             provider_id: &external_id.provider_id,
             id_type: &external_id.id_type,
-            id_value: &external_id.id,
+            id_value: &external_id.id_value,
         });
 
     db::genres::resolve(
@@ -602,7 +602,7 @@ impl DescribeInterface for GenreExternalId {
                 description: None,
             },
             FieldDescriptor {
-                name: "id",
+                name: "id_value",
                 ty: String::luau_type(),
                 description: None,
             },

@@ -18,7 +18,6 @@ use super::NodeId;
 pub(crate) struct MixerConfig {
     #[serde(skip)]
     pub(crate) db_id: Option<NodeId>,
-    pub(crate) id: String,
     pub(crate) mixer_id: String,
     pub(crate) display_name: String,
     pub(crate) priority: u32,

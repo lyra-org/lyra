@@ -63,12 +63,12 @@ pub(crate) async fn update_provider_priority(
 }
 
 pub(crate) async fn list_entity_external_ids(
-    node_id: &str,
+    entity_id: &str,
 ) -> Result<Vec<EntityExternalIdRecord>, ProviderAdminError> {
     let db = STATE.db.read().await;
-    let node_db_id = db::lookup::find_node_id_by_id(&db, node_id)?
-        .ok_or_else(|| ProviderAdminError::EntityNotFound(node_id.to_string()))?;
-    let ids = db::external_ids::get_for_entity(&db, node_db_id)?;
+    let entity_db_id = db::lookup::find_node_id_by_id(&db, entity_id)?
+        .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?;
+    let ids = db::external_ids::get_for_entity(&db, entity_db_id)?;
 
     Ok(ids
         .into_iter()
@@ -82,28 +82,30 @@ pub(crate) async fn list_entity_external_ids(
 }
 
 pub(crate) async fn set_entity_external_id(
-    node_id: &str,
+    entity_id: &str,
     request: SetEntityExternalIdRequest,
 ) -> Result<EntityExternalIdRecord, ProviderAdminError> {
     let mut db = STATE.db.write().await;
-    let node_db_id = db::lookup::find_node_id_by_id(&db, node_id)?
-        .ok_or_else(|| ProviderAdminError::EntityNotFound(node_id.to_string()))?;
-    if !db::entities::exists(&db, node_db_id)? {
-        return Err(ProviderAdminError::EntityNotFound(node_id.to_string()));
+    let entity_db_id = db::lookup::find_node_id_by_id(&db, entity_id)?
+        .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?;
+    if !db::entities::exists(&db, entity_db_id)? {
+        return Err(ProviderAdminError::EntityNotFound(entity_id.to_string()));
     }
 
     db::external_ids::upsert(
         &mut db,
-        node_db_id,
+        entity_db_id,
         &request.provider_id,
         &request.id_type,
         &request.id_value,
         IdSource::User,
     )?;
 
-    if request.id_type == "artist_db_id" && db::artists::get_by_id(&db, node_db_id)?.is_some() {
-        let _ =
-            crate::services::metadata::verification::recompute_artist_verified(&mut db, node_db_id);
+    if request.id_type == "artist_db_id" && db::artists::get_by_id(&db, entity_db_id)?.is_some() {
+        let _ = crate::services::metadata::verification::recompute_artist_verified(
+            &mut db,
+            entity_db_id,
+        );
     }
 
     Ok(EntityExternalIdRecord {
@@ -115,33 +117,33 @@ pub(crate) async fn set_entity_external_id(
 }
 
 pub(crate) async fn set_entity_locked(
-    node_id: &str,
+    entity_id: &str,
     locked: bool,
 ) -> Result<(), ProviderAdminError> {
     let mut db = STATE.db.write().await;
-    let node_db_id = db::lookup::find_node_id_by_id(&db, node_id)?
-        .ok_or_else(|| ProviderAdminError::EntityNotFound(node_id.to_string()))?;
-    if !db::entities::set_locked(&mut db, node_db_id, locked)? {
-        return Err(ProviderAdminError::EntityNotFound(node_id.to_string()));
+    let entity_db_id = db::lookup::find_node_id_by_id(&db, entity_id)?
+        .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?;
+    if !db::entities::set_locked(&mut db, entity_db_id, locked)? {
+        return Err(ProviderAdminError::EntityNotFound(entity_id.to_string()));
     }
     Ok(())
 }
 
 pub(crate) async fn refresh_entity_by_id(
-    node_id: &str,
+    entity_id: &str,
     refresh_mode: EntityRefreshMode,
 ) -> Result<EntityRefreshResult, ProviderAdminError> {
-    let node_db_id = {
+    let entity_db_id = {
         let db = STATE.db.read().await;
-        db::lookup::find_node_id_by_id(&db, node_id)?
-            .ok_or_else(|| ProviderAdminError::EntityNotFound(node_id.to_string()))?
+        db::lookup::find_node_id_by_id(&db, entity_id)?
+            .ok_or_else(|| ProviderAdminError::EntityNotFound(entity_id.to_string()))?
     };
 
-    refresh_entity_metadata(node_db_id, refresh_mode)
+    refresh_entity_metadata(entity_db_id, refresh_mode)
         .await
         .map_err(|error| match error {
             ProviderServiceError::EntityNotFound(_) => {
-                ProviderAdminError::EntityNotFound(node_id.to_string())
+                ProviderAdminError::EntityNotFound(entity_id.to_string())
             }
             ProviderServiceError::Internal(error) => ProviderAdminError::Internal(error),
             other => ProviderAdminError::Internal(anyhow::Error::new(other)),

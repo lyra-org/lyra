@@ -20,7 +20,6 @@ use super::NodeId;
 pub(crate) struct ProviderConfig {
     #[serde(skip)]
     pub(crate) db_id: Option<NodeId>,
-    pub(crate) id: String,
     pub(crate) provider_id: String,
     pub(crate) display_name: String,
     pub(crate) priority: u32,
@@ -122,7 +121,6 @@ mod tests {
     use super::*;
     use crate::db::test_db::TestDb;
     use agdb::CountComparison;
-    use nanoid::nanoid;
 
     fn new_test_db() -> anyhow::Result<DbAny> {
         Ok(TestDb::with_root_aliases(&["providers"])?.into_inner())
@@ -131,7 +129,6 @@ mod tests {
     fn make_provider(id: &str) -> ProviderConfig {
         ProviderConfig {
             db_id: None,
-            id: nanoid!(),
             provider_id: id.to_string(),
             display_name: id.to_string(),
             priority: 0,

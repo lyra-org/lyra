@@ -120,7 +120,7 @@ pub(crate) struct ProviderRegistry {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ProviderIdSpec {
-    pub(crate) id: String,
+    pub(crate) id_type: String,
     pub(crate) entity: EntityType,
     pub(crate) unique: bool,
 }
@@ -188,15 +188,15 @@ impl ProviderRegistry {
         if let Some(provider) = self.state_mut(provider_id) {
             provider
                 .id_specs
-                .insert(id_spec.id.clone(), id_spec.clone());
+                .insert(id_spec.id_type.clone(), id_spec.clone());
             match generator {
                 Some(ProviderIdUrlGenerator::Template(template)) => {
                     provider
                         .id_generators
-                        .insert(id_spec.id, ProviderIdUrlGenerator::Template(template));
+                        .insert(id_spec.id_type, ProviderIdUrlGenerator::Template(template));
                 }
                 None => {
-                    provider.id_generators.remove(&id_spec.id);
+                    provider.id_generators.remove(&id_spec.id_type);
                 }
             }
         }
@@ -297,7 +297,7 @@ impl ProviderRegistry {
         for (provider_id, state) in self.iter_states() {
             for spec in state.id_specs.values() {
                 if spec.entity == entity && spec.unique {
-                    pairs.insert((provider_id.clone(), spec.id.clone()));
+                    pairs.insert((provider_id.clone(), spec.id_type.clone()));
                 }
             }
         }

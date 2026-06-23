@@ -16,7 +16,6 @@ use agdb::{
 };
 
 use super::super::DbAccess;
-use nanoid::nanoid;
 use serde::{
     Deserialize,
     Serialize,
@@ -29,7 +28,6 @@ use super::super::NodeId;
 pub(crate) struct ExternalId {
     #[serde(skip)]
     pub(crate) db_id: Option<NodeId>,
-    pub(crate) id: String,
     pub(crate) provider_id: String,
     pub(crate) id_type: String,
     pub(crate) id_value: String,
@@ -299,7 +297,6 @@ pub(crate) fn upsert_inside_tx(
 
     let external_id = ExternalId {
         db_id: existing.as_ref().and_then(|e| e.db_id.clone()),
-        id: nanoid!(),
         provider_id: provider_id.to_string(),
         id_type: id_type.to_string(),
         id_value: id_value.to_string(),
