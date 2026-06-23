@@ -46,12 +46,12 @@ pub(crate) fn mix_registry() -> Arc<RwLock<MixRegistry>> {
 /// every teardown — the outer map is the source of truth.
 #[derive(Default)]
 pub(crate) struct MixRegistry {
-    providers: HashMap<PluginId, HashMap<String, MixProviderState>>,
+    mixers: HashMap<PluginId, HashMap<String, MixerState>>,
     plugin_by_mixer: HashMap<String, PluginId>,
 }
 
 #[derive(Default)]
-struct MixProviderState {
+struct MixerState {
     handlers: HashMap<MixSeedType, u64>,
     options: Vec<OptionDeclaration>,
 }
@@ -62,71 +62,67 @@ impl MixRegistry {
         if let Some(existing) = self.plugin_by_mixer.get(&id) {
             bail!("mixer '{id}' already registered by plugin '{existing}'");
         }
-        self.providers
+        self.mixers
             .entry(plugin_id.clone())
             .or_default()
-            .insert(id.clone(), MixProviderState::default());
+            .insert(id.clone(), MixerState::default());
         self.plugin_by_mixer.insert(id, plugin_id);
         Ok(())
     }
 
-    fn state(&self, provider_id: &str) -> Option<&MixProviderState> {
-        let plugin_id = self.plugin_by_mixer.get(provider_id)?;
-        self.providers.get(plugin_id)?.get(provider_id)
+    fn state(&self, mixer_id: &str) -> Option<&MixerState> {
+        let plugin_id = self.plugin_by_mixer.get(mixer_id)?;
+        self.mixers.get(plugin_id)?.get(mixer_id)
     }
 
-    fn state_mut(&mut self, provider_id: &str) -> Option<&mut MixProviderState> {
-        let plugin_id = self.plugin_by_mixer.get(provider_id)?.clone();
-        self.providers.get_mut(&plugin_id)?.get_mut(provider_id)
+    fn state_mut(&mut self, mixer_id: &str) -> Option<&mut MixerState> {
+        let plugin_id = self.plugin_by_mixer.get(mixer_id)?.clone();
+        self.mixers.get_mut(&plugin_id)?.get_mut(mixer_id)
     }
 
     pub(crate) fn set_seed_callback(
         &mut self,
-        provider_id: &str,
+        mixer_id: &str,
         seed_type: MixSeedType,
         handler_id: u64,
     ) {
-        if let Some(provider) = self.state_mut(provider_id) {
-            provider.handlers.insert(seed_type, handler_id);
+        if let Some(mixer) = self.state_mut(mixer_id) {
+            mixer.handlers.insert(seed_type, handler_id);
         }
     }
 
-    pub(crate) fn get_seed_callback(
-        &self,
-        provider_id: &str,
-        seed_type: MixSeedType,
-    ) -> Option<u64> {
-        self.state(provider_id)
+    pub(crate) fn get_seed_callback(&self, mixer_id: &str, seed_type: MixSeedType) -> Option<u64> {
+        self.state(mixer_id)
             .and_then(|p| p.handlers.get(&seed_type))
             .copied()
     }
 
-    pub(crate) fn has_handler(&self, provider_id: &str, seed_type: MixSeedType) -> bool {
-        self.state(provider_id)
+    pub(crate) fn has_handler(&self, mixer_id: &str, seed_type: MixSeedType) -> bool {
+        self.state(mixer_id)
             .is_some_and(|p| p.handlers.contains_key(&seed_type))
     }
 
     pub(crate) fn declare_option(
         &mut self,
-        provider_id: &str,
+        mixer_id: &str,
         option: OptionDeclaration,
     ) -> std::result::Result<(), String> {
-        if let Some(provider) = self.state_mut(provider_id) {
-            if provider.options.iter().any(|o| o.name == option.name) {
+        if let Some(mixer) = self.state_mut(mixer_id) {
+            if mixer.options.iter().any(|o| o.name == option.name) {
                 return Err(format!(
                     "option '{}' already declared on mixer '{}'",
-                    option.name, provider_id
+                    option.name, mixer_id
                 ));
             }
-            provider.options.push(option);
+            mixer.options.push(option);
             Ok(())
         } else {
-            Err(format!("mixer '{}' not registered", provider_id))
+            Err(format!("mixer '{}' not registered", mixer_id))
         }
     }
 
-    pub(crate) fn get_options(&self, provider_id: &str) -> &[OptionDeclaration] {
-        self.state(provider_id)
+    pub(crate) fn get_options(&self, mixer_id: &str) -> &[OptionDeclaration] {
+        self.state(mixer_id)
             .map(|p| p.options.as_slice())
             .unwrap_or(&[])
     }
@@ -134,12 +130,12 @@ impl MixRegistry {
 
 impl PluginScopedInner for MixRegistry {
     fn clear_bucket(&mut self, plugin_id: &PluginId) {
-        self.providers.remove(plugin_id);
+        self.mixers.remove(plugin_id);
     }
 
     fn rebuild_derived(&mut self) {
         self.plugin_by_mixer.clear();
-        for (plugin_id, bucket) in &self.providers {
+        for (plugin_id, bucket) in &self.mixers {
             for mixer_id in bucket.keys() {
                 self.plugin_by_mixer
                     .insert(mixer_id.clone(), plugin_id.clone());
