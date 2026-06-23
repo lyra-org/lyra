@@ -302,9 +302,9 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/stream/hls/{session_id}/{segment}"),
     ("GET", "/api/download/{track_id}"),
     ("GET", "/api/providers/"),
-    ("POST", "/api/providers/{id}/search"),
-    ("PUT", "/api/providers/{id}/priority"),
-    ("POST", "/api/providers/{id}/sync"),
+    ("POST", "/api/providers/{provider_id}/search"),
+    ("PUT", "/api/providers/{provider_id}/priority"),
+    ("POST", "/api/providers/{provider_id}/sync"),
     ("GET", "/api/entities/{id}/external-ids"),
     (
         "PUT",

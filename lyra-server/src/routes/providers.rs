@@ -700,9 +700,9 @@ pub fn provider_routes() -> Router {
 
     Router::new()
         .route("/", get(list_providers))
-        .route("/{id}/search", post(search_provider))
-        .route("/{id}/priority", put(update_provider_priority))
-        .route("/{id}/sync", post(sync_provider))
+        .route("/{provider_id}/search", post(search_provider))
+        .route("/{provider_id}/priority", put(update_provider_priority))
+        .route("/{provider_id}/sync", post(sync_provider))
 }
 
 #[cfg(feature = "docgen")]
@@ -716,14 +716,17 @@ pub(crate) fn provider_openapi_routes() -> aide::axum::ApiRouter {
     aide::axum::ApiRouter::new()
         .api_route("/", get_with(list_providers, list_providers_docs))
         .api_route(
-            "/{id}/search",
+            "/{provider_id}/search",
             post_with(search_provider, search_provider_docs),
         )
         .api_route(
-            "/{id}/priority",
+            "/{provider_id}/priority",
             put_with(update_provider_priority, update_priority_docs),
         )
-        .api_route("/{id}/sync", post_with(sync_provider, sync_provider_docs))
+        .api_route(
+            "/{provider_id}/sync",
+            post_with(sync_provider, sync_provider_docs),
+        )
 }
 
 pub fn entity_routes() -> Router {
