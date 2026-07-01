@@ -11,6 +11,7 @@ use std::{
         Path,
         PathBuf,
     },
+    rc::Rc,
     sync::Arc,
     task::{
         Context,
@@ -653,7 +654,7 @@ impl std::error::Error for ModuleCapabilityDenied {}
 pub struct ModuleRegistry {
     modules: HashMap<ModuleId, ModuleSpec>,
     cache: HashMap<ModuleId, Arc<ModuleExport>>,
-    luau_cache: HashMap<LuauModuleCacheKey, Arc<luau::Table>>,
+    luau_cache: HashMap<LuauModuleCacheKey, Rc<luau::Table>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -799,7 +800,7 @@ impl ModuleRegistry {
         origin: &ChunkOrigin,
         module_id: &ModuleId,
         policy: &dyn CapabilityPolicy,
-    ) -> std::result::Result<Arc<luau::Table>, ModuleLoadError> {
+    ) -> std::result::Result<Rc<luau::Table>, ModuleLoadError> {
         let module = self
             .modules
             .get(module_id)
@@ -822,7 +823,7 @@ impl ModuleRegistry {
             return Ok(export.clone());
         }
 
-        let export = Arc::new(
+        let export = Rc::new(
             install_luau_module(vm, origin, module)
                 .map_err(|error| ModuleLoadError::InstallFailed(anyhow::Error::new(error)))?,
         );
@@ -832,12 +833,9 @@ impl ModuleRegistry {
 
     pub fn invalidate(&mut self, module_id: &ModuleId) -> bool {
         let removed = self.cache.remove(module_id).is_some();
-        let removed = {
-            let before = self.luau_cache.len();
-            self.luau_cache.retain(|key, _| key.module_id != *module_id);
-            self.luau_cache.len() != before || removed
-        };
-        removed
+        let before = self.luau_cache.len();
+        self.luau_cache.retain(|key, _| key.module_id != *module_id);
+        self.luau_cache.len() != before || removed
     }
 }
 
@@ -1580,7 +1578,7 @@ mod tests {
                 },
             )
             .expect("cached require");
-        assert!(Arc::ptr_eq(&first, &second));
+        assert!(Rc::ptr_eq(&first, &second));
         vm.set_global_table("module", &first)?;
         assert_eq!(
             vm.eval(
@@ -1644,8 +1642,8 @@ mod tests {
             .require_luau_module(&vm, &beta_origin, &module_id, &AllowAllCapabilities)
             .expect("beta require");
 
-        assert!(Arc::ptr_eq(&alpha_first, &alpha_second));
-        assert!(!Arc::ptr_eq(&alpha_first, &beta));
+        assert!(Rc::ptr_eq(&alpha_first, &alpha_second));
+        assert!(!Rc::ptr_eq(&alpha_first, &beta));
 
         vm.set_global_table("alpha", &alpha_first)?;
         vm.set_global_table("beta", &beta)?;
