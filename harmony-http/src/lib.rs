@@ -258,15 +258,11 @@ fn parse_rate_limit_headers(headers: &HttpHeaderMap) -> Option<ServerRateLimitIn
 
     for (key, value) in headers.iter() {
         match key.as_str() {
-            "ratelimit-remaining" | "x-ratelimit-remaining" => {
-                if remaining.is_none() {
-                    remaining = value.parse().ok();
-                }
+            "ratelimit-remaining" | "x-ratelimit-remaining" if remaining.is_none() => {
+                remaining = value.parse().ok();
             }
-            "ratelimit-reset" | "x-ratelimit-reset" => {
-                if reset_ts.is_none() {
-                    reset_ts = value.parse().ok();
-                }
+            "ratelimit-reset" | "x-ratelimit-reset" if reset_ts.is_none() => {
+                reset_ts = value.parse().ok();
             }
             _ => {}
         }
@@ -648,11 +644,11 @@ where
 
         let response = request_fn(options.clone()).await;
 
-        if let Some(ref d) = domain {
-            if let Some(info) = parse_rate_limit_headers(&response.headers) {
-                let mut limiter = RATE_LIMITER.write().await;
-                limiter.update_from_response(d, info);
-            }
+        if let Some(ref d) = domain
+            && let Some(info) = parse_rate_limit_headers(&response.headers)
+        {
+            let mut limiter = RATE_LIMITER.write().await;
+            limiter.update_from_response(d, info);
         }
 
         let should_retry = config.as_ref().is_some_and(|cfg| {
@@ -789,15 +785,14 @@ async fn configure_max_in_flight(options: HttpConcurrencyOptions) -> anyhow::Res
 }
 
 pub fn module_spec() -> ModuleSpec {
-    let spec = ModuleSpec::new("harmony/http")
+    ModuleSpec::new("harmony/http")
         .capability("harmony.http")
         .function(request_spec())
         .function(set_rate_limit_spec())
         .function(set_max_in_flight_spec())
         .function(encode_uri_component_spec())
         .userdata(HttpMethod::_harmony_userdata_spec())
-        .install(|_| Ok(ModuleExport::new(HttpModule)));
-    spec
+        .install(|_| Ok(ModuleExport::new(HttpModule)))
 }
 
 fn request_spec() -> FunctionSpec {
