@@ -571,8 +571,10 @@ pub(crate) async fn require_auth(headers: &HeaderMap) -> Result<ResolvedAuth, Au
 
 pub(crate) async fn resolve_optional_auth(headers: &HeaderMap) -> AuthResult<Option<ResolvedAuth>> {
     let bearer = extract_bearer_credential(headers);
-    let Some(auth) = resolve_auth_from_bearer(bearer.as_deref()).await? else {
-        return Ok(None);
+    let auth = match resolve_auth_from_bearer(bearer.as_deref()).await {
+        Ok(Some(auth)) => auth,
+        Ok(None) | Err(AuthError::SessionExpired) => return Ok(None),
+        Err(err) => return Err(err),
     };
 
     {
@@ -773,6 +775,51 @@ mod tests {
             .await
             .expect_err("expired session must not resolve");
         assert!(matches!(err, AuthError::SessionExpired), "got {err:?}");
+
+        {
+            let db = STATE.db.read().await;
+            assert!(
+                db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?.is_none(),
+                "expired session should be revoked"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_optional_auth_treats_expired_session_as_absent() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        initialize_auth_test_runtime().await?;
+
+        let mut config = STATE.config.get().as_ref().clone();
+        config.auth.enabled = true;
+        config.auth.session_ttl_seconds = 60;
+        STATE.config.replace(std::sync::Arc::new(config));
+
+        let user_db_id = {
+            let mut db = STATE.db.write().await;
+            db::users::create(&mut db, &db::test_db::test_user("optional-expiring")?)?
+        };
+        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let session_db_id = {
+            let db = STATE.db.read().await;
+            db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?
+                .map(|(_, _, session_id)| session_id)
+                .ok_or_else(|| anyhow::anyhow!("session should have a db id"))?
+        };
+        {
+            let mut db = STATE.db.write().await;
+            db.exec_mut(
+                agdb::QueryBuilder::insert()
+                    .values_uniform([("expires_at", db::users::now_secs() - 1).into()])
+                    .ids(session_db_id)
+                    .query(),
+            )?;
+        }
+
+        let auth = resolve_optional_auth(&bearer_headers(&session.token)).await?;
+        assert!(auth.is_none(), "expired optional session should be absent");
 
         {
             let db = STATE.db.read().await;
