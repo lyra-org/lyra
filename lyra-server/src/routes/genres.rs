@@ -553,6 +553,19 @@ pub fn genre_routes() -> Router {
         .route("/{id}/mix", get(super::mix::get_genre_mix))
 }
 
+#[cfg(feature = "docgen")]
+pub(crate) fn genre_openapi_routes() -> aide::axum::ApiRouter {
+    use aide::axum::routing::get_with;
+
+    aide::axum::ApiRouter::new()
+        .api_route("/", get_with(list_genres, list_genres_docs))
+        .api_route("/{id}", get_with(get_genre, get_genre_docs))
+        .api_route(
+            "/{id}/mix",
+            get_with(super::mix::get_genre_mix, super::mix::genre_mix_docs),
+        )
+}
+
 #[cfg(test)]
 mod tests {
     use axum::http::{
@@ -1127,8 +1140,12 @@ mod benches {
                     &format!("Genre {genre_idx:04} Release {release_idx:02}"),
                 )
                 .unwrap();
-                db::genres::sync_release_genres(&mut db, release_db_id, &[genre_name.clone()])
-                    .unwrap();
+                db::genres::sync_release_genres(
+                    &mut db,
+                    release_db_id,
+                    std::slice::from_ref(&genre_name),
+                )
+                .unwrap();
                 for track_idx in 0..tracks_per_release {
                     let track_db_id = insert_track(
                         &mut db,
@@ -1212,17 +1229,4 @@ mod benches {
             .unwrap()
         });
     }
-}
-
-#[cfg(feature = "docgen")]
-pub(crate) fn genre_openapi_routes() -> aide::axum::ApiRouter {
-    use aide::axum::routing::get_with;
-
-    aide::axum::ApiRouter::new()
-        .api_route("/", get_with(list_genres, list_genres_docs))
-        .api_route("/{id}", get_with(get_genre, get_genre_docs))
-        .api_route(
-            "/{id}/mix",
-            get_with(super::mix::get_genre_mix, super::mix::genre_mix_docs),
-        )
 }

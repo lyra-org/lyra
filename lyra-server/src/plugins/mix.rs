@@ -141,6 +141,7 @@ struct Mixer {
 }
 
 #[harmony_macros::userdata_methods]
+#[allow(clippy::wrong_self_convention)]
 impl Mixer {
     #[harmony(
         description = "Registers a handler for generating a mix from a seed track.",
@@ -390,7 +391,7 @@ fn consumer_callback(
         let tracks = mix_service::from_seed(variant(seed), &options)
             .await
             .map_err(crate::plugins::runtime_error)?;
-        Ok(tracks_to_luau(tracks)?)
+        tracks_to_luau(tracks)
     }))
 }
 
@@ -433,7 +434,7 @@ fn instant_mix_from_audio_callback(
         let tracks = mix_service::instant_mix_from_audio(seed, &options)
             .await
             .map_err(crate::plugins::runtime_error)?;
-        Ok(tracks_to_luau(tracks)?)
+        tracks_to_luau(tracks)
     }))
 }
 
@@ -459,12 +460,12 @@ fn parse_consumer_options(
         .get("limit")
         .map(|value| parse_positive_usize(value, "limit"))
         .transpose()?;
-    if let Some(limit) = limit {
-        if limit > MAX_LIMIT {
-            return Err(crate::plugins::runtime_error(format!(
-                "mix options 'limit' must be <= {MAX_LIMIT}, got {limit}"
-            )));
-        }
+    if let Some(limit) = limit
+        && limit > MAX_LIMIT
+    {
+        return Err(crate::plugins::runtime_error(format!(
+            "mix options 'limit' must be <= {MAX_LIMIT}, got {limit}"
+        )));
     }
     let viewer = object
         .get("user_id")

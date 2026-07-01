@@ -85,13 +85,15 @@ pub(super) async fn plugin_api_response_to_axum(
                 match stream_track_response(
                     request_headers,
                     agdb::DbId(track_id),
-                    options.format,
-                    join_preferred_codecs(options.preferred_codecs),
-                    options.bitrate_bps,
-                    options.sample_rate_hz,
-                    options.channels,
-                    options.prefer_vbr,
-                    options.start_offset_ms,
+                    ServeTrackOptions {
+                        format: options.format,
+                        codec: join_preferred_codecs(options.preferred_codecs),
+                        bitrate_bps: options.bitrate_bps,
+                        sample_rate_hz: options.sample_rate_hz,
+                        channels: options.channels,
+                        prefer_vbr: options.prefer_vbr,
+                        start_offset_ms: options.start_offset_ms,
+                    },
                 )
                 .await
                 {
@@ -118,14 +120,18 @@ pub(super) async fn plugin_api_response_to_axum(
                 match download_track_response(
                     request_headers,
                     agdb::DbId(track_id),
-                    options.format,
-                    join_preferred_codecs(options.preferred_codecs),
-                    options.bitrate_bps,
-                    options.sample_rate_hz,
-                    options.channels,
-                    options.prefer_vbr,
-                    options.start_offset_ms,
-                    None,
+                    DownloadTrackRequest {
+                        output: ServeTrackOptions {
+                            format: options.format,
+                            codec: join_preferred_codecs(options.preferred_codecs),
+                            bitrate_bps: options.bitrate_bps,
+                            sample_rate_hz: options.sample_rate_hz,
+                            channels: options.channels,
+                            prefer_vbr: options.prefer_vbr,
+                            start_offset_ms: options.start_offset_ms,
+                        },
+                        media_token: None,
+                    },
                 )
                 .await
                 {

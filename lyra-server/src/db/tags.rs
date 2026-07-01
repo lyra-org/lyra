@@ -301,10 +301,8 @@ pub(crate) fn owner_tag_ids(db: &impl DbAccess, owner_db_id: DbId) -> anyhow::Re
     let mut ids = Vec::new();
     for element in result.elements {
         let from_id = element.from;
-        if from_id.0 != 0 {
-            if from_id.0 > 0 {
-                ids.push(from_id);
-            }
+        if from_id.0 != 0 && from_id.0 > 0 {
+            ids.push(from_id);
         }
     }
     Ok(ids)
@@ -327,10 +325,8 @@ pub(crate) fn get_owner(db: &impl DbAccess, tag_id: DbId) -> anyhow::Result<Opti
     )?;
     for element in result.elements {
         let to_id = element.to;
-        if to_id.0 != 0 {
-            if to_id.0 > 0 {
-                return Ok(Some(to_id));
-            }
+        if to_id.0 != 0 && to_id.0 > 0 {
+            return Ok(Some(to_id));
         }
     }
     Ok(None)

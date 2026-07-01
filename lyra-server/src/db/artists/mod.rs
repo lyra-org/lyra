@@ -204,10 +204,10 @@ fn get_connected_artists(db: &impl super::DbAccess, from: &QueryId) -> anyhow::R
         )?
         .try_into()?;
     for entry in direct {
-        if let Some(id) = entry.db_id.clone().map(DbId::from) {
-            if seen.insert(id) {
-                artists.push(entry);
-            }
+        if let Some(id) = entry.db_id.clone().map(DbId::from)
+            && seen.insert(id)
+        {
+            artists.push(entry);
         }
     }
 
@@ -242,10 +242,10 @@ fn get_connected_artists(db: &impl super::DbAccess, from: &QueryId) -> anyhow::R
             )?
             .try_into()?;
         for entry in artists_batch {
-            if let Some(id) = entry.db_id.clone().map(DbId::from) {
-                if seen.insert(id) {
-                    artists.push(entry);
-                }
+            if let Some(id) = entry.db_id.clone().map(DbId::from)
+                && seen.insert(id)
+            {
+                artists.push(entry);
             }
         }
     }

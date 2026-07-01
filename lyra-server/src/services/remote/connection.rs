@@ -367,13 +367,11 @@ pub(crate) async fn run(
                             &payload,
                             &user_public_id,
                             &accessible_library_ids,
-                        ) {
-                            if let Some(msg) = playback_event_to_message(payload) {
-                                if !send(&mut socket, msg).await {
-                                    break;
-                                }
-                                sync_required_pending = false;
+                        ) && let Some(msg) = playback_event_to_message(payload) {
+                            if !send(&mut socket, msg).await {
+                                break;
                             }
+                            sync_required_pending = false;
                         }
                     }
                     // Missed events can't be replayed; tell the client to

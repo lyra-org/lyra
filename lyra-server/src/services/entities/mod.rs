@@ -951,15 +951,15 @@ pub(crate) fn resolve_track_artists_with_context(
 
     for track_id in unresolved {
         let mut artists = artists_by_track.remove(&track_id).unwrap_or_default();
-        if artists.is_empty() {
-            if let Some(releases) = releases_by_track.get(&track_id) {
-                for release in releases {
-                    let Some(release_id) = release.db_id.clone().map(Into::<DbId>::into) else {
-                        continue;
-                    };
-                    if let Some(release_artists) = artists_by_release.get(&release_id) {
-                        artists.extend(release_artists.clone());
-                    }
+        if artists.is_empty()
+            && let Some(releases) = releases_by_track.get(&track_id)
+        {
+            for release in releases {
+                let Some(release_id) = release.db_id.clone().map(Into::<DbId>::into) else {
+                    continue;
+                };
+                if let Some(release_artists) = artists_by_release.get(&release_id) {
+                    artists.extend(release_artists.clone());
                 }
             }
         }

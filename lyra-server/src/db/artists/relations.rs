@@ -192,10 +192,10 @@ where
             continue;
         }
         if let Ok(relation) = ArtistRelation::from_db_element(element) {
-            if let Some(filter_type) = relation_type {
-                if relation.relation_type != filter_type {
-                    continue;
-                }
+            if let Some(filter_type) = relation_type
+                && relation.relation_type != filter_type
+            {
+                continue;
             }
             if let Some(peer_id) = extract_peer(element) {
                 relations.push((relation, peer_id));

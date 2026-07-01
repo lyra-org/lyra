@@ -173,7 +173,7 @@ fn list_callback(
                 }
             }
         };
-        Ok(harmony_luau::serializable_to_luau_owned(libraries)?)
+        harmony_luau::serializable_to_luau_owned(libraries)
     }))
 }
 
@@ -209,7 +209,7 @@ fn get_for_entity_callback(
             .map(LibraryRecord::from)
             .collect::<Vec<_>>()
         };
-        Ok(harmony_luau::serializable_to_luau_owned(libraries)?)
+        harmony_luau::serializable_to_luau_owned(libraries)
     }))
 }
 

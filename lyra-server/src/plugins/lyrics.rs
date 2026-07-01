@@ -255,7 +255,7 @@ fn parse_lrc_input(text: String, language: Option<String>) -> anyhow::Result<Plu
 }
 
 pub(crate) fn module_spec() -> ModuleSpec {
-    let spec = ModuleSpec::new("lyra/lyrics")
+    ModuleSpec::new("lyra/lyrics")
         .capability("lyra.lyrics")
         .function(get_spec())
         .function(parse_lrc_spec())
@@ -265,8 +265,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(delete_for_track_spec())
         .function(has_spec())
         .function(has_many_spec())
-        .install(|_| Ok(ModuleExport::new(LyricsModule)));
-    spec
+        .install(|_| Ok(ModuleExport::new(LyricsModule)))
 }
 
 fn get_spec() -> FunctionSpec {
@@ -447,7 +446,7 @@ fn upsert_user_override_callback(
         }
         let detail = lyrics_service::upsert_user_lyrics_by_db_id(&mut db, track_db_id, input)
             .map_err(crate::plugins::runtime_error)?;
-        Ok(lyrics_detail_to_luau_value(detail)?)
+        lyrics_detail_to_luau_value(detail)
     }))
 }
 

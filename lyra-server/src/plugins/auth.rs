@@ -162,14 +162,13 @@ pub(crate) fn to_plugin_auth(auth: ServiceResolvedAuth) -> ResolvedAuth {
 struct AuthModule;
 
 pub(crate) fn module_spec() -> ModuleSpec {
-    let spec = ModuleSpec::new("lyra/auth")
+    ModuleSpec::new("lyra/auth")
         .capability("lyra.auth")
         .function(auth_capabilities_spec())
         .function(resolve_auth_spec())
         .function(login_spec())
         .function(logout_session_spec())
-        .install(|_| Ok(ModuleExport::new(AuthModule)));
-    spec
+        .install(|_| Ok(ModuleExport::new(AuthModule)))
 }
 
 /// Per-dispatch client identity resolved at the HTTP boundary, so host calls

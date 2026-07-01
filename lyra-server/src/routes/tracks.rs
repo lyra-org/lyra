@@ -138,6 +138,16 @@ struct TrackListQuery {
     page: super::PageQuery,
 }
 
+pub(crate) struct TrackListOptions {
+    inc: Option<Vec<String>>,
+    query: Option<String>,
+    library_id: Option<String>,
+    release_id: Option<String>,
+    sort_by: Option<Vec<String>>,
+    sort_order: Option<String>,
+    page_options: super::PageOptions,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct TrackRouteIncludes {
     pub(crate) service: track_service::TrackIncludes,
@@ -474,14 +484,17 @@ pub(crate) fn track_detail_to_response(
 
 pub(crate) async fn list_track_responses(
     principal: &Principal,
-    inc: Option<Vec<String>>,
-    query: Option<String>,
-    library_id: Option<String>,
-    release_id: Option<String>,
-    sort_by: Option<Vec<String>>,
-    sort_order: Option<String>,
-    page_options: super::PageOptions,
+    options: TrackListOptions,
 ) -> Result<PageResponse<TrackResponse>, AppError> {
+    let TrackListOptions {
+        inc,
+        query,
+        library_id,
+        release_id,
+        sort_by,
+        sort_order,
+        page_options,
+    } = options;
     let db = &*STATE.db.read().await;
     let includes = parse_inc(inc)?;
     let search_term = super::parse_text_query(query);
@@ -718,7 +731,16 @@ async fn get_tracks(
     let principal = require_authenticated(&headers).await?;
     Ok(Json(
         list_track_responses(
-            &principal, inc, query, library_id, release_id, sort_by, sort_order, page,
+            &principal,
+            TrackListOptions {
+                inc,
+                query,
+                library_id,
+                release_id,
+                sort_by,
+                sort_order,
+                page_options: page,
+            },
         )
         .await?,
     ))
@@ -1443,15 +1465,17 @@ mod tests {
 
         let page = list_track_responses(
             &principal,
-            None,
-            None,
-            Some(visible_library_id),
-            None,
-            None,
-            None,
-            super::super::PageOptions {
-                limit: 100,
-                offset: 0,
+            TrackListOptions {
+                inc: None,
+                query: None,
+                library_id: Some(visible_library_id),
+                release_id: None,
+                sort_by: None,
+                sort_order: None,
+                page_options: super::super::PageOptions {
+                    limit: 100,
+                    offset: 0,
+                },
             },
         )
         .await
@@ -1479,15 +1503,17 @@ mod tests {
 
         let page = list_track_responses(
             &principal,
-            Some(vec!["releases,release_covers".to_string()]),
-            None,
-            None,
-            None,
-            None,
-            None,
-            super::super::PageOptions {
-                limit: 100,
-                offset: 0,
+            TrackListOptions {
+                inc: Some(vec!["releases,release_covers".to_string()]),
+                query: None,
+                library_id: None,
+                release_id: None,
+                sort_by: None,
+                sort_order: None,
+                page_options: super::super::PageOptions {
+                    limit: 100,
+                    offset: 0,
+                },
             },
         )
         .await
@@ -1624,15 +1650,17 @@ mod tests {
 
         let page = list_track_responses(
             &principal,
-            None,
-            None,
-            None,
-            Some(release_public_id),
-            None,
-            None,
-            super::super::PageOptions {
-                limit: 100,
-                offset: 0,
+            TrackListOptions {
+                inc: None,
+                query: None,
+                library_id: None,
+                release_id: Some(release_public_id),
+                sort_by: None,
+                sort_order: None,
+                page_options: super::super::PageOptions {
+                    limit: 100,
+                    offset: 0,
+                },
             },
         )
         .await

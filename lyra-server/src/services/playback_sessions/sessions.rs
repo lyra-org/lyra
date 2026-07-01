@@ -97,10 +97,8 @@ pub(crate) fn get_playback_sessions_for_user_session(
         .expect("playback session scopes RwLock poisoned");
     scopes
         .iter()
-        .filter_map(|(key, scope)| {
-            (key.user_db_id == user_db_id && key.session_key == session_key)
-                .then(|| (key.clone(), scope.clone()))
-        })
+        .filter(|(key, _)| key.user_db_id == user_db_id && key.session_key == session_key)
+        .map(|(key, scope)| (key.clone(), scope.clone()))
         .collect()
 }
 

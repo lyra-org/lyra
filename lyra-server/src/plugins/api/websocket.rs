@@ -5,14 +5,36 @@
 
 use super::*;
 
-pub(super) async fn dispatch_websocket_route(
+pub(super) struct WebSocketRouteRequest {
+    pub(super) route: RegisteredRoute,
+    pub(super) uri: Uri,
+    pub(super) headers: HeaderMap,
+    pub(super) query: HashMap<String, Vec<String>>,
+    pub(super) params: Option<HashMap<String, String>>,
+}
+
+struct PluginWebSocketContext {
+    runtime: crate::plugins::executor::PluginExecutorHandle,
     route: RegisteredRoute,
     uri: Uri,
     headers: HeaderMap,
     query: HashMap<String, Vec<String>>,
     params: Option<HashMap<String, String>>,
+    auth: Option<crate::services::auth::ResolvedAuth>,
+}
+
+pub(super) async fn dispatch_websocket_route(
+    request: WebSocketRouteRequest,
     ws: WebSocketUpgrade,
 ) -> Response {
+    let WebSocketRouteRequest {
+        route,
+        uri,
+        headers,
+        query,
+        params,
+    } = request;
+
     if let Err(reason) = crate::services::origin::validate(&headers) {
         return (StatusCode::FORBIDDEN, reason).into_response();
     }
@@ -43,20 +65,33 @@ pub(super) async fn dispatch_websocket_route(
 
     ws.max_message_size(MAX_MESSAGE_SIZE)
         .on_upgrade(move |socket| async move {
-            run_plugin_websocket(socket, runtime, route, uri, headers, query, params, auth).await;
+            run_plugin_websocket(
+                socket,
+                PluginWebSocketContext {
+                    runtime,
+                    route,
+                    uri,
+                    headers,
+                    query,
+                    params,
+                    auth,
+                },
+            )
+            .await;
         })
 }
 
-pub(super) async fn run_plugin_websocket(
-    socket: WebSocket,
-    runtime: crate::plugins::executor::PluginExecutorHandle,
-    route: RegisteredRoute,
-    uri: Uri,
-    headers: HeaderMap,
-    query: HashMap<String, Vec<String>>,
-    params: Option<HashMap<String, String>>,
-    auth: Option<crate::services::auth::ResolvedAuth>,
-) {
+async fn run_plugin_websocket(socket: WebSocket, context: PluginWebSocketContext) {
+    let PluginWebSocketContext {
+        runtime,
+        route,
+        uri,
+        headers,
+        query,
+        params,
+        auth,
+    } = context;
+
     let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel::<String>(32);
     let (inbound_tx, inbound_rx) = tokio::sync::mpsc::channel::<String>(32);
     let state = crate::plugins::executor::WebSocketState::new();

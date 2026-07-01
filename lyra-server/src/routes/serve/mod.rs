@@ -9,7 +9,10 @@ mod ranged_file;
 mod stream;
 
 pub use download::download_routes;
-pub(crate) use download::download_track_response;
+pub(crate) use download::{
+    DownloadTrackRequest,
+    download_track_response,
+};
 pub(crate) use hls::serve_hls_playlist_for_track;
 pub(crate) use ranged_file::build_ranged_file_body;
 pub(crate) use stream::stream_track_response;
@@ -75,6 +78,17 @@ pub struct ValidatedTrackSource {
     pub source_bitrate_bps: Option<u32>,
     pub source_sample_rate_hz: Option<u32>,
     pub source_channels: Option<u32>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct ServeTrackOptions {
+    pub(crate) format: Option<String>,
+    pub(crate) codec: Option<String>,
+    pub(crate) bitrate_bps: Option<u32>,
+    pub(crate) sample_rate_hz: Option<u32>,
+    pub(crate) channels: Option<u32>,
+    pub(crate) prefer_vbr: Option<bool>,
+    pub(crate) start_offset_ms: Option<u64>,
 }
 
 pub(crate) fn source_range_duration_ms(start_ms: Option<u64>, end_ms: Option<u64>) -> Option<u64> {
@@ -670,6 +684,7 @@ pub(crate) fn download_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::{
+        ServeTrackOptions,
         ValidatedTrackSource,
         apply_request_start_offset,
         configure_output,
@@ -1231,7 +1246,7 @@ mod tests {
         assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
     }
 
-    async fn prepare_streamable_track(test_dir: &PathBuf) -> anyhow::Result<i64> {
+    async fn prepare_streamable_track(test_dir: &std::path::Path) -> anyhow::Result<i64> {
         let fixture_src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/assets/metadata/integration_track.flac");
         let fixture_dst = test_dir.join("integration_track.flac");
@@ -1249,7 +1264,7 @@ mod tests {
 
         let fixture = crate::testing::prepare_fixture(
             &LibraryFixtureConfig {
-                directory: test_dir.clone(),
+                directory: test_dir.to_path_buf(),
                 language: None,
                 country: None,
             },
@@ -1273,13 +1288,7 @@ mod tests {
         let response = super::stream::stream_track_response(
             &headers,
             agdb::DbId(track_id),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            ServeTrackOptions::default(),
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1308,13 +1317,11 @@ mod tests {
         let response = super::stream::stream_track_response(
             &headers,
             agdb::DbId(track_id),
-            Some("mp3".to_string()),
-            None,
-            Some(96_000),
-            None,
-            None,
-            None,
-            None,
+            ServeTrackOptions {
+                format: Some("mp3".to_string()),
+                bitrate_bps: Some(96_000),
+                ..ServeTrackOptions::default()
+            },
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1351,13 +1358,11 @@ mod tests {
         let response = super::stream::stream_track_response(
             &headers,
             agdb::DbId(track_id),
-            Some("flac".to_string()),
-            None,
-            None,
-            Some(48_000),
-            None,
-            None,
-            None,
+            ServeTrackOptions {
+                format: Some("flac".to_string()),
+                sample_rate_hz: Some(48_000),
+                ..ServeTrackOptions::default()
+            },
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1393,13 +1398,11 @@ mod tests {
         let response = super::stream::stream_track_response(
             &headers,
             agdb::DbId(track_id),
-            Some("flac".to_string()),
-            None,
-            Some(96_000),
-            None,
-            None,
-            None,
-            None,
+            ServeTrackOptions {
+                format: Some("flac".to_string()),
+                bitrate_bps: Some(96_000),
+                ..ServeTrackOptions::default()
+            },
         )
         .await
         .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
@@ -1428,13 +1431,11 @@ mod tests {
         let result = super::stream::stream_track_response(
             &headers,
             agdb::DbId(track_id),
-            Some("mp3".to_string()),
-            None,
-            Some(0),
-            None,
-            None,
-            None,
-            None,
+            ServeTrackOptions {
+                format: Some("mp3".to_string()),
+                bitrate_bps: Some(0),
+                ..ServeTrackOptions::default()
+            },
         )
         .await;
 

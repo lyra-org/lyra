@@ -121,18 +121,18 @@ pub(crate) async fn from_seed(
 ) -> anyhow::Result<Option<Vec<Track>>> {
     {
         let db = STATE.db.read().await;
-        if !seed_exists(&*db, &seed)? {
+        if !seed_exists(&db, &seed)? {
             return Ok(None);
         }
     }
     let dispatched = dispatch_mixer(&seed, options).await?;
     let db = STATE.db.read().await;
-    if !seed_exists(&*db, &seed)? {
+    if !seed_exists(&db, &seed)? {
         return Ok(None);
     }
     let tracks = match dispatched {
-        Some(tracks) => filter_existing_tracks(&*db, tracks)?,
-        None => builtin_from_seed(&*db, &seed, options)?,
+        Some(tracks) => filter_existing_tracks(&db, tracks)?,
+        None => builtin_from_seed(&db, &seed, options)?,
     };
     Ok(Some(tracks))
 }
@@ -168,20 +168,20 @@ pub(crate) async fn instant_mix_from_audio(
 ) -> anyhow::Result<Option<Vec<Track>>> {
     {
         let db = STATE.db.read().await;
-        if db::tracks::get_by_id(&*db, track_db_id)?.is_none() {
+        if db::tracks::get_by_id(&db, track_db_id)?.is_none() {
             return Ok(None);
         }
     }
     let dispatched = dispatch_mixer(&MixSeed::Track(track_db_id), options).await?;
 
     let db = STATE.db.read().await;
-    let Some(seed) = db::tracks::get_by_id(&*db, track_db_id)? else {
+    let Some(seed) = db::tracks::get_by_id(&db, track_db_id)? else {
         return Ok(None);
     };
 
     let mix_tracks = match dispatched {
-        Some(tracks) => filter_existing_tracks(&*db, tracks)?,
-        None => builtin_from_track(&*db, track_db_id, options)?,
+        Some(tracks) => filter_existing_tracks(&db, tracks)?,
+        None => builtin_from_track(&db, track_db_id, options)?,
     };
 
     let effective_limit = options.limit.unwrap_or(DEFAULT_LIMIT);
@@ -216,9 +216,9 @@ fn pin_seed_and_truncate(seed: Track, mut tracks: Vec<Track>, limit: usize) -> V
 /// Mixer IDs with a handler for `seed_type`, highest priority first.
 async fn prioritized_mixer_ids(seed_type: MixSeedType) -> anyhow::Result<Vec<String>> {
     let db = STATE.db.read().await;
-    let mut configs = db::mixers::get(&*db)?;
+    let mut configs = db::mixers::get(&db)?;
     configs.retain(|c| c.enabled);
-    configs.sort_by(|a, b| b.priority.cmp(&a.priority));
+    configs.sort_by_key(|config| std::cmp::Reverse(config.priority));
 
     let registry = mix_registry().read_owned().await;
     let ids: Vec<String> = configs
@@ -392,7 +392,7 @@ async fn tracks_from_mixer_ids(track_ids: Vec<DbId>) -> anyhow::Result<Vec<Track
     let requested_count = track_ids.len();
     let db = STATE.db.read().await;
     let tracks_by_id: HashMap<DbId, Track> =
-        db::graph::bulk_fetch_typed(&*db, track_ids.clone(), "Track")?;
+        db::graph::bulk_fetch_typed(&db, track_ids.clone(), "Track")?;
 
     let mut tracks = Vec::with_capacity(requested_count);
     for id in &track_ids {
@@ -573,7 +573,7 @@ fn recent_listen_track_ids(db: &DbAny, user_db_id: DbId) -> anyhow::Result<Vec<D
         )?
         .try_into()?;
 
-    listens.sort_unstable_by(|a, b| b.listened_at_ms.cmp(&a.listened_at_ms));
+    listens.sort_unstable_by_key(|listen| std::cmp::Reverse(listen.listened_at_ms));
     listens.truncate(RECENT_LISTEN_COUNT);
 
     // Resolve through the snapshot, not the listen→track edge.

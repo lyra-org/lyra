@@ -94,7 +94,7 @@ fn validate_stored_values_inner(
     make_error: fn(&str, String) -> InvalidStoredSettings,
 ) -> anyhow::Result<()> {
     let mut entries = values.iter().collect::<Vec<_>>();
-    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+    entries.sort_by_key(|(key, _)| *key);
 
     for (key, value) in entries {
         let field = schema.field(key).ok_or_else(|| {
@@ -434,7 +434,7 @@ mod tests {
 
     fn test_user(db: &mut DbAny) -> anyhow::Result<DbId> {
         let user = db::test_db::test_user("testuser")?;
-        Ok(db::users::create(db, &user)?)
+        db::users::create(db, &user)
     }
 
     #[test]

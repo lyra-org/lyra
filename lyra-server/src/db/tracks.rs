@@ -357,10 +357,10 @@ pub(crate) fn get_by_release_artists(
     let mut release_db_ids = Vec::new();
     let mut seen_release_db_ids = HashSet::new();
     for release in releases {
-        if let Some(release_db_id) = release.db_id.clone().map(DbId::from) {
-            if seen_release_db_ids.insert(release_db_id) {
-                release_db_ids.push(release_db_id);
-            }
+        if let Some(release_db_id) = release.db_id.clone().map(DbId::from)
+            && seen_release_db_ids.insert(release_db_id)
+        {
+            release_db_ids.push(release_db_id);
         }
     }
 

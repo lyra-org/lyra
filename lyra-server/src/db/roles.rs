@@ -340,10 +340,10 @@ pub(crate) fn ensure_user_has_role(
     user_db_id: DbId,
     role_name: &str,
 ) -> anyhow::Result<()> {
-    if let Some(current) = get_role_for_user(db, user_db_id)? {
-        if current.name == role_name {
-            return Ok(());
-        }
+    if let Some(current) = get_role_for_user(db, user_db_id)?
+        && current.name == role_name
+    {
+        return Ok(());
     }
 
     let role = get_by_name(db, role_name)?

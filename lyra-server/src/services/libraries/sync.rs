@@ -239,10 +239,11 @@ async fn prune_missing_entries_for_scan(
     } else {
         0
     };
-    let prune_result = match {
+    let prune_write_result = {
         let mut db_write = db.write().await;
         prune_missing_entries(&mut db_write, library, observed_paths)
-    } {
+    };
+    let prune_result = match prune_write_result {
         Ok(result) => result,
         Err(err) => {
             if let Some(progress) = &progress {
@@ -634,10 +635,11 @@ async fn process_metadata_group(
         "scan group stage started"
     );
 
-    let apply_result = match {
+    let apply_write_result = {
         let mut db_write = db.write().await;
         apply_metadata(&mut db_write, library_db_id, metadata)
-    } {
+    };
+    let apply_result = match apply_write_result {
         Ok(result) => result,
         Err(err) => {
             if let Some(progress) = &progress {
@@ -681,6 +683,27 @@ struct ReleaseArtifactPlan {
     track_ids: Vec<DbId>,
 }
 
+struct ReleaseArtifactContext<'a> {
+    db: &'a DbAsync,
+    library_db_id: DbId,
+    library_path: &'a Path,
+    release_id: DbId,
+    release_public_id: Option<String>,
+    release_title: Option<String>,
+    run_id: String,
+    progress: Option<SyncRunProgress>,
+}
+
+impl ReleaseArtifactContext<'_> {
+    fn details(&self, stage: &'static str) -> SyncWorkDetails {
+        SyncWorkDetails::release(
+            stage,
+            self.release_public_id.clone(),
+            self.release_title.clone(),
+        )
+    }
+}
+
 async fn release_artifact_plan(
     db: &DbAsync,
     release_id: DbId,
@@ -713,6 +736,16 @@ async fn process_release_artifacts(
     let release_id = plan.release_id;
     let release_public_id = plan.release_public_id.clone();
     let release_title = plan.release_title.clone();
+    let context = ReleaseArtifactContext {
+        db,
+        library_db_id,
+        library_path,
+        release_id,
+        release_public_id: release_public_id.clone(),
+        release_title: release_title.clone(),
+        run_id: run_id.clone(),
+        progress: progress.clone(),
+    };
     let options = LibraryRefreshOptions {
         replace_cover: false,
         force_refresh: false,
@@ -740,17 +773,7 @@ async fn process_release_artifacts(
     )
     .await?;
 
-    let _ = sync_local_release_cover_metadata(
-        db,
-        library_db_id,
-        library_path,
-        release_id,
-        release_public_id.clone(),
-        release_title.clone(),
-        run_id.clone(),
-        progress.clone(),
-    )
-    .await;
+    let _ = sync_local_release_cover_metadata(&context).await;
 
     let _ = dispatch_release_lyrics(
         library_db_id,
@@ -761,37 +784,14 @@ async fn process_release_artifacts(
     )
     .await?;
 
-    let _ = sync_provider_release_cover(
-        db,
-        library_db_id,
-        library_path,
-        release_id,
-        release_public_id,
-        release_title,
-        run_id,
-        progress.clone(),
-    )
-    .await;
+    let _ = sync_provider_release_cover(&context).await;
     Ok(())
 }
 
-async fn sync_local_release_cover_metadata(
-    db: &DbAsync,
-    library_db_id: DbId,
-    library_path: &Path,
-    release_id: DbId,
-    release_public_id: Option<String>,
-    release_title: Option<String>,
-    run_id: String,
-    progress: Option<SyncRunProgress>,
-) -> bool {
+async fn sync_local_release_cover_metadata(context: &ReleaseArtifactContext<'_>) -> bool {
     let started = Instant::now();
-    let details = SyncWorkDetails::release(
-        "local_cover_metadata",
-        release_public_id.clone(),
-        release_title.clone(),
-    );
-    let work_id = if let Some(progress) = &progress {
+    let details = context.details("local_cover_metadata");
+    let work_id = if let Some(progress) = &context.progress {
         progress
             .start_work(SyncStageKey::LocalCoverMetadata, details.clone())
             .await
@@ -800,18 +800,18 @@ async fn sync_local_release_cover_metadata(
     };
     let covers_root = configured_covers_root();
     let cover_paths = CoverPaths {
-        library_root: Some(library_path),
+        library_root: Some(context.library_path),
         covers_root: covers_root.as_deref(),
     };
     let resolved = {
-        let db_read = db.read().await;
-        match resolve_cover_for_release_id(&db_read, release_id, cover_paths) {
+        let db_read = context.db.read().await;
+        match resolve_cover_for_release_id(&db_read, context.release_id, cover_paths) {
             Ok(path) => path,
             Err(err) => {
                 tracing::warn!(
-                    library_db_id = library_db_id.0,
-                    run_id = %run_id,
-                    release_db_id = release_id.0,
+                    library_db_id = context.library_db_id.0,
+                    run_id = %context.run_id,
+                    release_db_id = context.release_id.0,
                     stage = "local_cover_metadata",
                     error = %err,
                     "scan release local cover resolution failed"
@@ -823,13 +823,13 @@ async fn sync_local_release_cover_metadata(
 
     let Some(cover_path) = resolved else {
         tracing::debug!(
-            library_db_id = library_db_id.0,
-            run_id = %run_id,
-            release_db_id = release_id.0,
+            library_db_id = context.library_db_id.0,
+            run_id = %context.run_id,
+            release_db_id = context.release_id.0,
             stage = "local_cover_metadata",
             "scan release local cover not found"
         );
-        if let Some(progress) = &progress {
+        if let Some(progress) = &context.progress {
             progress
                 .complete_work(work_id, SyncStageKey::LocalCoverMetadata)
                 .await;
@@ -837,17 +837,17 @@ async fn sync_local_release_cover_metadata(
         return false;
     };
 
-    match upsert_release_cover_metadata(db, release_id, &cover_path).await {
+    match upsert_release_cover_metadata(context.db, context.release_id, &cover_path).await {
         Ok(changed) => {
-            if let Some(progress) = &progress {
+            if let Some(progress) = &context.progress {
                 progress
                     .complete_work(work_id, SyncStageKey::LocalCoverMetadata)
                     .await;
             }
             tracing::info!(
-                library_db_id = library_db_id.0,
-                run_id = %run_id,
-                release_db_id = release_id.0,
+                library_db_id = context.library_db_id.0,
+                run_id = %context.run_id,
+                release_db_id = context.release_id.0,
                 stage = "local_cover_metadata",
                 changed,
                 cover_path = %cover_path.display(),
@@ -857,7 +857,7 @@ async fn sync_local_release_cover_metadata(
             changed
         }
         Err(err) => {
-            if let Some(progress) = &progress {
+            if let Some(progress) = &context.progress {
                 progress
                     .fail_work(
                         work_id,
@@ -868,9 +868,9 @@ async fn sync_local_release_cover_metadata(
                     .await;
             }
             tracing::warn!(
-                library_db_id = library_db_id.0,
-                run_id = %run_id,
-                release_db_id = release_id.0,
+                library_db_id = context.library_db_id.0,
+                run_id = %context.run_id,
+                release_db_id = context.release_id.0,
                 stage = "local_cover_metadata",
                 cover_path = %cover_path.display(),
                 error = %err,
@@ -948,23 +948,10 @@ async fn dispatch_release_lyrics(
     Ok(track_count)
 }
 
-async fn sync_provider_release_cover(
-    db: &DbAsync,
-    library_db_id: DbId,
-    library_path: &Path,
-    release_id: DbId,
-    release_public_id: Option<String>,
-    release_title: Option<String>,
-    run_id: String,
-    progress: Option<SyncRunProgress>,
-) -> bool {
+async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) -> bool {
     let started = Instant::now();
-    let details = SyncWorkDetails::release(
-        "provider_cover",
-        release_public_id.clone(),
-        release_title.clone(),
-    );
-    let work_id = if let Some(progress) = &progress {
+    let details = context.details("provider_cover");
+    let work_id = if let Some(progress) = &context.progress {
         progress
             .start_work(SyncStageKey::ProviderCover, details.clone())
             .await
@@ -973,16 +960,16 @@ async fn sync_provider_release_cover(
     };
     let covers_root = configured_covers_root();
     let cover_paths = CoverPaths {
-        library_root: Some(library_path),
+        library_root: Some(context.library_path),
         covers_root: covers_root.as_deref(),
     };
 
     let release_bundle = {
-        let db_read = db.read().await;
-        match db::releases::get_by_id(&db_read, release_id) {
+        let db_read = context.db.read().await;
+        match db::releases::get_by_id(&db_read, context.release_id) {
             Ok(Some(release)) => {
-                let tracks = db::tracks::get(&db_read, release_id).unwrap_or_default();
-                let artists = db::artists::get(&db_read, release_id).unwrap_or_default();
+                let tracks = db::tracks::get(&db_read, context.release_id).unwrap_or_default();
+                let artists = db::artists::get(&db_read, context.release_id).unwrap_or_default();
                 Ok(Some((release, tracks, artists)))
             }
             Ok(None) => Ok(None),
@@ -992,7 +979,7 @@ async fn sync_provider_release_cover(
     let (release, tracks, artists) = match release_bundle {
         Ok(Some(bundle)) => bundle,
         Ok(None) => {
-            if let Some(progress) = &progress {
+            if let Some(progress) = &context.progress {
                 progress
                     .fail_work(
                         work_id,
@@ -1005,7 +992,7 @@ async fn sync_provider_release_cover(
             return false;
         }
         Err(err) => {
-            if let Some(progress) = &progress {
+            if let Some(progress) = &context.progress {
                 progress
                     .fail_work(
                         work_id,
@@ -1016,9 +1003,9 @@ async fn sync_provider_release_cover(
                     .await;
             }
             tracing::warn!(
-                library_db_id = library_db_id.0,
-                run_id = %run_id,
-                release_db_id = release_id.0,
+                library_db_id = context.library_db_id.0,
+                run_id = %context.run_id,
+                release_db_id = context.release_id.0,
                 stage = "provider_cover",
                 error = %err,
                 "scan release load failed before provider cover sync"
@@ -1028,7 +1015,7 @@ async fn sync_provider_release_cover(
     };
 
     let synced = match sync_release_cover_for_tracks(
-        db,
+        context.db,
         &tracks,
         &release,
         &artists,
@@ -1041,7 +1028,7 @@ async fn sync_provider_release_cover(
     .await
     {
         Ok(synced) => {
-            if let Some(progress) = &progress {
+            if let Some(progress) = &context.progress {
                 progress
                     .complete_work(work_id, SyncStageKey::ProviderCover)
                     .await;
@@ -1049,7 +1036,7 @@ async fn sync_provider_release_cover(
             synced
         }
         Err(err) => {
-            if let Some(progress) = &progress {
+            if let Some(progress) = &context.progress {
                 progress
                     .fail_work(
                         work_id,
@@ -1060,9 +1047,9 @@ async fn sync_provider_release_cover(
                     .await;
             }
             tracing::warn!(
-                library_db_id = library_db_id.0,
-                run_id = %run_id,
-                release_db_id = release_id.0,
+                library_db_id = context.library_db_id.0,
+                run_id = %context.run_id,
+                release_db_id = context.release_id.0,
                 stage = "provider_cover",
                 error = %err,
                 "scan release provider cover sync failed"
@@ -1072,29 +1059,30 @@ async fn sync_provider_release_cover(
     };
 
     let resolved = {
-        let db_read = db.read().await;
-        resolve_cover_for_release_id(&db_read, release_id, cover_paths)
+        let db_read = context.db.read().await;
+        resolve_cover_for_release_id(&db_read, context.release_id, cover_paths)
             .ok()
             .flatten()
     };
-    if let Some(cover_path) = resolved {
-        if let Err(err) = upsert_release_cover_metadata(db, release_id, &cover_path).await {
-            tracing::warn!(
-                library_db_id = library_db_id.0,
-                run_id = %run_id,
-                release_db_id = release_id.0,
-                stage = "provider_cover",
-                cover_path = %cover_path.display(),
-                error = %err,
-                "scan release provider cover metadata sync failed"
-            );
-        }
+    if let Some(cover_path) = resolved
+        && let Err(err) =
+            upsert_release_cover_metadata(context.db, context.release_id, &cover_path).await
+    {
+        tracing::warn!(
+            library_db_id = context.library_db_id.0,
+            run_id = %context.run_id,
+            release_db_id = context.release_id.0,
+            stage = "provider_cover",
+            cover_path = %cover_path.display(),
+            error = %err,
+            "scan release provider cover metadata sync failed"
+        );
     }
 
     tracing::info!(
-        library_db_id = library_db_id.0,
-        run_id = %run_id,
-        release_db_id = release_id.0,
+        library_db_id = context.library_db_id.0,
+        run_id = %context.run_id,
+        release_db_id = context.release_id.0,
         stage = "provider_cover",
         synced,
         elapsed_ms = started.elapsed().as_millis() as u64,

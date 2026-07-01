@@ -125,15 +125,10 @@ struct LibraryUpdateRequest {
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Clone, Copy, Deserialize, Serialize)]
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
 enum LibraryAccessKind {
+    #[default]
     ReadWrite,
-}
-
-impl Default for LibraryAccessKind {
-    fn default() -> Self {
-        Self::ReadWrite
-    }
 }
 
 impl From<LibraryAccessKind> for db::libraries::AccessKind {

@@ -249,20 +249,16 @@ pub(crate) fn build_entity_provider_context(
     let Some(element) = result.elements.into_iter().next() else {
         return Err(EntityContextError::EntityNotFound(entity_id.0));
     };
-    let entity_type = detect_entity_type(&element).map_err(anyhow::Error::from)?;
+    let entity_type = detect_entity_type(&element)?;
 
     match entity_type {
         DetectedEntityType::Release => Ok((
             EntityType::Release,
-            build_release_context(db, entity_id, library_id).map_err(anyhow::Error::from)?,
+            build_release_context(db, entity_id, library_id)?,
         )),
-        DetectedEntityType::Track => Ok((
-            EntityType::Track,
-            build_track_context(db, entity_id).map_err(anyhow::Error::from)?,
-        )),
-        DetectedEntityType::Artist => Ok((
-            EntityType::Artist,
-            build_artist_context(db, entity_id).map_err(anyhow::Error::from)?,
-        )),
+        DetectedEntityType::Track => Ok((EntityType::Track, build_track_context(db, entity_id)?)),
+        DetectedEntityType::Artist => {
+            Ok((EntityType::Artist, build_artist_context(db, entity_id)?))
+        }
     }
 }

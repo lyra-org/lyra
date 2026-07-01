@@ -611,10 +611,10 @@ pub(super) fn resolve_audio_entry_for_cue_track(
         .file_stem()
         .and_then(|value| value.to_str())
         .map(normalize_lookup_key)?;
-    if let Some(candidates) = audio_by_stem.get(&stem_key) {
-        if candidates.len() == 1 {
-            return candidates.first().cloned();
-        }
+    if let Some(candidates) = audio_by_stem.get(&stem_key)
+        && candidates.len() == 1
+    {
+        return candidates.first().cloned();
     }
 
     // Keep a literal fallback for malformed CUE refs that include slash-like

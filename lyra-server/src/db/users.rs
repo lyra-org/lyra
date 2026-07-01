@@ -182,10 +182,10 @@ pub(crate) fn ensure_default_user(db: &mut DbAny, default_username: &str) -> any
         return Err(anyhow::anyhow!("default username cannot be empty"));
     }
 
-    if let Some(user) = get_by_username(db, &username)? {
-        if let Some(db_id) = user.db_id {
-            return Ok(db_id);
-        }
+    if let Some(user) = get_by_username(db, &username)?
+        && let Some(db_id) = user.db_id
+    {
+        return Ok(db_id);
     }
 
     create(

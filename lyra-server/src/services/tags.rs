@@ -422,7 +422,7 @@ pub(crate) fn list_for_user(
     limit: u64,
     cursor: Option<TagListCursor>,
 ) -> Result<PagedTags, TagServiceError> {
-    let clamped = limit.min(LIST_HARD_LIMIT).max(1);
+    let clamped = limit.clamp(1, LIST_HARD_LIMIT);
     db::tags::list_for_user(db, owner_db_id, clamped, cursor).map_err(TagServiceError::Internal)
 }
 
@@ -435,7 +435,7 @@ pub(crate) fn list_targets(
     cursor: Option<TargetListCursor>,
 ) -> Result<PagedTargets, TagServiceError> {
     ensure_owner(db, tag_db_id, owner_db_id)?;
-    let clamped = limit.min(LIST_HARD_LIMIT).max(1);
+    let clamped = limit.clamp(1, LIST_HARD_LIMIT);
     let page = db::tags::list_targets(db, tag_db_id, clamped, cursor)
         .map_err(TagServiceError::Internal)?;
 

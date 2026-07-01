@@ -114,10 +114,10 @@ pub(crate) fn apply_merged_metadata_to_entity(db: &mut DbAny, node_id: DbId) -> 
         if apply_to_track(&mut track, &merged) {
             db::tracks::update(db, &track)?;
         }
-    } else if let Some(mut artist) = db::artists::get_by_id(db, node_id)? {
-        if apply_to_artist(&mut artist, &merged) {
-            db::artists::update(db, &artist)?;
-        }
+    } else if let Some(mut artist) = db::artists::get_by_id(db, node_id)?
+        && apply_to_artist(&mut artist, &merged)
+    {
+        db::artists::update(db, &artist)?;
     }
 
     Ok(())
@@ -253,17 +253,17 @@ fn extract_label_inputs(merged: &MergedMetadata) -> Option<Vec<db::labels::Label
 fn apply_to_release(release: &mut Release, merged: &MergedMetadata) -> bool {
     let mut changed = false;
 
-    if let Some(title) = merged.fields.get("release_title").and_then(|v| v.as_str()) {
-        if release.release_title != title {
-            release.set_release_title(title.to_string());
-            changed = true;
-        }
+    if let Some(title) = merged.fields.get("release_title").and_then(|v| v.as_str())
+        && release.release_title != title
+    {
+        release.set_release_title(title.to_string());
+        changed = true;
     }
-    if let Some(sort_title) = merged.fields.get("sort_title").and_then(|v| v.as_str()) {
-        if release.sort_title.as_deref() != Some(sort_title) {
-            release.set_sort_title(sort_title.to_string());
-            changed = true;
-        }
+    if let Some(sort_title) = merged.fields.get("sort_title").and_then(|v| v.as_str())
+        && release.sort_title.as_deref() != Some(sort_title)
+    {
+        release.set_sort_title(sort_title.to_string());
+        changed = true;
     }
     if let Some(release_type_str) = merged.fields.get("release_type").and_then(|v| v.as_str()) {
         let next = db::releases::ReleaseType::from_db_str(release_type_str)
@@ -294,17 +294,17 @@ fn apply_to_release(release: &mut Release, merged: &MergedMetadata) -> bool {
 fn apply_to_track(track: &mut Track, merged: &MergedMetadata) -> bool {
     let mut changed = false;
 
-    if let Some(title) = merged.fields.get("track_title").and_then(|v| v.as_str()) {
-        if track.track_title != title {
-            track.set_track_title(title.to_string());
-            changed = true;
-        }
+    if let Some(title) = merged.fields.get("track_title").and_then(|v| v.as_str())
+        && track.track_title != title
+    {
+        track.set_track_title(title.to_string());
+        changed = true;
     }
-    if let Some(sort_title) = merged.fields.get("sort_title").and_then(|v| v.as_str()) {
-        if track.sort_title.as_deref() != Some(sort_title) {
-            track.set_sort_title(sort_title.to_string());
-            changed = true;
-        }
+    if let Some(sort_title) = merged.fields.get("sort_title").and_then(|v| v.as_str())
+        && track.sort_title.as_deref() != Some(sort_title)
+    {
+        track.set_sort_title(sort_title.to_string());
+        changed = true;
     }
     if let Some(year) = merged.fields.get("year").and_then(|v| v.as_u64()) {
         let next = Some(year as u32);
@@ -348,11 +348,11 @@ fn apply_to_track(track: &mut Track, merged: &MergedMetadata) -> bool {
 fn apply_to_artist(artist: &mut Artist, merged: &MergedMetadata) -> bool {
     let mut changed = false;
 
-    if let Some(name) = merged.fields.get("artist_name").and_then(|v| v.as_str()) {
-        if artist.artist_name != name {
-            artist.set_artist_name(name.to_string());
-            changed = true;
-        }
+    if let Some(name) = merged.fields.get("artist_name").and_then(|v| v.as_str())
+        && artist.artist_name != name
+    {
+        artist.set_artist_name(name.to_string());
+        changed = true;
     }
     if let Some(at_str) = merged.fields.get("artist_type").and_then(|v| v.as_str()) {
         match crate::db::ArtistType::from_db_str(at_str) {
@@ -377,17 +377,17 @@ fn apply_to_artist(artist: &mut Artist, merged: &MergedMetadata) -> bool {
             }
         }
     }
-    if let Some(sort_name) = merged.fields.get("sort_name").and_then(|v| v.as_str()) {
-        if artist.sort_name.as_deref() != Some(sort_name) {
-            artist.set_sort_name(sort_name.to_string());
-            changed = true;
-        }
+    if let Some(sort_name) = merged.fields.get("sort_name").and_then(|v| v.as_str())
+        && artist.sort_name.as_deref() != Some(sort_name)
+    {
+        artist.set_sort_name(sort_name.to_string());
+        changed = true;
     }
-    if let Some(description) = merged.fields.get("description").and_then(|v| v.as_str()) {
-        if artist.description.as_deref() != Some(description) {
-            artist.set_description(description.to_string());
-            changed = true;
-        }
+    if let Some(description) = merged.fields.get("description").and_then(|v| v.as_str())
+        && artist.description.as_deref() != Some(description)
+    {
+        artist.set_description(description.to_string());
+        changed = true;
     }
 
     changed

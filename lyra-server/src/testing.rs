@@ -251,7 +251,7 @@ pub async fn prepare_fixture(
         .ok_or_else(|| anyhow::anyhow!("fixture release missing db_id"))?;
 
     Ok(PreparedFixture {
-        library_id: DbId::from(library_db_id).0,
+        library_id: library_db_id.0,
         release_id: DbId::from(release_db_id).0,
         track_ids: track_db_ids.into_iter().map(|id| id.0).collect(),
     })
@@ -408,14 +408,14 @@ pub async fn snapshot_fixture(prepared: &PreparedFixture) -> anyhow::Result<Fixt
         .into_iter()
         .map(|artist_id| snapshot_artist(&db, artist_id))
         .collect::<anyhow::Result<_>>()?;
-    artists_snapshot.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+    artists_snapshot.sort_by_key(|a| a.node_id);
 
     let mut tracks: Vec<EntitySnapshot> = track_ids
         .into_iter()
         .filter(|track_id| matches!(db::tracks::get_by_id(&db, *track_id), Ok(Some(_))))
         .map(|track_id| snapshot_track(&db, track_id))
         .collect::<anyhow::Result<_>>()?;
-    tracks.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+    tracks.sort_by_key(|a| a.node_id);
 
     Ok(FixtureSnapshot {
         release,

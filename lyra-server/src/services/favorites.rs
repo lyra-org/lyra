@@ -147,7 +147,7 @@ pub(crate) fn list(
     limit: u64,
     cursor: Option<Cursor>,
 ) -> anyhow::Result<ListPage> {
-    let clamped_limit = limit.min(LIST_HARD_LIMIT).max(1);
+    let clamped_limit = limit.clamp(1, LIST_HARD_LIMIT);
     let page = db::favorites::list(db, user_db_id, kind, clamped_limit, cursor)?;
 
     let edges = if kind == FavoriteKind::Playlist {

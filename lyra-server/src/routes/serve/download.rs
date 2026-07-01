@@ -33,6 +33,7 @@ use crate::routes::{
 };
 
 use super::{
+    ServeTrackOptions,
     apply_request_start_offset,
     apply_transcode_policy,
     configure_output,
@@ -100,6 +101,11 @@ struct DownloadQuery {
     start_offset_ms: Option<u64>,
 }
 
+pub(crate) struct DownloadTrackRequest {
+    pub(crate) output: ServeTrackOptions,
+    pub(crate) media_token: Option<String>,
+}
+
 async fn get_download(
     Path(track_id): Path<String>,
     Query(query): Query<DownloadQuery>,
@@ -113,14 +119,18 @@ async fn get_download(
     download_track_response(
         &headers,
         track_db_id,
-        query.format,
-        query.codec,
-        query.bitrate_bps,
-        query.sample_rate_hz,
-        query.channels,
-        query.prefer_vbr,
-        query.start_offset_ms,
-        query.media_token,
+        DownloadTrackRequest {
+            output: ServeTrackOptions {
+                format: query.format,
+                codec: query.codec,
+                bitrate_bps: query.bitrate_bps,
+                sample_rate_hz: query.sample_rate_hz,
+                channels: query.channels,
+                prefer_vbr: query.prefer_vbr,
+                start_offset_ms: query.start_offset_ms,
+            },
+            media_token: query.media_token,
+        },
     )
     .await
 }
@@ -128,15 +138,21 @@ async fn get_download(
 pub(crate) async fn download_track_response(
     headers: &HeaderMap,
     track_db_id: agdb::DbId,
-    format: Option<String>,
-    codec: Option<String>,
-    bitrate_bps: Option<u32>,
-    sample_rate_hz: Option<u32>,
-    channels: Option<u32>,
-    prefer_vbr: Option<bool>,
-    start_offset_ms: Option<u64>,
-    media_token: Option<String>,
+    request: DownloadTrackRequest,
 ) -> Result<Response<Body>, AppError> {
+    let DownloadTrackRequest {
+        output:
+            ServeTrackOptions {
+                format,
+                codec,
+                bitrate_bps,
+                sample_rate_hz,
+                channels,
+                prefer_vbr,
+                start_offset_ms,
+            },
+        media_token,
+    } = request;
     match super::require_download_track_access(headers, media_token.as_deref(), track_db_id).await?
     {
         super::TrackAccess::Principal(principal) => {

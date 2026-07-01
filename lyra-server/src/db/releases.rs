@@ -212,7 +212,7 @@ fn valid_year_month(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.get(4) == Some(&b'-')
         && valid_year(&value[..4])
-        && value[5..7].as_bytes().iter().all(u8::is_ascii_digit)
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
         && value[5..7]
             .parse::<u32>()
             .is_ok_and(|month| (1..=12).contains(&month))
@@ -223,7 +223,7 @@ fn valid_year_month_day(value: &str) -> bool {
     if bytes.get(7) != Some(&b'-') || !valid_year_month(&value[..7]) {
         return false;
     }
-    if !value[8..10].as_bytes().iter().all(u8::is_ascii_digit) {
+    if !bytes[8..10].iter().all(u8::is_ascii_digit) {
         return false;
     }
 

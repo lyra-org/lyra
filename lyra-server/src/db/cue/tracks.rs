@@ -126,10 +126,7 @@ pub(crate) fn upsert(
                 .ids(target_id)
                 .query(),
         )?;
-        let entry_targets: Vec<entries::Entry> = match entry_query.try_into() {
-            Ok(entries) => entries,
-            Err(_) => Vec::new(),
-        };
+        let entry_targets: Vec<entries::Entry> = entry_query.try_into().unwrap_or_default();
         let is_entry_target = !entry_targets.is_empty();
         if is_entry_target && target_id != audio_entry_id {
             db.exec_mut(QueryBuilder::remove().ids(edge.id).query())?;

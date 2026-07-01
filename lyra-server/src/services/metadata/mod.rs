@@ -260,7 +260,7 @@ pub(crate) async fn parse_metadata(
             }
         };
         let file_path = path.to_string_lossy().to_string();
-        let raw = extract_raw_tags_from_lofty(&tag, &tagged_file, &file_path, &mapping_config);
+        let raw = extract_raw_tags_from_lofty(&tag, &tagged_file, &file_path, mapping_config);
         if let Err(missing) = mapping::check_required_fields(&raw) {
             tracing::warn!(
                 path = %path.display(),
