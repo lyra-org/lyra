@@ -1081,18 +1081,7 @@ api.post(P .. "/Users/AuthenticateByName", function(ctx: ApiContext)
 	return api.response.json(200, session.to_authentication_result(login_result))
 end, "public", true)
 api.get(P .. "/Users/Public", function(): ApiResponse
-	-- TODO: Match Jellyfin public-user filtering (hidden/disabled, device visibility, and remote-access gating) instead of returning all users.
-	local listed_users = users.list()
-	if listed_users == nil then
-		return api.response.json(200, {})
-	end
-
-	local public_users = {}
-	for _, user in listed_users do
-		table.insert(public_users, session.to_jellyfin_user(user))
-	end
-
-	return api.response.json(200, public_users)
+	return api.response.json(200, {})
 end, "public", true)
 api.get(P .. "/Users", function(ctx: ApiContext): ApiResponse
 	local principal = session.require_jellyfin_principal(ctx)
