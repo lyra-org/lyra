@@ -77,6 +77,19 @@ fn map_install_error(error: InstallError) -> PluginRepoError {
     }
 }
 
+fn ensure_plugin_path_id(plugin_id: &str) -> Result<(), PluginRepoError> {
+    let valid = !plugin_id.is_empty()
+        && plugin_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if !valid {
+        return Err(PluginRepoError::BadRequest(format!(
+            "invalid plugin id: {plugin_id}"
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct PluginPreview {
     pub(crate) id: String,
@@ -267,9 +280,10 @@ pub(crate) enum UpdateOutcome {
 /// when the resolved commit differs. Branch refs track new commits; tag
 /// and SHA refs stay pinned by construction.
 pub(crate) async fn update_plugin(plugin_id: &str) -> Result<UpdateOutcome, PluginRepoError> {
+    ensure_plugin_path_id(plugin_id)?;
     let plugins_dir = crate::plugins::bootstrap::plugins_dir();
     let installed_dir = plugins_dir.join(plugin_id);
-    if plugin_id.is_empty() || !installed_dir.is_dir() {
+    if !installed_dir.is_dir() {
         return Err(PluginRepoError::NotFound(format!(
             "plugin not found: {plugin_id}"
         )));
