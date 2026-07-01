@@ -184,6 +184,19 @@ fn release_ids_for_accessible_libraries(
     Ok(release_ids)
 }
 
+fn genre_accessible_to_principal(
+    db: &impl db::DbAccess,
+    principal: &crate::services::auth::Principal,
+    genre_db_id: DbId,
+) -> anyhow::Result<bool> {
+    for release_db_id in genres::get_releases(db, genre_db_id)? {
+        if super::entity_accessible_to_principal(db, principal, release_db_id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 #[derive(Clone, Copy, Debug)]
 enum GenreRouteSortKey {
     Name,
@@ -484,6 +497,9 @@ async fn get_genre(
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
     let genre = genres::get_by_id(db, genre_db_id)?
         .ok_or_else(|| AppError::not_found(format!("Genre not found: {id}")))?;
+    if !genre_accessible_to_principal(db, &principal, genre_db_id)? {
+        return Err(AppError::not_found(format!("Genre not found: {id}")));
+    }
 
     let parents = if inc.parents {
         Some(
@@ -568,9 +584,13 @@ pub(crate) fn genre_openapi_routes() -> aide::axum::ApiRouter {
 
 #[cfg(test)]
 mod tests {
-    use axum::http::{
-        HeaderMap,
-        header::AUTHORIZATION,
+    use axum::{
+        http::{
+            HeaderMap,
+            StatusCode,
+            header::AUTHORIZATION,
+        },
+        response::IntoResponse,
     };
     use nanoid::nanoid;
 
@@ -832,6 +852,81 @@ mod tests {
 
         assert_eq!(genres.len(), 1);
         assert_eq!(genres[0].name, "Rock");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_genre_requires_an_accessible_release() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let (user_db_id, visible_genre_id, hidden_genre_id) = {
+            let mut db = STATE.db.write().await;
+            let user_db_id =
+                db::users::create(&mut db, &db::test_db::test_user("genre-detail-user")?)?;
+            let visible_library = insert_library(
+                &mut db,
+                "Visible Genre Detail",
+                "/tmp/lyra-visible-genre-detail",
+            )?;
+            let hidden_library = insert_library(
+                &mut db,
+                "Hidden Genre Detail",
+                "/tmp/lyra-hidden-genre-detail",
+            )?;
+            let visible_release = insert_test_release(&mut db, "Visible Genre Detail Release")?;
+            let hidden_release = insert_test_release(&mut db, "Hidden Genre Detail Release")?;
+            connect(&mut db, visible_library, visible_release)?;
+            connect(&mut db, hidden_library, hidden_release)?;
+            db::libraries::grant_access(
+                &mut *db,
+                user_db_id,
+                visible_library,
+                db::libraries::AccessKind::ReadWrite,
+            )?;
+            db::genres::sync_release_genres(
+                &mut *db,
+                visible_release,
+                &["Visible Detail Genre".to_string()],
+            )?;
+            db::genres::sync_release_genres(
+                &mut *db,
+                hidden_release,
+                &["Hidden Detail Genre".to_string()],
+            )?;
+            let visible_genre_id = db::genres::get_for_release(&*db, visible_release)?
+                .into_iter()
+                .find(|genre| genre.name == "Visible Detail Genre")
+                .ok_or_else(|| anyhow::anyhow!("visible genre missing"))?
+                .id;
+            let hidden_genre_id = db::genres::get_for_release(&*db, hidden_release)?
+                .into_iter()
+                .find(|genre| genre.name == "Hidden Detail Genre")
+                .ok_or_else(|| anyhow::anyhow!("hidden genre missing"))?
+                .id;
+            (user_db_id, visible_genre_id, hidden_genre_id)
+        };
+        let headers = create_headers_for_user(user_db_id).await?;
+
+        let Json(visible_genre) = get_genre(
+            headers.clone(),
+            Path(visible_genre_id),
+            Query(GenreQuery { inc: None }),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert_eq!(visible_genre.name, "Visible Detail Genre");
+
+        let hidden_result = get_genre(
+            headers,
+            Path(hidden_genre_id),
+            Query(GenreQuery { inc: None }),
+        )
+        .await;
+        let Err(err) = hidden_result else {
+            return Err(anyhow::anyhow!("hidden genre detail should be opaque"));
+        };
+        assert_eq!(err.into_response().status(), StatusCode::NOT_FOUND);
         Ok(())
     }
 
