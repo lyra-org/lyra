@@ -4002,8 +4002,66 @@ function helpers.realize_stubs(stubs: { ItemInfo }, options: ItemsQueryOptions):
 	return items
 end
 
+function helpers.stub_needs_library_access(stub: ItemInfo): boolean
+	return stub._type == "release" or stub._type == "artist" or stub._type == "track"
+end
+
+function helpers.stub_db_id(stub: ItemInfo): number?
+	local raw = stub._raw
+	if type(raw) ~= "table" then
+		return nil
+	end
+	return helpers.resolve_numeric_id(raw.db_id)
+end
+
+function helpers.filter_stubs_by_accessible_libraries(stubs: { ItemInfo }, options: ItemsQueryOptions): { ItemInfo }
+	if options.user_id == nil then
+		return stubs
+	end
+
+	local db_ids: { number } = {}
+	local seen: { [number]: boolean } = {}
+	for _, stub: ItemInfo in stubs do
+		if not helpers.stub_needs_library_access(stub) then
+			continue
+		end
+
+		local db_id = helpers.stub_db_id(stub)
+		if db_id and not seen[db_id] then
+			seen[db_id] = true
+			table.insert(db_ids, db_id)
+		end
+	end
+
+	if #db_ids == 0 then
+		return stubs
+	end
+
+	local ok, libraries_by_entity = pcall(libraries.get_for_entities, db_ids)
+	if not ok or type(libraries_by_entity) ~= "table" then
+		return {}
+	end
+
+	local filtered: { ItemInfo } = {}
+	for _, stub: ItemInfo in stubs do
+		if not helpers.stub_needs_library_access(stub) then
+			table.insert(filtered, stub)
+			continue
+		end
+
+		local db_id = helpers.stub_db_id(stub)
+		if db_id and libraries_by_entity[db_id] then
+			table.insert(filtered, stub)
+		end
+	end
+
+	return filtered
+end
+
 function helpers.page_and_realize_stubs(stubs: { ItemInfo }, options: ItemsQueryOptions): ({ ItemInfo }, number, number)
-	local paged_stubs, total_count, start_index = module.paginate_items(stubs, options.start_index, options.limit)
+	local filtered_stubs = helpers.filter_stubs_by_accessible_libraries(stubs, options)
+	local paged_stubs, total_count, start_index =
+		module.paginate_items(filtered_stubs, options.start_index, options.limit)
 	local items = helpers.realize_stubs(paged_stubs, options)
 	return items, total_count, start_index
 end
@@ -4109,6 +4167,10 @@ function helpers.track_items_by_scope(scope: number?): { Track }
 	return helpers.call_module_get(tracks.list, scope)
 end
 
+function helpers.release_items_by_scope(scope: number?): { Release }
+	return helpers.call_module_get(releases.list, scope)
+end
+
 function helpers.artist_items_by_scope(scope: number?): { Artist }
 	if scope == nil then
 		return helpers.call_module_get(artists_module.list)
@@ -4118,6 +4180,68 @@ function helpers.artist_items_by_scope(scope: number?): { Artist }
 		return if ok and type(result) == "table" then result else {}
 	end
 	return helpers.call_module_get(artists_module.list, scope)
+end
+
+function helpers.accessible_library_db_ids(): { number }?
+	local libs = helpers.call_module_get(libraries.list, nil)
+	local library_ids: { number } = {}
+	for _, lib: LibraryInfo in libs :: { LibraryInfo } do
+		if lib.db_id and lib.db_id > 0 then
+			table.insert(library_ids, lib.db_id)
+		end
+	end
+	return library_ids
+end
+
+function helpers.append_accessible_release_stubs(stubs: { ItemInfo }, library_ids: { number }): ()
+	local seen: { [number]: boolean } = {}
+	for _, library_id: number in library_ids do
+		for _, release: Release in helpers.release_items_by_scope(library_id) do
+			local db_id = release.db_id
+			if not db_id or seen[db_id] then
+				continue
+			end
+			seen[db_id] = true
+			local stub = helpers.to_release_stub(release)
+			if stub then
+				table.insert(stubs, stub)
+			end
+		end
+	end
+end
+
+function helpers.append_accessible_artist_stubs(stubs: { ItemInfo }, library_ids: { number }): ()
+	local seen: { [number]: boolean } = {}
+	for _, library_id: number in library_ids do
+		for _, artist: Artist in helpers.artist_items_by_scope(library_id) do
+			local db_id = artist.db_id
+			if not db_id or seen[db_id] then
+				continue
+			end
+			seen[db_id] = true
+			local stub = helpers.to_artist_stub(artist)
+			if stub then
+				table.insert(stubs, stub)
+			end
+		end
+	end
+end
+
+function helpers.append_accessible_track_stubs(stubs: { ItemInfo }, library_ids: { number }): ()
+	local seen: { [number]: boolean } = {}
+	for _, library_id: number in library_ids do
+		for _, track: Track in helpers.track_items_by_scope(library_id) do
+			local db_id = track.db_id
+			if not db_id or seen[db_id] then
+				continue
+			end
+			seen[db_id] = true
+			local stub = helpers.to_track_stub(track)
+			if stub then
+				table.insert(stubs, stub)
+			end
+		end
+	end
 end
 
 function helpers.resolve_person_credit_query_scope(
@@ -4260,16 +4384,37 @@ function helpers.append_scoped_listing_stubs(
 	scope: number?,
 	user_id: number?
 ): ()
+	local accessible_library_ids: { number }? = nil
+	if
+		scope == nil
+		and user_id ~= nil
+		and (selected_types.releases or selected_types.artists or selected_types.tracks)
+	then
+		accessible_library_ids = helpers.accessible_library_db_ids()
+	end
+
 	if selected_types.releases then
-		helpers.append_release_stubs(stubs, helpers.call_module_get(releases.list, scope))
+		if accessible_library_ids then
+			helpers.append_accessible_release_stubs(stubs, accessible_library_ids)
+		else
+			helpers.append_release_stubs(stubs, helpers.release_items_by_scope(scope))
+		end
 	end
 
 	if selected_types.artists then
-		helpers.append_artist_stubs(stubs, helpers.artist_items_by_scope(scope))
+		if accessible_library_ids then
+			helpers.append_accessible_artist_stubs(stubs, accessible_library_ids)
+		else
+			helpers.append_artist_stubs(stubs, helpers.artist_items_by_scope(scope))
+		end
 	end
 
 	if selected_types.tracks then
-		helpers.append_track_stubs(stubs, helpers.track_items_by_scope(scope))
+		if accessible_library_ids then
+			helpers.append_accessible_track_stubs(stubs, accessible_library_ids)
+		else
+			helpers.append_track_stubs(stubs, helpers.track_items_by_scope(scope))
+		end
 	end
 
 	if selected_types.playlists and scope == nil then
@@ -4476,6 +4621,10 @@ function helpers.resolve_single_entity_type(options: ItemsQueryOptions): ItemKin
 	return helpers.selected_single_entity_type(helpers.item_type_selection(options))
 end
 
+function helpers.uses_authenticated_root_listing(options: ItemsQueryOptions, parent_scope: ParentScopeInfo): boolean
+	return options.user_id ~= nil and parent_scope.db_id == nil
+end
+
 function helpers.list_items_by_artist_ids(
 	options: ItemsQueryOptions,
 	parent_scope: ParentScopeInfo
@@ -4524,6 +4673,7 @@ function helpers.list_items_by_artist_ids(
 		and (helpers.all_sort_tokens_query_eligible(sort_tokens) or allow_sort_fallback)
 		and not helpers.wants_favorite_only(options)
 		and helpers.can_use_paginated_query(options)
+		and not helpers.uses_authenticated_root_listing(options, parent_scope)
 		and (release_query_allowed or track_query_allowed)
 	then
 		if entity_type == "track" then
@@ -4878,6 +5028,10 @@ function helpers.try_query_single_type_items(
 	options: ItemsQueryOptions,
 	parent_scope: ParentScopeInfo
 ): ({ ItemInfo }?, number?, number?)
+	if helpers.uses_authenticated_root_listing(options, parent_scope) then
+		return nil, nil, nil
+	end
+
 	local sort_tokens = helpers.sort_tokens_from_options(options)
 	local is_random = sort_tokens[1] == "random"
 	if
@@ -5120,6 +5274,7 @@ function module.list_latest_items(options: ItemsQueryOptions): ({ ItemInfo }, nu
 		and not helpers.wants_favorite_only(options)
 		and helpers.can_use_paginated_query(options)
 		and not options.group_items
+		and not helpers.uses_authenticated_root_listing(options, parent_scope)
 	if use_paginated_query and entity_type then
 		local items, total_count, offset =
 			helpers.query_single_type_with_sort(entity_type, options, parent_scope, { "id" }, "descending")
