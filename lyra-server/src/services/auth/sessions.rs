@@ -80,10 +80,10 @@ fn last_seen_cache(
 fn should_persist_last_seen(session_id: DbId, now: i64) -> bool {
     let generation = STATE.generation();
     let cache = last_seen_cache(&generation);
-    match cache.get(&session_id) {
-        Some(&last) if now.saturating_sub(last) < LAST_SEEN_DEBOUNCE_SECS => false,
-        _ => true,
-    }
+    !matches!(
+        cache.get(&session_id),
+        Some(&last) if now.saturating_sub(last) < LAST_SEEN_DEBOUNCE_SECS
+    )
 }
 
 fn record_persisted_last_seen(session_id: DbId, now: i64) {
@@ -189,10 +189,8 @@ pub(crate) async fn revoke_session_by_token(token: &str) -> SessionServiceResult
         .map(|(_, _, session_id)| session_id);
     let removed = db::users::revoke_session_by_token_hash(&mut db, &token_hash)?;
     drop(db);
-    if removed {
-        if let Some(session_id) = session_id {
-            forget_last_seen(session_id);
-        }
+    if removed && let Some(session_id) = session_id {
+        forget_last_seen(session_id);
     }
     Ok(removed)
 }

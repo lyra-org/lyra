@@ -506,7 +506,7 @@ pub(crate) fn project_entities(
         }
     }
 
-    let has_include = |target| includes.iter().any(|include| *include == target);
+    let has_include = |target| includes.contains(&target);
     let library_root = if has_include(EntityInclude::Tracks) {
         if let Some(lib_id) = library_id {
             db::libraries::get_by_id(db, lib_id)?

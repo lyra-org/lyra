@@ -45,11 +45,11 @@ fn config_candidate_paths() -> Vec<PathBuf> {
         candidates.push(cwd.join("config.json"));
     }
 
-    if let Ok(exe) = env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            candidates.push(exe_dir.join("config.json"));
-            candidates.push(exe_dir.join("..").join("config.json"));
-        }
+    if let Ok(exe) = env::current_exe()
+        && let Some(exe_dir) = exe.parent()
+    {
+        candidates.push(exe_dir.join("config.json"));
+        candidates.push(exe_dir.join("..").join("config.json"));
     }
 
     candidates.push(manifest_parent.join("config.json"));
@@ -121,7 +121,7 @@ pub(crate) struct RateLimitConfig {
     pub(crate) login_burst: u32,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 pub(crate) struct LibraryConfig {
     #[serde(default)]
     pub(crate) path: Option<PathBuf>,
@@ -155,7 +155,7 @@ pub(crate) struct AuthConfig {
     pub(crate) session_ttl_seconds: u64,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 pub(crate) struct SyncConfig {
     #[serde(default)]
     pub(crate) interval_secs: u64,
@@ -168,35 +168,13 @@ pub(crate) struct HlsConfig {
     pub(crate) max_concurrent_transcodes: Option<u32>,
 }
 
-impl Default for SyncConfig {
-    fn default() -> Self {
-        Self { interval_secs: 0 }
-    }
-}
-
-impl Default for LibraryConfig {
-    fn default() -> Self {
-        Self {
-            path: None,
-            name: None,
-            language: None,
-            country: None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DbKind {
+    #[default]
     Memory,
     File,
     Mmap,
-}
-
-impl Default for DbKind {
-    fn default() -> Self {
-        DbKind::Memory
-    }
 }
 
 impl Default for DbConfig {
@@ -583,8 +561,10 @@ mod tests {
 
     #[test]
     fn published_url_is_normalized_to_origin() -> anyhow::Result<()> {
-        let mut config = Config::default();
-        config.published_url = Some(" http://LOCALHOST:8080/ ".to_string());
+        let mut config = Config {
+            published_url: Some(" http://LOCALHOST:8080/ ".to_string()),
+            ..Config::default()
+        };
 
         normalize_published_url(&mut config)?;
 
@@ -597,8 +577,10 @@ mod tests {
 
     #[test]
     fn published_url_rejects_paths() {
-        let mut config = Config::default();
-        config.published_url = Some("https://example.com/app".to_string());
+        let mut config = Config {
+            published_url: Some("https://example.com/app".to_string()),
+            ..Config::default()
+        };
 
         let error = normalize_published_url(&mut config).expect_err("expected error");
         assert!(error.to_string().contains("expected an origin"));
@@ -606,8 +588,10 @@ mod tests {
 
     #[test]
     fn published_url_rejects_query_strings() {
-        let mut config = Config::default();
-        config.published_url = Some("https://example.com?token=secret".to_string());
+        let mut config = Config {
+            published_url: Some("https://example.com?token=secret".to_string()),
+            ..Config::default()
+        };
 
         let error = normalize_published_url(&mut config).expect_err("expected error");
         assert!(error.to_string().contains("expected an origin"));

@@ -251,10 +251,7 @@ pub(crate) fn upsert(
                 .ids(target_id)
                 .query(),
         )?;
-        let entry_targets: Vec<super::entries::Entry> = match entry_query.try_into() {
-            Ok(entries) => entries,
-            Err(_) => Vec::new(),
-        };
+        let entry_targets: Vec<super::entries::Entry> = entry_query.try_into().unwrap_or_default();
         if !entry_targets.is_empty() && target_id != entry_db_id {
             db.exec_mut(QueryBuilder::remove().ids(edge.id).query())?;
             continue;
@@ -266,11 +263,8 @@ pub(crate) fn upsert(
                 .ids(target_id)
                 .query(),
         )?;
-        let cue_track_targets: Vec<super::cue::tracks::CueTrack> = match cue_track_query.try_into()
-        {
-            Ok(cue_tracks) => cue_tracks,
-            Err(_) => Vec::new(),
-        };
+        let cue_track_targets: Vec<super::cue::tracks::CueTrack> =
+            cue_track_query.try_into().unwrap_or_default();
         if !cue_track_targets.is_empty() && Some(target_id) != cue_track_id {
             db.exec_mut(QueryBuilder::remove().ids(edge.id).query())?;
         }

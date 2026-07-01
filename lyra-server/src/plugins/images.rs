@@ -201,14 +201,14 @@ async fn compose_impl(options: ComposeOptions) -> Result<ComposeResult> {
     let cache_path = cache_dir().join(format!("{key}.jpg"));
 
     // Check cache first.
-    if cache_path.is_file() {
-        if let Ok(data) = std::fs::read(&cache_path) {
-            return Ok(ComposeResult {
-                path: cache_path.to_string_lossy().to_string(),
-                hash: file_hash(&data),
-                mime_type: "image/jpeg".to_string(),
-            });
-        }
+    if cache_path.is_file()
+        && let Ok(data) = std::fs::read(&cache_path)
+    {
+        return Ok(ComposeResult {
+            path: cache_path.to_string_lossy().to_string(),
+            hash: file_hash(&data),
+            mime_type: "image/jpeg".to_string(),
+        });
     }
 
     let sources_owned = sources.clone();

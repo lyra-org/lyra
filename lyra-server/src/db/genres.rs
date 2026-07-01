@@ -87,10 +87,10 @@ pub(crate) fn find_by_alias(db: &impl DbAccess, alias: &str) -> anyhow::Result<O
                     .query(),
             )?
             .try_into()?;
-        if let Some(genre) = owners.into_iter().next() {
-            if let Some(db_id) = genre.db_id.map(DbId::from) {
-                return Ok(Some(db_id));
-            }
+        if let Some(genre) = owners.into_iter().next()
+            && let Some(db_id) = genre.db_id.map(DbId::from)
+        {
+            return Ok(Some(db_id));
         }
     }
     Ok(None)

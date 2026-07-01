@@ -129,7 +129,7 @@ fn list_callback(
             .map_err(crate::plugins::runtime_error)?
             .ok_or_else(|| crate::plugins::runtime_error("could not resolve scope"))?;
         let tracks = db::tracks::get(&db, query_id).map_err(crate::plugins::runtime_error)?;
-        Ok(harmony_luau::serializable_to_luau_owned(tracks)?)
+        harmony_luau::serializable_to_luau_owned(tracks)
     }))
 }
 
@@ -219,7 +219,7 @@ fn list_by_library_callback(
         let db = db.read().await;
         let tracks = db::tracks::get_by_library(&db, DbId(library_id))
             .map_err(crate::plugins::runtime_error)?;
-        Ok(harmony_luau::serializable_to_luau_owned(tracks)?)
+        harmony_luau::serializable_to_luau_owned(tracks)
     }))
 }
 

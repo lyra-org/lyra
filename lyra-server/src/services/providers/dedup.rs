@@ -266,7 +266,7 @@ pub(super) fn deduplicate_releases_by_external_id(
     }
 
     let mut releases_in_merge_groups = HashSet::new();
-    for (_, release_ids) in &groups {
+    for release_ids in groups.values() {
         if release_ids.len() > 1 {
             for release_db_id in release_ids {
                 releases_in_merge_groups.insert(*release_db_id);

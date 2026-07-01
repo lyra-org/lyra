@@ -267,7 +267,7 @@ async fn list_favorites(
 
 fn looks_like_public_id(candidate: &str) -> bool {
     let len = candidate.len();
-    if len < 6 || len > 64 {
+    if !(6..=64).contains(&len) {
         return false;
     }
     candidate

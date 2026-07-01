@@ -956,8 +956,7 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
     let values = runtime.eval_plugin_source(
         "demo",
         "check.luau",
-        format!(
-            r#"
+        r#"
                 return executor_playlist_id ~= nil,
                     executor_playlist.name,
                     executor_playlist.db_id ~= nil,
@@ -970,8 +969,8 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
                     executor_updated_playlist.name,
                     executor_updated_playlist.is_public,
                     executor_playlist_tracks_after_remove[1] == nil
-            "#,
-        )
+            "#
+        .to_string()
         .into_bytes(),
     )?;
 

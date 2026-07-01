@@ -133,7 +133,7 @@ pub(crate) fn update(db: &mut DbAny, config: &MetadataMappingConfig) -> anyhow::
         let server_db_id: DbId = server_infos
             .into_iter()
             .next()
-            .and_then(|s| s.db_id.map(DbId::from))
+            .and_then(|s| s.db_id)
             .ok_or_else(|| anyhow!("server info missing"))?;
 
         let nodes: Vec<MetadataMappingConfigNode> = t
@@ -204,7 +204,7 @@ pub(crate) fn rollback_to(db: &mut DbAny, config: &MetadataMappingConfig) -> any
         let server_db_id: DbId = server_infos
             .into_iter()
             .next()
-            .and_then(|s| s.db_id.map(DbId::from))
+            .and_then(|s| s.db_id)
             .ok_or_else(|| anyhow!("server info missing"))?;
         let nodes: Vec<MetadataMappingConfigNode> = t
             .exec(

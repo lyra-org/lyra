@@ -259,12 +259,18 @@ fn query_many_callback(
             .map_err(crate::plugins::runtime_error)?;
 
         let mut table = luau::OwnedTable::with_capacity(0, keys.len());
-        for (key, projection) in keys.into_iter().zip(projections.into_iter()) {
+        for (key, projection) in keys.into_iter().zip(projections) {
             table.set_field(key, projection_to_luau_owned(projection)?);
         }
         Ok(luau::Value::TableData(table))
     }))
 }
+
+type QueryManyRequest = (
+    Vec<(String, ResolveId)>,
+    Vec<EntityInclude>,
+    Option<agdb::DbId>,
+);
 
 fn parse_query_request(
     vm: &luau::Vm,
@@ -279,11 +285,7 @@ fn parse_query_request(
 fn parse_query_many_request(
     vm: &luau::Vm,
     request: &luau::Table,
-) -> luau::runtime::Result<(
-    Vec<(String, ResolveId)>,
-    Vec<EntityInclude>,
-    Option<agdb::DbId>,
-)> {
+) -> luau::runtime::Result<QueryManyRequest> {
     let ids = match required_value(vm, request, "ids")? {
         luau::Value::Table(table) => {
             let mut ids = Vec::new();

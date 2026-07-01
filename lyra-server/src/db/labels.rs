@@ -459,11 +459,11 @@ fn remove_release_label(
     super::graph::remove_edges_between(db, release_id, rl_id)?;
     db.exec_mut(QueryBuilder::remove().ids(rl_id).query())?;
 
-    if let Some(label_id) = label_id {
-        if !label_has_other_release_labels(db, label_id, rl_id)? {
-            external_ids::remove_all_for_owner(db, label_id)?;
-            db.exec_mut(QueryBuilder::remove().ids(label_id).query())?;
-        }
+    if let Some(label_id) = label_id
+        && !label_has_other_release_labels(db, label_id, rl_id)?
+    {
+        external_ids::remove_all_for_owner(db, label_id)?;
+        db.exec_mut(QueryBuilder::remove().ids(label_id).query())?;
     }
 
     Ok(())

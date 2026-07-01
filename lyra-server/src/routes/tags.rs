@@ -399,7 +399,7 @@ async fn update_tag(
         principal.user_db_id,
         tag_db_id,
         request.tag.as_deref(),
-        request.color.map(|c| c.as_str()).as_deref(),
+        request.color.map(TagColor::as_str),
     )?;
     Ok(Json(tag_to_response(tag)))
 }

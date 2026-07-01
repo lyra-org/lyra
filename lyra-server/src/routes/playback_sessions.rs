@@ -297,7 +297,7 @@ async fn get_playbacks(
         ));
     }
 
-    response.sort_by(|a, b| b.0.cmp(&a.0));
+    response.sort_by_key(|(updated_at_ms, _)| std::cmp::Reverse(*updated_at_ms));
     let response = response.into_iter().map(|(_, playback)| playback).collect();
 
     Ok(Json(response))
@@ -411,7 +411,7 @@ async fn report_playback_progress(
     let mut db = STATE.db.write().await;
     let session_db_id = db::lookup::find_node_id_by_id(&*db, &playback_session_id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {playback_session_id}")))?;
-    let track_db_id = db::playback_sessions::get_track_id(&*db, session_db_id)?
+    let track_db_id = db::playback_sessions::get_track_id(&db, session_db_id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {playback_session_id}")))?;
     routes::require_entity_accessible(&*db, &principal, track_db_id, || {
         AppError::not_found(format!("not found: {playback_session_id}"))
@@ -558,7 +558,7 @@ async fn get_active_sessions(
         ));
     }
 
-    response.sort_by(|a, b| b.0.cmp(&a.0));
+    response.sort_by_key(|(updated_at_ms, _)| std::cmp::Reverse(*updated_at_ms));
     let response = response.into_iter().map(|(_, session)| session).collect();
 
     Ok(Json(response))

@@ -621,12 +621,12 @@ async fn login_user(
         }
     }
 
-    if let Some(client_name) = body.client_name.as_deref() {
-        if client_name.chars().count() > MAX_CLIENT_NAME_LEN {
-            return Err(AppError::bad_request(format!(
-                "client_name cannot exceed {MAX_CLIENT_NAME_LEN} characters"
-            )));
-        }
+    if let Some(client_name) = body.client_name.as_deref()
+        && client_name.chars().count() > MAX_CLIENT_NAME_LEN
+    {
+        return Err(AppError::bad_request(format!(
+            "client_name cannot exceed {MAX_CLIENT_NAME_LEN} characters"
+        )));
     }
 
     let metadata = SessionMetadata {
@@ -651,9 +651,7 @@ async fn login_user(
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     let header = headers.get(AUTHORIZATION)?.to_str().ok()?;
-    let mut parts = header.splitn(2, char::is_whitespace);
-    let scheme = parts.next()?;
-    let token = parts.next()?;
+    let (scheme, token) = header.split_once(char::is_whitespace)?;
     if scheme.eq_ignore_ascii_case("bearer") {
         Some(token.trim())
     } else {

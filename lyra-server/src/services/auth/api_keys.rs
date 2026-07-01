@@ -37,10 +37,10 @@ fn last_used_cache(
 fn should_persist_last_used(api_key_id: DbId, now: i64) -> bool {
     let generation = STATE.generation();
     let cache = last_used_cache(&generation);
-    match cache.get(&api_key_id) {
-        Some(&last) if now.saturating_sub(last) < LAST_USED_DEBOUNCE_SECS => false,
-        _ => true,
-    }
+    !matches!(
+        cache.get(&api_key_id),
+        Some(&last) if now.saturating_sub(last) < LAST_USED_DEBOUNCE_SECS
+    )
 }
 
 fn record_persisted_last_used(api_key_id: DbId, now: i64) {

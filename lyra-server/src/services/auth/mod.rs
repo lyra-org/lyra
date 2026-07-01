@@ -351,7 +351,7 @@ async fn resolve_auth_from_session_token(token: &str) -> AuthResult<Option<Resol
 async fn resolve_auth_from_api_key(key: &str) -> AuthResult<Option<ResolvedAuth>> {
     let Some(api_key) = api_keys::resolve_api_key(key)
         .await
-        .map_err(|e| AuthError::Internal(e.into()))?
+        .map_err(AuthError::Internal)?
     else {
         return Ok(None);
     };
@@ -378,7 +378,7 @@ pub(crate) async fn resolve_auth_from_bearer(
     let bearer = bearer.map(str::trim).filter(|bearer| !bearer.is_empty());
 
     if !STATE.config.get().auth.enabled {
-        let default_principal = resolve_default_principal().await.map_err(AuthError::from)?;
+        let default_principal = resolve_default_principal().await?;
         let Some(bearer) = bearer else {
             return Ok(Some(ResolvedAuth {
                 principal: default_principal,

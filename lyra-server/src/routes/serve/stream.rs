@@ -50,6 +50,7 @@ use tokio::sync::{
 use crate::routes::AppError;
 
 use super::{
+    ServeTrackOptions,
     apply_request_start_offset,
     apply_transcode_policy,
     configure_output,
@@ -137,13 +138,15 @@ async fn get_stream(
     stream_track_response(
         &headers,
         track_db_id,
-        query.format,
-        query.codec,
-        query.bitrate_bps,
-        query.sample_rate_hz,
-        query.channels,
-        query.prefer_vbr,
-        query.start_offset_ms,
+        ServeTrackOptions {
+            format: query.format,
+            codec: query.codec,
+            bitrate_bps: query.bitrate_bps,
+            sample_rate_hz: query.sample_rate_hz,
+            channels: query.channels,
+            prefer_vbr: query.prefer_vbr,
+            start_offset_ms: query.start_offset_ms,
+        },
     )
     .await
 }
@@ -151,14 +154,17 @@ async fn get_stream(
 pub(crate) async fn stream_track_response(
     headers: &HeaderMap,
     track_db_id: agdb::DbId,
-    format: Option<String>,
-    codec: Option<String>,
-    bitrate_bps: Option<u32>,
-    sample_rate_hz: Option<u32>,
-    channels: Option<u32>,
-    prefer_vbr: Option<bool>,
-    start_offset_ms: Option<u64>,
+    options: ServeTrackOptions,
 ) -> Result<Response<Body>, AppError> {
+    let ServeTrackOptions {
+        format,
+        codec,
+        bitrate_bps,
+        sample_rate_hz,
+        channels,
+        prefer_vbr,
+        start_offset_ms,
+    } = options;
     let validated = validate_request(format, codec)?;
     let source = apply_request_start_offset(
         validate_and_get_track_source(track_db_id).await?,

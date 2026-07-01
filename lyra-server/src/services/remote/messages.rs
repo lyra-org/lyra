@@ -200,6 +200,7 @@ impl ResponseMessage {
 
 /// AsyncAPI specification for the WebSocket remote control protocol.
 #[cfg(feature = "docgen")]
+#[allow(clippy::duplicated_attributes)]
 #[derive(AsyncApi)]
 #[asyncapi(
     title = "Lyra WebSocket Remote Control",

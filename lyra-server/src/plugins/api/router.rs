@@ -3,12 +3,23 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use super::websocket::WebSocketRouteRequest;
 use super::*;
 
 #[derive(Default)]
 pub(crate) struct ApiRouteStore {
     next_handler_id: Cell<u64>,
     handlers: RefCell<HashMap<u64, ApiHandlerRegistration>>,
+}
+
+pub(super) struct ApiRouteRegistration {
+    pub(super) plugin_id: Arc<str>,
+    pub(super) method: &'static str,
+    pub(super) path: String,
+    pub(super) handler: luau::Function,
+    pub(super) auth_mode: Option<String>,
+    pub(super) case_insensitive: bool,
+    pub(super) context: harmony_core::CallContext,
 }
 
 impl ApiRouteStore {
@@ -19,16 +30,16 @@ impl ApiRouteStore {
         }
     }
 
-    pub(super) fn register(
-        &self,
-        plugin_id: Arc<str>,
-        method: &'static str,
-        path: String,
-        handler: luau::Function,
-        auth_mode: Option<String>,
-        case_insensitive: bool,
-        context: harmony_core::CallContext,
-    ) -> luau::runtime::Result<()> {
+    pub(super) fn register(&self, registration: ApiRouteRegistration) -> luau::runtime::Result<()> {
+        let ApiRouteRegistration {
+            plugin_id,
+            method,
+            path,
+            handler,
+            auth_mode,
+            case_insensitive,
+            context,
+        } = registration;
         let key = if case_insensitive {
             RouteKey::new_case_insensitive(method, &path)
         } else {
@@ -640,9 +651,16 @@ fn build_http_method_router(route: &RegisteredRoute) -> Result<MethodRouter> {
             async move {
                 let query = collect_query_pairs(pairs);
                 let client_key = client.map(|axum::Extension(key)| key.0.as_ref().to_string());
-                dispatch_registered_route(
-                    route, method, uri, headers, query, params, client_key, body,
-                )
+                dispatch_registered_route(RegisteredRouteRequest {
+                    route,
+                    method,
+                    uri,
+                    headers,
+                    query,
+                    params,
+                    client_key,
+                    body,
+                })
                 .await
             }
         },
@@ -660,7 +678,17 @@ fn build_websocket_method_router(route: &RegisteredRoute) -> MethodRouter {
             let route = dispatch_route.clone();
             async move {
                 let query = collect_query_pairs(pairs);
-                dispatch_websocket_route(route, uri, headers, query, params.map(|p| p.0), ws).await
+                dispatch_websocket_route(
+                    WebSocketRouteRequest {
+                        route,
+                        uri,
+                        headers,
+                        query,
+                        params: params.map(|p| p.0),
+                    },
+                    ws,
+                )
+                .await
             }
         },
     )
@@ -688,7 +716,7 @@ fn method_filter_for(method: &str) -> Result<MethodFilter> {
     Ok(filter)
 }
 
-async fn dispatch_registered_route(
+struct RegisteredRouteRequest {
     route: RegisteredRoute,
     method: Method,
     uri: Uri,
@@ -697,7 +725,20 @@ async fn dispatch_registered_route(
     params: Option<Path<HashMap<String, String>>>,
     client_key: Option<String>,
     body: Bytes,
-) -> Response {
+}
+
+async fn dispatch_registered_route(request: RegisteredRouteRequest) -> Response {
+    let RegisteredRouteRequest {
+        route,
+        method,
+        uri,
+        headers,
+        query,
+        params,
+        client_key,
+        body,
+    } = request;
+
     let auth = match resolve_optional_auth(&headers).await {
         Ok(auth) => auth,
         Err(err) => {

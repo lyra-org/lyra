@@ -139,7 +139,7 @@ fn list_callback(
             .flatten();
         let releases =
             release_service::get(&db, query_id).map_err(crate::plugins::runtime_error)?;
-        Ok(harmony_luau::serializable_to_luau_owned(releases)?)
+        harmony_luau::serializable_to_luau_owned(releases)
     }))
 }
 
@@ -195,7 +195,7 @@ fn get_by_artist_callback(
         let db = db.read().await;
         let releases = db::releases::get_by_artist(&db, DbId(artist_id))
             .map_err(crate::plugins::runtime_error)?;
-        Ok(harmony_luau::serializable_to_luau_owned(releases)?)
+        harmony_luau::serializable_to_luau_owned(releases)
     }))
 }
 
@@ -215,7 +215,7 @@ fn get_appearances_callback(
         let db = db.read().await;
         let releases = release_service::get_appearances(&db, DbId(artist_id))
             .map_err(crate::plugins::runtime_error)?;
-        Ok(harmony_luau::serializable_to_luau_owned(releases)?)
+        harmony_luau::serializable_to_luau_owned(releases)
     }))
 }
 

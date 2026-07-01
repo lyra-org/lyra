@@ -242,15 +242,13 @@ pub(crate) fn dispatch_update_for_caller(
         .event_broadcast
         .send(payload.clone());
 
+    if let Some(runtime) = generation.plugin_runtime.get()
+        && let Err(error) = runtime.dispatch_playback_update(payload)
     {
-        if let Some(runtime) = generation.plugin_runtime.get() {
-            if let Err(error) = runtime.dispatch_playback_update(payload) {
-                tracing::warn!(
-                    error = %error,
-                    "failed to enqueue plugin playback on_update dispatch"
-                );
-            }
-        }
+        tracing::warn!(
+            error = %error,
+            "failed to enqueue plugin playback on_update dispatch"
+        );
     }
 }
 

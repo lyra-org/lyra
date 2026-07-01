@@ -28,6 +28,7 @@ use self::parsing::{
 };
 use self::router::{
     API_ROUTE_REGISTRY,
+    ApiRouteRegistration,
     RegisteredRoute,
     RouteAuthMode,
     build_router,
@@ -169,6 +170,8 @@ use crate::plugins::auth::{
     Principal as AuthPrincipal,
 };
 use crate::routes::{
+    DownloadTrackRequest,
+    ServeTrackOptions,
     build_ranged_file_body,
     download_track_response,
     registry::{
@@ -228,20 +231,6 @@ pub(crate) async fn teardown_plugin_routes(plugin_id: &crate::plugins::lifecycle
         .unwrap_or_else(|err| panic!("router rebuild must not fail post-teardown: {err}"));
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
-    use super::*;
-
-    pub(crate) async fn registered_handler(method: &str, path: &str) -> Option<u64> {
-        let registry = API_ROUTE_REGISTRY.read().await;
-        registry
-            .snapshot()
-            .into_iter()
-            .find(|route| route.key.method.as_ref() == method && route.key.path.as_ref() == path)
-            .map(|route| route.handler_id)
-    }
-}
-
 fn route_spec(
     name: &'static str,
     include_method: bool,
@@ -285,15 +274,15 @@ fn register_route_callback(
         crate::plugins::runtime_error("lyra/api routes must be registered from plugin Luau code")
     })?;
     let routes = frame.vm.data().get::<ApiRouteStore>()?;
-    routes.register(
+    routes.register(ApiRouteRegistration {
         plugin_id,
         method,
         path,
         handler,
         auth_mode,
         case_insensitive,
-        core_call_context(&frame.context),
-    )
+        context: core_call_context(&frame.context),
+    })
 }
 
 fn route_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
@@ -1410,4 +1399,18 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &support_interfaces(),
         &[],
     )
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    pub(crate) async fn registered_handler(method: &str, path: &str) -> Option<u64> {
+        let registry = API_ROUTE_REGISTRY.read().await;
+        registry
+            .snapshot()
+            .into_iter()
+            .find(|route| route.key.method.as_ref() == method && route.key.path.as_ref() == path)
+            .map(|route| route.handler_id)
+    }
 }

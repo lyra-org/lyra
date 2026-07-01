@@ -46,6 +46,7 @@ pub(crate) fn acquire(config: &DbConfig, mode: LockMode) -> Result<Option<DbProc
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(&path)
         .with_context(|| format!("failed to open db lockfile at {}", path.display()))?;
 

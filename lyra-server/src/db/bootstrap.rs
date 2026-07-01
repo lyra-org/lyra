@@ -94,9 +94,9 @@ const CORE_INDEXES: &[&str] = &[
 
 pub(crate) fn open(kind: DbKind, db_path: &str) -> anyhow::Result<DbAny> {
     Ok(match kind {
-        DbKind::Memory => DbAny::new_memory(db_path.as_ref())?,
-        DbKind::File => DbAny::new_file(db_path.as_ref())?,
-        DbKind::Mmap => DbAny::new(db_path.as_ref())?,
+        DbKind::Memory => DbAny::new_memory(db_path)?,
+        DbKind::File => DbAny::new_file(db_path)?,
+        DbKind::Mmap => DbAny::new(db_path)?,
     })
 }
 

@@ -285,12 +285,11 @@ fn persist_release_inner(
 
     ensure_owned_edge(db, library_db_id, release_db_id)?;
 
-    if !release_provider_fields.contains("genres") {
-        if let Some(genres) = &first_track.genres {
-            if !genres.is_empty() {
-                db::genres::sync_release_genres(db, release_db_id, genres)?;
-            }
-        }
+    if !release_provider_fields.contains("genres")
+        && let Some(genres) = &first_track.genres
+        && !genres.is_empty()
+    {
+        db::genres::sync_release_genres(db, release_db_id, genres)?;
     }
 
     // Tag-sourced absence ≡ "no labels, drop any stale entries."

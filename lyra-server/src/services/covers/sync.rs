@@ -129,12 +129,12 @@ async fn download_cover(url: &str) -> Result<(Vec<u8>, Option<String>)> {
         ));
     }
 
-    if let Some(size) = response.content_length() {
-        if size > MAX_COVER_BYTES as u64 {
-            return Err(anyhow!(
-                "cover download from {url} exceeded max size {MAX_COVER_BYTES}"
-            ));
-        }
+    if let Some(size) = response.content_length()
+        && size > MAX_COVER_BYTES as u64
+    {
+        return Err(anyhow!(
+            "cover download from {url} exceeded max size {MAX_COVER_BYTES}"
+        ));
     }
 
     let content_type = response
@@ -323,10 +323,10 @@ pub(crate) async fn sync_release_cover_for_tracks(
 
         let target = target_dir.join(format!("cover.{ext}"));
         if options.replace_existing {
-            if let Some(existing) = existing_cover.as_ref() {
-                if existing != &target {
-                    let _ = fs::remove_file(existing).await;
-                }
+            if let Some(existing) = existing_cover.as_ref()
+                && existing != &target
+            {
+                let _ = fs::remove_file(existing).await;
             }
 
             let mut prune_dirs = candidate_dirs.clone();
@@ -466,10 +466,10 @@ pub(crate) async fn sync_artist_cover(
 
         let target = target_dir.join(format!("cover.{ext}"));
         if options.replace_existing {
-            if let Some(existing) = existing_cover.as_ref() {
-                if existing != &target {
-                    let _ = fs::remove_file(existing).await;
-                }
+            if let Some(existing) = existing_cover.as_ref()
+                && existing != &target
+            {
+                let _ = fs::remove_file(existing).await;
             }
 
             let mut prune_dirs = candidate_dirs.clone();
@@ -540,10 +540,10 @@ async fn execute_cover_download(task: CoverDownloadTask) -> bool {
 
     let target = task.target_dir.join(format!("cover.{ext}"));
     if task.replace_existing {
-        if let Some(existing) = task.existing_cover.as_ref() {
-            if existing != &target {
-                let _ = fs::remove_file(existing).await;
-            }
+        if let Some(existing) = task.existing_cover.as_ref()
+            && existing != &target
+        {
+            let _ = fs::remove_file(existing).await;
         }
 
         let mut prune_dirs = task.candidate_dirs.clone();

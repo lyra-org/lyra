@@ -53,11 +53,15 @@ use super::codec::{
 
 pub(crate) const HLS_JOB_TEMP_DIR_PREFIX: &str = "lyra-hls-job-";
 
-pub(crate) static HLS_SESSIONS: LazyLock<Arc<RwLock<HashMap<String, HlsSession>>>> =
+type HlsSessions = Arc<RwLock<HashMap<String, HlsSession>>>;
+type HlsJobs = Arc<RwLock<HashMap<HlsJobKey, HlsJob>>>;
+type HlsJobWaiters = Arc<Mutex<HashMap<HlsJobKey, Arc<Notify>>>>;
+
+pub(crate) static HLS_SESSIONS: LazyLock<HlsSessions> =
     LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
-pub(crate) static HLS_JOBS: LazyLock<Arc<RwLock<HashMap<HlsJobKey, HlsJob>>>> =
+pub(crate) static HLS_JOBS: LazyLock<HlsJobs> =
     LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
-pub(crate) static HLS_JOB_CREATING: LazyLock<Arc<Mutex<HashMap<HlsJobKey, Arc<Notify>>>>> =
+pub(crate) static HLS_JOB_CREATING: LazyLock<HlsJobWaiters> =
     LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
 static TRANSCODE_SEMAPHORE: LazyLock<RwLock<Option<Arc<Semaphore>>>> =
     LazyLock::new(|| RwLock::new(None));

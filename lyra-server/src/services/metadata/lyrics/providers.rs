@@ -177,7 +177,7 @@ impl LyricsProviderRegistry {
     fn ensure_plugin_token(&mut self, plugin_id: &PluginId) -> CancellationToken {
         self.plugin_cancels
             .entry(plugin_id.clone())
-            .or_insert_with(CancellationToken::new)
+            .or_default()
             .clone()
     }
 
@@ -209,11 +209,13 @@ impl LyricsProviderRegistry {
 pub(crate) static LYRICS_PROVIDER_REGISTRY: LazyLock<RwLock<LyricsProviderRegistry>> =
     LazyLock::new(|| RwLock::new(LyricsProviderRegistry::default()));
 
-static IN_FLIGHT: LazyLock<Mutex<HashSet<(i64, Arc<str>)>>> =
+type InFlightKey = (i64, Arc<str>);
+
+static IN_FLIGHT: LazyLock<Mutex<HashSet<InFlightKey>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
 struct InFlightGuard {
-    key: (i64, Arc<str>),
+    key: InFlightKey,
 }
 
 impl InFlightGuard {
@@ -476,7 +478,7 @@ async fn record_hit(
     };
 
     let mut db = STATE.db.write().await;
-    upload::upsert_plugin_lyrics(&mut *db, track_db_id, lyrics_input, provider_id.to_string())
+    upload::upsert_plugin_lyrics(&mut db, track_db_id, lyrics_input, provider_id.to_string())
         .map_err(|err| anyhow::anyhow!("upsert_plugin_lyrics failed: {err}"))?;
     Ok(())
 }
@@ -542,15 +544,15 @@ async fn build_track_context(
     // so concurrent dispatches don't pin readers across owned-data work.
     let (track, artists, release, external_ids_raw, libraries) = {
         let db = STATE.db.read().await;
-        let Some(track) = db::tracks::get_by_id(&*db, track_db_id)? else {
+        let Some(track) = db::tracks::get_by_id(&db, track_db_id)? else {
             return Ok(None);
         };
-        let artists = db::artists::get(&*db, track_db_id)?;
-        let release = db::releases::get_by_track(&*db, track_db_id)?
+        let artists = db::artists::get(&db, track_db_id)?;
+        let release = db::releases::get_by_track(&db, track_db_id)?
             .into_iter()
             .next();
-        let external_ids_raw = db::providers::external_ids::get_for_entity(&*db, track_db_id)?;
-        let libraries = db::libraries::get_for_entity(&*db, track_db_id)
+        let external_ids_raw = db::providers::external_ids::get_for_entity(&db, track_db_id)?;
+        let libraries = db::libraries::get_for_entity(&db, track_db_id)
             .ok()
             .unwrap_or_default();
         (track, artists, release, external_ids_raw, libraries)
@@ -600,14 +602,14 @@ async fn build_track_context(
 pub(crate) async fn rescan(force_refresh: bool, cancel: CancellationToken) -> Result<()> {
     let track_ids: Vec<DbId> = {
         let db = STATE.db.read().await;
-        let tracks = db::tracks::get(&*db, "tracks")?;
+        let tracks = db::tracks::get(&db, "tracks")?;
         let mut filtered = Vec::with_capacity(tracks.len());
         for track in tracks {
             let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
                 continue;
             };
             if !force_refresh
-                && selection::get_preferred_detail(&*db, track_db_id, None, false)?.is_some()
+                && selection::get_preferred_detail(&db, track_db_id, None, false)?.is_some()
             {
                 continue;
             }
@@ -702,15 +704,15 @@ mod tests {
 
     async fn install_track_in_state_db(title: &str, artist: &str, duration_ms: u64) -> DbId {
         let mut db = STATE.db.write().await;
-        let track_id = test_db::insert_track(&mut *db, title).expect("insert track");
-        let mut track = db::tracks::get_by_id(&*db, track_id)
+        let track_id = test_db::insert_track(&mut db, title).expect("insert track");
+        let mut track = db::tracks::get_by_id(&db, track_id)
             .expect("get_by_id")
             .expect("track");
         track.duration_ms = Some(duration_ms);
         db.exec_mut(agdb::QueryBuilder::insert().element(&track).query())
             .expect("update track");
-        let artist_id = test_db::insert_artist(&mut *db, artist).expect("insert artist");
-        test_db::connect(&mut *db, track_id, artist_id).expect("connect");
+        let artist_id = test_db::insert_artist(&mut db, artist).expect("insert artist");
+        test_db::connect(&mut db, track_id, artist_id).expect("connect");
         track_id
     }
 

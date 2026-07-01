@@ -225,6 +225,26 @@ enum CandidateIncrementScope {
     Instance,
 }
 
+struct CandidateUpdate<'a> {
+    profile_db_id: DbId,
+    profile_public_id: &'a str,
+    release_db_id: DbId,
+    release_public_id: &'a str,
+    random_score: u64,
+    now_ms: u64,
+    increment: Option<(CandidateIncrementScope, u64)>,
+}
+
+struct WinnerUpdate<'a> {
+    profile_db_id: DbId,
+    profile_public_id: &'a str,
+    release_db_id: DbId,
+    winner_kind: DisplayCoverWinnerKind,
+    listen_count: u64,
+    random_score: u64,
+    now_ms: u64,
+}
+
 pub(crate) struct DisplayCoverTarget<'a> {
     pub(crate) kind: DisplayCoverTargetKind,
     pub(crate) db_id: DbId,
@@ -599,25 +619,19 @@ fn candidate_values(
 
 fn upsert_candidate(
     db: &mut impl DbAccess,
-    profile_db_id: DbId,
-    profile_public_id: &str,
-    release_db_id: DbId,
-    release_public_id: &str,
-    random_score: u64,
-    now_ms: u64,
-    increment: Option<(CandidateIncrementScope, u64)>,
+    update: CandidateUpdate<'_>,
 ) -> anyhow::Result<DisplayCoverCandidate> {
-    let identity = candidate_identity(profile_public_id, release_public_id);
-    let mut candidate =
-        get_candidate(db, profile_public_id, release_public_id)?.unwrap_or(DisplayCoverCandidate {
+    let identity = candidate_identity(update.profile_public_id, update.release_public_id);
+    let mut candidate = get_candidate(db, update.profile_public_id, update.release_public_id)?
+        .unwrap_or(DisplayCoverCandidate {
             edge_id: DbId(0),
             user_listen_count: 0,
             instance_listen_count: 0,
             last_listened_at_ms: None,
-            random_score,
+            random_score: update.random_score,
         });
-    candidate.random_score = candidate.random_score.min(random_score);
-    if let Some((scope, listened_at_ms)) = increment {
+    candidate.random_score = candidate.random_score.min(update.random_score);
+    if let Some((scope, listened_at_ms)) = update.increment {
         match scope {
             CandidateIncrementScope::User => {
                 candidate.user_listen_count = candidate.user_listen_count.saturating_add(1);
@@ -639,8 +653,8 @@ fn upsert_candidate(
             .exec_mut(
                 QueryBuilder::insert()
                     .edges()
-                    .from(profile_db_id)
-                    .to(release_db_id)
+                    .from(update.profile_db_id)
+                    .to(update.release_db_id)
                     .query(),
             )?
             .ids()
@@ -650,7 +664,7 @@ fn upsert_candidate(
     }
     db.exec_mut(
         QueryBuilder::insert()
-            .values_uniform(candidate_values(&identity, &candidate, now_ms))
+            .values_uniform(candidate_values(&identity, &candidate, update.now_ms))
             .ids(candidate.edge_id)
             .query(),
     )?;
@@ -712,17 +726,8 @@ fn winner_values(
     ]
 }
 
-fn replace_winner(
-    db: &mut impl DbAccess,
-    profile_db_id: DbId,
-    profile_public_id: &str,
-    release_db_id: DbId,
-    winner_kind: DisplayCoverWinnerKind,
-    listen_count: u64,
-    random_score: u64,
-    now_ms: u64,
-) -> anyhow::Result<()> {
-    let identity = winner_identity(profile_public_id, winner_kind);
+fn replace_winner(db: &mut impl DbAccess, update: &WinnerUpdate<'_>) -> anyhow::Result<()> {
+    let identity = winner_identity(update.profile_public_id, update.winner_kind);
     if let Some(existing) = find_edge_by_identity(db, &identity)? {
         db.exec_mut(QueryBuilder::remove().ids(existing.id).query())?;
     }
@@ -730,8 +735,8 @@ fn replace_winner(
         .exec_mut(
             QueryBuilder::insert()
                 .edges()
-                .from(profile_db_id)
-                .to(release_db_id)
+                .from(update.profile_db_id)
+                .to(update.release_db_id)
                 .query(),
         )?
         .ids()
@@ -742,10 +747,10 @@ fn replace_winner(
         QueryBuilder::insert()
             .values_uniform(winner_values(
                 &identity,
-                winner_kind,
-                listen_count,
-                random_score,
-                now_ms,
+                update.winner_kind,
+                update.listen_count,
+                update.random_score,
+                update.now_ms,
             ))
             .ids(edge_id)
             .query(),
@@ -755,33 +760,61 @@ fn replace_winner(
 
 fn set_winner_if_better(
     db: &mut impl DbAccess,
-    profile_db_id: DbId,
     profile: &DisplayCoverProfile,
+    update: WinnerUpdate<'_>,
+) -> anyhow::Result<()> {
+    let current = get_winner(db, profile, update.winner_kind)?;
+    let replace = match (update.winner_kind, current.as_ref()) {
+        (_, None) => true,
+        (DisplayCoverWinnerKind::Random, Some(current)) => {
+            update.random_score < current.random_score
+        }
+        (_, Some(current)) => update.listen_count > current.listen_count,
+    };
+    if replace {
+        replace_winner(db, &update)?;
+    }
+    Ok(())
+}
+
+fn candidate_update<'a>(
+    profile_db_id: DbId,
+    profile_public_id: &'a str,
+    release_db_id: DbId,
+    release_public_id: &'a str,
+    random_score: u64,
+    now_ms: u64,
+    increment: Option<(CandidateIncrementScope, u64)>,
+) -> CandidateUpdate<'a> {
+    CandidateUpdate {
+        profile_db_id,
+        profile_public_id,
+        release_db_id,
+        release_public_id,
+        random_score,
+        now_ms,
+        increment,
+    }
+}
+
+fn winner_update<'a>(
+    profile_db_id: DbId,
+    profile_public_id: &'a str,
     release_db_id: DbId,
     winner_kind: DisplayCoverWinnerKind,
     listen_count: u64,
     random_score: u64,
     now_ms: u64,
-) -> anyhow::Result<()> {
-    let current = get_winner(db, profile, winner_kind)?;
-    let replace = match (winner_kind, current.as_ref()) {
-        (_, None) => true,
-        (DisplayCoverWinnerKind::Random, Some(current)) => random_score < current.random_score,
-        (_, Some(current)) => listen_count > current.listen_count,
-    };
-    if replace {
-        replace_winner(
-            db,
-            profile_db_id,
-            &profile.id,
-            release_db_id,
-            winner_kind,
-            listen_count,
-            random_score,
-            now_ms,
-        )?;
+) -> WinnerUpdate<'a> {
+    WinnerUpdate {
+        profile_db_id,
+        profile_public_id,
+        release_db_id,
+        winner_kind,
+        listen_count,
+        random_score,
+        now_ms,
     }
-    Ok(())
 }
 
 fn release_target(
@@ -833,23 +866,28 @@ pub(crate) fn ensure_genre_release_random_candidate(
     );
     upsert_candidate(
         db,
-        profile_db_id,
-        &profile.id,
-        release_db_id,
-        &release_public_id,
-        random_score,
-        now_ms,
-        None,
+        candidate_update(
+            profile_db_id,
+            &profile.id,
+            release_db_id,
+            &release_public_id,
+            random_score,
+            now_ms,
+            None,
+        ),
     )?;
     set_winner_if_better(
         db,
-        profile_db_id,
         &profile,
-        release_db_id,
-        DisplayCoverWinnerKind::Random,
-        0,
-        random_score,
-        now_ms,
+        winner_update(
+            profile_db_id,
+            &profile.id,
+            release_db_id,
+            DisplayCoverWinnerKind::Random,
+            0,
+            random_score,
+            now_ms,
+        ),
     )?;
     Ok(())
 }
@@ -951,54 +989,67 @@ pub(crate) fn record_genre_listen(
             );
             let user_candidate = upsert_candidate(
                 db,
-                user_profile_db_id,
-                &user_profile.id,
-                release_db_id,
-                &release_public_id,
-                random_score,
-                listened_at_ms,
-                Some((CandidateIncrementScope::User, listened_at_ms)),
+                candidate_update(
+                    user_profile_db_id,
+                    &user_profile.id,
+                    release_db_id,
+                    &release_public_id,
+                    random_score,
+                    listened_at_ms,
+                    Some((CandidateIncrementScope::User, listened_at_ms)),
+                ),
             )?;
             set_winner_if_better(
                 db,
-                user_profile_db_id,
                 &user_profile,
-                release_db_id,
-                DisplayCoverWinnerKind::Personal,
-                user_candidate.user_listen_count,
-                random_score,
-                listened_at_ms,
+                winner_update(
+                    user_profile_db_id,
+                    &user_profile.id,
+                    release_db_id,
+                    DisplayCoverWinnerKind::Personal,
+                    user_candidate.user_listen_count,
+                    random_score,
+                    listened_at_ms,
+                ),
             )?;
 
             let instance_candidate = upsert_candidate(
                 db,
-                instance_profile_db_id,
-                &instance_profile.id,
-                release_db_id,
-                &release_public_id,
-                random_score,
-                listened_at_ms,
-                Some((CandidateIncrementScope::Instance, listened_at_ms)),
+                candidate_update(
+                    instance_profile_db_id,
+                    &instance_profile.id,
+                    release_db_id,
+                    &release_public_id,
+                    random_score,
+                    listened_at_ms,
+                    Some((CandidateIncrementScope::Instance, listened_at_ms)),
+                ),
             )?;
             set_winner_if_better(
                 db,
-                instance_profile_db_id,
                 &instance_profile,
-                release_db_id,
-                DisplayCoverWinnerKind::Instance,
-                instance_candidate.instance_listen_count,
-                random_score,
-                listened_at_ms,
+                winner_update(
+                    instance_profile_db_id,
+                    &instance_profile.id,
+                    release_db_id,
+                    DisplayCoverWinnerKind::Instance,
+                    instance_candidate.instance_listen_count,
+                    random_score,
+                    listened_at_ms,
+                ),
             )?;
             set_winner_if_better(
                 db,
-                instance_profile_db_id,
                 &instance_profile,
-                release_db_id,
-                DisplayCoverWinnerKind::Random,
-                0,
-                random_score,
-                listened_at_ms,
+                winner_update(
+                    instance_profile_db_id,
+                    &instance_profile.id,
+                    release_db_id,
+                    DisplayCoverWinnerKind::Random,
+                    0,
+                    random_score,
+                    listened_at_ms,
+                ),
             )?;
         }
     }
