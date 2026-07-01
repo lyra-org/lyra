@@ -1318,6 +1318,27 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
         &crate::plugins::db::test_db::test_user("raw-tags")?,
     )?;
     let track_db_id = crate::plugins::db::test_db::insert_track(&mut db, "Raw Tag Track")?;
+    let suffix = nanoid::nanoid!();
+    let library_path = std::path::PathBuf::from(format!("/tmp/lyra-plugin-tags-{suffix}"));
+    let library = crate::plugins::db::libraries::create_with_creator(
+        &mut db,
+        crate::plugins::db::libraries::LibraryInsert {
+            id: nanoid::nanoid!(),
+            name: format!("Plugin Tags {suffix}"),
+            path_key: crate::plugins::db::libraries::path_key_for(&library_path),
+            path: library_path,
+            language: None,
+            country: None,
+        },
+        user_db_id,
+    )?;
+    db.exec_mut(
+        agdb::QueryBuilder::insert()
+            .edges()
+            .from(library.db_id.context("library db id")?)
+            .to(track_db_id)
+            .query(),
+    )?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
     let runtime = PluginExecutor::with_database(
