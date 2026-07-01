@@ -138,29 +138,24 @@ pub(crate) fn has_many_for_principal(
     Ok(response)
 }
 
-/// Paginated favorites list for one `kind`, with playlist visibility filtered on hydration.
+/// Paginated favorites list for one `kind`, with target visibility filtered on hydration.
 /// `next_cursor.is_none()` is the sole termination signal.
 pub(crate) fn list(
     db: &DbAny,
-    user_db_id: DbId,
+    principal: &Principal,
     kind: FavoriteKind,
     limit: u64,
     cursor: Option<Cursor>,
 ) -> anyhow::Result<ListPage> {
     let clamped_limit = limit.clamp(1, LIST_HARD_LIMIT);
-    let page = db::favorites::list(db, user_db_id, kind, clamped_limit, cursor)?;
+    let page = db::favorites::list(db, principal.user_db_id, kind, clamped_limit, cursor)?;
 
-    let edges = if kind == FavoriteKind::Playlist {
-        let mut visible = Vec::with_capacity(page.edges.len());
-        for edge in page.edges {
-            if playlist_is_visible(db, user_db_id, edge.target_db_id)? {
-                visible.push(edge);
-            }
+    let mut edges = Vec::with_capacity(page.edges.len());
+    for edge in page.edges {
+        if target_visible_to_principal(db, principal, edge.target_db_id, edge.kind)? {
+            edges.push(edge);
         }
-        visible
-    } else {
-        page.edges
-    };
+    }
 
     Ok(ListPage {
         edges,
@@ -279,7 +274,11 @@ fn now_ms() -> anyhow::Result<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
     use crate::db::test_db::{
+        connect,
+        insert_library,
         new_test_db,
         test_user,
     };
@@ -430,6 +429,17 @@ mod tests {
         Ok(())
     }
 
+    fn principal_for(user_db_id: DbId, accessible_library_ids: HashSet<String>) -> Principal {
+        Principal {
+            user_db_id,
+            user_public_id: format!("user-{}", user_db_id.0),
+            username: format!("user-{}", user_db_id.0),
+            permissions: Vec::new(),
+            role_name: None,
+            accessible_library_ids,
+        }
+    }
+
     #[test]
     fn add_applies_for_whitelisted_track() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
@@ -569,8 +579,9 @@ mod tests {
         let playlist_db_id = create_playlist(&mut db, owner, &pub_id, true)?;
 
         add(&mut db, other, &pub_id)?;
+        let other_principal = principal_for(other, HashSet::new());
         assert_eq!(
-            list(&db, other, FavoriteKind::Playlist, 10, None)?
+            list(&db, &other_principal, FavoriteKind::Playlist, 10, None)?
                 .edges
                 .len(),
             1,
@@ -591,17 +602,55 @@ mod tests {
         )?;
 
         assert!(
-            list(&db, other, FavoriteKind::Playlist, 10, None)?
+            list(&db, &other_principal, FavoriteKind::Playlist, 10, None)?
                 .edges
                 .is_empty(),
             "flipped-to-private playlist must be dropped from non-owner's list",
         );
+        let owner_principal = principal_for(owner, HashSet::new());
         assert_eq!(
-            list(&db, owner, FavoriteKind::Playlist, 10, None)?
+            list(&db, &owner_principal, FavoriteKind::Playlist, 10, None)?
                 .edges
                 .len(),
             0,
             "owner never favorited it, so it shouldn't appear on their list either",
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn list_filters_tracks_without_library_access() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        setup_id_index(&mut db)?;
+        let user = create_user(&mut db, "alice")?;
+        let library_db_id = insert_library(&mut db, "Favorites", "/tmp/lyra-favorites-list")?;
+        let library_public_id = db::lookup::find_id_by_db_id(&db, library_db_id)?
+            .expect("library should have a public id");
+        let track_public_id = nanoid!();
+        let track_db_id = create_track(&mut db, &track_public_id)?;
+        connect(&mut db, library_db_id, track_db_id)?;
+
+        let visible_principal = principal_for(user, HashSet::from([library_public_id]));
+        let hidden_principal = principal_for(user, HashSet::new());
+
+        let added = add_for_principal(&mut db, &visible_principal, &track_public_id)?;
+        assert!(matches!(
+            added,
+            MutationOutcome::Applied(FavoriteKind::Track)
+        ));
+        assert_eq!(
+            list(&db, &visible_principal, FavoriteKind::Track, 10, None)?
+                .edges
+                .len(),
+            1,
+            "track favorite should list while the library is accessible",
+        );
+        assert!(
+            list(&db, &hidden_principal, FavoriteKind::Track, 10, None)?
+                .edges
+                .is_empty(),
+            "track favorite must be hidden without access to the containing library",
         );
 
         Ok(())

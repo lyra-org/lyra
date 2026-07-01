@@ -251,7 +251,7 @@ async fn list_favorites(
     let kind = FavoriteKind::from(query.entity);
 
     let db = STATE.db.read().await;
-    let page = favorite_service::list(&db, principal.user_db_id, kind, limit, cursor)?;
+    let page = favorite_service::list(&db, &principal, kind, limit, cursor)?;
 
     let items: Vec<FavoriteItem> = page
         .edges
