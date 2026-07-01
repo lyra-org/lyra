@@ -596,11 +596,11 @@ fn collect_entities(context: &serde_json::Value) -> Vec<(i64, String)> {
 
     if let Some(artists_array) = context.get("artists").and_then(|v| v.as_array()) {
         for artist_entry in artists_array {
-            if let Some(id) = artist_entry.get("db_id").and_then(|v| v.as_i64()) {
-                if seen.insert(id) {
-                    let name = artist_display_name(artist_entry);
-                    entities.push((id, format!("Artist ({name})")));
-                }
+            if let Some(id) = artist_entry.get("db_id").and_then(|v| v.as_i64())
+                && seen.insert(id)
+            {
+                let name = artist_display_name(artist_entry);
+                entities.push((id, format!("Artist ({name})")));
             }
         }
     }
@@ -609,22 +609,22 @@ fn collect_entities(context: &serde_json::Value) -> Vec<(i64, String)> {
         for (i, track) in tracks.iter().enumerate() {
             if let Some(track_artists_array) = track.get("artists").and_then(|v| v.as_array()) {
                 for artist_entry in track_artists_array {
-                    if let Some(id) = artist_entry.get("db_id").and_then(|v| v.as_i64()) {
-                        if seen.insert(id) {
-                            let name = artist_display_name(artist_entry);
-                            entities.push((id, format!("Artist ({name})")));
-                        }
+                    if let Some(id) = artist_entry.get("db_id").and_then(|v| v.as_i64())
+                        && seen.insert(id)
+                    {
+                        let name = artist_display_name(artist_entry);
+                        entities.push((id, format!("Artist ({name})")));
                     }
                 }
             }
-            if let Some(id) = track.get("db_id").and_then(|v| v.as_i64()) {
-                if seen.insert(id) {
-                    let title = track
-                        .get("track_title")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("?");
-                    entities.push((id, format!("Track {} \u{2014} {title}", i + 1)));
-                }
+            if let Some(id) = track.get("db_id").and_then(|v| v.as_i64())
+                && seen.insert(id)
+            {
+                let title = track
+                    .get("track_title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                entities.push((id, format!("Track {} \u{2014} {title}", i + 1)));
             }
         }
     }
@@ -673,14 +673,13 @@ fn interactive_ids(
         println!("  Selected: {label}");
 
         // Show current IDs for this entity
-        if let Some(results) = plugin_results {
-            if let Some(entity) = results.get(&real_id.to_string()) {
-                if !entity.ids.is_empty() {
-                    println!("  Current IDs:");
-                    for (k, v) in &entity.ids {
-                        println!("    {k} = {v}");
-                    }
-                }
+        if let Some(results) = plugin_results
+            && let Some(entity) = results.get(&real_id.to_string())
+            && !entity.ids.is_empty()
+        {
+            println!("  Current IDs:");
+            for (k, v) in &entity.ids {
+                println!("    {k} = {v}");
             }
         }
 
