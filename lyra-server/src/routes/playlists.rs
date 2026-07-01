@@ -62,6 +62,8 @@ use crate::{
     },
 };
 
+const PLAYLIST_BULK_TRACK_HARD_CAP: usize = 500;
+
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
 struct CreatePlaylistRequest {
@@ -478,6 +480,12 @@ async fn add_playlist_tracks(
     if request.track_ids.is_empty() {
         return Err(AppError::bad_request("track_ids cannot be empty"));
     }
+    if request.track_ids.len() > PLAYLIST_BULK_TRACK_HARD_CAP {
+        return Err(AppError::bad_request(format!(
+            "track_ids cap exceeded: {} > {PLAYLIST_BULK_TRACK_HARD_CAP}",
+            request.track_ids.len(),
+        )));
+    }
 
     let track_query_ids = {
         let db = STATE.db.read().await;
@@ -541,6 +549,12 @@ async fn remove_playlist_entries(
 
     if entry_ids.is_empty() {
         return Err(AppError::bad_request("entry_ids cannot be empty"));
+    }
+    if entry_ids.len() > PLAYLIST_BULK_TRACK_HARD_CAP {
+        return Err(AppError::bad_request(format!(
+            "entry_ids cap exceeded: {} > {PLAYLIST_BULK_TRACK_HARD_CAP}",
+            entry_ids.len(),
+        )));
     }
 
     let mut db = STATE.db.write().await;
