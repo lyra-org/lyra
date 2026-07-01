@@ -494,6 +494,7 @@ fn parse_consumer_options(
     Ok(MixOptions {
         limit,
         viewer,
+        viewer_accessible_library_ids: None,
         extra,
     })
 }

@@ -46,6 +46,9 @@ pub(crate) struct MixOptions {
     /// unheard/heard partition and forwarded to plugins as `ctx.user_id`.
     /// Distinct from the seed identity — see `MixSeed`.
     pub(crate) viewer: Option<DbId>,
+    /// Current library visibility for the viewer. When present, recent-listen
+    /// seeds are filtered before they reach built-in or plugin mix handlers.
+    pub(crate) viewer_accessible_library_ids: Option<HashSet<String>>,
     /// Query-param options coerced via `declare_option` for `ctx.options`.
     pub(crate) extra: HashMap<String, String>,
 }
@@ -252,7 +255,11 @@ async fn dispatch_mixer(
 
     let recent_track_ids = if let MixSeed::Recent { user_db_id } = seed {
         let db = STATE.db.read().await;
-        recent_listen_track_ids(&db, *user_db_id)?
+        recent_listen_track_ids(
+            &db,
+            *user_db_id,
+            options.viewer_accessible_library_ids.as_ref(),
+        )?
     } else {
         Vec::new()
     };
@@ -528,7 +535,11 @@ fn builtin_from_recent_listens(
     user_db_id: DbId,
     options: &MixOptions,
 ) -> anyhow::Result<Vec<Track>> {
-    let track_ids = recent_listen_track_ids(db, user_db_id)?;
+    let track_ids = recent_listen_track_ids(
+        db,
+        user_db_id,
+        options.viewer_accessible_library_ids.as_ref(),
+    )?;
     if track_ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -559,7 +570,11 @@ fn builtin_from_recent_listens(
     tracks_for_genres(db, &weighted, options)
 }
 
-fn recent_listen_track_ids(db: &DbAny, user_db_id: DbId) -> anyhow::Result<Vec<DbId>> {
+fn recent_listen_track_ids(
+    db: &DbAny,
+    user_db_id: DbId,
+    accessible_library_ids: Option<&HashSet<String>>,
+) -> anyhow::Result<Vec<DbId>> {
     let mut listens: Vec<db::listens::Listen> = db
         .exec(
             QueryBuilder::select()
@@ -589,12 +604,27 @@ fn recent_listen_track_ids(db: &DbAny, user_db_id: DbId) -> anyhow::Result<Vec<D
         if !db::lookup::collection_contains_id(db, "tracks", track_db_id)? {
             continue;
         }
+        if let Some(accessible_library_ids) = accessible_library_ids
+            && !track_accessible_to_library_set(db, track_db_id, accessible_library_ids)?
+        {
+            continue;
+        }
         if seen.insert(track_db_id) {
             track_ids.push(track_db_id);
         }
     }
 
     Ok(track_ids)
+}
+
+fn track_accessible_to_library_set(
+    db: &DbAny,
+    track_db_id: DbId,
+    accessible_library_ids: &HashSet<String>,
+) -> anyhow::Result<bool> {
+    Ok(db::libraries::get_for_entity(db, track_db_id)?
+        .into_iter()
+        .any(|library| accessible_library_ids.contains(&library.id)))
 }
 
 fn collect_genres_from_releases(
@@ -822,6 +852,7 @@ mod tests {
             connect,
             connect_artist,
             insert_artist,
+            insert_library,
             insert_release,
             insert_track,
             new_test_db,
@@ -1164,7 +1195,7 @@ mod tests {
 
         record_listen_with_stale_snapshot(&mut db, track, user_id)?;
 
-        let recents = recent_listen_track_ids(&db, user_id)?;
+        let recents = recent_listen_track_ids(&db, user_id, None)?;
         assert!(
             recents.is_empty(),
             "stale-snapshot listens must not surface in mix seeds: {recents:?}"
@@ -1207,11 +1238,34 @@ mod tests {
         };
         listens::create_and_mark_recorded(&mut db, &listen, track, user_id, &session)?;
 
-        let recents = recent_listen_track_ids(&db, user_id)?;
+        let recents = recent_listen_track_ids(&db, user_id, None)?;
         assert!(
             recents.is_empty(),
             "kind-rebound listens must not surface in mix seeds: {recents:?}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn recent_listen_track_ids_filters_by_current_library_access() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_id = insert_user(&mut db)?;
+        let library_id = insert_library(&mut db, "Recent Access", "/tmp/lyra-recent-access")?;
+        let library_public_id = db::lookup::find_id_by_db_id(&db, library_id)?
+            .ok_or_else(|| anyhow::anyhow!("library missing public id"))?;
+        let track = insert_track(&mut db, "Visible Recent Track")?;
+        connect(&mut db, library_id, track)?;
+        record_listen(&mut db, track, user_id)?;
+
+        let hidden = recent_listen_track_ids(&db, user_id, Some(&HashSet::new()))?;
+        assert!(
+            hidden.is_empty(),
+            "recent-listen seeds must be hidden without access to the containing library",
+        );
+
+        let visible_libraries = HashSet::from([library_public_id]);
+        let visible = recent_listen_track_ids(&db, user_id, Some(&visible_libraries))?;
+        assert_eq!(visible, vec![track]);
         Ok(())
     }
 
