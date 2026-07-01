@@ -371,7 +371,7 @@ fn query_artist_route_items(
     sort: &[ArtistRouteSortSpec],
     search_term: Option<&str>,
     page_options: super::PageOptions,
-    user_db_id: DbId,
+    principal: &Principal,
 ) -> anyhow::Result<db::PagedResult<db::Artist>> {
     let mut release_ids_by_artist: HashMap<DbId, HashSet<DbId>> = HashMap::new();
     let mut tracks_by_artist: HashMap<DbId, Vec<db::Track>> = HashMap::new();
@@ -387,16 +387,22 @@ fn query_artist_route_items(
         };
 
         if needs_release_count {
-            let release_ids = db::releases::get_by_artist(db, artist_db_id)?
-                .into_iter()
-                .filter_map(|release| release.db_id.map(DbId::from))
-                .collect::<HashSet<DbId>>();
+            let mut release_ids = HashSet::new();
+            for release in db::releases::get_by_artist(db, artist_db_id)? {
+                let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
+                    continue;
+                };
+                if release_accessible_to_principal(db, principal, release_db_id)? {
+                    release_ids.insert(release_db_id);
+                }
+            }
             release_ids_by_artist.insert(artist_db_id, release_ids);
         }
 
         if needs_track_metrics {
             let mut tracks = db::tracks::get_by_artist(db, artist_db_id)?;
             tracks.extend(db::tracks::get_by_release_artists(db, &[artist_db_id])?);
+            tracks = filter_accessible_tracks(db, principal, tracks)?;
             if needs_listens {
                 for track in &tracks {
                     let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
@@ -412,7 +418,7 @@ fn query_artist_route_items(
     }
 
     let listen_stats: HashMap<DbId, db::listens::ListenStats> = if needs_listens {
-        db::listens::get_stats_for_user_tracks(db, &all_track_ids, user_db_id)?
+        db::listens::get_stats_for_user_tracks(db, &all_track_ids, principal.user_db_id)?
             .into_iter()
             .map(|stats| (stats.db_id, stats))
             .collect()
@@ -485,11 +491,136 @@ fn query_artist_route_items(
     ))
 }
 
+fn is_admin(principal: &Principal) -> bool {
+    principal.permissions.contains(&db::Permission::Admin)
+}
+
+fn release_accessible_to_principal(
+    db: &DbAny,
+    principal: &Principal,
+    release_db_id: DbId,
+) -> anyhow::Result<bool> {
+    if is_admin(principal) {
+        return Ok(true);
+    }
+    Ok(db::libraries::get_by_release(db, release_db_id)?
+        .into_iter()
+        .any(|library| principal.accessible_library_ids.contains(&library.id)))
+}
+
+fn track_accessible_to_principal(
+    db: &DbAny,
+    principal: &Principal,
+    track_db_id: DbId,
+) -> anyhow::Result<bool> {
+    if is_admin(principal) {
+        return Ok(true);
+    }
+    for release in db::releases::get_by_track(db, track_db_id)? {
+        let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
+            continue;
+        };
+        if release_accessible_to_principal(db, principal, release_db_id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn artist_accessible_to_principal(
+    db: &DbAny,
+    principal: &Principal,
+    artist_db_id: DbId,
+) -> anyhow::Result<bool> {
+    if is_admin(principal) {
+        return Ok(true);
+    }
+    for release in db::releases::get_by_artist(db, artist_db_id)? {
+        let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
+            continue;
+        };
+        if release_accessible_to_principal(db, principal, release_db_id)? {
+            return Ok(true);
+        }
+    }
+    for track in db::tracks::get_by_artist(db, artist_db_id)? {
+        let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
+            continue;
+        };
+        if track_accessible_to_principal(db, principal, track_db_id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn filter_accessible_releases(
+    db: &DbAny,
+    principal: &Principal,
+    releases: Vec<db::Release>,
+) -> anyhow::Result<Vec<db::Release>> {
+    let mut filtered = Vec::with_capacity(releases.len());
+    for release in releases {
+        let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
+            continue;
+        };
+        if release_accessible_to_principal(db, principal, release_db_id)? {
+            filtered.push(release);
+        }
+    }
+    Ok(filtered)
+}
+
+fn filter_accessible_tracks(
+    db: &DbAny,
+    principal: &Principal,
+    tracks: Vec<db::Track>,
+) -> anyhow::Result<Vec<db::Track>> {
+    let mut filtered = Vec::with_capacity(tracks.len());
+    for track in tracks {
+        let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
+            continue;
+        };
+        if track_accessible_to_principal(db, principal, track_db_id)? {
+            filtered.push(track);
+        }
+    }
+    Ok(filtered)
+}
+
+fn filter_accessible_relations(
+    db: &DbAny,
+    principal: &Principal,
+    relations: Vec<artist_service::ResolvedRelation>,
+) -> anyhow::Result<Vec<artist_service::ResolvedRelation>> {
+    let mut filtered = Vec::with_capacity(relations.len());
+    for relation in relations {
+        let Some(artist_db_id) = relation.artist.db_id.clone().map(DbId::from) else {
+            continue;
+        };
+        if artist_accessible_to_principal(db, principal, artist_db_id)? {
+            filtered.push(relation);
+        }
+    }
+    Ok(filtered)
+}
+
 fn artist_detail_to_response(
     db: &DbAny,
-    detail: artist_service::ArtistDetails,
+    principal: &Principal,
+    mut detail: artist_service::ArtistDetails,
     includes: ArtistRouteIncludes,
 ) -> anyhow::Result<ArtistResponse> {
+    if let Some(releases) = detail.releases.take() {
+        detail.releases = Some(filter_accessible_releases(db, principal, releases)?);
+    }
+    if let Some(tracks) = detail.tracks.take() {
+        detail.tracks = Some(filter_accessible_tracks(db, principal, tracks)?);
+    }
+    if let Some(relations) = detail.relations.take() {
+        detail.relations = Some(filter_accessible_relations(db, principal, relations)?);
+    }
+
     let artist_db_id = detail.artist.db_id.clone().map(DbId::from);
     let cover = match artist_db_id {
         Some(artist_db_id) => {
@@ -631,7 +762,7 @@ pub(crate) async fn list_artist_responses(
                 let Some(artist_db_id) = artist.db_id.clone().map(DbId::from) else {
                     continue;
                 };
-                if !super::entity_accessible_to_principal(db, principal, artist_db_id)? {
+                if !artist_accessible_to_principal(db, principal, artist_db_id)? {
                     continue;
                 }
                 accessible_artists.push(artist);
@@ -646,14 +777,14 @@ pub(crate) async fn list_artist_responses(
         &sort,
         search_term.as_deref(),
         page_options,
-        principal.user_db_id,
+        principal,
     )?;
     let next_cursor = super::next_page_cursor(page.offset, page.entries.len(), page.total_count);
     let details = artist_service::list_details_for_artists(db, includes.service, page.entries)?;
 
     let mut items = Vec::with_capacity(details.len());
     for detail in details {
-        items.push(artist_detail_to_response(db, detail, includes)?);
+        items.push(artist_detail_to_response(db, principal, detail, includes)?);
     }
     Ok(PageResponse { items, next_cursor })
 }
@@ -667,13 +798,13 @@ pub(crate) async fn get_artist_response(
     let includes = parse_inc(inc)?;
     let artist_db_id = db::lookup::find_node_id_by_id(db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-    super::require_entity_accessible(db, principal, artist_db_id, || {
-        AppError::not_found(format!("Artist not found: {id}"))
-    })?;
+    if !artist_accessible_to_principal(db, principal, artist_db_id)? {
+        return Err(AppError::not_found(format!("Artist not found: {id}")));
+    }
     let detail = artist_service::get_details(db, artist_db_id, includes.service)?
         .ok_or_else(|| AppError::not_found(format!("Artist not found: {}", id)))?;
 
-    Ok(artist_detail_to_response(db, detail, includes)?)
+    Ok(artist_detail_to_response(db, principal, detail, includes)?)
 }
 
 async fn get_artists(
@@ -718,9 +849,9 @@ async fn search_artist_covers(
         let db = STATE.db.read().await;
         let artist_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-        super::require_entity_accessible(&*db, &principal, artist_db_id, || {
-            AppError::not_found(format!("Artist not found: {id}"))
-        })?;
+        if !artist_accessible_to_principal(&*db, &principal, artist_db_id)? {
+            return Err(AppError::not_found(format!("Artist not found: {id}")));
+        }
         if db::artists::get_by_id(&db, artist_db_id)?.is_none() {
             return Err(AppError::not_found(format!("Artist not found: {}", id)));
         }
@@ -759,9 +890,9 @@ async fn update_artist(
     let mut db = STATE.db.write().await;
     let artist_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-    super::require_entity_accessible(&*db, &principal, artist_db_id, || {
-        AppError::not_found(format!("Artist not found: {id}"))
-    })?;
+    if !artist_accessible_to_principal(&*db, &principal, artist_db_id)? {
+        return Err(AppError::not_found(format!("Artist not found: {id}")));
+    }
     if let Some(name) = update_name.as_ref()
         && name.trim().is_empty()
     {
@@ -960,6 +1091,17 @@ mod tests {
         }
     }
 
+    fn user_principal(accessible_library_ids: HashSet<String>) -> Principal {
+        Principal {
+            user_db_id: DbId(1),
+            user_public_id: "user".to_string(),
+            username: "user".to_string(),
+            permissions: Vec::new(),
+            role_name: Some("user".to_string()),
+            accessible_library_ids,
+        }
+    }
+
     fn insert_cover_for(db: &mut DbAny, owner_db_id: DbId) -> anyhow::Result<db::Cover> {
         db::covers::upsert(
             db,
@@ -973,6 +1115,67 @@ mod tests {
                 blurhash: Some("LKO2?U%2Tw=w]~RBVZRi};RPxuwH".to_string()),
             },
         )
+    }
+
+    #[test]
+    fn query_artist_route_items_counts_only_accessible_releases() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let visible_library =
+            insert_library(&mut db, "Visible Artist Counts", "/tmp/lyra-visible-counts")?;
+        let hidden_library =
+            insert_library(&mut db, "Hidden Artist Counts", "/tmp/lyra-hidden-counts")?;
+        let visible_library_id = db::libraries::get_by_id(&db, visible_library)?
+            .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
+            .id;
+
+        let mostly_hidden = insert_artist(&mut db, "Mostly Hidden Artist")?;
+        let visible_heavy = insert_artist(&mut db, "Visible Heavy Artist")?;
+
+        let visible_release = insert_release(&mut db, "Only Visible Release")?;
+        connect(&mut db, visible_library, visible_release)?;
+        connect_artist(&mut db, visible_release, mostly_hidden)?;
+
+        for title in ["Hidden One", "Hidden Two", "Hidden Three"] {
+            let release = insert_release(&mut db, title)?;
+            connect(&mut db, hidden_library, release)?;
+            connect_artist(&mut db, release, mostly_hidden)?;
+        }
+        for title in ["Visible One", "Visible Two"] {
+            let release = insert_release(&mut db, title)?;
+            connect(&mut db, visible_library, release)?;
+            connect_artist(&mut db, release, visible_heavy)?;
+        }
+
+        let artists = vec![
+            db::artists::get_by_id(&db, mostly_hidden)?
+                .ok_or_else(|| anyhow::anyhow!("mostly hidden artist missing"))?,
+            db::artists::get_by_id(&db, visible_heavy)?
+                .ok_or_else(|| anyhow::anyhow!("visible heavy artist missing"))?,
+        ];
+        let principal = user_principal(HashSet::from([visible_library_id]));
+
+        let page = query_artist_route_items(
+            &db,
+            artists,
+            &[ArtistRouteSortSpec {
+                key: ArtistRouteSortKey::ReleaseCount,
+                direction: SortDirection::Descending,
+            }],
+            None,
+            super::super::PageOptions {
+                limit: 10,
+                offset: 0,
+            },
+            &principal,
+        )?;
+
+        let names: Vec<String> = page
+            .entries
+            .into_iter()
+            .map(|artist| artist.artist_name)
+            .collect();
+        assert_eq!(names, vec!["Visible Heavy Artist", "Mostly Hidden Artist"]);
+        Ok(())
     }
 
     #[test]
@@ -1072,7 +1275,7 @@ mod tests {
                 limit: 10,
                 offset: 0,
             },
-            DbId(1),
+            &admin_principal(HashSet::new()),
         )?;
 
         let names: Vec<String> = page
@@ -1185,6 +1388,84 @@ mod tests {
             .and_then(Option::as_ref)
             .ok_or_else(|| anyhow::anyhow!("expected relation artist cover"))?;
         assert_eq!(cover.id, cover_id);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_artist_response_filters_includes_by_library_access() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let _test_dir = initialize_test_runtime().await?;
+
+        let (artist_public_id, visible_library_id) = {
+            let mut db = STATE.db.write().await;
+            let visible_library = insert_library(
+                &mut db,
+                "Visible Artist Include",
+                "/tmp/lyra-visible-artist-inc",
+            )?;
+            let hidden_library = insert_library(
+                &mut db,
+                "Hidden Artist Include",
+                "/tmp/lyra-hidden-artist-inc",
+            )?;
+            let artist = insert_artist(&mut db, "Shared Artist")?;
+            let hidden_relation = insert_artist(&mut db, "Hidden Relation")?;
+
+            let visible_release = insert_release(&mut db, "Visible Release")?;
+            let hidden_release = insert_release(&mut db, "Hidden Release")?;
+            let visible_track = insert_track(&mut db, "Visible Track")?;
+            let hidden_track = insert_track(&mut db, "Hidden Track")?;
+
+            connect(&mut db, visible_library, visible_release)?;
+            connect(&mut db, visible_release, visible_track)?;
+            connect_artist(&mut db, visible_release, artist)?;
+            connect_artist(&mut db, visible_track, artist)?;
+
+            connect(&mut db, hidden_library, hidden_release)?;
+            connect(&mut db, hidden_release, hidden_track)?;
+            connect_artist(&mut db, hidden_release, artist)?;
+            connect_artist(&mut db, hidden_track, artist)?;
+            connect_artist(&mut db, hidden_release, hidden_relation)?;
+            db::artists::relations::link(
+                &mut db,
+                artist,
+                hidden_relation,
+                db::ArtistRelationType::MemberOf,
+                None,
+            )?;
+
+            let artist_public_id = db::artists::get_by_id(&db, artist)?
+                .ok_or_else(|| anyhow::anyhow!("artist missing"))?
+                .id;
+            let visible_library_id = db::libraries::get_by_id(&db, visible_library)?
+                .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
+                .id;
+            (artist_public_id, visible_library_id)
+        };
+        let principal = user_principal(HashSet::from([visible_library_id]));
+
+        let artist = get_artist_response(
+            &principal,
+            artist_public_id,
+            Some(vec!["releases,tracks,relations".to_string()]),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        let releases = artist.releases.expect("releases included");
+        let release_titles: Vec<String> =
+            releases.into_iter().map(|release| release.title).collect();
+        assert_eq!(release_titles, vec!["Visible Release"]);
+
+        let tracks = artist.tracks.expect("tracks included");
+        let track_titles: Vec<String> = tracks.into_iter().map(|track| track.title).collect();
+        assert_eq!(track_titles, vec!["Visible Track"]);
+
+        let relations = artist.relations.expect("relations included");
+        assert!(
+            relations.is_empty(),
+            "hidden relation peers must not be included in artist responses",
+        );
         Ok(())
     }
 
@@ -1346,6 +1627,7 @@ mod benches {
     struct ArtistSortBench {
         db: DbAny,
         user_db_id: DbId,
+        principal: Principal,
         artists: Vec<db::Artist>,
     }
 
@@ -1445,6 +1727,14 @@ mod benches {
         ArtistSortBench {
             db,
             user_db_id,
+            principal: Principal {
+                user_db_id,
+                user_public_id: "artist-sort-bench".to_string(),
+                username: "artist-sort-bench".to_string(),
+                permissions: vec![db::Permission::Admin],
+                role_name: Some("admin".to_string()),
+                accessible_library_ids: HashSet::new(),
+            },
             artists,
         }
     }
@@ -1467,7 +1757,7 @@ mod benches {
                 &sort,
                 None,
                 bench_page(),
-                setup.user_db_id,
+                &setup.principal,
             )
             .unwrap()
         });
@@ -1487,7 +1777,7 @@ mod benches {
                 &sort,
                 None,
                 bench_page(),
-                setup.user_db_id,
+                &setup.principal,
             )
             .unwrap()
         });
@@ -1507,7 +1797,7 @@ mod benches {
                 &sort,
                 None,
                 bench_page(),
-                setup.user_db_id,
+                &setup.principal,
             )
             .unwrap()
         });
