@@ -286,9 +286,9 @@ pub(crate) mod tests {
         powers[0] = dc * dc;
         powers[WORK_LEN] = nyquist * nyquist;
 
-        for k in 1..CHROMA_MAX_INDEX {
+        for (k, power) in powers.iter_mut().enumerate().take(CHROMA_MAX_INDEX).skip(1) {
             let energy = fft.split_bin_power(real, imag, k);
-            powers[k] = energy;
+            *power = energy;
         }
     }
 }
