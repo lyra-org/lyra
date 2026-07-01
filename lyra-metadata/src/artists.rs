@@ -153,7 +153,7 @@ fn strip_cv_marker(value: &str) -> Option<&str> {
 
     let rest = trimmed[marker_end..]
         .trim_start()
-        .trim_start_matches(|ch: char| matches!(ch, ':' | '\u{ff1a}' | '.' | '\u{ff0e}'))
+        .trim_start_matches([':', '\u{ff1a}', '.', '\u{ff0e}'])
         .trim_start();
     (!rest.is_empty()).then_some(rest)
 }
