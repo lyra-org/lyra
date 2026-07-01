@@ -47,7 +47,7 @@ fn valid_release_year_month(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.get(4) == Some(&b'-')
         && valid_release_year(&value[..4])
-        && value[5..7].as_bytes().iter().all(u8::is_ascii_digit)
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
         && value[5..7]
             .parse::<u32>()
             .is_ok_and(|month| (1..=12).contains(&month))

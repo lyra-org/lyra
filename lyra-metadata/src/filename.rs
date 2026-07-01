@@ -27,22 +27,21 @@ pub fn fill_from_filename(meta: &mut TrackMetadata, file_path: &Path, known_arti
     if !remainder.is_empty() {
         let (artist, title) = split_artist_title(remainder, known_artists);
 
-        if meta.artists.is_none() {
-            if let Some(a) = artist {
-                meta.artists = Some(vec![a.to_string()]);
-            }
+        if meta.artists.is_none()
+            && let Some(a) = artist
+        {
+            meta.artists = Some(vec![a.to_string()]);
         }
         if meta.title.is_none() {
             meta.title = Some(title.to_string());
         }
     }
 
-    if meta.album.is_none() {
-        if let Some(parent) = file_path.parent().and_then(|p| p.file_name()) {
-            if let Some(name) = parent.to_str() {
-                meta.album = Some(name.to_string());
-            }
-        }
+    if meta.album.is_none()
+        && let Some(parent) = file_path.parent().and_then(|p| p.file_name())
+        && let Some(name) = parent.to_str()
+    {
+        meta.album = Some(name.to_string());
     }
 }
 
