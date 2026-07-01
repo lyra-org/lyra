@@ -1089,6 +1089,10 @@ api.get(P .. "/Users", function(ctx: ApiContext): ApiResponse
 		return session.unauthorized()
 	end
 
+	if not session.is_admin(principal) then
+		return api.response.json(200, { session.to_jellyfin_principal_user(principal) })
+	end
+
 	local result: { JsonValue } = {}
 	for _, user in users.list() do
 		table.insert(
