@@ -445,7 +445,7 @@ fn create_tag_docs(op: TransformOperation) -> TransformOperation {
          PATCH to recolor. \
          Tag names are normalized (invisibles stripped, `White_Space` trimmed, NFC, \
          case-sensitive); control characters or names over 128 codepoints return 400. Target \
-         must be a track, release, artist, or visible playlist; otherwise returns 404.",
+         must be an accessible track, release, artist, or visible playlist; otherwise returns 404.",
         )
         .response::<201, ()>()
         .response::<204, ()>()

@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashMap;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 use std::time::{
     SystemTime,
     UNIX_EPOCH,
@@ -74,7 +77,8 @@ pub(crate) fn create(
 
     db.transaction_mut(
         |t| -> anyhow::Result<Result<CreateResult, TagServiceError>> {
-            let Some((target_db_id, _)) = resolve_targetable(t, owner_db_id, public_target_id)?
+            let visibility = TargetVisibility::for_user(t, owner_db_id)?;
+            let Some((target_db_id, _)) = resolve_targetable(t, &visibility, public_target_id)?
             else {
                 return Ok(Err(TagServiceError::NotTargetable));
             };
@@ -119,8 +123,10 @@ pub(crate) fn has_target_by_tag_id(
     let tag = db::tags::get_by_id(db, tag_db_id)
         .map_err(TagServiceError::Internal)?
         .ok_or(TagServiceError::NotFound)?;
+    let visibility =
+        TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
     let Some((target_db_id, _)) =
-        resolve_targetable(db, owner_db_id, public_target_id).map_err(TagServiceError::Internal)?
+        resolve_targetable(db, &visibility, public_target_id).map_err(TagServiceError::Internal)?
     else {
         return Ok(false);
     };
@@ -142,9 +148,11 @@ pub(crate) fn has_targets_by_db_id(
     }
     let normalized =
         db::tags::normalize_tag_name(raw_tag_name).map_err(TagServiceError::BadTagName)?;
+    let visibility =
+        TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
     let mut visible: Vec<DbId> = Vec::with_capacity(target_db_ids.len());
     for &id in target_db_ids {
-        if resolve_targetable_by_db_id(db, owner_db_id, id)
+        if resolve_targetable_by_db_id(db, &visibility, id)
             .map_err(TagServiceError::Internal)?
             .is_some()
         {
@@ -169,7 +177,9 @@ pub(crate) fn get_for_target_by_db_id(
     owner_db_id: DbId,
     target_db_id: DbId,
 ) -> Result<Vec<Tag>, TagServiceError> {
-    let Some((target_db_id, _)) = resolve_targetable_by_db_id(db, owner_db_id, target_db_id)
+    let visibility =
+        TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
+    let Some((target_db_id, _)) = resolve_targetable_by_db_id(db, &visibility, target_db_id)
         .map_err(TagServiceError::Internal)?
     else {
         return Ok(Vec::new());
@@ -189,6 +199,8 @@ pub(crate) fn get_for_targets_many_by_db_id(
         )));
     }
 
+    let visibility =
+        TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
     let mut visible: Vec<DbId> = Vec::with_capacity(target_db_ids.len());
     let mut out: HashMap<DbId, Vec<Tag>> = target_db_ids
         .iter()
@@ -196,7 +208,7 @@ pub(crate) fn get_for_targets_many_by_db_id(
         .map(|id| (id, Vec::new()))
         .collect();
     for &id in target_db_ids {
-        if resolve_targetable_by_db_id(db, owner_db_id, id)
+        if resolve_targetable_by_db_id(db, &visibility, id)
             .map_err(TagServiceError::Internal)?
             .is_some()
         {
@@ -234,8 +246,9 @@ pub(crate) fn create_by_db_id(
 
     db.transaction_mut(
         |t| -> anyhow::Result<Result<(CreateResult, String), TagServiceError>> {
+            let visibility = TargetVisibility::for_user(t, owner_db_id)?;
             let Some((target_db_id, _)) =
-                resolve_targetable_by_db_id(t, owner_db_id, target_db_id)?
+                resolve_targetable_by_db_id(t, &visibility, target_db_id)?
             else {
                 return Ok(Err(TagServiceError::NotTargetable));
             };
@@ -285,7 +298,9 @@ pub(crate) fn has_target_by_db_id(
 ) -> Result<bool, TagServiceError> {
     let normalized =
         db::tags::normalize_tag_name(raw_tag_name).map_err(TagServiceError::BadTagName)?;
-    let Some((target_db_id, _)) = resolve_targetable_by_db_id(db, owner_db_id, target_db_id)
+    let visibility =
+        TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
+    let Some((target_db_id, _)) = resolve_targetable_by_db_id(db, &visibility, target_db_id)
         .map_err(TagServiceError::Internal)?
     else {
         return Ok(false);
@@ -303,11 +318,13 @@ pub(crate) fn get_tagged(
 ) -> Result<(Vec<DbId>, String), TagServiceError> {
     let normalized =
         db::tags::normalize_tag_name(raw_tag_name).map_err(TagServiceError::BadTagName)?;
+    let visibility =
+        TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
     let ids = db::tags::get_targets_by_tag(db, owner_db_id, &normalized)
         .map_err(TagServiceError::Internal)?;
     let mut visible = Vec::with_capacity(ids.len());
     for id in ids {
-        if resolve_targetable_by_db_id(db, owner_db_id, id)
+        if resolve_targetable_by_db_id(db, &visibility, id)
             .map_err(TagServiceError::Internal)?
             .is_some()
         {
@@ -439,9 +456,11 @@ pub(crate) fn list_targets(
     let page = db::tags::list_targets(db, tag_db_id, clamped, cursor)
         .map_err(TagServiceError::Internal)?;
 
+    let visibility =
+        TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
     let mut filtered = Vec::with_capacity(page.target_db_ids.len());
     for id in page.target_db_ids {
-        if resolve_targetable_by_db_id(db, owner_db_id, id)
+        if resolve_targetable_by_db_id(db, &visibility, id)
             .map_err(TagServiceError::Internal)?
             .is_some()
         {
@@ -457,24 +476,24 @@ pub(crate) fn list_targets(
 
 fn resolve_targetable(
     db: &impl db::DbAccess,
-    user_db_id: DbId,
+    visibility: &TargetVisibility,
     public_target_id: &str,
 ) -> anyhow::Result<Option<(DbId, TargetKind)>> {
     let Some(target_db_id) = db::lookup::find_node_id_by_id(db, public_target_id)? else {
         return Ok(None);
     };
-    resolve_targetable_by_db_id(db, user_db_id, target_db_id)
+    resolve_targetable_by_db_id(db, visibility, target_db_id)
 }
 
 fn resolve_targetable_by_db_id(
     db: &impl db::DbAccess,
-    user_db_id: DbId,
+    visibility: &TargetVisibility,
     target_db_id: DbId,
 ) -> anyhow::Result<Option<(DbId, TargetKind)>> {
     let Some((target_db_id, kind)) = resolve_whitelisted_by_db_id(db, target_db_id)? else {
         return Ok(None);
     };
-    if matches!(kind, TargetKind::Playlist) && !playlist_is_visible(db, user_db_id, target_db_id)? {
+    if !visibility.can_access_target(db, target_db_id, kind)? {
         return Ok(None);
     }
     Ok(Some((target_db_id, kind)))
@@ -511,6 +530,48 @@ enum TargetKind {
     Release,
     Artist,
     Playlist,
+}
+
+struct TargetVisibility {
+    user_db_id: DbId,
+    can_access_all_libraries: bool,
+    accessible_library_ids: HashSet<String>,
+}
+
+impl TargetVisibility {
+    fn for_user(db: &impl db::DbAccess, user_db_id: DbId) -> anyhow::Result<Self> {
+        let can_access_all_libraries = db::roles::get_role_for_user(db, user_db_id)?
+            .is_some_and(|role| role.permissions.contains(&db::Permission::Admin));
+        let accessible_library_ids = if can_access_all_libraries {
+            HashSet::new()
+        } else {
+            db::libraries::accessible_library_ids(db, user_db_id)?
+        };
+        Ok(Self {
+            user_db_id,
+            can_access_all_libraries,
+            accessible_library_ids,
+        })
+    }
+
+    fn can_access_target(
+        &self,
+        db: &impl db::DbAccess,
+        target_db_id: DbId,
+        kind: TargetKind,
+    ) -> anyhow::Result<bool> {
+        match kind {
+            TargetKind::Playlist => playlist_is_visible(db, self.user_db_id, target_db_id),
+            TargetKind::Track | TargetKind::Release | TargetKind::Artist => {
+                if self.can_access_all_libraries {
+                    return Ok(true);
+                }
+                Ok(db::libraries::get_for_entity(db, target_db_id)?
+                    .into_iter()
+                    .any(|library| self.accessible_library_ids.contains(&library.id)))
+            }
+        }
+    }
 }
 
 fn playlist_is_visible(
@@ -582,6 +643,54 @@ mod tests {
         Ok((track_db_id, public_id))
     }
 
+    fn library_insert(name: &str) -> db::libraries::LibraryInsert {
+        let suffix = nanoid!();
+        let path = std::path::PathBuf::from(format!("/tmp/lyra-tags-test-{suffix}"));
+        let path_key = db::libraries::path_key_for(&path);
+        db::libraries::LibraryInsert {
+            id: nanoid!(),
+            name: format!("{name}-{suffix}"),
+            path,
+            path_key,
+            language: None,
+            country: None,
+        }
+    }
+
+    fn attach_entity_to_library(
+        db: &mut DbAny,
+        library_db_id: DbId,
+        target_db_id: DbId,
+    ) -> anyhow::Result<()> {
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(library_db_id)
+                .to(target_db_id)
+                .query(),
+        )?;
+        Ok(())
+    }
+
+    fn create_accessible_track(
+        db: &mut DbAny,
+        user_db_id: DbId,
+    ) -> anyhow::Result<(DbId, String, DbId)> {
+        let (track_db_id, public_id) = create_track(db)?;
+        let library = db::libraries::create_with_creator(db, library_insert("Tags"), user_db_id)?;
+        let library_db_id = library.db_id.expect("library db id");
+        attach_entity_to_library(db, library_db_id, track_db_id)?;
+        Ok((track_db_id, public_id, library_db_id))
+    }
+
+    fn create_inaccessible_track(db: &mut DbAny) -> anyhow::Result<(DbId, String)> {
+        let (track_db_id, public_id) = create_track(db)?;
+        let library = db::libraries::create_system(db, library_insert("HiddenTags"))?;
+        let library_db_id = library.db_id.expect("library db id");
+        attach_entity_to_library(db, library_db_id, track_db_id)?;
+        Ok((track_db_id, public_id))
+    }
+
     fn create_playlist(
         db: &mut DbAny,
         owner: DbId,
@@ -606,8 +715,8 @@ mod tests {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
-        let (_, track_a) = create_track(&mut db)?;
-        let (_, track_b) = create_track(&mut db)?;
+        let (_, track_a, _) = create_accessible_track(&mut db, user)?;
+        let (_, track_b, _) = create_accessible_track(&mut db, user)?;
 
         assert_eq!(
             create(&mut db, user, &track_a, "Workout", "blue")?,
@@ -625,10 +734,22 @@ mod tests {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
-        let (_, track_id) = create_track(&mut db)?;
+        let (_, track_id, _) = create_accessible_track(&mut db, user)?;
 
         let err = create(&mut db, user, &track_id, "bad\x00name", "blue").unwrap_err();
         assert!(matches!(err, TagServiceError::BadTagName(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn create_rejects_track_without_library_access() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        setup_id_index(&mut db)?;
+        let user = create_user(&mut db, "alice")?;
+        let (_, track_id) = create_inaccessible_track(&mut db)?;
+
+        let err = create(&mut db, user, &track_id, "Hidden", "blue").unwrap_err();
+        assert!(matches!(err, TagServiceError::NotTargetable));
         Ok(())
     }
 
@@ -769,12 +890,31 @@ mod tests {
     }
 
     #[test]
+    fn media_tags_are_filtered_after_library_access_is_revoked() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        setup_id_index(&mut db)?;
+        let user = create_user(&mut db, "alice")?;
+        let (track_db_id, track_id, library_db_id) = create_accessible_track(&mut db, user)?;
+
+        create(&mut db, user, &track_id, "Visible", "blue")?;
+        assert!(has_target_by_db_id(&db, user, track_db_id, "Visible")?);
+
+        db::libraries::revoke_access(&mut db, user, library_db_id)?;
+
+        assert!(!has_target_by_db_id(&db, user, track_db_id, "Visible")?);
+        assert!(get_for_target_by_db_id(&db, user, track_db_id)?.is_empty());
+        let (targets, _) = get_tagged(&db, user, "Visible")?;
+        assert!(targets.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn get_by_public_id_rejects_non_owner() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let alice = create_user(&mut db, "alice")?;
         let bob = create_user(&mut db, "bob")?;
-        let (_, track_id) = create_track(&mut db)?;
+        let (_, track_id, _) = create_accessible_track(&mut db, alice)?;
         create(&mut db, alice, &track_id, "Private", "blue")?;
 
         let tags = db::tags::list_for_user(&db, alice, 10, None)?;
@@ -794,7 +934,7 @@ mod tests {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
-        let (_, track_id) = create_track(&mut db)?;
+        let (_, track_id, _) = create_accessible_track(&mut db, user)?;
 
         create(&mut db, user, &track_id, "Workout", "blue")?;
         create(&mut db, user, &track_id, "Mood", "red")?;
@@ -817,7 +957,7 @@ mod tests {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
-        let (_, track_id) = create_track(&mut db)?;
+        let (_, track_id, _) = create_accessible_track(&mut db, user)?;
         create(&mut db, user, &track_id, "X", "blue")?;
         let tag_id = db::tags::list_for_user(&db, user, 10, None)?
             .tags
