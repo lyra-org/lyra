@@ -24,11 +24,13 @@ use std::{
         self,
         NonNull,
     },
-    rc::Rc,
+    rc::{
+        Rc,
+        Weak as RcWeak,
+    },
     sync::{
         Arc,
         RwLock,
-        Weak,
         atomic::{
             AtomicU64,
             AtomicUsize,
@@ -222,7 +224,7 @@ impl StandardLibraries {
 
 #[derive(Clone)]
 pub struct Vm {
-    inner: Arc<VmInner>,
+    inner: Rc<VmInner>,
 }
 
 struct VmInner {
@@ -257,7 +259,7 @@ impl Vm {
             sys::lua_set_callback_userdata(state.as_ptr(), control.as_ptr().cast());
         }
         Ok(Self {
-            inner: Arc::new(VmInner {
+            inner: Rc::new(VmInner {
                 id: NEXT_VM_ID.fetch_add(1, Ordering::Relaxed),
                 state,
                 control,
@@ -803,7 +805,7 @@ impl Vm {
             ptr::write(
                 slot,
                 CallbackSlot {
-                    vm: Arc::downgrade(&self.inner),
+                    vm: Rc::downgrade(&self.inner),
                     vm_id: self.inner.id,
                     callback,
                     origin: options.origin.clone(),
@@ -1144,7 +1146,7 @@ impl Function {
 
 #[derive(Clone)]
 pub struct Thread {
-    inner: Arc<ThreadInner>,
+    inner: Rc<ThreadInner>,
 }
 
 struct ThreadInner {
@@ -1167,7 +1169,7 @@ impl Thread {
         finished: bool,
     ) -> Self {
         Self {
-            inner: Arc::new(ThreadInner {
+            inner: Rc::new(ThreadInner {
                 _reference: reference,
                 state,
                 vm_id,
@@ -2703,7 +2705,7 @@ impl NativeFunctionOptions {
 }
 
 struct CallbackSlot {
-    vm: Weak<VmInner>,
+    vm: RcWeak<VmInner>,
     vm_id: u64,
     callback: NativeFn,
     origin: ChunkOrigin,
@@ -2867,47 +2869,48 @@ unsafe extern "C-unwind" fn native_callback(state: *mut sys::lua_State) -> i32 {
         Err(error) => return lua_error(state.as_ptr(), &error.to_string()),
     };
     let mut return_state = ReturnState::default();
-    let returns = ReturnWriter::borrowed(&mut return_state);
-    let argc = unsafe { sys::lua_gettop(state.as_ptr()) };
-    let thread_reference = vm.ref_current_thread_from(state);
-    let caller = thread_context
-        .as_ref()
-        .map(|context| context.caller.clone())
-        .unwrap_or_default();
-    let task_group = thread_context
-        .as_ref()
-        .map(|context| context.task_group)
-        .unwrap_or(slot.task_group);
-    let origin = if slot.use_thread_context_origin {
-        thread_context
+    let result = {
+        let returns = ReturnWriter::borrowed(&mut return_state);
+        let argc = unsafe { sys::lua_gettop(state.as_ptr()) };
+        let thread_reference = vm.ref_current_thread_from(state);
+        let caller = thread_context
             .as_ref()
-            .map(|context| context.origin.clone())
-            .unwrap_or_else(|| slot.origin.clone())
-    } else {
-        slot.origin.clone()
-    };
-    let frame = CallFrame {
-        vm: &vm,
-        thread: Thread::new(
-            Some(thread_reference),
-            state,
-            slot.vm_id,
-            origin.clone(),
-            true,
-            false,
-        ),
-        context: CallContext {
-            origin,
-            capability: slot.capability.clone(),
-            caller,
-            task_group,
-        },
-        args: ArgReader::stack(&vm, state, argc, slot.argument_names.clone()),
-        returns: returns.clone(),
-    };
+            .map(|context| context.caller.clone())
+            .unwrap_or_default();
+        let task_group = thread_context
+            .as_ref()
+            .map(|context| context.task_group)
+            .unwrap_or(slot.task_group);
+        let origin = if slot.use_thread_context_origin {
+            thread_context
+                .as_ref()
+                .map(|context| context.origin.clone())
+                .unwrap_or_else(|| slot.origin.clone())
+        } else {
+            slot.origin.clone()
+        };
+        let frame = CallFrame {
+            vm: &vm,
+            thread: Thread::new(
+                Some(thread_reference),
+                state,
+                slot.vm_id,
+                origin.clone(),
+                true,
+                false,
+            ),
+            context: CallContext {
+                origin,
+                capability: slot.capability.clone(),
+                caller,
+                task_group,
+            },
+            args: ArgReader::stack(&vm, state, argc, slot.argument_names.clone()),
+            returns: returns.clone(),
+        };
 
-    let result = catch_unwind(AssertUnwindSafe(|| (slot.callback)(frame)));
-    drop(returns);
+        catch_unwind(AssertUnwindSafe(|| (slot.callback)(frame)))
+    };
     match result {
         Ok(Ok(())) => {
             for value in &return_state.values {
