@@ -20,6 +20,7 @@ use serde::{
 };
 
 use crate::cached_http::AccessedKeys;
+use crate::cached_http::CachedHttpState;
 use crate::test_case::{
     AcceptedValues,
     ExpectedEntity,
@@ -59,16 +60,29 @@ impl RunResult {
     }
 }
 
-pub async fn run_test(
-    test_name: &str,
-    test_case: &TestCase,
-    test_dir: &Path,
-    base_cache_dir: &Path,
-    overlay_cache_dir: Option<&Path>,
-    live_policy: crate::cached_http::LivePolicy,
-    accessed_keys: &AccessedKeys,
-    max_release_requests: Option<usize>,
-) -> anyhow::Result<RunResult> {
+pub(crate) struct RunTestOptions<'a> {
+    pub(crate) test_name: &'a str,
+    pub(crate) test_case: &'a TestCase,
+    pub(crate) test_dir: &'a Path,
+    pub(crate) base_cache_dir: &'a Path,
+    pub(crate) overlay_cache_dir: Option<&'a Path>,
+    pub(crate) live_policy: crate::cached_http::LivePolicy,
+    pub(crate) accessed_keys: &'a AccessedKeys,
+    pub(crate) max_release_requests: Option<usize>,
+}
+
+pub async fn run_test(options: RunTestOptions<'_>) -> anyhow::Result<RunResult> {
+    let RunTestOptions {
+        test_name,
+        test_case,
+        test_dir,
+        base_cache_dir,
+        overlay_cache_dir,
+        live_policy,
+        accessed_keys,
+        max_release_requests,
+    } = options;
+
     test_case
         .check_mapping_version()
         .map_err(|err| anyhow::anyhow!("{test_name}: {err}"))?;
@@ -95,17 +109,17 @@ pub async fn run_test(
 
     let plugins_dir = find_plugins_dir(test_dir)?;
     let parent = plugins_dir.parent().unwrap_or(Path::new("/")).to_path_buf();
-    let http_module = crate::cached_http::module_spec(
-        base_cache_dir.to_path_buf(),
-        overlay_cache_dir.map(Path::to_path_buf),
-        accessed_keys.clone(),
-        request_count.clone(),
-        live_request_count.clone(),
-        cache_misses.clone(),
-        request_trace.clone(),
+    let http_module = crate::cached_http::module_spec(CachedHttpState {
+        base_cache_dir: base_cache_dir.to_path_buf(),
+        overlay_cache_dir: overlay_cache_dir.map(Path::to_path_buf),
+        accessed_keys: accessed_keys.clone(),
+        request_count: request_count.clone(),
+        live_request_count: live_request_count.clone(),
+        cache_misses: cache_misses.clone(),
+        request_trace: request_trace.clone(),
         live_policy,
-        test_case.plugin.clone(),
-    );
+        plugin_id: test_case.plugin.clone(),
+    });
     harmony_http::test_clear_rate_limits_for_plugin(&test_case.plugin).await;
     let started = Instant::now();
     lyra_server::testing::exec_plugins(&parent, plugins_dir, http_module, &test_case.plugin)

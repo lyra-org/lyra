@@ -216,40 +216,19 @@ pub async fn take_cache_misses(cache_misses: &CacheMisses) -> Vec<String> {
 }
 
 #[derive(Clone)]
-struct CachedHttpState {
-    base_cache_dir: PathBuf,
-    overlay_cache_dir: Option<PathBuf>,
-    accessed_keys: AccessedKeys,
-    request_count: RequestCount,
-    live_request_count: LiveRequestCount,
-    cache_misses: CacheMisses,
-    request_trace: RequestTrace,
-    live_policy: LivePolicy,
-    plugin_id: String,
+pub(crate) struct CachedHttpState {
+    pub(crate) base_cache_dir: PathBuf,
+    pub(crate) overlay_cache_dir: Option<PathBuf>,
+    pub(crate) accessed_keys: AccessedKeys,
+    pub(crate) request_count: RequestCount,
+    pub(crate) live_request_count: LiveRequestCount,
+    pub(crate) cache_misses: CacheMisses,
+    pub(crate) request_trace: RequestTrace,
+    pub(crate) live_policy: LivePolicy,
+    pub(crate) plugin_id: String,
 }
 
-pub fn module_spec(
-    base_cache_dir: PathBuf,
-    overlay_cache_dir: Option<PathBuf>,
-    accessed_keys: AccessedKeys,
-    request_count: RequestCount,
-    live_request_count: LiveRequestCount,
-    cache_misses: CacheMisses,
-    request_trace: RequestTrace,
-    live_policy: LivePolicy,
-    plugin_id: String,
-) -> ModuleSpec {
-    let state = CachedHttpState {
-        base_cache_dir,
-        overlay_cache_dir,
-        accessed_keys,
-        request_count,
-        live_request_count,
-        cache_misses,
-        request_trace,
-        live_policy,
-        plugin_id,
-    };
+pub(crate) fn module_spec(state: CachedHttpState) -> ModuleSpec {
     let request_state = state.clone();
     let rate_limit_plugin_id = state.plugin_id.clone();
 

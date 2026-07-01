@@ -135,10 +135,10 @@ fn discover_tests(dir: &Path, filter: Option<&str>) -> anyhow::Result<Vec<(Strin
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
-            if let Some(filter) = filter {
-                if !name.contains(filter) {
-                    continue;
-                }
+            if let Some(filter) = filter
+                && !name.contains(filter)
+            {
+                continue;
             }
             tests.push((name, path));
         }
@@ -173,16 +173,16 @@ async fn replay_scenario(
     max_release_requests: Option<usize>,
 ) -> ScenarioExecution {
     let accessed_keys = cached_http::new_accessed_keys();
-    let outcome = runner::run_test(
-        &test.name,
-        &test.test_case,
-        test_base_dir,
-        &scenario.cache_dir,
-        None,
-        cached_http::LivePolicy::CacheOnly,
-        &accessed_keys,
+    let outcome = runner::run_test(runner::RunTestOptions {
+        test_name: &test.name,
+        test_case: &test.test_case,
+        test_dir: test_base_dir,
+        base_cache_dir: &scenario.cache_dir,
+        overlay_cache_dir: None,
+        live_policy: cached_http::LivePolicy::CacheOnly,
+        accessed_keys: &accessed_keys,
         max_release_requests,
-    )
+    })
     .await;
 
     ScenarioExecution {
@@ -203,16 +203,16 @@ async fn discover_seeded_scenario(
     let staging_cache_dir =
         cached_http::scenario_cache_dir(cache_dir, &test.name, &staging_scenario_id);
     let _ = std::fs::remove_dir_all(&staging_cache_dir);
-    let outcome = runner::run_test(
-        &test.name,
-        &test.test_case,
-        test_base_dir,
-        &scenario.cache_dir,
-        Some(&staging_cache_dir),
-        cached_http::LivePolicy::AllowLive,
-        &accessed_keys,
+    let outcome = runner::run_test(runner::RunTestOptions {
+        test_name: &test.name,
+        test_case: &test.test_case,
+        test_dir: test_base_dir,
+        base_cache_dir: &scenario.cache_dir,
+        overlay_cache_dir: Some(&staging_cache_dir),
+        live_policy: cached_http::LivePolicy::AllowLive,
+        accessed_keys: &accessed_keys,
         max_release_requests,
-    )
+    })
     .await
     .and_then(|result| {
         cached_http::persist_scenario(
@@ -247,16 +247,16 @@ async fn discover_scenario(
     let staging_cache_dir =
         cached_http::scenario_cache_dir(cache_dir, &test.name, staging_scenario_id);
     let _ = std::fs::remove_dir_all(&staging_cache_dir);
-    let outcome = runner::run_test(
-        &test.name,
-        &test.test_case,
-        test_base_dir,
-        &staging_cache_dir,
-        None,
-        cached_http::LivePolicy::AllowLive,
-        &accessed_keys,
+    let outcome = runner::run_test(runner::RunTestOptions {
+        test_name: &test.name,
+        test_case: &test.test_case,
+        test_dir: test_base_dir,
+        base_cache_dir: &staging_cache_dir,
+        overlay_cache_dir: None,
+        live_policy: cached_http::LivePolicy::AllowLive,
+        accessed_keys: &accessed_keys,
         max_release_requests,
-    )
+    })
     .await
     .and_then(|result| {
         cached_http::persist_scenario(
@@ -327,24 +327,24 @@ async fn run_fixture<'a>(
                 .await;
                 if run.outcome.is_ok() {
                     scenarios_discovered += 1;
-                    if let Some(max) = max_scenarios {
-                        if scenarios_discovered >= max {
-                            if let Ok(result) = &run.outcome {
-                                discovered_ids.insert(result.scenario_id.clone());
-                            }
-                            runs.push(run);
-                            return Ok(FixtureExecution {
-                                test,
-                                scenario_runs: vec![ScenarioExecution {
-                                    scenario_id: "max-scenarios".to_string(),
-                                    outcome: Err(anyhow::anyhow!(
-                                        "hit --max-scenarios limit ({max} scenarios discovered)"
-                                    )),
-                                }],
-                                discovered_scenario_ids: Some(discovered_ids),
-                                discovery_complete: false,
-                            });
+                    if let Some(max) = max_scenarios
+                        && scenarios_discovered >= max
+                    {
+                        if let Ok(result) = &run.outcome {
+                            discovered_ids.insert(result.scenario_id.clone());
                         }
+                        runs.push(run);
+                        return Ok(FixtureExecution {
+                            test,
+                            scenario_runs: vec![ScenarioExecution {
+                                scenario_id: "max-scenarios".to_string(),
+                                outcome: Err(anyhow::anyhow!(
+                                    "hit --max-scenarios limit ({max} scenarios discovered)"
+                                )),
+                            }],
+                            discovered_scenario_ids: Some(discovered_ids),
+                            discovery_complete: false,
+                        });
                     }
                 }
                 run
@@ -669,10 +669,10 @@ fn write_expected_entity(
         .ids
         .iter()
         .filter(|(k, v)| {
-            if let Some((skip_key, skip_value)) = skip_id {
-                if k.as_str() == skip_key {
-                    return !matches!(v, test_case::AcceptedValues::Single(value) if value == skip_value);
-                }
+            if let Some((skip_key, skip_value)) = skip_id
+                && k.as_str() == skip_key
+            {
+                return !matches!(v, test_case::AcceptedValues::Single(value) if value == skip_value);
             }
             true
         })
@@ -723,10 +723,9 @@ fn merge_entity_ids(
             test_case::AcceptedValues::Single(recorded),
             test_case::AcceptedValues::Multiple(existing_vals),
         ) = (&*captured_val, existing_val)
+            && existing_vals.iter().any(|v| v == recorded)
         {
-            if existing_vals.iter().any(|v| v == recorded) {
-                *captured_val = test_case::AcceptedValues::Multiple(existing_vals.clone());
-            }
+            *captured_val = test_case::AcceptedValues::Multiple(existing_vals.clone());
         }
     }
 }
