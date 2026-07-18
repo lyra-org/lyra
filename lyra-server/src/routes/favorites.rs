@@ -150,16 +150,13 @@ struct FavoriteItem {
     last_refreshed_at: String,
 }
 
-fn favorite_item_from_edge(edge: crate::db::favorites::FavoriteEdge) -> Option<FavoriteItem> {
-    if edge.target_public_id.is_empty() {
-        return None;
+fn favorite_item_from_list_item(item: favorite_service::ListItem) -> FavoriteItem {
+    FavoriteItem {
+        target_id: item.target_id,
+        entity: item.kind.as_str().to_string(),
+        first_favorited_at: super::unix_ms_to_rfc3339_i64(item.first_favorited_at_ms),
+        last_refreshed_at: super::unix_ms_to_rfc3339_i64(item.last_refreshed_at_ms),
     }
-    Some(FavoriteItem {
-        target_id: edge.target_public_id,
-        entity: edge.kind.as_str().to_string(),
-        first_favorited_at: super::unix_ms_to_rfc3339_i64(edge.first_favorited_at_ms),
-        last_refreshed_at: super::unix_ms_to_rfc3339_i64(edge.last_refreshed_at_ms),
-    })
 }
 
 async fn put_favorite(
@@ -254,9 +251,9 @@ async fn list_favorites(
     let page = favorite_service::list(&db, &principal, kind, limit, cursor)?;
 
     let items: Vec<FavoriteItem> = page
-        .edges
+        .items
         .into_iter()
-        .filter_map(favorite_item_from_edge)
+        .map(favorite_item_from_list_item)
         .collect();
 
     Ok(Json(ListResponse {
@@ -348,8 +345,9 @@ fn check_favorites_docs(op: TransformOperation) -> TransformOperation {
 fn list_favorites_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List favorites").description(
         "Returns favorites for one entity kind, paginated by creation time descending \
-         with an opaque cursor. `limit` is best-effort: visibility filters and elided \
-         snapshots can return `items.len() < limit`. Drive iteration off `next_cursor`.",
+         with an opaque cursor. `limit` is best-effort: visibility filtering and targets \
+         removed during hydration can return `items.len() < limit`. Drive iteration off \
+         `next_cursor`.",
     )
 }
 
@@ -421,28 +419,15 @@ mod tests {
     }
 
     #[test]
-    fn favorite_item_from_edge_drops_pre_snapshot_edges() {
-        let edge = crate::db::favorites::FavoriteEdge {
-            target_db_id: agdb::DbId(7),
-            target_public_id: String::new(),
-            kind: FavoriteKind::Track,
-            first_favorited_at_ms: 1,
-            last_refreshed_at_ms: 1,
-        };
-        assert!(favorite_item_from_edge(edge).is_none());
-    }
-
-    #[test]
-    fn favorite_item_from_edge_returns_snapshot_when_set() {
-        let edge = crate::db::favorites::FavoriteEdge {
-            target_db_id: agdb::DbId(7),
-            target_public_id: "tr-snapshot".to_string(),
+    fn favorite_item_from_list_item_formats_fields() {
+        let entry = favorite_service::ListItem {
+            target_id: "tr-current".to_string(),
             kind: FavoriteKind::Track,
             first_favorited_at_ms: 1,
             last_refreshed_at_ms: 2,
         };
-        let item = favorite_item_from_edge(edge).expect("snapshot edge renders");
-        assert_eq!(item.target_id, "tr-snapshot");
+        let item = favorite_item_from_list_item(entry);
+        assert_eq!(item.target_id, "tr-current");
         assert_eq!(item.entity, "track");
         assert_eq!(item.first_favorited_at, "1970-01-01T00:00:00.001Z");
         assert_eq!(item.last_refreshed_at, "1970-01-01T00:00:00.002Z");
