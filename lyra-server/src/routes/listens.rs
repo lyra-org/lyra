@@ -45,6 +45,7 @@ use crate::{
             require_permission,
             require_principal,
         },
+        pagination::SnapshotKey,
         playback_sessions as playback_service,
         providers::provider_registry,
     },
@@ -332,15 +333,33 @@ fn listen_row_to_response(row: ListenRow) -> ListenResponse {
     }
 }
 
-fn apply_page<T>(rows: Vec<T>, page_options: routes::PageOptions) -> (Vec<T>, Option<String>) {
-    let total_count = rows.len() as u64;
-    let items = rows
-        .into_iter()
-        .skip(usize::try_from(page_options.offset).unwrap_or(usize::MAX))
-        .take(usize::try_from(page_options.limit).unwrap_or(usize::MAX))
-        .collect::<Vec<_>>();
-    let next_cursor = routes::next_page_cursor(page_options.offset, items.len(), total_count);
-    (items, next_cursor)
+fn listen_row_id(row: &ListenRow) -> String {
+    format!(
+        "{}\0{}\0{}\0{}",
+        row.user_id,
+        row.track_id,
+        row.listen_count,
+        row.last_played_ms
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
+    )
+}
+
+fn parse_listen_row_id(raw: &str) -> Option<ListenRow> {
+    let mut fields = raw.splitn(4, '\0');
+    let user_id = fields.next()?.to_string();
+    let track_id = fields.next()?.to_string();
+    let listen_count = fields.next()?.parse().ok()?;
+    let last_played_ms = match fields.next()? {
+        "" => None,
+        value => Some(value.parse().ok()?),
+    };
+    Some(ListenRow {
+        user_id,
+        track_id,
+        listen_count,
+        last_played_ms,
+    })
 }
 
 fn validate_merge_usage(
@@ -535,26 +554,82 @@ async fn rows_for_managed_listens(
     Ok(rows)
 }
 
+async fn hydrate_listen_rows(
+    principal: &Principal,
+    item_ids: &[String],
+) -> Result<Vec<ListenRow>, AppError> {
+    let rows = item_ids
+        .iter()
+        .filter_map(|item_id| parse_listen_row_id(item_id))
+        .collect::<Vec<_>>();
+    let db = STATE.db.read().await;
+    let track_public_ids = rows
+        .iter()
+        .map(|row| row.track_id.as_str())
+        .collect::<Vec<_>>();
+    let track_db_ids = db::lookup::find_node_ids_by_ids(&db, &track_public_ids)?;
+    let mut visible_users = HashMap::new();
+    let mut hydrated = Vec::with_capacity(rows.len());
+    for row in rows {
+        let user_exists = match visible_users.get(&row.user_id).copied() {
+            Some(exists) => exists,
+            None => {
+                let exists = db::users::get_by_public_id(&db, &row.user_id)?.is_some();
+                visible_users.insert(row.user_id.clone(), exists);
+                exists
+            }
+        };
+        if !user_exists {
+            continue;
+        }
+        let Some(track_db_id) = track_db_ids.get(&row.track_id).copied() else {
+            continue;
+        };
+        if routes::entity_accessible_to_principal(&db, principal, track_db_id)? {
+            hydrated.push(row);
+        }
+    }
+    Ok(hydrated)
+}
+
 pub(super) async fn get_me_listens(
     headers: HeaderMap,
     Query(query): Query<MeListenQuery>,
 ) -> Result<Json<PageResponse<MeListenResponse>>, AppError> {
     let principal = require_principal(&headers).await?;
-    let page = query.page.clone().resolve()?;
+    let page_request = query.page.clone().resolve_snapshot();
     let merge_unique_external_ids = query.merge_unique_external_ids.unwrap_or(false);
     validate_merge_usage(query.track_id.as_deref(), merge_unique_external_ids)?;
+    let merge_context = merge_unique_external_ids.to_string();
+    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "me-listens")
+        .field(query.track_id.as_deref())
+        .values(query.sort_by.as_deref())
+        .field(query.sort_order.as_deref())
+        .field(Some(&merge_context))
+        .finish();
 
-    let mut rows = rows_for_user(
-        &principal,
-        principal.user_db_id,
-        principal.user_public_id.clone(),
-        query.track_id,
-        merge_unique_external_ids,
-    )
-    .await?;
-
-    sort_listen_rows(&mut rows, query.sort_by, query.sort_order, false)?;
-    let (rows, next_cursor) = apply_page(rows, page);
+    let (rows, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
+        let rows = hydrate_listen_rows(&principal, &page.item_ids).await?;
+        (rows, page.next_cursor)
+    } else {
+        let mut rows = rows_for_user(
+            &principal,
+            principal.user_db_id,
+            principal.user_public_id.clone(),
+            query.track_id.clone(),
+            merge_unique_external_ids,
+        )
+        .await?;
+        sort_listen_rows(
+            &mut rows,
+            query.sort_by.clone(),
+            query.sort_order.clone(),
+            false,
+        )?;
+        let page = page_request.start(&snapshot_key, rows.iter().map(listen_row_id).collect())?;
+        rows.truncate(page.item_ids.len());
+        (rows, page.next_cursor)
+    };
 
     let items = rows.into_iter().map(listen_row_to_me_response).collect();
     Ok(Json(PageResponse { items, next_cursor }))
@@ -566,11 +641,33 @@ async fn get_listens(
 ) -> Result<Json<PageResponse<ListenResponse>>, AppError> {
     let principal = require_principal(&headers).await?;
     require_permission(&principal, Permission::ManageLibraries)?;
-    let page = query.page.clone().resolve()?;
+    let page_request = query.page.clone().resolve_snapshot();
+    let merge_unique_external_ids = query.merge_unique_external_ids.unwrap_or(false);
+    validate_merge_usage(query.track_id.as_deref(), merge_unique_external_ids)?;
+    let merge_context = merge_unique_external_ids.to_string();
+    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "listens")
+        .field(query.user_id.as_deref())
+        .field(query.track_id.as_deref())
+        .values(query.sort_by.as_deref())
+        .field(query.sort_order.as_deref())
+        .field(Some(&merge_context))
+        .finish();
 
-    let mut rows = rows_for_managed_listens(&principal, &query).await?;
-    sort_listen_rows(&mut rows, query.sort_by, query.sort_order, true)?;
-    let (rows, next_cursor) = apply_page(rows, page);
+    let (rows, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
+        let rows = hydrate_listen_rows(&principal, &page.item_ids).await?;
+        (rows, page.next_cursor)
+    } else {
+        let mut rows = rows_for_managed_listens(&principal, &query).await?;
+        sort_listen_rows(
+            &mut rows,
+            query.sort_by.clone(),
+            query.sort_order.clone(),
+            true,
+        )?;
+        let page = page_request.start(&snapshot_key, rows.iter().map(listen_row_id).collect())?;
+        rows.truncate(page.item_ids.len());
+        (rows, page.next_cursor)
+    };
 
     let items = rows.into_iter().map(listen_row_to_response).collect();
     Ok(Json(PageResponse { items, next_cursor }))
@@ -579,14 +676,14 @@ async fn get_listens(
 #[cfg(feature = "docgen")]
 pub(super) fn get_me_listens_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List my listen summaries").description(
-        "Returns authenticated user-scoped per-track listen summaries. Defaults to listen_count descending, then last_played_at descending.",
+        "Returns authenticated user-scoped per-track listen summaries as `{ items, next_cursor }`. Defaults to listen_count descending, then last_played_at descending. The first page creates a bounded snapshot of row identities and summary values.",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn get_listens_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List listen summaries").description(
-        "Requires ManageLibraries or Admin. Returns per-user per-track listen summaries for visible library content.",
+        "Requires ManageLibraries or Admin. Returns per-user per-track listen summaries for visible library content as `{ items, next_cursor }`. The first page creates a bounded snapshot; continuation pages recheck current user and track visibility.",
     )
 }
 

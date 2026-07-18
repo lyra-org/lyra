@@ -25,10 +25,6 @@ use axum::{
         post,
     },
 };
-use base64::{
-    Engine,
-    engine::general_purpose::URL_SAFE_NO_PAD,
-};
 use serde::{
     Deserialize,
     Serialize,
@@ -36,17 +32,14 @@ use serde::{
 
 use crate::{
     STATE,
-    db::{
-        self,
-        tags::{
-            LIST_HARD_LIMIT,
-            TagListCursor,
-            TargetListCursor,
-        },
+    db,
+    routes::{
+        AppError,
+        responses::PageResponse,
     },
-    routes::AppError,
     services::{
         auth::require_authenticated,
+        pagination::SnapshotKey,
         tags::{
             self as tag_service,
             CreateResult,
@@ -54,10 +47,6 @@ use crate::{
         },
     },
 };
-
-const DEFAULT_LIST_LIMIT: u64 = 100;
-const LIST_CURSOR_BASE64_LEN: usize = 22; // base64 of (i64, i64) = 16 bytes
-const TARGET_CURSOR_BASE64_LEN: usize = 11; // base64 of (i64) = 8 bytes
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Deserialize, Serialize)]
@@ -143,38 +132,8 @@ fn tag_to_response(tag: db::Tag) -> TagResponse {
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
 struct ListQuery {
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Page size. Default 100, cap 500.")
-    )]
-    limit: Option<u64>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Opaque cursor from the previous page's `next_cursor`.")
-    )]
-    cursor: Option<String>,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Serialize)]
-struct TagListResponse {
-    items: Vec<TagResponse>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Opaque cursor; `null` on the last page. Sole termination signal.")
-    )]
-    next_cursor: Option<String>,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Serialize)]
-struct TargetListResponse {
-    target_ids: Vec<String>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Opaque cursor; `null` on the last page. Sole termination signal.")
-    )]
-    next_cursor: Option<String>,
+    #[serde(flatten)]
+    page: super::PageQuery,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -195,50 +154,6 @@ fn looks_like_public_id(candidate: &str) -> bool {
     candidate
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-}
-
-fn encode_list_cursor(cursor: TagListCursor) -> String {
-    let mut buf = [0u8; 16];
-    buf[..8].copy_from_slice(&cursor.created_at_ms.to_be_bytes());
-    buf[8..].copy_from_slice(&cursor.tag_db_id.to_be_bytes());
-    URL_SAFE_NO_PAD.encode(buf)
-}
-
-fn decode_list_cursor(raw: &str) -> Result<TagListCursor, AppError> {
-    if raw.len() != LIST_CURSOR_BASE64_LEN {
-        return Err(AppError::bad_request("malformed cursor"));
-    }
-    let bytes = URL_SAFE_NO_PAD
-        .decode(raw.as_bytes())
-        .map_err(|_| AppError::bad_request("malformed cursor"))?;
-    if bytes.len() != 16 {
-        return Err(AppError::bad_request("malformed cursor"));
-    }
-    let created_at_ms = i64::from_be_bytes(bytes[..8].try_into().unwrap());
-    let tag_db_id = i64::from_be_bytes(bytes[8..].try_into().unwrap());
-    Ok(TagListCursor {
-        created_at_ms,
-        tag_db_id,
-    })
-}
-
-fn encode_target_cursor(cursor: TargetListCursor) -> String {
-    URL_SAFE_NO_PAD.encode(cursor.target_db_id.to_be_bytes())
-}
-
-fn decode_target_cursor(raw: &str) -> Result<TargetListCursor, AppError> {
-    if raw.len() != TARGET_CURSOR_BASE64_LEN {
-        return Err(AppError::bad_request("malformed cursor"));
-    }
-    let bytes = URL_SAFE_NO_PAD
-        .decode(raw.as_bytes())
-        .map_err(|_| AppError::bad_request("malformed cursor"))?;
-    if bytes.len() != 8 {
-        return Err(AppError::bad_request("malformed cursor"));
-    }
-    Ok(TargetListCursor {
-        target_db_id: i64::from_be_bytes(bytes[..8].try_into().unwrap()),
-    })
 }
 
 impl From<TagServiceError> for AppError {
@@ -290,24 +205,30 @@ async fn create_tag(
 async fn list_tags(
     headers: HeaderMap,
     Query(query): Query<ListQuery>,
-) -> Result<Json<TagListResponse>, AppError> {
+) -> Result<Json<PageResponse<TagResponse>>, AppError> {
     let principal = require_authenticated(&headers).await?;
-    let limit = query
-        .limit
-        .unwrap_or(DEFAULT_LIST_LIMIT)
-        .clamp(1, LIST_HARD_LIMIT);
-    let cursor = query
-        .cursor
-        .as_deref()
-        .map(decode_list_cursor)
-        .transpose()?;
+    let page_request = query.page.resolve_snapshot();
+    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "tags").finish();
 
     let db = STATE.db.read().await;
-    let page = tag_service::list_for_user(&db, principal.user_db_id, limit, cursor)?;
+    let (tags, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
+        (
+            tag_service::hydrate_tag_snapshot(&db, principal.user_db_id, &page.item_ids)?,
+            page.next_cursor,
+        )
+    } else {
+        let mut tags = tag_service::list_for_user(&db, principal.user_db_id)?;
+        let page = page_request.start(
+            &snapshot_key,
+            tags.iter().map(|tag| tag.id.clone()).collect(),
+        )?;
+        tags.truncate(page.item_ids.len());
+        (tags, page.next_cursor)
+    };
 
-    Ok(Json(TagListResponse {
-        items: page.tags.into_iter().map(tag_to_response).collect(),
-        next_cursor: page.next_cursor.map(encode_list_cursor),
+    Ok(Json(PageResponse {
+        items: tags.into_iter().map(tag_to_response).collect(),
+        next_cursor,
     }))
 }
 
@@ -329,35 +250,41 @@ async fn list_tag_targets(
     headers: HeaderMap,
     Path(id): Path<String>,
     Query(query): Query<ListQuery>,
-) -> Result<Json<TargetListResponse>, AppError> {
+) -> Result<Json<PageResponse<String>>, AppError> {
     let principal = require_authenticated(&headers).await?;
     if !looks_like_public_id(&id) {
         return Err(AppError::bad_request(format!("malformed tag id: {id}")));
     }
-    let limit = query
-        .limit
-        .unwrap_or(DEFAULT_LIST_LIMIT)
-        .clamp(1, LIST_HARD_LIMIT);
-    let cursor = query
-        .cursor
-        .as_deref()
-        .map(decode_target_cursor)
-        .transpose()?;
+    let page_request = query.page.resolve_snapshot();
+    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "tag-targets")
+        .field(Some(&id))
+        .finish();
 
     let db = STATE.db.read().await;
     let tag_db_id = tag_service::resolve_owned_tag_id(&db, principal.user_db_id, &id)?;
-    let page = tag_service::list_targets(&db, principal.user_db_id, tag_db_id, limit, cursor)?;
+    let (targets, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
+        (
+            tag_service::hydrate_target_snapshot(
+                &db,
+                principal.user_db_id,
+                tag_db_id,
+                &page.item_ids,
+            )?,
+            page.next_cursor,
+        )
+    } else {
+        let mut targets = tag_service::list_targets(&db, principal.user_db_id, tag_db_id)?;
+        let page = page_request.start(
+            &snapshot_key,
+            targets.iter().map(|target| target.snapshot_id()).collect(),
+        )?;
+        targets.truncate(page.item_ids.len());
+        (targets, page.next_cursor)
+    };
 
-    let mut target_ids = Vec::with_capacity(page.target_db_ids.len());
-    for db_id in page.target_db_ids {
-        if let Some(public_id) = db::lookup::find_id_by_db_id(&*db, db_id)? {
-            target_ids.push(public_id);
-        }
-    }
-
-    Ok(Json(TargetListResponse {
-        target_ids,
-        next_cursor: page.next_cursor.map(encode_target_cursor),
+    Ok(Json(PageResponse {
+        items: targets.into_iter().map(|target| target.target_id).collect(),
+        next_cursor,
     }))
 }
 
@@ -454,8 +381,9 @@ fn create_tag_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_tags_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tags").description(
-        "Returns the authenticated user's tags, paginated by creation time descending with \
-         a stable tiebreaker. Renaming does not reorder tags. `next_cursor` is the only \
+        "Returns `{ items, next_cursor }` for the authenticated user's tags, ordered by creation \
+         time descending with a stable tiebreaker. The first page creates a bounded snapshot, so \
+         later renames and inserts do not shift continuation pages. `next_cursor` is the only \
          termination signal.",
     )
 }
@@ -469,9 +397,9 @@ fn get_tag_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_tag_targets_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tag targets").description(
-        "Returns paginated public target IDs in a stable cursor order. Non-visible targets are \
-         filtered out; underlying edges persist and reappear when visibility is restored. \
-         `next_cursor` is the only termination signal.",
+        "Returns public target IDs as `{ items, next_cursor }` in a bounded snapshot order. \
+         Continuation pages recheck edge existence and target visibility, so removed or newly \
+         hidden targets are skipped. `next_cursor` is the only termination signal.",
     )
 }
 
@@ -544,40 +472,4 @@ pub(crate) fn tag_openapi_routes() -> aide::axum::ApiRouter {
             "/{id}/targets/{target_id}",
             delete_with(delete_tag_target, delete_tag_target_docs),
         )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn list_cursor_roundtrip() {
-        let cursor = TagListCursor {
-            created_at_ms: 1_700_000_000_000,
-            tag_db_id: 42,
-        };
-        let encoded = encode_list_cursor(cursor);
-        let decoded = decode_list_cursor(&encoded).expect("roundtrip");
-        assert_eq!(decoded, cursor);
-    }
-
-    #[test]
-    fn target_cursor_roundtrip() {
-        let cursor = TargetListCursor { target_db_id: 42 };
-        let encoded = encode_target_cursor(cursor);
-        let decoded = decode_target_cursor(&encoded).expect("roundtrip");
-        assert_eq!(decoded, cursor);
-    }
-
-    #[test]
-    fn list_cursor_rejects_wrong_length() {
-        assert!(decode_list_cursor("shortcursor").is_err());
-        assert!(decode_list_cursor(&"x".repeat(1000)).is_err());
-    }
-
-    #[test]
-    fn target_cursor_rejects_wrong_length() {
-        assert!(decode_target_cursor("shortcursor").is_err());
-        assert!(decode_target_cursor(&"x".repeat(1000)).is_err());
-    }
 }

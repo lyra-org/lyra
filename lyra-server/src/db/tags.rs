@@ -29,7 +29,6 @@ use super::NodeId;
 pub(crate) const MAX_TAG_NAME_LEN: usize = 128;
 pub(crate) const HAS_MANY_CAP: usize = 1024;
 pub(crate) const GET_TAGGED_CAP: usize = 10_000;
-pub(crate) const LIST_HARD_LIMIT: u64 = 500;
 
 const TAG_EDGE_KEY: &str = "tag_edge";
 
@@ -445,6 +444,13 @@ fn tag_target_edges_from(db: &impl DbAccess, tag_id: DbId) -> anyhow::Result<Vec
         .collect())
 }
 
+fn edge_is_tag_target(edge: &DbElement) -> bool {
+    edge.values.iter().any(|value| {
+        matches!(&value.key, DbValue::String(key) if key == TAG_EDGE_KEY)
+            && value.value == DbValue::I64(1)
+    })
+}
+
 fn has_target_edge(db: &impl DbAccess, tag_id: DbId, target_db_id: DbId) -> anyhow::Result<bool> {
     for element in tag_target_edges_from(db, tag_id)? {
         if element.to == target_db_id {
@@ -548,33 +554,8 @@ pub(crate) fn remove_target(
     Ok(true)
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct PagedTags {
-    pub(crate) tags: Vec<Tag>,
-    pub(crate) next_cursor: Option<TagListCursor>,
-}
-
-/// Anchored on `(created_at_ms, tag_db_id)` — both immutable, so rename doesn't reorder.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TagListCursor {
-    pub(crate) created_at_ms: i64,
-    pub(crate) tag_db_id: i64,
-}
-
 /// List a user's tags by `created_at_ms DESC, tag_db_id ASC`.
-pub(crate) fn list_for_user(
-    db: &impl DbAccess,
-    owner_db_id: DbId,
-    limit: u64,
-    cursor: Option<TagListCursor>,
-) -> anyhow::Result<PagedTags> {
-    if limit == 0 {
-        return Ok(PagedTags {
-            tags: Vec::new(),
-            next_cursor: None,
-        });
-    }
-
+pub(crate) fn list_for_user(db: &impl DbAccess, owner_db_id: DbId) -> anyhow::Result<Vec<Tag>> {
     let mut tags: Vec<Tag> = Vec::new();
     for tag_id in owner_tag_ids(db, owner_db_id)? {
         if let Some(tag) = get_by_id(db, tag_id)? {
@@ -583,78 +564,52 @@ pub(crate) fn list_for_user(
     }
 
     sort_tags(&mut tags);
-
-    if let Some(cursor) = cursor {
-        tags.retain(|tag| {
-            let tag_id = tag_node_id_value(tag);
-            match tag.created_at_ms.cmp(&cursor.created_at_ms) {
-                std::cmp::Ordering::Less => true,
-                std::cmp::Ordering::Equal => tag_id > cursor.tag_db_id,
-                std::cmp::Ordering::Greater => false,
-            }
-        });
-    }
-
-    let mut next_cursor = None;
-    if tags.len() > limit as usize {
-        tags.truncate(limit as usize);
-        if let Some(last) = tags.last() {
-            next_cursor = Some(TagListCursor {
-                created_at_ms: last.created_at_ms,
-                tag_db_id: tag_node_id_value(last),
-            });
-        }
-    }
-
-    Ok(PagedTags { tags, next_cursor })
+    Ok(tags)
 }
 
-/// Paginated target list for a tag, anchored on `target_db_id ASC`.
 #[derive(Debug, Clone)]
-pub(crate) struct PagedTargets {
-    pub(crate) target_db_ids: Vec<DbId>,
-    pub(crate) next_cursor: Option<TargetListCursor>,
+pub(crate) struct TagTarget {
+    pub(crate) edge_db_id: DbId,
+    pub(crate) target_db_id: DbId,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TargetListCursor {
-    pub(crate) target_db_id: i64,
+pub(crate) fn list_targets(db: &impl DbAccess, tag_id: DbId) -> anyhow::Result<Vec<TagTarget>> {
+    let mut targets = tag_target_edges_from(db, tag_id)?
+        .into_iter()
+        .filter_map(|edge| {
+            (edge.to.0 > 0).then_some(TagTarget {
+                edge_db_id: edge.id,
+                target_db_id: edge.to,
+            })
+        })
+        .collect::<Vec<_>>();
+    targets.sort_by_key(|target| target.target_db_id.0);
+    Ok(targets)
 }
 
-pub(crate) fn list_targets(
+pub(crate) fn get_targets_by_edge_ids(
     db: &impl DbAccess,
     tag_id: DbId,
-    limit: u64,
-    cursor: Option<TargetListCursor>,
-) -> anyhow::Result<PagedTargets> {
-    if limit == 0 {
-        return Ok(PagedTargets {
-            target_db_ids: Vec::new(),
-            next_cursor: None,
-        });
+    edge_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, TagTarget>> {
+    if edge_ids.is_empty() {
+        return Ok(HashMap::new());
     }
-
-    let mut ids = get_targets(db, tag_id)?;
-    ids.sort_by_key(|id| id.0);
-
-    if let Some(cursor) = cursor {
-        ids.retain(|id| id.0 > cursor.target_db_id);
-    }
-
-    let mut next_cursor = None;
-    if ids.len() > limit as usize {
-        ids.truncate(limit as usize);
-        if let Some(last) = ids.last() {
-            next_cursor = Some(TargetListCursor {
-                target_db_id: last.0,
-            });
-        }
-    }
-
-    Ok(PagedTargets {
-        target_db_ids: ids,
-        next_cursor,
-    })
+    Ok(db
+        .exec(QueryBuilder::select().ids(edge_ids).query())?
+        .elements
+        .into_iter()
+        .filter(|edge| edge.from == tag_id && edge.to.0 > 0 && edge_is_tag_target(edge))
+        .map(|edge| {
+            (
+                edge.id,
+                TagTarget {
+                    edge_db_id: edge.id,
+                    target_db_id: edge.to,
+                },
+            )
+        })
+        .collect())
 }
 
 pub(crate) fn remove_outbound_for_user(
@@ -1117,7 +1072,7 @@ mod tests {
     }
 
     #[test]
-    fn list_for_user_paginates_by_created_at_desc() -> anyhow::Result<()> {
+    fn list_for_user_sorts_by_created_at_desc() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user = create_test_user(&mut db)?;
         let track = create_test_track(&mut db)?;
@@ -1126,22 +1081,17 @@ mod tests {
         create(&mut db, user, track, "Second", "red", 2000)?;
         create(&mut db, user, track, "Third", "green", 3000)?;
 
-        let page1 = list_for_user(&db, user, 2, None)?;
-        assert_eq!(page1.tags.len(), 2);
-        assert_eq!(page1.tags[0].tag, "Third");
-        assert_eq!(page1.tags[1].tag, "Second");
-        let cursor = page1.next_cursor.expect("cursor present");
-
-        let page2 = list_for_user(&db, user, 2, Some(cursor))?;
-        assert_eq!(page2.tags.len(), 1);
-        assert_eq!(page2.tags[0].tag, "First");
-        assert!(page2.next_cursor.is_none());
+        let tags = list_for_user(&db, user)?;
+        assert_eq!(tags.len(), 3);
+        assert_eq!(tags[0].tag, "Third");
+        assert_eq!(tags[1].tag, "Second");
+        assert_eq!(tags[2].tag, "First");
 
         Ok(())
     }
 
     #[test]
-    fn list_targets_paginates_by_target_id_asc() -> anyhow::Result<()> {
+    fn list_targets_sorts_by_target_id_asc() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user = create_test_user(&mut db)?;
         let track_a = create_test_track(&mut db)?;
@@ -1152,13 +1102,13 @@ mod tests {
         create(&mut db, user, track_b, "Shared", "blue", 2)?;
         create(&mut db, user, track_c, "Shared", "blue", 3)?;
 
-        let page1 = list_targets(&db, tag_id, 2, None)?;
-        assert_eq!(page1.target_db_ids.len(), 2);
-        let cursor = page1.next_cursor.expect("cursor present");
-
-        let page2 = list_targets(&db, tag_id, 2, Some(cursor))?;
-        assert_eq!(page2.target_db_ids.len(), 1);
-        assert!(page2.next_cursor.is_none());
+        let targets = list_targets(&db, tag_id)?;
+        assert_eq!(targets.len(), 3);
+        assert!(
+            targets
+                .windows(2)
+                .all(|window| window[0].target_db_id.0 < window[1].target_db_id.0)
+        );
 
         Ok(())
     }

@@ -67,6 +67,7 @@ use crate::{
             require_manage_metadata,
         },
         covers,
+        pagination::SnapshotKey,
         releases as release_service,
     },
 };
@@ -370,9 +371,8 @@ fn query_artist_route_items(
     artists: Vec<db::Artist>,
     sort: &[ArtistRouteSortSpec],
     search_term: Option<&str>,
-    page_options: super::PageOptions,
     principal: &Principal,
-) -> anyhow::Result<db::PagedResult<db::Artist>> {
+) -> anyhow::Result<Vec<db::Artist>> {
     let mut release_ids_by_artist: HashMap<DbId, HashSet<DbId>> = HashMap::new();
     let mut tracks_by_artist: HashMap<DbId, Vec<db::Track>> = HashMap::new();
     let mut all_track_ids = Vec::new();
@@ -484,11 +484,7 @@ fn query_artist_route_items(
     }
 
     entries.sort_by(|a, b| compare_artist_route_entries(a, b, sort));
-    Ok(super::paginate_entries(
-        entries.into_iter().map(|entry| entry.artist).collect(),
-        page_options.offset,
-        page_options.limit,
-    ))
+    Ok(entries.into_iter().map(|entry| entry.artist).collect())
 }
 
 fn is_admin(principal: &Principal) -> bool {
@@ -728,11 +724,17 @@ pub(crate) async fn list_artist_responses(
     library_id: Option<String>,
     sort_by: Option<Vec<String>>,
     sort_order: Option<String>,
-    page_options: super::PageOptions,
+    page_request: super::SnapshotPageRequest,
 ) -> Result<PageResponse<ArtistResponse>, AppError> {
     let db = &*STATE.db.read().await;
     let includes = parse_inc(inc)?;
     let search_term = super::parse_text_query(query);
+    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "artists")
+        .field(search_term.as_deref())
+        .field(library_id.as_deref())
+        .values(sort_by.as_deref())
+        .field(sort_order.as_deref())
+        .finish();
     let mut sort = parse_artist_sort_specs(sort_by, sort_order)?;
     if sort.is_empty() {
         sort = default_artist_sort();
@@ -740,47 +742,59 @@ pub(crate) async fn list_artist_responses(
     let library_scope =
         super::resolve_optional_library_filter(db, principal, library_id.as_deref())?;
 
-    let accessible_artists = match library_scope {
-        Some(library_db_id) => {
-            artist_service::query_credited(
-                db,
-                Some(&db::ResolveId::DbId(library_db_id)),
-                &artist_service::CreditedArtistFilters::default(),
-                &ListOptions {
-                    sort: Vec::new(),
-                    offset: None,
-                    limit: None,
-                    search_term: None,
-                },
-            )?
-            .entries
-        }
-        None => {
-            let artists = db::artists::get(db, "artists")?;
-            let mut accessible_artists = Vec::with_capacity(artists.len());
-            for artist in artists {
-                let Some(artist_db_id) = artist.db_id.clone().map(DbId::from) else {
-                    continue;
-                };
-                if !artist_accessible_to_principal(db, principal, artist_db_id)? {
-                    continue;
-                }
-                accessible_artists.push(artist);
+    let (artists, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
+        let artists = super::load_snapshot_items(
+            db,
+            &page.item_ids,
+            db::artists::get_by_id,
+            |db, artist_db_id| artist_accessible_to_principal(db, principal, artist_db_id),
+        )?;
+        (artists, page.next_cursor)
+    } else {
+        let accessible_artists = match library_scope {
+            Some(library_db_id) => {
+                artist_service::query_credited(
+                    db,
+                    Some(&db::ResolveId::DbId(library_db_id)),
+                    &artist_service::CreditedArtistFilters::default(),
+                    &ListOptions {
+                        sort: Vec::new(),
+                        offset: None,
+                        limit: None,
+                        search_term: None,
+                    },
+                )?
+                .entries
             }
-
-            accessible_artists
-        }
+            None => {
+                let artists = db::artists::get(db, "artists")?;
+                let mut accessible_artists = Vec::with_capacity(artists.len());
+                for artist in artists {
+                    let Some(artist_db_id) = artist.db_id.clone().map(DbId::from) else {
+                        continue;
+                    };
+                    if artist_accessible_to_principal(db, principal, artist_db_id)? {
+                        accessible_artists.push(artist);
+                    }
+                }
+                accessible_artists
+            }
+        };
+        let mut artists = query_artist_route_items(
+            db,
+            accessible_artists,
+            &sort,
+            search_term.as_deref(),
+            principal,
+        )?;
+        let page = page_request.start(
+            &snapshot_key,
+            artists.iter().map(|artist| artist.id.clone()).collect(),
+        )?;
+        artists.truncate(page.item_ids.len());
+        (artists, page.next_cursor)
     };
-    let page = query_artist_route_items(
-        db,
-        accessible_artists,
-        &sort,
-        search_term.as_deref(),
-        page_options,
-        principal,
-    )?;
-    let next_cursor = super::next_page_cursor(page.offset, page.entries.len(), page.total_count);
-    let details = artist_service::list_details_for_artists(db, includes.service, page.entries)?;
+    let details = artist_service::list_details_for_artists(db, includes.service, artists)?;
 
     let mut items = Vec::with_capacity(details.len());
     for detail in details {
@@ -819,7 +833,7 @@ async fn get_artists(
         sort_order,
         page,
     } = list_query;
-    let page = page.resolve()?;
+    let page = page.resolve_snapshot();
     let principal = require_authenticated(&headers).await?;
     Ok(Json(
         list_artist_responses(
@@ -849,7 +863,7 @@ async fn search_artist_covers(
         let db = STATE.db.read().await;
         let artist_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-        if !artist_accessible_to_principal(&*db, &principal, artist_db_id)? {
+        if !artist_accessible_to_principal(&db, &principal, artist_db_id)? {
             return Err(AppError::not_found(format!("Artist not found: {id}")));
         }
         if db::artists::get_by_id(&db, artist_db_id)?.is_none() {
@@ -890,7 +904,7 @@ async fn update_artist(
     let mut db = STATE.db.write().await;
     let artist_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-    if !artist_accessible_to_principal(&*db, &principal, artist_db_id)? {
+    if !artist_accessible_to_principal(&db, &principal, artist_db_id)? {
         return Err(AppError::not_found(format!("Artist not found: {id}")));
     }
     if let Some(name) = update_name.as_ref()
@@ -1154,7 +1168,7 @@ mod tests {
         ];
         let principal = user_principal(HashSet::from([visible_library_id]));
 
-        let page = query_artist_route_items(
+        let artists = query_artist_route_items(
             &db,
             artists,
             &[ArtistRouteSortSpec {
@@ -1162,15 +1176,10 @@ mod tests {
                 direction: SortDirection::Descending,
             }],
             None,
-            super::super::PageOptions {
-                limit: 10,
-                offset: 0,
-            },
             &principal,
         )?;
 
-        let names: Vec<String> = page
-            .entries
+        let names: Vec<String> = artists
             .into_iter()
             .map(|artist| artist.artist_name)
             .collect();
@@ -1263,7 +1272,7 @@ mod tests {
                 .ok_or_else(|| anyhow::anyhow!("two release artist missing"))?,
         ];
 
-        let page = query_artist_route_items(
+        let artists = query_artist_route_items(
             &db,
             artists,
             &[ArtistRouteSortSpec {
@@ -1271,15 +1280,10 @@ mod tests {
                 direction: SortDirection::Descending,
             }],
             None,
-            super::super::PageOptions {
-                limit: 10,
-                offset: 0,
-            },
             &admin_principal(HashSet::new()),
         )?;
 
-        let names: Vec<String> = page
-            .entries
+        let names: Vec<String> = artists
             .into_iter()
             .map(|artist| artist.artist_name)
             .collect();
@@ -1516,10 +1520,7 @@ mod tests {
             Some(visible_library_id),
             None,
             None,
-            super::super::PageOptions {
-                limit: 100,
-                offset: 0,
-            },
+            super::super::SnapshotPageRequest::first_page(100),
         )
         .await
         .map_err(|err| anyhow::anyhow!("{err:?}"))?;
@@ -1557,10 +1558,7 @@ mod tests {
             None,
             Some(vec!["name".to_string()]),
             Some("descending".to_string()),
-            super::super::PageOptions {
-                limit: 100,
-                offset: 0,
-            },
+            super::super::SnapshotPageRequest::first_page(100),
         )
         .await
         .map_err(|err| anyhow::anyhow!("{err:?}"))?;
@@ -1739,13 +1737,6 @@ mod benches {
         }
     }
 
-    fn bench_page() -> super::super::PageOptions {
-        super::super::PageOptions {
-            limit: 100,
-            offset: 0,
-        }
-    }
-
     #[bench]
     fn route_sort_artists_sort_name_500(b: &mut Bencher) {
         let setup = seed_artist_sort_bench(500, 0, 0, 0);
@@ -1756,7 +1747,6 @@ mod benches {
                 black_box(setup.artists.clone()),
                 &sort,
                 None,
-                bench_page(),
                 &setup.principal,
             )
             .unwrap()
@@ -1776,7 +1766,6 @@ mod benches {
                 black_box(setup.artists.clone()),
                 &sort,
                 None,
-                bench_page(),
                 &setup.principal,
             )
             .unwrap()
@@ -1796,7 +1785,6 @@ mod benches {
                 black_box(setup.artists.clone()),
                 &sort,
                 None,
-                bench_page(),
                 &setup.principal,
             )
             .unwrap()

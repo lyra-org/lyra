@@ -53,6 +53,7 @@ use services::auth::media_tokens::MediaTokenStore;
 use services::hls::cleanup::HlsCleanupState;
 use services::libraries::LibrarySyncRegistries;
 use services::mix::MixRegistries;
+use services::pagination::SnapshotRegistry;
 use services::playback_sessions::{
     PlaybackScopes,
     PlaybackUpdateRegistries,
@@ -156,6 +157,7 @@ pub(crate) struct GenerationState {
     pub(crate) plugin_settings: SettingsRegistries,
     pub(crate) providers: ProviderRegistries,
     pub(crate) mix: MixRegistries,
+    pub(crate) pagination: SnapshotRegistry,
     pub(crate) playback_updates: PlaybackUpdateRegistries,
     pub(crate) playback_scopes: PlaybackScopes,
     pub(crate) library_sync: LibrarySyncRegistries,

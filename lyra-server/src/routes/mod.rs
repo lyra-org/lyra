@@ -15,6 +15,7 @@ mod libraries;
 mod listens;
 mod metadata;
 mod mix;
+mod pagination;
 mod playback_sessions;
 mod playlists;
 mod plugins;
@@ -45,12 +46,6 @@ use time::{
     format_description::well_known::Rfc3339,
 };
 
-use agdb::DbId;
-use base64::{
-    Engine as _,
-    engine::general_purpose::URL_SAFE_NO_PAD,
-};
-
 use crate::{
     db,
     services::{
@@ -58,6 +53,7 @@ use crate::{
         entities::ResolvedCreditedArtist,
     },
 };
+use agdb::DbId;
 
 pub(crate) use app::build_core_api;
 pub use artists::artist_routes;
@@ -70,6 +66,10 @@ pub use labels::label_routes;
 pub use libraries::library_routes;
 pub use listens::listen_routes;
 pub use metadata::metadata_routes;
+pub(crate) use pagination::{
+    SnapshotPageRequest,
+    load_snapshot_items,
+};
 pub use playback_sessions::playback_session_routes;
 pub use playlists::playlist_routes;
 pub use plugins::plugin_routes;
@@ -98,7 +98,6 @@ pub use serve::{
 pub use server::server_routes;
 pub(crate) use sorting::{
     RouteSortSpec,
-    paginate_entries,
     parse_route_sort_specs,
 };
 pub use tags::tag_routes;
@@ -144,11 +143,6 @@ pub(crate) fn credited_artist_responses(
 
 const DEFAULT_PAGE_LIMIT: u64 = 100;
 pub(crate) const PAGE_HARD_LIMIT: u64 = 500;
-const PAGE_CURSOR_VERSION: u8 = 1;
-const PAGE_CURSOR_NONCE_LEN: usize = 8;
-const PAGE_CURSOR_BYTES_LEN: usize = 1 + PAGE_CURSOR_NONCE_LEN + size_of::<u64>();
-const PAGE_CURSOR_MAX_LEN: usize = 32;
-const PAGE_CURSOR_MASK_SEED: u64 = 0;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Clone, Deserialize, Default)]
@@ -161,35 +155,11 @@ pub(crate) struct PageQuery {
     limit: Option<u64>,
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "Opaque cursor from the previous page's `next_cursor`.")
+        schemars(
+            description = "Opaque cursor from the previous page's `next_cursor`. Repeat the same collection-shaping query parameters on continuation requests. Cursors are bound to the authenticated user and collection snapshot; expired, evicted, or mismatched cursors return 409 and pagination must restart."
+        )
     )]
     cursor: Option<String>,
-}
-
-pub(crate) struct PageOptions {
-    pub(crate) limit: u64,
-    pub(crate) offset: u64,
-}
-
-impl PageQuery {
-    pub(crate) fn resolve(self) -> Result<PageOptions, AppError> {
-        let limit = self
-            .limit
-            .unwrap_or(DEFAULT_PAGE_LIMIT)
-            .clamp(1, PAGE_HARD_LIMIT);
-        let offset = self
-            .cursor
-            .as_deref()
-            .map(decode_page_cursor)
-            .transpose()?
-            .unwrap_or(0);
-        Ok(PageOptions { limit, offset })
-    }
-}
-
-pub(crate) fn next_page_cursor(offset: u64, item_count: usize, total_count: u64) -> Option<String> {
-    let next_offset = offset.saturating_add(item_count as u64);
-    (next_offset < total_count).then(|| encode_page_cursor(next_offset))
 }
 
 pub(crate) fn unix_secs_to_rfc3339_u64(seconds: u64) -> String {
@@ -220,42 +190,6 @@ fn unix_ms_to_rfc3339_i128(milliseconds: i128) -> String {
         .expect("Unix timestamp milliseconds should be RFC3339-representable")
         .format(&Rfc3339)
         .expect("RFC3339 formatting should succeed")
-}
-
-fn encode_page_cursor(offset: u64) -> String {
-    let nonce = rand::random::<[u8; PAGE_CURSOR_NONCE_LEN]>();
-    let mut bytes = [0_u8; PAGE_CURSOR_BYTES_LEN];
-    bytes[0] = PAGE_CURSOR_VERSION;
-    bytes[1..1 + PAGE_CURSOR_NONCE_LEN].copy_from_slice(&nonce);
-
-    let mask = xxh3::hash64_with_seed(&nonce, PAGE_CURSOR_MASK_SEED);
-    let masked_offset = offset ^ mask;
-    bytes[1 + PAGE_CURSOR_NONCE_LEN..].copy_from_slice(&masked_offset.to_be_bytes());
-    URL_SAFE_NO_PAD.encode(bytes)
-}
-
-fn decode_page_cursor(raw: &str) -> Result<u64, AppError> {
-    if raw.is_empty() || raw.len() > PAGE_CURSOR_MAX_LEN {
-        return Err(AppError::bad_request("malformed cursor"));
-    }
-
-    let bytes = URL_SAFE_NO_PAD
-        .decode(raw)
-        .map_err(|_| AppError::bad_request("malformed cursor"))?;
-    if bytes.len() != PAGE_CURSOR_BYTES_LEN || bytes[0] != PAGE_CURSOR_VERSION {
-        return Err(AppError::bad_request("malformed cursor"));
-    }
-
-    let nonce: [u8; PAGE_CURSOR_NONCE_LEN] = bytes[1..1 + PAGE_CURSOR_NONCE_LEN]
-        .try_into()
-        .expect("cursor nonce length is fixed");
-    let masked_offset = u64::from_be_bytes(
-        bytes[1 + PAGE_CURSOR_NONCE_LEN..]
-            .try_into()
-            .expect("cursor offset length is fixed"),
-    );
-    let mask = xxh3::hash64_with_seed(&nonce, PAGE_CURSOR_MASK_SEED);
-    Ok(masked_offset ^ mask)
 }
 
 fn deserialize_optional_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>

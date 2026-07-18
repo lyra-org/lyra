@@ -54,6 +54,7 @@ use crate::{
     services::{
         auth::require_authenticated,
         covers as cover_services,
+        pagination::SnapshotKey,
     },
 };
 
@@ -327,9 +328,8 @@ fn query_genre_route_items(
     release_ids: &[DbId],
     sort: &[GenreRouteSortSpec],
     search_term: Option<&str>,
-    page_options: super::PageOptions,
     user_db_id: DbId,
-) -> anyhow::Result<db::PagedResult<genres::Genre>> {
+) -> anyhow::Result<Vec<genres::Genre>> {
     let genres_by_release = genres::get_for_releases_many(db, release_ids)?;
     let needs_track_metrics = genre_sort_needs_track_metrics(sort);
     let needs_listens = genre_sort_needs_listens(sort);
@@ -454,11 +454,7 @@ fn query_genre_route_items(
     }
 
     entries.sort_by(|a, b| compare_genre_route_entries(a, b, sort));
-    Ok(super::paginate_entries(
-        entries.into_iter().map(|entry| entry.genre).collect(),
-        page_options.offset,
-        page_options.limit,
-    ))
+    Ok(entries.into_iter().map(|entry| entry.genre).collect())
 }
 
 async fn list_genres(
@@ -473,39 +469,68 @@ async fn list_genres(
         sort_order,
         page,
     } = query;
-    let page_options = page.resolve()?;
+    let page_request = page.resolve_snapshot();
     let principal = require_authenticated(&headers).await?;
     let inc = parse_genre_inc(inc)?;
     let search_term = super::parse_text_query(query);
 
     let db = &*STATE.db.read().await;
+    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "genres")
+        .field(search_term.as_deref())
+        .field(library_id.as_deref())
+        .values(sort_by.as_deref())
+        .field(sort_order.as_deref())
+        .finish();
     let library_scope =
         super::resolve_optional_library_filter(db, &principal, library_id.as_deref())?;
     let mut sort = parse_genre_sort_specs(sort_by, sort_order)?;
     if sort.is_empty() {
         sort = default_genre_sort();
     }
-    let release_ids = match library_scope {
-        Some(library_db_id) => release_ids_for_library(db, library_db_id)?,
-        None => release_ids_for_accessible_libraries(db, &principal.accessible_library_ids)?,
+    let release_ids = || match library_scope {
+        Some(library_db_id) => release_ids_for_library(db, library_db_id),
+        None => release_ids_for_accessible_libraries(db, &principal.accessible_library_ids),
     };
-    let page = query_genre_route_items(
-        db,
-        &release_ids,
-        &sort,
-        search_term.as_deref(),
-        page_options,
-        principal.user_db_id,
-    )?;
-    let next_cursor = super::next_page_cursor(page.offset, page.entries.len(), page.total_count);
-    let genres = page.entries;
-    let visible_release_ids = release_ids.iter().copied().collect::<HashSet<_>>();
+    let (genres, next_cursor, cover_release_ids) =
+        if let Some(page) = page_request.resume(&snapshot_key)? {
+            let genres = super::load_snapshot_items(
+                db,
+                &page.item_ids,
+                genres::get_by_id,
+                |db, genre_db_id| genre_accessible_to_principal(db, &principal, genre_db_id),
+            )?;
+            let cover_release_ids = if inc.covers {
+                Some(release_ids()?)
+            } else {
+                None
+            };
+            (genres, page.next_cursor, cover_release_ids)
+        } else {
+            let release_ids = release_ids()?;
+            let mut genres = query_genre_route_items(
+                db,
+                &release_ids,
+                &sort,
+                search_term.as_deref(),
+                principal.user_db_id,
+            )?;
+            let page = page_request.start(
+                &snapshot_key,
+                genres.iter().map(|genre| genre.id.clone()).collect(),
+            )?;
+            genres.truncate(page.item_ids.len());
+            let cover_release_ids = inc.covers.then_some(release_ids);
+            (genres, page.next_cursor, cover_release_ids)
+        };
+    let visible_release_ids = cover_release_ids
+        .as_ref()
+        .map(|ids| ids.iter().copied().collect::<HashSet<_>>());
     let covers = if inc.covers {
         Some(cover_services::display::genres::covers_for_genres(
             db,
             &genres,
             &principal.user_public_id,
-            Some(&visible_release_ids),
+            visible_release_ids.as_ref(),
         )?)
     } else {
         None
@@ -804,14 +829,10 @@ mod tests {
                 direction: SortDirection::Descending,
             }],
             None,
-            crate::routes::PageOptions {
-                limit: crate::routes::PAGE_HARD_LIMIT,
-                offset: 0,
-            },
             DbId(1),
         )?;
 
-        let names: Vec<String> = genres.entries.into_iter().map(|genre| genre.name).collect();
+        let names: Vec<String> = genres.into_iter().map(|genre| genre.name).collect();
         assert_eq!(names, vec!["Rock", "Jazz"]);
         Ok(())
     }
@@ -861,7 +882,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_genres_supports_query_and_cursor_pagination() -> anyhow::Result<()> {
+    async fn list_genres_cursor_keeps_query_snapshot_stable() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         setup_route_test().await?;
 
@@ -903,6 +924,15 @@ mod tests {
         let cursor = first_page
             .next_cursor
             .ok_or_else(|| anyhow::anyhow!("expected another matching genre"))?;
+
+        {
+            let mut db = STATE.db.write().await;
+            let library_db_id = db::lookup::find_node_id_by_id(&db, &library_id)?
+                .ok_or_else(|| anyhow::anyhow!("genre search library missing"))?;
+            let release = insert_test_release(&mut db, "Aardvark Search Release")?;
+            connect(&mut db, library_db_id, release)?;
+            db::genres::sync_release_genres(&mut *db, release, &["Aardvark".to_string()])?;
+        }
 
         let Json(second_page) = list_genres(
             headers,
@@ -1416,10 +1446,6 @@ mod benches {
                 black_box(&setup.release_ids),
                 &sort,
                 None,
-                crate::routes::PageOptions {
-                    limit: crate::routes::PAGE_HARD_LIMIT,
-                    offset: 0,
-                },
                 setup.user_db_id,
             )
             .unwrap()
@@ -1439,10 +1465,6 @@ mod benches {
                 black_box(&setup.release_ids),
                 &sort,
                 None,
-                crate::routes::PageOptions {
-                    limit: crate::routes::PAGE_HARD_LIMIT,
-                    offset: 0,
-                },
                 setup.user_db_id,
             )
             .unwrap()
@@ -1462,10 +1484,6 @@ mod benches {
                 black_box(&setup.release_ids),
                 &sort,
                 None,
-                crate::routes::PageOptions {
-                    limit: crate::routes::PAGE_HARD_LIMIT,
-                    offset: 0,
-                },
                 setup.user_db_id,
             )
             .unwrap()

@@ -59,6 +59,7 @@ use crate::{
     services::{
         auth::require_authenticated,
         covers,
+        pagination::SnapshotKey,
         releases,
     },
 };
@@ -386,9 +387,8 @@ fn query_release_route_items(
     releases: Vec<db::Release>,
     sort: &[ReleaseRouteSortSpec],
     search_term: Option<&str>,
-    page_options: super::PageOptions,
     user_db_id: DbId,
-) -> anyhow::Result<db::PagedResult<db::Release>> {
+) -> anyhow::Result<Vec<db::Release>> {
     let release_ids: Vec<DbId> = releases
         .iter()
         .filter_map(|release| release.db_id.clone().map(DbId::from))
@@ -466,11 +466,7 @@ fn query_release_route_items(
     }
 
     entries.sort_by(|a, b| compare_release_route_entries(a, b, sort));
-    Ok(super::paginate_entries(
-        entries.into_iter().map(|entry| entry.release).collect(),
-        page_options.offset,
-        page_options.limit,
-    ))
+    Ok(entries.into_iter().map(|entry| entry.release).collect())
 }
 
 pub(crate) fn detail_to_release_response(
@@ -554,7 +550,7 @@ async fn get_releases(
         sort_order,
         page,
     } = list_query;
-    let page_options = page.resolve()?;
+    let page_request = page.resolve_snapshot();
     let principal = require_authenticated(&headers).await?;
     let include_entry_paths =
         db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
@@ -563,78 +559,104 @@ async fn get_releases(
     let (includes, include_covers, include_genres, include_artist_covers) =
         parse_release_includes(inc)?;
     let search_term = super::parse_text_query(query);
+    let year_context = year.map(|year| year.to_string());
+    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "releases")
+        .field(search_term.as_deref())
+        .field(year_context.as_deref())
+        .field(library_id.as_deref())
+        .values(genre_id.as_deref())
+        .values(sort_by.as_deref())
+        .field(sort_order.as_deref())
+        .finish();
     let mut sort = parse_sort_specs(sort_by, sort_order)?;
     if sort.is_empty() {
         sort = default_release_sort();
     }
     let library_scope =
         super::resolve_optional_library_filter(db, &principal, library_id.as_deref())?;
-    let genre_filter = parse_genre_id_filter(genre_id);
-    let genre_db_ids = resolve_genre_id_filter(db, &genre_filter)?;
-    let query_filters = db::releases::ReleaseQueryFilters {
-        year,
-        ids: if genre_db_ids.is_empty() {
-            None
-        } else {
-            Some(db::genres::release_ids_matching_genre_ids(
-                db,
-                &genre_db_ids,
-            )?)
-        },
-    };
 
-    let accessible_releases = match library_scope {
-        Some(library_db_id) => {
-            db::releases::query(
-                db,
-                library_db_id,
-                &ListOptions {
-                    sort: Vec::new(),
-                    offset: None,
-                    limit: None,
-                    search_term: None,
-                },
-                &query_filters,
-            )?
-            .entries
-        }
-        None => {
-            let releases = db::releases::query(
-                db,
-                "releases",
-                &ListOptions {
-                    sort: Vec::new(),
-                    offset: None,
-                    limit: None,
-                    search_term: None,
-                },
-                &query_filters,
-            )?
-            .entries;
-            let mut accessible_releases = Vec::with_capacity(releases.len());
-            for release in releases {
-                let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
-                    continue;
-                };
-                if !super::entity_accessible_to_principal(db, &principal, release_db_id)? {
-                    continue;
-                }
-                accessible_releases.push(release);
+    let (release_items, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
+        let release_items = super::load_snapshot_items(
+            db,
+            &page.item_ids,
+            db::releases::get_by_id,
+            |db, release_db_id| {
+                super::entity_accessible_to_principal(db, &principal, release_db_id)
+            },
+        )?;
+        (release_items, page.next_cursor)
+    } else {
+        let genre_filter = parse_genre_id_filter(genre_id);
+        let genre_db_ids = resolve_genre_id_filter(db, &genre_filter)?;
+        let query_filters = db::releases::ReleaseQueryFilters {
+            year,
+            ids: if genre_db_ids.is_empty() {
+                None
+            } else {
+                Some(db::genres::release_ids_matching_genre_ids(
+                    db,
+                    &genre_db_ids,
+                )?)
+            },
+        };
+        let accessible_releases = match library_scope {
+            Some(library_db_id) => {
+                db::releases::query(
+                    db,
+                    library_db_id,
+                    &ListOptions {
+                        sort: Vec::new(),
+                        offset: None,
+                        limit: None,
+                        search_term: None,
+                    },
+                    &query_filters,
+                )?
+                .entries
             }
-            accessible_releases
-        }
+            None => {
+                let releases = db::releases::query(
+                    db,
+                    "releases",
+                    &ListOptions {
+                        sort: Vec::new(),
+                        offset: None,
+                        limit: None,
+                        search_term: None,
+                    },
+                    &query_filters,
+                )?
+                .entries;
+                let mut accessible_releases = Vec::with_capacity(releases.len());
+                for release in releases {
+                    let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
+                        continue;
+                    };
+                    if super::entity_accessible_to_principal(db, &principal, release_db_id)? {
+                        accessible_releases.push(release);
+                    }
+                }
+                accessible_releases
+            }
+        };
+        let mut release_items = query_release_route_items(
+            db,
+            accessible_releases,
+            &sort,
+            search_term.as_deref(),
+            principal.user_db_id,
+        )?;
+        let page = page_request.start(
+            &snapshot_key,
+            release_items
+                .iter()
+                .map(|release| release.id.clone())
+                .collect(),
+        )?;
+        release_items.truncate(page.item_ids.len());
+        (release_items, page.next_cursor)
     };
-
-    let page = query_release_route_items(
-        db,
-        accessible_releases,
-        &sort,
-        search_term.as_deref(),
-        page_options,
-        principal.user_db_id,
-    )?;
-    let next_cursor = super::next_page_cursor(page.offset, page.entries.len(), page.total_count);
-    let details = releases::list_details_for_releases(db, includes, page.entries)?;
+    let details = releases::list_details_for_releases(db, includes, release_items)?;
 
     let mut items: Vec<ReleaseResponse> = Vec::with_capacity(details.len());
     for detail in details {
@@ -1006,7 +1028,7 @@ mod tests {
                 .ok_or_else(|| anyhow::anyhow!("long release missing"))?,
         ];
 
-        let page = query_release_route_items(
+        let releases = query_release_route_items(
             &db,
             releases,
             &[ReleaseRouteSortSpec {
@@ -1014,15 +1036,10 @@ mod tests {
                 direction: SortDirection::Descending,
             }],
             None,
-            super::super::PageOptions {
-                limit: 10,
-                offset: 0,
-            },
             DbId(1),
         )?;
 
-        let titles: Vec<String> = page
-            .entries
+        let titles: Vec<String> = releases
             .into_iter()
             .map(|release| release.release_title)
             .collect();
@@ -1443,13 +1460,6 @@ mod benches {
         }
     }
 
-    fn bench_page() -> super::super::PageOptions {
-        super::super::PageOptions {
-            limit: 100,
-            offset: 0,
-        }
-    }
-
     #[bench]
     fn route_sort_releases_sort_name_500(b: &mut Bencher) {
         let setup = seed_release_sort_bench(500, 0, 0);
@@ -1460,7 +1470,6 @@ mod benches {
                 black_box(setup.releases.clone()),
                 &sort,
                 None,
-                bench_page(),
                 setup.user_db_id,
             )
             .unwrap()
@@ -1480,7 +1489,6 @@ mod benches {
                 black_box(setup.releases.clone()),
                 &sort,
                 None,
-                bench_page(),
                 setup.user_db_id,
             )
             .unwrap()
@@ -1500,7 +1508,6 @@ mod benches {
                 black_box(setup.releases.clone()),
                 &sort,
                 None,
-                bench_page(),
                 setup.user_db_id,
             )
             .unwrap()

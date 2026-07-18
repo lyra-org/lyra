@@ -25,10 +25,6 @@ use axum::{
         put,
     },
 };
-use base64::{
-    Engine,
-    engine::general_purpose::URL_SAFE_NO_PAD,
-};
 use serde::{
     Deserialize,
     Serialize,
@@ -37,19 +33,18 @@ use std::collections::HashMap;
 
 use crate::{
     STATE,
-    db::favorites::{
-        Cursor,
-        FavoriteKind,
-        LIST_HARD_LIMIT,
+    db::favorites::FavoriteKind,
+    routes::{
+        AppError,
+        responses::PageResponse,
     },
-    routes::AppError,
     services::{
         auth::require_authenticated,
         favorites as favorite_service,
+        pagination::SnapshotKey,
     },
 };
 
-const DEFAULT_LIST_LIMIT: u64 = 100;
 const CHECK_HARD_CAP: usize = 500;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -118,27 +113,8 @@ struct ListQuery {
         schemars(description = "Entity kind to filter on. Required.")
     )]
     entity: EntityParam,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Page size. Default 100, cap 500.")
-    )]
-    limit: Option<u64>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Opaque cursor from the previous page's `next_cursor`.")
-    )]
-    cursor: Option<String>,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Serialize)]
-struct ListResponse {
-    items: Vec<FavoriteItem>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Opaque cursor; `null` on the last page. Sole termination signal.")
-    )]
-    next_cursor: Option<String>,
+    #[serde(flatten)]
+    page: super::PageQuery,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -237,29 +213,36 @@ async fn check_favorites(
 async fn list_favorites(
     headers: HeaderMap,
     Query(query): Query<ListQuery>,
-) -> Result<Json<ListResponse>, AppError> {
+) -> Result<Json<PageResponse<FavoriteItem>>, AppError> {
     let principal = require_authenticated(&headers).await?;
-    let limit = query
-        .limit
-        .unwrap_or(DEFAULT_LIST_LIMIT)
-        .clamp(1, LIST_HARD_LIMIT);
-    let cursor = query.cursor.as_deref().map(decode_cursor).transpose()?;
-
+    let page_request = query.page.resolve_snapshot();
     let kind = FavoriteKind::from(query.entity);
+    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "favorites")
+        .field(Some(kind.as_str()))
+        .finish();
 
     let db = STATE.db.read().await;
-    let page = favorite_service::list(&db, &principal, kind, limit, cursor)?;
+    let (list_items, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
+        (
+            favorite_service::hydrate_snapshot(&db, &principal, kind, &page.item_ids)?,
+            page.next_cursor,
+        )
+    } else {
+        let mut list_items = favorite_service::list(&db, &principal, kind)?;
+        let page = page_request.start(
+            &snapshot_key,
+            list_items.iter().map(|item| item.snapshot_id()).collect(),
+        )?;
+        list_items.truncate(page.item_ids.len());
+        (list_items, page.next_cursor)
+    };
 
-    let items: Vec<FavoriteItem> = page
-        .items
+    let items: Vec<FavoriteItem> = list_items
         .into_iter()
         .map(favorite_item_from_list_item)
         .collect();
 
-    Ok(Json(ListResponse {
-        items,
-        next_cursor: page.next_cursor.map(encode_cursor),
-    }))
+    Ok(Json(PageResponse { items, next_cursor }))
 }
 
 fn looks_like_public_id(candidate: &str) -> bool {
@@ -270,34 +253,6 @@ fn looks_like_public_id(candidate: &str) -> bool {
     candidate
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-}
-
-fn encode_cursor(cursor: Cursor) -> String {
-    let mut buf = [0u8; 16];
-    buf[..8].copy_from_slice(&cursor.first_favorited_at_ms.to_be_bytes());
-    buf[8..].copy_from_slice(&cursor.target_db_id.to_be_bytes());
-    URL_SAFE_NO_PAD.encode(buf)
-}
-
-// base64(16 bytes) = 22 chars. Length-check before decoding to bound allocation.
-const CURSOR_BASE64_LEN: usize = 22;
-
-fn decode_cursor(raw: &str) -> Result<Cursor, AppError> {
-    if raw.len() != CURSOR_BASE64_LEN {
-        return Err(AppError::bad_request("malformed cursor"));
-    }
-    let bytes = URL_SAFE_NO_PAD
-        .decode(raw.as_bytes())
-        .map_err(|_| AppError::bad_request("malformed cursor"))?;
-    if bytes.len() != 16 {
-        return Err(AppError::bad_request("malformed cursor"));
-    }
-    let first_favorited_at_ms = i64::from_be_bytes(bytes[..8].try_into().unwrap());
-    let target_db_id = i64::from_be_bytes(bytes[8..].try_into().unwrap());
-    Ok(Cursor {
-        first_favorited_at_ms,
-        target_db_id,
-    })
 }
 
 #[cfg(feature = "docgen")]
@@ -344,9 +299,10 @@ fn check_favorites_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_favorites_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List favorites").description(
-        "Returns favorites for one entity kind, paginated by creation time descending \
-         with an opaque cursor. `limit` is best-effort: visibility filtering and targets \
-         removed during hydration can return `items.len() < limit`. Drive iteration off \
+        "Returns `{ items, next_cursor }` for one entity kind, ordered by creation time \
+         descending. The first page creates a bounded snapshot; continuation pages retain that \
+         order while rechecking current target visibility. Removed or newly hidden targets can \
+         make `items.len() < limit`. Repeat `entity` with the cursor and drive iteration from \
          `next_cursor`.",
     )
 }
@@ -387,23 +343,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cursor_roundtrip() {
-        let cursor = Cursor {
-            first_favorited_at_ms: 1_700_000_000_000,
-            target_db_id: 42,
-        };
-        let encoded = encode_cursor(cursor);
-        let decoded = decode_cursor(&encoded).expect("cursor roundtrips");
-        assert_eq!(decoded, cursor);
-    }
-
-    #[test]
-    fn decode_cursor_rejects_malformed() {
-        assert!(decode_cursor("not-base64!").is_err());
-        assert!(decode_cursor("c2hvcnQ").is_err()); // base64 of "short", < 16 bytes
-    }
-
-    #[test]
     fn looks_like_public_id_accepts_nanoid_shape() {
         assert!(looks_like_public_id("V1StGXR8_Z5jdHi6B-myT"));
         assert!(looks_like_public_id("abc123"));
@@ -421,6 +360,7 @@ mod tests {
     #[test]
     fn favorite_item_from_list_item_formats_fields() {
         let entry = favorite_service::ListItem {
+            edge_db_id: agdb::DbId(1),
             target_id: "tr-current".to_string(),
             kind: FavoriteKind::Track,
             first_favorited_at_ms: 1,

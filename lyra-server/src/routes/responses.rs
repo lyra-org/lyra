@@ -20,7 +20,9 @@ pub(crate) struct PageResponse<T> {
     pub items: Vec<T>,
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "Opaque cursor; `null` on the last page. Sole termination signal.")
+        schemars(
+            description = "Opaque cursor for the bounded collection snapshot; `null` on the last page. Sole termination signal."
+        )
     )]
     pub next_cursor: Option<String>,
 }

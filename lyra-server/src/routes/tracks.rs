@@ -74,6 +74,7 @@ use crate::{
             require_permission,
         },
         metadata::lyrics as lyrics_service,
+        pagination::SnapshotKey,
         tracks as track_service,
     },
 };
@@ -145,7 +146,7 @@ pub(crate) struct TrackListOptions {
     release_id: Option<String>,
     sort_by: Option<Vec<String>>,
     sort_order: Option<String>,
-    page_options: super::PageOptions,
+    page_request: super::SnapshotPageRequest,
 }
 
 #[derive(Clone, Copy)]
@@ -386,9 +387,8 @@ fn query_track_route_items(
     tracks: Vec<db::Track>,
     sort: &[TrackRouteSortSpec],
     search_term: Option<&str>,
-    page_options: super::PageOptions,
     user_db_id: DbId,
-) -> anyhow::Result<db::PagedResult<db::Track>> {
+) -> anyhow::Result<Vec<db::Track>> {
     let listen_stats: HashMap<DbId, db::listens::ListenStats> = if track_sort_needs_listens(sort) {
         let track_ids: Vec<DbId> = tracks
             .iter()
@@ -419,11 +419,7 @@ fn query_track_route_items(
     }
 
     entries.sort_by(|a, b| compare_track_route_entries(a, b, sort));
-    Ok(super::paginate_entries(
-        entries.into_iter().map(|entry| entry.track).collect(),
-        page_options.offset,
-        page_options.limit,
-    ))
+    Ok(entries.into_iter().map(|entry| entry.track).collect())
 }
 
 fn release_to_response(
@@ -493,11 +489,18 @@ pub(crate) async fn list_track_responses(
         release_id,
         sort_by,
         sort_order,
-        page_options,
+        page_request,
     } = options;
     let db = &*STATE.db.read().await;
     let includes = parse_inc(inc)?;
     let search_term = super::parse_text_query(query);
+    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "tracks")
+        .field(search_term.as_deref())
+        .field(library_id.as_deref())
+        .field(release_id.as_deref())
+        .values(sort_by.as_deref())
+        .field(sort_order.as_deref())
+        .finish();
     let library_scope =
         super::resolve_optional_library_filter(db, principal, library_id.as_deref())?;
     let release_scope = resolve_optional_release_filter(db, principal, release_id.as_deref())?;
@@ -505,40 +508,52 @@ pub(crate) async fn list_track_responses(
     if sort.is_empty() {
         sort = default_track_sort(release_scope.is_some());
     }
-    let accessible_tracks = match (release_scope, library_scope) {
-        (Some(release_db_id), Some(library_db_id))
-            if !release_belongs_to_library(db, release_db_id, library_db_id)? =>
-        {
-            Vec::new()
-        }
-        (Some(release_db_id), _) => db::tracks::get_by_releases(db, &[release_db_id])?,
-        (None, Some(library_db_id)) => db::tracks::get_by_library(db, library_db_id)?,
-        (None, None) => {
-            let tracks = db::tracks::get(db, "tracks")?;
-            let mut accessible_tracks = Vec::with_capacity(tracks.len());
-            for track in tracks {
-                let Some(track_db_id) = track.db_id.clone().map(agdb::DbId::from) else {
-                    continue;
-                };
-                if !super::entity_accessible_to_principal(db, principal, track_db_id)? {
-                    continue;
-                }
-                accessible_tracks.push(track);
+    let (tracks, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
+        let tracks = super::load_snapshot_items(
+            db,
+            &page.item_ids,
+            db::tracks::get_by_id,
+            |db, track_db_id| super::entity_accessible_to_principal(db, principal, track_db_id),
+        )?;
+        (tracks, page.next_cursor)
+    } else {
+        let accessible_tracks = match (release_scope, library_scope) {
+            (Some(release_db_id), Some(library_db_id))
+                if !release_belongs_to_library(db, release_db_id, library_db_id)? =>
+            {
+                Vec::new()
             }
-            accessible_tracks
-        }
+            (Some(release_db_id), _) => db::tracks::get_by_releases(db, &[release_db_id])?,
+            (None, Some(library_db_id)) => db::tracks::get_by_library(db, library_db_id)?,
+            (None, None) => {
+                let tracks = db::tracks::get(db, "tracks")?;
+                let mut accessible_tracks = Vec::with_capacity(tracks.len());
+                for track in tracks {
+                    let Some(track_db_id) = track.db_id.clone().map(agdb::DbId::from) else {
+                        continue;
+                    };
+                    if super::entity_accessible_to_principal(db, principal, track_db_id)? {
+                        accessible_tracks.push(track);
+                    }
+                }
+                accessible_tracks
+            }
+        };
+        let mut tracks = query_track_route_items(
+            db,
+            accessible_tracks,
+            &sort,
+            search_term.as_deref(),
+            principal.user_db_id,
+        )?;
+        let page = page_request.start(
+            &snapshot_key,
+            tracks.iter().map(|track| track.id.clone()).collect(),
+        )?;
+        tracks.truncate(page.item_ids.len());
+        (tracks, page.next_cursor)
     };
-
-    let page = query_track_route_items(
-        db,
-        accessible_tracks,
-        &sort,
-        search_term.as_deref(),
-        page_options,
-        principal.user_db_id,
-    )?;
-    let next_cursor = super::next_page_cursor(page.offset, page.entries.len(), page.total_count);
-    let details = track_service::list_details_for_tracks(db, includes.service, page.entries)?;
+    let details = track_service::list_details_for_tracks(db, includes.service, tracks)?;
 
     let mut items = Vec::with_capacity(details.len());
     for detail in details {
@@ -727,7 +742,7 @@ async fn get_tracks(
         sort_order,
         page,
     } = list_query;
-    let page = page.resolve()?;
+    let page = page.resolve_snapshot();
     let principal = require_authenticated(&headers).await?;
     Ok(Json(
         list_track_responses(
@@ -739,7 +754,7 @@ async fn get_tracks(
                 release_id,
                 sort_by,
                 sort_order,
-                page_options: page,
+                page_request: page,
             },
         )
         .await?,
@@ -1386,7 +1401,7 @@ mod tests {
             db::tracks::get_by_id(&db, two_listens)?.ok_or_else(|| anyhow::anyhow!("missing"))?,
         ];
 
-        let page = query_track_route_items(
+        let tracks = query_track_route_items(
             &db,
             tracks,
             &[TrackRouteSortSpec {
@@ -1394,18 +1409,10 @@ mod tests {
                 direction: SortDirection::Descending,
             }],
             None,
-            super::super::PageOptions {
-                limit: 10,
-                offset: 0,
-            },
             user_db_id,
         )?;
 
-        let titles: Vec<String> = page
-            .entries
-            .into_iter()
-            .map(|track| track.track_title)
-            .collect();
+        let titles: Vec<String> = tracks.into_iter().map(|track| track.track_title).collect();
         assert_eq!(titles, vec!["Two Listens", "One Listen"]);
         Ok(())
     }
@@ -1472,10 +1479,7 @@ mod tests {
                 release_id: None,
                 sort_by: None,
                 sort_order: None,
-                page_options: super::super::PageOptions {
-                    limit: 100,
-                    offset: 0,
-                },
+                page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
         .await
@@ -1510,10 +1514,7 @@ mod tests {
                 release_id: None,
                 sort_by: None,
                 sort_order: None,
-                page_options: super::super::PageOptions {
-                    limit: 100,
-                    offset: 0,
-                },
+                page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
         .await
@@ -1657,10 +1658,7 @@ mod tests {
                 release_id: Some(release_public_id),
                 sort_by: None,
                 sort_order: None,
-                page_options: super::super::PageOptions {
-                    limit: 100,
-                    offset: 0,
-                },
+                page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
         .await
@@ -1790,13 +1788,6 @@ mod benches {
         }
     }
 
-    fn bench_page() -> super::super::PageOptions {
-        super::super::PageOptions {
-            limit: 100,
-            offset: 0,
-        }
-    }
-
     #[bench]
     fn route_sort_tracks_sort_name_1000(b: &mut Bencher) {
         let setup = seed_track_sort_bench(1_000, 0);
@@ -1807,7 +1798,6 @@ mod benches {
                 black_box(setup.tracks.clone()),
                 &sort,
                 None,
-                bench_page(),
                 setup.user_db_id,
             )
             .unwrap()
@@ -1827,7 +1817,6 @@ mod benches {
                 black_box(setup.tracks.clone()),
                 &sort,
                 None,
-                bench_page(),
                 setup.user_db_id,
             )
             .unwrap()
