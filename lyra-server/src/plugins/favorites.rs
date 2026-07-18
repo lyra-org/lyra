@@ -145,12 +145,12 @@ fn add_callback(
         }
 
         let mut db = db.write().await;
-        let Some(target_public_id) =
+        let Some(public_target_id) =
             db::lookup::find_id_by_db_id(&*db, target_id).map_err(crate::plugins::runtime_error)?
         else {
             return Ok(luau::Value::Boolean(false));
         };
-        let outcome = favorite_service::add_for_principal(&mut db, &principal, &target_public_id)
+        let outcome = favorite_service::add_for_principal(&mut db, &principal, &public_target_id)
             .map_err(crate::plugins::runtime_error)?;
         Ok(luau::Value::Boolean(matches!(
             outcome,
@@ -208,12 +208,12 @@ fn has_callback(
         }
 
         let db = db.read().await;
-        let Some(target_public_id) =
+        let Some(public_target_id) =
             db::lookup::find_id_by_db_id(&*db, target_id).map_err(crate::plugins::runtime_error)?
         else {
             return Ok(luau::Value::Boolean(false));
         };
-        let favored = favorite_service::has_for_principal(&db, &principal, &target_public_id)
+        let favored = favorite_service::has_for_principal(&db, &principal, &public_target_id)
             .map_err(crate::plugins::runtime_error)?;
         Ok(luau::Value::Boolean(favored))
     }))

@@ -19,7 +19,6 @@ use crate::db::{
     self,
     favorites::{
         Cursor,
-        FavoriteEdge,
         FavoriteKind,
         HAS_MANY_CAP,
         LIST_HARD_LIMIT,
@@ -37,8 +36,16 @@ pub(crate) enum MutationOutcome {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ListPage {
-    pub(crate) edges: Vec<FavoriteEdge>,
+    pub(crate) items: Vec<ListItem>,
     pub(crate) next_cursor: Option<Cursor>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ListItem {
+    pub(crate) target_id: String,
+    pub(crate) kind: FavoriteKind,
+    pub(crate) first_favorited_at_ms: i64,
+    pub(crate) last_refreshed_at_ms: i64,
 }
 
 /// Add or refresh a favorite. Atomic over resolve + whitelist + visibility + write.
@@ -54,14 +61,7 @@ pub(crate) fn add_for_principal(
         else {
             return Ok(MutationOutcome::NotTargetable);
         };
-        db::favorites::add(
-            t,
-            principal.user_db_id,
-            target_db_id,
-            public_target_id,
-            kind,
-            now_ms,
-        )?;
+        db::favorites::add(t, principal.user_db_id, target_db_id, kind, now_ms)?;
         Ok(MutationOutcome::Applied(kind))
     })
 }
@@ -92,11 +92,7 @@ pub(crate) fn has_for_principal(
     else {
         return Ok(false);
     };
-    let Some(snapshot) = db::favorites::edge_snapshot(db, principal.user_db_id, target_db_id)?
-    else {
-        return Ok(false);
-    };
-    Ok(snapshot == public_target_id)
+    db::favorites::has(db, principal.user_db_id, target_db_id)
 }
 
 pub(crate) fn has_many_for_principal(
@@ -126,11 +122,9 @@ pub(crate) fn has_many_for_principal(
 
     if !resolved.is_empty() {
         let db_ids: Vec<DbId> = resolved.iter().map(|(_, id)| *id).collect();
-        let snapshots = db::favorites::edge_snapshots(db, principal.user_db_id, &db_ids)?;
+        let states = db::favorites::has_many(db, principal.user_db_id, &db_ids)?;
         for (public_id, db_id) in resolved {
-            let is_fav = snapshots
-                .get(&db_id)
-                .is_some_and(|snapshot| snapshot == &public_id);
+            let is_fav = states.get(&db_id).copied().unwrap_or(false);
             response.insert(public_id, is_fav);
         }
     }
@@ -149,16 +143,25 @@ pub(crate) fn list(
 ) -> anyhow::Result<ListPage> {
     let clamped_limit = limit.clamp(1, LIST_HARD_LIMIT);
     let page = db::favorites::list(db, principal.user_db_id, kind, clamped_limit, cursor)?;
+    let target_db_ids: Vec<DbId> = page.edges.iter().map(|edge| edge.target_db_id).collect();
+    let target_ids = db::lookup::find_ids_by_db_ids(db, &target_db_ids)?;
 
-    let mut edges = Vec::with_capacity(page.edges.len());
+    let mut items = Vec::with_capacity(page.edges.len());
     for edge in page.edges {
-        if target_visible_to_principal(db, principal, edge.target_db_id, edge.kind)? {
-            edges.push(edge);
+        if target_visible_to_principal(db, principal, edge.target_db_id, edge.kind)?
+            && let Some(target_id) = target_ids.get(&edge.target_db_id)
+        {
+            items.push(ListItem {
+                target_id: target_id.clone(),
+                kind: edge.kind,
+                first_favorited_at_ms: edge.first_favorited_at_ms,
+                last_refreshed_at_ms: edge.last_refreshed_at_ms,
+            });
         }
     }
 
     Ok(ListPage {
-        edges,
+        items,
         next_cursor: page.next_cursor,
     })
 }
@@ -303,7 +306,7 @@ mod tests {
             else {
                 return Ok(MutationOutcome::NotTargetable);
             };
-            db::favorites::add(t, user_db_id, target_db_id, public_target_id, kind, now_ms)?;
+            db::favorites::add(t, user_db_id, target_db_id, kind, now_ms)?;
             Ok(MutationOutcome::Applied(kind))
         })
     }
@@ -313,10 +316,7 @@ mod tests {
         else {
             return Ok(false);
         };
-        let Some(snapshot) = db::favorites::edge_snapshot(db, user_db_id, target_db_id)? else {
-            return Ok(false);
-        };
-        Ok(snapshot == public_target_id)
+        db::favorites::has(db, user_db_id, target_db_id)
     }
 
     fn has_many(
@@ -346,11 +346,9 @@ mod tests {
 
         if !resolved.is_empty() {
             let db_ids: Vec<DbId> = resolved.iter().map(|(_, id)| *id).collect();
-            let snapshots = db::favorites::edge_snapshots(db, user_db_id, &db_ids)?;
+            let states = db::favorites::has_many(db, user_db_id, &db_ids)?;
             for (public_id, db_id) in resolved {
-                let is_fav = snapshots
-                    .get(&db_id)
-                    .is_some_and(|snapshot| snapshot == &public_id);
+                let is_fav = states.get(&db_id).copied().unwrap_or(false);
                 response.insert(public_id, is_fav);
             }
         }
@@ -582,7 +580,7 @@ mod tests {
         let other_principal = principal_for(other, HashSet::new());
         assert_eq!(
             list(&db, &other_principal, FavoriteKind::Playlist, 10, None)?
-                .edges
+                .items
                 .len(),
             1,
             "public playlist should hydrate for non-owner",
@@ -603,14 +601,14 @@ mod tests {
 
         assert!(
             list(&db, &other_principal, FavoriteKind::Playlist, 10, None)?
-                .edges
+                .items
                 .is_empty(),
             "flipped-to-private playlist must be dropped from non-owner's list",
         );
         let owner_principal = principal_for(owner, HashSet::new());
         assert_eq!(
             list(&db, &owner_principal, FavoriteKind::Playlist, 10, None)?
-                .edges
+                .items
                 .len(),
             0,
             "owner never favorited it, so it shouldn't appear on their list either",
@@ -639,16 +637,16 @@ mod tests {
             added,
             MutationOutcome::Applied(FavoriteKind::Track)
         ));
+        let visible_page = list(&db, &visible_principal, FavoriteKind::Track, 10, None)?;
         assert_eq!(
-            list(&db, &visible_principal, FavoriteKind::Track, 10, None)?
-                .edges
-                .len(),
+            visible_page.items.len(),
             1,
             "track favorite should list while the library is accessible",
         );
+        assert_eq!(visible_page.items[0].target_id, track_public_id);
         assert!(
             list(&db, &hidden_principal, FavoriteKind::Track, 10, None)?
-                .edges
+                .items
                 .is_empty(),
             "track favorite must be hidden without access to the containing library",
         );
