@@ -21,6 +21,12 @@ use serde::{
 
 use crate::{
     STATE,
+    db::ratings::{
+        MAX_VALUE,
+        MIN_VALUE,
+        RatingFilter,
+        RatingValue,
+    },
     routes::AppError,
     services::{
         auth::require_authenticated,
@@ -46,6 +52,20 @@ struct SearchQuery {
         schemars(description = "Optional per-entity result cap. Defaults to 20, capped at 50.")
     )]
     limit: Option<u64>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional inclusive minimum personal rating. Must be an integer from 1 through 5. Unrated entities are excluded."
+        )
+    )]
+    min_rating: Option<i64>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional inclusive maximum personal rating. Must be an integer from 1 through 5. Unrated entities are excluded."
+        )
+    )]
+    max_rating: Option<i64>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -86,9 +106,11 @@ async fn search(
         )));
     }
 
-    let options = search_service::SearchOptions::new(trimmed.to_string(), params.limit);
+    let rating_filter = parse_rating_filter(params.min_rating, params.max_rating)?;
+    let options =
+        search_service::SearchOptions::new(trimmed.to_string(), params.limit, rating_filter);
 
-    // CPU-bound: each entity's `query` walks the full root collection in memory.
+    // CPU-bound: candidate collection and fuzzy ranking walk each result branch in memory.
     let guard = STATE.db.read().await;
     let results = tokio::task::spawn_blocking(move || {
         search_service::search_accessible(&guard, &principal, &options)
@@ -124,6 +146,31 @@ async fn search(
     }))
 }
 
+fn parse_rating_filter(
+    min_rating: Option<i64>,
+    max_rating: Option<i64>,
+) -> Result<RatingFilter, AppError> {
+    let min = min_rating
+        .map(|value| parse_rating_bound("min_rating", value))
+        .transpose()?;
+    let max = max_rating
+        .map(|value| parse_rating_bound("max_rating", value))
+        .transpose()?;
+    RatingFilter::new(min, max)
+        .map_err(|_| AppError::bad_request("min_rating must not exceed max_rating"))
+}
+
+fn parse_rating_bound(name: &str, raw: i64) -> Result<RatingValue, AppError> {
+    u8::try_from(raw)
+        .ok()
+        .and_then(RatingValue::new)
+        .ok_or_else(|| {
+            AppError::bad_request(format!(
+                "{name} must be an integer from {MIN_VALUE} through {MAX_VALUE}"
+            ))
+        })
+}
+
 #[cfg(feature = "docgen")]
 fn search_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Cross-entity fuzzy search").description(
@@ -131,6 +178,9 @@ fn search_docs(op: TransformOperation) -> TransformOperation {
          is a minimal autocomplete shape (`id` + title/name); use the per-entity resource \
          endpoints for detail and for paging within a single type. `limit` defaults to 20, \
          capped at 50. `query` is 1-256 characters after trimming, matched case-insensitively. \
+         `min_rating` and `max_rating` apply an inclusive range over the authenticated user's \
+         personal ratings; either bound excludes unrated entities, and an equal pair matches an \
+         exact rating. \
          Per-token modifiers: `'foo` exact, `^foo` prefix, `foo$` suffix, `!foo` negation, `\\` \
          escapes a leading modifier; plain tokens are fuzzy.",
     )
@@ -145,4 +195,24 @@ pub(crate) fn search_openapi_routes() -> aide::axum::ApiRouter {
     use aide::axum::routing::get_with;
 
     aide::axum::ApiRouter::new().api_route("/", get_with(search, search_docs))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rating_filter_parses_optional_inclusive_bounds() {
+        assert!(parse_rating_filter(None, None).unwrap().is_empty());
+        assert!(!parse_rating_filter(Some(1), None).unwrap().is_empty());
+        assert!(!parse_rating_filter(None, Some(5)).unwrap().is_empty());
+        assert!(!parse_rating_filter(Some(3), Some(3)).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rating_filter_rejects_invalid_bounds() {
+        assert!(parse_rating_filter(Some(0), None).is_err());
+        assert!(parse_rating_filter(None, Some(6)).is_err());
+        assert!(parse_rating_filter(Some(4), Some(3)).is_err());
+    }
 }
