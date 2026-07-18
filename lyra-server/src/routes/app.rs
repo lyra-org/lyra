@@ -45,6 +45,7 @@ pub(crate) fn build_core_api() -> Result<CoreApi> {
         .nest("/api/download", super::download_routes())
         .nest("/api/providers", super::provider_routes())
         .nest("/api/entities", super::entity_routes())
+        .nest("/api/ratings", super::rating_routes())
         .nest("/api/plugins", super::plugin_routes())
         .nest("/api/sync", super::sync_routes())
         .nest("/api/search", super::search_routes());
@@ -99,6 +100,7 @@ pub(crate) fn build_openapi_spec() -> OpenApi {
             super::providers::provider_openapi_routes(),
         )
         .nest("/api/entities", super::providers::entity_openapi_routes())
+        .nest("/api/ratings", super::ratings::rating_openapi_routes())
         .nest("/api/plugins", super::plugins::plugin_openapi_routes())
         .nest("/api/sync", super::sync::sync_openapi_routes())
         .nest("/api/search", super::search::search_openapi_routes())
@@ -260,6 +262,9 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/favorites/{target_id}"),
     ("PUT", "/api/favorites/{target_id}"),
     ("DELETE", "/api/favorites/{target_id}"),
+    ("GET", "/api/ratings/{target_id}"),
+    ("PUT", "/api/ratings/{target_id}"),
+    ("DELETE", "/api/ratings/{target_id}"),
     ("GET", "/api/metadata/mapping"),
     ("PUT", "/api/metadata/mapping"),
     ("POST", "/api/metadata/mapping/preview"),

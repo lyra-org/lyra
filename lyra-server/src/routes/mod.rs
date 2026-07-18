@@ -19,6 +19,7 @@ mod playback_sessions;
 mod playlists;
 mod plugins;
 mod providers;
+mod ratings;
 pub(crate) mod registry;
 mod releases;
 pub(crate) mod responses;
@@ -76,6 +77,7 @@ pub use providers::{
     entity_routes,
     provider_routes,
 };
+pub use ratings::rating_routes;
 pub use releases::release_routes;
 pub use roles::role_routes;
 pub use search::search_routes;
