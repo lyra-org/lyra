@@ -23,13 +23,8 @@ use crate::db::{
     tags::{
         CreateOutcome,
         HAS_MANY_CAP,
-        LIST_HARD_LIMIT,
-        PagedTags,
-        PagedTargets,
         RenameConflict,
-        TagListCursor,
         TagNormalizeError,
-        TargetListCursor,
     },
 };
 
@@ -433,45 +428,124 @@ pub(crate) fn delete(
     .map_err(TagServiceError::Internal)
 }
 
-pub(crate) fn list_for_user(
-    db: &DbAny,
-    owner_db_id: DbId,
-    limit: u64,
-    cursor: Option<TagListCursor>,
-) -> Result<PagedTags, TagServiceError> {
-    let clamped = limit.clamp(1, LIST_HARD_LIMIT);
-    db::tags::list_for_user(db, owner_db_id, clamped, cursor).map_err(TagServiceError::Internal)
+pub(crate) fn list_for_user(db: &DbAny, owner_db_id: DbId) -> Result<Vec<Tag>, TagServiceError> {
+    db::tags::list_for_user(db, owner_db_id).map_err(TagServiceError::Internal)
 }
 
-/// Paginated target list for a tag, filtered by caller-side playlist visibility.
+pub(crate) fn hydrate_tag_snapshot(
+    db: &DbAny,
+    owner_db_id: DbId,
+    public_tag_ids: &[String],
+) -> Result<Vec<Tag>, TagServiceError> {
+    let mut tags = Vec::with_capacity(public_tag_ids.len());
+    for public_tag_id in public_tag_ids {
+        match get_by_public_id(db, owner_db_id, public_tag_id) {
+            Ok(tag) => tags.push(tag),
+            Err(TagServiceError::NotFound) => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(tags)
+}
+
+#[derive(Debug)]
+pub(crate) struct TargetListItem {
+    edge_db_id: DbId,
+    pub(crate) target_id: String,
+}
+
+impl TargetListItem {
+    pub(crate) fn snapshot_id(&self) -> String {
+        format!("{}:{}", self.edge_db_id.0, self.target_id)
+    }
+}
+
+/// Target list for a tag, filtered by caller-side visibility.
 pub(crate) fn list_targets(
     db: &DbAny,
     owner_db_id: DbId,
     tag_db_id: DbId,
-    limit: u64,
-    cursor: Option<TargetListCursor>,
-) -> Result<PagedTargets, TagServiceError> {
+) -> Result<Vec<TargetListItem>, TagServiceError> {
     ensure_owner(db, tag_db_id, owner_db_id)?;
-    let clamped = limit.clamp(1, LIST_HARD_LIMIT);
-    let page = db::tags::list_targets(db, tag_db_id, clamped, cursor)
-        .map_err(TagServiceError::Internal)?;
+    let targets = db::tags::list_targets(db, tag_db_id).map_err(TagServiceError::Internal)?;
 
     let visibility =
         TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
-    let mut filtered = Vec::with_capacity(page.target_db_ids.len());
-    for id in page.target_db_ids {
-        if resolve_targetable_by_db_id(db, &visibility, id)
+    let target_db_ids = targets
+        .iter()
+        .map(|target| target.target_db_id)
+        .collect::<Vec<_>>();
+    let target_ids =
+        db::lookup::find_ids_by_db_ids(db, &target_db_ids).map_err(TagServiceError::Internal)?;
+    let mut filtered = Vec::with_capacity(targets.len());
+    for target in targets {
+        if resolve_targetable_by_db_id(db, &visibility, target.target_db_id)
             .map_err(TagServiceError::Internal)?
             .is_some()
+            && let Some(target_id) = target_ids.get(&target.target_db_id)
         {
-            filtered.push(id);
+            filtered.push(TargetListItem {
+                edge_db_id: target.edge_db_id,
+                target_id: target_id.clone(),
+            });
         }
     }
 
-    Ok(PagedTargets {
-        target_db_ids: filtered,
-        next_cursor: page.next_cursor,
-    })
+    Ok(filtered)
+}
+
+pub(crate) fn hydrate_target_snapshot(
+    db: &DbAny,
+    owner_db_id: DbId,
+    tag_db_id: DbId,
+    snapshot_ids: &[String],
+) -> Result<Vec<TargetListItem>, TagServiceError> {
+    ensure_owner(db, tag_db_id, owner_db_id)?;
+    let identities = snapshot_ids
+        .iter()
+        .filter_map(|snapshot_id| {
+            let (edge_db_id, target_id) = snapshot_id.split_once(':')?;
+            Some((DbId(edge_db_id.parse::<i64>().ok()?), target_id))
+        })
+        .collect::<Vec<_>>();
+    let edge_ids = identities
+        .iter()
+        .map(|(edge_db_id, _)| *edge_db_id)
+        .collect::<Vec<_>>();
+    let mut targets = db::tags::get_targets_by_edge_ids(db, tag_db_id, &edge_ids)
+        .map_err(TagServiceError::Internal)?;
+    let target_db_ids = targets
+        .values()
+        .map(|target| target.target_db_id)
+        .collect::<Vec<_>>();
+    let target_ids =
+        db::lookup::find_ids_by_db_ids(db, &target_db_ids).map_err(TagServiceError::Internal)?;
+    let visibility =
+        TargetVisibility::for_user(db, owner_db_id).map_err(TagServiceError::Internal)?;
+
+    let mut items = Vec::with_capacity(identities.len());
+    for (edge_db_id, expected_target_id) in identities {
+        let Some(target) = targets.remove(&edge_db_id) else {
+            continue;
+        };
+        if resolve_targetable_by_db_id(db, &visibility, target.target_db_id)
+            .map_err(TagServiceError::Internal)?
+            .is_none()
+        {
+            continue;
+        }
+        let Some(target_id) = target_ids.get(&target.target_db_id) else {
+            continue;
+        };
+        if target_id != expected_target_id {
+            continue;
+        }
+        items.push(TargetListItem {
+            edge_db_id,
+            target_id: target_id.clone(),
+        });
+    }
+    Ok(items)
 }
 
 fn resolve_targetable(
@@ -775,8 +849,7 @@ mod tests {
         let (playlist_db_id, public_id) = create_playlist(&mut db, alice, true)?;
 
         create(&mut db, bob, &public_id, "Ref", "blue")?;
-        let tag_id = db::tags::list_for_user(&db, bob, 10, None)?
-            .tags
+        let tag_id = db::tags::list_for_user(&db, bob)?
             .first()
             .and_then(|tag| tag.db_id.clone())
             .expect("tag present")
@@ -917,12 +990,8 @@ mod tests {
         let (_, track_id, _) = create_accessible_track(&mut db, alice)?;
         create(&mut db, alice, &track_id, "Private", "blue")?;
 
-        let tags = db::tags::list_for_user(&db, alice, 10, None)?;
-        let public_id = tags
-            .tags
-            .first()
-            .map(|t| t.id.clone())
-            .expect("alice has a tag");
+        let tags = db::tags::list_for_user(&db, alice)?;
+        let public_id = tags.first().map(|t| t.id.clone()).expect("alice has a tag");
 
         let err = get_by_public_id(&db, bob, &public_id).unwrap_err();
         assert!(matches!(err, TagServiceError::NotFound));
@@ -939,8 +1008,7 @@ mod tests {
         create(&mut db, user, &track_id, "Workout", "blue")?;
         create(&mut db, user, &track_id, "Mood", "red")?;
 
-        let workout_id = db::tags::list_for_user(&db, user, 10, None)?
-            .tags
+        let workout_id = db::tags::list_for_user(&db, user)?
             .into_iter()
             .find(|t| t.tag == "Workout")
             .and_then(|t| t.db_id.clone())
@@ -959,8 +1027,7 @@ mod tests {
         let user = create_user(&mut db, "alice")?;
         let (_, track_id, _) = create_accessible_track(&mut db, user)?;
         create(&mut db, user, &track_id, "X", "blue")?;
-        let tag_id = db::tags::list_for_user(&db, user, 10, None)?
-            .tags
+        let tag_id = db::tags::list_for_user(&db, user)?
             .first()
             .and_then(|t| t.db_id.clone())
             .expect("tag present")

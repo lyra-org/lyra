@@ -56,25 +56,3 @@ pub(crate) fn parse_route_sort_specs<K>(
 
     Ok(sort)
 }
-
-fn u64_to_usize_saturating(value: u64) -> usize {
-    usize::try_from(value).unwrap_or(usize::MAX)
-}
-
-pub(crate) fn paginate_entries<T>(
-    mut entries: Vec<T>,
-    offset: u64,
-    limit: u64,
-) -> db::PagedResult<T> {
-    let total_count = entries.len() as u64;
-    let offset = offset.min(total_count);
-    let offset_usize = u64_to_usize_saturating(offset).min(entries.len());
-    let limit = u64_to_usize_saturating(limit);
-    let entries = entries.drain(offset_usize..).take(limit).collect();
-
-    db::PagedResult {
-        entries,
-        total_count,
-        offset,
-    }
-}

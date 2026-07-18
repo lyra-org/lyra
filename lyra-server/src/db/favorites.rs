@@ -20,7 +20,6 @@ use super::DbAccess;
 
 pub(crate) const HAS_MANY_CAP: usize = 1024;
 pub(crate) const LIST_IDS_CAP: usize = 10_000;
-pub(crate) const LIST_HARD_LIMIT: u64 = 500;
 
 const KIND_KEY: &str = "favorite_kind";
 const FIRST_FAVORITED_KEY: &str = "first_favorited_at_ms";
@@ -77,24 +76,11 @@ impl TryFrom<&str> for FavoriteKind {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FavoriteEdge {
+    pub(crate) db_id: DbId,
     pub(crate) target_db_id: DbId,
     pub(crate) kind: FavoriteKind,
     pub(crate) first_favorited_at_ms: i64,
     pub(crate) last_refreshed_at_ms: i64,
-}
-
-/// Cursor on `(first_favorited_at_ms, target_db_id)`. Both immutable per edge, so re-PUT
-/// does not reorder past an active scan.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Cursor {
-    pub(crate) first_favorited_at_ms: i64,
-    pub(crate) target_db_id: i64,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct ListResult {
-    pub(crate) edges: Vec<FavoriteEdge>,
-    pub(crate) next_cursor: Option<Cursor>,
 }
 
 pub(crate) fn target_kind(
@@ -215,21 +201,12 @@ pub(crate) fn has_many(
         .collect())
 }
 
-/// Paginated favorite edges for a user, by `first_favorited_at_ms DESC, target_db_id ASC`.
+/// Favorite edges for a user, by `first_favorited_at_ms DESC, target_db_id ASC`.
 pub(crate) fn list(
     db: &impl DbAccess,
     user_db_id: DbId,
     kind: FavoriteKind,
-    limit: u64,
-    cursor: Option<Cursor>,
-) -> anyhow::Result<ListResult> {
-    if limit == 0 {
-        return Ok(ListResult {
-            edges: Vec::new(),
-            next_cursor: None,
-        });
-    }
-
+) -> anyhow::Result<Vec<FavoriteEdge>> {
     let mut edges: Vec<FavoriteEdge> = read_outbound_favorite_edges(db, user_db_id)?
         .into_iter()
         .filter_map(parse_favorite_edge)
@@ -242,33 +219,27 @@ pub(crate) fn list(
             .then_with(|| a.target_db_id.0.cmp(&b.target_db_id.0))
     });
 
-    if let Some(cursor) = cursor {
-        edges.retain(|edge| cursor_accepts(cursor, edge));
-    }
-
-    let mut next_cursor = None;
-    if edges.len() > limit as usize {
-        edges.truncate(limit as usize);
-        if let Some(last) = edges.last() {
-            next_cursor = Some(Cursor {
-                first_favorited_at_ms: last.first_favorited_at_ms,
-                target_db_id: last.target_db_id.0,
-            });
-        }
-    }
-
-    Ok(ListResult { edges, next_cursor })
+    Ok(edges)
 }
 
-fn cursor_accepts(cursor: Cursor, edge: &FavoriteEdge) -> bool {
-    match edge
-        .first_favorited_at_ms
-        .cmp(&cursor.first_favorited_at_ms)
-    {
-        std::cmp::Ordering::Less => true,
-        std::cmp::Ordering::Equal => edge.target_db_id.0 > cursor.target_db_id,
-        std::cmp::Ordering::Greater => false,
+pub(crate) fn get_by_ids(
+    db: &impl DbAccess,
+    user_db_id: DbId,
+    kind: FavoriteKind,
+    edge_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, FavoriteEdge>> {
+    if edge_ids.is_empty() {
+        return Ok(HashMap::new());
     }
+    Ok(db
+        .exec(QueryBuilder::select().ids(edge_ids).query())?
+        .elements
+        .into_iter()
+        .filter(|element| element.from == user_db_id)
+        .filter_map(parse_favorite_edge)
+        .filter(|edge| edge.kind == kind)
+        .map(|edge| (edge.db_id, edge))
+        .collect())
 }
 
 /// Every favorite target DbId for a user+kind. Errs above [`LIST_IDS_CAP`].
@@ -424,6 +395,7 @@ fn parse_favorite_edge(element: DbElement) -> Option<FavoriteEdge> {
     }
 
     Some(FavoriteEdge {
+        db_id: element.id,
         target_db_id,
         kind: kind?,
         first_favorited_at_ms: first_favorited_at_ms?,
@@ -599,11 +571,11 @@ mod tests {
             "user A's favorite must not leak to user B via has_many"
         );
 
-        let a_list = list(&db, user_a, FavoriteKind::Track, 10, None)?;
-        let b_list = list(&db, user_b, FavoriteKind::Track, 10, None)?;
-        assert_eq!(a_list.edges.len(), 1);
+        let a_list = list(&db, user_a, FavoriteKind::Track)?;
+        let b_list = list(&db, user_b, FavoriteKind::Track)?;
+        assert_eq!(a_list.len(), 1);
         assert_eq!(
-            b_list.edges.len(),
+            b_list.len(),
             0,
             "user A's favorite must not leak to user B via list"
         );
@@ -630,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn list_orders_by_first_favorited_desc_and_cursor_paginates() -> anyhow::Result<()> {
+    fn list_orders_by_first_favorited_desc() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user = create_test_user(&mut db)?;
         let track_a = create_test_track(&mut db)?;
@@ -641,34 +613,11 @@ mod tests {
         add(&mut db, user, track_b, FavoriteKind::Track, 2000)?;
         add(&mut db, user, track_c, FavoriteKind::Track, 3000)?;
 
-        let page1 = list(&db, user, FavoriteKind::Track, 2, None)?;
-        assert_eq!(page1.edges.len(), 2);
-        assert_eq!(page1.edges[0].target_db_id, track_c);
-        assert_eq!(page1.edges[1].target_db_id, track_b);
-        let cursor = page1.next_cursor.expect("expected more pages");
-
-        let page2 = list(&db, user, FavoriteKind::Track, 2, Some(cursor))?;
-        assert_eq!(page2.edges.len(), 1);
-        assert_eq!(page2.edges[0].target_db_id, track_a);
-        assert!(page2.next_cursor.is_none());
-
-        Ok(())
-    }
-
-    #[test]
-    fn list_next_cursor_is_sole_termination_signal() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let user = create_test_user(&mut db)?;
-        let track = create_test_track(&mut db)?;
-
-        add(&mut db, user, track, FavoriteKind::Track, 100)?;
-
-        let page = list(&db, user, FavoriteKind::Track, 10, None)?;
-        assert_eq!(page.edges.len(), 1);
-        assert!(
-            page.next_cursor.is_none(),
-            "underfull page must set next_cursor to None",
-        );
+        let items = list(&db, user, FavoriteKind::Track)?;
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].target_db_id, track_c);
+        assert_eq!(items[1].target_db_id, track_b);
+        assert_eq!(items[2].target_db_id, track_a);
 
         Ok(())
     }
@@ -809,9 +758,7 @@ mod tests {
             "favorite edge must be removed when the playlist is deleted",
         );
         assert!(
-            list(&db, user, FavoriteKind::Playlist, 10, None)?
-                .edges
-                .is_empty(),
+            list(&db, user, FavoriteKind::Playlist)?.is_empty(),
             "list must not return edges whose target has been deleted",
         );
 
