@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::collections::HashSet;
+
 use agdb::{
     CountComparison,
     DbElement,
@@ -21,7 +23,7 @@ const UPDATED_AT_KEY: &str = "rating_updated_at_ms";
 pub(crate) const MIN_VALUE: u8 = 1;
 pub(crate) const MAX_VALUE: u8 = 5;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct RatingValue(u8);
 
 impl RatingValue {
@@ -33,6 +35,35 @@ impl RatingValue {
 
     pub(crate) fn get(self) -> u8 {
         self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RatingFilter {
+    min: Option<RatingValue>,
+    max: Option<RatingValue>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct InvertedRatingFilter;
+
+impl RatingFilter {
+    pub(crate) fn new(
+        min: Option<RatingValue>,
+        max: Option<RatingValue>,
+    ) -> Result<Self, InvertedRatingFilter> {
+        if min.zip(max).is_some_and(|(min, max)| min > max) {
+            return Err(InvertedRatingFilter);
+        }
+        Ok(Self { min, max })
+    }
+
+    pub(crate) fn is_empty(self) -> bool {
+        self.min.is_none() && self.max.is_none()
+    }
+
+    fn contains(self, value: RatingValue) -> bool {
+        self.min.is_none_or(|min| value >= min) && self.max.is_none_or(|max| value <= max)
     }
 }
 
@@ -141,6 +172,23 @@ pub(crate) fn get(
         }
     }
     Ok(None)
+}
+
+pub(crate) fn target_ids_matching(
+    db: &impl DbAccess,
+    user_db_id: DbId,
+    filter: RatingFilter,
+) -> anyhow::Result<HashSet<DbId>> {
+    anyhow::ensure!(
+        !filter.is_empty(),
+        "ratings::target_ids_matching requires at least one bound",
+    );
+    Ok(read_outbound_rating_edges(db, user_db_id)?
+        .into_iter()
+        .filter_map(parse_rating_edge)
+        .filter(|edge| filter.contains(edge.value))
+        .map(|edge| edge.target_db_id)
+        .collect())
 }
 
 #[cfg(test)]
@@ -366,6 +414,61 @@ mod tests {
         assert!(get(&db, user_b, target)?.is_none());
         assert!(list(&db, user_b)?.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn target_ids_matching_applies_inclusive_range_per_user() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_a = create_node(&mut db)?;
+        let user_b = create_node(&mut db)?;
+        let low = create_node(&mut db)?;
+        let middle = create_node(&mut db)?;
+        let upper = create_node(&mut db)?;
+        let high = create_node(&mut db)?;
+
+        for (target, value) in [(low, 2), (middle, 3), (upper, 4), (high, 5)] {
+            upsert(
+                &mut db,
+                user_a,
+                target,
+                RatingKind::Track,
+                RatingValue::new(value).unwrap(),
+                100,
+            )?;
+        }
+        upsert(
+            &mut db,
+            user_b,
+            high,
+            RatingKind::Track,
+            RatingValue::new(4).unwrap(),
+            100,
+        )?;
+
+        let filter = RatingFilter::new(RatingValue::new(3), RatingValue::new(4)).unwrap();
+        let matches = target_ids_matching(&db, user_a, filter)?;
+        assert_eq!(matches, HashSet::from([middle, upper]));
+
+        let exact = RatingFilter::new(RatingValue::new(4), RatingValue::new(4)).unwrap();
+        assert_eq!(
+            target_ids_matching(&db, user_a, exact)?,
+            HashSet::from([upper]),
+        );
+
+        let at_most = RatingFilter::new(None, RatingValue::new(2)).unwrap();
+        assert_eq!(
+            target_ids_matching(&db, user_a, at_most)?,
+            HashSet::from([low]),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rating_filter_accepts_single_and_equal_bounds() {
+        assert!(RatingFilter::new(RatingValue::new(1), None).is_ok());
+        assert!(RatingFilter::new(None, RatingValue::new(5)).is_ok());
+        assert!(RatingFilter::new(RatingValue::new(3), RatingValue::new(3)).is_ok());
+        assert!(RatingFilter::new(RatingValue::new(4), RatingValue::new(3)).is_err());
     }
 
     #[test]
