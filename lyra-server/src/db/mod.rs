@@ -111,6 +111,7 @@ pub(crate) mod plugin;
 pub(crate) mod plugin_repositories;
 pub(crate) mod process_lock;
 pub(crate) mod providers;
+pub(crate) mod ratings;
 pub(crate) mod releases;
 pub(crate) mod roles;
 pub(crate) mod search;

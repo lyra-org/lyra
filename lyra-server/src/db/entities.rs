@@ -33,7 +33,7 @@ fn classify_element(element: &DbElement) -> Option<MetadataEntityType> {
 }
 
 pub(crate) fn metadata_entity_type(
-    db: &DbAny,
+    db: &impl super::DbAccess,
     node_id: DbId,
 ) -> anyhow::Result<Option<MetadataEntityType>> {
     let result = db.exec(QueryBuilder::select().ids(node_id).query())?;
