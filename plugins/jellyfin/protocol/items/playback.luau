@@ -16,7 +16,10 @@ local JELLYFIN_PLUGIN_ID = constants.JELLYFIN_PLUGIN_ID
 local PLAYBACK_COMPLETION_TOLERANCE_MS = constants.PLAYBACK_COMPLETION_TOLERANCE_MS
 local ROUTE_PREFIX = constants.ROUTE_PREFIX
 
-local base = require("./common")
+local item_ids = require("./identifiers")
+local media = require("./media")
+local requests = require("./requests")
+local responses = require("./responses")
 
 local next_generated_play_session_id = 1
 type Track = tracks.Track
@@ -100,14 +103,14 @@ local playback_session_state_count = 0
 local MAX_PLAYBACK_SESSION_STATES = 500
 
 local module = {}
-module.trim = base.trim
-module.decode_jellyfin_item_id = base.decode_jellyfin_item_id
-module.bad_request = base.bad_request
-module.not_found = base.not_found
-module.parse_query_string = base.parse_query_string
-module.resolve_playback_source_for_track = base.resolve_playback_source_for_track
-module.encode_jellyfin_item_id = base.encode_jellyfin_item_id
-module.extension_from_path = base.extension_from_path
+module.trim = requests.trim
+module.decode_jellyfin_item_id = item_ids.decode_jellyfin_item_id
+module.bad_request = responses.bad_request
+module.not_found = responses.not_found
+module.parse_query_string = requests.parse_query_string
+module.resolve_playback_source_for_track = media.resolve_playback_source_for_track
+module.encode_jellyfin_item_id = item_ids.encode_jellyfin_item_id
+module.extension_from_path = media.extension_from_path
 
 local function ticks_to_ms(value: number | string?): number?
 	local ticks = tonumber(value)

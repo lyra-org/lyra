@@ -7,7 +7,8 @@
 local api = require("@lyra/api")
 local datastore = require("@lyra/datastore")
 
-local base = require("./items/common")
+local requests = require("./items/requests")
+local responses = require("./items/responses")
 
 type ApiContext = api.ApiContext
 type ApiResponse = api.ApiResponse
@@ -70,13 +71,13 @@ end
 
 local function require_client(ctx: ApiContext): string?
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local raw = base.parse_query_string(query, { "client", "Client" }, nil)
+	local raw = requests.parse_query_string(query, { "client", "Client" }, nil)
 	return valid_segment(raw, MAX_CLIENT_SEGMENT_LENGTH)
 end
 
 local function require_device_id(ctx: ApiContext): string?
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local raw = base.parse_query_string(query, { "id", "Id" }, nil)
+	local raw = requests.parse_query_string(query, { "id", "Id" }, nil)
 	return valid_segment(raw, MAX_DEVICE_ID_LENGTH)
 end
 
@@ -124,11 +125,11 @@ end
 function module.display_prefs_get(ctx: ApiContext, user_id: number, prefs_id_raw: string): ApiResponse
 	local prefs_id = valid_segment(prefs_id_raw, MAX_PREFS_ID_LENGTH)
 	if not prefs_id then
-		return base.bad_request("invalid displayPreferencesId")
+		return responses.bad_request("invalid displayPreferencesId")
 	end
 	local client = require_client(ctx)
 	if not client then
-		return base.bad_request("invalid or missing client")
+		return responses.bad_request("invalid or missing client")
 	end
 
 	local store = get_display_prefs_store()
@@ -156,20 +157,20 @@ end
 function module.display_prefs_set(ctx: ApiContext, user_id: number, prefs_id_raw: string): ApiResponse
 	local prefs_id = valid_segment(prefs_id_raw, MAX_PREFS_ID_LENGTH)
 	if not prefs_id then
-		return base.bad_request("invalid displayPreferencesId")
+		return responses.bad_request("invalid displayPreferencesId")
 	end
 	local client = require_client(ctx)
 	if not client then
-		return base.bad_request("invalid or missing client")
+		return responses.bad_request("invalid or missing client")
 	end
 
 	local request = if ctx then ctx.request else nil
 	local request_json = if request then request.json else nil
 	if type(request_json) ~= "table" then
-		return base.bad_request("invalid display preferences body")
+		return responses.bad_request("invalid display preferences body")
 	end
 	if not body_within_size_cap(ctx) then
-		return base.bad_request("display preferences body exceeds size cap")
+		return responses.bad_request("display preferences body exceeds size cap")
 	end
 
 	local store = get_display_prefs_store()
@@ -188,7 +189,7 @@ end
 function module.device_options_get(ctx: ApiContext, user_id: number): ApiResponse
 	local device_id = require_device_id(ctx)
 	if not device_id then
-		return base.bad_request("invalid or missing id")
+		return responses.bad_request("invalid or missing id")
 	end
 
 	local store = get_device_options_store()
@@ -216,16 +217,16 @@ end
 function module.device_options_set(ctx: ApiContext, user_id: number): ApiResponse
 	local device_id = require_device_id(ctx)
 	if not device_id then
-		return base.bad_request("invalid or missing id")
+		return responses.bad_request("invalid or missing id")
 	end
 
 	local request = if ctx then ctx.request else nil
 	local request_json = if request then request.json else nil
 	if type(request_json) ~= "table" then
-		return base.bad_request("invalid device options body")
+		return responses.bad_request("invalid device options body")
 	end
 	if not body_within_size_cap(ctx) then
-		return base.bad_request("device options body exceeds size cap")
+		return responses.bad_request("device options body exceeds size cap")
 	end
 
 	local payload = request_json :: JsonObject

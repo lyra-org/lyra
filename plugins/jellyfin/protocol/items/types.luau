@@ -6,11 +6,11 @@
 
 local api = require("@lyra/api")
 
-local base = require("./common")
+local user_data = require("./user_data")
 
 type JsonValue = api.JsonValue
 
-export type UserData = base.UserData
+export type UserData = user_data.UserData
 export type MediaStreamInfo = { [string]: JsonValue }
 export type MediaSourceInfo = { [string]: JsonValue }
 export type PersonType =
