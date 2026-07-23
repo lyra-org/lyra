@@ -29,7 +29,7 @@ impl PluginExecutor {
             .vm
             .data()
             .get::<crate::plugins::metadata::MetadataCallbackRegistry>()?;
-        let handler = handlers
+        let handler: crate::plugins::metadata::MetadataCallback = handlers
             .get(request.handler_id)
             .ok_or_else(|| anyhow::anyhow!("metadata handler {} not found", request.handler_id))?;
         let ctx = harmony_serde::json_to_luau_owned(request.context, 0)?;
