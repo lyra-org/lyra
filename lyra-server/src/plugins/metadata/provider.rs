@@ -427,6 +427,7 @@ fn lyrics_callback(
 ) -> luau::runtime::Result<()> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
     ensure_registration_open(&provider.plugin_id)?;
+    validate_lyrics_provider_id(&provider.provider_id)?;
     if !futures::executor::block_on(harmony_http::has_rate_limit_for_plugin(
         provider.plugin_id.as_ref(),
     )) {
@@ -487,6 +488,10 @@ fn lyrics_callback(
         .await;
     });
     Ok(())
+}
+
+fn validate_lyrics_provider_id(provider_id: &str) -> luau::runtime::Result<()> {
+    db::lyrics::validate_provider_id(provider_id).map_err(crate::plugins::runtime_error)
 }
 
 fn refresh_callback(
@@ -975,4 +980,25 @@ fn layer_callback(
     let node_id = require_positive_id(node_id, "node_id")?;
     let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
     MetadataLayer::new_value(vm, origin, store, node_id, provider.provider_id.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_lyrics_provider_id;
+
+    #[test]
+    fn lyrics_registration_uses_database_provider_id_rules() {
+        for provider_id in ["lrclib", "manual", "provider-with-punctuation_1"] {
+            assert!(
+                validate_lyrics_provider_id(provider_id).is_ok(),
+                "expected {provider_id:?} to be accepted"
+            );
+        }
+        for provider_id in ["", "two words", " leading", "trailing\t", "métadata"] {
+            assert!(
+                validate_lyrics_provider_id(provider_id).is_err(),
+                "expected {provider_id:?} to be rejected"
+            );
+        }
+    }
 }

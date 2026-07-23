@@ -330,6 +330,9 @@ pub(crate) fn revoke_all_sessions_for_user(
 }
 
 pub(crate) fn delete_user(db: &mut impl super::DbAccess, user_db_id: DbId) -> anyhow::Result<()> {
+    if let Some(user) = get_by_id(db, user_db_id)? {
+        super::lyrics::delete_personal_for_owner_in_txn(db, &user.id)?;
+    }
     revoke_all_sessions_for_user(db, user_db_id)?;
     super::settings::remove_all_user_plugin_settings_for_user(db, user_db_id)?;
     super::favorites::remove_outbound_for_user(db, user_db_id)?;
@@ -484,6 +487,66 @@ mod tests {
         assert!(find_by_session_token_hash(&db, "token-hash-2")?.is_none());
         assert!(get_by_id(&db, user_db_id)?.is_none());
 
+        Ok(())
+    }
+
+    #[test]
+    fn delete_user_cascades_personal_lyrics_and_children() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user = test_user("alice")?;
+        let owner_user_id = user.id.clone();
+        let user_db_id = create(&mut db, &user)?;
+        let track_db_id = crate::db::test_db::insert_track(&mut db, "song")?;
+        let lyrics_db_id = crate::db::lyrics::upsert_personal(
+            &mut db,
+            track_db_id,
+            crate::db::lyrics::LyricsInput {
+                id: String::new(),
+                provider_id: String::new(),
+                language: "eng".to_string(),
+                plain_text: "hello".to_string(),
+                lines: vec![crate::db::lyrics::LineInput {
+                    ts_ms: 1_000,
+                    text: "hello".to_string(),
+                    words: vec![crate::db::lyrics::WordInput {
+                        ts_ms: 1_000,
+                        char_start: 0,
+                        char_end: 5,
+                    }],
+                }],
+                last_checked_at: 1,
+            },
+            &owner_user_id,
+            Some(2_000),
+        )?;
+        let detail = crate::db::lyrics::get_detail(&db, lyrics_db_id)?.expect("lyrics");
+        let line_db_id: DbId = detail.lines[0]
+            .line
+            .db_id
+            .clone()
+            .expect("line db id")
+            .into();
+        let word_db_id: DbId = detail.lines[0].words[0]
+            .db_id
+            .clone()
+            .expect("word db id")
+            .into();
+
+        delete_user(&mut db, user_db_id)?;
+
+        assert!(
+            db.exec(QueryBuilder::select().ids(lyrics_db_id).query())
+                .is_err()
+        );
+        assert!(
+            db.exec(QueryBuilder::select().ids(line_db_id).query())
+                .is_err()
+        );
+        assert!(
+            db.exec(QueryBuilder::select().ids(word_db_id).query())
+                .is_err()
+        );
+        assert!(get_by_id(&db, user_db_id)?.is_none());
         Ok(())
     }
 

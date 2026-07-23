@@ -16,8 +16,6 @@ use serde::Deserialize;
 
 use crate::db::{
     self,
-    IdSource,
-    NodeId,
     lyrics::{
         LineInput,
         LyricsDetail,
@@ -40,7 +38,6 @@ pub(crate) enum LyricsUploadError {
 
 #[derive(Deserialize)]
 struct LyricsJsonRequest {
-    id: Option<String>,
     language: String,
     plain_text: String,
     #[serde(default)]
@@ -64,15 +61,8 @@ struct LyricsWordRequest {
 
 impl LyricsJsonRequest {
     fn into_input(self, now_ms: u64) -> Result<LyricsInput, LyricsUploadError> {
-        let id = self.id.unwrap_or_else(|| "user".to_string());
-        if id.trim().is_empty() {
-            return Err(LyricsUploadError::BadRequest(
-                "lyrics id cannot be empty".to_string(),
-            ));
-        }
-
         Ok(LyricsInput {
-            id,
+            id: String::new(),
             provider_id: String::new(),
             language: self.language,
             plain_text: self.plain_text,
@@ -127,7 +117,7 @@ pub(crate) fn input_from_upload(
             })?;
             lrc_to_input(
                 text,
-                "user".to_string(),
+                String::new(),
                 language.unwrap_or_else(|| "und".to_string()),
                 now_ms,
             )
@@ -148,17 +138,6 @@ pub(crate) fn input_from_upload(
     }
 }
 
-pub(crate) fn upsert_user_lyrics(
-    db: &mut DbAny,
-    track_public_id: &str,
-    input: LyricsInput,
-) -> Result<LyricsDetail, LyricsUploadError> {
-    let track_db_id = db::lookup::find_node_id_by_id(db, track_public_id)?.ok_or_else(|| {
-        LyricsUploadError::NotFound(format!("Track not found: {track_public_id}"))
-    })?;
-    upsert_user_lyrics_by_db_id(db, track_db_id, input)
-}
-
 pub(crate) fn upsert_plugin_lyrics(
     db: &mut DbAny,
     track_db_id: DbId,
@@ -173,38 +152,15 @@ pub(crate) fn upsert_plugin_lyrics(
         .map_err(|err| LyricsUploadError::BadRequest(err.to_string()))
 }
 
-pub(crate) fn delete_user_lyrics_for_track(
-    db: &mut DbAny,
-    track_public_id: &str,
-) -> Result<bool, LyricsUploadError> {
-    let track_db_id = db::lookup::find_node_id_by_id(db, track_public_id)?.ok_or_else(|| {
-        LyricsUploadError::NotFound(format!("Track not found: {track_public_id}"))
-    })?;
-    delete_user_lyrics_for_track_by_db_id(db, track_db_id)
-}
-
-pub(crate) fn delete_user_lyrics_for_track_by_db_id(
+pub(crate) fn delete_personal_lyrics_for_track_by_db_id(
     db: &mut DbAny,
     track_db_id: DbId,
+    owner_user_id: &str,
 ) -> Result<bool, LyricsUploadError> {
-    db::tracks::get_by_id(db, track_db_id)?.ok_or_else(|| {
-        LyricsUploadError::NotFound(format!("Track not found: {}", track_db_id.0))
-    })?;
-    let lyrics = db::lyrics::get_for_track(db, track_db_id)?;
-    let user_lyrics_ids: Vec<DbId> = lyrics
-        .into_iter()
-        .filter(|lyrics| {
-            matches!(lyrics.origin, IdSource::User)
-                && lyrics.provider_id.eq_ignore_ascii_case("user")
-        })
-        .filter_map(|lyrics| lyrics.db_id.map(NodeId::into))
-        .collect();
-
-    let removed = !user_lyrics_ids.is_empty();
-    for lyrics_db_id in user_lyrics_ids {
-        db::lyrics::delete_by_db_id(db, lyrics_db_id)?;
+    if db::tracks::get_by_id(db, track_db_id)?.is_none() {
+        return Ok(false);
     }
-    Ok(removed)
+    db::lyrics::delete_personal(db, track_db_id, owner_user_id).map_err(Into::into)
 }
 
 pub(crate) fn delete_all_lyrics_for_track(
@@ -215,7 +171,30 @@ pub(crate) fn delete_all_lyrics_for_track(
     Ok(())
 }
 
-pub(crate) fn upsert_user_lyrics_by_db_id(
+pub(crate) fn upsert_personal_lyrics_by_db_id(
+    db: &mut DbAny,
+    track_db_id: DbId,
+    expected_track_public_id: &str,
+    owner_user_id: &str,
+    input: LyricsInput,
+) -> Result<LyricsDetail, LyricsUploadError> {
+    let track = db::tracks::get_by_id(db, track_db_id)?.ok_or_else(|| {
+        LyricsUploadError::NotFound(format!("Track not found: {}", track_db_id.0))
+    })?;
+    if track.id != expected_track_public_id {
+        return Err(LyricsUploadError::NotFound(format!(
+            "Track not found: {expected_track_public_id}"
+        )));
+    }
+
+    let lyrics_db_id =
+        db::lyrics::upsert_personal(db, track_db_id, input, owner_user_id, track.duration_ms)
+            .map_err(|err| LyricsUploadError::BadRequest(err.to_string()))?;
+    db::lyrics::get_detail(db, lyrics_db_id)?
+        .ok_or_else(|| LyricsUploadError::NotFound("lyrics not found after upsert".to_string()))
+}
+
+pub(crate) fn upsert_shared_lyrics_by_db_id(
     db: &mut DbAny,
     track_db_id: DbId,
     input: LyricsInput,
@@ -223,16 +202,25 @@ pub(crate) fn upsert_user_lyrics_by_db_id(
     let track = db::tracks::get_by_id(db, track_db_id)?.ok_or_else(|| {
         LyricsUploadError::NotFound(format!("Track not found: {}", track_db_id.0))
     })?;
-
-    let lyrics_db_id = db::lyrics::upsert_user_override(db, track_db_id, input, track.duration_ms)
+    let lyrics_db_id = db::lyrics::upsert_shared(db, track_db_id, input, track.duration_ms)
         .map_err(|err| LyricsUploadError::BadRequest(err.to_string()))?;
     db::lyrics::get_detail(db, lyrics_db_id)?
         .ok_or_else(|| LyricsUploadError::NotFound("lyrics not found after upsert".to_string()))
 }
 
+pub(crate) fn delete_shared_lyrics_for_track_by_db_id(
+    db: &mut DbAny,
+    track_db_id: DbId,
+) -> Result<bool, LyricsUploadError> {
+    db::tracks::get_by_id(db, track_db_id)?.ok_or_else(|| {
+        LyricsUploadError::NotFound(format!("Track not found: {}", track_db_id.0))
+    })?;
+    db::lyrics::delete_shared(db, track_db_id).map_err(Into::into)
+}
+
 fn plain_text_to_input(contents: &str, language: String, now_ms: u64) -> LyricsInput {
     LyricsInput {
-        id: "user".to_string(),
+        id: String::new(),
         provider_id: String::new(),
         language,
         plain_text: contents.to_string(),
@@ -599,10 +587,73 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(input.id, "user");
+        assert!(input.id.is_empty());
         assert_eq!(input.language, "ENG");
         assert_eq!(input.last_checked_at, 42);
         assert_eq!(input.plain_text, "[00:01.00]not lrc\nplain lyric line");
         assert!(input.lines.is_empty());
+    }
+
+    #[test]
+    fn personal_delete_is_owner_scoped_without_an_access_check() -> anyhow::Result<()> {
+        let mut db = crate::db::test_db::new_test_db()?;
+        let track_id = crate::db::test_db::insert_track(&mut db, "song")?;
+        let alice_input = plain_text_to_input("alice", "eng".to_string(), 1);
+        let bob_input = plain_text_to_input("bob", "eng".to_string(), 2);
+        let track_public_id = db::tracks::get_by_id(&db, track_id)?.unwrap().id;
+        upsert_personal_lyrics_by_db_id(&mut db, track_id, &track_public_id, "alice", alice_input)?;
+        upsert_personal_lyrics_by_db_id(&mut db, track_id, &track_public_id, "bob", bob_input)?;
+
+        assert!(delete_personal_lyrics_for_track_by_db_id(
+            &mut db, track_id, "alice"
+        )?);
+        assert!(!delete_personal_lyrics_for_track_by_db_id(
+            &mut db, track_id, "alice"
+        )?);
+        assert!(!delete_personal_lyrics_for_track_by_db_id(
+            &mut db,
+            DbId(999_999),
+            "alice"
+        )?);
+        let non_track_id = db::users::create(&mut db, &db::test_db::test_user("not-a-track")?)?;
+        assert!(!delete_personal_lyrics_for_track_by_db_id(
+            &mut db,
+            non_track_id,
+            "alice"
+        )?);
+        let rows = db::lyrics::get_for_track(&db, track_id)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].owner_user_id, "bob");
+        Ok(())
+    }
+
+    #[test]
+    fn personal_upsert_rejects_a_reused_track_db_id() -> anyhow::Result<()> {
+        let mut db = crate::db::test_db::new_test_db()?;
+        let track_db_id = crate::db::test_db::insert_track(&mut db, "original")?;
+        let original = db::tracks::get_by_id(&db, track_db_id)?.expect("original track");
+        let original_public_id = original.id.clone();
+        let mut replacement = original;
+        replacement.db_id = None;
+        replacement.id = "replacement-track-public-id".to_string();
+        replacement.track_title = "replacement".to_string();
+
+        db.exec_mut(agdb::QueryBuilder::remove().ids(track_db_id).query())?;
+        let replacement_db_id = db
+            .exec_mut(agdb::QueryBuilder::insert().element(&replacement).query())?
+            .ids()[0];
+        assert_eq!(replacement_db_id, track_db_id);
+
+        let error = upsert_personal_lyrics_by_db_id(
+            &mut db,
+            track_db_id,
+            &original_public_id,
+            "alice",
+            plain_text_to_input("stale", "eng".to_string(), 1),
+        )
+        .expect_err("stale public ID must reject the replacement track");
+        assert!(matches!(error, LyricsUploadError::NotFound(_)));
+        assert!(db::lyrics::get_for_track(&db, track_db_id)?.is_empty());
+        Ok(())
     }
 }

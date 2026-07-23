@@ -27,11 +27,12 @@ use super::{
 const EDGE_LINE_IDX_KEY: &str = "line_idx";
 const EDGE_WORD_IDX_KEY: &str = "word_idx";
 
-/// ISO-639-2 "unknown" — substituted for empty/whitespace input at upsert.
+/// Lowercase ISO-639-3 "unknown" — substituted for empty/whitespace input at upsert.
 const LANGUAGE_UNKNOWN: &str = "und";
 
-/// Reserved for user overrides; plugins can't claim it (case-insensitive).
-const USER_PROVIDER_ID: &str = "user";
+const MANUAL_PROVIDER_ID: &str = "manual";
+const PERSONAL_LYRICS_ID: &str = "personal";
+const SHARED_LYRICS_ID: &str = "shared";
 
 // Size caps sized to cover typical LRC / USLT payloads ~10× over and block
 // pathological plugin input. Picked without corpus data; tune as it arrives.
@@ -39,28 +40,30 @@ const MAX_PLAIN_TEXT_BYTES: usize = 64 * 1024;
 const MAX_LINE_TEXT_BYTES: usize = 2048;
 const MAX_LINES_PER_LYRIC: usize = 10_000;
 const MAX_WORDS_PER_LINE: usize = 500;
-const MAX_LYRICS_PER_TRACK: usize = 32;
 
-fn normalize_language(raw: &str) -> String {
+fn normalize_language(raw: &str) -> anyhow::Result<String> {
     let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        LANGUAGE_UNKNOWN.to_string()
-    } else {
-        trimmed.to_ascii_lowercase()
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case(LANGUAGE_UNKNOWN) {
+        return Ok(LANGUAGE_UNKNOWN.to_string());
     }
+    crate::locale::validate_language(trimmed).map_err(Into::into)
 }
 
-fn is_valid_provider_id(provider_id: &str) -> bool {
-    // No leading/trailing/interior whitespace — the string lands verbatim in
-    // logs and admin UIs, and surrounding whitespace would create two rows
-    // that compare unequal under the exact-match upsert lookup.
-    !provider_id.is_empty()
-        && provider_id.is_ascii()
-        && !provider_id.chars().any(|c| c.is_whitespace())
+pub(crate) fn validate_provider_id(provider_id: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !provider_id.is_empty()
+            && provider_id.is_ascii()
+            && !provider_id.chars().any(|c| c.is_whitespace()),
+        "provider_id must be a non-empty ASCII string with no whitespace; got {provider_id:?}"
+    );
+    Ok(())
 }
 
-fn is_user_namespace(provider_id: &str) -> bool {
-    provider_id.trim().eq_ignore_ascii_case(USER_PROVIDER_ID)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LyricsKind {
+    Personal,
+    Shared,
+    Provider,
 }
 
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug)]
@@ -71,6 +74,10 @@ pub(crate) struct Lyrics {
     pub(crate) provider_id: String,
     pub(crate) language: String,
     pub(crate) origin: IdSource,
+    /// Empty for shared/manual and provider rows. Personal rows carry the
+    /// owner's stable public user ID so recycled database IDs cannot transfer
+    /// ownership.
+    pub(crate) owner_user_id: String,
     pub(crate) plain_text: String,
     pub(crate) line_count: u32,
     /// Count of lines with `ts_ms > 0`; gates the selector's synced tier.
@@ -80,6 +87,23 @@ pub(crate) struct Lyrics {
     pub(crate) content_hash: String,
     pub(crate) last_checked_at: u64,
     pub(crate) updated_at: u64,
+}
+
+impl Lyrics {
+    pub(crate) fn kind(&self) -> LyricsKind {
+        match self.origin {
+            IdSource::Plugin => LyricsKind::Provider,
+            IdSource::User if self.owner_user_id.is_empty() => LyricsKind::Shared,
+            IdSource::User => LyricsKind::Personal,
+        }
+    }
+
+    pub(crate) fn is_visible_to(&self, owner_user_id: Option<&str>) -> bool {
+        match self.kind() {
+            LyricsKind::Personal => owner_user_id.is_some_and(|owner| owner == self.owner_user_id),
+            LyricsKind::Shared | LyricsKind::Provider => true,
+        }
+    }
 }
 
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug)]
@@ -118,7 +142,7 @@ pub(crate) struct LineInput {
 #[derive(Clone, Debug)]
 pub(crate) struct LyricsInput {
     pub id: String,
-    /// Ignored by `upsert_user_override` (always stamped `"user"`).
+    /// Manual upserts replace this with the server-controlled `"manual"` ID.
     pub provider_id: String,
     pub language: String,
     pub plain_text: String,
@@ -154,8 +178,7 @@ fn origin_tag(origin: IdSource) -> u8 {
 fn compute_content_hash(input: &LyricsInput, origin: IdSource) -> String {
     let mut hasher = Hasher::new();
     // Mix origin so two rows sharing a natural key but differing in origin
-    // can't collide on hash (defence-in-depth against a future refactor that
-    // removes the reserved-namespace gate).
+    // cannot collide on hash even when their provider labels match.
     hasher.update(&[origin_tag(origin)]);
     hash_bytes(&mut hasher, input.provider_id.as_bytes());
     hash_bytes(&mut hasher, input.language.as_bytes());
@@ -271,6 +294,7 @@ fn validate_word_offsets(lines: &[LineInput]) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn get_for_track(db: &impl DbAccess, track_id: DbId) -> anyhow::Result<Vec<Lyrics>> {
     let rows: Vec<Lyrics> = db
         .exec(
@@ -285,6 +309,111 @@ pub(crate) fn get_for_track(db: &impl DbAccess, track_id: DbId) -> anyhow::Resul
         )?
         .try_into()?;
     Ok(rows)
+}
+
+pub(crate) fn get_visible_for_track(
+    db: &impl DbAccess,
+    track_id: DbId,
+    owner_user_id: Option<&str>,
+) -> anyhow::Result<Vec<Lyrics>> {
+    let mut rows: Vec<Lyrics> = db
+        .exec(
+            QueryBuilder::select()
+                .elements::<Lyrics>()
+                .search()
+                .from(track_id)
+                .where_()
+                .neighbor()
+                .and()
+                .key("origin")
+                .value(IdSource::Plugin)
+                .end_where()
+                .query(),
+        )?
+        .try_into()?;
+    if let Some(shared) = find_shared(db, track_id)? {
+        rows.push(shared);
+    }
+    if let Some(owner_user_id) = owner_user_id
+        && let Some(personal) = find_personal(db, track_id, owner_user_id)?
+    {
+        rows.push(personal);
+    }
+    Ok(rows)
+}
+
+pub(crate) fn find_provider(
+    db: &impl DbAccess,
+    track_id: DbId,
+    provider_id: &str,
+) -> anyhow::Result<Option<Lyrics>> {
+    let rows: Vec<Lyrics> = db
+        .exec(
+            QueryBuilder::select()
+                .elements::<Lyrics>()
+                .search()
+                .from(track_id)
+                .where_()
+                .neighbor()
+                .and()
+                .key("origin")
+                .value(IdSource::Plugin)
+                .and()
+                .key("provider_id")
+                .value(provider_id)
+                .end_where()
+                .query(),
+        )?
+        .try_into()?;
+    Ok(rows.into_iter().next())
+}
+
+pub(crate) fn find_personal(
+    db: &impl DbAccess,
+    track_id: DbId,
+    owner_user_id: &str,
+) -> anyhow::Result<Option<Lyrics>> {
+    let rows: Vec<Lyrics> = db
+        .exec(
+            QueryBuilder::select()
+                .elements::<Lyrics>()
+                .search()
+                .from(track_id)
+                .where_()
+                .neighbor()
+                .and()
+                .key("origin")
+                .value(IdSource::User)
+                .and()
+                .key("owner_user_id")
+                .value(owner_user_id)
+                .end_where()
+                .query(),
+        )?
+        .try_into()?;
+    Ok(rows.into_iter().next())
+}
+
+pub(crate) fn find_shared(db: &impl DbAccess, track_id: DbId) -> anyhow::Result<Option<Lyrics>> {
+    let rows: Vec<Lyrics> = db
+        .exec(
+            QueryBuilder::select()
+                .elements::<Lyrics>()
+                .search()
+                .from(track_id)
+                .where_()
+                .neighbor()
+                .and()
+                .key("origin")
+                .value(IdSource::User)
+                .and()
+                .key("owner_user_id")
+                .value("")
+                .end_where()
+                .query(),
+        )?
+        .try_into()?;
+    Ok(rows.into_iter().next())
 }
 
 pub(crate) fn get_by_id(db: &impl DbAccess, lyrics_id: DbId) -> anyhow::Result<Option<Lyrics>> {
@@ -407,38 +536,48 @@ fn edge_u32(edge: &DbElement, key: &str) -> Option<u32> {
         })
 }
 
-/// Stamps `origin = Plugin`. `provider_id` must be a non-empty ASCII string
-/// with no whitespace, and not in the reserved `"user"` namespace.
+/// Stamps `origin = Plugin`. One active row is retained per `(track, provider)`;
+/// a changed upstream ID replaces the existing row in place.
 pub(crate) fn upsert_from_plugin(
     db: &mut DbAny,
     track_id: DbId,
     input: LyricsInput,
     max_ts_ms: Option<u64>,
 ) -> anyhow::Result<DbId> {
-    anyhow::ensure!(
-        is_valid_provider_id(&input.provider_id),
-        "provider_id must be a non-empty ASCII string with no whitespace; got {:?}",
-        input.provider_id
-    );
-    anyhow::ensure!(
-        !is_user_namespace(&input.provider_id),
-        "plugin upsert cannot use the reserved '{USER_PROVIDER_ID}' provider_id"
-    );
+    validate_provider_id(&input.provider_id)?;
     db.transaction_mut(|t| -> anyhow::Result<DbId> {
-        upsert_inner(t, track_id, input, IdSource::Plugin, max_ts_ms)
+        upsert_inner(t, track_id, input, IdSource::Plugin, "", max_ts_ms)
     })
 }
 
-/// Stamps `origin = User` and forces `provider_id = "user"`.
-pub(crate) fn upsert_user_override(
+pub(crate) fn upsert_personal(
+    db: &mut DbAny,
+    track_id: DbId,
+    mut input: LyricsInput,
+    owner_user_id: &str,
+    max_ts_ms: Option<u64>,
+) -> anyhow::Result<DbId> {
+    anyhow::ensure!(
+        !owner_user_id.is_empty(),
+        "personal lyrics owner cannot be empty"
+    );
+    input.id = PERSONAL_LYRICS_ID.to_string();
+    input.provider_id = MANUAL_PROVIDER_ID.to_string();
+    db.transaction_mut(|t| -> anyhow::Result<DbId> {
+        upsert_inner(t, track_id, input, IdSource::User, owner_user_id, max_ts_ms)
+    })
+}
+
+pub(crate) fn upsert_shared(
     db: &mut DbAny,
     track_id: DbId,
     mut input: LyricsInput,
     max_ts_ms: Option<u64>,
 ) -> anyhow::Result<DbId> {
-    input.provider_id = USER_PROVIDER_ID.to_string();
+    input.id = SHARED_LYRICS_ID.to_string();
+    input.provider_id = MANUAL_PROVIDER_ID.to_string();
     db.transaction_mut(|t| -> anyhow::Result<DbId> {
-        upsert_inner(t, track_id, input, IdSource::User, max_ts_ms)
+        upsert_inner(t, track_id, input, IdSource::User, "", max_ts_ms)
     })
 }
 
@@ -447,22 +586,15 @@ fn upsert_inner(
     track_id: DbId,
     mut input: LyricsInput,
     origin: IdSource,
+    owner_user_id: &str,
     max_ts_ms: Option<u64>,
 ) -> anyhow::Result<DbId> {
-    // Cheapest rejection first: a track already at cap fails without us
-    // scanning potentially-oversized input.
-    let existing_rows_for_track = get_for_track(db, track_id)?;
-    let existing_db_id = existing_rows_for_track
-        .iter()
-        .find(|row| row.provider_id == input.provider_id && row.id == input.id)
-        .and_then(|row| row.db_id.clone().map(Into::into));
-
-    if existing_db_id.is_none() && existing_rows_for_track.len() >= MAX_LYRICS_PER_TRACK {
-        anyhow::bail!(
-            "track already has {} lyrics rows (cap {MAX_LYRICS_PER_TRACK}); reject new row",
-            existing_rows_for_track.len()
-        );
-    }
+    let existing = match origin {
+        IdSource::Plugin => find_provider(db, track_id, &input.provider_id)?,
+        IdSource::User if owner_user_id.is_empty() => find_shared(db, track_id)?,
+        IdSource::User => find_personal(db, track_id, owner_user_id)?,
+    };
+    let existing_db_id = existing.and_then(|row| row.db_id.map(Into::into));
 
     validate_size_caps(&input)?;
     validate_line_text(&input.lines)?;
@@ -473,7 +605,7 @@ fn upsert_inner(
     validate_ts_ms(&input.lines, max_ts_ms)?;
     validate_word_offsets(&input.lines)?;
 
-    input.language = normalize_language(&input.language);
+    input.language = normalize_language(&input.language)?;
     let content_hash = compute_content_hash(&input, origin);
     let line_count = u32::try_from(input.lines.len()).unwrap_or(u32::MAX);
     let synced_line_count =
@@ -493,10 +625,11 @@ fn upsert_inner(
         {
             let bumped = Lyrics {
                 db_id: existing.db_id.clone(),
-                id: existing.id,
+                id: input.id,
                 provider_id: existing.provider_id,
                 language: existing.language,
                 origin: existing.origin,
+                owner_user_id: existing.owner_user_id,
                 plain_text: existing.plain_text,
                 line_count: existing.line_count,
                 synced_line_count: existing.synced_line_count,
@@ -518,6 +651,7 @@ fn upsert_inner(
             provider_id: input.provider_id,
             language: input.language,
             origin,
+            owner_user_id: owner_user_id.to_string(),
             plain_text: input.plain_text,
             line_count,
             synced_line_count,
@@ -539,6 +673,7 @@ fn upsert_inner(
         provider_id: input.provider_id,
         language: input.language,
         origin,
+        owner_user_id: owner_user_id.to_string(),
         plain_text: input.plain_text,
         line_count,
         synced_line_count,
@@ -679,12 +814,77 @@ fn remove_children(db: &mut impl DbAccess, lyrics_db_id: DbId) -> anyhow::Result
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn delete_by_db_id(db: &mut DbAny, lyrics_db_id: DbId) -> anyhow::Result<()> {
     db.transaction_mut(|t| -> anyhow::Result<()> {
         remove_children(t, lyrics_db_id)?;
         t.exec_mut(QueryBuilder::remove().ids(lyrics_db_id).query())?;
         Ok(())
     })
+}
+
+pub(crate) fn delete_personal(
+    db: &mut DbAny,
+    track_id: DbId,
+    owner_user_id: &str,
+) -> anyhow::Result<bool> {
+    db.transaction_mut(|t| -> anyhow::Result<bool> {
+        let Some(lyrics_db_id) = find_personal(t, track_id, owner_user_id)?
+            .and_then(|lyrics| lyrics.db_id.map(Into::into))
+        else {
+            return Ok(false);
+        };
+        remove_children(t, lyrics_db_id)?;
+        t.exec_mut(QueryBuilder::remove().ids(lyrics_db_id).query())?;
+        Ok(true)
+    })
+}
+
+pub(crate) fn delete_shared(db: &mut DbAny, track_id: DbId) -> anyhow::Result<bool> {
+    db.transaction_mut(|t| -> anyhow::Result<bool> {
+        let Some(lyrics_db_id) =
+            find_shared(t, track_id)?.and_then(|lyrics| lyrics.db_id.map(Into::into))
+        else {
+            return Ok(false);
+        };
+        remove_children(t, lyrics_db_id)?;
+        t.exec_mut(QueryBuilder::remove().ids(lyrics_db_id).query())?;
+        Ok(true)
+    })
+}
+
+pub(crate) fn delete_personal_for_owner_in_txn(
+    db: &mut impl DbAccess,
+    owner_user_id: &str,
+) -> anyhow::Result<()> {
+    let lyrics: Vec<Lyrics> = db
+        .exec(
+            QueryBuilder::select()
+                .elements::<Lyrics>()
+                .search()
+                .from("lyrics")
+                .where_()
+                .distance(CountComparison::Equal(2))
+                .and()
+                .key("origin")
+                .value(IdSource::User)
+                .and()
+                .key("owner_user_id")
+                .value(owner_user_id)
+                .end_where()
+                .query(),
+        )?
+        .try_into()?;
+    let lyrics_ids: Vec<DbId> = lyrics
+        .into_iter()
+        .filter_map(|lyrics| lyrics.db_id.map(Into::into))
+        .collect();
+
+    for lyrics_db_id in lyrics_ids {
+        remove_children(db, lyrics_db_id)?;
+        db.exec_mut(QueryBuilder::remove().ids(lyrics_db_id).query())?;
+    }
+    Ok(())
 }
 
 pub(crate) fn delete_for_track_in_txn(
@@ -774,13 +974,27 @@ mod tests {
     }
 
     #[test]
-    fn plugin_upsert_rejects_user_provider_id() {
+    fn plugin_manual_provider_id_is_distinct_from_manual_lyrics_kind() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db().unwrap();
         let track_id = test_db::insert_track(&mut db, "song").unwrap();
 
-        let err =
-            upsert_from_plugin(&mut db, track_id, plugin_input("x", "USER", ""), None).unwrap_err();
-        assert!(err.to_string().contains("reserved"), "error was: {err}");
+        upsert_from_plugin(
+            &mut db,
+            track_id,
+            plugin_input("x", "manual", "provider"),
+            None,
+        )?;
+        upsert_shared(
+            &mut db,
+            track_id,
+            plugin_input("ignored", "ignored", "shared"),
+            None,
+        )?;
+        let rows = get_for_track(&db, track_id)?;
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| row.kind() == LyricsKind::Provider));
+        assert!(rows.iter().any(|row| row.kind() == LyricsKind::Shared));
+        Ok(())
     }
 
     #[test]
@@ -788,7 +1002,7 @@ mod tests {
         let mut db = test_db::new_test_db().unwrap();
         let track_id = test_db::insert_track(&mut db, "song").unwrap();
 
-        // Cyrillic "user" homoglyph — blocked at the ASCII gate so the admin
+        // A Cyrillic homoglyph — blocked at the ASCII gate so the admin
         // UI can't surface spoofed provider names.
         let err = upsert_from_plugin(
             &mut db,
@@ -824,18 +1038,76 @@ mod tests {
     }
 
     #[test]
-    fn user_override_stamps_reserved_provider_and_origin() -> anyhow::Result<()> {
+    fn personal_upsert_stamps_manual_identity_owner_and_origin() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
         let track_id = test_db::insert_track(&mut db, "song")?;
 
         let mut input = plugin_input("u-1", "ignored", "mine");
         input.provider_id = "plugin-says".to_string();
-        upsert_user_override(&mut db, track_id, input, None)?;
+        upsert_personal(&mut db, track_id, input, "alice", None)?;
 
         let rows = get_for_track(&db, track_id)?;
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].provider_id, "user");
+        assert_eq!(rows[0].id, "personal");
+        assert_eq!(rows[0].provider_id, "manual");
         assert_eq!(rows[0].origin, IdSource::User);
+        assert_eq!(rows[0].owner_user_id, "alice");
+        Ok(())
+    }
+
+    #[test]
+    fn personal_and_shared_manual_rows_are_singletons_in_their_scopes() -> anyhow::Result<()> {
+        let mut db = test_db::new_test_db()?;
+        let track_id = test_db::insert_track(&mut db, "song")?;
+
+        let alice_first = upsert_personal(
+            &mut db,
+            track_id,
+            plugin_input("ignored-a", "ignored", "alice one"),
+            "alice",
+            None,
+        )?;
+        let alice_second = upsert_personal(
+            &mut db,
+            track_id,
+            plugin_input("ignored-b", "ignored", "alice two"),
+            "alice",
+            None,
+        )?;
+        let bob = upsert_personal(
+            &mut db,
+            track_id,
+            plugin_input("ignored", "ignored", "bob"),
+            "bob",
+            None,
+        )?;
+        let shared_first = upsert_shared(
+            &mut db,
+            track_id,
+            plugin_input("ignored-a", "ignored", "shared one"),
+            None,
+        )?;
+        let shared_second = upsert_shared(
+            &mut db,
+            track_id,
+            plugin_input("ignored-b", "ignored", "shared two"),
+            None,
+        )?;
+
+        assert_eq!(alice_first, alice_second);
+        assert_ne!(alice_second, bob);
+        assert_eq!(shared_first, shared_second);
+        let rows = get_for_track(&db, track_id)?;
+        assert_eq!(rows.len(), 3);
+        assert!(
+            rows.iter()
+                .any(|row| row.owner_user_id == "alice" && row.plain_text == "alice two")
+        );
+        assert!(rows.iter().any(|row| row.owner_user_id == "bob"));
+        assert!(
+            rows.iter()
+                .any(|row| row.owner_user_id.is_empty() && row.plain_text == "shared two")
+        );
         Ok(())
     }
 
@@ -895,22 +1167,24 @@ mod tests {
     }
 
     #[test]
-    fn user_override_survives_plugin_write_with_identical_natural_key() -> anyhow::Result<()> {
+    fn personal_lyrics_coexist_with_provider_named_manual() -> anyhow::Result<()> {
         let mut db = test_db::new_test_db()?;
         let track_id = test_db::insert_track(&mut db, "song")?;
 
-        let user_input = plugin_input("shared-id", "user", "user-authored");
-        upsert_user_override(&mut db, track_id, user_input, None)?;
+        let user_input = plugin_input("shared-id", "manual", "user-authored");
+        upsert_personal(&mut db, track_id, user_input, "alice", None)?;
 
-        // A plugin tries to sneak in with provider_id = "user".
-        let plugin_attempt = plugin_input("shared-id", "user", "plugin-injected");
-        let err = upsert_from_plugin(&mut db, track_id, plugin_attempt, None).unwrap_err();
-        assert!(err.to_string().contains("reserved"), "error was: {err}");
+        let plugin_attempt = plugin_input("shared-id", "manual", "plugin-injected");
+        upsert_from_plugin(&mut db, track_id, plugin_attempt, None)?;
 
         let rows = get_for_track(&db, track_id)?;
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].origin, IdSource::User);
-        assert_eq!(rows[0].plain_text, "user-authored");
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| {
+            row.kind() == LyricsKind::Personal && row.plain_text == "user-authored"
+        }));
+        assert!(rows.iter().any(|row| {
+            row.kind() == LyricsKind::Provider && row.plain_text == "plugin-injected"
+        }));
         Ok(())
     }
 
@@ -983,6 +1257,15 @@ mod tests {
 
         let rows = get_for_track(&db, track_id)?;
         assert_eq!(rows[0].language, "eng");
+        Ok(())
+    }
+
+    #[test]
+    fn lyrics_language_uses_shared_locale_normalization() -> anyhow::Result<()> {
+        assert_eq!(normalize_language("en")?, "eng");
+        assert_eq!(normalize_language("Japanese")?, "jpn");
+        assert_eq!(normalize_language("und")?, "und");
+        assert!(normalize_language("not-a-language").is_err());
         Ok(())
     }
 
@@ -1107,27 +1390,29 @@ mod tests {
     }
 
     #[test]
-    fn upsert_rejects_excess_lyrics_per_track() {
+    fn provider_upsert_replaces_changed_upstream_id() {
         let mut db = test_db::new_test_db().unwrap();
         let track_id = test_db::insert_track(&mut db, "song").unwrap();
 
-        for i in 0..MAX_LYRICS_PER_TRACK {
-            upsert_from_plugin(
-                &mut db,
-                track_id,
-                plugin_input(&format!("id-{i}"), "plug", "x"),
-                None,
-            )
-            .unwrap();
-        }
-        let err = upsert_from_plugin(
+        let first_id = upsert_from_plugin(
             &mut db,
             track_id,
-            plugin_input("id-over", "plug", "overflow"),
+            plugin_input("old-upstream", "plug", "old"),
             None,
         )
-        .unwrap_err();
-        assert!(err.to_string().contains("cap"), "got: {err}");
+        .unwrap();
+        let replacement_id = upsert_from_plugin(
+            &mut db,
+            track_id,
+            plugin_input("new-upstream", "plug", "old"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(replacement_id, first_id);
+        let rows = get_for_track(&db, track_id).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "new-upstream");
+        assert_eq!(rows[0].plain_text, "old");
     }
 
     #[test]
@@ -1268,10 +1553,11 @@ mod tests {
             plugin_input("e-1", "embedded", "from embedded"),
             None,
         )?;
-        upsert_user_override(
+        upsert_personal(
             &mut db,
             track_id,
             plugin_input("u-1", "anything", "from user"),
+            "alice",
             None,
         )?;
 
@@ -1279,9 +1565,9 @@ mod tests {
         rows.sort_by(|a, b| a.provider_id.cmp(&b.provider_id));
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].provider_id, "embedded");
-        assert_eq!(rows[1].provider_id, "plug");
-        assert_eq!(rows[2].provider_id, "user");
-        assert_eq!(rows[2].origin, IdSource::User);
+        assert_eq!(rows[1].provider_id, "manual");
+        assert_eq!(rows[1].origin, IdSource::User);
+        assert_eq!(rows[2].provider_id, "plug");
         Ok(())
     }
 

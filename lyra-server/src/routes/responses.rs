@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::{
     db,
-    db::IdSource,
+    db::lyrics::LyricsKind,
     services::entities::{
         ArtistCreditSource,
         ResolvedCreditedArtist,
@@ -32,22 +32,24 @@ pub(crate) struct PageResponse<T> {
 pub struct LyricsResponse {
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "Provider-supplied stable ID scoped to `(track, provider_id)`.")
+        schemars(
+            description = "Provider-supplied ID for provider rows; server-controlled singleton ID for manual rows."
+        )
     )]
     pub id: String,
     #[cfg_attr(
         feature = "docgen",
-        schemars(
-            description = "Source provider ID. `user` is reserved and paired with `origin=user`; all other values identify an enabled metadata provider."
-        )
+        schemars(description = "Metadata provider ID; omitted for manual lyrics.")
     )]
-    pub provider_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "ISO-639-2 language code in lowercase; `und` when unknown.")
+        schemars(description = "Lowercase ISO-639-3 language code; `und` when unknown.")
     )]
     pub language: String,
-    pub origin: LyricsOriginResponse,
+    pub scope: LyricsScopeResponse,
+    pub source: LyricsSourceResponse,
     #[cfg_attr(
         feature = "docgen",
         schemars(
@@ -76,24 +78,60 @@ pub struct LyricsResponse {
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Serialize)]
+#[derive(Serialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(
     feature = "docgen",
     schemars(
-        description = "`user`: hand-authored override, preferred over every provider. `plugin`: written by an enabled metadata provider."
+        description = "`personal` is visible only to its owner; `shared` is visible to every caller with track access."
     )
 )]
-pub enum LyricsOriginResponse {
-    User,
-    Plugin,
+pub enum LyricsScopeResponse {
+    Personal,
+    Shared,
 }
 
-impl From<IdSource> for LyricsOriginResponse {
-    fn from(source: IdSource) -> Self {
-        match source {
-            IdSource::User => Self::User,
-            IdSource::Plugin => Self::Plugin,
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum LyricsSourceResponse {
+    Manual,
+    Provider,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+pub struct LyricsCandidateSummaryResponse {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    pub language: String,
+    pub scope: LyricsScopeResponse,
+    pub source: LyricsSourceResponse,
+    pub lrc_available: bool,
+    pub updated_at: String,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+pub struct LyricsCandidatesResponse {
+    pub items: Vec<LyricsCandidateSummaryResponse>,
+}
+
+impl LyricsScopeResponse {
+    pub(crate) fn from_lyrics(lyrics: &db::Lyrics) -> Self {
+        match lyrics.kind() {
+            LyricsKind::Personal => Self::Personal,
+            LyricsKind::Shared | LyricsKind::Provider => Self::Shared,
+        }
+    }
+}
+
+impl LyricsSourceResponse {
+    pub(crate) fn from_lyrics(lyrics: &db::Lyrics) -> Self {
+        match lyrics.kind() {
+            LyricsKind::Personal | LyricsKind::Shared => Self::Manual,
+            LyricsKind::Provider => Self::Provider,
         }
     }
 }

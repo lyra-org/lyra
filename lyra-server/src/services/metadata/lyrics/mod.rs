@@ -9,18 +9,20 @@ mod selection;
 mod upload;
 
 pub(crate) use selection::{
+    eligible_candidates,
     get_preferred_detail,
+    has_meaningful_synced,
+    normalize_language_hint,
     pick_preferred,
 };
 pub(crate) use upload::{
     LyricsUploadError,
     delete_all_lyrics_for_track,
-    delete_user_lyrics_for_track,
-    delete_user_lyrics_for_track_by_db_id,
+    delete_personal_lyrics_for_track_by_db_id,
+    delete_shared_lyrics_for_track_by_db_id,
     input_from_upload,
     lrc_to_input,
     now_ms,
-    upsert_plugin_lyrics,
-    upsert_user_lyrics,
-    upsert_user_lyrics_by_db_id,
+    upsert_personal_lyrics_by_db_id,
+    upsert_shared_lyrics_by_db_id,
 };
