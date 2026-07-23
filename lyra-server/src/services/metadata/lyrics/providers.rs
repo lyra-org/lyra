@@ -286,7 +286,7 @@ pub(crate) async fn unregister_handlers_for_plugin(plugin_id: &PluginId) {
 /// each gate-passing `Hit` writes a row; `selection.rs` picks the winner.
 pub(crate) async fn dispatch_for_track(track_db_id: DbId, force_refresh: bool) -> Result<()> {
     let now = upload::now_ms().map_err(|err| anyhow::anyhow!("now_ms() failed: {err}"))?;
-    let (mut context, preferred_languages, local) =
+    let (mut context, preferred_languages, local, track_public_id) =
         match build_track_context(track_db_id, now).await? {
             Some(parts) => parts,
             None => return Ok(()),
@@ -325,6 +325,7 @@ pub(crate) async fn dispatch_for_track(track_db_id: DbId, force_refresh: bool) -
             &preferred_languages,
             &local,
             track_db_id,
+            &track_public_id,
         );
         tokio::select! {
             _ = cancel.cancelled() => {
@@ -357,6 +358,7 @@ async fn dispatch_one(
     preferred_languages: &[String],
     local: &LocalTrackContext,
     track_db_id: DbId,
+    track_public_id: &str,
 ) -> Result<()> {
     let provider_id = handler.provider_id.as_ref();
 
@@ -405,7 +407,7 @@ async fn dispatch_one(
             match picked_idx {
                 Some(idx) => {
                     let chosen = capped.into_iter().nth(idx).expect("idx in range");
-                    record_hit(track_db_id, provider_id, chosen).await?;
+                    record_hit(track_db_id, track_public_id, provider_id, chosen).await?;
                 }
                 None => {
                     tracing::debug!(
@@ -459,6 +461,7 @@ fn pick_index(
 
 async fn record_hit(
     track_db_id: DbId,
+    track_public_id: &str,
     provider_id: &str,
     candidate: LyricsHandlerCandidate,
 ) -> Result<()> {
@@ -478,6 +481,19 @@ async fn record_hit(
     };
 
     let mut db = STATE.db.write().await;
+    let current_track = db::tracks::get_by_id(&*db, track_db_id)?;
+    if current_track
+        .as_ref()
+        .is_none_or(|track| track.id != track_public_id)
+    {
+        tracing::debug!(
+            provider = provider_id,
+            track_db_id = track_db_id.0,
+            track_public_id,
+            "lyrics handler result dropped: track identity changed during dispatch"
+        );
+        return Ok(());
+    }
     upload::upsert_plugin_lyrics(&mut db, track_db_id, lyrics_input, provider_id.to_string())
         .map_err(|err| anyhow::anyhow!("upsert_plugin_lyrics failed: {err}"))?;
     Ok(())
@@ -538,7 +554,7 @@ fn context_path_present(context: &LyricsTrackContext, path: &str) -> bool {
 async fn build_track_context(
     track_db_id: DbId,
     _now_ms: u64,
-) -> Result<Option<(LyricsTrackContext, Vec<String>, LocalTrackContext)>> {
+) -> Result<Option<(LyricsTrackContext, Vec<String>, LocalTrackContext, String)>> {
     // Collect everything we need under one short read lock; defer all CPU-side
     // shaping (string trimming, HashMap building) until after the lock drops
     // so concurrent dispatches don't pin readers across owned-data work.
@@ -595,7 +611,7 @@ async fn build_track_context(
         artist_name: primary_artist,
         duration_ms: track.duration_ms,
     };
-    Ok(Some((context, preferred_languages, local)))
+    Ok(Some((context, preferred_languages, local, track.id)))
 }
 
 /// `force_refresh = true` includes tracks that already have preferred lyrics.
@@ -609,7 +625,8 @@ pub(crate) async fn rescan(force_refresh: bool, cancel: CancellationToken) -> Re
                 continue;
             };
             if !force_refresh
-                && selection::get_preferred_detail(&db, track_db_id, None, false)?.is_some()
+                && selection::get_preferred_detail(&db, track_db_id, None, None, None, false)?
+                    .is_some()
             {
                 continue;
             }
@@ -789,6 +806,63 @@ mod tests {
         assert!(
             lyrics.iter().any(|l| l.provider_id == "test_hit"),
             "lyrics row from test_hit must exist"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn hit_is_dropped_when_track_db_id_is_reused_during_handler() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        initialize_test_runtime().await?;
+        let track_id =
+            install_track_in_state_db("A Long Song Title Here", "An Artist Group Name", 180_000)
+                .await;
+
+        let replacement = {
+            let db = STATE.db.read().await;
+            let mut track = db::tracks::get_by_id(&*db, track_id)?
+                .ok_or_else(|| anyhow::anyhow!("original track missing"))?;
+            track.db_id = None;
+            track.id = "replacement-track-public-id".to_string();
+            track.track_title = "Replacement Track".to_string();
+            track
+        };
+        let replacement_public_id = replacement.id.clone();
+        let handler: HandlerFn = Arc::new(move |_ctx| {
+            let replacement = replacement.clone();
+            Box::pin(async move {
+                let mut db = STATE.db.write().await;
+                db.exec_mut(agdb::QueryBuilder::remove().ids(track_id).query())?;
+                let replacement_id = db
+                    .exec_mut(agdb::QueryBuilder::insert().element(&replacement).query())?
+                    .ids()[0];
+                assert_eq!(
+                    replacement_id, track_id,
+                    "test requires agdb to reuse the deleted track's numeric ID"
+                );
+                Ok(LyricsHandlerResult::Hit {
+                    candidates: vec![match_candidate()],
+                })
+            })
+        });
+        let cancel = make_plugin_cancellation_child(&test_plugin_id()).await;
+        install_handler_for_test(make_handler(
+            "test_recycled_track",
+            test_plugin_id(),
+            cancel,
+            handler,
+        ))
+        .await;
+
+        dispatch_for_track(track_id, false).await?;
+
+        let db = STATE.db.read().await;
+        let current = db::tracks::get_by_id(&*db, track_id)?
+            .ok_or_else(|| anyhow::anyhow!("replacement track missing"))?;
+        assert_eq!(current.id, replacement_public_id);
+        assert!(
+            db::lyrics::get_for_track(&*db, track_id)?.is_empty(),
+            "stale provider result must not be written to the replacement track"
         );
         Ok(())
     }

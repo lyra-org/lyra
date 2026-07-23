@@ -36,6 +36,14 @@ pub fn validate_language(code: &str) -> Result<String, LocaleValidationError> {
         return Ok(lang.to_639_3().to_string());
     }
 
+    let lowercase = code.to_ascii_lowercase();
+    if let Some(lang) = Language::from_639_3(&lowercase) {
+        return Ok(lang.to_639_3().to_string());
+    }
+    if let Some(lang) = Language::from_639_1(&lowercase) {
+        return Ok(lang.to_639_3().to_string());
+    }
+
     Err(LocaleValidationError::UnrecognizedLanguage {
         input: code.to_string(),
     })
@@ -67,6 +75,7 @@ mod tests {
     #[test]
     fn validate_language_normalizes_common_inputs() {
         assert_eq!(validate_language("en").unwrap(), "eng");
+        assert_eq!(validate_language("ENG").unwrap(), "eng");
         assert_eq!(validate_language("Japanese").unwrap(), "jpn");
     }
 

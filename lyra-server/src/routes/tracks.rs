@@ -3,6 +3,8 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+mod lyrics;
+
 use agdb::{
     DbAny,
     DbId,
@@ -11,29 +13,17 @@ use agdb::{
 use aide::transform::TransformOperation;
 use axum::{
     Json,
-    body::Bytes,
     extract::{
         Path,
         Query,
     },
-    http::{
-        HeaderMap,
-        HeaderValue,
-        StatusCode,
-        header,
-    },
-    response::{
-        IntoResponse,
-        Response,
-    },
+    http::HeaderMap,
 };
 use axum::{
     Router,
     routing::{
-        delete,
         get,
         post,
-        put,
     },
 };
 use serde::{
@@ -54,9 +44,6 @@ use crate::{
         covers as route_covers,
         deserialize_inc,
         responses::{
-            LyricsLineResponse,
-            LyricsResponse,
-            LyricsWordResponse,
             PageResponse,
             ReleaseResponse,
             TrackResponse,
@@ -73,7 +60,6 @@ use crate::{
             require_authenticated,
             require_permission,
         },
-        metadata::lyrics as lyrics_service,
         pagination::SnapshotKey,
         tracks as track_service,
     },
@@ -795,35 +781,6 @@ fn get_track_docs(op: TransformOperation) -> TransformOperation {
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
-struct LyricsQuery {
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(
-            description = "Output format: `json` (default), `plain`, or `lrc`. `lrc` returns 406 when no stored candidate has synced content meeting the selector's coverage threshold, even if `json`/`plain` would succeed for the same track."
-        )
-    )]
-    format: Option<String>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(
-            description = "Preferred language as ISO-639-2 (e.g. 'eng', 'jpn'). When no stored lyric matches this language, the server falls back to the best available lyric regardless of language; inspect `language` on the response to tell whether the preference was honoured."
-        )
-    )]
-    language: Option<String>,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Deserialize)]
-struct LyricsWriteQuery {
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Language for raw LRC and plain text uploads. Defaults to `und`.")
-    )]
-    language: Option<String>,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Deserialize)]
 struct PlaybackUrlQuery {
     #[cfg_attr(
         feature = "docgen",
@@ -893,292 +850,6 @@ struct PlaybackUrlResponse {
     idle_expires_after_seconds: u64,
 }
 
-async fn get_track_lyrics(
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Query(query): Query<LyricsQuery>,
-) -> Result<Response, AppError> {
-    let principal = require_authenticated(&headers).await?;
-    let db = &*STATE.db.read().await;
-
-    // Same 404 body whether the track or the lyrics are missing — hides which
-    // stage failed from an authenticated caller trying to enumerate.
-    let not_found = || AppError::not_found(format!("No lyrics for track: {id}"));
-
-    let track_db_id = db::lookup::find_node_id_by_id(db, &id)?.ok_or_else(not_found)?;
-    crate::services::auth::access::require_entity_accessible(
-        db,
-        &principal,
-        track_db_id,
-        not_found,
-    )?;
-    let track = db::tracks::get_by_id(db, track_db_id)?.ok_or_else(not_found)?;
-
-    let format = query
-        .format
-        .as_deref()
-        .map(str::to_ascii_lowercase)
-        .unwrap_or_else(|| "json".to_string());
-    if !matches!(format.as_str(), "json" | "plain" | "lrc") {
-        return Err(AppError::bad_request(format!(
-            "Unsupported lyrics format: {format}. Supported: json, plain, lrc."
-        )));
-    }
-    let require_synced = format == "lrc";
-
-    let candidates = db::lyrics::get_for_track(db, track_db_id)?;
-    let providers = db::providers::get(db)?;
-    let language_hint = query.language.as_deref();
-
-    let winner = lyrics_service::pick_preferred(
-        &candidates,
-        &providers,
-        language_hint,
-        track.duration_ms,
-        require_synced,
-    )
-    .ok_or_else(|| {
-        if require_synced {
-            AppError::not_acceptable(format!(
-                "LRC format requires synced lyrics; none available for track: {id}"
-            ))
-        } else {
-            not_found()
-        }
-    })?;
-
-    let Some(winner_db_id) = winner.db_id.clone().map(Into::into) else {
-        return Err(not_found());
-    };
-    let detail = db::lyrics::get_detail(db, winner_db_id)?.ok_or_else(not_found)?;
-
-    match format.as_str() {
-        "json" => Ok(lyrics_response_json(detail).into_response()),
-        "plain" => Ok(lyrics_response_plain(detail).into_response()),
-        "lrc" => Ok(lyrics_response_lrc(detail).into_response()),
-        _ => unreachable!("format validated above"),
-    }
-}
-
-async fn put_track_lyrics(
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Query(query): Query<LyricsWriteQuery>,
-    body: Bytes,
-) -> Result<Json<LyricsResponse>, AppError> {
-    let principal = require_authenticated(&headers).await?;
-    let now = lyrics_service::now_ms().map_err(lyrics_upload_error_to_app_error)?;
-    let content_type = request_content_type(&headers)?;
-    if !matches!(
-        content_type,
-        "application/json" | "application/lrc" | "text/x-lrc" | "text/plain"
-    ) {
-        return Err(AppError::unsupported_media_type(format!(
-            "unsupported lyrics Content-Type: {content_type}. Supported: application/json, application/lrc, text/x-lrc, text/plain"
-        )));
-    }
-    let input = lyrics_service::input_from_upload(content_type, &body, query.language, now)
-        .map_err(lyrics_upload_error_to_app_error)?;
-
-    let mut db = STATE.db.write().await;
-    let track_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
-        .ok_or_else(|| AppError::not_found(format!("Track not found: {id}")))?;
-    crate::services::auth::access::require_entity_accessible(
-        &*db,
-        &principal,
-        track_db_id,
-        || AppError::not_found(format!("Track not found: {id}")),
-    )?;
-    let detail = lyrics_service::upsert_user_lyrics(&mut db, &id, input)
-        .map_err(lyrics_upload_error_to_app_error)?;
-
-    Ok(lyrics_response_json(detail))
-}
-
-async fn delete_track_lyrics(
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> Result<StatusCode, AppError> {
-    let principal = require_authenticated(&headers).await?;
-    let mut db = STATE.db.write().await;
-    let track_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
-        .ok_or_else(|| AppError::not_found(format!("Track not found: {id}")))?;
-    crate::services::auth::access::require_entity_accessible(
-        &*db,
-        &principal,
-        track_db_id,
-        || AppError::not_found(format!("Track not found: {id}")),
-    )?;
-    lyrics_service::delete_user_lyrics_for_track(&mut db, &id)
-        .map_err(lyrics_upload_error_to_app_error)?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-async fn refresh_track_lyrics(
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> Result<StatusCode, AppError> {
-    let principal = require_authenticated(&headers).await?;
-
-    let track_db_id = {
-        let db = &*STATE.db.read().await;
-        let track_db_id = db::lookup::find_node_id_by_id(db, &id)?
-            .ok_or_else(|| AppError::not_found(format!("No track: {id}")))?;
-        crate::services::auth::access::require_entity_accessible(
-            db,
-            &principal,
-            track_db_id,
-            || AppError::not_found(format!("No track: {id}")),
-        )?;
-        track_db_id
-    };
-
-    lyrics_service::providers::dispatch_for_track(track_db_id, true).await?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-fn lyrics_upload_error_to_app_error(error: lyrics_service::LyricsUploadError) -> AppError {
-    match error {
-        lyrics_service::LyricsUploadError::BadRequest(message) => AppError::bad_request(message),
-        lyrics_service::LyricsUploadError::NotFound(message) => AppError::not_found(message),
-        lyrics_service::LyricsUploadError::Internal(error) => AppError::from(error),
-    }
-}
-
-fn request_content_type(headers: &HeaderMap) -> Result<&str, AppError> {
-    let raw = headers
-        .get(header::CONTENT_TYPE)
-        .ok_or_else(|| AppError::unsupported_media_type("missing Content-Type"))?
-        .to_str()
-        .map_err(|_| AppError::unsupported_media_type("invalid Content-Type"))?;
-    Ok(raw.split(';').next().unwrap_or("").trim())
-}
-
-fn lyrics_response_json(detail: db::lyrics::LyricsDetail) -> Json<LyricsResponse> {
-    let db::lyrics::LyricsDetail { lyrics, lines } = detail;
-    let response_lines = lines
-        .into_iter()
-        .map(|line| LyricsLineResponse {
-            ts_ms: line.line.ts_ms,
-            text: line.line.text,
-            words: line
-                .words
-                .into_iter()
-                .map(|word| LyricsWordResponse {
-                    ts_ms: word.ts_ms,
-                    char_start: word.char_start,
-                    char_end: word.char_end,
-                })
-                .collect(),
-        })
-        .collect();
-
-    Json(LyricsResponse {
-        id: lyrics.id,
-        provider_id: lyrics.provider_id,
-        language: lyrics.language,
-        origin: lyrics.origin.into(),
-        plain_text: lyrics.plain_text,
-        has_word_cues: lyrics.has_word_cues,
-        updated_at: super::unix_ms_to_rfc3339_u64(lyrics.updated_at),
-        lines: response_lines,
-    })
-}
-
-fn lyrics_response_plain(detail: db::lyrics::LyricsDetail) -> Response {
-    let body = if !detail.lyrics.plain_text.is_empty() {
-        detail.lyrics.plain_text
-    } else {
-        detail
-            .lines
-            .iter()
-            .map(|line| line.line.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    plain_text_response("text/plain; charset=utf-8", body)
-}
-
-/// `[mm:ss.xx]` caps the minute field at 99; anything above is clamped so
-/// a slipped bogus timestamp can't break the emitted LRC grammar.
-const LRC_MAX_TS_MS: u64 = 99 * 60 * 1000 + 59 * 1000 + 990;
-
-fn lyrics_response_lrc(detail: db::lyrics::LyricsDetail) -> Response {
-    let mut body = String::new();
-    for line in &detail.lines {
-        // Skip untimed prologue lines — would render stacked at [00:00.00]
-        // alongside real synced lines in every LRC client.
-        if line.line.ts_ms == 0 {
-            continue;
-        }
-        let ts_ms = line.line.ts_ms.min(LRC_MAX_TS_MS);
-        let total_centis = ts_ms / 10;
-        let minutes = total_centis / (60 * 100);
-        let seconds = (total_centis / 100) % 60;
-        let centis = total_centis % 100;
-        body.push_str(&format!(
-            "[{minutes:02}:{seconds:02}.{centis:02}]{text}\n",
-            text = line.line.text,
-        ));
-    }
-    plain_text_response("application/lrc; charset=utf-8", body)
-}
-
-fn plain_text_response(content_type: &'static str, body: String) -> Response {
-    let mut response = (StatusCode::OK, body).into_response();
-    response
-        .headers_mut()
-        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-    response
-}
-
-#[cfg(feature = "docgen")]
-fn get_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Get track lyrics").description(
-        "Returns the best-matching lyrics for a track, selected from all stored providers. \
-         `?format=json|plain|lrc` controls the response format (default json). Use `?language=` to \
-         prefer an ISO-639-2 language; when no stored lyric matches the requested language, \
-         the server falls back to the best available lyric; the `language` field on the \
-         response reveals what was actually served. `LyricsWordResponse.char_start` / \
-         `char_end` are Unicode-scalar (code point) offsets into the line's `text`, not \
-         byte offsets. Returns 404 when no lyrics are stored; 406 when `lrc` is requested \
-         but no candidate has synced content meeting the selector's coverage threshold.",
-    )
-}
-
-#[cfg(feature = "docgen")]
-fn put_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Write track lyrics").description(
-        "Creates or replaces the authenticated user's global lyrics override for a track. \
-         The request body is selected by `Content-Type`: `application/json` accepts structured \
-         lyrics JSON, `application/lrc` and `text/x-lrc` accept raw LRC text, and `text/plain` \
-         stores non-timestamped plain text. Raw uploads use `?language=` for the stored language, \
-         defaulting to `und`. All formats \
-         store `origin=user` and provider `user`, making the result preferred over plugin lyrics.",
-    )
-}
-
-#[cfg(feature = "docgen")]
-fn delete_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Delete user track lyrics").description(
-        "Deletes the user-authored lyrics override for a track. Plugin/provider lyrics are left \
-         intact, so future reads may fall back to provider lyrics. Idempotent: returns 204 even \
-         when the track has no user-authored lyrics.",
-    ).response::<204, ()>()
-}
-
-#[cfg(feature = "docgen")]
-fn refresh_track_lyrics_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Refresh track lyrics")
-        .description(
-            "Re-runs every registered lyrics provider for the track with `force_refresh=true`, \
-         bypassing each provider's negative cache. Awaits all dispatches before returning. \
-         Returns 204 once dispatch completes; the caller should then GET the lyrics to read \
-         what was stored. 404 if the track does not exist.",
-        )
-        .response::<204, ()>()
-}
-
 #[cfg(feature = "docgen")]
 fn create_track_playback_url_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create playable track URLs").description(
@@ -1196,19 +867,14 @@ pub fn track_routes() -> Router {
         .route("/{id}", get(get_track))
         .route("/{id}/mix", get(super::mix::get_track_mix))
         .route("/{id}/playback-url", post(create_track_playback_url))
-        .route("/{id}/lyrics", get(get_track_lyrics))
-        .route("/{id}/lyrics", put(put_track_lyrics))
-        .route("/{id}/lyrics", delete(delete_track_lyrics))
-        .route("/{id}/lyrics/refresh", post(refresh_track_lyrics))
+        .merge(lyrics::routes())
 }
 
 #[cfg(feature = "docgen")]
 pub(crate) fn track_openapi_routes() -> aide::axum::ApiRouter {
     use aide::axum::routing::{
-        delete_with,
         get_with,
         post_with,
-        put_with,
     };
 
     aide::axum::ApiRouter::new()
@@ -1222,22 +888,17 @@ pub(crate) fn track_openapi_routes() -> aide::axum::ApiRouter {
             "/{id}/playback-url",
             post_with(create_track_playback_url, create_track_playback_url_docs),
         )
-        .api_route(
-            "/{id}/lyrics",
-            get_with(get_track_lyrics, get_track_lyrics_docs),
-        )
-        .api_route(
-            "/{id}/lyrics",
-            put_with(put_track_lyrics, put_track_lyrics_docs),
-        )
-        .api_route(
-            "/{id}/lyrics",
-            delete_with(delete_track_lyrics, delete_track_lyrics_docs),
-        )
-        .api_route(
-            "/{id}/lyrics/refresh",
-            post_with(refresh_track_lyrics, refresh_track_lyrics_docs),
-        )
+        .merge(lyrics::openapi_routes())
+}
+
+#[cfg(test)]
+async fn setup_route_test() -> anyhow::Result<()> {
+    crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
+        directory: std::path::PathBuf::from("."),
+        language: None,
+        country: None,
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -1261,22 +922,9 @@ mod tests {
             new_test_db,
         },
         services::auth::Principal,
-        testing::{
-            LibraryFixtureConfig,
-            initialize_runtime,
-            runtime_test_lock,
-        },
+        testing::runtime_test_lock,
     };
     use nanoid::nanoid;
-
-    async fn setup_route_test() -> anyhow::Result<()> {
-        initialize_runtime(&LibraryFixtureConfig {
-            directory: std::path::PathBuf::from("."),
-            language: None,
-            country: None,
-        })
-        .await
-    }
 
     fn admin_principal(accessible_library_ids: HashSet<String>) -> Principal {
         Principal {

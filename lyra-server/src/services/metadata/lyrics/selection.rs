@@ -10,10 +10,10 @@ use agdb::DbId;
 use crate::db::{
     self,
     DbAccess,
-    IdSource,
     Lyrics,
     ProviderConfig,
     lyrics::LyricsDetail,
+    lyrics::LyricsKind,
 };
 
 /// Coverage threshold for the selector's synced tier.
@@ -30,7 +30,7 @@ fn priority_map(providers: &[ProviderConfig]) -> HashMap<&str, u32> {
 /// Minimum non-zero-ts lines for the selector's synced tier.
 const MIN_SYNCED_LINES: u32 = 2;
 
-fn has_meaningful_synced(lyrics: &Lyrics, duration_ms: Option<u64>) -> bool {
+pub(crate) fn has_meaningful_synced(lyrics: &Lyrics, duration_ms: Option<u64>) -> bool {
     if lyrics.synced_line_count < MIN_SYNCED_LINES || lyrics.max_synced_ts_ms == 0 {
         return false;
     }
@@ -48,7 +48,43 @@ fn language_matches(stored: &str, hint: &str) -> bool {
     stored.eq_ignore_ascii_case(hint.trim())
 }
 
-/// Ordering (first-difference wins): `is_user_override`, `language_match`,
+fn is_eligible(
+    lyrics: &Lyrics,
+    priorities: &HashMap<&str, u32>,
+    owner_user_id: Option<&str>,
+) -> bool {
+    lyrics.is_visible_to(owner_user_id)
+        && (lyrics.kind() != LyricsKind::Provider
+            || priorities.contains_key(lyrics.provider_id.as_str()))
+}
+
+pub(crate) fn normalize_language_hint(raw: Option<&str>) -> anyhow::Result<Option<String>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.eq_ignore_ascii_case("und") {
+        return Ok(Some("und".to_string()));
+    }
+    Ok(Some(crate::locale::validate_language(trimmed)?))
+}
+
+pub(crate) fn eligible_candidates<'a>(
+    candidates: &'a [Lyrics],
+    providers: &[ProviderConfig],
+    owner_user_id: Option<&str>,
+    require_synced: bool,
+    duration_ms: Option<u64>,
+) -> Vec<&'a Lyrics> {
+    let priorities = priority_map(providers);
+    candidates
+        .iter()
+        .filter(|lyrics| is_eligible(lyrics, &priorities, owner_user_id))
+        .filter(|lyrics| !require_synced || has_meaningful_synced(lyrics, duration_ms))
+        .collect()
+}
+
+/// Ordering (first-difference wins): personal, shared manual, language match,
 /// `has_meaningful_synced` (≥ `MIN_SYNCED_LINES` non-zero-ts lines AND
 /// `max_synced_ts_ms` ≥ 50% of duration), `provider_priority`,
 /// `updated_at`, `provider_id` asc.
@@ -57,6 +93,8 @@ fn language_matches(stored: &str, hint: &str) -> bool {
 pub(crate) fn pick_preferred<'a>(
     candidates: &'a [Lyrics],
     providers: &[ProviderConfig],
+    owner_user_id: Option<&str>,
+    provider_id: Option<&str>,
     language_hint: Option<&str>,
     duration_ms: Option<u64>,
     require_synced: bool,
@@ -65,14 +103,21 @@ pub(crate) fn pick_preferred<'a>(
 
     candidates
         .iter()
+        .filter(|lyrics| is_eligible(lyrics, &priorities, owner_user_id))
         .filter(|lyrics| {
-            matches!(lyrics.origin, IdSource::User)
-                || priorities.contains_key(lyrics.provider_id.as_str())
+            provider_id.is_none_or(|provider_id| {
+                lyrics.kind() == LyricsKind::Provider && lyrics.provider_id == provider_id
+            })
         })
         .filter(|lyrics| !require_synced || has_meaningful_synced(lyrics, duration_ms))
         .max_by(|a, b| {
-            let a_user = u8::from(matches!(a.origin, IdSource::User));
-            let b_user = u8::from(matches!(b.origin, IdSource::User));
+            let tier = |lyrics: &Lyrics| match lyrics.kind() {
+                LyricsKind::Provider => 0_u8,
+                LyricsKind::Shared => 1,
+                LyricsKind::Personal => 2,
+            };
+            let a_tier = tier(a);
+            let b_tier = tier(b);
 
             let a_lang = language_hint.is_some_and(|h| language_matches(&a.language, h));
             let b_lang = language_hint.is_some_and(|h| language_matches(&b.language, h));
@@ -83,8 +128,8 @@ pub(crate) fn pick_preferred<'a>(
             let a_priority = priorities.get(a.provider_id.as_str()).copied().unwrap_or(0);
             let b_priority = priorities.get(b.provider_id.as_str()).copied().unwrap_or(0);
 
-            a_user
-                .cmp(&b_user)
+            a_tier
+                .cmp(&b_tier)
                 .then_with(|| a_lang.cmp(&b_lang))
                 .then_with(|| a_synced.cmp(&b_synced))
                 .then_with(|| a_priority.cmp(&b_priority))
@@ -98,19 +143,24 @@ pub(crate) fn pick_preferred<'a>(
 pub(crate) fn get_preferred_detail(
     db: &impl DbAccess,
     track_db_id: DbId,
+    owner_user_id: Option<&str>,
+    provider_id: Option<&str>,
     language_hint: Option<&str>,
     require_synced: bool,
 ) -> anyhow::Result<Option<LyricsDetail>> {
     let Some(track) = db::tracks::get_by_id(db, track_db_id)? else {
         return Ok(None);
     };
-    let candidates = db::lyrics::get_for_track(db, track_db_id)?;
+    let candidates = db::lyrics::get_visible_for_track(db, track_db_id, owner_user_id)?;
     let providers = db::providers::get(db)?;
+    let language_hint = normalize_language_hint(language_hint)?;
 
     let Some(winner) = pick_preferred(
         &candidates,
         &providers,
-        language_hint,
+        owner_user_id,
+        provider_id,
+        language_hint.as_deref(),
         track.duration_ms,
         require_synced,
     ) else {
@@ -126,6 +176,7 @@ pub(crate) fn get_preferred_detail(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::IdSource;
 
     fn lyrics(
         id: &str,
@@ -144,6 +195,11 @@ mod tests {
             provider_id: provider_id.to_string(),
             language: language.to_string(),
             origin,
+            owner_user_id: if matches!(origin, IdSource::User) {
+                "owner".to_string()
+            } else {
+                String::new()
+            },
             plain_text: String::new(),
             line_count,
             synced_line_count,
@@ -175,8 +231,26 @@ mod tests {
         }
     }
 
+    fn pick_preferred<'a>(
+        candidates: &'a [Lyrics],
+        providers: &[ProviderConfig],
+        language_hint: Option<&str>,
+        duration_ms: Option<u64>,
+        require_synced: bool,
+    ) -> Option<&'a Lyrics> {
+        super::pick_preferred(
+            candidates,
+            providers,
+            Some("owner"),
+            None,
+            language_hint,
+            duration_ms,
+            require_synced,
+        )
+    }
+
     #[test]
-    fn user_override_beats_everything() {
+    fn personal_lyrics_beat_everything() {
         let cands = vec![
             lyrics("p1", "plug", "eng", IdSource::Plugin, 100, 180_000, 2000),
             lyrics("u1", "user", "eng", IdSource::User, 0, 0, 1000),
@@ -240,6 +314,7 @@ mod tests {
             provider_id: "plug".to_string(),
             language: "eng".to_string(),
             origin: IdSource::Plugin,
+            owner_user_id: String::new(),
             plain_text: String::new(),
             line_count: 50,
             synced_line_count: 1,
@@ -324,10 +399,13 @@ mod tests {
         let providers = vec![disabled("off", 100), provider("live", 50)];
         let winner = pick_preferred(&cands, &providers, None, Some(200_000), false);
         assert_eq!(winner.map(|w| w.id.as_str()), Some("on"));
+        let eligible = eligible_candidates(&cands, &providers, Some("owner"), false, Some(200_000));
+        assert_eq!(eligible.len(), 1);
+        assert_eq!(eligible[0].id, "on");
     }
 
     #[test]
-    fn user_override_accepted_even_when_provider_not_configured() {
+    fn personal_lyrics_are_eligible_without_provider_configuration() {
         let cands = vec![lyrics("u1", "user", "eng", IdSource::User, 0, 0, 1000)];
         let providers = vec![];
         let winner = pick_preferred(&cands, &providers, None, None, false);
@@ -350,5 +428,83 @@ mod tests {
         let providers = vec![provider("plug", 100)];
         let winner = pick_preferred(&cands, &providers, None, None, false);
         assert_eq!(winner.map(|w| w.id.as_str()), Some("thin"));
+    }
+
+    #[test]
+    fn personal_lyrics_are_isolated_and_beat_language_hints_for_the_owner() {
+        let mut alice = lyrics("alice", "manual", "fra", IdSource::User, 0, 0, 1000);
+        alice.owner_user_id = "alice".to_string();
+        let mut bob = lyrics("bob", "manual", "eng", IdSource::User, 0, 0, 2000);
+        bob.owner_user_id = "bob".to_string();
+        let provider_lyrics = lyrics("provider", "plug", "eng", IdSource::Plugin, 0, 0, 3000);
+        let candidates = vec![alice, bob, provider_lyrics];
+        let providers = vec![provider("plug", 100)];
+
+        let winner = super::pick_preferred(
+            &candidates,
+            &providers,
+            Some("alice"),
+            None,
+            Some("eng"),
+            None,
+            false,
+        );
+        assert_eq!(winner.map(|lyrics| lyrics.id.as_str()), Some("alice"));
+        let visible = eligible_candidates(&candidates, &providers, Some("alice"), false, None);
+        assert_eq!(visible.len(), 2);
+        assert!(visible.iter().all(|lyrics| lyrics.id != "bob"));
+    }
+
+    #[test]
+    fn explicit_provider_selector_bypasses_manual_precedence() {
+        let personal = lyrics("personal", "manual", "eng", IdSource::User, 0, 0, 3000);
+        let provider_lyrics = lyrics("provider", "plug", "eng", IdSource::Plugin, 0, 0, 1000);
+        let candidates = vec![personal, provider_lyrics];
+        let providers = vec![provider("plug", 100)];
+
+        let winner = super::pick_preferred(
+            &candidates,
+            &providers,
+            Some("owner"),
+            Some("plug"),
+            None,
+            None,
+            false,
+        );
+        assert_eq!(winner.map(|lyrics| lyrics.id.as_str()), Some("provider"));
+    }
+
+    #[test]
+    fn shared_manual_beats_provider_but_not_personal() {
+        let mut shared = lyrics("shared", "manual", "eng", IdSource::User, 0, 0, 3000);
+        shared.owner_user_id.clear();
+        let personal = lyrics("personal", "manual", "fra", IdSource::User, 0, 0, 1000);
+        let provider_lyrics = lyrics("provider", "plug", "eng", IdSource::Plugin, 0, 0, 5000);
+        let candidates = vec![shared, personal, provider_lyrics];
+        let providers = vec![provider("plug", 100)];
+
+        let winner = super::pick_preferred(
+            &candidates,
+            &providers,
+            Some("owner"),
+            None,
+            Some("eng"),
+            None,
+            false,
+        );
+        assert_eq!(winner.map(|lyrics| lyrics.id.as_str()), Some("personal"));
+        let other_user_winner = super::pick_preferred(
+            &candidates,
+            &providers,
+            Some("other"),
+            None,
+            Some("eng"),
+            None,
+            false,
+        );
+        assert_eq!(
+            other_user_winner.map(|lyrics| lyrics.id.as_str()),
+            Some("shared")
+        );
     }
 }

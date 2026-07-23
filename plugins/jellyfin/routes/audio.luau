@@ -121,8 +121,7 @@ function module.register()
 		if track_id == nil or item == nil then
 			return responses.not_found("item not found")
 		end
-
-		local ok, lyric_info = pcall(lyrics.get, track_id, nil, false)
+		local ok, lyric_info = pcall(lyrics.get, track_id, nil, false, nil)
 		if not ok then
 			return api.response.empty(500)
 		end
@@ -140,6 +139,11 @@ function module.register()
 		if track_id == nil or item == nil then
 			return responses.not_found("item not found")
 		end
+		local raw_track = item._raw
+		local track_public_id = if raw_track then raw_track.id else nil
+		if type(track_public_id) ~= "string" then
+			return responses.not_found("item not found")
+		end
 
 		local body = if ctx and ctx.request then ctx.request.body_raw else nil
 		if type(body) ~= "string" or #body == 0 then
@@ -154,7 +158,7 @@ function module.register()
 			return responses.bad_request("Extension is required on filename")
 		end
 
-		local ok, lyric_info = pcall(lyrics.upsert_user_override, track_id, {
+		local ok, lyric_info = pcall(lyrics.upsert_personal, track_id, track_public_id, {
 			content_type = content_type,
 			body = body,
 			language = nil,
@@ -166,15 +170,22 @@ function module.register()
 		return api.response.json(200, lyrics_protocol.to_jellyfin_lyric_dto(item, lyric_info :: LyricsInfo))
 	end, nil, true)
 	api.delete(P .. "/Audio/{itemId}/Lyrics", function(ctx: ApiContext): ApiResponse
-		local track_id, _item, resolve_err = lyrics_protocol.resolve_audio_item(ctx)
-		if resolve_err then
-			return resolve_err
+		local principal = session.require_jellyfin_principal(ctx)
+		if not principal then
+			return session.unauthorized()
 		end
-		if track_id == nil then
-			return responses.not_found("item not found")
+		if not session.require_matching_user_scope(ctx, principal) then
+			return session.unauthorized()
 		end
 
-		local ok = pcall(lyrics.delete_user_override_for_track, track_id)
+		local params = if ctx then ctx.params else nil
+		local raw_item_id = if params then params.itemId else nil
+		local track_id = item_ids.decode_jellyfin_item_id(raw_item_id)
+		if track_id == nil then
+			return api.response.empty(204)
+		end
+
+		local ok = pcall(lyrics.delete_personal_for_track, track_id)
 		if not ok then
 			return api.response.empty(500)
 		end

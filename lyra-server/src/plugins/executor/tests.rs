@@ -187,6 +187,209 @@ fn plugin_executor_preserves_typed_call_context_across_luau_yield() -> Result<()
 }
 
 #[test]
+fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
+
+    let (
+        alice_db_id,
+        alice_public_id,
+        bob_db_id,
+        bob_public_id,
+        library_public_id,
+        track_db_id,
+        track_public_id,
+    ) = futures::executor::block_on(async {
+        let mut db = crate::STATE.db.write().await;
+        let alice = crate::plugins::db::test_db::test_user("lyrics-alice")?;
+        let alice_public_id = alice.id.clone();
+        let alice_db_id = crate::plugins::db::users::create(&mut db, &alice)?;
+        let bob = crate::plugins::db::test_db::test_user("lyrics-bob")?;
+        let bob_public_id = bob.id.clone();
+        let bob_db_id = crate::plugins::db::users::create(&mut db, &bob)?;
+        let library_db_id = crate::plugins::db::test_db::insert_library(
+            &mut db,
+            "Plugin Lyrics",
+            "/tmp/plugin-lyrics",
+        )?;
+        let library_public_id = crate::plugins::db::lookup::find_id_by_db_id(&db, library_db_id)?
+            .context("inserted library has public id")?;
+        let track_db_id =
+            crate::plugins::db::test_db::insert_track(&mut db, "Plugin Lyrics Track")?;
+        let track_public_id = crate::plugins::db::lookup::find_id_by_db_id(&db, track_db_id)?
+            .context("inserted track has public id")?;
+        crate::plugins::db::test_db::connect(&mut db, library_db_id, track_db_id)?;
+        crate::plugins::db::providers::upsert(
+            &mut db,
+            &crate::plugins::db::ProviderConfig {
+                db_id: None,
+                provider_id: "test_provider".to_string(),
+                display_name: "Test Provider".to_string(),
+                priority: 10,
+                enabled: true,
+            },
+        )?;
+        crate::plugins::db::lyrics::upsert_from_plugin(
+            &mut db,
+            track_db_id,
+            crate::plugins::db::lyrics::LyricsInput {
+                id: "remote-one".to_string(),
+                provider_id: "test_provider".to_string(),
+                language: "eng".to_string(),
+                plain_text: "provider lyrics".to_string(),
+                lines: Vec::new(),
+                last_checked_at: 1,
+            },
+            None,
+        )?;
+        Ok::<_, anyhow::Error>((
+            alice_db_id,
+            alice_public_id,
+            bob_db_id,
+            bob_public_id,
+            library_public_id,
+            track_db_id,
+            track_public_id,
+        ))
+    })?;
+
+    let runtime = runtime_with_scopes(&["lyra.lyrics"])?;
+    let principal =
+        |user_db_id, user_public_id: String, can_access: bool| crate::services::auth::Principal {
+            user_db_id,
+            user_public_id,
+            username: "lyrics-user".to_string(),
+            permissions: Vec::new(),
+            role_name: None,
+            accessible_library_ids: can_access
+                .then(|| std::collections::HashSet::from([library_public_id.clone()]))
+                .unwrap_or_default(),
+        };
+
+    let mut alice_context = CallContext {
+        origin: plugin_origin("demo", "alice.luau"),
+        ..CallContext::default()
+    };
+    seed_caller_principal(
+        &mut alice_context,
+        principal(alice_db_id, alice_public_id.clone(), true),
+    );
+    let alice_values = runtime.eval_plugin_source_with_call_context(
+        format!(
+            r#"
+                local lyrics = require("@lyra/lyrics")
+                local track_id = {track_id}
+                local provider = lyrics.get(track_id, nil, false, "test_provider")
+                local personal = lyrics.upsert_personal(track_id, {track_public_id:?}, {{
+                    content_type = "text/plain",
+                    body = "alice lyrics",
+                    language = "eng",
+                }})
+                local automatic = lyrics.get(track_id, nil, false, nil)
+                local selected_provider = lyrics.get(track_id, nil, false, "test_provider")
+                return provider.plain_text,
+                    provider.provider_id,
+                    provider.scope,
+                    provider.source,
+                    personal.plain_text,
+                    personal.scope,
+                    personal.source,
+                    automatic.plain_text,
+                    selected_provider.plain_text
+            "#,
+            track_id = track_db_id.0,
+            track_public_id = track_public_id,
+        )
+        .into_bytes(),
+        alice_context,
+    )?;
+    assert_eq!(
+        alice_values,
+        vec![
+            luau::Value::String(b"provider lyrics".to_vec()),
+            luau::Value::String(b"test_provider".to_vec()),
+            luau::Value::String(b"shared".to_vec()),
+            luau::Value::String(b"provider".to_vec()),
+            luau::Value::String(b"alice lyrics".to_vec()),
+            luau::Value::String(b"personal".to_vec()),
+            luau::Value::String(b"manual".to_vec()),
+            luau::Value::String(b"alice lyrics".to_vec()),
+            luau::Value::String(b"provider lyrics".to_vec()),
+        ]
+    );
+
+    let mut bob_context = CallContext {
+        origin: plugin_origin("demo", "bob.luau"),
+        ..CallContext::default()
+    };
+    seed_caller_principal(
+        &mut bob_context,
+        principal(bob_db_id, bob_public_id.clone(), true),
+    );
+    let bob_values = runtime.eval_plugin_source_with_call_context(
+        format!(
+            r#"
+                local lyrics = require("@lyra/lyrics")
+                local track_id = {track_id}
+                local before = lyrics.get(track_id, nil, false, nil)
+                lyrics.upsert_personal(track_id, {track_public_id:?}, {{
+                    content_type = "text/plain",
+                    body = "bob lyrics",
+                    language = "eng",
+                }})
+                local after = lyrics.get(track_id, nil, false, nil)
+                return before.plain_text, after.plain_text
+            "#,
+            track_id = track_db_id.0,
+            track_public_id = track_public_id,
+        )
+        .into_bytes(),
+        bob_context,
+    )?;
+    assert_eq!(
+        bob_values,
+        vec![
+            luau::Value::String(b"provider lyrics".to_vec()),
+            luau::Value::String(b"bob lyrics".to_vec()),
+        ]
+    );
+
+    let mut inaccessible_alice_context = CallContext {
+        origin: plugin_origin("demo", "alice-delete.luau"),
+        ..CallContext::default()
+    };
+    seed_caller_principal(
+        &mut inaccessible_alice_context,
+        principal(alice_db_id, alice_public_id.clone(), false),
+    );
+    let deleted = runtime.eval_plugin_source_with_call_context(
+        format!(
+            r#"
+                local lyrics = require("@lyra/lyrics")
+                return lyrics.delete_personal_for_track({track_id})
+            "#,
+            track_id = track_db_id.0,
+        )
+        .into_bytes(),
+        inaccessible_alice_context,
+    )?;
+    assert_eq!(deleted, vec![luau::Value::Boolean(true)]);
+
+    let remaining_personal_owners = futures::executor::block_on(async {
+        let db = crate::STATE.db.read().await;
+        Ok::<_, anyhow::Error>(
+            crate::plugins::db::lyrics::get_for_track(&db, track_db_id)?
+                .into_iter()
+                .filter(|lyrics| !lyrics.owner_user_id.is_empty())
+                .map(|lyrics| lyrics.owner_user_id)
+                .collect::<Vec<_>>(),
+        )
+    })?;
+    assert_eq!(remaining_personal_owners, vec![bob_public_id]);
+    Ok(())
+}
+
+#[test]
 fn plugin_executor_declares_metadata_provider_ids_and_options() -> Result<()> {
     let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
     crate::testing::init_default_test_state()?;
