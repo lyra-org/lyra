@@ -38,7 +38,7 @@ async fn require_plugin_track_access(
     if let Some(permission) = permission {
         require_permission(principal, permission)?;
     }
-    crate::routes::require_entity_accessible(&*db, principal, track_db_id, || {
+    crate::services::auth::access::require_entity_accessible(&*db, principal, track_db_id, || {
         AppError::not_found(format!("Track not found: {}", track_db_id.0))
     })
 }

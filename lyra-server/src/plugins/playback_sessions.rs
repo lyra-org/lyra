@@ -336,7 +336,7 @@ fn report_callback(
         let track_db_id = db::playback_sessions::get_track_id(&db, playback_session_id)
             .map_err(crate::plugins::runtime_error)?
             .ok_or_else(|| crate::plugins::runtime_error("playback session not found"))?;
-        if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
+        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
             return Err(crate::plugins::runtime_error("playback session not found"));
@@ -396,7 +396,7 @@ fn start_callback(
         let current_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
 
         let mut db = db.write().await;
-        if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
+        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
             return Err(crate::plugins::runtime_error("track not found"));
@@ -462,7 +462,7 @@ fn report_session_callback(
         let mutation = playback_mutation(request.position_ms, request.duration_ms, request.state);
 
         let mut db = db.write().await;
-        if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
+        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
             return Err(crate::plugins::runtime_error("track not found"));

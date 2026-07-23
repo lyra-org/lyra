@@ -289,7 +289,7 @@ fn list_ids_callback(
         let mut visible_ids = Vec::new();
         for id in ids {
             if kind == FavoriteKind::Playlist
-                || crate::routes::entity_accessible_to_principal(&db, &principal, id)
+                || crate::services::auth::access::entity_accessible(&db, &principal, id)
                     .map_err(crate::plugins::runtime_error)?
             {
                 visible_ids.push(id);

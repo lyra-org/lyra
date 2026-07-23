@@ -515,7 +515,7 @@ fn can_read_entity(
 ) -> luau::runtime::Result<bool> {
     match principal {
         Some(principal) => {
-            crate::routes::entity_accessible_to_principal(db, principal, entity_db_id)
+            crate::services::auth::access::entity_accessible(db, principal, entity_db_id)
                 .map_err(crate::plugins::runtime_error)
         }
         None => Ok(true),
@@ -529,7 +529,7 @@ fn can_mutate_release(
 ) -> luau::runtime::Result<bool> {
     match principal {
         Some(principal) => Ok(can_mutate_global(Some(principal))
-            && crate::routes::entity_accessible_to_principal(db, principal, release_db_id)
+            && crate::services::auth::access::entity_accessible(db, principal, release_db_id)
                 .map_err(crate::plugins::runtime_error)?),
         None => Ok(true),
     }

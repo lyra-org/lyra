@@ -26,7 +26,6 @@ use crate::{
         labels,
     },
     routes::{
-        self,
         AppError,
         deserialize_inc,
         parse_inc_values,
@@ -91,7 +90,7 @@ async fn list_labels(headers: HeaderMap) -> Result<Json<Vec<LabelResponse>>, App
         let release_pairs = labels::get_releases_with_catalog(db, label_db_id)?;
         let mut has_accessible_release = false;
         for (release_db_id, _) in &release_pairs {
-            if routes::entity_accessible_to_principal(db, &principal, *release_db_id)? {
+            if crate::services::auth::access::entity_accessible(db, &principal, *release_db_id)? {
                 has_accessible_release = true;
                 break;
             }
@@ -125,7 +124,7 @@ async fn get_label(
     let pairs = labels::get_releases_with_catalog(db, label_db_id)?;
     let mut accessible_pairs = Vec::new();
     for (release_db_id, catalog_number) in pairs {
-        if routes::entity_accessible_to_principal(db, &principal, release_db_id)? {
+        if crate::services::auth::access::entity_accessible(db, &principal, release_db_id)? {
             accessible_pairs.push((release_db_id, catalog_number));
         }
     }

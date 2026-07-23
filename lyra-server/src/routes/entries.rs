@@ -30,7 +30,6 @@ use crate::{
         ReleaseResponse,
     },
     routes::{
-        self,
         AppError,
         deserialize_inc,
     },
@@ -108,7 +107,7 @@ async fn get_entries(
             .entry
             .db_id
             .ok_or_else(|| anyhow::anyhow!("entry missing db_id"))?;
-        if !routes::entity_accessible_to_principal(db, &principal, entry_db_id)? {
+        if !crate::services::auth::access::entity_accessible(db, &principal, entry_db_id)? {
             continue;
         }
         response.push(detail_to_entry_response(db, detail, include_full_path)?);
@@ -131,7 +130,7 @@ async fn get_entry(
         .entry
         .db_id
         .ok_or_else(|| anyhow::anyhow!("entry missing db_id"))?;
-    routes::require_entity_accessible(db, &principal, entry_db_id, || {
+    crate::services::auth::access::require_entity_accessible(db, &principal, entry_db_id, || {
         AppError::not_found(format!("Entry not found: {id}"))
     })?;
     Ok(Json(detail_to_entry_response(

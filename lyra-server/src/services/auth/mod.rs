@@ -44,6 +44,7 @@ static DUMMY_PASSWORD_HASH: LazyLock<String> = LazyLock::new(|| {
         .to_string()
 });
 
+pub(crate) mod access;
 pub(crate) mod api_keys;
 pub(crate) mod media_tokens;
 pub(crate) mod sessions;
@@ -198,24 +199,17 @@ pub(crate) async fn require_manage_libraries_on(
 ) -> AuthResult<Principal> {
     let principal = require_permission_principal(headers, Permission::ManageLibraries).await?;
 
-    if principal.permissions.contains(&Permission::Admin) {
-        if principal.accessible_library_ids.contains(library_public_id) {
-            return Ok(principal);
-        }
-        return Err(AuthError::NotFound(format!(
-            "library not found: {library_public_id}"
-        )));
-    }
-
     let db = STATE.db.read().await;
-    if db::libraries::find_accessible_node_id_by_id(&*db, &principal, library_public_id)?.is_some()
-    {
-        Ok(principal)
-    } else {
-        Err(AuthError::NotFound(format!(
-            "library not found: {library_public_id}"
-        )))
-    }
+    access::resolve_library_db_id(&*db, &principal, library_public_id).map_err(
+        |error| match error {
+            access::AccessError::InvalidRequest(message) => AuthError::Forbidden(message),
+            access::AccessError::LibraryNotFound(id) => {
+                AuthError::NotFound(format!("library not found: {id}"))
+            }
+            access::AccessError::Internal(error) => AuthError::Internal(error),
+        },
+    )?;
+    Ok(principal)
 }
 
 pub(crate) struct LoginResult {

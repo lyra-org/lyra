@@ -572,8 +572,11 @@ async fn get_releases(
     if sort.is_empty() {
         sort = default_release_sort();
     }
-    let library_scope =
-        super::resolve_optional_library_filter(db, &principal, library_id.as_deref())?;
+    let library_scope = crate::services::auth::access::resolve_optional_library_filter(
+        db,
+        &principal,
+        library_id.as_deref(),
+    )?;
 
     let (release_items, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
         let release_items = super::load_snapshot_items(
@@ -581,7 +584,7 @@ async fn get_releases(
             &page.item_ids,
             db::releases::get_by_id,
             |db, release_db_id| {
-                super::entity_accessible_to_principal(db, &principal, release_db_id)
+                crate::services::auth::access::entity_accessible(db, &principal, release_db_id)
             },
         )?;
         (release_items, page.next_cursor)
@@ -632,7 +635,11 @@ async fn get_releases(
                     let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
                         continue;
                     };
-                    if super::entity_accessible_to_principal(db, &principal, release_db_id)? {
+                    if crate::services::auth::access::entity_accessible(
+                        db,
+                        &principal,
+                        release_db_id,
+                    )? {
                         accessible_releases.push(release);
                     }
                 }
@@ -687,9 +694,12 @@ async fn get_release(
         parse_release_includes(query.inc)?;
     let release_db_id = db::lookup::find_node_id_by_id(db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-    super::require_entity_accessible(db, &principal, release_db_id, || {
-        AppError::not_found(format!("Release not found: {id}"))
-    })?;
+    crate::services::auth::access::require_entity_accessible(
+        db,
+        &principal,
+        release_db_id,
+        || AppError::not_found(format!("Release not found: {id}")),
+    )?;
     let detail = releases::get_details(db, release_db_id, includes)?
         .ok_or_else(|| AppError::not_found(format!("Release not found: {}", id)))?;
 
@@ -714,9 +724,12 @@ async fn search_release_covers(
         let db = STATE.db.read().await;
         let release_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-        super::require_entity_accessible(&*db, &principal, release_db_id, || {
-            AppError::not_found(format!("Release not found: {id}"))
-        })?;
+        crate::services::auth::access::require_entity_accessible(
+            &*db,
+            &principal,
+            release_db_id,
+            || AppError::not_found(format!("Release not found: {id}")),
+        )?;
         if db::releases::get_by_id(&db, release_db_id)?.is_none() {
             return Err(AppError::not_found(format!("Release not found: {}", id)));
         }
