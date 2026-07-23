@@ -7,8 +7,10 @@
 local api = require("@lyra/api")
 local lyra_lyrics = require("@lyra/lyrics")
 
-local base = require("./items/common")
 local catalog = require("./items/catalog")
+local item_ids = require("./items/identifiers")
+local requests = require("./items/requests")
+local responses = require("./items/responses")
 local session = require("./session")
 
 type ApiContext = api.ApiContext
@@ -42,13 +44,13 @@ function module.resolve_audio_item(ctx: ApiContext): (number?, catalog.ItemInfo?
 	local params = if ctx then ctx.params else nil
 	local raw_item_id = if params then params.itemId else nil
 	if not raw_item_id then
-		return nil, nil, base.bad_request("missing item id")
+		return nil, nil, responses.bad_request("missing item id")
 	end
 
-	local track_id = base.decode_jellyfin_item_id(raw_item_id)
+	local track_id = item_ids.decode_jellyfin_item_id(raw_item_id)
 	local item = catalog.find_item_by_id(track_id, principal.user_id)
 	if not item or item.Type ~= "Audio" then
-		return nil, nil, base.not_found("item not found")
+		return nil, nil, responses.not_found("item not found")
 	end
 
 	return track_id, item, nil
@@ -130,7 +132,7 @@ function module.to_jellyfin_lyric_dto(item: catalog.ItemInfo, lyric_info: Lyrics
 end
 
 local function lyrics_content_type_from_file_name(file_name: string?): string?
-	local trimmed = base.trim(file_name)
+	local trimmed = requests.trim(file_name)
 	if not trimmed then
 		return nil
 	end
@@ -156,14 +158,14 @@ end
 
 function module.resolve_upload_content_type(ctx: ApiContext): (string?, ApiResponse?)
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local file_name = base.parse_query_string(query, { "fileName", "FileName", "filename" }, nil)
-	if not base.trim(file_name) then
-		return nil, base.bad_request("fileName is required")
+	local file_name = requests.parse_query_string(query, { "fileName", "FileName", "filename" }, nil)
+	if not requests.trim(file_name) then
+		return nil, responses.bad_request("fileName is required")
 	end
 
 	local content_type = lyrics_content_type_from_file_name(file_name)
 	if not content_type then
-		return nil, base.bad_request("Extension is required on filename")
+		return nil, responses.bad_request("Extension is required on filename")
 	end
 	return content_type, nil
 end

@@ -7,9 +7,10 @@
 local api = require("@lyra/api")
 local serde = require("@harmony/serde")
 
-local base = require("./common")
 local constants = require("../../constants")
 local item_types = require("./types")
+local results = require("./results")
+local user_data = require("./user_data")
 
 local SERVER_ID = constants.SERVER_ID
 
@@ -65,11 +66,11 @@ local function artist_projection_items_to_json(items: { ArtistProjectionItem }?)
 	return output
 end
 
-local function user_data_to_json(user_data: UserData?): JsonObject?
-	if user_data == nil then
+local function user_data_to_json(value: UserData?): JsonObject?
+	if value == nil then
 		return nil
 	end
-	return base.user_data_to_json(user_data)
+	return user_data.user_data_to_json(value)
 end
 
 local function image_blur_hashes_to_json(blur_hashes: ImageBlurHashes?): JsonObject?
@@ -377,7 +378,7 @@ function module.items_to_json(items: { ItemInfo }): { JsonValue }
 end
 
 function module.build_item_query_result(items: { ItemInfo }, total_count: number, start_index: number): JsonValue
-	return base.build_query_result(module.items_to_json(items), total_count, start_index)
+	return results.build_query_result(module.items_to_json(items), total_count, start_index)
 end
 
 return module

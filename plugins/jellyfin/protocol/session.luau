@@ -11,10 +11,14 @@ local playlists = require("@lyra/playlists")
 
 local crypt = require("@harmony/crypt")
 
-local base = require("./items/common")
+local artwork = require("./items/images")
 local catalog = require("./items/catalog")
 local constants = require("../constants")
+local item_ids = require("./items/identifiers")
 local playback = require("./items/playback")
+local playlist_access = require("./playlist_access")
+local requests = require("./items/requests")
+local responses = require("./items/responses")
 
 local SERVER_ID = constants.SERVER_ID
 local AUTH_ENABLED = constants.AUTH_ENABLED
@@ -83,7 +87,7 @@ local function json_text_value(value: JsonValue): string?
 		return nil
 	end
 
-	return base.trim(tostring(value))
+	return requests.trim(tostring(value))
 end
 
 local function jellyfin_ids_input(value: JsonValue): (string | { string })?
@@ -109,7 +113,7 @@ local function parse_bearer_authorization(header_value: string): string?
 		return nil
 	end
 
-	return base.trim(token)
+	return requests.trim(token)
 end
 
 local function parse_mediabrowser_params(header_value: string): { [string]: string? }?
@@ -119,12 +123,12 @@ local function parse_mediabrowser_params(header_value: string): { [string]: stri
 	end
 
 	local values: { [string]: string? } = {}
-	for _, part: string in base.split_csv_preserving_quotes(remainder) do
+	for _, part: string in requests.split_csv_preserving_quotes(remainder) do
 		local key, raw_value = string.match(part, "^%s*([^=]+)%s*=%s*(.-)%s*$")
 		if key and raw_value then
-			local normalized_key = string.lower(base.trim(key) or "")
+			local normalized_key = string.lower(requests.trim(key) or "")
 			if normalized_key ~= "" then
-				values[normalized_key] = base.unquote(raw_value)
+				values[normalized_key] = requests.unquote(raw_value)
 			end
 		end
 	end
@@ -136,7 +140,7 @@ local function parse_mediabrowser_authorization(header_value: string): (string?,
 	if not values then
 		return nil, nil, nil
 	end
-	return base.trim(values.token), base.trim(values.userid), base.trim(values.deviceid)
+	return requests.trim(values.token), requests.trim(values.userid), requests.trim(values.deviceid)
 end
 
 local function extract_header_identity(header_value: string?): (string?, string?)
@@ -158,7 +162,7 @@ local function extract_header_device_id(header_value: string?): string?
 	end
 
 	local _, _, device_id = parse_mediabrowser_authorization(header_value)
-	return base.trim(device_id)
+	return requests.trim(device_id)
 end
 
 local function get_query_token(query: ApiQueryParams?): string?
@@ -174,7 +178,7 @@ local function get_query_token(query: ApiQueryParams?): string?
 		return nil
 	end
 
-	return base.trim(first("ApiKey")) or base.trim(first("api_key"))
+	return requests.trim(first("ApiKey")) or requests.trim(first("api_key"))
 end
 
 local function build_jellyfin_user_configuration(): JsonObject
@@ -253,12 +257,12 @@ local function get_legacy_header_token(headers: { [string]: string }?): string?
 		return nil
 	end
 
-	return base.trim(raw)
+	return requests.trim(raw)
 end
 
 function module.to_jellyfin_user(principal: UserIdentity): JsonValue
 	return {
-		Id = base.encode_jellyfin_item_id(principal.user_id),
+		Id = item_ids.encode_jellyfin_item_id(principal.user_id),
 		Name = principal.username,
 		ServerId = SERVER_ID,
 		HasPassword = AUTH_ENABLED,
@@ -272,7 +276,7 @@ end
 function module.to_jellyfin_principal_user(principal: Principal): JsonValue
 	local is_admin = module.is_admin(principal)
 	return {
-		Id = base.encode_jellyfin_item_id(principal.user_id),
+		Id = item_ids.encode_jellyfin_item_id(principal.user_id),
 		Name = principal.username,
 		ServerId = SERVER_ID,
 		HasPassword = AUTH_ENABLED,
@@ -297,13 +301,13 @@ function module.parse_authenticate_request(ctx: ApiContext?): (AuthenticateReque
 	local request = if ctx then ctx.request else nil
 	local request_json = if request then request.json else nil
 	if type(request_json) ~= "table" then
-		return nil, base.bad_request("invalid authentication request body")
+		return nil, responses.bad_request("invalid authentication request body")
 	end
 	local request_object = request_json :: JsonObject
 
 	local username = json_text_value(request_object.Username or request_object.username)
 	if not username then
-		return nil, base.bad_request("missing Username")
+		return nil, responses.bad_request("missing Username")
 	end
 
 	local password_raw = request_object.Pw
@@ -340,7 +344,7 @@ local function resolve_jellyfin_auth(ctx: ApiContext?): (ResolvedAuth?, string?)
 	local principal = resolved_auth.principal
 
 	if requested_user_id then
-		local decoded_user_id = base.decode_jellyfin_item_id(requested_user_id)
+		local decoded_user_id = item_ids.decode_jellyfin_item_id(requested_user_id)
 		if decoded_user_id ~= principal.user_id then
 			return nil, token
 		end
@@ -366,11 +370,11 @@ function module.resolve_client_identity(ctx: ApiContext?): ClientIdentity?
 	end
 
 	local function take(header_key: string, query_keys: { string }): string?
-		local header_value = base.trim(header_values[header_key])
+		local header_value = requests.trim(header_values[header_key])
 		if header_value then
 			return header_value
 		end
-		return base.parse_query_string(query, query_keys, nil)
+		return requests.parse_query_string(query, query_keys, nil)
 	end
 
 	local client = take("client", { "client", "Client" })
@@ -432,7 +436,7 @@ function module.handle_playback_report_route(ctx: ApiContext?, event_name: strin
 
 	local payload, parse_err = playback.parse_playback_report_body(ctx)
 	if not payload then
-		return parse_err or base.bad_request("invalid playback report body")
+		return parse_err or responses.bad_request("invalid playback report body")
 	end
 	if not playback.ensure_payload_user_matches(resolved_auth, payload) then
 		return module.unauthorized()
@@ -445,7 +449,7 @@ function module.handle_playback_report_route(ctx: ApiContext?, event_name: strin
 
 	local ok, report_err = playback.report_playback_event(resolved_auth, payload, event_name, request_device_id)
 	if not ok then
-		return report_err or base.bad_request("failed to report playback event")
+		return report_err or responses.bad_request("failed to report playback event")
 	end
 
 	return api.response.empty(204)
@@ -453,14 +457,14 @@ end
 
 function module.require_matching_user_scope(ctx: ApiContext?, principal: Principal): boolean
 	local params = if ctx then ctx.params else nil
-	local path_user_id = if params then base.trim(params.userId) else nil
-	if path_user_id and base.decode_jellyfin_item_id(path_user_id) ~= principal.user_id then
+	local path_user_id = if params then requests.trim(params.userId) else nil
+	if path_user_id and item_ids.decode_jellyfin_item_id(path_user_id) ~= principal.user_id then
 		return false
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local query_user_id = base.parse_query_string(query, { "userId", "UserId", "userid" }, nil)
-	if query_user_id and base.decode_jellyfin_item_id(query_user_id) ~= principal.user_id then
+	local query_user_id = requests.parse_query_string(query, { "userId", "UserId", "userid" }, nil)
+	if query_user_id and item_ids.decode_jellyfin_item_id(query_user_id) ~= principal.user_id then
 		return false
 	end
 
@@ -469,8 +473,8 @@ end
 
 function module.require_matching_user_scope_from_id_param(ctx: ApiContext?, principal: Principal): boolean
 	local params = if ctx then ctx.params else nil
-	local path_user_id = if params then base.trim(params.id) else nil
-	if path_user_id and base.decode_jellyfin_item_id(path_user_id) ~= principal.user_id then
+	local path_user_id = if params then requests.trim(params.id) else nil
+	if path_user_id and item_ids.decode_jellyfin_item_id(path_user_id) ~= principal.user_id then
 		return false
 	end
 
@@ -486,14 +490,14 @@ function module.normalize_optional_user_id(value: JsonValue): string?
 		return nil
 	end
 
-	return base.trim(tostring(value))
+	return requests.trim(tostring(value))
 end
 
 function module.parse_playlist_request_body(ctx: ApiContext?): (PlaylistRouteRequest?, ApiResponse?)
 	local request = if ctx then ctx.request else nil
 	local request_json = if request then request.json else nil
 	if type(request_json) ~= "table" then
-		return nil, base.bad_request("invalid playlist request body")
+		return nil, responses.bad_request("invalid playlist request body")
 	end
 	local request_object = request_json :: JsonObject
 
@@ -502,14 +506,14 @@ function module.parse_playlist_request_body(ctx: ApiContext?): (PlaylistRouteReq
 	local is_public = nil
 	if raw_is_public ~= nil then
 		if type(raw_is_public) ~= "boolean" then
-			return nil, base.bad_request("invalid IsPublic value")
+			return nil, responses.bad_request("invalid IsPublic value")
 		end
 		is_public = raw_is_public
 	end
 
 	return {
 		name = json_text_value(request_object.Name or request_object.name),
-		ids = base.parse_jellyfin_ids_array(jellyfin_ids_input(request_object.Ids or request_object.ids)),
+		ids = item_ids.parse_jellyfin_ids_array(jellyfin_ids_input(request_object.Ids or request_object.ids)),
 		user_id = requested_user_id,
 		is_public = is_public,
 	},
@@ -517,17 +521,17 @@ function module.parse_playlist_request_body(ctx: ApiContext?): (PlaylistRouteReq
 end
 
 function module.parse_playlist_query_track_ids(query: ApiQueryParams?): { number }
-	local raw_ids = base.parse_query_string(query, { "ids", "Ids" }, nil)
-	return base.parse_jellyfin_ids_csv(raw_ids)
+	local raw_ids = requests.parse_query_string(query, { "ids", "Ids" }, nil)
+	return item_ids.parse_jellyfin_ids_csv(raw_ids)
 end
 
 function module.parse_playlist_query_entry_ids(query: ApiQueryParams?): { number }
-	local raw_entry_ids = base.parse_query_string(query, { "entryIds", "EntryIds", "entryids" }, nil)
-	return base.parse_jellyfin_ids_csv(raw_entry_ids)
+	local raw_entry_ids = requests.parse_query_string(query, { "entryIds", "EntryIds", "entryids" }, nil)
+	return item_ids.parse_jellyfin_ids_csv(raw_entry_ids)
 end
 
 function module.ensure_user_scope_matches_principal(requested_user_id: string?, principal: Principal): boolean
-	if requested_user_id and base.decode_jellyfin_item_id(requested_user_id) ~= principal.user_id then
+	if requested_user_id and item_ids.decode_jellyfin_item_id(requested_user_id) ~= principal.user_id then
 		return false
 	end
 
@@ -538,47 +542,47 @@ function module.resolve_playlist_for_route(ctx: ApiContext?): (PlaylistInfo?, Ap
 	local params = if ctx then ctx.params else nil
 	local playlist_id = if params then params.playlistId else nil
 	if not playlist_id then
-		return nil, base.bad_request("missing playlist id")
+		return nil, responses.bad_request("missing playlist id")
 	end
 
-	local playlist = catalog.find_playlist_by_id(base.decode_jellyfin_item_id(playlist_id))
+	local playlist = playlist_access.find(item_ids.decode_jellyfin_item_id(playlist_id))
 	if not playlist then
-		return nil, base.not_found("playlist not found")
+		return nil, responses.not_found("playlist not found")
 	end
 
 	return playlist, nil
 end
 
 function module.ensure_playlist_visible(playlist: PlaylistInfo, principal: Principal): (boolean, ApiResponse?)
-	if catalog.playlist_can_view(playlist, principal.user_id) then
+	if playlist_access.can_view(playlist, principal.user_id) then
 		return true, nil
 	end
 
-	return false, base.forbidden("playlist not accessible")
+	return false, responses.forbidden("playlist not accessible")
 end
 
 function module.ensure_playlist_editable(playlist: PlaylistInfo, principal: Principal): (boolean, ApiResponse?)
-	if catalog.playlist_can_edit(playlist, principal.user_id) then
+	if playlist_access.can_edit(playlist, principal.user_id) then
 		return true, nil
 	end
 
-	return false, base.forbidden("playlist is read-only")
+	return false, responses.forbidden("playlist is read-only")
 end
 
 local function playlist_item_ids(playlist: PlaylistInfo): { string }
-	local item_ids: { string } = {}
-	for _, track_ref: PlaylistTrackLink in catalog.playlist_track_refs(playlist) do
-		local item_id = base.encode_jellyfin_item_id(track_ref.track_id)
+	local encoded_ids: { string } = {}
+	for _, track_ref: PlaylistTrackLink in playlist_access.track_refs(playlist) do
+		local item_id = item_ids.encode_jellyfin_item_id(track_ref.track_id)
 		if item_id then
-			table.insert(item_ids, item_id)
+			table.insert(encoded_ids, item_id)
 		end
 	end
 
-	return item_ids
+	return encoded_ids
 end
 
 function module.to_playlist_info(playlist: PlaylistInfo): PlaylistResponseInfo
-	local owner_id = catalog.playlist_owner_id(playlist)
+	local owner_id = playlist_access.owner_id(playlist)
 	local shares: { PlaylistUserPermission } = {}
 	if owner_id then
 		table.insert(shares, {
@@ -623,15 +627,15 @@ function module.playlist_info_to_json(info: PlaylistResponseInfo): JsonObject
 end
 
 function module.to_playlist_user_permission(playlist: PlaylistInfo, user_id: number): PlaylistUserPermission
-	local owner_id = catalog.playlist_owner_id(playlist)
+	local owner_id = playlist_access.owner_id(playlist)
 	return {
-		UserId = base.encode_jellyfin_item_id(user_id) or "",
+		UserId = item_ids.encode_jellyfin_item_id(user_id) or "",
 		CanEdit = owner_id ~= nil and owner_id == user_id,
 	}
 end
 
-local function resolve_primary_image_cover_info(item_db_id: number?): base.ResolvedCoverInfo?
-	local cover_info = base.get_cover_info(item_db_id)
+local function resolve_primary_image_cover_info(item_db_id: number?): artwork.ResolvedCoverInfo?
+	local cover_info = artwork.get_cover_info(item_db_id)
 	if not cover_info and item_db_id then
 		cover_info = catalog.resolve_genre_cover(item_db_id)
 	end
@@ -641,17 +645,17 @@ local function resolve_primary_image_cover_info(item_db_id: number?): base.Resol
 	return cover_info
 end
 
-local function respond_with_primary_image(ctx: ApiContext?, cover_info: base.ResolvedCoverInfo): ApiResponse
+local function respond_with_primary_image(ctx: ApiContext?, cover_info: artwork.ResolvedCoverInfo): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local format_query = base.parse_query_string(query, { "format" }, nil)
-	local requested_format = base.normalize_image_format(format_query)
+	local format_query = requests.parse_query_string(query, { "format" }, nil)
+	local requested_format = requests.normalize_image_format(format_query)
 	if format_query ~= nil and requested_format == nil then
-		return base.bad_request("invalid image format")
+		return responses.bad_request("invalid image format")
 	end
 
-	local requested_quality = base.parse_query_int(query, { "quality" }, nil, 0, 100)
-	local requested_max_width = base.parse_query_int(query, { "MaxWidth" }, nil, 1, nil)
-	local requested_max_height = base.parse_query_int(query, { "MaxHeight" }, nil, 1, nil)
+	local requested_quality = requests.parse_query_int(query, { "quality" }, nil, 0, 100)
+	local requested_max_width = requests.parse_query_int(query, { "MaxWidth" }, nil, 1, nil)
+	local requested_max_height = requests.parse_query_int(query, { "MaxHeight" }, nil, 1, nil)
 
 	local image_format = requested_format
 	local image_quality = requested_quality
@@ -686,7 +690,7 @@ end
 local function serve_primary_image_for_item(ctx: ApiContext?, item_db_id: number?): ApiResponse
 	local cover_info = resolve_primary_image_cover_info(item_db_id)
 	if not cover_info then
-		return base.not_found("image not found")
+		return responses.not_found("image not found")
 	end
 	return respond_with_primary_image(ctx, cover_info)
 end
@@ -700,10 +704,10 @@ function module.handle_primary_image_request(ctx: ApiContext?): ApiResponse
 	local params = if ctx then ctx.params else nil
 	local image_id = if params then params.imageId else nil
 	if not image_id then
-		return base.bad_request("missing image id")
+		return responses.bad_request("missing image id")
 	end
 
-	return serve_primary_image_for_item(ctx, base.decode_jellyfin_item_id(image_id))
+	return serve_primary_image_for_item(ctx, item_ids.decode_jellyfin_item_id(image_id))
 end
 
 function module.handle_artist_image_request(ctx: ApiContext?): ApiResponse
@@ -715,29 +719,29 @@ function module.handle_artist_image_request(ctx: ApiContext?): ApiResponse
 	local params = if ctx then ctx.params else nil
 	local name = if params then params.name else nil
 	if not name or name == "" then
-		return base.bad_request("missing artist name")
+		return responses.bad_request("missing artist name")
 	end
 
 	local image_type = if params then params.imageType else nil
 	if type(image_type) ~= "string" or string.lower(image_type) ~= "primary" then
-		return base.not_found("image not found")
+		return responses.not_found("image not found")
 	end
 
 	local raw_image_index = if params then params.imageIndex else nil
 	local image_index = if type(raw_image_index) == "string" then tonumber(raw_image_index) else nil
 	if image_index == nil or image_index ~= math.floor(image_index) or image_index < 0 then
-		return base.bad_request("invalid image index")
+		return responses.bad_request("invalid image index")
 	end
 	if image_index ~= 0 then
-		return base.not_found("image not found")
+		return responses.not_found("image not found")
 	end
 
 	local artist = catalog.find_artist_by_name(name, principal.user_id)
 	if not artist or not artist.Id then
-		return base.not_found("artist not found")
+		return responses.not_found("artist not found")
 	end
 
-	return serve_primary_image_for_item(ctx, base.decode_jellyfin_item_id(artist.Id))
+	return serve_primary_image_for_item(ctx, item_ids.decode_jellyfin_item_id(artist.Id))
 end
 
 function module.handle_person_image_request(ctx: ApiContext?): ApiResponse
@@ -749,29 +753,29 @@ function module.handle_person_image_request(ctx: ApiContext?): ApiResponse
 	local params = if ctx then ctx.params else nil
 	local name = if params then params.name else nil
 	if not name or name == "" then
-		return base.bad_request("missing person name")
+		return responses.bad_request("missing person name")
 	end
 
 	local image_type = if params then params.imageType else nil
 	if type(image_type) ~= "string" or string.lower(image_type) ~= "primary" then
-		return base.not_found("image not found")
+		return responses.not_found("image not found")
 	end
 
 	local raw_image_index = if params then params.imageIndex else nil
 	local image_index = if type(raw_image_index) == "string" then tonumber(raw_image_index) else 0
 	if image_index == nil or image_index ~= math.floor(image_index) or image_index < 0 then
-		return base.bad_request("invalid image index")
+		return responses.bad_request("invalid image index")
 	end
 	if image_index ~= 0 then
-		return base.not_found("image not found")
+		return responses.not_found("image not found")
 	end
 
 	local person = catalog.find_person_by_name(name, principal.user_id)
 	if not person or not person.Id then
-		return base.not_found("person not found")
+		return responses.not_found("person not found")
 	end
 
-	return serve_primary_image_for_item(ctx, base.decode_jellyfin_item_id(person.Id))
+	return serve_primary_image_for_item(ctx, item_ids.decode_jellyfin_item_id(person.Id))
 end
 
 local MAX_SESSION_KEY_DISPLAY_LENGTH = 64
@@ -829,7 +833,7 @@ local function parse_csv_array(raw: string?): { JsonValue }?
 	end
 	local result: { JsonValue } = {}
 	for _, part in string.split(raw, ",") do
-		local trimmed = base.trim(part)
+		local trimmed = requests.trim(part)
 		if trimmed then
 			table.insert(result, trimmed)
 		end
@@ -845,17 +849,18 @@ function module.parse_client_capabilities_query(query: ApiQueryParams?): JsonObj
 		return nil
 	end
 	local result: JsonObject = {}
-	local commands = parse_csv_array(base.parse_query_string(query, { "SupportedCommands", "supportedCommands" }, nil))
+	local commands =
+		parse_csv_array(requests.parse_query_string(query, { "SupportedCommands", "supportedCommands" }, nil))
 	if commands then
 		result.SupportedCommands = commands
 	end
 	local media_types =
-		parse_csv_array(base.parse_query_string(query, { "PlayableMediaTypes", "playableMediaTypes" }, nil))
+		parse_csv_array(requests.parse_query_string(query, { "PlayableMediaTypes", "playableMediaTypes" }, nil))
 	if media_types then
 		result.PlayableMediaTypes = media_types
 	end
 	for _, key in { "SupportsMediaControl", "SupportsPersistentIdentifier", "SupportsSync" } do
-		local raw = base.parse_query_string(query, { key }, nil)
+		local raw = requests.parse_query_string(query, { key }, nil)
 		local parsed = parse_bool_string(raw)
 		if parsed ~= nil then
 			result[key] = parsed
@@ -924,7 +929,7 @@ function module.build_session_info(
 ): JsonObject
 	return {
 		Id = session_id,
-		UserId = base.encode_jellyfin_item_id(principal.user_id),
+		UserId = item_ids.encode_jellyfin_item_id(principal.user_id),
 		UserName = principal.username,
 		Client = identity.client,
 		DeviceName = identity.device,
@@ -948,14 +953,14 @@ end
 
 function module.devices_info_response(ctx: ApiContext?, user_id: number): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local requested_device_id = base.parse_query_string(query, { "id", "Id" }, nil)
+	local requested_device_id = requests.parse_query_string(query, { "id", "Id" }, nil)
 
 	local ok, connections = pcall(playback_sessions.list_connections, user_id)
 	if not ok or type(connections) ~= "table" then
 		return api.response.empty(500)
 	end
 
-	local user_encoded_id = base.encode_jellyfin_item_id(user_id)
+	local user_encoded_id = item_ids.encode_jellyfin_item_id(user_id)
 	local activity_iso = os.date("!%Y-%m-%dT%H:%M:%SZ", os.time())
 
 	local function build_entry(conn): JsonObject
@@ -975,7 +980,7 @@ function module.devices_info_response(ctx: ApiContext?, user_id: number): ApiRes
 				return api.response.json(200, build_entry(conn))
 			end
 		end
-		return base.not_found("device not found")
+		return responses.not_found("device not found")
 	end
 
 	local items: { JsonValue } = {}
@@ -1002,17 +1007,17 @@ function module.handle_item_file_stream_request(ctx: ApiContext?): ApiResponse
 	local params = if ctx then ctx.params else nil
 	local item_id = if params then params.itemId else nil
 	if not item_id then
-		return base.bad_request("missing item id")
+		return responses.bad_request("missing item id")
 	end
 
-	local track = playback.resolve_track_for_playback(base.decode_jellyfin_item_id(item_id))
+	local track = playback.resolve_track_for_playback(item_ids.decode_jellyfin_item_id(item_id))
 	if not track then
-		return base.not_found("item not found")
+		return responses.not_found("item not found")
 	end
 
 	local track_id = track.db_id
 	if track_id == nil or track_id <= 0 then
-		return base.not_found("item not found")
+		return responses.not_found("item not found")
 	end
 
 	return api.response.stream_track(track_id)
