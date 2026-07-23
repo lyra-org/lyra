@@ -203,7 +203,7 @@ pub(crate) async fn get_playlist_mix(
     let db_id = resolve_seed_id(&id, "playlist").await?;
     {
         let db = STATE.db.read().await;
-        if !routes::playlist_accessible_to_principal(&*db, &principal, db_id)? {
+        if !crate::services::auth::access::playlist_accessible(&*db, &principal, db_id)? {
             return Err(AppError::not_found(format!("playlist not found: {id}")));
         }
     }
@@ -249,7 +249,7 @@ async fn resolve_accessible_seed_id(
     let db = &*STATE.db.read().await;
     let db_id = db::lookup::find_node_id_by_id(db, id)?
         .ok_or_else(|| AppError::not_found(format!("{label} not found: {id}")))?;
-    routes::require_entity_accessible(db, principal, db_id, || {
+    crate::services::auth::access::require_entity_accessible(db, principal, db_id, || {
         AppError::not_found(format!("{label} not found: {id}"))
     })?;
     Ok(db_id)
@@ -265,7 +265,7 @@ async fn filter_accessible_tracks(
         let Some(track_db_id) = track.db_id.clone().map(agdb::DbId::from) else {
             continue;
         };
-        if routes::entity_accessible_to_principal(db, principal, track_db_id)? {
+        if crate::services::auth::access::entity_accessible(db, principal, track_db_id)? {
             filtered.push(track);
         }
     }

@@ -278,7 +278,11 @@ async fn get_playbacks(
     let only_active = query.active.unwrap_or(false);
 
     for playback in playbacks::list_playbacks(&db, principal.user_db_id)? {
-        if !routes::entity_accessible_to_principal(&*db, &principal, playback.track_db_id)? {
+        if !crate::services::auth::access::entity_accessible(
+            &*db,
+            &principal,
+            playback.track_db_id,
+        )? {
             continue;
         }
         if only_active
@@ -320,7 +324,7 @@ async fn start_playback(
     let mut db = STATE.db.write().await;
     let track_db_id = db::lookup::find_node_id_by_id(&*db, &request.track_id)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {}", request.track_id)))?;
-    routes::require_entity_accessible(&*db, principal, track_db_id, || {
+    crate::services::auth::access::require_entity_accessible(&*db, principal, track_db_id, || {
         AppError::not_found(format!("Track not found: {}", request.track_id))
     })?;
 
@@ -413,9 +417,12 @@ async fn report_playback_progress(
         .ok_or_else(|| AppError::not_found(format!("not found: {playback_session_id}")))?;
     let track_db_id = db::playback_sessions::get_track_id(&db, session_db_id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {playback_session_id}")))?;
-    routes::require_entity_accessible(&*db, &principal, track_db_id, || {
-        AppError::not_found(format!("not found: {playback_session_id}"))
-    })?;
+    crate::services::auth::access::require_entity_accessible(
+        &*db,
+        &principal,
+        track_db_id,
+        || AppError::not_found(format!("not found: {playback_session_id}")),
+    )?;
     let update = playbacks::report_playback_with_cleanup(
         &mut db,
         playbacks::ReportPlaybackRequest {
@@ -508,7 +515,11 @@ async fn get_active_sessions(
 
     let mut response = Vec::new();
     for playback in playbacks::list_playbacks(&db, principal.user_db_id)? {
-        if !routes::entity_accessible_to_principal(&*db, &principal, playback.track_db_id)? {
+        if !crate::services::auth::access::entity_accessible(
+            &*db,
+            &principal,
+            playback.track_db_id,
+        )? {
             continue;
         }
         if !playback_is_recently_active(

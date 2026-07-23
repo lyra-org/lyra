@@ -169,9 +169,12 @@ async fn require_authenticated_track_access(
     let principal = require_authenticated(headers).await?;
     {
         let db = STATE.db.read().await;
-        crate::routes::require_entity_accessible(&*db, &principal, track_db_id, || {
-            AppError::not_found(format!("Track not found: {}", track_db_id.0))
-        })?;
+        crate::services::auth::access::require_entity_accessible(
+            &*db,
+            &principal,
+            track_db_id,
+            || AppError::not_found(format!("Track not found: {}", track_db_id.0)),
+        )?;
     }
     Ok(principal)
 }

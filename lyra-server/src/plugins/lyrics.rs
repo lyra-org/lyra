@@ -354,7 +354,7 @@ fn get_callback(
         }
 
         let db = STATE.db.read().await;
-        if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
+        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
             return Ok(luau::Value::Nil);
@@ -402,7 +402,7 @@ fn upsert_callback(
         let track_db_id = require_positive_id(track_id, "track_id")?;
 
         let mut db = STATE.db.write().await;
-        if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
+        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
             return Err(crate::plugins::runtime_error("track not found"));
@@ -439,7 +439,7 @@ fn upsert_user_override_callback(
                 .map_err(crate::plugins::runtime_error)?;
 
         let mut db = STATE.db.write().await;
-        if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
+        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
             return Err(crate::plugins::runtime_error("track not found"));
@@ -459,7 +459,7 @@ fn delete_user_override_for_track_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = require_positive_id(track_id, "track_id")?;
         let mut db = STATE.db.write().await;
-        if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
+        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
             return Ok(luau::Value::Boolean(false));
@@ -479,7 +479,7 @@ fn delete_for_track_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = require_positive_id(track_id, "track_id")?;
         let mut db = STATE.db.write().await;
-        if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
+        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
             return Ok(());
@@ -503,7 +503,7 @@ fn has_callback(
         }
 
         let db = STATE.db.read().await;
-        if !crate::routes::entity_accessible_to_principal(&db, &principal, track_db_id)
+        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
             return Ok(luau::Value::Boolean(false));
@@ -528,7 +528,7 @@ fn has_many_callback(
 
         for track_id in track_ids {
             let has_lyrics =
-                if !crate::routes::entity_accessible_to_principal(&db, &principal, track_id)
+                if !crate::services::auth::access::entity_accessible(&db, &principal, track_id)
                     .map_err(crate::plugins::runtime_error)?
                 {
                     false

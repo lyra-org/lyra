@@ -739,8 +739,11 @@ pub(crate) async fn list_artist_responses(
     if sort.is_empty() {
         sort = default_artist_sort();
     }
-    let library_scope =
-        super::resolve_optional_library_filter(db, principal, library_id.as_deref())?;
+    let library_scope = crate::services::auth::access::resolve_optional_library_filter(
+        db,
+        principal,
+        library_id.as_deref(),
+    )?;
 
     let (artists, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
         let artists = super::load_snapshot_items(

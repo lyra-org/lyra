@@ -48,7 +48,6 @@ use crate::{
         TrackResponse,
     },
     routes::{
-        self,
         AppError,
         deserialize_inc,
     },
@@ -268,7 +267,7 @@ fn build_track_response(
     position: u64,
     inc: PlaylistInc,
 ) -> anyhow::Result<PlaylistTrackResponse> {
-    if !routes::entity_accessible_to_principal(db, principal, track_db_id)? {
+    if !crate::services::auth::access::entity_accessible(db, principal, track_db_id)? {
         return Ok(PlaylistTrackResponse {
             entry_id,
             track: TrackResponse::unavailable(track.id),
@@ -394,7 +393,7 @@ async fn get_playlist(
 
     // Check access: owner or public
     let owner_db_id = playlists::get_owner(db, QueryId::Id(playlist_db_id))?;
-    if !routes::playlist_accessible_to_principal(db, &principal, playlist_db_id)? {
+    if !crate::services::auth::access::playlist_accessible(db, &principal, playlist_db_id)? {
         return Err(AppError::not_found(format!("Playlist not found: {}", id)));
     }
 
@@ -493,9 +492,12 @@ async fn add_playlist_tracks(
         for track_id in request.track_ids {
             let track_db_id = db::lookup::find_node_id_by_id(&*db, &track_id)?
                 .ok_or_else(|| AppError::not_found(format!("track not found: {track_id}")))?;
-            routes::require_entity_accessible(&*db, &principal, track_db_id, || {
-                AppError::not_found(format!("track not found: {track_id}"))
-            })?;
+            crate::services::auth::access::require_entity_accessible(
+                &*db,
+                &principal,
+                track_db_id,
+                || AppError::not_found(format!("track not found: {track_id}")),
+            )?;
             ids.push(QueryId::Id(track_db_id));
         }
         ids

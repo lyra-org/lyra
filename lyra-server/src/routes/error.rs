@@ -30,6 +30,7 @@ use axum::{
 use crate::services::{
     auth::{
         AuthError,
+        access::AccessError,
         api_keys::ApiKeyServiceError,
     },
     entries::EntryServiceError,
@@ -157,6 +158,16 @@ impl From<AuthError> for AppError {
             AuthError::NotFound(msg) => Self::not_found(msg),
             AuthError::RateLimited(retry_after) => Self::too_many_requests(retry_after),
             AuthError::Internal(err) => err.into(),
+        }
+    }
+}
+
+impl From<AccessError> for AppError {
+    fn from(err: AccessError) -> Self {
+        match err {
+            AccessError::InvalidRequest(message) => Self::bad_request(message),
+            AccessError::LibraryNotFound(id) => Self::not_found(format!("library not found: {id}")),
+            AccessError::Internal(err) => err.into(),
         }
     }
 }

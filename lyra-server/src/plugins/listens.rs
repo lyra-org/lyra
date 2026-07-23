@@ -221,7 +221,7 @@ async fn resolve_stats(
         let mut accessible_track_ids = Vec::new();
         for track_id in track_ids {
             counts.insert(*track_id, 0);
-            if crate::routes::entity_accessible_to_principal(&db, principal, *track_id)
+            if crate::services::auth::access::entity_accessible(&db, principal, *track_id)
                 .map_err(crate::plugins::runtime_error)?
             {
                 accessible_track_ids.push(*track_id);
@@ -253,7 +253,7 @@ async fn resolve_stats(
 
     for track_id in track_ids {
         counts.insert(*track_id, 0);
-        if !crate::routes::entity_accessible_to_principal(&db, principal, *track_id)
+        if !crate::services::auth::access::entity_accessible(&db, principal, *track_id)
             .map_err(crate::plugins::runtime_error)?
         {
             continue;
@@ -266,7 +266,7 @@ async fn resolve_stats(
         .map_err(crate::plugins::runtime_error)?;
         let mut accessible_merged_ids = Vec::new();
         for merged_id in merged_ids {
-            if crate::routes::entity_accessible_to_principal(&db, principal, merged_id)
+            if crate::services::auth::access::entity_accessible(&db, principal, merged_id)
                 .map_err(crate::plugins::runtime_error)?
             {
                 merged_unique_ids.insert(merged_id);

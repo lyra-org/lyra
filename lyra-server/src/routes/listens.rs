@@ -403,7 +403,7 @@ async fn resolve_accessible_track_filter(
     let db = STATE.db.read().await;
     let track_db_id = db::lookup::find_node_id_by_id(&*db, track_id)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {}", track_id)))?;
-    routes::require_entity_accessible(&*db, principal, track_db_id, || {
+    crate::services::auth::access::require_entity_accessible(&*db, principal, track_db_id, || {
         AppError::not_found(format!("Track not found: {}", track_id))
     })?;
 
@@ -419,7 +419,7 @@ async fn resolve_accessible_track_filter(
 
     let mut accessible_track_ids = Vec::with_capacity(stat_track_ids.len());
     for id in stat_track_ids {
-        if routes::entity_accessible_to_principal(&*db, principal, id)? {
+        if crate::services::auth::access::entity_accessible(&*db, principal, id)? {
             accessible_track_ids.push(id);
         }
     }
@@ -460,7 +460,8 @@ async fn rows_for_user(
     let summaries = db::listens::list_summaries_for_user(&db, user_db_id)?;
     let mut rows = Vec::with_capacity(summaries.len());
     for summary in summaries {
-        if !routes::entity_accessible_to_principal(&*db, principal, summary.track_db_id)? {
+        if !crate::services::auth::access::entity_accessible(&*db, principal, summary.track_db_id)?
+        {
             continue;
         }
         rows.push(ListenRow {
@@ -518,7 +519,11 @@ async fn rows_for_managed_listens(
     if let Some(track_id) = query.track_id.as_deref() {
         let mut rows_by_user: HashMap<String, ListenRow> = HashMap::new();
         for summary in summaries {
-            if !routes::entity_accessible_to_principal(&*db, principal, summary.track_db_id)? {
+            if !crate::services::auth::access::entity_accessible(
+                &*db,
+                principal,
+                summary.track_db_id,
+            )? {
                 continue;
             }
             let entry = rows_by_user
@@ -541,7 +546,8 @@ async fn rows_for_managed_listens(
 
     let mut rows = Vec::with_capacity(summaries.len());
     for summary in summaries {
-        if !routes::entity_accessible_to_principal(&*db, principal, summary.track_db_id)? {
+        if !crate::services::auth::access::entity_accessible(&*db, principal, summary.track_db_id)?
+        {
             continue;
         }
         rows.push(ListenRow {
@@ -585,7 +591,7 @@ async fn hydrate_listen_rows(
         let Some(track_db_id) = track_db_ids.get(&row.track_id).copied() else {
             continue;
         };
-        if routes::entity_accessible_to_principal(&db, principal, track_db_id)? {
+        if crate::services::auth::access::entity_accessible(&db, principal, track_db_id)? {
             hydrated.push(row);
         }
     }

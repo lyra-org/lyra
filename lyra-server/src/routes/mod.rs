@@ -48,10 +48,7 @@ use time::{
 
 use crate::{
     db,
-    services::{
-        auth::Principal,
-        entities::ResolvedCreditedArtist,
-    },
+    services::entities::ResolvedCreditedArtist,
 };
 use agdb::DbId;
 
@@ -293,87 +290,6 @@ pub(crate) fn parse_text_query(query: Option<String>) -> Option<String> {
             Some(value.to_string())
         }
     })
-}
-
-pub(crate) fn entity_accessible_to_principal(
-    db: &impl db::DbAccess,
-    principal: &Principal,
-    entity_db_id: agdb::DbId,
-) -> anyhow::Result<bool> {
-    if principal.permissions.contains(&db::Permission::Admin) {
-        return Ok(true);
-    }
-    Ok(db::libraries::get_for_entity(db, entity_db_id)?
-        .into_iter()
-        .any(|library| principal.accessible_library_ids.contains(&library.id)))
-}
-
-pub(crate) fn require_entity_accessible(
-    db: &impl db::DbAccess,
-    principal: &Principal,
-    entity_db_id: agdb::DbId,
-    not_found: impl FnOnce() -> AppError,
-) -> Result<(), AppError> {
-    if entity_accessible_to_principal(db, principal, entity_db_id)? {
-        Ok(())
-    } else {
-        Err(not_found())
-    }
-}
-
-pub(crate) fn resolve_accessible_library_db_id(
-    db: &impl db::DbAccess,
-    principal: &Principal,
-    library_id: &str,
-) -> Result<agdb::DbId, AppError> {
-    if principal.permissions.contains(&db::Permission::Admin) {
-        if !principal.accessible_library_ids.contains(library_id) {
-            return Err(AppError::not_found(format!(
-                "library not found: {library_id}"
-            )));
-        }
-        let library_db_id = db::lookup::find_node_id_by_id(db, library_id)?
-            .ok_or_else(|| AppError::not_found(format!("library not found: {library_id}")))?;
-        db::libraries::get_by_id(db, library_db_id)?
-            .ok_or_else(|| AppError::not_found(format!("library not found: {library_id}")))?;
-        return Ok(library_db_id);
-    }
-
-    db::libraries::find_accessible_node_id_by_id(db, principal, library_id)?
-        .ok_or_else(|| AppError::not_found(format!("library not found: {library_id}")))
-}
-
-pub(crate) fn resolve_optional_library_filter(
-    db: &impl db::DbAccess,
-    principal: &Principal,
-    library_id: Option<&str>,
-) -> Result<Option<agdb::DbId>, AppError> {
-    let Some(library_id) = library_id else {
-        return Ok(None);
-    };
-    let library_id = library_id.trim();
-    if library_id.is_empty() {
-        return Err(AppError::bad_request("library_id cannot be empty"));
-    }
-
-    resolve_accessible_library_db_id(db, principal, library_id).map(Some)
-}
-
-pub(crate) fn playlist_accessible_to_principal(
-    db: &impl db::DbAccess,
-    principal: &Principal,
-    playlist_db_id: agdb::DbId,
-) -> anyhow::Result<bool> {
-    if principal.permissions.contains(&db::Permission::Admin) {
-        return Ok(true);
-    }
-    let Some(playlist) = db::playlists::get_by_id(db, playlist_db_id)? else {
-        return Ok(false);
-    };
-    if playlist.is_public.unwrap_or(false) {
-        return Ok(true);
-    }
-    Ok(db::playlists::get_owner(db, playlist_db_id)? == Some(principal.user_db_id))
 }
 
 #[cfg(test)]

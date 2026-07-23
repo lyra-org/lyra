@@ -160,6 +160,44 @@ mod tests {
     }
 
     #[test]
+    fn plugin_sources_do_not_import_route_owned_access_policy() {
+        fn visit(path: &Path, files: &mut Vec<PathBuf>) {
+            if path.is_dir() {
+                for entry in std::fs::read_dir(path).expect("read plugin source directory") {
+                    visit(&entry.expect("read plugin source entry").path(), files);
+                }
+                return;
+            }
+
+            if path.extension().is_some_and(|ext| ext == "rs") {
+                files.push(path.to_path_buf());
+            }
+        }
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/plugins");
+        let mut files = Vec::new();
+        visit(&root, &mut files);
+
+        let route_prefix = format!("{}::", ["crate", "routes"].join("::"));
+        for path in files {
+            let source = std::fs::read_to_string(&path).expect("read plugin source");
+            for helper_name in [
+                "entity_accessible",
+                "require_entity_accessible",
+                "playlist_accessible",
+                "resolve_accessible_library",
+            ] {
+                let route_owned_helper = format!("{route_prefix}{helper_name}");
+                assert!(
+                    !source.contains(&route_owned_helper),
+                    "{} imports route-owned access policy; use crate::services::auth::access",
+                    path.strip_prefix(&root).unwrap_or(&path).display()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn plugin_modules_do_not_use_context_labels() {
         fn visit(path: &Path, files: &mut Vec<PathBuf>) {
             if path.is_dir() {

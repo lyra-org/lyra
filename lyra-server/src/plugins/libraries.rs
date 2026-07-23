@@ -41,6 +41,11 @@ use crate::plugins::db::{
     ResolveId,
 };
 use crate::services::auth::Principal;
+use crate::services::auth::access::{
+    self,
+    LibraryFull,
+    LibraryView,
+};
 
 #[derive(Clone, Default)]
 pub(crate) struct LibrariesModuleStore {
@@ -120,13 +125,13 @@ fn list_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let libraries: Vec<LibraryRecord> = match (principal.as_ref(), id) {
-            (Some(principal), None) => db::libraries::accessible(&db, principal)
+            (Some(principal), None) => access::libraries(&db, principal)
                 .map_err(crate::plugins::runtime_error)?
                 .into_iter()
                 .map(LibraryRecord::from)
                 .collect::<Vec<_>>(),
             (None, None) => {
-                db::libraries::for_system(&db, &crate::services::libraries::system_context())
+                access::system_libraries(&db, &crate::services::libraries::system_context())
                     .map_err(crate::plugins::runtime_error)?
                     .into_iter()
                     .map(LibraryRecord::from)
@@ -138,14 +143,12 @@ fn list_callback(
                     .map_err(crate::plugins::runtime_error)?
                     .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))?;
                 match (principal, query_id) {
-                    (Some(principal), QueryId::Id(id)) => {
-                        db::libraries::accessible_by_id(&db, principal, id)
-                            .map_err(crate::plugins::runtime_error)?
-                            .into_iter()
-                            .map(LibraryRecord::from)
-                            .collect::<Vec<_>>()
-                    }
-                    (None, QueryId::Id(id)) => db::libraries::for_system_by_id(
+                    (Some(principal), QueryId::Id(id)) => access::library_by_id(&db, principal, id)
+                        .map_err(crate::plugins::runtime_error)?
+                        .into_iter()
+                        .map(LibraryRecord::from)
+                        .collect::<Vec<_>>(),
+                    (None, QueryId::Id(id)) => access::system_library_by_id(
                         &db,
                         &crate::services::libraries::system_context(),
                         id,
@@ -155,13 +158,13 @@ fn list_callback(
                     .map(LibraryRecord::from)
                     .collect::<Vec<_>>(),
                     (Some(principal), QueryId::Alias(alias)) => {
-                        db::libraries::accessible_by_alias(&db, principal, alias.as_str())
+                        access::libraries_by_alias(&db, principal, alias.as_str())
                             .map_err(crate::plugins::runtime_error)?
                             .into_iter()
                             .map(LibraryRecord::from)
                             .collect::<Vec<_>>()
                     }
-                    (None, QueryId::Alias(alias)) => db::libraries::for_system_by_alias(
+                    (None, QueryId::Alias(alias)) => access::system_libraries_by_alias(
                         &db,
                         &crate::services::libraries::system_context(),
                         alias.as_str(),
@@ -193,13 +196,13 @@ fn get_for_entity_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let libraries = if let Some(principal) = principal {
-            db::libraries::accessible_for_entity(&db, &principal, DbId(entity_id))
+            access::libraries_for_entity(&db, &principal, DbId(entity_id))
                 .map_err(crate::plugins::runtime_error)?
                 .into_iter()
                 .map(LibraryRecord::from)
                 .collect::<Vec<_>>()
         } else {
-            db::libraries::for_system_for_entity(
+            access::system_libraries_for_entity(
                 &db,
                 &crate::services::libraries::system_context(),
                 DbId(entity_id),
@@ -230,13 +233,13 @@ fn get_for_entities_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
         let libraries: HashMap<DbId, LibraryRecord> = if let Some(principal) = principal {
-            db::libraries::accessible_for_entities(&db, &principal, &ids)
+            access::libraries_for_entities(&db, &principal, &ids)
                 .map_err(crate::plugins::runtime_error)?
                 .into_iter()
                 .map(|(id, library)| (id, LibraryRecord::from(library)))
                 .collect::<HashMap<_, _>>()
         } else {
-            db::libraries::for_system_for_entities(
+            access::system_libraries_for_entities(
                 &db,
                 &crate::services::libraries::system_context(),
                 &ids,
@@ -283,8 +286,8 @@ impl From<db::libraries::Library> for LibraryRecord {
     }
 }
 
-impl From<db::libraries::LibraryView> for LibraryRecord {
-    fn from(library: db::libraries::LibraryView) -> Self {
+impl From<LibraryView> for LibraryRecord {
+    fn from(library: LibraryView) -> Self {
         Self {
             db_id: None,
             id: library.id,
@@ -296,8 +299,8 @@ impl From<db::libraries::LibraryView> for LibraryRecord {
     }
 }
 
-impl From<db::libraries::LibraryFull> for LibraryRecord {
-    fn from(library: db::libraries::LibraryFull) -> Self {
+impl From<LibraryFull> for LibraryRecord {
+    fn from(library: LibraryFull) -> Self {
         Self {
             db_id: library.db_id.map(|id| id.0),
             id: library.id,

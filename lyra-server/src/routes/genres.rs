@@ -201,7 +201,7 @@ fn genre_accessible_to_principal(
     genre_db_id: DbId,
 ) -> anyhow::Result<bool> {
     for release_db_id in genres::get_releases(db, genre_db_id)? {
-        if super::entity_accessible_to_principal(db, principal, release_db_id)? {
+        if crate::services::auth::access::entity_accessible(db, principal, release_db_id)? {
             return Ok(true);
         }
     }
@@ -481,8 +481,11 @@ async fn list_genres(
         .values(sort_by.as_deref())
         .field(sort_order.as_deref())
         .finish();
-    let library_scope =
-        super::resolve_optional_library_filter(db, &principal, library_id.as_deref())?;
+    let library_scope = crate::services::auth::access::resolve_optional_library_filter(
+        db,
+        &principal,
+        library_id.as_deref(),
+    )?;
     let mut sort = parse_genre_sort_specs(sort_by, sort_order)?;
     if sort.is_empty() {
         sort = default_genre_sort();

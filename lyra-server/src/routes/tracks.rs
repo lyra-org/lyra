@@ -274,7 +274,7 @@ fn resolve_optional_release_filter(
         .ok_or_else(|| AppError::not_found(format!("Release not found: {release_id}")))?;
     db::releases::get_by_id(db, release_db_id)?
         .ok_or_else(|| AppError::not_found(format!("Release not found: {release_id}")))?;
-    super::require_entity_accessible(db, principal, release_db_id, || {
+    crate::services::auth::access::require_entity_accessible(db, principal, release_db_id, || {
         AppError::not_found(format!("Release not found: {release_id}"))
     })?;
     Ok(Some(release_db_id))
@@ -501,8 +501,11 @@ pub(crate) async fn list_track_responses(
         .values(sort_by.as_deref())
         .field(sort_order.as_deref())
         .finish();
-    let library_scope =
-        super::resolve_optional_library_filter(db, principal, library_id.as_deref())?;
+    let library_scope = crate::services::auth::access::resolve_optional_library_filter(
+        db,
+        principal,
+        library_id.as_deref(),
+    )?;
     let release_scope = resolve_optional_release_filter(db, principal, release_id.as_deref())?;
     let mut sort = parse_track_sort_specs(sort_by, sort_order, release_scope.is_some())?;
     if sort.is_empty() {
@@ -513,7 +516,9 @@ pub(crate) async fn list_track_responses(
             db,
             &page.item_ids,
             db::tracks::get_by_id,
-            |db, track_db_id| super::entity_accessible_to_principal(db, principal, track_db_id),
+            |db, track_db_id| {
+                crate::services::auth::access::entity_accessible(db, principal, track_db_id)
+            },
         )?;
         (tracks, page.next_cursor)
     } else {
@@ -532,7 +537,8 @@ pub(crate) async fn list_track_responses(
                     let Some(track_db_id) = track.db_id.clone().map(agdb::DbId::from) else {
                         continue;
                     };
-                    if super::entity_accessible_to_principal(db, principal, track_db_id)? {
+                    if crate::services::auth::access::entity_accessible(db, principal, track_db_id)?
+                    {
                         accessible_tracks.push(track);
                     }
                 }
@@ -571,7 +577,7 @@ pub(crate) async fn get_track_response(
     let includes = parse_inc(inc)?;
     let track_db_id = db::lookup::find_node_id_by_id(db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-    super::require_entity_accessible(db, principal, track_db_id, || {
+    crate::services::auth::access::require_entity_accessible(db, principal, track_db_id, || {
         AppError::not_found(format!("Track not found: {id}"))
     })?;
     let detail = track_service::get_details(db, track_db_id, includes.service)?
@@ -700,9 +706,12 @@ async fn create_track_playback_url(
         let db = &*STATE.db.read().await;
         let track_db_id = db::lookup::find_node_id_by_id(db, &id)?
             .ok_or_else(|| AppError::not_found(format!("Track not found: {id}")))?;
-        super::require_entity_accessible(db, &principal, track_db_id, || {
-            AppError::not_found(format!("Track not found: {id}"))
-        })?;
+        crate::services::auth::access::require_entity_accessible(
+            db,
+            &principal,
+            track_db_id,
+            || AppError::not_found(format!("Track not found: {id}")),
+        )?;
         track_db_id
     };
 
@@ -897,7 +906,12 @@ async fn get_track_lyrics(
     let not_found = || AppError::not_found(format!("No lyrics for track: {id}"));
 
     let track_db_id = db::lookup::find_node_id_by_id(db, &id)?.ok_or_else(not_found)?;
-    super::require_entity_accessible(db, &principal, track_db_id, not_found)?;
+    crate::services::auth::access::require_entity_accessible(
+        db,
+        &principal,
+        track_db_id,
+        not_found,
+    )?;
     let track = db::tracks::get_by_id(db, track_db_id)?.ok_or_else(not_found)?;
 
     let format = query
@@ -969,9 +983,12 @@ async fn put_track_lyrics(
     let mut db = STATE.db.write().await;
     let track_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {id}")))?;
-    super::require_entity_accessible(&*db, &principal, track_db_id, || {
-        AppError::not_found(format!("Track not found: {id}"))
-    })?;
+    crate::services::auth::access::require_entity_accessible(
+        &*db,
+        &principal,
+        track_db_id,
+        || AppError::not_found(format!("Track not found: {id}")),
+    )?;
     let detail = lyrics_service::upsert_user_lyrics(&mut db, &id, input)
         .map_err(lyrics_upload_error_to_app_error)?;
 
@@ -986,9 +1003,12 @@ async fn delete_track_lyrics(
     let mut db = STATE.db.write().await;
     let track_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {id}")))?;
-    super::require_entity_accessible(&*db, &principal, track_db_id, || {
-        AppError::not_found(format!("Track not found: {id}"))
-    })?;
+    crate::services::auth::access::require_entity_accessible(
+        &*db,
+        &principal,
+        track_db_id,
+        || AppError::not_found(format!("Track not found: {id}")),
+    )?;
     lyrics_service::delete_user_lyrics_for_track(&mut db, &id)
         .map_err(lyrics_upload_error_to_app_error)?;
     Ok(StatusCode::NO_CONTENT)
@@ -1004,9 +1024,12 @@ async fn refresh_track_lyrics(
         let db = &*STATE.db.read().await;
         let track_db_id = db::lookup::find_node_id_by_id(db, &id)?
             .ok_or_else(|| AppError::not_found(format!("No track: {id}")))?;
-        super::require_entity_accessible(db, &principal, track_db_id, || {
-            AppError::not_found(format!("No track: {id}"))
-        })?;
+        crate::services::auth::access::require_entity_accessible(
+            db,
+            &principal,
+            track_db_id,
+            || AppError::not_found(format!("No track: {id}")),
+        )?;
         track_db_id
     };
 

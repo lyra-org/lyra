@@ -46,75 +46,6 @@ pub(crate) struct Library {
     pub(crate) language: Option<String>,
     pub(crate) country: Option<String>,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LibraryView {
-    pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) language: Option<String>,
-    pub(crate) country: Option<String>,
-}
-
-impl From<Library> for LibraryView {
-    fn from(library: Library) -> Self {
-        Self {
-            id: library.id,
-            name: library.name,
-            language: library.language,
-            country: library.country,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct LibraryFull {
-    pub(crate) db_id: Option<DbId>,
-    pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) language: Option<String>,
-    pub(crate) country: Option<String>,
-    pub(crate) path: PathBuf,
-}
-
-impl From<Library> for LibraryFull {
-    fn from(library: Library) -> Self {
-        Self {
-            db_id: library.db_id,
-            id: library.id,
-            name: library.name,
-            language: library.language,
-            country: library.country,
-            path: library.path,
-        }
-    }
-}
-
-fn principal_can_access(principal: &crate::services::auth::Principal, library: &Library) -> bool {
-    principal.accessible_library_ids.contains(&library.id)
-}
-
-fn filter_accessible_libraries(
-    libraries: impl IntoIterator<Item = Library>,
-    principal: &crate::services::auth::Principal,
-) -> Vec<LibraryView> {
-    libraries
-        .into_iter()
-        .filter(|library| principal_can_access(principal, library))
-        .map(LibraryView::from)
-        .collect()
-}
-pub(crate) fn accessible(
-    db: &impl super::DbAccess,
-    principal: &crate::services::auth::Principal,
-) -> anyhow::Result<Vec<LibraryView>> {
-    Ok(filter_accessible_libraries(get(db)?, principal))
-}
-pub(crate) fn for_system(
-    db: &impl super::DbAccess,
-    _ctx: &crate::services::SystemContext,
-) -> anyhow::Result<Vec<LibraryFull>> {
-    Ok(get(db)?.into_iter().map(LibraryFull::from).collect())
-}
-
 pub(crate) fn get(db: &impl super::DbAccess) -> anyhow::Result<Vec<Library>> {
     let libraries: Vec<Library> = db
         .exec(
@@ -262,28 +193,11 @@ pub(crate) fn get_by_id(
 ) -> anyhow::Result<Option<Library>> {
     super::graph::fetch_typed_by_id(db, library_db_id, "Library")
 }
-pub(crate) fn accessible_by_id(
-    db: &impl super::DbAccess,
-    principal: &crate::services::auth::Principal,
-    library_db_id: DbId,
-) -> anyhow::Result<Option<LibraryView>> {
-    Ok(get_by_id(db, library_db_id)?
-        .filter(|library| principal_can_access(principal, library))
-        .map(LibraryView::from))
-}
-pub(crate) fn for_system_by_id(
-    db: &impl super::DbAccess,
-    _ctx: &crate::services::SystemContext,
-    library_db_id: DbId,
-) -> anyhow::Result<Option<LibraryFull>> {
-    Ok(get_by_id(db, library_db_id)?.map(LibraryFull::from))
-}
-
 /// All None branches do equal agdb work; see `mod benches` for parity. Admins
-/// bypass via the route gate, never reach this.
-pub(crate) fn find_accessible_node_id_by_id(
+/// bypass via the service access policy and never reach this.
+pub(crate) fn find_node_id_accessible_to_user(
     db: &impl super::DbAccess,
-    principal: &crate::services::auth::Principal,
+    user_db_id: DbId,
     public_id: &str,
 ) -> anyhow::Result<Option<DbId>> {
     // Padding queries are unconditional — gating on `found` would leak.
@@ -291,7 +205,7 @@ pub(crate) fn find_accessible_node_id_by_id(
         QueryBuilder::select()
             .values(vec![DbValue::from("db_element_id"), DbValue::from("id")])
             .search()
-            .from(principal.user_db_id)
+            .from(user_db_id)
             .where_()
             .distance(CountComparison::Equal(2))
             .and()
@@ -338,27 +252,6 @@ pub(crate) fn get_by_alias(db: &impl super::DbAccess, alias: &str) -> anyhow::Re
 
     Ok(libraries)
 }
-pub(crate) fn accessible_by_alias(
-    db: &impl super::DbAccess,
-    principal: &crate::services::auth::Principal,
-    alias: &str,
-) -> anyhow::Result<Vec<LibraryView>> {
-    Ok(filter_accessible_libraries(
-        get_by_alias(db, alias)?,
-        principal,
-    ))
-}
-pub(crate) fn for_system_by_alias(
-    db: &impl super::DbAccess,
-    _ctx: &crate::services::SystemContext,
-    alias: &str,
-) -> anyhow::Result<Vec<LibraryFull>> {
-    Ok(get_by_alias(db, alias)?
-        .into_iter()
-        .map(LibraryFull::from)
-        .collect())
-}
-
 pub(crate) fn get_for_entity(
     db: &impl super::DbAccess,
     node_id: DbId,
@@ -378,27 +271,6 @@ pub(crate) fn get_for_entity(
         .try_into()?;
     Ok(libraries)
 }
-pub(crate) fn accessible_for_entity(
-    db: &impl super::DbAccess,
-    principal: &crate::services::auth::Principal,
-    node_id: DbId,
-) -> anyhow::Result<Vec<LibraryView>> {
-    Ok(filter_accessible_libraries(
-        get_for_entity(db, node_id)?,
-        principal,
-    ))
-}
-pub(crate) fn for_system_for_entity(
-    db: &impl super::DbAccess,
-    _ctx: &crate::services::SystemContext,
-    node_id: DbId,
-) -> anyhow::Result<Vec<LibraryFull>> {
-    Ok(get_for_entity(db, node_id)?
-        .into_iter()
-        .map(LibraryFull::from)
-        .collect())
-}
-
 pub(crate) fn get_by_release(
     db: &impl super::DbAccess,
     release_db_id: DbId,
@@ -487,28 +359,6 @@ pub(crate) fn get_for_entities(
 
     Ok(result)
 }
-pub(crate) fn accessible_for_entities(
-    db: &impl super::DbAccess,
-    principal: &crate::services::auth::Principal,
-    entity_ids: &[DbId],
-) -> anyhow::Result<HashMap<DbId, LibraryView>> {
-    Ok(get_for_entities(db, entity_ids)?
-        .into_iter()
-        .filter(|(_, library)| principal_can_access(principal, library))
-        .map(|(entity_id, library)| (entity_id, LibraryView::from(library)))
-        .collect())
-}
-pub(crate) fn for_system_for_entities(
-    db: &impl super::DbAccess,
-    _ctx: &crate::services::SystemContext,
-    entity_ids: &[DbId],
-) -> anyhow::Result<HashMap<DbId, LibraryFull>> {
-    Ok(get_for_entities(db, entity_ids)?
-        .into_iter()
-        .map(|(entity_id, library)| (entity_id, LibraryFull::from(library)))
-        .collect())
-}
-
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum LibraryCreateError {
     #[error("a library named '{0}' already exists")]
@@ -980,17 +830,6 @@ mod tests {
         super::super::users::create(db, &super::super::test_db::test_user(username)?)
     }
 
-    fn principal_for(user_db_id: DbId, user_public_id: &str) -> crate::services::auth::Principal {
-        crate::services::auth::Principal {
-            user_db_id,
-            user_public_id: user_public_id.to_string(),
-            username: format!("user-{}", user_db_id.0),
-            permissions: vec![],
-            role_name: None,
-            accessible_library_ids: HashSet::new(),
-        }
-    }
-
     #[test]
     fn create_rejects_duplicate_name_case_insensitive() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
@@ -1096,42 +935,6 @@ mod tests {
     }
 
     #[test]
-    fn accessible_returns_request_view_filtered_to_principal_access() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let user_db_id = create_test_user(&mut db, "viewer")?;
-        let principal = db.transaction_mut(|t| -> anyhow::Result<_> {
-            let visible = create_with_creator(t, insert_request("Visible", "visible"), user_db_id)?;
-            let hidden = create_system(t, insert_request("Hidden", "hidden"))?;
-            assert_ne!(visible.id, hidden.id);
-            let mut principal = principal_for(user_db_id, "viewer-public-id");
-            principal.accessible_library_ids = accessible_library_ids(t, user_db_id)?;
-            Ok(principal)
-        })?;
-
-        let libraries = accessible(&db, &principal)?;
-
-        assert_eq!(libraries.len(), 1);
-        assert_eq!(libraries[0].name, "Visible");
-        Ok(())
-    }
-
-    #[test]
-    fn for_system_returns_full_library_shape() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let created = db.transaction_mut(|t| -> anyhow::Result<Library> {
-            Ok(create_system(t, insert_request("Music", "system-full"))?)
-        })?;
-        let ctx = crate::services::libraries::system_context();
-
-        let libraries = for_system(&db, &ctx)?;
-
-        assert_eq!(libraries.len(), 1);
-        assert_eq!(libraries[0].id, created.id);
-        assert_eq!(libraries[0].path, created.path);
-        Ok(())
-    }
-
-    #[test]
     fn create_system_inserts_no_access_edge() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let lib = db.transaction_mut(|t| -> anyhow::Result<Library> {
@@ -1191,10 +994,9 @@ mod tests {
     }
 
     #[test]
-    fn find_accessible_node_id_by_id_resolves_for_principal_with_edge() -> anyhow::Result<()> {
+    fn find_node_id_accessible_to_user_resolves_library_with_edge() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user_db_id = create_test_user(&mut db, "alice")?;
-        let user = super::super::users::get_by_id(&db, user_db_id)?.expect("user exists");
         let lib = db.transaction_mut(|t| -> anyhow::Result<Library> {
             Ok(create_with_creator(
                 t,
@@ -1202,19 +1004,16 @@ mod tests {
                 user_db_id,
             )?)
         })?;
-        let principal = principal_for(user_db_id, &user.id);
-
-        let resolved = find_accessible_node_id_by_id(&db, &principal, &lib.id)?;
+        let resolved = find_node_id_accessible_to_user(&db, user_db_id, &lib.id)?;
         assert_eq!(resolved, lib.db_id);
         Ok(())
     }
 
     #[test]
-    fn find_accessible_node_id_by_id_rejects_inaccessible_library() -> anyhow::Result<()> {
+    fn find_node_id_accessible_to_user_rejects_inaccessible_library() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let creator_db_id = create_test_user(&mut db, "creator")?;
         let viewer_db_id = create_test_user(&mut db, "viewer")?;
-        let viewer = super::super::users::get_by_id(&db, viewer_db_id)?.expect("user exists");
         let lib = db.transaction_mut(|t| -> anyhow::Result<Library> {
             Ok(create_with_creator(
                 t,
@@ -1222,30 +1021,25 @@ mod tests {
                 creator_db_id,
             )?)
         })?;
-        let principal = principal_for(viewer_db_id, &viewer.id);
-
-        let resolved = find_accessible_node_id_by_id(&db, &principal, &lib.id)?;
+        let resolved = find_node_id_accessible_to_user(&db, viewer_db_id, &lib.id)?;
         assert!(resolved.is_none());
         Ok(())
     }
 
     #[test]
-    fn find_accessible_node_id_by_id_returns_none_for_missing_public_id() -> anyhow::Result<()> {
+    fn find_node_id_accessible_to_user_returns_none_for_missing_public_id() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user_db_id = create_test_user(&mut db, "alice")?;
-        let user = super::super::users::get_by_id(&db, user_db_id)?.expect("user exists");
-        let principal = principal_for(user_db_id, &user.id);
-
-        let resolved = find_accessible_node_id_by_id(&db, &principal, "no-such-library-public-id")?;
+        let resolved =
+            find_node_id_accessible_to_user(&db, user_db_id, "no-such-library-public-id")?;
         assert!(resolved.is_none());
         Ok(())
     }
 
     #[test]
-    fn find_accessible_node_id_by_id_rejects_non_library_node() -> anyhow::Result<()> {
+    fn find_node_id_accessible_to_user_rejects_non_library_node() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user_db_id = create_test_user(&mut db, "alice")?;
-        let user = super::super::users::get_by_id(&db, user_db_id)?.expect("user exists");
         let foreign_public_id = nanoid!();
         db.exec_mut(
             QueryBuilder::insert()
@@ -1253,9 +1047,7 @@ mod tests {
                 .values([[("id", foreign_public_id.as_str()).into()]])
                 .query(),
         )?;
-        let principal = principal_for(user_db_id, &user.id);
-
-        let resolved = find_accessible_node_id_by_id(&db, &principal, &foreign_public_id)?;
+        let resolved = find_node_id_accessible_to_user(&db, user_db_id, &foreign_public_id)?;
         assert!(resolved.is_none());
         Ok(())
     }
@@ -1276,7 +1068,7 @@ mod tests {
         /// 2 owned libs + 1 inaccessible (other user) + 1 foreign-typed node.
         struct ParitySetup {
             db: agdb::DbAny,
-            principal: crate::services::auth::Principal,
+            user_db_id: DbId,
             inaccessible_id: String,
             missing_id: String,
             foreign_id: String,
@@ -1285,9 +1077,6 @@ mod tests {
         fn parity_setup() -> ParitySetup {
             let mut db = new_test_db().unwrap();
             let user_db_id = users::create(&mut db, &test_user("alice").unwrap()).unwrap();
-            let user = users::get_by_id(&db, user_db_id)
-                .unwrap()
-                .expect("user exists");
             for i in 0..2 {
                 db.transaction_mut(|t| -> anyhow::Result<()> {
                     let path = PathBuf::from(format!("/tmp/lyra-bench-own-{i}-{}", nanoid!()));
@@ -1335,17 +1124,9 @@ mod tests {
                     .query(),
             )
             .unwrap();
-            let principal = crate::services::auth::Principal {
-                user_db_id,
-                user_public_id: user.id.clone(),
-                username: format!("user-{}", user_db_id.0),
-                permissions: vec![],
-                role_name: None,
-                accessible_library_ids: HashSet::new(),
-            };
             ParitySetup {
                 db,
-                principal,
+                user_db_id,
                 inaccessible_id: inaccessible.id,
                 missing_id: "no-such-library-public-id".to_string(),
                 foreign_id: foreign_public_id,
@@ -1353,23 +1134,23 @@ mod tests {
         }
 
         #[bench]
-        fn bench_find_accessible_node_id_by_id_inaccessible(b: &mut Bencher) {
+        fn bench_find_node_id_accessible_to_user_inaccessible(b: &mut Bencher) {
             let s = parity_setup();
             b.iter(|| {
-                find_accessible_node_id_by_id(&s.db, &s.principal, &s.inaccessible_id).unwrap()
+                find_node_id_accessible_to_user(&s.db, s.user_db_id, &s.inaccessible_id).unwrap()
             });
         }
 
         #[bench]
-        fn bench_find_accessible_node_id_by_id_missing(b: &mut Bencher) {
+        fn bench_find_node_id_accessible_to_user_missing(b: &mut Bencher) {
             let s = parity_setup();
-            b.iter(|| find_accessible_node_id_by_id(&s.db, &s.principal, &s.missing_id).unwrap());
+            b.iter(|| find_node_id_accessible_to_user(&s.db, s.user_db_id, &s.missing_id).unwrap());
         }
 
         #[bench]
-        fn bench_find_accessible_node_id_by_id_foreign(b: &mut Bencher) {
+        fn bench_find_node_id_accessible_to_user_foreign(b: &mut Bencher) {
             let s = parity_setup();
-            b.iter(|| find_accessible_node_id_by_id(&s.db, &s.principal, &s.foreign_id).unwrap());
+            b.iter(|| find_node_id_accessible_to_user(&s.db, s.user_db_id, &s.foreign_id).unwrap());
         }
     }
 }

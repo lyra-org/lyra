@@ -117,7 +117,7 @@ fn get_callback(
             else {
                 return Ok(luau::Value::Nil);
             };
-            if !crate::routes::entity_accessible_to_principal(&*db_read, &principal, item_id)
+            if !crate::services::auth::access::entity_accessible(&*db_read, &principal, item_id)
                 .map_err(crate::plugins::runtime_error)?
             {
                 return Ok(luau::Value::Nil);
@@ -154,7 +154,7 @@ fn get_many_callback(
             let mut stale_owners = Vec::new();
             let mut accessible_ids = Vec::new();
             for item_id in &item_ids {
-                if crate::routes::entity_accessible_to_principal(&*db_read, &principal, *item_id)
+                if crate::services::auth::access::entity_accessible(&*db_read, &principal, *item_id)
                     .map_err(crate::plugins::runtime_error)?
                 {
                     accessible_ids.push(*item_id);

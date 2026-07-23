@@ -135,7 +135,7 @@ fn get_callback(
             let Some(track_id) = track.db_id.map(DbId::from) else {
                 continue;
             };
-            if !crate::routes::entity_accessible_to_principal(&db, &principal, track_id)
+            if !crate::services::auth::access::entity_accessible(&db, &principal, track_id)
                 .map_err(crate::plugins::runtime_error)?
             {
                 continue;
@@ -180,22 +180,23 @@ fn get_many_callback(
             db::roles::has_permission(&principal.permissions, db::Permission::ManageLibraries);
         let mut rows = luau::OwnedTable::with_entry_capacity(0, 0, track_ids.len());
         for track_id in track_ids {
-            let value = if crate::routes::entity_accessible_to_principal(&db, &principal, track_id)
-                .map_err(crate::plugins::runtime_error)?
-            {
-                playback_source_service::resolve(&db, track_id, include_entry)
+            let value =
+                if crate::services::auth::access::entity_accessible(&db, &principal, track_id)
                     .map_err(crate::plugins::runtime_error)?
-                    .map(|source| {
-                        luau::Value::TableData(source_to_table(
-                            source,
-                            include_entry,
-                            include_full_path,
-                        ))
-                    })
-                    .unwrap_or(luau::Value::Nil)
-            } else {
-                luau::Value::Nil
-            };
+                {
+                    playback_source_service::resolve(&db, track_id, include_entry)
+                        .map_err(crate::plugins::runtime_error)?
+                        .map(|source| {
+                            luau::Value::TableData(source_to_table(
+                                source,
+                                include_entry,
+                                include_full_path,
+                            ))
+                        })
+                        .unwrap_or(luau::Value::Nil)
+                } else {
+                    luau::Value::Nil
+                };
             rows.set_key(luau::Value::Integer(track_id.0), value.clone());
             rows.set_key(luau::Value::Number(track_id.0 as f64), value);
         }
