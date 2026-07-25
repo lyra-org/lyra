@@ -55,7 +55,10 @@ fn is_eligible(
 ) -> bool {
     lyrics.is_visible_to(owner_user_id)
         && (lyrics.kind() != LyricsKind::Provider
-            || priorities.contains_key(lyrics.provider_id.as_str()))
+            || lyrics
+                .provider_id
+                .as_deref()
+                .is_some_and(|provider_id| priorities.contains_key(provider_id)))
 }
 
 pub(crate) fn normalize_language_hint(raw: Option<&str>) -> anyhow::Result<Option<String>> {
@@ -106,7 +109,8 @@ pub(crate) fn pick_preferred<'a>(
         .filter(|lyrics| is_eligible(lyrics, &priorities, owner_user_id))
         .filter(|lyrics| {
             provider_id.is_none_or(|provider_id| {
-                lyrics.kind() == LyricsKind::Provider && lyrics.provider_id == provider_id
+                lyrics.kind() == LyricsKind::Provider
+                    && lyrics.provider_id.as_deref() == Some(provider_id)
             })
         })
         .filter(|lyrics| !require_synced || has_meaningful_synced(lyrics, duration_ms))
@@ -125,8 +129,18 @@ pub(crate) fn pick_preferred<'a>(
             let a_synced = has_meaningful_synced(a, duration_ms);
             let b_synced = has_meaningful_synced(b, duration_ms);
 
-            let a_priority = priorities.get(a.provider_id.as_str()).copied().unwrap_or(0);
-            let b_priority = priorities.get(b.provider_id.as_str()).copied().unwrap_or(0);
+            let a_priority = a
+                .provider_id
+                .as_deref()
+                .and_then(|provider_id| priorities.get(provider_id))
+                .copied()
+                .unwrap_or(0);
+            let b_priority = b
+                .provider_id
+                .as_deref()
+                .and_then(|provider_id| priorities.get(provider_id))
+                .copied()
+                .unwrap_or(0);
 
             a_tier
                 .cmp(&b_tier)
@@ -192,14 +206,10 @@ mod tests {
         Lyrics {
             db_id: None,
             id: id.to_string(),
-            provider_id: provider_id.to_string(),
+            provider_id: matches!(origin, IdSource::Plugin).then(|| provider_id.to_string()),
             language: language.to_string(),
             origin,
-            owner_user_id: if matches!(origin, IdSource::User) {
-                "owner".to_string()
-            } else {
-                String::new()
-            },
+            owner_user_id: matches!(origin, IdSource::User).then(|| "owner".to_string()),
             plain_text: String::new(),
             line_count,
             synced_line_count,
@@ -311,10 +321,10 @@ mod tests {
         let forged = Lyrics {
             db_id: None,
             id: "forged".to_string(),
-            provider_id: "plug".to_string(),
+            provider_id: Some("plug".to_string()),
             language: "eng".to_string(),
             origin: IdSource::Plugin,
-            owner_user_id: String::new(),
+            owner_user_id: None,
             plain_text: String::new(),
             line_count: 50,
             synced_line_count: 1,
@@ -433,9 +443,9 @@ mod tests {
     #[test]
     fn personal_lyrics_are_isolated_and_beat_language_hints_for_the_owner() {
         let mut alice = lyrics("alice", "manual", "fra", IdSource::User, 0, 0, 1000);
-        alice.owner_user_id = "alice".to_string();
+        alice.owner_user_id = Some("alice".to_string());
         let mut bob = lyrics("bob", "manual", "eng", IdSource::User, 0, 0, 2000);
-        bob.owner_user_id = "bob".to_string();
+        bob.owner_user_id = Some("bob".to_string());
         let provider_lyrics = lyrics("provider", "plug", "eng", IdSource::Plugin, 0, 0, 3000);
         let candidates = vec![alice, bob, provider_lyrics];
         let providers = vec![provider("plug", 100)];
@@ -477,7 +487,7 @@ mod tests {
     #[test]
     fn shared_manual_beats_provider_but_not_personal() {
         let mut shared = lyrics("shared", "manual", "eng", IdSource::User, 0, 0, 3000);
-        shared.owner_user_id.clear();
+        shared.owner_user_id = None;
         let personal = lyrics("personal", "manual", "fra", IdSource::User, 0, 0, 1000);
         let provider_lyrics = lyrics("provider", "plug", "eng", IdSource::Plugin, 0, 0, 5000);
         let candidates = vec![shared, personal, provider_lyrics];

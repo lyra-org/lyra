@@ -17,7 +17,7 @@ type JsonArray = { JsonValue }
 type HttpRequestOptions = http.HttpRequestOptions
 type HttpResponse = http.HttpResponse
 type DataStore = datastore.DataStore
-type PluginLyricsInput = lyrics_api.PluginLyricsInput
+type ProviderLyricsInput = metadata.ProviderLyricsInput
 type ProviderLyricsCandidate = metadata.ProviderLyricsCandidate
 type ProviderLyricsContext = metadata.ProviderLyricsContext
 type ProviderLyricsResult = metadata.ProviderLyricsResult
@@ -194,7 +194,7 @@ local function parse_retry_after_ms(response: HttpResponse): number?
 	return math.floor(seconds * 1000)
 end
 
-local function build_plain_only_input(id: string, plain_text: string): PluginLyricsInput
+local function build_plain_only_input(id: string, plain_text: string): ProviderLyricsInput
 	return {
 		id = id,
 		language = DEFAULT_LANGUAGE,
@@ -225,12 +225,16 @@ local function candidate_from_response(response_object: JsonObject?): LyricsCand
 	local synced = json_string_field(response_object, "syncedLyrics")
 	local plain = json_string_field(response_object, "plainLyrics")
 
-	local lyrics_input: PluginLyricsInput? = nil
+	local lyrics_input: ProviderLyricsInput? = nil
 	if synced ~= nil then
 		local ok, parsed = pcall(lyrics_api.parse_lrc, synced, DEFAULT_LANGUAGE)
 		if ok and type(parsed) == "table" then
-			parsed.id = id
-			lyrics_input = parsed
+			lyrics_input = {
+				id = id,
+				language = parsed.language,
+				plain_text = parsed.plain_text,
+				lines = parsed.lines,
+			}
 		end
 	end
 	if lyrics_input == nil and plain ~= nil then

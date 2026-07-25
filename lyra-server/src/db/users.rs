@@ -501,8 +501,6 @@ mod tests {
             &mut db,
             track_db_id,
             crate::db::lyrics::LyricsInput {
-                id: String::new(),
-                provider_id: String::new(),
                 language: "eng".to_string(),
                 plain_text: "hello".to_string(),
                 lines: vec![crate::db::lyrics::LineInput {

@@ -140,10 +140,16 @@ pub(crate) struct PluginLyricsInput {
     pub(crate) lines: Vec<PluginLyricLineInput>,
 }
 
-impl PluginLyricsInput {
+#[derive(Clone, Debug, Serialize)]
+struct ParsedLyricsInput {
+    language: String,
+    plain_text: String,
+    lines: Vec<PluginLyricLineInput>,
+}
+
+impl ParsedLyricsInput {
     fn from_lyrics_input(input: LyricsInput) -> Self {
         Self {
-            id: input.id,
             language: input.language,
             plain_text: input.plain_text,
             lines: input
@@ -168,35 +174,34 @@ impl PluginLyricsInput {
 }
 
 impl PluginLyricsInput {
-    pub(crate) fn into_lyrics_input(self, now_ms: u64) -> anyhow::Result<LyricsInput> {
-        if self.id.trim().is_empty() {
-            anyhow::bail!("lyrics id cannot be empty");
-        }
+    pub(crate) fn into_lyrics_input(self, now_ms: u64) -> anyhow::Result<(String, LyricsInput)> {
+        anyhow::ensure!(!self.id.trim().is_empty(), "lyrics id cannot be empty");
 
-        Ok(LyricsInput {
-            id: self.id,
-            provider_id: String::new(),
-            language: self.language,
-            plain_text: self.plain_text,
-            lines: self
-                .lines
-                .into_iter()
-                .map(|line| LineInput {
-                    ts_ms: line.ts_ms,
-                    text: line.text,
-                    words: line
-                        .words
-                        .into_iter()
-                        .map(|word| WordInput {
-                            ts_ms: word.ts_ms,
-                            char_start: word.char_start,
-                            char_end: word.char_end,
-                        })
-                        .collect(),
-                })
-                .collect(),
-            last_checked_at: now_ms,
-        })
+        Ok((
+            self.id,
+            LyricsInput {
+                language: self.language,
+                plain_text: self.plain_text,
+                lines: self
+                    .lines
+                    .into_iter()
+                    .map(|line| LineInput {
+                        ts_ms: line.ts_ms,
+                        text: line.text,
+                        words: line
+                            .words
+                            .into_iter()
+                            .map(|word| WordInput {
+                                ts_ms: word.ts_ms,
+                                char_start: word.char_start,
+                                char_end: word.char_end,
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+                last_checked_at: now_ms,
+            },
+        ))
     }
 }
 
@@ -244,7 +249,7 @@ fn lyrics_detail_to_info(detail: LyricsDetail) -> LyricsInfo {
     LyricsInfo {
         db_id: lyrics.db_id,
         id: lyrics.id,
-        provider_id: is_provider.then_some(lyrics.provider_id),
+        provider_id: lyrics.provider_id,
         language: lyrics.language,
         scope: match kind {
             LyricsKind::Personal => LyricsScope::Personal,
@@ -277,15 +282,15 @@ fn lyrics_detail_to_info(detail: LyricsDetail) -> LyricsInfo {
     }
 }
 
-fn parse_lrc_input(text: String, language: Option<String>) -> anyhow::Result<PluginLyricsInput> {
+fn parse_lrc_input(text: String, language: Option<String>) -> anyhow::Result<ParsedLyricsInput> {
     let language = language
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "und".to_string());
     let now = lyrics_service::now_ms()?;
-    let input = lyrics_service::lrc_to_input(&text, String::new(), language, now)
+    let input = lyrics_service::lrc_to_input(&text, language, now)
         .map_err(|err| anyhow::anyhow!(err.to_string()))?;
-    Ok(PluginLyricsInput::from_lyrics_input(input))
+    Ok(ParsedLyricsInput::from_lyrics_input(input))
 }
 
 pub(crate) fn module_spec() -> ModuleSpec {
@@ -316,7 +321,7 @@ fn parse_lrc_spec() -> FunctionSpec {
     let spec = FunctionSpec::sync_fn("parse_lrc")
         .named_arg::<String>("text")
         .named_arg::<Option<String>>("language")
-        .returns::<PluginLyricsInput>();
+        .returns::<ParsedLyricsInput>();
     spec.call(parse_lrc_callback)
 }
 
@@ -575,10 +580,9 @@ fn has_many_callback(
         Ok(luau::Value::TableData(table))
     }))
 }
-impl PluginLyricsInput {
+impl ParsedLyricsInput {
     fn into_luau_table(self) -> luau::OwnedTable {
-        let mut table = luau::OwnedTable::with_capacity(0, 4);
-        table.set_field("id", luau::Value::String(self.id.into_bytes()));
+        let mut table = luau::OwnedTable::with_capacity(0, 3);
         table.set_field("language", luau::Value::String(self.language.into_bytes()));
         table.set_field(
             "plain_text",
@@ -754,21 +758,16 @@ impl DescribeInterface for PluginLyricLineInput {
     }
 }
 
-impl LuauTypeInfo for PluginLyricsInput {
+impl LuauTypeInfo for ParsedLyricsInput {
     fn luau_type() -> LuauType {
-        LuauType::literal("PluginLyricsInput")
+        LuauType::literal("ParsedLyricsInput")
     }
 }
 
-impl DescribeInterface for PluginLyricsInput {
+impl DescribeInterface for ParsedLyricsInput {
     fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("PluginLyricsInput", None);
+        let mut descriptor = InterfaceDescriptor::new("ParsedLyricsInput", None);
         descriptor.fields.extend([
-            FieldDescriptor {
-                name: "id",
-                ty: String::luau_type(),
-                description: None,
-            },
             FieldDescriptor {
                 name: "language",
                 ty: String::luau_type(),
@@ -978,12 +977,12 @@ fn module_descriptor() -> ModuleDescriptor {
             },
             ModuleFunctionDescriptor {
                 path: vec!["parse_lrc"],
-                description: Some("Parses an LRC payload into a PluginLyricsInput-shaped table."),
+                description: Some("Parses an LRC payload into identity-free lyrics content."),
                 params: vec![
                     param("text", String::luau_type()),
                     param("language", Option::<String>::luau_type()),
                 ],
-                returns: vec![PluginLyricsInput::luau_type()],
+                returns: vec![ParsedLyricsInput::luau_type()],
                 yields: false,
             },
             ModuleFunctionDescriptor {
@@ -1041,7 +1040,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &module_descriptor(),
         &[],
         &[
-            PluginLyricsInput::interface_descriptor(),
+            ParsedLyricsInput::interface_descriptor(),
             PluginLyricLineInput::interface_descriptor(),
             PluginLyricWordInput::interface_descriptor(),
             PersonalLyricsUploadInput::interface_descriptor(),
