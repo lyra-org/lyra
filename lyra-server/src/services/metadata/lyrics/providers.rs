@@ -467,8 +467,8 @@ async fn record_hit(
 ) -> Result<()> {
     let LyricsHandlerCandidate { lyrics, .. } = candidate;
     let now = upload::now_ms().map_err(|err| anyhow::anyhow!("now_ms() failed: {err}"))?;
-    let lyrics_input = match lyrics.into_lyrics_input(now) {
-        Ok(input) => input,
+    let (lyrics_id, lyrics_input) = match lyrics.into_lyrics_input(now) {
+        Ok(parts) => parts,
         Err(err) => {
             tracing::warn!(
                 provider = provider_id,
@@ -494,7 +494,7 @@ async fn record_hit(
         );
         return Ok(());
     }
-    upload::upsert_plugin_lyrics(&mut db, track_db_id, lyrics_input, provider_id.to_string())
+    upload::upsert_plugin_lyrics(&mut db, track_db_id, lyrics_input, lyrics_id, provider_id)
         .map_err(|err| anyhow::anyhow!("upsert_plugin_lyrics failed: {err}"))?;
     Ok(())
 }
@@ -804,7 +804,9 @@ mod tests {
         let db = STATE.db.read().await;
         let lyrics = db::lyrics::get_for_track(&*db, track_id)?;
         assert!(
-            lyrics.iter().any(|l| l.provider_id == "test_hit"),
+            lyrics
+                .iter()
+                .any(|l| l.provider_id.as_deref() == Some("test_hit")),
             "lyrics row from test_hit must exist"
         );
         Ok(())

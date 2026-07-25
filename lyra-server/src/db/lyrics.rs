@@ -30,7 +30,6 @@ const EDGE_WORD_IDX_KEY: &str = "word_idx";
 /// Lowercase ISO-639-3 "unknown" — substituted for empty/whitespace input at upsert.
 const LANGUAGE_UNKNOWN: &str = "und";
 
-const MANUAL_PROVIDER_ID: &str = "manual";
 const PERSONAL_LYRICS_ID: &str = "personal";
 const SHARED_LYRICS_ID: &str = "shared";
 
@@ -71,13 +70,14 @@ pub(crate) struct Lyrics {
     #[serde(skip)]
     pub(crate) db_id: Option<NodeId>,
     pub(crate) id: String,
-    pub(crate) provider_id: String,
+    /// Present only for provider rows.
+    pub(crate) provider_id: Option<String>,
     pub(crate) language: String,
     pub(crate) origin: IdSource,
-    /// Empty for shared/manual and provider rows. Personal rows carry the
-    /// owner's stable public user ID so recycled database IDs cannot transfer
-    /// ownership.
-    pub(crate) owner_user_id: String,
+    /// Personal rows carry the owner's stable public user ID so recycled
+    /// database IDs cannot transfer ownership. Absent for shared and provider
+    /// rows.
+    pub(crate) owner_user_id: Option<String>,
     pub(crate) plain_text: String,
     pub(crate) line_count: u32,
     /// Count of lines with `ts_ms > 0`; gates the selector's synced tier.
@@ -93,14 +93,14 @@ impl Lyrics {
     pub(crate) fn kind(&self) -> LyricsKind {
         match self.origin {
             IdSource::Plugin => LyricsKind::Provider,
-            IdSource::User if self.owner_user_id.is_empty() => LyricsKind::Shared,
+            IdSource::User if self.owner_user_id.is_none() => LyricsKind::Shared,
             IdSource::User => LyricsKind::Personal,
         }
     }
 
     pub(crate) fn is_visible_to(&self, owner_user_id: Option<&str>) -> bool {
         match self.kind() {
-            LyricsKind::Personal => owner_user_id.is_some_and(|owner| owner == self.owner_user_id),
+            LyricsKind::Personal => owner_user_id == self.owner_user_id.as_deref(),
             LyricsKind::Shared | LyricsKind::Provider => true,
         }
     }
@@ -141,9 +141,6 @@ pub(crate) struct LineInput {
 
 #[derive(Clone, Debug)]
 pub(crate) struct LyricsInput {
-    pub id: String,
-    /// Manual upserts replace this with the server-controlled `"manual"` ID.
-    pub provider_id: String,
     pub language: String,
     pub plain_text: String,
     pub lines: Vec<LineInput>,
@@ -180,7 +177,6 @@ fn compute_content_hash(input: &LyricsInput, origin: IdSource) -> String {
     // Mix origin so two rows sharing a natural key but differing in origin
     // cannot collide on hash even when their provider labels match.
     hasher.update(&[origin_tag(origin)]);
-    hash_bytes(&mut hasher, input.provider_id.as_bytes());
     hash_bytes(&mut hasher, input.language.as_bytes());
     hash_bytes(&mut hasher, input.plain_text.as_bytes());
     hasher.update(&(input.lines.len() as u64).to_be_bytes());
@@ -407,8 +403,8 @@ pub(crate) fn find_shared(db: &impl DbAccess, track_id: DbId) -> anyhow::Result<
                 .key("origin")
                 .value(IdSource::User)
                 .and()
-                .key("owner_user_id")
-                .value("")
+                .key("id")
+                .value(SHARED_LYRICS_ID)
                 .end_where()
                 .query(),
         )?
@@ -542,18 +538,30 @@ pub(crate) fn upsert_from_plugin(
     db: &mut DbAny,
     track_id: DbId,
     input: LyricsInput,
+    lyrics_id: String,
+    provider_id: &str,
     max_ts_ms: Option<u64>,
 ) -> anyhow::Result<DbId> {
-    validate_provider_id(&input.provider_id)?;
+    anyhow::ensure!(!lyrics_id.trim().is_empty(), "lyrics id cannot be empty");
+    validate_provider_id(provider_id)?;
     db.transaction_mut(|t| -> anyhow::Result<DbId> {
-        upsert_inner(t, track_id, input, IdSource::Plugin, "", max_ts_ms)
+        upsert_inner(
+            t,
+            track_id,
+            input,
+            LyricsIdentity::Provider {
+                lyrics_id,
+                provider_id,
+            },
+            max_ts_ms,
+        )
     })
 }
 
 pub(crate) fn upsert_personal(
     db: &mut DbAny,
     track_id: DbId,
-    mut input: LyricsInput,
+    input: LyricsInput,
     owner_user_id: &str,
     max_ts_ms: Option<u64>,
 ) -> anyhow::Result<DbId> {
@@ -561,40 +569,71 @@ pub(crate) fn upsert_personal(
         !owner_user_id.is_empty(),
         "personal lyrics owner cannot be empty"
     );
-    input.id = PERSONAL_LYRICS_ID.to_string();
-    input.provider_id = MANUAL_PROVIDER_ID.to_string();
     db.transaction_mut(|t| -> anyhow::Result<DbId> {
-        upsert_inner(t, track_id, input, IdSource::User, owner_user_id, max_ts_ms)
+        upsert_inner(
+            t,
+            track_id,
+            input,
+            LyricsIdentity::Personal { owner_user_id },
+            max_ts_ms,
+        )
     })
 }
 
 pub(crate) fn upsert_shared(
     db: &mut DbAny,
     track_id: DbId,
-    mut input: LyricsInput,
+    input: LyricsInput,
     max_ts_ms: Option<u64>,
 ) -> anyhow::Result<DbId> {
-    input.id = SHARED_LYRICS_ID.to_string();
-    input.provider_id = MANUAL_PROVIDER_ID.to_string();
     db.transaction_mut(|t| -> anyhow::Result<DbId> {
-        upsert_inner(t, track_id, input, IdSource::User, "", max_ts_ms)
+        upsert_inner(t, track_id, input, LyricsIdentity::Shared, max_ts_ms)
     })
+}
+
+enum LyricsIdentity<'a> {
+    Provider {
+        lyrics_id: String,
+        provider_id: &'a str,
+    },
+    Personal {
+        owner_user_id: &'a str,
+    },
+    Shared,
 }
 
 fn upsert_inner(
     db: &mut impl DbAccess,
     track_id: DbId,
     mut input: LyricsInput,
-    origin: IdSource,
-    owner_user_id: &str,
+    identity: LyricsIdentity<'_>,
     max_ts_ms: Option<u64>,
 ) -> anyhow::Result<DbId> {
-    let existing = match origin {
-        IdSource::Plugin => find_provider(db, track_id, &input.provider_id)?,
-        IdSource::User if owner_user_id.is_empty() => find_shared(db, track_id)?,
-        IdSource::User => find_personal(db, track_id, owner_user_id)?,
+    let existing = match &identity {
+        LyricsIdentity::Provider { provider_id, .. } => find_provider(db, track_id, provider_id)?,
+        LyricsIdentity::Personal { owner_user_id } => find_personal(db, track_id, owner_user_id)?,
+        LyricsIdentity::Shared => find_shared(db, track_id)?,
     };
     let existing_db_id = existing.and_then(|row| row.db_id.map(Into::into));
+
+    let (id, provider_id, origin, owner_user_id) = match identity {
+        LyricsIdentity::Provider {
+            lyrics_id,
+            provider_id,
+        } => (
+            lyrics_id,
+            Some(provider_id.to_string()),
+            IdSource::Plugin,
+            None,
+        ),
+        LyricsIdentity::Personal { owner_user_id } => (
+            PERSONAL_LYRICS_ID.to_string(),
+            None,
+            IdSource::User,
+            Some(owner_user_id.to_string()),
+        ),
+        LyricsIdentity::Shared => (SHARED_LYRICS_ID.to_string(), None, IdSource::User, None),
+    };
 
     validate_size_caps(&input)?;
     validate_line_text(&input.lines)?;
@@ -625,7 +664,7 @@ fn upsert_inner(
         {
             let bumped = Lyrics {
                 db_id: existing.db_id.clone(),
-                id: input.id,
+                id,
                 provider_id: existing.provider_id,
                 language: existing.language,
                 origin: existing.origin,
@@ -647,11 +686,11 @@ fn upsert_inner(
 
         let lyrics = Lyrics {
             db_id: Some(NodeId::from(existing_db_id)),
-            id: input.id,
-            provider_id: input.provider_id,
+            id,
+            provider_id,
             language: input.language,
             origin,
-            owner_user_id: owner_user_id.to_string(),
+            owner_user_id,
             plain_text: input.plain_text,
             line_count,
             synced_line_count,
@@ -669,11 +708,11 @@ fn upsert_inner(
 
     let lyrics = Lyrics {
         db_id: None,
-        id: input.id,
-        provider_id: input.provider_id,
+        id,
+        provider_id,
         language: input.language,
         origin,
-        owner_user_id: owner_user_id.to_string(),
+        owner_user_id,
         plain_text: input.plain_text,
         line_count,
         synced_line_count,
@@ -920,6 +959,11 @@ pub(crate) fn delete_for_track(db: &mut DbAny, track_id: DbId) -> anyhow::Result
 
 #[cfg(test)]
 mod tests {
+    use std::ops::{
+        Deref,
+        DerefMut,
+    };
+
     use super::*;
     use crate::db::test_db;
 
@@ -931,15 +975,53 @@ mod tests {
         }
     }
 
-    fn plugin_input(id: &str, provider: &str, plain: &str) -> LyricsInput {
-        LyricsInput {
+    struct TestPluginInput {
+        id: String,
+        provider_id: String,
+        input: LyricsInput,
+    }
+
+    impl Deref for TestPluginInput {
+        type Target = LyricsInput;
+
+        fn deref(&self) -> &Self::Target {
+            &self.input
+        }
+    }
+
+    impl DerefMut for TestPluginInput {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.input
+        }
+    }
+
+    fn plugin_input(id: &str, provider: &str, plain: &str) -> TestPluginInput {
+        TestPluginInput {
             id: id.to_string(),
             provider_id: provider.to_string(),
-            language: "eng".to_string(),
-            plain_text: plain.to_string(),
-            lines: Vec::new(),
-            last_checked_at: 100,
+            input: LyricsInput {
+                language: "eng".to_string(),
+                plain_text: plain.to_string(),
+                lines: Vec::new(),
+                last_checked_at: 100,
+            },
         }
+    }
+
+    fn upsert_from_plugin(
+        db: &mut DbAny,
+        track_id: DbId,
+        input: TestPluginInput,
+        max_ts_ms: Option<u64>,
+    ) -> anyhow::Result<DbId> {
+        super::upsert_from_plugin(
+            db,
+            track_id,
+            input.input,
+            input.id,
+            &input.provider_id,
+            max_ts_ms,
+        )
     }
 
     #[test]
@@ -958,8 +1040,9 @@ mod tests {
         let rows = get_for_track(&db, track_id)?;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "abc");
-        assert_eq!(rows[0].provider_id, "plug");
+        assert_eq!(rows[0].provider_id.as_deref(), Some("plug"));
         assert_eq!(rows[0].origin, IdSource::Plugin);
+        assert_eq!(rows[0].owner_user_id, None);
         assert_eq!(rows[0].plain_text, "hello");
         assert_eq!(rows[0].line_count, 0);
         assert_eq!(rows[0].synced_line_count, 0);
@@ -987,7 +1070,7 @@ mod tests {
         upsert_shared(
             &mut db,
             track_id,
-            plugin_input("ignored", "ignored", "shared"),
+            plugin_input("ignored", "ignored", "shared").input,
             None,
         )?;
         let rows = get_for_track(&db, track_id)?;
@@ -1042,16 +1125,15 @@ mod tests {
         let mut db = test_db::new_test_db()?;
         let track_id = test_db::insert_track(&mut db, "song")?;
 
-        let mut input = plugin_input("u-1", "ignored", "mine");
-        input.provider_id = "plugin-says".to_string();
-        upsert_personal(&mut db, track_id, input, "alice", None)?;
+        let input = plugin_input("u-1", "ignored", "mine");
+        upsert_personal(&mut db, track_id, input.input, "alice", None)?;
 
         let rows = get_for_track(&db, track_id)?;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "personal");
-        assert_eq!(rows[0].provider_id, "manual");
+        assert_eq!(rows[0].provider_id, None);
         assert_eq!(rows[0].origin, IdSource::User);
-        assert_eq!(rows[0].owner_user_id, "alice");
+        assert_eq!(rows[0].owner_user_id.as_deref(), Some("alice"));
         Ok(())
     }
 
@@ -1063,34 +1145,34 @@ mod tests {
         let alice_first = upsert_personal(
             &mut db,
             track_id,
-            plugin_input("ignored-a", "ignored", "alice one"),
+            plugin_input("ignored-a", "ignored", "alice one").input,
             "alice",
             None,
         )?;
         let alice_second = upsert_personal(
             &mut db,
             track_id,
-            plugin_input("ignored-b", "ignored", "alice two"),
+            plugin_input("ignored-b", "ignored", "alice two").input,
             "alice",
             None,
         )?;
         let bob = upsert_personal(
             &mut db,
             track_id,
-            plugin_input("ignored", "ignored", "bob"),
+            plugin_input("ignored", "ignored", "bob").input,
             "bob",
             None,
         )?;
         let shared_first = upsert_shared(
             &mut db,
             track_id,
-            plugin_input("ignored-a", "ignored", "shared one"),
+            plugin_input("ignored-a", "ignored", "shared one").input,
             None,
         )?;
         let shared_second = upsert_shared(
             &mut db,
             track_id,
-            plugin_input("ignored-b", "ignored", "shared two"),
+            plugin_input("ignored-b", "ignored", "shared two").input,
             None,
         )?;
 
@@ -1101,12 +1183,16 @@ mod tests {
         assert_eq!(rows.len(), 3);
         assert!(
             rows.iter()
-                .any(|row| row.owner_user_id == "alice" && row.plain_text == "alice two")
+                .any(|row| row.owner_user_id.as_deref() == Some("alice")
+                    && row.plain_text == "alice two")
         );
-        assert!(rows.iter().any(|row| row.owner_user_id == "bob"));
         assert!(
             rows.iter()
-                .any(|row| row.owner_user_id.is_empty() && row.plain_text == "shared two")
+                .any(|row| row.owner_user_id.as_deref() == Some("bob"))
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.owner_user_id.is_none() && row.plain_text == "shared two")
         );
         Ok(())
     }
@@ -1159,9 +1245,9 @@ mod tests {
             2,
             "same id under different providers must stay separate"
         );
-        assert_eq!(rows[0].provider_id, "embedded");
+        assert_eq!(rows[0].provider_id.as_deref(), Some("embedded"));
         assert_eq!(rows[0].plain_text, "from-embedded");
-        assert_eq!(rows[1].provider_id, "plug");
+        assert_eq!(rows[1].provider_id.as_deref(), Some("plug"));
         assert_eq!(rows[1].plain_text, "from-plug");
         Ok(())
     }
@@ -1172,7 +1258,7 @@ mod tests {
         let track_id = test_db::insert_track(&mut db, "song")?;
 
         let user_input = plugin_input("shared-id", "manual", "user-authored");
-        upsert_personal(&mut db, track_id, user_input, "alice", None)?;
+        upsert_personal(&mut db, track_id, user_input.input, "alice", None)?;
 
         let plugin_attempt = plugin_input("shared-id", "manual", "plugin-injected");
         upsert_from_plugin(&mut db, track_id, plugin_attempt, None)?;
@@ -1556,7 +1642,7 @@ mod tests {
         upsert_personal(
             &mut db,
             track_id,
-            plugin_input("u-1", "anything", "from user"),
+            plugin_input("u-1", "anything", "from user").input,
             "alice",
             None,
         )?;
@@ -1564,10 +1650,10 @@ mod tests {
         let mut rows = get_for_track(&db, track_id)?;
         rows.sort_by(|a, b| a.provider_id.cmp(&b.provider_id));
         assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0].provider_id, "embedded");
-        assert_eq!(rows[1].provider_id, "manual");
-        assert_eq!(rows[1].origin, IdSource::User);
-        assert_eq!(rows[2].provider_id, "plug");
+        assert_eq!(rows[0].provider_id, None);
+        assert_eq!(rows[0].origin, IdSource::User);
+        assert_eq!(rows[1].provider_id.as_deref(), Some("embedded"));
+        assert_eq!(rows[2].provider_id.as_deref(), Some("plug"));
         Ok(())
     }
 
@@ -1642,7 +1728,7 @@ mod tests {
 
         let rows = get_for_track(&db, track_id)?;
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].provider_id, "embedded");
+        assert_eq!(rows[0].provider_id.as_deref(), Some("embedded"));
         Ok(())
     }
 }

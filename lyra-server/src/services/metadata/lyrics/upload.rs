@@ -62,8 +62,6 @@ struct LyricsWordRequest {
 impl LyricsJsonRequest {
     fn into_input(self, now_ms: u64) -> Result<LyricsInput, LyricsUploadError> {
         Ok(LyricsInput {
-            id: String::new(),
-            provider_id: String::new(),
             language: self.language,
             plain_text: self.plain_text,
             lines: self
@@ -115,12 +113,7 @@ pub(crate) fn input_from_upload(
             let text = std::str::from_utf8(body).map_err(|_| {
                 LyricsUploadError::BadRequest("LRC upload must be valid UTF-8".into())
             })?;
-            lrc_to_input(
-                text,
-                String::new(),
-                language.unwrap_or_else(|| "und".to_string()),
-                now_ms,
-            )
+            lrc_to_input(text, language.unwrap_or_else(|| "und".to_string()), now_ms)
         }
         "text/plain" => {
             let text = std::str::from_utf8(body).map_err(|_| {
@@ -141,15 +134,22 @@ pub(crate) fn input_from_upload(
 pub(crate) fn upsert_plugin_lyrics(
     db: &mut DbAny,
     track_db_id: DbId,
-    mut input: LyricsInput,
-    provider_id: String,
+    input: LyricsInput,
+    lyrics_id: String,
+    provider_id: &str,
 ) -> Result<DbId, LyricsUploadError> {
-    input.provider_id = provider_id;
     let track = db::tracks::get_by_id(db, track_db_id)?.ok_or_else(|| {
         LyricsUploadError::NotFound(format!("Track not found: {}", track_db_id.0))
     })?;
-    db::lyrics::upsert_from_plugin(db, track_db_id, input, track.duration_ms)
-        .map_err(|err| LyricsUploadError::BadRequest(err.to_string()))
+    db::lyrics::upsert_from_plugin(
+        db,
+        track_db_id,
+        input,
+        lyrics_id,
+        provider_id,
+        track.duration_ms,
+    )
+    .map_err(|err| LyricsUploadError::BadRequest(err.to_string()))
 }
 
 pub(crate) fn delete_personal_lyrics_for_track_by_db_id(
@@ -220,8 +220,6 @@ pub(crate) fn delete_shared_lyrics_for_track_by_db_id(
 
 fn plain_text_to_input(contents: &str, language: String, now_ms: u64) -> LyricsInput {
     LyricsInput {
-        id: String::new(),
-        provider_id: String::new(),
         language,
         plain_text: contents.to_string(),
         lines: Vec::new(),
@@ -234,7 +232,6 @@ fn plain_text_to_input(contents: &str, language: String, now_ms: u64) -> LyricsI
 /// offsets keyed to character positions in the cleaned line.
 pub(crate) fn lrc_to_input(
     contents: &str,
-    id: String,
     language: String,
     now_ms: u64,
 ) -> Result<LyricsInput, LyricsUploadError> {
@@ -283,8 +280,6 @@ pub(crate) fn lrc_to_input(
         .join("\n");
 
     Ok(LyricsInput {
-        id,
-        provider_id: String::new(),
         language,
         plain_text,
         lines,
@@ -451,13 +446,11 @@ mod tests {
     fn lrc_to_input_ignores_metadata_and_sorts_lines() {
         let input = lrc_to_input(
             "[ar:artist]\n[00:03.00]third\n[00:01.00]first\n[00:02.00]second",
-            "user".to_string(),
             "eng".to_string(),
             42,
         )
         .unwrap();
 
-        assert_eq!(input.id, "user");
         assert_eq!(input.language, "eng");
         assert_eq!(input.last_checked_at, 42);
         assert_eq!(input.plain_text, "first\nsecond\nthird");
@@ -472,22 +465,8 @@ mod tests {
     }
 
     #[test]
-    fn lrc_to_input_uses_caller_supplied_id() {
-        let input = lrc_to_input(
-            "[00:01.00]hello",
-            "lrclib:42".to_string(),
-            "eng".to_string(),
-            0,
-        )
-        .unwrap();
-        assert_eq!(input.id, "lrclib:42");
-    }
-
-    #[test]
     fn lrc_to_input_rejects_non_timestamped_lyrics() {
-        assert!(
-            lrc_to_input("plain lyric line", "user".to_string(), "und".to_string(), 0).is_err()
-        );
+        assert!(lrc_to_input("plain lyric line", "und".to_string(), 0).is_err());
     }
 
     #[test]
@@ -542,7 +521,6 @@ mod tests {
     fn lrc_to_input_threads_word_cues_into_each_line() {
         let input = lrc_to_input(
             "[00:01.00]<00:01.00>Hello <00:01.50>world<00:02.00>",
-            "user".to_string(),
             "eng".to_string(),
             0,
         )
@@ -561,13 +539,8 @@ mod tests {
 
     #[test]
     fn lrc_to_input_clones_words_for_repeated_line_timestamps() {
-        let input = lrc_to_input(
-            "[00:01.00][00:02.00]<00:00.10>Hello",
-            "user".to_string(),
-            "eng".to_string(),
-            0,
-        )
-        .unwrap();
+        let input =
+            lrc_to_input("[00:01.00][00:02.00]<00:00.10>Hello", "eng".to_string(), 0).unwrap();
 
         assert_eq!(input.lines.len(), 2);
         for line in &input.lines {
@@ -587,7 +560,6 @@ mod tests {
         )
         .unwrap();
 
-        assert!(input.id.is_empty());
         assert_eq!(input.language, "ENG");
         assert_eq!(input.last_checked_at, 42);
         assert_eq!(input.plain_text, "[00:01.00]not lrc\nplain lyric line");
@@ -623,7 +595,7 @@ mod tests {
         )?);
         let rows = db::lyrics::get_for_track(&db, track_id)?;
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].owner_user_id, "bob");
+        assert_eq!(rows[0].owner_user_id.as_deref(), Some("bob"));
         Ok(())
     }
 

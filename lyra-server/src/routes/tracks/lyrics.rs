@@ -388,8 +388,7 @@ fn lyrics_candidate_summary(
 ) -> LyricsCandidateSummaryResponse {
     LyricsCandidateSummaryResponse {
         id: lyrics.id.clone(),
-        provider_id: (lyrics.kind() == db::lyrics::LyricsKind::Provider)
-            .then(|| lyrics.provider_id.clone()),
+        provider_id: lyrics.provider_id.clone(),
         language: lyrics.language.clone(),
         scope: LyricsScopeResponse::from_lyrics(lyrics),
         source: LyricsSourceResponse::from_lyrics(lyrics),
@@ -402,8 +401,7 @@ fn lyrics_response_json(detail: db::lyrics::LyricsDetail) -> Json<LyricsResponse
     let db::lyrics::LyricsDetail { lyrics, lines } = detail;
     let scope = LyricsScopeResponse::from_lyrics(&lyrics);
     let source = LyricsSourceResponse::from_lyrics(&lyrics);
-    let provider_id =
-        (lyrics.kind() == db::lyrics::LyricsKind::Provider).then(|| lyrics.provider_id.clone());
+    let provider_id = lyrics.provider_id.clone();
     let response_lines = lines
         .into_iter()
         .map(|line| LyricsLineResponse {
@@ -736,8 +734,6 @@ mod tests {
                 &mut db,
                 track,
                 db::lyrics::LyricsInput {
-                    id: "provider-row".to_string(),
-                    provider_id: "route-provider".to_string(),
                     language: "eng".to_string(),
                     plain_text: "provider lyrics".to_string(),
                     lines: vec![
@@ -754,6 +750,8 @@ mod tests {
                     ],
                     last_checked_at: 1,
                 },
+                "provider-row".to_string(),
+                "route-provider",
                 Some(4_000),
             )?;
             (track, track_row.id, library, alice_id, bob_id, admin_id)

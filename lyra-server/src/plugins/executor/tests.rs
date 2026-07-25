@@ -233,13 +233,13 @@ fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<
             &mut db,
             track_db_id,
             crate::plugins::db::lyrics::LyricsInput {
-                id: "remote-one".to_string(),
-                provider_id: "test_provider".to_string(),
                 language: "eng".to_string(),
                 plain_text: "provider lyrics".to_string(),
                 lines: Vec::new(),
                 last_checked_at: 1,
             },
+            "remote-one".to_string(),
+            "test_provider",
             None,
         )?;
         Ok::<_, anyhow::Error>((
@@ -380,8 +380,7 @@ fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<
         Ok::<_, anyhow::Error>(
             crate::plugins::db::lyrics::get_for_track(&db, track_db_id)?
                 .into_iter()
-                .filter(|lyrics| !lyrics.owner_user_id.is_empty())
-                .map(|lyrics| lyrics.owner_user_id)
+                .filter_map(|lyrics| lyrics.owner_user_id)
                 .collect::<Vec<_>>(),
         )
     })?;
