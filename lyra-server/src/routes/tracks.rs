@@ -43,6 +43,7 @@ use crate::{
     routes::{
         covers as route_covers,
         deserialize_inc,
+        ratings::RatingFilterQuery,
         responses::{
             PageResponse,
             ReleaseResponse,
@@ -122,6 +123,8 @@ struct TrackListQuery {
     )]
     sort_order: Option<String>,
     #[serde(flatten)]
+    rating: RatingFilterQuery,
+    #[serde(flatten)]
     page: super::PageQuery,
 }
 
@@ -132,6 +135,7 @@ pub(crate) struct TrackListOptions {
     release_id: Option<String>,
     sort_by: Option<Vec<String>>,
     sort_order: Option<String>,
+    rating_filter: db::ratings::RatingFilter,
     page_request: super::SnapshotPageRequest,
 }
 
@@ -475,17 +479,23 @@ pub(crate) async fn list_track_responses(
         release_id,
         sort_by,
         sort_order,
+        rating_filter,
         page_request,
     } = options;
     let db = &*STATE.db.read().await;
     let includes = parse_inc(inc)?;
     let search_term = super::parse_text_query(query);
+    let (min_rating, max_rating) = rating_filter.bounds();
+    let min_rating_context = min_rating.map(|value| value.to_string());
+    let max_rating_context = max_rating.map(|value| value.to_string());
     let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "tracks")
         .field(search_term.as_deref())
         .field(library_id.as_deref())
         .field(release_id.as_deref())
         .values(sort_by.as_deref())
         .field(sort_order.as_deref())
+        .field(min_rating_context.as_deref())
+        .field(max_rating_context.as_deref())
         .finish();
     let library_scope = crate::services::auth::access::resolve_optional_library_filter(
         db,
@@ -508,7 +518,7 @@ pub(crate) async fn list_track_responses(
         )?;
         (tracks, page.next_cursor)
     } else {
-        let accessible_tracks = match (release_scope, library_scope) {
+        let mut accessible_tracks = match (release_scope, library_scope) {
             (Some(release_db_id), Some(library_db_id))
                 if !release_belongs_to_library(db, release_db_id, library_db_id)? =>
             {
@@ -531,6 +541,17 @@ pub(crate) async fn list_track_responses(
                 accessible_tracks
             }
         };
+        if !rating_filter.is_empty() {
+            let rated_target_ids =
+                db::ratings::target_ids_matching(db, principal.user_db_id, rating_filter)?;
+            accessible_tracks.retain(|track| {
+                track
+                    .db_id
+                    .clone()
+                    .map(DbId::from)
+                    .is_some_and(|db_id| rated_target_ids.contains(&db_id))
+            });
+        }
         let mut tracks = query_track_route_items(
             db,
             accessible_tracks,
@@ -735,10 +756,12 @@ async fn get_tracks(
         release_id,
         sort_by,
         sort_order,
+        rating,
         page,
     } = list_query;
     let page = page.resolve_snapshot();
     let principal = require_authenticated(&headers).await?;
+    let rating_filter = rating.parse()?;
     Ok(Json(
         list_track_responses(
             &principal,
@@ -749,6 +772,7 @@ async fn get_tracks(
                 release_id,
                 sort_by,
                 sort_order,
+                rating_filter,
                 page_request: page,
             },
         )
@@ -768,7 +792,7 @@ async fn get_track(
 #[cfg(feature = "docgen")]
 fn list_tracks_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tracks").description(
-        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `limit`, `cursor`. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `duration`, and `id`; when `release_id` is present it also supports `disc` and `track`. `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
+        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `min_rating`, `max_rating`, `limit`, `cursor`. `min_rating` and `max_rating` filter tracks by the authenticated user's inclusive personal rating range; either bound excludes unrated tracks. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `duration`, and `id`; when `release_id` is present it also supports `disc` and `track`. `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 
@@ -1151,6 +1175,7 @@ mod tests {
                 release_id: None,
                 sort_by: None,
                 sort_order: None,
+                rating_filter: db::ratings::RatingFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1160,6 +1185,199 @@ mod tests {
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].title, "Visible Track");
         assert!(page.next_cursor.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_track_responses_filters_personal_ratings_and_binds_cursor() -> anyhow::Result<()>
+    {
+        use axum::{
+            http::StatusCode,
+            response::IntoResponse,
+        };
+
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let (principal, four_star_id, five_star_id) = {
+            let mut db = STATE.db.write().await;
+            let user_db_id =
+                db::users::create(&mut db, &db::test_db::test_user("track-rating-user")?)?;
+            let other_user_db_id =
+                db::users::create(&mut db, &db::test_db::test_user("other-track-rating-user")?)?;
+            let visible_library =
+                insert_library(&mut db, "Rated Tracks", "/tmp/lyra-rated-tracks")?;
+            let hidden_library = insert_library(
+                &mut db,
+                "Hidden Rated Tracks",
+                "/tmp/lyra-hidden-rated-tracks",
+            )?;
+            let visible_release = insert_release(&mut db, "Rated Track Release")?;
+            let hidden_release = insert_release(&mut db, "Hidden Rated Track Release")?;
+            let four_star = insert_track(&mut db, "Four Star")?;
+            let five_star = insert_track(&mut db, "Five Star")?;
+            let low_rating = insert_track(&mut db, "Low Rating")?;
+            let unrated = insert_track(&mut db, "Unrated")?;
+            let other_user_rating = insert_track(&mut db, "Other User Rating")?;
+            let hidden_rating = insert_track(&mut db, "Hidden Rating")?;
+
+            connect(&mut db, visible_library, visible_release)?;
+            for track in [four_star, five_star, low_rating, unrated, other_user_rating] {
+                connect(&mut db, visible_release, track)?;
+            }
+            connect(&mut db, hidden_library, hidden_release)?;
+            connect(&mut db, hidden_release, hidden_rating)?;
+
+            for (target, value) in [
+                (four_star, 4),
+                (five_star, 5),
+                (low_rating, 3),
+                (hidden_rating, 5),
+            ] {
+                db::ratings::upsert(
+                    &mut *db,
+                    user_db_id,
+                    target,
+                    db::ratings::RatingKind::Track,
+                    db::ratings::RatingValue::new(value).unwrap(),
+                    1,
+                )?;
+            }
+            db::ratings::upsert(
+                &mut *db,
+                other_user_db_id,
+                other_user_rating,
+                db::ratings::RatingKind::Track,
+                db::ratings::RatingValue::new(5).unwrap(),
+                1,
+            )?;
+
+            let visible_library_id = db::libraries::get_by_id(&db, visible_library)?
+                .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
+                .id;
+            let principal = Principal {
+                user_db_id,
+                user_public_id: "track-rating-user".to_string(),
+                username: "track-rating-user".to_string(),
+                permissions: Vec::new(),
+                role_name: Some("user".to_string()),
+                accessible_library_ids: HashSet::from([visible_library_id]),
+            };
+            let four_star_id = db::tracks::get_by_id(&db, four_star)?.unwrap().id;
+            let five_star_id = db::tracks::get_by_id(&db, five_star)?.unwrap().id;
+            (principal, four_star_id, five_star_id)
+        };
+        let rating_filter = db::ratings::RatingFilter::new(
+            db::ratings::RatingValue::new(4),
+            db::ratings::RatingValue::new(5),
+        )
+        .unwrap();
+
+        let first_page = list_track_responses(
+            &principal,
+            TrackListOptions {
+                inc: None,
+                query: None,
+                library_id: None,
+                release_id: None,
+                sort_by: None,
+                sort_order: None,
+                rating_filter,
+                page_request: super::super::PageQuery {
+                    limit: Some(1),
+                    cursor: None,
+                }
+                .resolve_snapshot(),
+            },
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        let cursor = first_page
+            .next_cursor
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("expected another rated track page"))?;
+        let second_page = list_track_responses(
+            &principal,
+            TrackListOptions {
+                inc: None,
+                query: None,
+                library_id: None,
+                release_id: None,
+                sort_by: None,
+                sort_order: None,
+                rating_filter,
+                page_request: super::super::PageQuery {
+                    limit: Some(1),
+                    cursor: Some(cursor.clone()),
+                }
+                .resolve_snapshot(),
+            },
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        let returned_ids: HashSet<String> = first_page
+            .items
+            .into_iter()
+            .chain(second_page.items)
+            .map(|track| track.id)
+            .collect();
+        assert_eq!(
+            returned_ids,
+            HashSet::from([four_star_id, five_star_id.clone()])
+        );
+
+        let exact_five = db::ratings::RatingFilter::new(
+            db::ratings::RatingValue::new(5),
+            db::ratings::RatingValue::new(5),
+        )
+        .unwrap();
+        let mismatch = match list_track_responses(
+            &principal,
+            TrackListOptions {
+                inc: None,
+                query: None,
+                library_id: None,
+                release_id: None,
+                sort_by: None,
+                sort_order: None,
+                rating_filter: exact_five,
+                page_request: super::super::PageQuery {
+                    limit: Some(1),
+                    cursor: Some(cursor),
+                }
+                .resolve_snapshot(),
+            },
+        )
+        .await
+        {
+            Ok(_) => return Err(anyhow::anyhow!("changed rating bounds accepted the cursor")),
+            Err(err) => err.into_response(),
+        };
+        assert_eq!(mismatch.status(), StatusCode::CONFLICT);
+
+        let exact_page = list_track_responses(
+            &principal,
+            TrackListOptions {
+                inc: None,
+                query: None,
+                library_id: None,
+                release_id: None,
+                sort_by: None,
+                sort_order: None,
+                rating_filter: exact_five,
+                page_request: super::super::SnapshotPageRequest::first_page(100),
+            },
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert_eq!(
+            exact_page
+                .items
+                .into_iter()
+                .map(|track| track.id)
+                .collect::<Vec<_>>(),
+            vec![five_star_id],
+        );
         Ok(())
     }
 
@@ -1186,6 +1404,7 @@ mod tests {
                 release_id: None,
                 sort_by: None,
                 sort_order: None,
+                rating_filter: db::ratings::RatingFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
@@ -1330,6 +1549,7 @@ mod tests {
                 release_id: Some(release_public_id),
                 sort_by: None,
                 sort_order: None,
+                rating_filter: db::ratings::RatingFilter::default(),
                 page_request: super::super::SnapshotPageRequest::first_page(100),
             },
         )
