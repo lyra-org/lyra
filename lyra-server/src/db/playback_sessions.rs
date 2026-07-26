@@ -114,6 +114,7 @@ impl LuauTypeInfo for PlaybackState {
 pub(crate) struct PlaybackSession {
     pub(crate) db_id: Option<DbId>,
     pub(crate) id: String,
+    pub(crate) client_name: Option<String>,
     pub(crate) position_ms: u64,
     pub(crate) duration_ms: Option<u64>,
     pub(crate) activity_ms: Option<u64>,
@@ -366,6 +367,7 @@ mod tests {
         PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 0,
             duration_ms: Some(300_000),
             activity_ms: Some(0),
@@ -521,6 +523,7 @@ mod tests {
         let session = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 1000,
             duration_ms: Some(300_000),
             activity_ms: Some(100),
@@ -554,6 +557,7 @@ mod tests {
         let session = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 100,
             duration_ms: Some(300_000),
             activity_ms: Some(100),
@@ -586,6 +590,7 @@ mod tests {
         let session = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 60_000,
             duration_ms: Some(300_000),
             activity_ms: Some(30_000),
@@ -617,6 +622,7 @@ mod tests {
         let session = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 100,
             duration_ms: Some(300_000),
             activity_ms: Some(100),

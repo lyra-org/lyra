@@ -406,6 +406,7 @@ fn start_callback(
             playbacks::StartPlaybackRequest {
                 track_db_id,
                 user_db_id,
+                client_name: None,
                 mutation,
                 now_ms: current_ms,
                 active_event: playbacks::ActiveEvent::Started,
@@ -475,6 +476,7 @@ fn report_session_callback(
                 user_db_id,
                 session_key: &session_key,
                 track_db_id,
+                client_name: None,
                 mutation,
                 now_ms: current_ms,
                 active_event,

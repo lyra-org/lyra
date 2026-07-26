@@ -154,6 +154,7 @@ impl From<AuthError> for AppError {
             AuthError::MissingBearerCredential => Self::unauthorized("missing bearer credential"),
             AuthError::InvalidBearerCredential => Self::unauthorized("invalid bearer credential"),
             AuthError::SessionExpired => Self::unauthorized("session expired"),
+            AuthError::InvalidClientName(err) => Self::bad_request(err.to_string()),
             AuthError::Forbidden(msg) => Self::forbidden(msg),
             AuthError::NotFound(msg) => Self::not_found(msg),
             AuthError::RateLimited(retry_after) => Self::too_many_requests(retry_after),

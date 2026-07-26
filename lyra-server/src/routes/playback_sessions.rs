@@ -143,6 +143,13 @@ struct PlaybackResponse {
     track_id: String,
     #[cfg_attr(
         feature = "docgen",
+        schemars(
+            description = "Sanitized display name of the client that started this playback, if any. This is a snapshot taken at creation and does not change if another client later takes the playback over."
+        )
+    )]
+    client_name: Option<String>,
+    #[cfg_attr(
+        feature = "docgen",
         schemars(description = "User ID who owns this playback.")
     )]
     user_id: String,
@@ -223,6 +230,7 @@ fn playback_to_response(
     Ok(PlaybackResponse {
         playback_session_id: resolve_id(db, playback.playback_session_id)?,
         track_id: resolve_id(db, playback.track_db_id)?,
+        client_name: playback.playback.client_name.clone(),
         user_id: resolve_id(db, playback.user_db_id)?,
         position_ms: playback.playback.position_ms,
         duration_ms: playback.playback.duration_ms,
@@ -250,6 +258,36 @@ fn active_playback_cutoff_ms(current_ms: u64, state: PlaybackState) -> Option<u6
     }
 
     Some(current_ms.saturating_sub(ACTIVE_PLAYBACK_TIMEOUT_MS))
+}
+
+/// The connection currently driving `playback_session_id`, if any.
+///
+/// A connection qualifies only when its native scope still points at this
+/// playback. Nothing stops two scopes from binding the same playback — either
+/// device can claim one via `POST /{id}/progress` — so ties resolve to the most
+/// recently active scope rather than to registry iteration order, which is
+/// unordered and would make the reported controller flap between polls.
+fn controlling_connection(
+    connections: &[remote_registry::ConnectionSnapshot],
+    playback_session_id: DbId,
+) -> Option<&remote_registry::ConnectionSnapshot> {
+    connections
+        .iter()
+        .filter_map(|connection| {
+            let scope_key = playbacks::PlaybackScopeKey {
+                plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
+                user_db_id: connection.user_db_id,
+                session_key: &connection.session_key,
+            };
+            let scope = playbacks::get_playback_session(&scope_key)?;
+            (scope.current_playback_session_id == Some(playback_session_id)).then_some((
+                scope.updated_at_ms,
+                connection.connection_id,
+                connection,
+            ))
+        })
+        .max_by_key(|&(updated_at_ms, connection_id, _)| (updated_at_ms, connection_id))
+        .map(|(_, _, connection)| connection)
 }
 
 fn playback_is_recently_active(current_ms: u64, updated_at_ms: u64, state: PlaybackState) -> bool {
@@ -313,6 +351,7 @@ async fn start_playback(
 ) -> Result<Json<PlaybackResponse>, AppError> {
     let auth = require_auth(&headers).await?;
     let principal = &auth.principal;
+    let client_name = auth.client_name.clone();
 
     let current_ms = now_ms()?;
     let mutation = PlaybackMutation {
@@ -338,6 +377,7 @@ async fn start_playback(
                 user_db_id: principal.user_db_id,
                 session_key,
                 track_db_id,
+                client_name: client_name.clone(),
                 mutation: mutation.clone(),
                 now_ms: current_ms,
                 active_event: ActiveEvent::Started,
@@ -364,6 +404,7 @@ async fn start_playback(
                 user_db_id: principal.user_db_id,
                 session_key: &session_key,
                 track_db_id,
+                client_name: client_name.clone(),
                 mutation: mutation.clone(),
                 now_ms: current_ms,
                 active_event: ActiveEvent::Started,
@@ -388,6 +429,7 @@ async fn start_playback(
             playbacks::StartPlaybackRequest {
                 track_db_id,
                 user_db_id: principal.user_db_id,
+                client_name,
                 mutation,
                 now_ms: current_ms,
                 active_event: ActiveEvent::Started,
@@ -485,6 +527,13 @@ struct ActiveSessionResponse {
     #[cfg_attr(
         feature = "docgen",
         schemars(
+            description = "Sanitized display name of the controlling connection, if any. Unlike `client_name`, this reflects the client currently in control rather than the one that started the playback."
+        )
+    )]
+    connection_client_name: Option<String>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
             description = "Remote control commands supported by the controlling connection, if any."
         )
     )]
@@ -530,19 +579,9 @@ async fn get_active_sessions(
             continue;
         }
 
-        let playback_response = playback_to_response(&*db, &playback, current_ms)?;
+        let connection = controlling_connection(&connections, playback.playback_session_id);
 
-        // Match a WS connection to this playback only if the connection's native
-        // scope currently owns this playback session.
-        let connection = connections.iter().find(|c| {
-            let scope_key = playbacks::PlaybackScopeKey {
-                plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
-                user_db_id: c.user_db_id,
-                session_key: &c.session_key,
-            };
-            playbacks::get_playback_session(&scope_key)
-                .is_some_and(|scope| scope.current_playback_session_id == playback.playback.db_id)
-        });
+        let playback_response = playback_to_response(&*db, &playback, current_ms)?;
 
         let degraded = connection
             .map(|c| {
@@ -561,6 +600,7 @@ async fn get_active_sessions(
                 playback: playback_response,
                 connection_token: connection.map(|c| c.token.clone()),
                 connection_session_key: connection.map(|c| c.session_key.clone()),
+                connection_client_name: connection.and_then(|c| c.client_name.clone()),
                 supported_commands: connection
                     .map(|c| c.supported_commands.clone())
                     .unwrap_or_default(),
@@ -641,6 +681,82 @@ pub(crate) fn playback_session_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn connection_snapshot(
+        connection_id: u64,
+        session_key: &str,
+        client_name: Option<&str>,
+    ) -> remote_registry::ConnectionSnapshot {
+        remote_registry::ConnectionSnapshot {
+            connection_id,
+            token: format!("token-{connection_id}"),
+            user_db_id: DbId(1),
+            user_public_id: "user-1".to_string(),
+            client_name: client_name.map(str::to_string),
+            session_key: session_key.to_string(),
+            supported_commands: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn controlling_connection_prefers_the_most_recently_active_binding() -> anyhow::Result<()>
+    {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
+
+        let playback_session_id = DbId(7);
+        for (session_key, now_ms) in [("stale", 1_000), ("fresh", 2_000)] {
+            playbacks::bind_current_playback_session_scope(
+                &playbacks::PlaybackScopeKey {
+                    plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
+                    user_db_id: DbId(1),
+                    session_key,
+                },
+                playback_session_id,
+                "playback-public-id".to_string(),
+                now_ms,
+            );
+        }
+
+        // Registry order is a HashMap walk; the newer binding must win either way.
+        let ascending = [
+            connection_snapshot(1, "stale", Some("Living Room")),
+            connection_snapshot(2, "fresh", Some("Kitchen")),
+        ];
+        let descending = [ascending[1].clone(), ascending[0].clone()];
+
+        for connections in [&ascending, &descending] {
+            let selected = controlling_connection(connections, playback_session_id)
+                .expect("a bound connection should be selected");
+            assert_eq!(selected.session_key, "fresh");
+            assert_eq!(selected.client_name.as_deref(), Some("Kitchen"));
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn controlling_connection_ignores_scopes_bound_to_other_playbacks() -> anyhow::Result<()>
+    {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
+
+        playbacks::bind_current_playback_session_scope(
+            &playbacks::PlaybackScopeKey {
+                plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
+                user_db_id: DbId(1),
+                session_key: "other",
+            },
+            DbId(9),
+            "other-playback".to_string(),
+            1_000,
+        );
+
+        let connections = [connection_snapshot(1, "other", Some("Living Room"))];
+        assert!(controlling_connection(&connections, DbId(7)).is_none());
+
+        Ok(())
+    }
 
     #[test]
     fn active_filter_includes_non_terminal_playback_within_active_timeout() {
