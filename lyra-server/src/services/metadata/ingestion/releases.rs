@@ -35,10 +35,7 @@ use crate::db::{
     DbAccess,
     Release,
     Track,
-    graph::{
-        ensure_owned_edge,
-        remove_edges_between,
-    },
+    graph::ensure_owned_edge,
     indexes::ensure_index,
     metadata::get_connected_artist_ids,
 };
@@ -589,12 +586,12 @@ fn persist_release_inner(
                 continue;
             };
             if other_db_id != release_db_id {
-                remove_edges_between(db, other_db_id, track_db_id)?;
+                db::releases::unlink_track(db, other_db_id, track_db_id)?;
             }
         }
 
-        remove_edges_between(db, release_db_id, track_db_id)?;
-        ensure_owned_edge(db, release_db_id, track_db_id)?;
+        db::releases::unlink_track(db, release_db_id, track_db_id)?;
+        db::releases::link_track(db, release_db_id, track_db_id)?;
         if !persisted_track_ids.contains(&track_db_id) {
             persisted_track_ids.push(track_db_id);
         }

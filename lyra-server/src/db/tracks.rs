@@ -135,7 +135,10 @@ pub(crate) fn get(db: &DbAny, from: impl Into<QueryId>) -> anyhow::Result<Vec<Tr
     Ok(tracks)
 }
 
-pub(crate) fn get_direct(db: &DbAny, from: impl Into<QueryId>) -> anyhow::Result<Vec<Track>> {
+pub(crate) fn get_direct(
+    db: &impl super::DbAccess,
+    from: impl Into<QueryId>,
+) -> anyhow::Result<Vec<Track>> {
     let tracks: Vec<Track> = db
         .exec(
             QueryBuilder::select()

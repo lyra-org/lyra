@@ -31,9 +31,13 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use std::time::{
-    SystemTime,
-    UNIX_EPOCH,
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    time::{
+        SystemTime,
+        UNIX_EPOCH,
+    },
 };
 
 use crate::{
@@ -41,14 +45,18 @@ use crate::{
     db::{
         self,
         Playlist,
+        SortDirection,
     },
     routes::responses::{
         ArtistResponse,
+        CoverResponse,
+        PageResponse,
         ReleaseResponse,
         TrackResponse,
     },
     routes::{
         AppError,
+        covers as route_covers,
         deserialize_inc,
     },
     services::{
@@ -56,7 +64,9 @@ use crate::{
             Principal,
             require_principal,
         },
+        covers as cover_services,
         entities::resolve_track_artists,
+        pagination::SnapshotKey,
         playlists,
     },
 };
@@ -105,8 +115,28 @@ struct PlaylistResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
     is_public: bool,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Number of entries in the playlist.")
+    )]
+    track_count: u64,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Summed duration of the playlist's entries in milliseconds. Entries with no known duration, and entries whose track is not accessible to the caller, contribute nothing."
+        )
+    )]
+    total_duration_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     tracks: Option<Vec<PlaylistTrackResponse>>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Present when requested via `inc=covers`; `null` when no current display cover is visible to the caller."
+        )
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cover: Option<Option<CoverResponse>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     owner_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -140,10 +170,45 @@ struct PlaylistTrackResponse {
 struct PlaylistQuery {
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "Comma-separated or repeated values: tracks, artists, releases.")
+        schemars(
+            description = "Comma-separated or repeated values: tracks, artists, releases, covers."
+        )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
     inc: Option<Vec<String>>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+struct PlaylistListQuery {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Comma-separated or repeated values: tracks, artists, releases, covers."
+        )
+    )]
+    #[serde(default, deserialize_with = "deserialize_inc")]
+    inc: Option<Vec<String>>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Optional fuzzy text query matched against playlist names.")
+    )]
+    query: Option<String>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Comma-separated or repeated values: name, created_at, updated_at, track_count, total_duration, id."
+        )
+    )]
+    #[serde(default, deserialize_with = "deserialize_inc")]
+    sort_by: Option<Vec<String>>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Sort direction: ascending or descending.")
+    )]
+    sort_order: Option<String>,
+    #[serde(flatten)]
+    page: super::PageQuery,
 }
 
 #[derive(Clone, Copy)]
@@ -151,20 +216,33 @@ struct PlaylistInc {
     tracks: bool,
     artists: bool,
     releases: bool,
+    covers: bool,
+}
+
+impl PlaylistInc {
+    /// What the entry-mutating handlers echo back: bare tracks, no relations.
+    const TRACKS_ONLY: Self = Self {
+        tracks: true,
+        artists: false,
+        releases: false,
+        covers: false,
+    };
 }
 
 fn parse_inc(inc: Option<Vec<String>>) -> Result<PlaylistInc, AppError> {
-    let values = super::parse_inc_values(inc, &["tracks", "artists", "releases"])?;
+    let values = super::parse_inc_values(inc, &["tracks", "artists", "releases", "covers"])?;
     let mut result = PlaylistInc {
         tracks: false,
         artists: false,
         releases: false,
+        covers: false,
     };
     for value in values {
         match value.as_str() {
             "tracks" => result.tracks = true,
             "artists" => result.artists = true,
             "releases" => result.releases = true,
+            "covers" => result.covers = true,
             _ => {}
         }
     }
@@ -175,6 +253,161 @@ fn parse_inc(inc: Option<Vec<String>>) -> Result<PlaylistInc, AppError> {
     }
 
     Ok(result)
+}
+
+#[derive(Clone, Copy, Debug)]
+enum PlaylistRouteSortKey {
+    Name,
+    CreatedAt,
+    UpdatedAt,
+    TrackCount,
+    TotalDuration,
+    Id,
+}
+
+type PlaylistRouteSortSpec = super::RouteSortSpec<PlaylistRouteSortKey>;
+
+fn default_playlist_sort() -> Vec<PlaylistRouteSortSpec> {
+    vec![PlaylistRouteSortSpec {
+        key: PlaylistRouteSortKey::Name,
+        direction: SortDirection::Ascending,
+    }]
+}
+
+fn parse_playlist_sort_specs(
+    sort_by: Option<Vec<String>>,
+    sort_order: Option<String>,
+) -> Result<Vec<PlaylistRouteSortSpec>, AppError> {
+    super::parse_route_sort_specs(
+        sort_by,
+        sort_order,
+        |token| match token {
+            "name" => Some(PlaylistRouteSortKey::Name),
+            "created_at" => Some(PlaylistRouteSortKey::CreatedAt),
+            "updated_at" => Some(PlaylistRouteSortKey::UpdatedAt),
+            "track_count" => Some(PlaylistRouteSortKey::TrackCount),
+            "total_duration" => Some(PlaylistRouteSortKey::TotalDuration),
+            "id" => Some(PlaylistRouteSortKey::Id),
+            _ => None,
+        },
+        "name, created_at, updated_at, track_count, total_duration, id",
+    )
+}
+
+fn playlist_sort_needs_summaries(sort: &[PlaylistRouteSortSpec]) -> bool {
+    sort.iter().any(|spec| {
+        matches!(
+            spec.key,
+            PlaylistRouteSortKey::TrackCount | PlaylistRouteSortKey::TotalDuration
+        )
+    })
+}
+
+struct PlaylistRouteSortEntry {
+    playlist: Playlist,
+    sort_name: String,
+    summary: playlists::PlaylistSummary,
+    match_score: u32,
+}
+
+fn compare_playlist_route_field(
+    a: &PlaylistRouteSortEntry,
+    b: &PlaylistRouteSortEntry,
+    key: PlaylistRouteSortKey,
+) -> Ordering {
+    match key {
+        PlaylistRouteSortKey::Name => a
+            .sort_name
+            .cmp(&b.sort_name)
+            .then_with(|| a.playlist.name.cmp(&b.playlist.name)),
+        PlaylistRouteSortKey::CreatedAt => {
+            db::compare_option(&a.playlist.created_at, &b.playlist.created_at)
+        }
+        PlaylistRouteSortKey::UpdatedAt => {
+            db::compare_option(&a.playlist.updated_at, &b.playlist.updated_at)
+        }
+        PlaylistRouteSortKey::TrackCount => a.summary.track_count.cmp(&b.summary.track_count),
+        PlaylistRouteSortKey::TotalDuration => a
+            .summary
+            .total_duration_ms
+            .cmp(&b.summary.total_duration_ms),
+        PlaylistRouteSortKey::Id => a.playlist.id.cmp(&b.playlist.id),
+    }
+}
+
+fn compare_playlist_route_entries(
+    a: &PlaylistRouteSortEntry,
+    b: &PlaylistRouteSortEntry,
+    sort: &[PlaylistRouteSortSpec],
+) -> Ordering {
+    for spec in sort {
+        let ord = db::apply_direction(compare_playlist_route_field(a, b, spec.key), spec.direction);
+        if ord != Ordering::Equal {
+            return ord;
+        }
+    }
+
+    b.match_score
+        .cmp(&a.match_score)
+        .then_with(|| a.sort_name.cmp(&b.sort_name))
+        .then_with(|| a.playlist.name.cmp(&b.playlist.name))
+        .then_with(|| a.playlist.id.cmp(&b.playlist.id))
+}
+
+/// Ordered playlists for the caller, plus any summaries computed along the way
+/// so the caller does not have to recompute them for the page.
+fn query_playlist_route_items(
+    db: &agdb::DbAny,
+    principal: &Principal,
+    sort: &[PlaylistRouteSortSpec],
+    search_term: Option<&str>,
+) -> anyhow::Result<(Vec<Playlist>, HashMap<DbId, playlists::PlaylistSummary>)> {
+    let playlists_for_user = playlists::get_by_user(db, principal.user_db_id)?;
+    let mut entries = playlists_for_user
+        .into_iter()
+        .map(|playlist| PlaylistRouteSortEntry {
+            sort_name: playlist.name.to_lowercase(),
+            playlist,
+            summary: playlists::PlaylistSummary::default(),
+            match_score: 0,
+        })
+        .collect::<Vec<_>>();
+
+    // Filter before summarising: discarded playlists should not be walked.
+    if let Some(term) = search_term {
+        db::search::fuzzy_filter(
+            &mut entries,
+            term,
+            |entry| entry.playlist.name.as_str(),
+            |entry, score| entry.match_score = score,
+        );
+    }
+
+    let summaries = if playlist_sort_needs_summaries(sort) {
+        let playlist_db_ids = entries
+            .iter()
+            .filter_map(|entry| entry.playlist.db_id.clone().map(DbId::from))
+            .collect::<Vec<_>>();
+        let summaries = playlists::summaries(db, principal, &playlist_db_ids)?;
+        for entry in &mut entries {
+            entry.summary = entry
+                .playlist
+                .db_id
+                .clone()
+                .map(DbId::from)
+                .and_then(|playlist_db_id| summaries.get(&playlist_db_id).copied())
+                .unwrap_or_default();
+        }
+        summaries
+    } else {
+        HashMap::new()
+    };
+
+    entries.sort_by(|a, b| compare_playlist_route_entries(a, b, sort));
+    Ok((
+        entries.into_iter().map(|entry| entry.playlist).collect(),
+        summaries,
+    ))
 }
 
 fn now_epoch() -> u64 {
@@ -192,22 +425,37 @@ fn resolve_owner_id(db: &agdb::DbAny, owner_db_id: Option<DbId>) -> anyhow::Resu
 }
 
 fn playlist_to_response(
-    db: &agdb::DbAny,
     playlist: Playlist,
     tracks: Option<Vec<PlaylistTrackResponse>>,
-    owner_db_id: Option<DbId>,
-) -> anyhow::Result<PlaylistResponse> {
-    let owner_id = resolve_owner_id(db, owner_db_id)?;
-    Ok(PlaylistResponse {
+    cover: Option<Option<CoverResponse>>,
+    owner_id: Option<String>,
+    summary: playlists::PlaylistSummary,
+) -> PlaylistResponse {
+    PlaylistResponse {
         id: playlist.id,
         name: playlist.name,
         description: playlist.description,
         is_public: playlist.is_public.unwrap_or(false),
+        track_count: summary.track_count,
+        total_duration_ms: summary.total_duration_ms,
         tracks,
+        cover,
         owner_id,
         created_at: playlist.created_at.map(super::unix_secs_to_rfc3339_u64),
         updated_at: playlist.updated_at.map(super::unix_secs_to_rfc3339_u64),
-    })
+    }
+}
+
+/// Summary for a single playlist, for the handlers that return one.
+fn playlist_summary(
+    db: &agdb::DbAny,
+    principal: &Principal,
+    playlist_db_id: DbId,
+) -> anyhow::Result<playlists::PlaylistSummary> {
+    Ok(playlists::summaries(db, principal, &[playlist_db_id])?
+        .get(&playlist_db_id)
+        .copied()
+        .unwrap_or_default())
 }
 
 async fn require_playlist_owner(
@@ -340,26 +588,87 @@ async fn create_playlist(
     Ok((
         StatusCode::CREATED,
         Json(playlist_to_response(
-            &db,
             created,
             None,
-            Some(principal.user_db_id),
-        )?),
+            None,
+            Some(principal.user_public_id),
+            playlists::PlaylistSummary::default(),
+        )),
     ))
 }
 
 async fn get_playlists(
     headers: HeaderMap,
-    Query(query): Query<PlaylistQuery>,
-) -> Result<Json<Vec<PlaylistResponse>>, AppError> {
+    Query(query): Query<PlaylistListQuery>,
+) -> Result<Json<PageResponse<PlaylistResponse>>, AppError> {
+    let PlaylistListQuery {
+        inc,
+        query,
+        sort_by,
+        sort_order,
+        page,
+    } = query;
     let principal = require_principal(&headers).await?;
-    let inc = parse_inc(query.inc)?;
+    let inc = parse_inc(inc)?;
+    let search_term = super::parse_text_query(query);
+    let page_request = page.resolve_snapshot();
+    let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "playlists")
+        .field(search_term.as_deref())
+        .values(sort_by.as_deref())
+        .field(sort_order.as_deref())
+        .finish();
+    let mut sort = parse_playlist_sort_specs(sort_by, sort_order)?;
+    if sort.is_empty() {
+        sort = default_playlist_sort();
+    }
 
     let db = &*STATE.db.read().await;
-    let playlists = playlists::get_by_user(db, principal.user_db_id)?;
+    let (page_playlists, next_cursor, mut summaries) =
+        if let Some(page) = page_request.resume(&snapshot_key)? {
+            let playlists_page = super::load_snapshot_items(
+                db,
+                &page.item_ids,
+                db::playlists::get_by_id,
+                |db, playlist_db_id| {
+                    Ok(db::playlists::get_owner(db, playlist_db_id)? == Some(principal.user_db_id))
+                },
+            )?;
+            (playlists_page, page.next_cursor, HashMap::new())
+        } else {
+            let (mut playlists_page, summaries) =
+                query_playlist_route_items(db, &principal, &sort, search_term.as_deref())?;
+            let page = page_request.start(
+                &snapshot_key,
+                playlists_page
+                    .iter()
+                    .map(|playlist| playlist.id.clone())
+                    .collect(),
+            )?;
+            playlists_page.truncate(page.item_ids.len());
+            (playlists_page, page.next_cursor, summaries)
+        };
 
-    let mut response = Vec::with_capacity(playlists.len());
-    for playlist in playlists {
+    let playlist_db_ids = page_playlists
+        .iter()
+        .filter_map(|playlist| playlist.db_id.clone().map(DbId::from))
+        .collect::<Vec<_>>();
+    // The sort pass already summarised these unless it sorted on a field that
+    // did not need them.
+    if !playlist_db_ids.iter().all(|id| summaries.contains_key(id)) {
+        summaries = playlists::summaries(db, &principal, &playlist_db_ids)?;
+    }
+    let covers = if inc.covers {
+        Some(cover_services::display::playlists::covers_for_playlists(
+            db,
+            &principal,
+            &page_playlists,
+        )?)
+    } else {
+        None
+    };
+
+    let mut items = Vec::with_capacity(page_playlists.len());
+    for playlist in page_playlists {
         let playlist_db_id: DbId = playlist
             .db_id
             .clone()
@@ -370,11 +679,22 @@ async fn get_playlists(
         } else {
             None
         };
-        let owner_db_id = playlists::get_owner(db, QueryId::Id(playlist_db_id))?;
-        response.push(playlist_to_response(db, playlist, tracks, owner_db_id)?);
+        let cover = covers.as_ref().map(|covers| {
+            covers
+                .get(&playlist_db_id)
+                .cloned()
+                .map(route_covers::cover_to_response)
+        });
+        items.push(playlist_to_response(
+            playlist,
+            tracks,
+            cover,
+            Some(principal.user_public_id.clone()),
+            summaries.get(&playlist_db_id).copied().unwrap_or_default(),
+        ));
     }
 
-    Ok(Json(response))
+    Ok(Json(PageResponse { items, next_cursor }))
 }
 
 async fn get_playlist(
@@ -402,13 +722,22 @@ async fn get_playlist(
     } else {
         None
     };
+    let cover = if inc.covers {
+        Some(
+            cover_services::display::playlists::cover_for_playlist(db, &principal, &playlist)?
+                .map(route_covers::cover_to_response),
+        )
+    } else {
+        None
+    };
 
     Ok(Json(playlist_to_response(
-        db,
         playlist,
         tracks,
-        owner_db_id,
-    )?))
+        cover,
+        resolve_owner_id(db, owner_db_id)?,
+        playlist_summary(db, &principal, playlist_db_id)?,
+    )))
 }
 
 async fn update_playlist(
@@ -421,7 +750,7 @@ async fn update_playlist(
         db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?
     };
-    let _principal = require_playlist_owner(&headers, playlist_db_id).await?;
+    let principal = require_playlist_owner(&headers, playlist_db_id).await?;
 
     let mut db = STATE.db.write().await;
     let playlist = playlists::update(
@@ -437,13 +766,14 @@ async fn update_playlist(
     .map_err(|err| AppError::bad_request(err.to_string()))?
     .ok_or_else(|| AppError::not_found(format!("Playlist not found: {}", id)))?;
 
-    let owner_db_id = playlists::get_owner(&db, QueryId::Id(playlist_db_id))?;
+    let summary = playlist_summary(&db, &principal, playlist_db_id)?;
     Ok(Json(playlist_to_response(
-        &db,
         playlist,
         None,
-        owner_db_id,
-    )?))
+        None,
+        Some(principal.user_public_id),
+        summary,
+    )))
 }
 
 async fn delete_playlist(
@@ -514,11 +844,6 @@ async fn add_playlist_tracks(
             }
         })?;
 
-    let no_inc = PlaylistInc {
-        tracks: true,
-        artists: false,
-        releases: false,
-    };
     let mut added = Vec::with_capacity(results.len());
     for playlist_track in results {
         let track = db::tracks::get_by_id(&db, playlist_track.track_db_id)?
@@ -530,7 +855,7 @@ async fn add_playlist_tracks(
             playlist_track.track_db_id,
             playlist_track.entry_id,
             playlist_track.position,
-            no_inc,
+            PlaylistInc::TRACKS_ONLY,
         )?);
     }
 
@@ -586,11 +911,6 @@ async fn remove_playlist_entries(
                 playlist_track.track_db_id.0
             ))
         })?;
-        let no_inc = PlaylistInc {
-            tracks: true,
-            artists: false,
-            releases: false,
-        };
         removed.push(build_track_response(
             &db,
             &_principal,
@@ -598,7 +918,7 @@ async fn remove_playlist_entries(
             playlist_track.track_db_id,
             playlist_track.entry_id,
             playlist_track.position,
-            no_inc,
+            PlaylistInc::TRACKS_ONLY,
         )?);
     }
 
@@ -648,12 +968,7 @@ async fn move_playlist_track(
         }
     })?;
 
-    let no_inc = PlaylistInc {
-        tracks: true,
-        artists: false,
-        releases: false,
-    };
-    let items = build_tracks(&db, &_principal, playlist_db_id, no_inc)?;
+    let items = build_tracks(&db, &_principal, playlist_db_id, PlaylistInc::TRACKS_ONLY)?;
     Ok(Json(items))
 }
 
@@ -667,13 +982,13 @@ fn create_playlist_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_playlists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List playlists")
-        .description("Returns playlists owned by the authenticated user. Use `inc` to include tracks, artists, releases.")
+        .description("Returns a cursor-paginated page of playlists owned by the authenticated user. Track counts and durations are always included. Use `inc` to include tracks, artists, releases, covers.")
 }
 
 #[cfg(feature = "docgen")]
 fn get_playlist_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get playlist by ID")
-        .description("Returns a single playlist. Use `inc=tracks,artists,releases` to include track details. 404 if not found or not accessible.")
+        .description("Returns a single playlist. Use `inc=tracks,artists,releases,covers` to include track or cover details. 404 if not found or not accessible.")
 }
 
 #[cfg(feature = "docgen")]
@@ -803,6 +1118,160 @@ mod tests {
         Ok(user_db_id)
     }
 
+    fn test_principal(db: &mut DbAny) -> anyhow::Result<(DbId, Principal)> {
+        let user_db_id = create_test_user(db)?;
+        Ok((
+            user_db_id,
+            Principal {
+                user_db_id,
+                user_public_id: "route-principal".to_string(),
+                username: "route-principal".to_string(),
+                permissions: vec![db::Permission::Admin],
+                role_name: Some("admin".to_string()),
+                accessible_library_ids: std::collections::HashSet::new(),
+            },
+        ))
+    }
+
+    fn seed_playlist(db: &mut DbAny, user_db_id: DbId, name: &str) -> anyhow::Result<DbId> {
+        playlists::create(
+            db,
+            &playlists::CreatePlaylistRequest {
+                user_db_id,
+                name: name.to_string(),
+                description: None,
+                is_public: None,
+                created_at: None,
+                updated_at: None,
+            },
+        )
+    }
+
+    #[test]
+    fn parse_playlist_sort_specs_rejects_unknown_keys() -> anyhow::Result<()> {
+        let specs = parse_playlist_sort_specs(
+            Some(vec!["track_count,name".to_string()]),
+            Some("descending".to_string()),
+        )
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert_eq!(specs.len(), 2);
+        assert!(matches!(specs[0].key, PlaylistRouteSortKey::TrackCount));
+        assert!(matches!(specs[1].key, PlaylistRouteSortKey::Name));
+        assert!(matches!(specs[0].direction, SortDirection::Descending));
+
+        let err = parse_playlist_sort_specs(Some(vec!["bogus".to_string()]), None)
+            .expect_err("unknown sort key should be rejected");
+        assert!(format!("{err:?}").contains("bogus"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn parse_inc_accepts_covers_and_implies_tracks() -> anyhow::Result<()> {
+        let inc = parse_inc(Some(vec!["covers".to_string()]))
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert!(inc.covers);
+        assert!(!inc.tracks);
+
+        let inc = parse_inc(Some(vec!["releases".to_string()]))
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert!(inc.tracks, "releases should imply tracks");
+
+        Ok(())
+    }
+
+    #[test]
+    fn query_playlist_route_items_sorts_by_track_count() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (user_db_id, principal) = test_principal(&mut db)?;
+        let empty = seed_playlist(&mut db, user_db_id, "Zebra")?;
+        let filled = seed_playlist(&mut db, user_db_id, "Alpha")?;
+        let track = insert_track(&mut db, "Track")?;
+        playlists::add_tracks(&mut db, QueryId::Id(filled), &[QueryId::Id(track)])?;
+
+        let sort = parse_playlist_sort_specs(
+            Some(vec!["track_count".to_string()]),
+            Some("descending".to_string()),
+        )
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        let (ordered, summaries) = query_playlist_route_items(&db, &principal, &sort, None)?;
+        assert_eq!(
+            ordered.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            ["Alpha", "Zebra"]
+        );
+        assert_eq!(summaries.get(&filled).map(|s| s.track_count), Some(1));
+
+        // Default sort is by name, so the empty playlist comes second.
+        let (ordered, summaries) =
+            query_playlist_route_items(&db, &principal, &default_playlist_sort(), None)?;
+        assert_eq!(
+            ordered.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            ["Alpha", "Zebra"]
+        );
+        assert!(
+            summaries.is_empty(),
+            "name sort should not pay for summaries"
+        );
+        assert_eq!(ordered.len(), 2);
+        let _ = empty;
+
+        Ok(())
+    }
+
+    #[test]
+    fn query_playlist_route_items_filters_by_search_term() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (user_db_id, principal) = test_principal(&mut db)?;
+        seed_playlist(&mut db, user_db_id, "Late Night Jazz")?;
+        seed_playlist(&mut db, user_db_id, "Morning Rock")?;
+
+        let (ordered, _) =
+            query_playlist_route_items(&db, &principal, &default_playlist_sort(), Some("jazz"))?;
+        assert_eq!(
+            ordered.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            ["Late Night Jazz"]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn snapshot_key_separates_collection_shaping_inputs() {
+        let key = |search: Option<&str>, sort_by: Option<&[String]>, order: Option<&str>| {
+            SnapshotKey::builder("user", "playlists")
+                .field(search)
+                .values(sort_by)
+                .field(order)
+                .finish()
+        };
+        let name = [String::from("name")];
+        let count = [String::from("track_count")];
+        let registry = crate::services::pagination::SnapshotRegistry::default();
+        let items = || vec!["a".to_string(), "b".to_string()];
+
+        // A cursor minted under one shaping must not resume under another.
+        let page = registry
+            .start(&key(None, Some(&name), Some("ascending")), items(), 1)
+            .expect("first page");
+        let cursor = page.next_cursor.expect("cursor");
+        for other in [
+            key(Some("jazz"), Some(&name), Some("ascending")),
+            key(None, Some(&count), Some("ascending")),
+            key(None, Some(&name), Some("descending")),
+        ] {
+            assert!(
+                registry.resume(&other, &cursor, 1).is_err(),
+                "cursor must be bound to search term, sort key, and direction"
+            );
+        }
+        assert!(
+            registry
+                .resume(&key(None, Some(&name), Some("ascending")), &cursor, 1)
+                .is_ok(),
+            "identical shaping must resume"
+        );
+    }
+
     #[test]
     fn build_track_response_uses_release_artist_fallback() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
@@ -836,9 +1305,8 @@ mod tests {
             pt.entry_id,
             pt.position,
             PlaylistInc {
-                tracks: true,
                 artists: true,
-                releases: false,
+                ..PlaylistInc::TRACKS_ONLY
             },
         )?;
 

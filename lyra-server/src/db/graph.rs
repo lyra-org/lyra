@@ -59,33 +59,34 @@ pub(crate) fn remove_edges_between(
     db: &mut impl DbAccess,
     from: DbId,
     to: DbId,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let edge_ids = direct_edge_ids(db, from, to)?;
-    if !edge_ids.is_empty() {
-        db.exec_mut(QueryBuilder::remove().ids(&edge_ids).query())?;
+    if edge_ids.is_empty() {
+        return Ok(false);
     }
 
-    Ok(())
+    db.exec_mut(QueryBuilder::remove().ids(&edge_ids).query())?;
+    Ok(true)
 }
 
 pub(crate) fn ensure_owned_edge(
     db: &mut impl DbAccess,
     from: DbId,
     to: DbId,
-) -> anyhow::Result<()> {
-    if !edge_exists(db, from, to)? {
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from(from)
-                .to(to)
-                .values_uniform([("owned", 1).into()])
-                .query(),
-        )?;
-        super::covers::display::mark_release_track_link_changed(db, from, to)?;
+) -> anyhow::Result<bool> {
+    if edge_exists(db, from, to)? {
+        return Ok(false);
     }
 
-    Ok(())
+    db.exec_mut(
+        QueryBuilder::insert()
+            .edges()
+            .from(from)
+            .to(to)
+            .values_uniform([("owned", 1).into()])
+            .query(),
+    )?;
+    Ok(true)
 }
 
 pub(crate) fn edge_count_map(

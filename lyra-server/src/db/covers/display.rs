@@ -29,6 +29,7 @@ use crate::db::{
     NodeId,
     genres,
     graph,
+    playlists,
     releases,
     tracks,
     users,
@@ -726,11 +727,16 @@ fn winner_values(
     ]
 }
 
-fn replace_winner(db: &mut impl DbAccess, update: &WinnerUpdate<'_>) -> anyhow::Result<()> {
-    let identity = winner_identity(update.profile_public_id, update.winner_kind);
-    if let Some(existing) = find_edge_by_identity(db, &identity)? {
+fn remove_winner(db: &mut impl DbAccess, identity: &str) -> anyhow::Result<()> {
+    if let Some(existing) = find_edge_by_identity(db, identity)? {
         db.exec_mut(QueryBuilder::remove().ids(existing.id).query())?;
     }
+    Ok(())
+}
+
+fn replace_winner(db: &mut impl DbAccess, update: &WinnerUpdate<'_>) -> anyhow::Result<()> {
+    let identity = winner_identity(update.profile_public_id, update.winner_kind);
+    remove_winner(db, &identity)?;
     let edge_id = db
         .exec_mut(
             QueryBuilder::insert()
@@ -906,6 +912,233 @@ pub(crate) fn sync_release_random_candidates(
             continue;
         };
         ensure_genre_release_random_candidate(db, genre_db_id, release_db_id, now_ms)?;
+    }
+    Ok(())
+}
+
+/// Releases reachable from a playlist's entries that currently have a cover,
+/// paired with their public ids for deterministic scoring.
+fn playlist_cover_candidates(
+    db: &impl DbAccess,
+    playlist_db_id: DbId,
+) -> anyhow::Result<Vec<(DbId, String)>> {
+    let entries = playlists::get_tracks(db, playlist_db_id)?;
+    let edge_ids = entries
+        .iter()
+        .map(|entry| entry.edge_id)
+        .collect::<Vec<_>>();
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+    for track_db_id in playlists::resolve_edge_targets(db, &edge_ids)? {
+        for release in releases::get_by_track(db, track_db_id)? {
+            let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
+                continue;
+            };
+            if !seen.insert(release_db_id) {
+                continue;
+            }
+            if super::get(db, release_db_id)?.is_none() {
+                continue;
+            }
+            candidates.push((release_db_id, release.id));
+        }
+    }
+    Ok(candidates)
+}
+
+/// Recompute a playlist's display cover from its current membership.
+///
+/// Playlist membership is authoritative and fully known at call time, so the
+/// winner is replaced outright rather than accumulated through candidate edges
+/// the way listen-driven genre winners are.
+pub(crate) fn sync_playlist_cover(
+    db: &mut impl DbAccess,
+    playlist_db_id: DbId,
+) -> anyhow::Result<()> {
+    let Some(playlist) = playlists::get_by_id(db, playlist_db_id)? else {
+        return Ok(());
+    };
+    let now_ms = now_ms();
+    let target = DisplayCoverTarget {
+        kind: DisplayCoverTargetKind::Playlist,
+        db_id: playlist_db_id,
+        public_id: &playlist.id,
+    };
+    let (profile_db_id, mut profile) =
+        ensure_profile(db, DisplayCoverScope::Instance, &target, None, now_ms)?;
+
+    let winner = playlist_cover_candidates(db, playlist_db_id)?
+        .into_iter()
+        .map(|(release_db_id, release_public_id)| {
+            let random_score = deterministic_random_score(
+                DisplayCoverTargetKind::Playlist,
+                &playlist.id,
+                &release_public_id,
+            );
+            (random_score, release_public_id, release_db_id)
+        })
+        .min_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+
+    match winner {
+        Some((random_score, _, release_db_id)) => replace_winner(
+            db,
+            &winner_update(
+                profile_db_id,
+                &profile.id,
+                release_db_id,
+                DisplayCoverWinnerKind::Random,
+                0,
+                random_score,
+                now_ms,
+            ),
+        ),
+        None => remove_winner(
+            db,
+            &winner_identity(&profile.id, DisplayCoverWinnerKind::Random),
+        ),
+    }?;
+    mark_profile_current(db, profile_db_id, &mut profile, now_ms)
+}
+
+fn mark_profile_current(
+    db: &mut impl DbAccess,
+    profile_db_id: DbId,
+    profile: &mut DisplayCoverProfile,
+    now_ms: u64,
+) -> anyhow::Result<()> {
+    if profile_is_clean(profile) {
+        return Ok(());
+    }
+    profile.algorithm_version = ALGORITHM_VERSION;
+    profile.dirty = Some(false);
+    profile.updated_at_ms = now_ms;
+    save_profile(db, profile_db_id, profile)
+}
+
+/// Remove a playlist's display-cover profile before deleting the playlist node.
+/// The playlist's public id is required to locate the separately rooted profile.
+pub(crate) fn remove_playlist_cover_profile(
+    db: &mut impl DbAccess,
+    playlist_db_id: DbId,
+) -> anyhow::Result<()> {
+    let Some(playlist) = playlists::get_by_id(db, playlist_db_id)? else {
+        return Ok(());
+    };
+    let identity = profile_identity(
+        DisplayCoverScope::Instance,
+        DisplayCoverTargetKind::Playlist,
+        None,
+        &playlist.id,
+    );
+    let Some((profile_db_id, _)) = find_profile_by_identity(db, &identity)? else {
+        return Ok(());
+    };
+    db.exec_mut(QueryBuilder::remove().ids(profile_db_id).query())?;
+    Ok(())
+}
+
+/// Offer a single release to a playlist's display cover.
+///
+/// The winner is the minimum deterministic score over the playlist's covered
+/// releases, so a newly covered release only has to beat a current incumbent.
+/// Dirty profiles delegate to [`sync_playlist_cover`] before they can be marked
+/// current.
+pub(crate) fn offer_playlist_cover_candidate(
+    db: &mut impl DbAccess,
+    playlist_db_id: DbId,
+    release_db_id: DbId,
+) -> anyhow::Result<()> {
+    let Some(playlist) = playlists::get_by_id(db, playlist_db_id)? else {
+        return Ok(());
+    };
+    let Some(release) = releases::get_by_id(db, release_db_id)? else {
+        return Ok(());
+    };
+    if super::get(db, release_db_id)?.is_none() {
+        return Ok(());
+    }
+
+    let now_ms = now_ms();
+    let target = DisplayCoverTarget {
+        kind: DisplayCoverTargetKind::Playlist,
+        db_id: playlist_db_id,
+        public_id: &playlist.id,
+    };
+    let (profile_db_id, profile) =
+        ensure_profile(db, DisplayCoverScope::Instance, &target, None, now_ms)?;
+    if !profile_is_clean(&profile) {
+        return sync_playlist_cover(db, playlist_db_id);
+    }
+    let random_score =
+        deterministic_random_score(DisplayCoverTargetKind::Playlist, &playlist.id, &release.id);
+    set_winner_if_better(
+        db,
+        &profile,
+        winner_update(
+            profile_db_id,
+            &profile.id,
+            release_db_id,
+            DisplayCoverWinnerKind::Random,
+            0,
+            random_score,
+            now_ms,
+        ),
+    )?;
+    Ok(())
+}
+
+/// A track joined a playlist: offer each of its releases as a cover candidate.
+pub(crate) fn offer_track_to_playlist_cover(
+    db: &mut impl DbAccess,
+    playlist_db_id: DbId,
+    track_db_id: DbId,
+) -> anyhow::Result<()> {
+    for release in releases::get_by_track(db, track_db_id)? {
+        let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
+            continue;
+        };
+        offer_playlist_cover_candidate(db, playlist_db_id, release_db_id)?;
+    }
+    Ok(())
+}
+
+/// Playlists holding at least one track of `release_db_id`.
+fn playlists_for_release(db: &impl DbAccess, release_db_id: DbId) -> anyhow::Result<Vec<DbId>> {
+    let mut playlist_db_ids = Vec::new();
+    let mut seen = HashSet::new();
+    for track in tracks::get_direct(db, release_db_id)? {
+        let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
+            continue;
+        };
+        for playlist_db_id in playlists::get_by_track(db, track_db_id)? {
+            if seen.insert(playlist_db_id) {
+                playlist_db_ids.push(playlist_db_id);
+            }
+        }
+    }
+    Ok(playlist_db_ids)
+}
+
+/// A release gained a cover: offer it to every playlist holding one of its
+/// tracks without rescanning each playlist's entries.
+pub(crate) fn offer_release_to_playlist_covers(
+    db: &mut impl DbAccess,
+    release_db_id: DbId,
+) -> anyhow::Result<()> {
+    for playlist_db_id in playlists_for_release(db, release_db_id)? {
+        offer_playlist_cover_candidate(db, playlist_db_id, release_db_id)?;
+    }
+    Ok(())
+}
+
+/// A release lost its cover, so playlists holding its current tracks need a
+/// full recompute in case it was their winner.
+pub(crate) fn resync_playlist_covers_for_release(
+    db: &mut impl DbAccess,
+    release_db_id: DbId,
+) -> anyhow::Result<()> {
+    for playlist_db_id in playlists_for_release(db, release_db_id)? {
+        sync_playlist_cover(db, playlist_db_id)?;
     }
     Ok(())
 }
@@ -1107,13 +1340,50 @@ pub(crate) fn mark_genre_profiles_dirty_for_release(
     Ok(())
 }
 
-pub(crate) fn mark_release_track_link_changed(
+pub(crate) fn offer_release_to_playlists_with_track(
     db: &mut impl DbAccess,
-    from_id: DbId,
-    to_id: DbId,
+    release_db_id: DbId,
+    track_db_id: DbId,
 ) -> anyhow::Result<()> {
-    if releases::get_by_id(db, from_id)?.is_some() && tracks::get_by_id(db, to_id)?.is_some() {
-        mark_genre_profiles_dirty_for_release(db, from_id)?;
+    for playlist_db_id in playlists::get_by_track(db, track_db_id)? {
+        offer_playlist_cover_candidate(db, playlist_db_id, release_db_id)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn resync_playlists_with_track(
+    db: &mut impl DbAccess,
+    track_db_id: DbId,
+) -> anyhow::Result<()> {
+    for playlist_db_id in playlists::get_by_track(db, track_db_id)? {
+        sync_playlist_cover(db, playlist_db_id)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn playlist_ids_for_tracks(
+    db: &impl DbAccess,
+    track_db_ids: &[DbId],
+) -> anyhow::Result<Vec<DbId>> {
+    let tracks = tracks::get_by_ids(db, track_db_ids)?;
+    let mut playlist_db_ids = Vec::new();
+    let mut seen = HashSet::new();
+    for track_db_id in tracks.keys().copied() {
+        for playlist_db_id in playlists::get_by_track(db, track_db_id)? {
+            if seen.insert(playlist_db_id) {
+                playlist_db_ids.push(playlist_db_id);
+            }
+        }
+    }
+    Ok(playlist_db_ids)
+}
+
+pub(crate) fn sync_playlist_covers(
+    db: &mut impl DbAccess,
+    playlist_db_ids: &[DbId],
+) -> anyhow::Result<()> {
+    for playlist_db_id in playlist_db_ids.iter().copied() {
+        sync_playlist_cover(db, playlist_db_id)?;
     }
     Ok(())
 }
@@ -1250,6 +1520,321 @@ mod tests {
         };
 
         assert_eq!(winner.release_db_id, expected);
+        Ok(())
+    }
+
+    fn insert_playlist(db: &mut agdb::DbAny, user_db_id: DbId) -> anyhow::Result<(DbId, String)> {
+        let playlist = crate::db::playlists::Playlist {
+            db_id: None,
+            id: nanoid!(),
+            name: "Display Cover Playlist".to_string(),
+            description: None,
+            is_public: None,
+            created_at: None,
+            updated_at: None,
+        };
+        let playlist_db_id = crate::db::playlists::create(db, &playlist, user_db_id)?;
+        Ok((playlist_db_id, playlist.id))
+    }
+
+    #[test]
+    fn playlist_cover_tracks_membership() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = users::create(&mut db, &test_user("playlist-covers")?)?;
+        let release_db_id = insert_release(&mut db, "Covered")?;
+        let track_db_id = insert_track(&mut db, "Covered Track")?;
+        connect(&mut db, release_db_id, track_db_id)?;
+        insert_cover(&mut db, release_db_id, "playlist-winner")?;
+
+        let (playlist_db_id, playlist_public_id) = insert_playlist(&mut db, user_db_id)?;
+        let entry = db
+            .transaction_mut(|t| crate::db::playlists::add_track(t, playlist_db_id, track_db_id))?;
+        sync_playlist_cover(&mut db, playlist_db_id)?;
+
+        let (_, profile) = get_profile(
+            &db,
+            DisplayCoverScope::Instance,
+            DisplayCoverTargetKind::Playlist,
+            None,
+            &playlist_public_id,
+        )?
+        .expect("playlist profile should exist");
+        let winner = get_winner(&db, &profile, DisplayCoverWinnerKind::Random)?
+            .expect("playlist winner should exist");
+        assert_eq!(winner.release_db_id, release_db_id);
+
+        crate::db::playlists::remove_track(&mut db, entry.edge_id)?;
+        sync_playlist_cover(&mut db, playlist_db_id)?;
+
+        let (_, profile) = get_profile(
+            &db,
+            DisplayCoverScope::Instance,
+            DisplayCoverTargetKind::Playlist,
+            None,
+            &playlist_public_id,
+        )?
+        .expect("playlist profile should still exist");
+        assert!(
+            get_winner(&db, &profile, DisplayCoverWinnerKind::Random)?.is_none(),
+            "winner should be cleared once the playlist holds no covered release"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn playlist_sync_leaves_profile_current() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = users::create(&mut db, &test_user("playlist-dirty")?)?;
+        let release_db_id = insert_release(&mut db, "Covered")?;
+        let track_db_id = insert_track(&mut db, "Covered Track")?;
+        connect(&mut db, release_db_id, track_db_id)?;
+        insert_cover(&mut db, release_db_id, "clean")?;
+
+        let (playlist_db_id, playlist_public_id) = insert_playlist(&mut db, user_db_id)?;
+        db.transaction_mut(|t| crate::db::playlists::add_track(t, playlist_db_id, track_db_id))?;
+        sync_playlist_cover(&mut db, playlist_db_id)?;
+
+        // Simulate the state an ALGORITHM_VERSION bump leaves behind. Without a
+        // listen-driven writer, nothing else would ever clear this, and the
+        // playlist would report no cover forever.
+        let (profile_db_id, mut profile) = get_profile(
+            &db,
+            DisplayCoverScope::Instance,
+            DisplayCoverTargetKind::Playlist,
+            None,
+            &playlist_public_id,
+        )?
+        .expect("playlist profile should exist");
+        profile.dirty = Some(true);
+        save_profile(&mut db, profile_db_id, &profile)?;
+
+        sync_playlist_cover(&mut db, playlist_db_id)?;
+
+        let (_, profile) = get_profile(
+            &db,
+            DisplayCoverScope::Instance,
+            DisplayCoverTargetKind::Playlist,
+            None,
+            &playlist_public_id,
+        )?
+        .expect("playlist profile should exist");
+        assert!(
+            profile_is_clean(&profile),
+            "a recomputed playlist profile is current by construction"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn playlist_offer_recomputes_an_old_algorithm_profile() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = users::create(&mut db, &test_user("playlist-version")?)?;
+        let release_a = insert_release(&mut db, "A")?;
+        let release_b = insert_release(&mut db, "B")?;
+        let track_a = insert_track(&mut db, "A1")?;
+        let track_b = insert_track(&mut db, "B1")?;
+        connect(&mut db, release_a, track_a)?;
+        connect(&mut db, release_b, track_b)?;
+        insert_cover(&mut db, release_a, "version-a")?;
+        insert_cover(&mut db, release_b, "version-b")?;
+
+        let (playlist_db_id, playlist_public_id) = insert_playlist(&mut db, user_db_id)?;
+        for track_db_id in [track_a, track_b] {
+            db.transaction_mut(|t| {
+                crate::db::playlists::add_track(t, playlist_db_id, track_db_id)
+            })?;
+        }
+        sync_playlist_cover(&mut db, playlist_db_id)?;
+
+        let release_a_public_id = releases::get_by_id(&db, release_a)?.unwrap().id;
+        let release_b_public_id = releases::get_by_id(&db, release_b)?.unwrap().id;
+        let (expected, stale) = if deterministic_random_score(
+            DisplayCoverTargetKind::Playlist,
+            &playlist_public_id,
+            &release_a_public_id,
+        ) < deterministic_random_score(
+            DisplayCoverTargetKind::Playlist,
+            &playlist_public_id,
+            &release_b_public_id,
+        ) {
+            (release_a, release_b)
+        } else {
+            (release_b, release_a)
+        };
+
+        let (profile_db_id, mut profile) = get_profile(
+            &db,
+            DisplayCoverScope::Instance,
+            DisplayCoverTargetKind::Playlist,
+            None,
+            &playlist_public_id,
+        )?
+        .expect("playlist profile should exist");
+        replace_winner(
+            &mut db,
+            &winner_update(
+                profile_db_id,
+                &profile.id,
+                stale,
+                DisplayCoverWinnerKind::Random,
+                0,
+                0,
+                now_ms(),
+            ),
+        )?;
+        profile.algorithm_version = 0;
+        profile.dirty = Some(false);
+        save_profile(&mut db, profile_db_id, &profile)?;
+
+        offer_playlist_cover_candidate(&mut db, playlist_db_id, expected)?;
+
+        let (_, profile) = get_profile(
+            &db,
+            DisplayCoverScope::Instance,
+            DisplayCoverTargetKind::Playlist,
+            None,
+            &playlist_public_id,
+        )?
+        .expect("playlist profile should still exist");
+        assert!(profile_is_clean(&profile));
+        let winner = get_winner(&db, &profile, DisplayCoverWinnerKind::Random)?
+            .expect("playlist winner should exist");
+        assert_eq!(winner.release_db_id, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn removing_a_track_node_resyncs_its_playlist_cover() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = users::create(&mut db, &test_user("playlist-cascade")?)?;
+        let release_db_id = insert_release(&mut db, "Covered")?;
+        let playlist_track_db_id = insert_track(&mut db, "Playlist Track")?;
+        let surviving_track_db_id = insert_track(&mut db, "Surviving Track")?;
+        connect(&mut db, release_db_id, playlist_track_db_id)?;
+        connect(&mut db, release_db_id, surviving_track_db_id)?;
+        insert_cover(&mut db, release_db_id, "cascade")?;
+
+        let (playlist_db_id, playlist_public_id) = insert_playlist(&mut db, user_db_id)?;
+        db.transaction_mut(|t| {
+            crate::db::playlists::add_track(t, playlist_db_id, playlist_track_db_id)
+        })?;
+        sync_playlist_cover(&mut db, playlist_db_id)?;
+
+        crate::db::metadata::cascade_remove_entities(&mut db, &[playlist_track_db_id])?;
+
+        assert!(crate::db::playlists::get_tracks(&db, playlist_db_id)?.is_empty());
+        let (_, profile) = get_profile(
+            &db,
+            DisplayCoverScope::Instance,
+            DisplayCoverTargetKind::Playlist,
+            None,
+            &playlist_public_id,
+        )?
+        .expect("playlist profile should still exist");
+        assert!(get_winner(&db, &profile, DisplayCoverWinnerKind::Random)?.is_none());
+        assert!(releases::get_by_id(&db, release_db_id)?.is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn deleting_a_playlist_removes_its_cover_profile() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = users::create(&mut db, &test_user("playlist-delete")?)?;
+        let release_db_id = insert_release(&mut db, "Covered")?;
+        let track_db_id = insert_track(&mut db, "Covered Track")?;
+        connect(&mut db, release_db_id, track_db_id)?;
+        insert_cover(&mut db, release_db_id, "doomed")?;
+
+        let (playlist_db_id, playlist_public_id) = insert_playlist(&mut db, user_db_id)?;
+        db.transaction_mut(|t| crate::db::playlists::add_track(t, playlist_db_id, track_db_id))?;
+        sync_playlist_cover(&mut db, playlist_db_id)?;
+        assert!(
+            get_profile(
+                &db,
+                DisplayCoverScope::Instance,
+                DisplayCoverTargetKind::Playlist,
+                None,
+                &playlist_public_id,
+            )?
+            .is_some()
+        );
+
+        crate::db::playlists::delete(&mut db, playlist_db_id)?;
+
+        assert!(
+            get_profile(
+                &db,
+                DisplayCoverScope::Instance,
+                DisplayCoverTargetKind::Playlist,
+                None,
+                &playlist_public_id,
+            )?
+            .is_none(),
+            "profile must not outlive the playlist that owns it"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn playlist_cover_winner_is_deterministic() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = users::create(&mut db, &test_user("playlist-random")?)?;
+        let release_a = insert_release(&mut db, "A")?;
+        let release_b = insert_release(&mut db, "B")?;
+        let track_a = insert_track(&mut db, "A1")?;
+        let track_b = insert_track(&mut db, "B1")?;
+        connect(&mut db, release_a, track_a)?;
+        connect(&mut db, release_b, track_b)?;
+        insert_cover(&mut db, release_a, "a")?;
+        insert_cover(&mut db, release_b, "b")?;
+
+        let (playlist_db_id, playlist_public_id) = insert_playlist(&mut db, user_db_id)?;
+        for track_db_id in [track_a, track_b] {
+            db.transaction_mut(|t| {
+                crate::db::playlists::add_track(t, playlist_db_id, track_db_id)
+            })?;
+        }
+        sync_playlist_cover(&mut db, playlist_db_id)?;
+
+        let release_a_public_id = releases::get_by_id(&db, release_a)?.unwrap().id;
+        let release_b_public_id = releases::get_by_id(&db, release_b)?.unwrap().id;
+        let expected = if deterministic_random_score(
+            DisplayCoverTargetKind::Playlist,
+            &playlist_public_id,
+            &release_a_public_id,
+        ) < deterministic_random_score(
+            DisplayCoverTargetKind::Playlist,
+            &playlist_public_id,
+            &release_b_public_id,
+        ) {
+            release_a
+        } else {
+            release_b
+        };
+
+        let (_, profile) = get_profile(
+            &db,
+            DisplayCoverScope::Instance,
+            DisplayCoverTargetKind::Playlist,
+            None,
+            &playlist_public_id,
+        )?
+        .expect("playlist profile should exist");
+        let winner = get_winner(&db, &profile, DisplayCoverWinnerKind::Random)?
+            .expect("playlist winner should exist");
+        assert_eq!(winner.release_db_id, expected);
+
+        // Re-syncing an unchanged playlist must not move the winner.
+        sync_playlist_cover(&mut db, playlist_db_id)?;
+        let winner = get_winner(&db, &profile, DisplayCoverWinnerKind::Random)?
+            .expect("playlist winner should still exist");
+        assert_eq!(winner.release_db_id, expected);
+
         Ok(())
     }
 

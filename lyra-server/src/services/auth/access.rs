@@ -4,7 +4,10 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
-    collections::HashMap,
+    collections::{
+        HashMap,
+        HashSet,
+    },
     path::PathBuf,
 };
 
@@ -192,6 +195,25 @@ pub(crate) fn system_libraries_for_entities(
         .collect())
 }
 
+/// Return the unique entity ids accessible to the principal.
+pub(crate) fn accessible_entities(
+    db: &impl db::DbAccess,
+    principal: &Principal,
+    entity_db_ids: &[DbId],
+) -> anyhow::Result<HashSet<DbId>> {
+    if principal.permissions.contains(&db::Permission::Admin) {
+        return Ok(db::dedup_positive_ids(entity_db_ids).into_iter().collect());
+    }
+
+    let mut accessible = HashSet::new();
+    for entity_db_id in db::dedup_positive_ids(entity_db_ids) {
+        if entity_accessible(db, principal, entity_db_id)? {
+            accessible.insert(entity_db_id);
+        }
+    }
+    Ok(accessible)
+}
+
 pub(crate) fn entity_accessible(
     db: &impl db::DbAccess,
     principal: &Principal,
@@ -288,6 +310,8 @@ mod tests {
         libraries::LibraryInsert,
         playlists::Playlist,
         test_db::{
+            connect,
+            insert_track,
             new_test_db,
             test_user,
         },
@@ -355,6 +379,28 @@ mod tests {
                 .iter()
                 .any(|library| { library.id == hidden.id && library.path == hidden.path })
         );
+        Ok(())
+    }
+
+    #[test]
+    fn accessible_entities_accepts_any_visible_library_path() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = create_user(&mut db, "shared-track-viewer")?;
+        let visible = create_library(&mut db, "Visible Shared", None)?;
+        let hidden = create_library(&mut db, "Hidden Shared", None)?;
+        let track_db_id = insert_track(&mut db, "Shared Track")?;
+
+        connect(&mut db, visible.db_id.unwrap(), track_db_id)?;
+        connect(&mut db, hidden.db_id.unwrap(), track_db_id)?;
+
+        let mut principal = principal(user_db_id, vec![]);
+        principal.accessible_library_ids.insert(visible.id);
+        assert!(entity_accessible(&db, &principal, track_db_id)?);
+        assert_eq!(
+            accessible_entities(&db, &principal, &[track_db_id])?,
+            HashSet::from([track_db_id])
+        );
+
         Ok(())
     }
 

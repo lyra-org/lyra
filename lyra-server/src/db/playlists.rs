@@ -141,6 +141,7 @@ pub(crate) fn delete(db: &mut DbAny, playlist_db_id: DbId) -> anyhow::Result<()>
     db.transaction_mut(|t| -> anyhow::Result<()> {
         super::favorites::remove_inbound_for_target(t, playlist_db_id)?;
         super::tags::remove_inbound_for_target_with_orphan_cleanup(t, &[playlist_db_id])?;
+        super::covers::display::remove_playlist_cover_profile(t, playlist_db_id)?;
         t.exec_mut(QueryBuilder::remove().ids(playlist_db_id).query())?;
         Ok(())
     })
@@ -257,7 +258,7 @@ pub(crate) fn add_tracks(
     Ok(results)
 }
 
-pub(crate) fn remove_track(db: &mut DbAny, edge_id: DbId) -> anyhow::Result<()> {
+pub(crate) fn remove_track(db: &mut impl DbAccess, edge_id: DbId) -> anyhow::Result<()> {
     db.exec_mut(QueryBuilder::remove().ids(edge_id).query())?;
     Ok(())
 }
@@ -274,21 +275,14 @@ pub(crate) fn get_tracks(
             .edge()
             .and()
             .distance(CountComparison::Equal(1))
+            .and()
+            .keys("entry_id")
             .end_where()
             .query(),
     )?;
 
     let mut tracks = Vec::new();
     for element in &result.elements {
-        // Skip the owner edge
-        let is_owner = element
-            .values
-            .iter()
-            .any(|kv| matches!(&kv.key, DbValue::String(k) if k == "owner"));
-        if is_owner {
-            continue;
-        }
-
         let position = element
             .values
             .iter()
@@ -318,7 +312,10 @@ pub(crate) fn get_tracks(
     Ok(tracks)
 }
 
-/// Return tracks for multiple playlists in a single pass.
+/// Return tracks for multiple playlists, keyed by playlist.
+///
+/// This runs one graph search per playlist; only the caller's downstream track
+/// load can be batched.
 pub(crate) fn get_tracks_many(
     db: &impl DbAccess,
     playlist_db_ids: &[DbId],
@@ -373,7 +370,10 @@ pub(crate) fn move_track(
     Ok(())
 }
 
-pub(crate) fn resolve_edge_targets(db: &DbAny, edge_ids: &[DbId]) -> anyhow::Result<Vec<DbId>> {
+pub(crate) fn resolve_edge_targets(
+    db: &impl DbAccess,
+    edge_ids: &[DbId],
+) -> anyhow::Result<Vec<DbId>> {
     if edge_ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -383,6 +383,36 @@ pub(crate) fn resolve_edge_targets(db: &DbAny, edge_ids: &[DbId]) -> anyhow::Res
         .iter()
         .filter_map(|e| (e.id.0 < 0 && e.to.0 != 0).then_some(e.to))
         .collect())
+}
+
+/// Return the playlists holding at least one entry for `track_db_id`.
+///
+/// Uses one inbound search from the track and needs no root lookup.
+pub(crate) fn get_by_track(db: &impl DbAccess, track_db_id: DbId) -> anyhow::Result<Vec<DbId>> {
+    let result = db.exec(
+        QueryBuilder::select()
+            .search()
+            .to(track_db_id)
+            .where_()
+            .edge()
+            .and()
+            .distance(CountComparison::Equal(1))
+            .and()
+            .keys("entry_id")
+            .end_where()
+            .query(),
+    )?;
+
+    let mut playlist_db_ids = Vec::new();
+    for element in &result.elements {
+        let from_id = element.from;
+        if from_id.0 <= 0 || playlist_db_ids.contains(&from_id) {
+            continue;
+        }
+        playlist_db_ids.push(from_id);
+    }
+
+    Ok(playlist_db_ids)
 }
 
 fn get_max_position(db: &impl DbAccess, playlist_db_id: DbId) -> anyhow::Result<u64> {
@@ -643,6 +673,77 @@ mod tests {
 
         let result = get_by_id(&db, playlist_db_id)?;
         assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_tracks_ignores_edges_without_entries() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = create_test_user(&mut db)?;
+        let track = create_test_track(&mut db, "Real Entry")?;
+
+        let playlist = Playlist {
+            db_id: None,
+            id: nanoid!(),
+            name: "Entry Filter".to_string(),
+            description: None,
+            is_public: None,
+            created_at: None,
+            updated_at: None,
+        };
+        let playlist_db_id = create(&mut db, &playlist, user_db_id)?;
+        add_track(&mut db, playlist_db_id, track)?;
+
+        // Playlists carry outbound edges that are not entries — the owner edge
+        // and the display cover profile edge. Only `entry_id` edges are tracks.
+        let unrelated = create_test_track(&mut db, "Not An Entry")?;
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(playlist_db_id)
+                .to(unrelated)
+                .query(),
+        )?;
+
+        let tracks = get_tracks(&db, playlist_db_id)?;
+        assert_eq!(tracks.len(), 1);
+        let track_ids = resolve_edge_targets(&db, &[tracks[0].edge_id])?;
+        assert_eq!(track_ids, [track]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_by_track_returns_holding_playlists() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = create_test_user(&mut db)?;
+        let track = create_test_track(&mut db, "Shared")?;
+        let untracked = create_test_track(&mut db, "Elsewhere")?;
+
+        let mut playlist_db_ids = Vec::new();
+        for name in ["First", "Second"] {
+            let playlist = Playlist {
+                db_id: None,
+                id: nanoid!(),
+                name: name.to_string(),
+                description: None,
+                is_public: None,
+                created_at: None,
+                updated_at: None,
+            };
+            let playlist_db_id = create(&mut db, &playlist, user_db_id)?;
+            // Twice, to prove duplicate entries do not duplicate the playlist.
+            add_track(&mut db, playlist_db_id, track)?;
+            add_track(&mut db, playlist_db_id, track)?;
+            playlist_db_ids.push(playlist_db_id);
+        }
+
+        let mut holders = get_by_track(&db, track)?;
+        holders.sort_by_key(|id| id.0);
+        playlist_db_ids.sort_by_key(|id| id.0);
+        assert_eq!(holders, playlist_db_ids);
+        assert!(get_by_track(&db, untracked)?.is_empty());
 
         Ok(())
     }
