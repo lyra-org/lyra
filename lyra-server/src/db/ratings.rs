@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashSet;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 
 use agdb::{
     CountComparison,
@@ -179,6 +182,23 @@ pub(crate) fn get(
         }
     }
     Ok(None)
+}
+
+pub(crate) fn values_for_targets(
+    db: &impl DbAccess,
+    user_db_id: DbId,
+    target_db_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, RatingEdge>> {
+    if target_db_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let requested: HashSet<DbId> = target_db_ids.iter().copied().collect();
+    Ok(read_outbound_rating_edges(db, user_db_id)?
+        .into_iter()
+        .filter_map(parse_rating_edge)
+        .filter(|edge| requested.contains(&edge.target_db_id))
+        .map(|edge| (edge.target_db_id, edge))
+        .collect())
 }
 
 pub(crate) fn target_ids_matching(
@@ -420,6 +440,60 @@ mod tests {
 
         assert!(get(&db, user_b, target)?.is_none());
         assert!(list(&db, user_b)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn values_for_targets_subsets_once_and_preserves_rating_state() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_a = create_node(&mut db)?;
+        let user_b = create_node(&mut db)?;
+        let track = create_node(&mut db)?;
+        let artist = create_node(&mut db)?;
+        let other_user_target = create_node(&mut db)?;
+        let unrated = create_node(&mut db)?;
+
+        upsert(
+            &mut db,
+            user_a,
+            track,
+            RatingKind::Track,
+            RatingValue::new(2).unwrap(),
+            100,
+        )?;
+        upsert(
+            &mut db,
+            user_a,
+            artist,
+            RatingKind::Artist,
+            RatingValue::new(5).unwrap(),
+            200,
+        )?;
+        upsert(
+            &mut db,
+            user_b,
+            other_user_target,
+            RatingKind::Release,
+            RatingValue::new(4).unwrap(),
+            300,
+        )?;
+
+        assert!(values_for_targets(&db, user_a, &[])?.is_empty());
+        let values = values_for_targets(&db, user_a, &[track, other_user_target, unrated])?;
+        assert_eq!(values.len(), 1);
+        let edge = values.get(&track).expect("requested track rating");
+        assert_eq!(edge.kind, RatingKind::Track);
+        assert_eq!(edge.value.get(), 2);
+        assert_eq!(edge.created_at_ms, 100);
+        assert_eq!(edge.updated_at_ms, 100);
+        assert!(
+            !values.contains_key(&artist),
+            "unrequested rating must be omitted"
+        );
+        assert!(
+            !values.contains_key(&other_user_target),
+            "another user's rating must be omitted",
+        );
         Ok(())
     }
 
