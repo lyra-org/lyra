@@ -34,6 +34,7 @@ use serde::{
 
 use super::NodeId;
 use super::{
+    DbAccess,
     ListOptions,
     PagedResult,
     SortKey,
@@ -352,6 +353,33 @@ pub(crate) fn get_by_id(
     release_db_id: DbId,
 ) -> anyhow::Result<Option<Release>> {
     super::graph::fetch_typed_by_id(db, release_db_id, "Release")
+}
+
+pub(crate) fn link_track(
+    db: &mut impl DbAccess,
+    release_db_id: DbId,
+    track_db_id: DbId,
+) -> anyhow::Result<()> {
+    if super::graph::ensure_owned_edge(db, release_db_id, track_db_id)? {
+        super::covers::display::mark_genre_profiles_dirty_for_release(db, release_db_id)?;
+        super::covers::display::offer_release_to_playlists_with_track(
+            db,
+            release_db_id,
+            track_db_id,
+        )?;
+    }
+    Ok(())
+}
+
+pub(crate) fn unlink_track(
+    db: &mut impl DbAccess,
+    release_db_id: DbId,
+    track_db_id: DbId,
+) -> anyhow::Result<()> {
+    if super::graph::remove_edges_between(db, release_db_id, track_db_id)? {
+        super::covers::display::resync_playlists_with_track(db, track_db_id)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn get_by_artist(db: &DbAny, artist_db_id: DbId) -> anyhow::Result<Vec<Release>> {

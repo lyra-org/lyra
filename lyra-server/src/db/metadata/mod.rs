@@ -94,9 +94,11 @@ pub(crate) fn cascade_remove_entities(db: &mut DbAny, node_ids: &[DbId]) -> anyh
     if node_ids.is_empty() {
         return Ok(());
     }
+    let playlist_db_ids = super::covers::display::playlist_ids_for_tracks(db, node_ids)?;
     cascade_remove_entities_pre_favorites(db, node_ids)?;
     db.transaction_mut(|t| -> anyhow::Result<()> {
-        cascade_remove_favorites_and_nodes(t, node_ids)
+        cascade_remove_favorites_and_nodes(t, node_ids)?;
+        super::covers::display::sync_playlist_covers(t, &playlist_db_ids)
     })
 }
 
@@ -107,8 +109,10 @@ pub(crate) fn cascade_remove_entities_in_txn(
     if node_ids.is_empty() {
         return Ok(());
     }
+    let playlist_db_ids = super::covers::display::playlist_ids_for_tracks(db, node_ids)?;
     cascade_remove_entities_pre_favorites(db, node_ids)?;
-    cascade_remove_favorites_and_nodes(db, node_ids)
+    cascade_remove_favorites_and_nodes(db, node_ids)?;
+    super::covers::display::sync_playlist_covers(db, &playlist_db_ids)
 }
 
 fn cascade_remove_entities_pre_favorites(

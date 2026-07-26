@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 pub(crate) mod genres;
+pub(crate) mod playlists;
 
 use agdb::DbId;
 
@@ -70,6 +71,19 @@ fn cover_for_release(
     visible_release_ids: Option<&std::collections::HashSet<DbId>>,
 ) -> anyhow::Result<Option<db::Cover>> {
     if !release_is_visible(release_db_id, visible_release_ids) {
+        return Ok(None);
+    }
+    db::covers::get(db, release_db_id)
+}
+
+/// Per-release visibility check, for callers that would otherwise have to
+/// enumerate every accessible release just to filter a handful of winners.
+fn cover_for_accessible_release(
+    db: &agdb::DbAny,
+    principal: &crate::services::auth::Principal,
+    release_db_id: DbId,
+) -> anyhow::Result<Option<db::Cover>> {
+    if !crate::services::auth::access::entity_accessible(db, principal, release_db_id)? {
         return Ok(None);
     }
     db::covers::get(db, release_db_id)

@@ -77,8 +77,8 @@ fn merge_release_into(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Resu
         let Some(track_db_id) = track.db_id.map(Into::into) else {
             continue;
         };
-        db::graph::ensure_owned_edge(db, winner, track_db_id)?;
-        db::graph::remove_edges_between(db, loser, track_db_id)?;
+        db::releases::link_track(db, winner, track_db_id)?;
+        db::releases::unlink_track(db, loser, track_db_id)?;
     }
 
     // Migrate Credit nodes from loser to winner.
@@ -185,6 +185,8 @@ fn merge_release_into(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Resu
         && let Some(cover_id) = cover.db_id
     {
         db::graph::ensure_owned_edge(db, winner, cover_id)?;
+        db::covers::display::sync_release_random_candidates(db, winner)?;
+        db::covers::display::offer_release_to_playlist_covers(db, winner)?;
     }
 
     // Migrate label pairings onto the winner before cascade. Cascade calls
