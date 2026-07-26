@@ -35,6 +35,7 @@ pub(crate) struct ConnectionHandle {
     pub(crate) token: String,
     pub(crate) user_db_id: DbId,
     pub(crate) user_public_id: String,
+    pub(crate) client_name: Option<String>,
     pub(crate) session_key: String,
     pub(crate) cancel: Arc<Notify>,
     pub(crate) command_tx: mpsc::Sender<OutgoingMessage>,
@@ -91,6 +92,7 @@ impl ConnectionRegistry {
         &mut self,
         user_db_id: DbId,
         user_public_id: String,
+        client_name: Option<String>,
         session_key: String,
         cancel: Arc<Notify>,
         command_tx: mpsc::Sender<OutgoingMessage>,
@@ -115,6 +117,7 @@ impl ConnectionRegistry {
                 token: token.clone(),
                 user_db_id,
                 user_public_id,
+                client_name,
                 session_key,
                 cancel,
                 command_tx,
@@ -171,6 +174,7 @@ pub(crate) struct RegisterResult {
 pub(crate) async fn register(
     user_db_id: DbId,
     user_public_id: String,
+    client_name: Option<String>,
     session_key: String,
     cancel: Arc<Notify>,
 ) -> Result<RegisterResult, RegistryError> {
@@ -193,8 +197,14 @@ pub(crate) async fn register(
 
     let evicted = registry.evict_duplicate(&user_public_id, &session_key);
     let (command_tx, command_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
-    let connection_id =
-        registry.insert(user_db_id, user_public_id, session_key, cancel, command_tx)?;
+    let connection_id = registry.insert(
+        user_db_id,
+        user_public_id,
+        client_name,
+        session_key,
+        cancel,
+        command_tx,
+    )?;
     Ok(RegisterResult {
         connection_id,
         evicted,
@@ -264,6 +274,7 @@ fn snapshot_from_handle(handle: &ConnectionHandle) -> ConnectionSnapshot {
         token: handle.token.clone(),
         user_db_id: handle.user_db_id,
         user_public_id: handle.user_public_id.clone(),
+        client_name: handle.client_name.clone(),
         session_key: handle.session_key.clone(),
         supported_commands: handle.supported_commands.iter().cloned().collect(),
     }
@@ -275,6 +286,7 @@ pub(crate) struct ConnectionSnapshot {
     pub(crate) token: String,
     pub(crate) user_db_id: DbId,
     pub(crate) user_public_id: String,
+    pub(crate) client_name: Option<String>,
     pub(crate) session_key: String,
     pub(crate) supported_commands: Vec<RemoteAction>,
 }
@@ -303,6 +315,7 @@ mod tests {
             .insert(
                 DbId(1),
                 "user-1".into(),
+                None,
                 "a".into(),
                 test_cancel(),
                 test_tx(),
@@ -312,6 +325,7 @@ mod tests {
             .insert(
                 DbId(1),
                 "user-1".into(),
+                None,
                 "b".into(),
                 test_cancel(),
                 test_tx(),
@@ -334,6 +348,7 @@ mod tests {
             reg.insert(
                 DbId(1),
                 "user-1".into(),
+                None,
                 format!("key-{i}"),
                 test_cancel(),
                 test_tx(),
@@ -344,6 +359,7 @@ mod tests {
             .insert(
                 DbId(1),
                 "user-1".into(),
+                None,
                 "overflow".into(),
                 test_cancel(),
                 test_tx(),
@@ -358,6 +374,7 @@ mod tests {
         reg.insert(
             DbId(1),
             "user-1".into(),
+            None,
             "a".into(),
             test_cancel(),
             test_tx(),
@@ -366,6 +383,7 @@ mod tests {
         reg.insert(
             DbId(2),
             "user-2".into(),
+            None,
             "a".into(),
             test_cancel(),
             test_tx(),
@@ -381,13 +399,21 @@ mod tests {
         reg.insert(
             DbId(42),
             "alice".into(),
+            None,
             "a".into(),
             test_cancel(),
             test_tx(),
         )
         .unwrap();
-        reg.insert(DbId(42), "bob".into(), "a".into(), test_cancel(), test_tx())
-            .unwrap();
+        reg.insert(
+            DbId(42),
+            "bob".into(),
+            None,
+            "a".into(),
+            test_cancel(),
+            test_tx(),
+        )
+        .unwrap();
         assert_eq!(reg.count_user_connections("alice"), 1);
         assert_eq!(reg.count_user_connections("bob"), 1);
     }
@@ -399,6 +425,7 @@ mod tests {
             .insert(
                 DbId(1),
                 "user-1".into(),
+                None,
                 "key".into(),
                 test_cancel(),
                 test_tx(),
@@ -418,6 +445,7 @@ mod tests {
         reg.insert(
             DbId(1),
             "user-1".into(),
+            None,
             "key".into(),
             test_cancel(),
             test_tx(),
@@ -434,6 +462,7 @@ mod tests {
         reg.insert(
             DbId(42),
             "alice".into(),
+            None,
             "key".into(),
             test_cancel(),
             test_tx(),
@@ -452,8 +481,15 @@ mod tests {
         let mut reg = test_registry();
         let cancel = test_cancel();
         let cancel_clone = cancel.clone();
-        reg.insert(DbId(1), "user-1".into(), "key".into(), cancel, test_tx())
-            .unwrap();
+        reg.insert(
+            DbId(1),
+            "user-1".into(),
+            None,
+            "key".into(),
+            cancel,
+            test_tx(),
+        )
+        .unwrap();
 
         reg.evict_duplicate("user-1", "key");
 
@@ -478,6 +514,7 @@ mod tests {
             .insert(
                 DbId(1),
                 "user-1".into(),
+                None,
                 "key".into(),
                 test_cancel(),
                 test_tx(),
@@ -499,6 +536,7 @@ mod tests {
             .insert(
                 DbId(1),
                 "user-1".into(),
+                None,
                 "source".into(),
                 test_cancel(),
                 test_tx(),
@@ -508,18 +546,19 @@ mod tests {
             .insert(
                 DbId(1),
                 "user-1".into(),
+                Some("Living Room".to_string()),
                 "target".into(),
                 test_cancel(),
                 test_tx(),
             )
             .unwrap();
         let target_token = reg.connections[&target_id].token.clone();
-
         let (source, target) = reg.connection_and_token_target(source_id, &target_token);
 
         assert_eq!(source.unwrap().connection_id, source_id);
         let target = target.unwrap();
         assert_eq!(target.connection_id, target_id);
+        assert_eq!(target.client_name.as_deref(), Some("Living Room"));
         assert_eq!(target.session_key, "target");
     }
 
@@ -531,6 +570,7 @@ mod tests {
             .insert(
                 DbId(1),
                 "user-1".into(),
+                None,
                 "key".into(),
                 test_cancel(),
                 test_tx(),

@@ -517,6 +517,7 @@ mod tests {
         let session = crate::db::PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 0,
             duration_ms: Some(180_000),
             activity_ms: Some(180_000),
@@ -549,6 +550,7 @@ mod tests {
         let session = crate::db::PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 0,
             duration_ms: Some(180_000),
             activity_ms: Some(180_000),
@@ -593,6 +595,7 @@ mod tests {
         let session = crate::db::PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 0,
             duration_ms: Some(180_000),
             activity_ms: Some(180_000),

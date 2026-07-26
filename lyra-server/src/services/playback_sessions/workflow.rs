@@ -710,6 +710,7 @@ pub(crate) fn start_playback(
     let StartPlaybackRequest {
         track_db_id,
         user_db_id,
+        client_name,
         mutation,
         now_ms,
         active_event: _,
@@ -734,6 +735,7 @@ pub(crate) fn start_playback(
     let playback = PlaybackSession {
         db_id: None,
         id: nanoid!(),
+        client_name,
         position_ms,
         duration_ms: mutation.duration_ms,
         activity_ms: Some(0),
@@ -833,6 +835,7 @@ pub(crate) fn report_playback_session(
         user_db_id,
         session_key,
         track_db_id,
+        client_name,
         mutation,
         now_ms,
         active_event,
@@ -1076,6 +1079,7 @@ pub(crate) fn report_playback_session(
                     StartPlaybackRequest {
                         track_db_id,
                         user_db_id,
+                        client_name,
                         mutation: PlaybackMutation {
                             position_ms: mutation.position_ms,
                             duration_ms: mutation.duration_ms,

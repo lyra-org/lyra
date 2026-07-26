@@ -75,10 +75,7 @@ use crate::{
         require_manage_users,
         require_permission,
         require_principal,
-        sessions::{
-            MAX_CLIENT_NAME_LEN,
-            SessionMetadata,
-        },
+        sessions::SessionMetadata,
     },
 };
 
@@ -619,14 +616,6 @@ async fn login_user(
                 "password login for non-default users is disabled because authentication is disabled",
             ));
         }
-    }
-
-    if let Some(client_name) = body.client_name.as_deref()
-        && client_name.chars().count() > MAX_CLIENT_NAME_LEN
-    {
-        return Err(AppError::bad_request(format!(
-            "client_name cannot exceed {MAX_CLIENT_NAME_LEN} characters"
-        )));
     }
 
     let metadata = SessionMetadata {
@@ -1445,6 +1434,50 @@ mod tests {
         assert_eq!(session.last_seen_at, session.created_at);
 
         drop(db);
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn login_user_rejects_unusable_client_name() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+
+        let password = "bad-client-name-pass";
+        {
+            let mut db = STATE.db.write().await;
+            db::roles::ensure_builtin_roles(&mut db)?;
+            let user = User {
+                db_id: None,
+                id: nanoid!(),
+                username: "bad-client-name".to_string(),
+                password: hash_password(password)
+                    .map_err(|err| anyhow::anyhow!("hash_password failed: {err:?}"))?,
+            };
+            let user_db_id = db::users::create(&mut db, &user)?;
+            db::roles::ensure_user_has_role(&mut db, user_db_id, db::roles::BUILTIN_USER_ROLE)?;
+        };
+
+        for client_name in ["Lyra\nDesktop".to_string(), "x".repeat(129)] {
+            let result = login_user(
+                // A peer address no other login test uses: the rate limiter
+                // buckets by client key and would otherwise answer 429 here.
+                ConnectInfo(SocketAddr::from(([203, 0, 113, 43], 4747))),
+                HeaderMap::new(),
+                Json(LoginRequest {
+                    username: "bad-client-name".to_string(),
+                    password: password.to_string(),
+                    client_name: Some(client_name),
+                }),
+            )
+            .await;
+
+            let Err(error) = result else {
+                anyhow::bail!("an unusable client_name should be rejected");
+            };
+            assert_eq!(error.into_response().status(), StatusCode::BAD_REQUEST);
+        }
+
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
     }

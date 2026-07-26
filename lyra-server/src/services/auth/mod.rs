@@ -72,6 +72,8 @@ pub(crate) enum AuthError {
     InvalidBearerCredential,
     #[error("session expired")]
     SessionExpired,
+    #[error(transparent)]
+    InvalidClientName(#[from] sessions::ClientNameError),
     #[error("forbidden: {0}")]
     Forbidden(String),
     #[error("not found: {0}")]
@@ -80,6 +82,17 @@ pub(crate) enum AuthError {
     RateLimited(std::time::Duration),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
+}
+
+impl From<sessions::SessionServiceError> for AuthError {
+    fn from(error: sessions::SessionServiceError) -> Self {
+        match error {
+            sessions::SessionServiceError::InvalidClientName(error) => {
+                Self::InvalidClientName(error)
+            }
+            sessions::SessionServiceError::Internal(error) => Self::Internal(error),
+        }
+    }
 }
 
 type AuthResult<T> = std::result::Result<T, AuthError>;
@@ -122,6 +135,7 @@ pub(crate) enum AuthCredential {
 pub(crate) struct ResolvedAuth {
     pub(crate) principal: Principal,
     pub(crate) credential: AuthCredential,
+    pub(crate) client_name: Option<String>,
 }
 
 impl ResolvedAuth {
@@ -324,13 +338,13 @@ async fn resolve_auth_from_session_token(token: &str) -> AuthResult<Option<Resol
 
     if session.expires_at > 0 && db::users::now_secs() >= session.expires_at {
         drop(db);
-        let mut db_write = STATE.db.write().await;
-        if let Err(e) = db::users::revoke_session_by_id(&mut db_write, session_id) {
+        if let Err(e) = sessions::revoke_session_by_id(session_id).await {
             tracing::warn!(error = %e, "failed to revoke expired session");
         }
         return Err(AuthError::SessionExpired);
     }
 
+    let client_name = session.client_name;
     let principal = resolve_principal(&db, user_db_id, user.id, user.username);
     drop(db);
 
@@ -339,6 +353,7 @@ async fn resolve_auth_from_session_token(token: &str) -> AuthResult<Option<Resol
     Ok(Some(ResolvedAuth {
         principal,
         credential: AuthCredential::Session { session_id },
+        client_name,
     }))
 }
 
@@ -363,6 +378,7 @@ async fn resolve_auth_from_api_key(key: &str) -> AuthResult<Option<ResolvedAuth>
             api_key_id: api_key.api_key_id,
             name: api_key.name,
         },
+        client_name: None,
     }))
 }
 
@@ -377,6 +393,7 @@ pub(crate) async fn resolve_auth_from_bearer(
             return Ok(Some(ResolvedAuth {
                 principal: default_principal,
                 credential: AuthCredential::Default,
+                client_name: None,
             }));
         };
 
@@ -405,6 +422,7 @@ pub(crate) async fn resolve_auth_from_bearer(
         return Ok(Some(ResolvedAuth {
             principal: default_principal,
             credential: AuthCredential::Default,
+            client_name: None,
         }));
     }
 
@@ -447,7 +465,7 @@ pub(crate) async fn logout_with_token(token: Option<&str>) -> AuthResult<bool> {
 
     sessions::revoke_session_by_token(token)
         .await
-        .map_err(|e| AuthError::Internal(e.into()))
+        .map_err(AuthError::from)
 }
 
 async fn create_login_result(
@@ -456,7 +474,7 @@ async fn create_login_result(
 ) -> AuthResult<LoginResult> {
     let session = sessions::create_session_for_user(principal.user_db_id, metadata)
         .await
-        .map_err(|e| AuthError::Internal(e.into()))?;
+        .map_err(AuthError::from)?;
 
     Ok(LoginResult {
         token: session.token,
@@ -869,8 +887,14 @@ mod tests {
             (session_user_db_id, api_key_user_db_id)
         };
 
-        let session =
-            sessions::create_session_for_user(session_user_db_id, Default::default()).await?;
+        let session = sessions::create_session_for_user(
+            session_user_db_id,
+            sessions::SessionMetadata {
+                user_agent: None,
+                client_name: Some("Lyra Web".to_string()),
+            },
+        )
+        .await?;
         let session_db_id = {
             let db = STATE.db.read().await;
             db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?
@@ -900,6 +924,7 @@ mod tests {
                 session_id: session_db_id
             }
         );
+        assert_eq!(auth.client_name.as_deref(), Some("Lyra Web"));
 
         Ok(())
     }

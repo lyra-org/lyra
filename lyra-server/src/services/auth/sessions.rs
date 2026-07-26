@@ -10,6 +10,11 @@ use std::{
 
 use agdb::DbId;
 use nanoid::nanoid;
+use unicode_normalization::UnicodeNormalization;
+use unicode_properties::{
+    GeneralCategory,
+    UnicodeGeneralCategory,
+};
 
 use crate::{
     STATE,
@@ -23,7 +28,7 @@ use crate::{
     },
 };
 
-pub(crate) const MAX_CLIENT_NAME_LEN: usize = 128;
+const MAX_CLIENT_NAME_LEN: usize = 128;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SessionMetadata {
@@ -32,11 +37,11 @@ pub(crate) struct SessionMetadata {
 }
 
 impl SessionMetadata {
-    fn normalized(self) -> Self {
-        Self {
+    fn normalized(self) -> Result<Self, ClientNameError> {
+        Ok(Self {
             user_agent: normalize_text(self.user_agent),
-            client_name: normalize_text(self.client_name),
-        }
+            client_name: normalize_client_name(self.client_name)?,
+        })
     }
 }
 
@@ -48,6 +53,46 @@ fn normalize_text(value: Option<String>) -> Option<String> {
     Some(trimmed)
 }
 
+/// U+034F CGJ is not `Cf`, but it also blocks NFC canonicalization.
+fn is_invisible_strippable(c: char) -> bool {
+    c == '\u{034F}' || c.general_category() == GeneralCategory::Format
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub(crate) enum ClientNameError {
+    #[error("client_name cannot contain control characters")]
+    ContainsControl,
+    #[error("client_name cannot exceed {MAX_CLIENT_NAME_LEN} characters")]
+    TooLong,
+}
+
+/// Canonicalize an optional client device label by stripping Unicode format controls and
+/// CGJ, trimming Unicode whitespace, and NFC-composing. Rejects control characters and
+/// labels over [`MAX_CLIENT_NAME_LEN`]; a label that normalizes away entirely becomes
+/// `None`. Stripping precedes trimming because format controls are not whitespace.
+fn normalize_client_name(value: Option<String>) -> Result<Option<String>, ClientNameError> {
+    let Some(client_name) = value else {
+        return Ok(None);
+    };
+
+    let stripped: String = client_name
+        .chars()
+        .filter(|c| !is_invisible_strippable(*c))
+        .collect();
+    let trimmed = stripped.trim_matches(char::is_whitespace);
+    let client_name: String = trimmed.nfc().collect();
+    if client_name.is_empty() {
+        return Ok(None);
+    }
+    if client_name.chars().any(char::is_control) {
+        return Err(ClientNameError::ContainsControl);
+    }
+    if client_name.chars().count() > MAX_CLIENT_NAME_LEN {
+        return Err(ClientNameError::TooLong);
+    }
+    Ok(Some(client_name))
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct CreatedSession {
     pub(crate) token: String,
@@ -55,6 +100,8 @@ pub(crate) struct CreatedSession {
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SessionServiceError {
+    #[error(transparent)]
+    InvalidClientName(#[from] ClientNameError),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -113,7 +160,7 @@ pub(crate) async fn create_session_for_user(
     user_db_id: DbId,
     metadata: SessionMetadata,
 ) -> SessionServiceResult<CreatedSession> {
-    let metadata = metadata.normalized();
+    let metadata = metadata.normalized()?;
     let token = random_hex_secret::<SESSION_TOKEN_BYTES>();
     let token_hash = hash_secret(&token);
     let now = db::users::now_secs();
@@ -182,6 +229,16 @@ pub(crate) async fn touch_last_seen(session_id: DbId) {
     }
 }
 
+pub(super) async fn revoke_session_by_id(session_id: DbId) -> anyhow::Result<bool> {
+    let mut db = STATE.db.write().await;
+    let removed = db::users::revoke_session_by_id(&mut db, session_id)?;
+    drop(db);
+    if removed {
+        forget_last_seen(session_id);
+    }
+    Ok(removed)
+}
+
 pub(crate) async fn revoke_session_by_token(token: &str) -> SessionServiceResult<bool> {
     let mut db = STATE.db.write().await;
     let token_hash = hash_secret(token.trim());
@@ -193,4 +250,41 @@ pub(crate) async fn revoke_session_by_token(token: &str) -> SessionServiceResult
         forget_last_seen(session_id);
     }
     Ok(removed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_client_name_strips_invisibles_and_trims() {
+        assert_eq!(
+            normalize_client_name(Some("  Lyra\u{200B} Web  ".to_string())).unwrap(),
+            Some("Lyra Web".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_client_name_discards_names_that_normalize_away() {
+        assert_eq!(
+            normalize_client_name(Some(" \u{200B} ".to_string())).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn normalize_client_name_rejects_control_characters() {
+        assert_eq!(
+            normalize_client_name(Some("Lyra\nWeb".to_string())),
+            Err(ClientNameError::ContainsControl)
+        );
+    }
+
+    #[test]
+    fn normalize_client_name_rejects_oversized_values() {
+        assert_eq!(
+            normalize_client_name(Some("x".repeat(MAX_CLIENT_NAME_LEN + 1))),
+            Err(ClientNameError::TooLong)
+        );
+    }
 }

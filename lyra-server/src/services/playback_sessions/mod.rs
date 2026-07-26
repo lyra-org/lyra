@@ -119,6 +119,7 @@ pub(crate) struct PlaybackMutation {
 pub(crate) struct StartPlaybackRequest {
     pub(crate) track_db_id: DbId,
     pub(crate) user_db_id: DbId,
+    pub(crate) client_name: Option<String>,
     pub(crate) mutation: PlaybackMutation,
     pub(crate) now_ms: u64,
     pub(crate) active_event: ActiveEvent,
@@ -140,6 +141,7 @@ pub(crate) struct SessionPlaybackReportRequest<'a> {
     pub(crate) user_db_id: DbId,
     pub(crate) session_key: &'a str,
     pub(crate) track_db_id: DbId,
+    pub(crate) client_name: Option<String>,
     pub(crate) mutation: PlaybackMutation,
     pub(crate) now_ms: u64,
     pub(crate) active_event: ActiveEvent,
@@ -284,6 +286,7 @@ mod tests {
         apply_playback_mutation,
         collect_unique_track_external_id_keys,
         pause_playing_scopes_on_disconnect,
+        report_playback,
         report_playback_session,
         report_playback_session_with_cleanup,
     };
@@ -380,6 +383,7 @@ mod tests {
                 user_db_id,
                 session_key: "auth:1",
                 track_db_id,
+                client_name: None,
                 mutation,
                 now_ms,
                 active_event,
@@ -403,12 +407,63 @@ mod tests {
                 user_db_id,
                 session_key: "auth:1",
                 track_db_id,
+                client_name: None,
                 mutation,
                 now_ms,
                 active_event,
                 stale_ttl_ms: ACTIVE_SESSION_TTL_MS,
             },
         )?)
+    }
+
+    #[tokio::test]
+    async fn playback_client_name_snapshot_is_persisted_and_stable() -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user_db_id = insert_user(&mut db, "alice")?;
+        let track_db_id = insert_track(&mut db, "Track A", 200_000)?;
+
+        let started = report_playback_session(
+            &mut db,
+            SessionPlaybackReportRequest {
+                plugin_id: "native",
+                user_db_id,
+                session_key: "browser:1",
+                track_db_id,
+                client_name: Some("Living Room".to_string()),
+                mutation: PlaybackMutation {
+                    position_ms: Some(0),
+                    duration_ms: Some(200_000),
+                    state: Some(PlaybackState::Playing),
+                },
+                now_ms: 1_000,
+                active_event: ActiveEvent::Started,
+                stale_ttl_ms: ACTIVE_SESSION_TTL_MS,
+            },
+        )?
+        .expect("playback should start");
+
+        assert_eq!(started.playback.client_name.as_deref(), Some("Living Room"));
+        let persisted = db::playback_sessions::get_by_id(&db, started.playback_session_id)?
+            .expect("playback should be persisted");
+        assert_eq!(persisted.client_name.as_deref(), Some("Living Room"));
+
+        let updated = report_playback(
+            &mut db,
+            ReportPlaybackRequest {
+                playback_session_id: started.playback_session_id,
+                user_db_id: Some(user_db_id),
+                mutation: PlaybackMutation {
+                    position_ms: Some(1_000),
+                    duration_ms: None,
+                    state: None,
+                },
+                now_ms: 2_000,
+                activity_policy: ActivityPolicy::AnyState,
+                active_event: ActiveEvent::Progress,
+            },
+        )?;
+        assert_eq!(updated.playback.client_name.as_deref(), Some("Living Room"));
+        Ok(())
     }
 
     #[test]
@@ -524,6 +579,7 @@ mod tests {
         let mut playback = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 0,
             duration_ms: Some(300_000),
             activity_ms: Some(0),
@@ -554,6 +610,7 @@ mod tests {
         let mut playback = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 0,
             duration_ms: Some(300_000),
             activity_ms: Some(0),
@@ -584,6 +641,7 @@ mod tests {
         let mut playback = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 0,
             duration_ms: Some(300_000),
             activity_ms: Some(0),
@@ -614,6 +672,7 @@ mod tests {
         let mut playback = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 22_000,
             duration_ms: Some(200_000),
             activity_ms: Some(22_000),
@@ -645,6 +704,7 @@ mod tests {
         let mut playback = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 22_000,
             duration_ms: Some(200_000),
             activity_ms: Some(22_000),
@@ -1054,6 +1114,7 @@ mod tests {
                 user_db_id,
                 session_key: "device:1",
                 track_db_id,
+                client_name: None,
                 mutation: PlaybackMutation {
                     position_ms: Some(10_000),
                     duration_ms: Some(200_000),
@@ -1072,6 +1133,7 @@ mod tests {
                 user_db_id,
                 session_key: "device:1",
                 track_db_id: native_track_db_id,
+                client_name: None,
                 mutation: PlaybackMutation {
                     position_ms: Some(20_000),
                     duration_ms: Some(200_000),
@@ -1149,6 +1211,7 @@ mod tests {
                 user_db_id,
                 session_key: "device:1",
                 track_db_id: track_a_id,
+                client_name: None,
                 mutation: PlaybackMutation {
                     position_ms: Some(10_000),
                     duration_ms: Some(200_000),
@@ -1167,6 +1230,7 @@ mod tests {
                 user_db_id,
                 session_key: "device:1",
                 track_db_id: track_b_id,
+                client_name: None,
                 mutation: PlaybackMutation {
                     position_ms: Some(20_000),
                     duration_ms: Some(200_000),
@@ -1227,6 +1291,7 @@ mod tests {
         let mut playback = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 150_000,
             duration_ms: Some(200_000),
             activity_ms: Some(150_000),
@@ -1260,6 +1325,7 @@ mod tests {
         let mut playback = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 150_000,
             duration_ms: Some(200_000),
             activity_ms: Some(150_000),
@@ -1292,6 +1358,7 @@ mod tests {
         let mut playback = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 150_000,
             duration_ms: Some(200_000),
             activity_ms: Some(150_000),
@@ -1326,6 +1393,7 @@ mod tests {
         let mut playback = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 8_000,
             duration_ms: Some(10_000),
             activity_ms: Some(8_000),
@@ -1357,6 +1425,7 @@ mod tests {
         let mut playback = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 150_000,
             duration_ms: Some(200_000),
             activity_ms: Some(150_000),
@@ -1390,6 +1459,7 @@ mod tests {
         let mut playback = PlaybackSession {
             db_id: None,
             id: nanoid!(),
+            client_name: None,
             position_ms: 25_000,
             duration_ms: Some(200_000),
             activity_ms: Some(25_000),

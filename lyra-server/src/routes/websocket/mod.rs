@@ -62,6 +62,7 @@ async fn ws_upgrade(
         ));
     }
 
+    let client_name = resolved.client_name.clone();
     let principal = resolved.into_principal();
 
     let session_key = query.session_key.trim().to_string();
@@ -83,6 +84,7 @@ async fn ws_upgrade(
             let result = match registry::register(
                 user_db_id,
                 user_public_id.clone(),
+                client_name,
                 session_key.clone(),
                 cancel.clone(),
             )
