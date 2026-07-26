@@ -62,6 +62,13 @@ impl RatingFilter {
         self.min.is_none() && self.max.is_none()
     }
 
+    pub(crate) fn bounds(self) -> (Option<u8>, Option<u8>) {
+        (
+            self.min.map(RatingValue::get),
+            self.max.map(RatingValue::get),
+        )
+    }
+
     fn contains(self, value: RatingValue) -> bool {
         self.min.is_none_or(|min| value >= min) && self.max.is_none_or(|max| value <= max)
     }

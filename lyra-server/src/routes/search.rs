@@ -21,18 +21,14 @@ use serde::{
 
 use crate::{
     STATE,
-    db::ratings::{
-        MAX_VALUE,
-        MIN_VALUE,
-        RatingFilter,
-        RatingValue,
-    },
     routes::AppError,
     services::{
         auth::require_authenticated,
         search as search_service,
     },
 };
+
+use super::ratings::RatingFilterQuery;
 
 const MAX_QUERY_LEN: usize = 256;
 
@@ -52,20 +48,8 @@ struct SearchQuery {
         schemars(description = "Optional per-entity result cap. Defaults to 20, capped at 50.")
     )]
     limit: Option<u64>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(
-            description = "Optional inclusive minimum personal rating. Must be an integer from 1 through 5. Unrated entities are excluded."
-        )
-    )]
-    min_rating: Option<i64>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(
-            description = "Optional inclusive maximum personal rating. Must be an integer from 1 through 5. Unrated entities are excluded."
-        )
-    )]
-    max_rating: Option<i64>,
+    #[serde(flatten)]
+    rating: RatingFilterQuery,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -106,7 +90,7 @@ async fn search(
         )));
     }
 
-    let rating_filter = parse_rating_filter(params.min_rating, params.max_rating)?;
+    let rating_filter = params.rating.parse()?;
     let options =
         search_service::SearchOptions::new(trimmed.to_string(), params.limit, rating_filter);
 
@@ -146,31 +130,6 @@ async fn search(
     }))
 }
 
-fn parse_rating_filter(
-    min_rating: Option<i64>,
-    max_rating: Option<i64>,
-) -> Result<RatingFilter, AppError> {
-    let min = min_rating
-        .map(|value| parse_rating_bound("min_rating", value))
-        .transpose()?;
-    let max = max_rating
-        .map(|value| parse_rating_bound("max_rating", value))
-        .transpose()?;
-    RatingFilter::new(min, max)
-        .map_err(|_| AppError::bad_request("min_rating must not exceed max_rating"))
-}
-
-fn parse_rating_bound(name: &str, raw: i64) -> Result<RatingValue, AppError> {
-    u8::try_from(raw)
-        .ok()
-        .and_then(RatingValue::new)
-        .ok_or_else(|| {
-            AppError::bad_request(format!(
-                "{name} must be an integer from {MIN_VALUE} through {MAX_VALUE}"
-            ))
-        })
-}
-
 #[cfg(feature = "docgen")]
 fn search_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Cross-entity fuzzy search").description(
@@ -195,24 +154,4 @@ pub(crate) fn search_openapi_routes() -> aide::axum::ApiRouter {
     use aide::axum::routing::get_with;
 
     aide::axum::ApiRouter::new().api_route("/", get_with(search, search_docs))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rating_filter_parses_optional_inclusive_bounds() {
-        assert!(parse_rating_filter(None, None).unwrap().is_empty());
-        assert!(!parse_rating_filter(Some(1), None).unwrap().is_empty());
-        assert!(!parse_rating_filter(None, Some(5)).unwrap().is_empty());
-        assert!(!parse_rating_filter(Some(3), Some(3)).unwrap().is_empty());
-    }
-
-    #[test]
-    fn rating_filter_rejects_invalid_bounds() {
-        assert!(parse_rating_filter(Some(0), None).is_err());
-        assert!(parse_rating_filter(None, Some(6)).is_err());
-        assert!(parse_rating_filter(Some(4), Some(3)).is_err());
-    }
 }

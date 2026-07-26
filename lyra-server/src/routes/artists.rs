@@ -49,6 +49,7 @@ use crate::{
     routes::{
         covers as route_covers,
         deserialize_inc,
+        ratings::RatingFilterQuery,
         releases as route_releases,
         responses::{
             ArtistRelationResponse,
@@ -120,7 +121,19 @@ struct ArtistListQuery {
     )]
     sort_order: Option<String>,
     #[serde(flatten)]
+    rating: RatingFilterQuery,
+    #[serde(flatten)]
     page: super::PageQuery,
+}
+
+pub(crate) struct ArtistListOptions {
+    inc: Option<Vec<String>>,
+    query: Option<String>,
+    library_id: Option<String>,
+    sort_by: Option<Vec<String>>,
+    sort_order: Option<String>,
+    rating_filter: db::ratings::RatingFilter,
+    page_request: super::SnapshotPageRequest,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -719,21 +732,30 @@ fn artist_detail_to_response(
 
 pub(crate) async fn list_artist_responses(
     principal: &Principal,
-    inc: Option<Vec<String>>,
-    query: Option<String>,
-    library_id: Option<String>,
-    sort_by: Option<Vec<String>>,
-    sort_order: Option<String>,
-    page_request: super::SnapshotPageRequest,
+    options: ArtistListOptions,
 ) -> Result<PageResponse<ArtistResponse>, AppError> {
+    let ArtistListOptions {
+        inc,
+        query,
+        library_id,
+        sort_by,
+        sort_order,
+        rating_filter,
+        page_request,
+    } = options;
     let db = &*STATE.db.read().await;
     let includes = parse_inc(inc)?;
     let search_term = super::parse_text_query(query);
+    let (min_rating, max_rating) = rating_filter.bounds();
+    let min_rating_context = min_rating.map(|value| value.to_string());
+    let max_rating_context = max_rating.map(|value| value.to_string());
     let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "artists")
         .field(search_term.as_deref())
         .field(library_id.as_deref())
         .values(sort_by.as_deref())
         .field(sort_order.as_deref())
+        .field(min_rating_context.as_deref())
+        .field(max_rating_context.as_deref())
         .finish();
     let mut sort = parse_artist_sort_specs(sort_by, sort_order)?;
     if sort.is_empty() {
@@ -754,7 +776,7 @@ pub(crate) async fn list_artist_responses(
         )?;
         (artists, page.next_cursor)
     } else {
-        let accessible_artists = match library_scope {
+        let mut accessible_artists = match library_scope {
             Some(library_db_id) => {
                 artist_service::query_credited(
                     db,
@@ -783,6 +805,17 @@ pub(crate) async fn list_artist_responses(
                 accessible_artists
             }
         };
+        if !rating_filter.is_empty() {
+            let rated_target_ids =
+                db::ratings::target_ids_matching(db, principal.user_db_id, rating_filter)?;
+            accessible_artists.retain(|artist| {
+                artist
+                    .db_id
+                    .clone()
+                    .map(DbId::from)
+                    .is_some_and(|db_id| rated_target_ids.contains(&db_id))
+            });
+        }
         let mut artists = query_artist_route_items(
             db,
             accessible_artists,
@@ -834,13 +867,24 @@ async fn get_artists(
         library_id,
         sort_by,
         sort_order,
+        rating,
         page,
     } = list_query;
     let page = page.resolve_snapshot();
     let principal = require_authenticated(&headers).await?;
+    let rating_filter = rating.parse()?;
     Ok(Json(
         list_artist_responses(
-            &principal, inc, query, library_id, sort_by, sort_order, page,
+            &principal,
+            ArtistListOptions {
+                inc,
+                query,
+                library_id,
+                sort_by,
+                sort_order,
+                rating_filter,
+                page_request: page,
+            },
         )
         .await?,
     ))
@@ -954,7 +998,7 @@ async fn update_artist(
 #[cfg(feature = "docgen")]
 fn list_artists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List artists").description(
-        "Returns artists as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `limit`, `cursor`. `library_id` scopes results to artists credited by releases or tracks belonging to that public library ID. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against artist names. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, artist cover metadata includes a public image URL. When `inc=relations`, add `relation_covers` to include public image metadata for related artists. When `inc=releases`, use `release_artists`, `release_covers`, and/or `artist_covers` to hydrate those nested release fields. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
+        "Returns artists as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `min_rating`, `max_rating`, `limit`, `cursor`. `min_rating` and `max_rating` filter artists by the authenticated user's inclusive personal rating range; either bound excludes unrated artists. `library_id` scopes results to artists credited by releases or tracks belonging to that public library ID. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against artist names. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, artist cover metadata includes a public image URL. When `inc=relations`, add `relation_covers` to include public image metadata for related artists. When `inc=releases`, use `release_artists`, `release_covers`, and/or `artist_covers` to hydrate those nested release fields. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
     )
 }
 
@@ -1518,12 +1562,15 @@ mod tests {
 
         let page = list_artist_responses(
             &principal,
-            None,
-            None,
-            Some(visible_library_id),
-            None,
-            None,
-            super::super::SnapshotPageRequest::first_page(100),
+            ArtistListOptions {
+                inc: None,
+                query: None,
+                library_id: Some(visible_library_id),
+                sort_by: None,
+                sort_order: None,
+                rating_filter: db::ratings::RatingFilter::default(),
+                page_request: super::super::SnapshotPageRequest::first_page(100),
+            },
         )
         .await
         .map_err(|err| anyhow::anyhow!("{err:?}"))?;
@@ -1537,6 +1584,64 @@ mod tests {
                 "Visible Track Artist".to_string()
             ]
         );
+        assert!(page.next_cursor.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_artist_responses_filters_exact_personal_rating() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let _test_dir = initialize_test_runtime().await?;
+
+        let principal = {
+            let mut db = STATE.db.write().await;
+            let user_db_id =
+                db::users::create(&mut db, &db::test_db::test_user("artist-rating-user")?)?;
+            let four_star = insert_artist(&mut db, "Four Star Artist")?;
+            let five_star = insert_artist(&mut db, "Five Star Artist")?;
+            insert_artist(&mut db, "Unrated Artist")?;
+            for (target, value) in [(four_star, 4), (five_star, 5)] {
+                db::ratings::upsert(
+                    &mut *db,
+                    user_db_id,
+                    target,
+                    db::ratings::RatingKind::Artist,
+                    db::ratings::RatingValue::new(value).unwrap(),
+                    1,
+                )?;
+            }
+            Principal {
+                user_db_id,
+                user_public_id: "artist-rating-user".to_string(),
+                username: "artist-rating-user".to_string(),
+                permissions: vec![db::Permission::Admin],
+                role_name: Some("admin".to_string()),
+                accessible_library_ids: HashSet::new(),
+            }
+        };
+        let exact_four = db::ratings::RatingFilter::new(
+            db::ratings::RatingValue::new(4),
+            db::ratings::RatingValue::new(4),
+        )
+        .unwrap();
+
+        let page = list_artist_responses(
+            &principal,
+            ArtistListOptions {
+                inc: None,
+                query: None,
+                library_id: None,
+                sort_by: None,
+                sort_order: None,
+                rating_filter: exact_four,
+                page_request: super::super::SnapshotPageRequest::first_page(100),
+            },
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].name, "Four Star Artist");
         assert!(page.next_cursor.is_none());
         Ok(())
     }
@@ -1556,12 +1661,15 @@ mod tests {
 
         let page = list_artist_responses(
             &principal,
-            None,
-            None,
-            None,
-            Some(vec!["name".to_string()]),
-            Some("descending".to_string()),
-            super::super::SnapshotPageRequest::first_page(100),
+            ArtistListOptions {
+                inc: None,
+                query: None,
+                library_id: None,
+                sort_by: Some(vec!["name".to_string()]),
+                sort_order: Some("descending".to_string()),
+                rating_filter: db::ratings::RatingFilter::default(),
+                page_request: super::super::SnapshotPageRequest::first_page(100),
+            },
         )
         .await
         .map_err(|err| anyhow::anyhow!("{err:?}"))?;

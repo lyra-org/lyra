@@ -49,6 +49,7 @@ use crate::{
     routes::{
         covers as route_covers,
         deserialize_inc,
+        ratings::RatingFilterQuery,
         responses::{
             EntryResponse,
             PageResponse,
@@ -117,6 +118,8 @@ pub(crate) struct ReleaseListQuery {
         schemars(description = "Sort order for all sort keys: ascending or descending.")
     )]
     pub(crate) sort_order: Option<String>,
+    #[serde(flatten)]
+    pub(crate) rating: RatingFilterQuery,
     #[serde(flatten)]
     pub(crate) page: super::PageQuery,
 }
@@ -548,10 +551,12 @@ async fn get_releases(
         genre_id,
         sort_by,
         sort_order,
+        rating,
         page,
     } = list_query;
     let page_request = page.resolve_snapshot();
     let principal = require_authenticated(&headers).await?;
+    let rating_filter = rating.parse()?;
     let include_entry_paths =
         db::roles::has_permission(&principal.permissions, Permission::ManageLibraries);
 
@@ -560,6 +565,9 @@ async fn get_releases(
         parse_release_includes(inc)?;
     let search_term = super::parse_text_query(query);
     let year_context = year.map(|year| year.to_string());
+    let (min_rating, max_rating) = rating_filter.bounds();
+    let min_rating_context = min_rating.map(|value| value.to_string());
+    let max_rating_context = max_rating.map(|value| value.to_string());
     let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "releases")
         .field(search_term.as_deref())
         .field(year_context.as_deref())
@@ -567,6 +575,8 @@ async fn get_releases(
         .values(genre_id.as_deref())
         .values(sort_by.as_deref())
         .field(sort_order.as_deref())
+        .field(min_rating_context.as_deref())
+        .field(max_rating_context.as_deref())
         .finish();
     let mut sort = parse_sort_specs(sort_by, sort_order)?;
     if sort.is_empty() {
@@ -602,7 +612,7 @@ async fn get_releases(
                 )?)
             },
         };
-        let accessible_releases = match library_scope {
+        let mut accessible_releases = match library_scope {
             Some(library_db_id) => {
                 db::releases::query(
                     db,
@@ -646,6 +656,17 @@ async fn get_releases(
                 accessible_releases
             }
         };
+        if !rating_filter.is_empty() {
+            let rated_target_ids =
+                db::ratings::target_ids_matching(db, principal.user_db_id, rating_filter)?;
+            accessible_releases.retain(|release| {
+                release
+                    .db_id
+                    .clone()
+                    .map(DbId::from)
+                    .is_some_and(|db_id| rated_target_ids.contains(&db_id))
+            });
+        }
         let mut release_items = query_release_route_items(
             db,
             accessible_releases,
@@ -754,7 +775,7 @@ async fn search_release_covers(
 #[cfg(feature = "docgen")]
 fn list_releases_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List releases").description(
-        "Returns releases as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `year`, `library_id`, `genre_id`, `sort_by`, `sort_order`, `limit`, `cursor`. `library_id` scopes results to releases belonging to that public library ID. `genre_id` filters by one or more public genre IDs. `sort_by` supports `sort_name`, `name`, `date_created`, `release_date`, `last_played_at`, `listen_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `inc` values: `artists`, `tracks`, `track_artists`, `entries`, `covers`, `artist_covers`, `genres`. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits (for example, artist and producer). Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
+        "Returns releases as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `year`, `library_id`, `genre_id`, `sort_by`, `sort_order`, `min_rating`, `max_rating`, `limit`, `cursor`. `min_rating` and `max_rating` filter releases by the authenticated user's inclusive personal rating range; either bound excludes unrated releases. `library_id` scopes results to releases belonging to that public library ID. `genre_id` filters by one or more public genre IDs. `sort_by` supports `sort_name`, `name`, `date_created`, `release_date`, `last_played_at`, `listen_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `inc` values: `artists`, `tracks`, `track_artists`, `entries`, `covers`, `artist_covers`, `genres`. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits (for example, artist and producer). Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
     )
 }
 
@@ -897,7 +918,7 @@ mod tests {
         .await
     }
 
-    async fn create_admin_headers(username: &str) -> anyhow::Result<HeaderMap> {
+    async fn create_admin_auth(username: &str) -> anyhow::Result<(HeaderMap, DbId)> {
         let user_db_id = {
             let mut db = STATE.db.write().await;
             db::roles::ensure_builtin_roles(&mut db)?;
@@ -914,7 +935,11 @@ mod tests {
                 .parse()
                 .expect("valid auth header"),
         );
-        Ok(headers)
+        Ok((headers, user_db_id))
+    }
+
+    async fn create_admin_headers(username: &str) -> anyhow::Result<HeaderMap> {
+        Ok(create_admin_auth(username).await?.0)
     }
 
     #[test]
@@ -1092,6 +1117,7 @@ mod tests {
                 genre_id: None,
                 sort_by: None,
                 sort_order: None,
+                rating: RatingFilterQuery::default(),
                 page: super::super::PageQuery::default(),
             }),
         )
@@ -1101,6 +1127,77 @@ mod tests {
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].title, "Visible Release");
         assert!(page.next_cursor.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_releases_filters_top_level_personal_rating() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+        let (headers, user_db_id) = create_admin_auth("release-rating-admin").await?;
+
+        {
+            let mut db = STATE.db.write().await;
+            let rated_release = insert_test_release(&mut db, "Rated Release")?;
+            let unrated_release = insert_test_release(&mut db, "Unrated Release")?;
+            let five_star_release = insert_test_release(&mut db, "Five Star Release")?;
+            let unrated_track = insert_track(&mut db, "Unrated Nested Track")?;
+            let rated_track = insert_track(&mut db, "Rated Nested Track")?;
+            connect(&mut db, rated_release, unrated_track)?;
+            connect(&mut db, unrated_release, rated_track)?;
+            db::ratings::upsert(
+                &mut *db,
+                user_db_id,
+                rated_release,
+                db::ratings::RatingKind::Release,
+                db::ratings::RatingValue::new(4).unwrap(),
+                1,
+            )?;
+            db::ratings::upsert(
+                &mut *db,
+                user_db_id,
+                five_star_release,
+                db::ratings::RatingKind::Release,
+                db::ratings::RatingValue::new(5).unwrap(),
+                1,
+            )?;
+            db::ratings::upsert(
+                &mut *db,
+                user_db_id,
+                rated_track,
+                db::ratings::RatingKind::Track,
+                db::ratings::RatingValue::new(4).unwrap(),
+                1,
+            )?;
+        }
+
+        let Json(page) = get_releases(
+            headers,
+            Query(ReleaseListQuery {
+                inc: Some(vec!["tracks".to_string()]),
+                query: None,
+                year: None,
+                library_id: None,
+                genre_id: None,
+                sort_by: None,
+                sort_order: None,
+                rating: RatingFilterQuery::from_bounds(Some(4), Some(4)),
+                page: super::super::PageQuery::default(),
+            }),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].title, "Rated Release");
+        assert_eq!(
+            page.items[0]
+                .tracks
+                .as_ref()
+                .and_then(|tracks| tracks.first())
+                .map(|track| track.title.as_str()),
+            Some("Unrated Nested Track"),
+        );
         Ok(())
     }
 
@@ -1133,6 +1230,7 @@ mod tests {
                 genre_id: Some(vec![rock_genre_id]),
                 sort_by: None,
                 sort_order: None,
+                rating: RatingFilterQuery::default(),
                 page: super::super::PageQuery::default(),
             }),
         )

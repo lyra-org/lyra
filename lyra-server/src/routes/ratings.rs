@@ -40,6 +40,48 @@ use crate::{
 use super::AppError;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+pub(crate) struct RatingFilterQuery {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional inclusive minimum personal rating. Must be an integer from 1 through 5. Unrated entities are excluded."
+        )
+    )]
+    min_rating: Option<i64>,
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Optional inclusive maximum personal rating. Must be an integer from 1 through 5. Unrated entities are excluded."
+        )
+    )]
+    max_rating: Option<i64>,
+}
+
+impl RatingFilterQuery {
+    #[cfg(test)]
+    pub(crate) fn from_bounds(min_rating: Option<i64>, max_rating: Option<i64>) -> Self {
+        Self {
+            min_rating,
+            max_rating,
+        }
+    }
+
+    pub(crate) fn parse(self) -> Result<crate::db::ratings::RatingFilter, AppError> {
+        let min = self
+            .min_rating
+            .map(|value| parse_rating_bound("min_rating", value))
+            .transpose()?;
+        let max = self
+            .max_rating
+            .map(|value| parse_rating_bound("max_rating", value))
+            .transpose()?;
+        crate::db::ratings::RatingFilter::new(min, max)
+            .map_err(|_| AppError::bad_request("min_rating must not exceed max_rating"))
+    }
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
 struct SetRatingRequest {
     #[cfg_attr(
@@ -109,12 +151,16 @@ async fn delete_rating(
 }
 
 fn parse_rating(raw: i64) -> Result<RatingValue, AppError> {
+    parse_rating_bound("rating", raw)
+}
+
+fn parse_rating_bound(name: &str, raw: i64) -> Result<RatingValue, AppError> {
     u8::try_from(raw)
         .ok()
         .and_then(RatingValue::new)
         .ok_or_else(|| {
             AppError::bad_request(format!(
-                "rating must be an integer from {MIN_VALUE} through {MAX_VALUE}"
+                "{name} must be an integer from {MIN_VALUE} through {MAX_VALUE}"
             ))
         })
 }
@@ -197,6 +243,69 @@ mod tests {
         assert!(parse_rating(0).is_err());
         assert!(parse_rating(6).is_err());
         assert!(parse_rating(-1).is_err());
+    }
+
+    #[test]
+    fn rating_filter_parses_optional_inclusive_bounds() {
+        assert!(RatingFilterQuery::default().parse().unwrap().is_empty());
+        assert_eq!(
+            RatingFilterQuery {
+                min_rating: Some(1),
+                max_rating: None,
+            }
+            .parse()
+            .unwrap()
+            .bounds(),
+            (Some(1), None),
+        );
+        assert_eq!(
+            RatingFilterQuery {
+                min_rating: None,
+                max_rating: Some(5),
+            }
+            .parse()
+            .unwrap()
+            .bounds(),
+            (None, Some(5)),
+        );
+        assert_eq!(
+            RatingFilterQuery {
+                min_rating: Some(3),
+                max_rating: Some(3),
+            }
+            .parse()
+            .unwrap()
+            .bounds(),
+            (Some(3), Some(3)),
+        );
+    }
+
+    #[test]
+    fn rating_filter_rejects_invalid_bounds() {
+        assert!(
+            RatingFilterQuery {
+                min_rating: Some(0),
+                max_rating: None,
+            }
+            .parse()
+            .is_err()
+        );
+        assert!(
+            RatingFilterQuery {
+                min_rating: None,
+                max_rating: Some(6),
+            }
+            .parse()
+            .is_err()
+        );
+        assert!(
+            RatingFilterQuery {
+                min_rating: Some(4),
+                max_rating: Some(3),
+            }
+            .parse()
+            .is_err()
+        );
     }
 
     #[test]
