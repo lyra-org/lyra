@@ -262,6 +262,7 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/favorites/{target_id}"),
     ("PUT", "/api/favorites/{target_id}"),
     ("DELETE", "/api/favorites/{target_id}"),
+    ("POST", "/api/ratings/check"),
     ("GET", "/api/ratings/{target_id}"),
     ("PUT", "/api/ratings/{target_id}"),
     ("DELETE", "/api/ratings/{target_id}"),
@@ -346,6 +347,9 @@ mod tests {
                 .reservations
                 .contains(&RouteKey::new("GET", "/ws").expect("ws route key"))
         );
+        assert!(core_api.reservations.contains(
+            &RouteKey::new("POST", "/api/ratings/check").expect("ratings check route key")
+        ));
         assert!(
             !core_api
                 .reservations
@@ -355,6 +359,28 @@ mod tests {
             !core_api
                 .reservations
                 .contains(&RouteKey::new("GET", "/api/asyncapi.json").expect("asyncapi route key"))
+        );
+    }
+
+    #[cfg(feature = "docgen")]
+    #[test]
+    fn ratings_check_is_documented_and_authenticated() {
+        let api = build_openapi_spec();
+        let paths = api.paths.as_ref().expect("OpenAPI paths");
+        let path = paths
+            .paths
+            .get("/api/ratings/check")
+            .expect("ratings check path");
+        let ReferenceOr::Item(path) = path else {
+            panic!("ratings check path should be inline");
+        };
+        let operation = path.post.as_ref().expect("ratings check POST operation");
+        assert!(
+            operation
+                .security
+                .iter()
+                .any(|requirement| requirement.contains_key(BEARER_AUTH_SCHEME)),
+            "ratings check must require bearer auth",
         );
     }
 }

@@ -16,6 +16,7 @@ use axum::{
     routing::{
         delete,
         get,
+        post,
         put,
     },
 };
@@ -23,6 +24,7 @@ use serde::{
     Deserialize,
     Serialize,
 };
+use std::collections::HashMap;
 
 use crate::{
     STATE,
@@ -38,6 +40,8 @@ use crate::{
 };
 
 use super::AppError;
+
+const CHECK_TARGET_CAP: usize = 500;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
@@ -103,6 +107,30 @@ struct RatingStateResponse {
     rating: Option<u8>,
 }
 
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+struct CheckRatingsRequest {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Target IDs to check. At most 500 submitted entries, counted before duplicate IDs are collapsed."
+        )
+    )]
+    target_ids: Vec<String>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct CheckRatingsResponse {
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Dense `{ [submitted_id]: 1..5 | null }` map. Duplicate IDs collapse to one key."
+        )
+    )]
+    ratings: HashMap<String, Option<u8>>,
+}
+
 async fn set_rating(
     headers: HeaderMap,
     Path(target_id): Path<String>,
@@ -148,6 +176,27 @@ async fn delete_rating(
             "rating target not found: {target_id}"
         ))),
     }
+}
+
+async fn check_ratings(
+    headers: HeaderMap,
+    Json(request): Json<CheckRatingsRequest>,
+) -> Result<Json<CheckRatingsResponse>, AppError> {
+    let principal = require_authenticated(&headers).await?;
+    if request.target_ids.len() > CHECK_TARGET_CAP {
+        return Err(AppError::bad_request(format!(
+            "rating check cap exceeded: {} > {}",
+            request.target_ids.len(),
+            CHECK_TARGET_CAP,
+        )));
+    }
+
+    let db = STATE.db.read().await;
+    let ratings = rating_service::values_for_principal(&db, &principal, &request.target_ids)?
+        .into_iter()
+        .map(|(target_id, rating)| (target_id, rating.map(RatingValue::get)))
+        .collect();
+    Ok(Json(CheckRatingsResponse { ratings }))
 }
 
 fn parse_rating(raw: i64) -> Result<RatingValue, AppError> {
@@ -208,8 +257,22 @@ fn delete_rating_docs(op: TransformOperation) -> TransformOperation {
         .response::<204, ()>()
 }
 
+#[cfg(feature = "docgen")]
+fn check_ratings_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Check personal ratings for targets").description(
+        "Checks up to 500 submitted target IDs, counted before duplicate IDs are collapsed, and \
+         returns a dense `{ ratings: { [submitted_id]: 1..5 | null } }` map. Mixed track, \
+         release, and artist IDs are supported. Missing, malformed, unsupported, non-visible, \
+         kind-mismatched, other-user-only, and unrated targets all map to `null`; an empty input \
+         returns an empty map. Unlike singular rating routes, malformed individual target IDs do \
+         not return 400. Malformed JSON and requests containing more than 500 submitted IDs \
+         return 400.",
+    )
+}
+
 pub fn rating_routes() -> Router {
     Router::new()
+        .route("/check", post(check_ratings))
         .route("/{target_id}", put(set_rating))
         .route("/{target_id}", get(get_rating))
         .route("/{target_id}", delete(delete_rating))
@@ -220,10 +283,12 @@ pub(crate) fn rating_openapi_routes() -> aide::axum::ApiRouter {
     use aide::axum::routing::{
         delete_with,
         get_with,
+        post_with,
         put_with,
     };
 
     aide::axum::ApiRouter::new()
+        .api_route("/check", post_with(check_ratings, check_ratings_docs))
         .api_route("/{target_id}", put_with(set_rating, set_rating_docs))
         .api_route("/{target_id}", get_with(get_rating, get_rating_docs))
         .api_route(
@@ -235,6 +300,36 @@ pub(crate) fn rating_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        db::{
+            self,
+            test_db::{
+                connect,
+                insert_library,
+                insert_track,
+            },
+        },
+        services::auth::sessions,
+        testing::{
+            LibraryFixtureConfig,
+            initialize_runtime,
+            runtime_test_lock,
+        },
+    };
+    use axum::{
+        body::{
+            Body,
+            to_bytes,
+        },
+        http::{
+            Request,
+            header::{
+                AUTHORIZATION,
+                CONTENT_TYPE,
+            },
+        },
+    };
+    use tower::ServiceExt;
 
     #[test]
     fn rating_bounds_are_inclusive() {
@@ -314,5 +409,122 @@ mod tests {
         assert!(validate_target_id("V1StGXR8_Z5jdHi6B-myT").is_ok());
         assert!(validate_target_id("short").is_err());
         assert!(validate_target_id("has/slash").is_err());
+    }
+
+    #[tokio::test]
+    async fn check_ratings_route_is_authenticated_and_enforces_raw_cap() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        initialize_runtime(&LibraryFixtureConfig {
+            directory: std::path::PathBuf::from("."),
+            language: None,
+            country: None,
+        })
+        .await?;
+
+        let (user_db_id, track_id) = {
+            let mut db = STATE.db.write().await;
+            db::roles::ensure_builtin_roles(&mut db)?;
+            let user_db_id =
+                db::users::create(&mut db, &db::test_db::test_user("ratings-check-admin")?)?;
+            db::roles::ensure_user_has_role(&mut db, user_db_id, db::roles::BUILTIN_ADMIN_ROLE)?;
+            let library = insert_library(&mut db, "Ratings", "/tmp/lyra-ratings-check-route")?;
+            let track = insert_track(&mut db, "Checked Track")?;
+            connect(&mut db, library, track)?;
+            db::ratings::upsert(
+                &mut *db,
+                user_db_id,
+                track,
+                db::ratings::RatingKind::Track,
+                db::ratings::RatingValue::new(2).unwrap(),
+                100,
+            )?;
+            (
+                user_db_id,
+                db::lookup::find_id_by_db_id(&db, track)?.unwrap(),
+            )
+        };
+        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let authorization = format!("Bearer {}", session.token);
+        let routes = rating_routes();
+
+        let response = routes
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/check")
+                    .header(CONTENT_TYPE, "application/json")
+                    .header(AUTHORIZATION, &authorization)
+                    .body(Body::from(serde_json::to_vec(&serde_json::json!({
+                        "target_ids": [track_id.clone()],
+                    }))?))?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(CONTENT_TYPE).unwrap(),
+            "application/json",
+        );
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body)?,
+            serde_json::json!({
+                "ratings": HashMap::from([(track_id.clone(), 2)]),
+            }),
+        );
+
+        let exact_cap = routes
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/check")
+                    .header(CONTENT_TYPE, "application/json")
+                    .header(AUTHORIZATION, &authorization)
+                    .body(Body::from(serde_json::to_vec(&serde_json::json!({
+                        "target_ids": vec![track_id.clone(); CHECK_TARGET_CAP],
+                    }))?))?,
+            )
+            .await?;
+        assert_eq!(exact_cap.status(), StatusCode::OK);
+
+        let over_cap = routes
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/check")
+                    .header(CONTENT_TYPE, "application/json")
+                    .header(AUTHORIZATION, &authorization)
+                    .body(Body::from(serde_json::to_vec(&serde_json::json!({
+                        "target_ids": vec![track_id; CHECK_TARGET_CAP + 1],
+                    }))?))?,
+            )
+            .await?;
+        assert_eq!(over_cap.status(), StatusCode::BAD_REQUEST);
+
+        let unauthenticated = routes
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/check")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"target_ids":[]}"#))?,
+            )
+            .await?;
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let malformed_json = routes
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/check")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(Body::from("{"))?,
+            )
+            .await?;
+        assert_eq!(malformed_json.status(), StatusCode::BAD_REQUEST);
+        Ok(())
     }
 }
