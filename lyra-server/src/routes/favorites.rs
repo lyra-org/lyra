@@ -45,7 +45,7 @@ use crate::{
     },
 };
 
-const CHECK_HARD_CAP: usize = 500;
+const CHECK_TARGET_CAP: usize = 500;
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -87,7 +87,9 @@ struct FavoriteStateResponse {
 struct CheckRequest {
     #[cfg_attr(
         feature = "docgen",
-        schemars(description = "Target IDs to check. Maximum 500.")
+        schemars(
+            description = "Target IDs to check. At most 500 submitted entries, counted before duplicate IDs are collapsed."
+        )
     )]
     target_ids: Vec<String>,
 }
@@ -99,7 +101,7 @@ struct CheckResponse {
         feature = "docgen",
         schemars(
             description = "Dense `{ [id]: bool }`. Missing and non-visible IDs map to `false`; \
-                       validate client-side if you need to distinguish typos."
+                       empty input returns an empty map and duplicate IDs collapse to one key."
         )
     )]
     favorited: HashMap<String, bool>,
@@ -198,10 +200,11 @@ async fn check_favorites(
 ) -> Result<Json<CheckResponse>, AppError> {
     let principal = require_authenticated(&headers).await?;
 
-    if request.target_ids.len() > CHECK_HARD_CAP {
+    if request.target_ids.len() > CHECK_TARGET_CAP {
         return Err(AppError::bad_request(format!(
-            "check cap exceeded: {} > {CHECK_HARD_CAP}",
+            "favorite check cap exceeded: {} > {}",
             request.target_ids.len(),
+            CHECK_TARGET_CAP,
         )));
     }
 
@@ -290,9 +293,11 @@ fn get_favorite_state_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn check_favorites_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Check target favorite states").description(
-        "Checks up to 500 target IDs and returns `{ [id]: bool }`. Missing, unsupported, and \
-         non-visible IDs all map to `false`; validate IDs client-side if you need to \
-         distinguish typos.",
+        "Checks up to 500 submitted target IDs, counted before duplicate IDs are collapsed, and \
+         returns a dense `{ favorited: { [submitted_id]: bool } }` map. Empty input returns an \
+         empty map and duplicate IDs collapse to one key. Malformed, missing, unsupported, and \
+         non-visible IDs all map to `false`. Requests containing more than 500 submitted IDs \
+         return 400.",
     )
 }
 
@@ -341,6 +346,19 @@ pub(crate) fn favorite_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        db,
+        services::auth::sessions,
+        testing::{
+            LibraryFixtureConfig,
+            initialize_runtime,
+            runtime_test_lock,
+        },
+    };
+    use axum::{
+        http::header::AUTHORIZATION,
+        response::IntoResponse,
+    };
 
     #[test]
     fn looks_like_public_id_accepts_nanoid_shape() {
@@ -378,5 +396,53 @@ mod tests {
         let result: Result<ListQuery, _> =
             serde_json::from_value(serde_json::json!({ "limit": 10 }));
         assert!(result.is_err(), "entity must be required");
+    }
+
+    #[tokio::test]
+    async fn check_favorites_enforces_http_cap_before_deduplication() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        initialize_runtime(&LibraryFixtureConfig {
+            directory: std::path::PathBuf::from("."),
+            language: None,
+            country: None,
+        })
+        .await?;
+
+        let user_db_id = {
+            let mut db = STATE.db.write().await;
+            db::users::create(&mut db, &db::test_db::test_user("favorites-check-user")?)?
+        };
+        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            format!("Bearer {}", session.token).parse().unwrap(),
+        );
+        let missing_id = "missing-favorite-target".to_string();
+
+        let Json(exact_cap) = check_favorites(
+            headers.clone(),
+            Json(CheckRequest {
+                target_ids: vec![missing_id.clone(); CHECK_TARGET_CAP],
+            }),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert_eq!(exact_cap.favorited.len(), 1);
+        assert_eq!(exact_cap.favorited.get(&missing_id), Some(&false));
+
+        let over_cap = match check_favorites(
+            headers,
+            Json(CheckRequest {
+                target_ids: vec![missing_id; CHECK_TARGET_CAP + 1],
+            }),
+        )
+        .await
+        {
+            Ok(_) => return Err(anyhow::anyhow!("favorite check accepted 501 IDs")),
+            Err(err) => err.into_response(),
+        };
+        assert_eq!(over_cap.status(), StatusCode::BAD_REQUEST);
+        Ok(())
     }
 }

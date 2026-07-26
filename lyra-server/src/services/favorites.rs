@@ -13,7 +13,6 @@ use agdb::{
     DbAny,
     DbId,
 };
-use anyhow::bail;
 
 use crate::db::{
     self,
@@ -99,23 +98,24 @@ pub(crate) fn has_many_for_principal(
     principal: &Principal,
     public_target_ids: &[String],
 ) -> anyhow::Result<HashMap<String, bool>> {
-    if public_target_ids.len() > HAS_MANY_CAP {
-        bail!(
-            "has_many cap exceeded: {} > {HAS_MANY_CAP}",
-            public_target_ids.len(),
-        );
-    }
+    anyhow::ensure!(
+        public_target_ids.len() <= HAS_MANY_CAP,
+        "has_many cap exceeded: {} > {HAS_MANY_CAP}",
+        public_target_ids.len(),
+    );
 
-    let mut resolved: Vec<(String, DbId)> = Vec::with_capacity(public_target_ids.len());
-    let mut response: HashMap<String, bool> = HashMap::with_capacity(public_target_ids.len());
-    for public_id in public_target_ids {
-        match resolve_targetable_for_principal(db, principal, public_id)? {
-            Some((target_db_id, _)) => {
-                resolved.push((public_id.clone(), target_db_id));
-            }
-            None => {
-                response.insert(public_id.clone(), false);
-            }
+    let mut response: HashMap<String, bool> = public_target_ids
+        .iter()
+        .cloned()
+        .map(|public_id| (public_id, false))
+        .collect();
+    let unique_public_ids: Vec<String> = response.keys().cloned().collect();
+    let mut resolved: Vec<(String, DbId)> = Vec::with_capacity(unique_public_ids.len());
+    for public_id in unique_public_ids {
+        if let Some((target_db_id, _)) =
+            resolve_targetable_for_principal(db, principal, &public_id)?
+        {
+            resolved.push((public_id, target_db_id));
         }
     }
 
@@ -358,43 +358,6 @@ mod tests {
             return Ok(false);
         };
         db::favorites::has(db, user_db_id, target_db_id)
-    }
-
-    fn has_many(
-        db: &DbAny,
-        user_db_id: DbId,
-        public_target_ids: &[String],
-    ) -> anyhow::Result<HashMap<String, bool>> {
-        if public_target_ids.len() > HAS_MANY_CAP {
-            bail!(
-                "has_many cap exceeded: {} > {HAS_MANY_CAP}",
-                public_target_ids.len(),
-            );
-        }
-
-        let mut resolved: Vec<(String, DbId)> = Vec::with_capacity(public_target_ids.len());
-        let mut response: HashMap<String, bool> = HashMap::with_capacity(public_target_ids.len());
-        for public_id in public_target_ids {
-            match resolve_targetable(db, user_db_id, public_id)? {
-                Some((target_db_id, _)) => {
-                    resolved.push((public_id.clone(), target_db_id));
-                }
-                None => {
-                    response.insert(public_id.clone(), false);
-                }
-            }
-        }
-
-        if !resolved.is_empty() {
-            let db_ids: Vec<DbId> = resolved.iter().map(|(_, id)| *id).collect();
-            let states = db::favorites::has_many(db, user_db_id, &db_ids)?;
-            for (public_id, db_id) in resolved {
-                let is_fav = states.get(&db_id).copied().unwrap_or(false);
-                response.insert(public_id, is_fav);
-            }
-        }
-
-        Ok(response)
     }
 
     fn resolve_targetable(
@@ -688,23 +651,61 @@ mod tests {
     }
 
     #[test]
-    fn has_many_dense_response_false_for_invalid_and_visible_for_favorited() -> anyhow::Result<()> {
+    fn has_many_for_principal_is_dense_deduplicated_and_capped_before_deduplication()
+    -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
         let user = create_user(&mut db, "alice")?;
-        let track_id = nanoid!();
-        create_track(&mut db, &track_id)?;
-        add(&mut db, user, &track_id)?;
+        let unsupported_user = create_user(&mut db, "unsupported")?;
+        let visible_library = insert_library(&mut db, "Visible", "/tmp/lyra-favorites-check")?;
+        let hidden_library = insert_library(&mut db, "Hidden", "/tmp/lyra-favorites-check-hidden")?;
+        let visible_library_id = db::lookup::find_id_by_db_id(&db, visible_library)?.unwrap();
+        let principal = principal_for(user, HashSet::from([visible_library_id]));
+        let favorited_id = nanoid!();
+        let unfavorited_id = nanoid!();
+        let hidden_id = nanoid!();
+        let favorited = create_track(&mut db, &favorited_id)?;
+        let unfavorited = create_track(&mut db, &unfavorited_id)?;
+        let hidden = create_track(&mut db, &hidden_id)?;
+        connect(&mut db, visible_library, favorited)?;
+        connect(&mut db, visible_library, unfavorited)?;
+        connect(&mut db, hidden_library, hidden)?;
+        add_for_principal(&mut db, &principal, &favorited_id)?;
+        db::favorites::add(&mut db, user, hidden, FavoriteKind::Track, now_ms()?)?;
 
-        let bad_id = "nonexistent".to_string();
-        let result = has_many(&db, user, &[track_id.clone(), bad_id.clone()])?;
-        assert_eq!(result.len(), 2);
-        assert_eq!(result.get(&track_id), Some(&true));
+        let malformed_id = "bad/id".to_string();
+        let missing_id = "nonexistent".to_string();
+        let unsupported_id = db::users::get_by_id(&db, unsupported_user)?.unwrap().id;
+        let submitted = vec![
+            favorited_id.clone(),
+            favorited_id.clone(),
+            unfavorited_id.clone(),
+            hidden_id.clone(),
+            malformed_id.clone(),
+            missing_id.clone(),
+            unsupported_id.clone(),
+        ];
+        let result = has_many_for_principal(&db, &principal, &submitted)?;
+        assert_eq!(result.len(), submitted.iter().collect::<HashSet<_>>().len());
+        assert_eq!(result.get(&favorited_id), Some(&true));
+        for opaque_id in [
+            unfavorited_id,
+            hidden_id,
+            malformed_id,
+            missing_id,
+            unsupported_id,
+        ] {
+            assert_eq!(result.get(&opaque_id), Some(&false), "{opaque_id}");
+        }
+        assert!(has_many_for_principal(&db, &principal, &[])?.is_empty());
+
+        let exact_cap = vec![favorited_id.clone(); HAS_MANY_CAP];
         assert_eq!(
-            result.get(&bad_id),
-            Some(&false),
-            "invalid nanoid must map to false, not omitted",
+            has_many_for_principal(&db, &principal, &exact_cap)?.get(&favorited_id),
+            Some(&true),
         );
+        let over_cap = vec![favorited_id; HAS_MANY_CAP + 1];
+        assert!(has_many_for_principal(&db, &principal, &over_cap).is_err());
 
         Ok(())
     }
