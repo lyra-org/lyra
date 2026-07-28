@@ -1027,7 +1027,7 @@ fn delete_track_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn move_track_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Move track within playlist")
-        .description("Moves a playlist track entry to a new position. Returns the full updated item list without artists or release details.")
+        .description("Moves a playlist track entry to a new position. `new_position` is a 0-based index into the list after the moved entry is removed. Returns the full updated item list without artists or release details.")
 }
 
 pub fn playlist_routes() -> Router {
