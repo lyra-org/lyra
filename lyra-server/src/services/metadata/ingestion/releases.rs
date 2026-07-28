@@ -219,15 +219,14 @@ fn persist_release_inner(
         .map(|d| d.as_secs())
         .ok();
 
-    let earliest_ctime = release_tracks
-        .iter()
-        .filter_map(|t| {
-            db::entries::get_by_id(db, t.meta.entry_db_id)
-                .ok()
-                .flatten()
-        })
-        .map(|e| e.ctime)
-        .min();
+    // Propagate lookup failures: a swallowed error is indistinguishable from
+    // "no ctime", and ctime drives date-added ordering.
+    let mut earliest_ctime: Option<u64> = None;
+    for track in release_tracks.iter() {
+        if let Some(entry) = db::entries::get_by_id(db, track.meta.entry_db_id)? {
+            earliest_ctime = Some(earliest_ctime.map_or(entry.ctime, |c| c.min(entry.ctime)));
+        }
+    }
 
     let (release_db_id, release_provider_fields) = if let Some(release_db_id) = existing_release_id
     {
@@ -254,7 +253,11 @@ fn persist_release_inner(
                 release.release_date = None;
             }
         }
-        release.ctime = earliest_ctime;
+        // Only overwrite when the scan actually resolved one; `None` here means
+        // "not determined", never "cleared".
+        if earliest_ctime.is_some() {
+            release.ctime = earliest_ctime;
+        }
         db::releases::update_in_transaction(db, &release)?;
         (release_db_id, release_provider_fields)
     } else {
@@ -401,10 +404,7 @@ fn persist_release_inner(
 
         let effective_disc_total = disc_total.or(inferred_disc_total);
 
-        let entry_ctime = db::entries::get_by_id(db, entry_db_id)
-            .ok()
-            .flatten()
-            .map(|e| e.ctime);
+        let entry_ctime = db::entries::get_by_id(db, entry_db_id)?.map(|e| e.ctime);
 
         let track_db_id = if let Some(track_db_id) = track.track_db_id {
             let mut existing = db::tracks::get_by_id(db, track_db_id)?.unwrap_or(Track {
@@ -464,16 +464,19 @@ fn persist_release_inner(
                     existing.track_total = None;
                 }
             }
+            // Duration and audio properties are intrinsic to the file, not tags:
+            // there is no "user removed it" case, so `None` only ever means the
+            // probe could not determine the value. Keep what is stored.
             if let Some(duration_ms) = duration_ms {
                 existing.set_duration_ms(duration_ms);
-            } else {
-                existing.duration_ms = None;
             }
-            existing.sample_rate_hz = sample_rate_hz;
-            existing.channel_count = channel_count;
-            existing.bit_depth = bit_depth;
-            existing.bitrate_bps = bitrate_bps;
-            existing.ctime = entry_ctime;
+            existing.sample_rate_hz = sample_rate_hz.or(existing.sample_rate_hz);
+            existing.channel_count = channel_count.or(existing.channel_count);
+            existing.bit_depth = bit_depth.or(existing.bit_depth);
+            existing.bitrate_bps = bitrate_bps.or(existing.bitrate_bps);
+            if entry_ctime.is_some() {
+                existing.ctime = entry_ctime;
+            }
             db::tracks::update_in_transaction(db, &existing)?;
             track_db_id
         } else {

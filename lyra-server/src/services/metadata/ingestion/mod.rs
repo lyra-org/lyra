@@ -2397,6 +2397,139 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         Ok(())
     }
 
+    /// Tags that vanish from the file must vanish from storage. agdb omits
+    /// `None` fields from inserts, so a rescan that clears a field only takes
+    /// effect if `update` removes the stored key.
+    #[test]
+    fn rescan_clears_release_and_track_fields_whose_tags_were_removed() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+
+        let library =
+            test_db::insert_test_library_node(&mut db, "Test Library", PathBuf::from("/music"))?;
+        let library_db_id = library
+            .db_id
+            .ok_or_else(|| anyhow!("library missing db_id"))?;
+
+        let entry_db_id = insert_entry(&mut db, "/music/Artist/Album/01 - Track.flac")?;
+        connect(&mut db, library_db_id, entry_db_id)?;
+
+        let tagged = TrackMetadata {
+            entry_db_id,
+            album: Some("Album".to_string()),
+            album_artists: Some(vec!["Artist".to_string()]),
+            date: Some("1999-05-04".to_string()),
+            year: Some(1999),
+            title: Some("Track".to_string()),
+            artists: Some(vec!["Artist".to_string()]),
+            artist_relations: Vec::new(),
+            disc: Some(1),
+            disc_total: Some(1),
+            track: Some(7),
+            track_total: Some(12),
+            duration_ms: Some(180_000),
+            genres: None,
+            label: None,
+            catalog_number: None,
+            source_kind: Some("embedded_tags".to_string()),
+            source_key: Some(format!("entry:{}:embedded", entry_db_id.0)),
+            segment_start_ms: None,
+            segment_end_ms: None,
+            cue_sheet_entry_id: None,
+            cue_sheet_hash: None,
+            cue_track_no: None,
+            cue_audio_entry_id: None,
+            cue_index00_frames: None,
+            cue_index01_frames: None,
+            sample_rate_hz: Some(44_100),
+            channel_count: Some(2),
+            bit_depth: Some(16),
+            bitrate_bps: Some(900_000),
+        };
+        apply_metadata(&mut db, library_db_id, vec![tagged])?;
+
+        let release = select_releases(&db)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("release missing after first scan"))?;
+        let release_db_id: DbId = release
+            .db_id
+            .ok_or_else(|| anyhow!("release missing db_id"))?
+            .into();
+        let track = db::tracks::get(&db, release_db_id)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("track missing after first scan"))?;
+        let track_db_id: DbId = track
+            .db_id
+            .ok_or_else(|| anyhow!("track missing db_id"))?
+            .into();
+        assert_eq!(track.year, Some(1999));
+        assert_eq!(track.track, Some(7));
+        assert_eq!(
+            db::releases::get_by_id(&db, release_db_id)?
+                .and_then(|release| release.release_date)
+                .as_deref(),
+            Some("1999-05-04")
+        );
+
+        let stripped = TrackMetadata {
+            entry_db_id,
+            album: Some("Album".to_string()),
+            album_artists: Some(vec!["Artist".to_string()]),
+            date: None,
+            year: None,
+            title: Some("Track".to_string()),
+            artists: Some(vec!["Artist".to_string()]),
+            artist_relations: Vec::new(),
+            disc: None,
+            disc_total: None,
+            track: None,
+            track_total: None,
+            duration_ms: None,
+            genres: None,
+            label: None,
+            catalog_number: None,
+            source_kind: Some("embedded_tags".to_string()),
+            source_key: Some(format!("entry:{}:embedded", entry_db_id.0)),
+            segment_start_ms: None,
+            segment_end_ms: None,
+            cue_sheet_entry_id: None,
+            cue_sheet_hash: None,
+            cue_track_no: None,
+            cue_audio_entry_id: None,
+            cue_index00_frames: None,
+            cue_index01_frames: None,
+            sample_rate_hz: None,
+            channel_count: None,
+            bit_depth: None,
+            bitrate_bps: None,
+        };
+        apply_metadata(&mut db, library_db_id, vec![stripped])?;
+
+        let track_after =
+            db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("track missing"))?;
+        assert_eq!(track_after.year, None);
+        assert_eq!(track_after.track, None);
+        assert_eq!(track_after.track_total, None);
+        assert_eq!(track_after.track_title, "Track");
+
+        // Intrinsic audio properties are not tags: an unresolved probe must not
+        // wipe values a previous scan established.
+        assert_eq!(track_after.duration_ms, Some(180_000));
+        assert_eq!(track_after.sample_rate_hz, Some(44_100));
+        assert_eq!(track_after.channel_count, Some(2));
+        assert_eq!(track_after.bit_depth, Some(16));
+        assert_eq!(track_after.bitrate_bps, Some(900_000));
+        assert!(track_after.ctime.is_some(), "ctime must survive a rescan");
+
+        let release_after = db::releases::get_by_id(&db, release_db_id)?
+            .ok_or_else(|| anyhow!("release missing"))?;
+        assert_eq!(release_after.release_date, None);
+        assert_eq!(release_after.release_title, "Album");
+
+        Ok(())
+    }
+
     /// Rescans must skip the tag-path label sync when a provider owns
     /// the field. Regressing the gate would wipe enriched labels on
     /// every library scan.
