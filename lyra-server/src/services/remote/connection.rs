@@ -35,7 +35,6 @@ use super::messages::{
     ClientCommand,
     EventMessage,
     ForwardedCommand,
-    ForwardedCommandData,
     OutgoingMessage,
     ResponseMessage,
 };
@@ -163,21 +162,39 @@ async fn handle_remote_control(cmd: ClientCommand, connection_id: ConnectionId) 
         return ResponseMessage::error(id, format!("target does not support command: {action:?}"));
     }
 
-    let data = match &cmd {
-        ClientCommand::Seek(c) => ForwardedCommandData::Seek {
+    let forwarded = match &cmd {
+        ClientCommand::Seek(c) => ForwardedCommand::Seek {
+            from: Some(connection_id),
             position_ms: c.position_ms,
         },
-        ClientCommand::SetVolume(c) => ForwardedCommandData::Volume {
+        ClientCommand::SetVolume(c) => ForwardedCommand::SetVolume {
+            from: Some(connection_id),
             level: c.level.clamp(0.0, 1.0),
         },
-        _ => ForwardedCommandData::Simple,
+        ClientCommand::Play(_) => ForwardedCommand::Play {
+            from: Some(connection_id),
+        },
+        ClientCommand::Pause(_) => ForwardedCommand::Pause {
+            from: Some(connection_id),
+        },
+        ClientCommand::Unpause(_) => ForwardedCommand::Unpause {
+            from: Some(connection_id),
+        },
+        ClientCommand::Stop(_) => ForwardedCommand::Stop {
+            from: Some(connection_id),
+        },
+        ClientCommand::NextTrack(_) => ForwardedCommand::NextTrack {
+            from: Some(connection_id),
+        },
+        ClientCommand::PreviousTrack(_) => ForwardedCommand::PreviousTrack {
+            from: Some(connection_id),
+        },
+        ClientCommand::DeclareCapabilities { .. } => {
+            return ResponseMessage::error(id, "not a remote control action");
+        }
     };
 
-    let forwarded = OutgoingMessage::Command(ForwardedCommand {
-        action,
-        from: Some(connection_id),
-        data,
-    });
+    let forwarded = OutgoingMessage::Command(forwarded);
 
     match registry::send_to_connection(target_snap.connection_id, forwarded).await {
         Ok(()) => {

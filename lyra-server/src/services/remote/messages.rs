@@ -138,21 +138,42 @@ pub(crate) enum OutgoingMessage {
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct ForwardedCommand {
-    pub(crate) action: RemoteAction,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) from: Option<u64>,
-    #[serde(flatten)]
-    pub(crate) data: ForwardedCommandData,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
-pub(crate) enum ForwardedCommandData {
-    Simple,
-    Seek { position_ms: u64 },
-    Volume { level: f32 },
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum ForwardedCommand {
+    Play {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        from: Option<u64>,
+    },
+    Pause {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        from: Option<u64>,
+    },
+    Unpause {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        from: Option<u64>,
+    },
+    Stop {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        from: Option<u64>,
+    },
+    Seek {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        from: Option<u64>,
+        position_ms: u64,
+    },
+    NextTrack {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        from: Option<u64>,
+    },
+    PreviousTrack {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        from: Option<u64>,
+    },
+    SetVolume {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        from: Option<u64>,
+        level: f32,
+    },
 }
 
 /// Response to a client command, correlated by `id`.
@@ -301,10 +322,9 @@ mod tests {
 
     #[test]
     fn serialize_forwarded_seek() {
-        let msg = OutgoingMessage::Command(ForwardedCommand {
-            action: RemoteAction::Seek,
+        let msg = OutgoingMessage::Command(ForwardedCommand::Seek {
             from: Some(42),
-            data: ForwardedCommandData::Seek { position_ms: 30000 },
+            position_ms: 30000,
         });
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["type"], "command");
@@ -315,11 +335,7 @@ mod tests {
 
     #[test]
     fn serialize_forwarded_pause() {
-        let msg = OutgoingMessage::Command(ForwardedCommand {
-            action: RemoteAction::Pause,
-            from: Some(1),
-            data: ForwardedCommandData::Simple,
-        });
+        let msg = OutgoingMessage::Command(ForwardedCommand::Pause { from: Some(1) });
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["action"], "pause");
         assert_eq!(json["from"], 1);
@@ -329,14 +345,43 @@ mod tests {
 
     #[test]
     fn serialize_forwarded_command_omits_from_when_none() {
-        let msg = OutgoingMessage::Command(ForwardedCommand {
-            action: RemoteAction::Pause,
-            from: None,
-            data: ForwardedCommandData::Simple,
-        });
+        let msg = OutgoingMessage::Command(ForwardedCommand::Pause { from: None });
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["action"], "pause");
         assert!(json.get("from").is_none());
+    }
+
+    #[test]
+    fn forwarded_commands_round_trip() {
+        for msg in [
+            OutgoingMessage::Command(ForwardedCommand::Pause { from: Some(1) }),
+            OutgoingMessage::Command(ForwardedCommand::Seek {
+                from: Some(42),
+                position_ms: 30000,
+            }),
+            OutgoingMessage::Command(ForwardedCommand::SetVolume {
+                from: None,
+                level: 0.5,
+            }),
+        ] {
+            let json = serde_json::to_string(&msg).unwrap();
+            let parsed = serde_json::from_str::<OutgoingMessage>(&json)
+                .unwrap_or_else(|err| panic!("{json} must deserialize: {err}"));
+            assert_eq!(serde_json::to_string(&parsed).unwrap(), json);
+        }
+    }
+
+    #[test]
+    fn forwarded_commands_reject_mismatched_payloads() {
+        for json in [
+            r#"{"type":"command","action":"seek","from":1}"#,
+            r#"{"type":"command","action":"pause","from":1,"position_ms":30000}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<OutgoingMessage>(json).is_err(),
+                "mismatched payload must fail: {json}"
+            );
+        }
     }
 
     #[test]
