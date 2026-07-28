@@ -468,41 +468,41 @@ mod tests {
         }
     }
 
-    fn unique_temp_path(label: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system time should be after unix epoch")
-            .as_nanos();
-        std::env::temp_dir().join(format!("lyra-{label}-{}-{nanos}", std::process::id()))
+    fn temp_dir(label: &str) -> std::io::Result<tempfile::TempDir> {
+        tempfile::Builder::new()
+            .prefix(&format!("lyra-{label}-"))
+            .tempdir()
     }
 
     #[test]
     fn db_dir_env_resolves_relative_db_paths() -> anyhow::Result<()> {
-        let db_dir = unique_temp_path("db-dir");
-        std::fs::create_dir(&db_dir)?;
+        let db_dir = temp_dir("db-dir")?;
         let mut config = Config::default();
         config.db.kind = DbKind::Mmap;
         config.db.path = PathBuf::from("custom.db");
 
-        normalize_db_path_with_dir(&mut config, Some(db_dir.clone().into_os_string()))?;
+        normalize_db_path_with_dir(
+            &mut config,
+            Some(db_dir.path().to_path_buf().into_os_string()),
+        )?;
 
-        assert_eq!(config.db.path, db_dir.join("custom.db"));
-        std::fs::remove_dir(&db_dir)?;
+        assert_eq!(config.db.path, db_dir.path().join("custom.db"));
         Ok(())
     }
 
     #[test]
     fn db_dir_env_preserves_absolute_db_paths() -> anyhow::Result<()> {
-        let db_dir = unique_temp_path("db-dir");
-        std::fs::create_dir(&db_dir)?;
+        let db_dir = temp_dir("db-dir")?;
         let mut config = Config::default();
         config.db.kind = DbKind::Mmap;
         config.db.path = PathBuf::from("/var/lib/lyra/custom.db");
 
-        normalize_db_path_with_dir(&mut config, Some(db_dir.clone().into_os_string()))?;
+        normalize_db_path_with_dir(
+            &mut config,
+            Some(db_dir.path().to_path_buf().into_os_string()),
+        )?;
 
         assert_eq!(config.db.path, PathBuf::from("/var/lib/lyra/custom.db"));
-        std::fs::remove_dir(&db_dir)?;
         Ok(())
     }
 
@@ -515,13 +515,15 @@ mod tests {
     }
 
     #[test]
-    fn db_dir_env_rejects_non_directories() {
-        let path = unique_temp_path("missing-db-dir");
+    fn db_dir_env_rejects_non_directories() -> anyhow::Result<()> {
+        let parent = temp_dir("missing-db-dir")?;
+        let path = parent.path().join("missing");
 
         let error = configured_db_dir(Some(path.into_os_string()))
             .expect_err("missing db directory should be rejected");
 
         assert!(error.to_string().contains("LYRA_DB_DIR"));
+        Ok(())
     }
 
     #[test]
