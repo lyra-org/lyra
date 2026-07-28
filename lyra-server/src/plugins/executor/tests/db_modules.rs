@@ -137,19 +137,21 @@ fn plugin_executor_exposes_db_backed_lyra_entries_module() -> Result<()> {
     let entry_db_id = db
         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
         .ids()[0];
-    crate::plugins::db::track_sources::upsert(
-        &mut db,
-        track_db_id,
-        entry_db_id,
-        crate::plugins::db::track_sources::TrackSourceUpsert {
-            source_kind: "embedded_tags".to_string(),
-            source_key: format!("entry:{}:embedded", entry_db_id.0),
-            is_primary: true,
-            start_ms: None,
-            end_ms: None,
-        },
-        None,
-    )?;
+    db.transaction_mut(|t| {
+        crate::plugins::db::track_sources::upsert(
+            t,
+            track_db_id,
+            entry_db_id,
+            crate::plugins::db::track_sources::TrackSourceUpsert {
+                source_kind: "embedded_tags".to_string(),
+                source_key: format!("entry:{}:embedded", entry_db_id.0),
+                is_primary: true,
+                start_ms: None,
+                end_ms: None,
+            },
+            None,
+        )
+    })?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
     let runtime = PluginExecutor::with_database(
@@ -704,19 +706,21 @@ fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
         .ids()[0];
     let source_key = format!("entry:{}:embedded", entry_db_id.0);
-    crate::plugins::db::track_sources::upsert(
-        &mut db,
-        track_db_id,
-        entry_db_id,
-        crate::plugins::db::track_sources::TrackSourceUpsert {
-            source_kind: "embedded_tags".to_string(),
-            source_key: source_key.clone(),
-            is_primary: true,
-            start_ms: None,
-            end_ms: None,
-        },
-        None,
-    )?;
+    db.transaction_mut(|t| {
+        crate::plugins::db::track_sources::upsert(
+            t,
+            track_db_id,
+            entry_db_id,
+            crate::plugins::db::track_sources::TrackSourceUpsert {
+                source_kind: "embedded_tags".to_string(),
+                source_key: source_key.clone(),
+                is_primary: true,
+                start_ms: None,
+                end_ms: None,
+            },
+            None,
+        )
+    })?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
     let runtime = PluginExecutor::with_database(
@@ -784,19 +788,21 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
         .exec_mut(agdb::QueryBuilder::insert().element(&entry).query())?
         .ids()[0];
     let source_key = format!("entry:{}:embedded", entry_db_id.0);
-    let source_id = crate::plugins::db::track_sources::upsert(
-        &mut db,
-        track_db_id,
-        entry_db_id,
-        crate::plugins::db::track_sources::TrackSourceUpsert {
-            source_kind: "embedded_tags".to_string(),
-            source_key: source_key.clone(),
-            is_primary: true,
-            start_ms: Some(100),
-            end_ms: Some(200),
-        },
-        None,
-    )?;
+    let source_id = db.transaction_mut(|t| {
+        crate::plugins::db::track_sources::upsert(
+            t,
+            track_db_id,
+            entry_db_id,
+            crate::plugins::db::track_sources::TrackSourceUpsert {
+                source_kind: "embedded_tags".to_string(),
+                source_key: source_key.clone(),
+                is_primary: true,
+                start_ms: Some(100),
+                end_ms: Some(200),
+            },
+            None,
+        )
+    })?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
     let runtime = PluginExecutor::with_database(
@@ -1008,18 +1014,20 @@ fn plugin_executor_exposes_db_backed_lyra_covers_module() -> Result<()> {
     let cover_path = std::env::temp_dir().join(format!("lyra-raw-cover-{}.jpg", nanoid::nanoid!()));
     std::fs::write(&cover_path, b"raw cover")?;
     let cover_path_string = cover_path.to_string_lossy().into_owned();
-    crate::plugins::db::covers::upsert(
-        &mut db,
-        release_db_id,
-        crate::plugins::db::Cover {
-            db_id: None,
-            id: nanoid::nanoid!(),
-            path: cover_path_string.clone(),
-            mime_type: "image/jpeg".to_string(),
-            hash: "raw-cover-hash".to_string(),
-            blurhash: Some("raw-blurhash".to_string()),
-        },
-    )?;
+    db.transaction_mut(|t| {
+        crate::plugins::db::covers::upsert(
+            t,
+            release_db_id,
+            crate::plugins::db::Cover {
+                db_id: None,
+                id: nanoid::nanoid!(),
+                path: cover_path_string.clone(),
+                mime_type: "image/jpeg".to_string(),
+                hash: "raw-cover-hash".to_string(),
+                blurhash: Some("raw-blurhash".to_string()),
+            },
+        )
+    })?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
     let runtime = PluginExecutor::with_database(

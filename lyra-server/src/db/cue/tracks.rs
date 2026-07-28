@@ -5,6 +5,7 @@
 
 use agdb::{
     CountComparison,
+    DbAnyTransactionMut,
     DbElement,
     DbId,
     QueryBuilder,
@@ -45,7 +46,7 @@ pub(crate) fn get_by_id(
 }
 
 pub(crate) fn upsert(
-    db: &mut impl DbAccess,
+    db: &mut DbAnyTransactionMut<'_>,
     cue_sheet_id: DbId,
     cue_entry_id: DbId,
     track_no: u32,
@@ -64,10 +65,23 @@ pub(crate) fn upsert(
         identity,
     };
 
-    let result = db.exec_mut(QueryBuilder::insert().element(&cue_track).query())?;
-    let cue_track_id = existing_id
-        .or_else(|| result.elements.first().map(|element| element.id))
-        .ok_or_else(|| anyhow::anyhow!("upsert cue track returned no id"))?;
+    let cue_track_id = match existing_id {
+        Some(existing_id) => {
+            super::super::replace_element_in_transaction(
+                db,
+                existing_id,
+                [("index00_frames", cue_track.index00_frames.is_none())],
+                &cue_track,
+            )?;
+            existing_id
+        }
+        None => db
+            .exec_mut(QueryBuilder::insert().element(&cue_track).query())?
+            .elements
+            .first()
+            .map(|element| element.id)
+            .ok_or_else(|| anyhow::anyhow!("upsert cue track returned no id"))?,
+    };
 
     if existing_id.is_none() {
         db.exec_mut(
@@ -157,4 +171,46 @@ pub(crate) fn upsert(
     }
 
     Ok(cue_track_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_db::new_test_db;
+
+    #[test]
+    fn upsert_clears_a_dropped_pregap_index() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let sheet_id = db
+            .exec_mut(QueryBuilder::insert().nodes().count(1).query())?
+            .ids()[0];
+        let cue_entry_id = db
+            .exec_mut(QueryBuilder::insert().nodes().count(1).query())?
+            .ids()[0];
+        let audio_entry_id = db
+            .exec_mut(QueryBuilder::insert().nodes().count(1).query())?
+            .ids()[0];
+
+        let cue_track_id = db.transaction_mut(|t| {
+            upsert(t, sheet_id, cue_entry_id, 1, audio_entry_id, Some(100), 200)
+        })?;
+        assert_eq!(
+            get_by_id(&db, cue_track_id)?
+                .expect("cue track exists")
+                .index00_frames,
+            Some(100)
+        );
+
+        // The `.cue` is edited to drop this track's `INDEX 00` line, then rescanned.
+        db.transaction_mut(|t| upsert(t, sheet_id, cue_entry_id, 1, audio_entry_id, None, 200))?;
+
+        assert_eq!(
+            get_by_id(&db, cue_track_id)?
+                .expect("cue track exists")
+                .index00_frames,
+            None,
+            "a pregap index removed from the cue sheet must not persist"
+        );
+        Ok(())
+    }
 }

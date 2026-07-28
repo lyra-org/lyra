@@ -346,56 +346,18 @@ pub(crate) fn update(
         return Ok(None);
     };
 
-    let Artist {
-        id: entity_id,
-        artist_name,
-        scan_name,
-        sort_name: artist_sort_name,
-        description: artist_description,
-        verified,
-        created_at,
-        ..
-    } = artist_entity;
-    let updated_name = update_name.unwrap_or(artist_name);
-    let mut updated_sort_name = artist_sort_name;
-    let mut updated_description = artist_description;
-
-    let mut clear_sort_name = false;
+    let mut updated = artist_entity;
+    if let Some(name) = update_name {
+        updated.artist_name = name;
+    }
     if let Some(sort_name) = update_sort_name {
-        match sort_name {
-            Some(value) => updated_sort_name = Some(value),
-            None => {
-                updated_sort_name = None;
-                clear_sort_name = true;
-            }
-        }
+        updated.sort_name = sort_name;
     }
-
-    let mut clear_description = false;
     if let Some(description) = update_description {
-        match description {
-            Some(value) => updated_description = Some(value),
-            None => {
-                updated_description = None;
-                clear_description = true;
-            }
-        }
+        updated.description = description;
     }
 
-    let updated = Artist {
-        db_id: Some(artist_db_id.into()),
-        id: entity_id,
-        artist_name: updated_name,
-        scan_name,
-        sort_name: updated_sort_name,
-        artist_type: None,
-        description: updated_description,
-        verified,
-        locked: None,
-        created_at,
-    };
-
-    db::artists::update_with_clears(db, &updated, clear_sort_name, clear_description)?;
+    db::artists::update(db, &updated)?;
     Ok(Some(updated))
 }
 
@@ -486,6 +448,41 @@ mod tests {
                 .to(artist_id)
                 .query(),
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn update_clears_requested_fields_and_preserves_the_rest() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let artist_db_id = insert_artist(&mut db, "Coltrane")?;
+
+        let mut seeded = db::artists::get_by_id(&db, artist_db_id)?.expect("artist exists");
+        seeded.set_sort_name("Coltrane, John".to_string());
+        seeded.set_description("Saxophonist".to_string());
+        seeded.set_artist_type(db::ArtistType::Person);
+        seeded.locked = Some(true);
+        seeded.created_at = Some(42);
+        db::artists::update(&mut db, &seeded)?;
+
+        let updated =
+            update(&mut db, artist_db_id, None, Some(None), None)?.expect("artist exists");
+
+        assert_eq!(updated.sort_name, None, "explicit null clears sort_name");
+        assert_eq!(updated.description.as_deref(), Some("Saxophonist"));
+        assert_eq!(updated.artist_type, Some(db::ArtistType::Person));
+        assert_eq!(updated.locked, Some(true));
+        assert_eq!(updated.created_at, Some(42));
+
+        let stored = db::artists::get_by_id(&db, artist_db_id)?.expect("artist exists");
+        assert_eq!(stored.sort_name, None);
+        assert_eq!(stored.description.as_deref(), Some("Saxophonist"));
+        assert_eq!(
+            stored.artist_type,
+            Some(db::ArtistType::Person),
+            "an unrelated field must survive a targeted clear"
+        );
+        assert_eq!(stored.locked, Some(true));
+        assert_eq!(stored.created_at, Some(42));
         Ok(())
     }
 

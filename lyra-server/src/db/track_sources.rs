@@ -6,6 +6,7 @@
 use agdb::{
     CountComparison,
     DbAny,
+    DbAnyTransactionMut,
     DbElement,
     DbId,
     QueryBuilder,
@@ -121,7 +122,7 @@ pub(crate) fn get_track_id_by_source_key(
 }
 
 pub(crate) fn upsert(
-    db: &mut impl DbAccess,
+    db: &mut DbAnyTransactionMut<'_>,
     track_db_id: DbId,
     entry_db_id: DbId,
     source: TrackSourceUpsert,
@@ -139,10 +140,26 @@ pub(crate) fn upsert(
         end_ms: source.end_ms,
     };
 
-    let result = db.exec_mut(QueryBuilder::insert().element(&source_node).query())?;
-    let source_id = existing_id
-        .or_else(|| result.elements.first().map(|element| element.id))
-        .ok_or_else(|| anyhow::anyhow!("upsert track source returned no id"))?;
+    let source_id = match existing_id {
+        Some(existing_id) => {
+            super::replace_element_in_transaction(
+                db,
+                existing_id,
+                [
+                    ("start_ms", source_node.start_ms.is_none()),
+                    ("end_ms", source_node.end_ms.is_none()),
+                ],
+                &source_node,
+            )?;
+            existing_id
+        }
+        None => db
+            .exec_mut(QueryBuilder::insert().element(&source_node).query())?
+            .elements
+            .first()
+            .map(|element| element.id)
+            .ok_or_else(|| anyhow::anyhow!("upsert track source returned no id"))?,
+    };
 
     if existing_id.is_none() {
         db.exec_mut(
@@ -357,19 +374,21 @@ mod tests {
         let entry_db_id = insert_entry(&mut db)?;
         let source_key = format!("entry:{}:embedded", entry_db_id.0);
 
-        let source_id = upsert(
-            &mut db,
-            track_db_id,
-            entry_db_id,
-            TrackSourceUpsert {
-                source_kind: "embedded_tags".to_string(),
-                source_key,
-                is_primary: true,
-                start_ms: None,
-                end_ms: None,
-            },
-            None,
-        )?;
+        let source_id = db.transaction_mut(|t| {
+            upsert(
+                t,
+                track_db_id,
+                entry_db_id,
+                TrackSourceUpsert {
+                    source_kind: "embedded_tags".to_string(),
+                    source_key,
+                    is_primary: true,
+                    start_ms: None,
+                    end_ms: None,
+                },
+                None,
+            )
+        })?;
 
         let found_entry_db_id = get_entry_id(&db, source_id)?;
         assert_eq!(found_entry_db_id, Some(entry_db_id));
@@ -394,23 +413,71 @@ mod tests {
         let track_db_id = insert_track(&mut db, "Track 1")?;
         let entry_db_id = insert_entry(&mut db)?;
 
-        upsert(
-            &mut db,
-            track_db_id,
-            entry_db_id,
-            TrackSourceUpsert {
-                source_kind: "embedded_tags".to_string(),
-                source_key: "key1".to_string(),
-                is_primary: true,
-                start_ms: None,
-                end_ms: None,
-            },
-            None,
-        )?;
+        db.transaction_mut(|t| {
+            upsert(
+                t,
+                track_db_id,
+                entry_db_id,
+                TrackSourceUpsert {
+                    source_kind: "embedded_tags".to_string(),
+                    source_key: "key1".to_string(),
+                    is_primary: true,
+                    start_ms: None,
+                    end_ms: None,
+                },
+                None,
+            )
+        })?;
 
         let sources = get_by_track(&db, track_db_id)?;
         assert_eq!(sources.len(), 1);
         assert_eq!(sources[0].source_key, "key1");
+        Ok(())
+    }
+
+    #[test]
+    fn upsert_clears_removed_offsets() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let track_db_id = insert_track(&mut db, "Track 1")?;
+        let entry_db_id = insert_entry(&mut db)?;
+        let source_key = "key1".to_string();
+
+        let source_id = db.transaction_mut(|t| {
+            upsert(
+                t,
+                track_db_id,
+                entry_db_id,
+                TrackSourceUpsert {
+                    source_kind: "cue".to_string(),
+                    source_key: source_key.clone(),
+                    is_primary: true,
+                    start_ms: Some(1_000),
+                    end_ms: Some(2_000),
+                },
+                None,
+            )
+        })?;
+
+        let updated_source_id = db.transaction_mut(|t| {
+            upsert(
+                t,
+                track_db_id,
+                entry_db_id,
+                TrackSourceUpsert {
+                    source_kind: "cue".to_string(),
+                    source_key,
+                    is_primary: true,
+                    start_ms: None,
+                    end_ms: None,
+                },
+                None,
+            )
+        })?;
+
+        assert_eq!(updated_source_id, source_id);
+        let source = get_by_id(&db, source_id)?.expect("source should exist");
+        assert_eq!(source.start_ms, None);
+        assert_eq!(source.end_ms, None);
         Ok(())
     }
 
@@ -426,19 +493,21 @@ mod tests {
             .ok_or_else(|| anyhow!("entry insert returned no id"))?;
         let source_key = format!("entry:{}:embedded", entry_db_id.0);
 
-        upsert(
-            &mut db,
-            track_db_id,
-            entry_db_id,
-            TrackSourceUpsert {
-                source_kind: "embedded_tags".to_string(),
-                source_key: source_key.clone(),
-                is_primary: true,
-                start_ms: None,
-                end_ms: None,
-            },
-            None,
-        )?;
+        db.transaction_mut(|t| {
+            upsert(
+                t,
+                track_db_id,
+                entry_db_id,
+                TrackSourceUpsert {
+                    source_kind: "embedded_tags".to_string(),
+                    source_key: source_key.clone(),
+                    is_primary: true,
+                    start_ms: None,
+                    end_ms: None,
+                },
+                None,
+            )
+        })?;
 
         let found_track_db_id = get_track_id_by_source_key(&db, &source_key)?;
         assert_eq!(found_track_db_id, Some(track_db_id));

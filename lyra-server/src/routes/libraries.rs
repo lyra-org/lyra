@@ -326,34 +326,18 @@ async fn update_library(
         updated_name = name;
     }
 
-    let mut clear_language = false;
     if let Some(language) = update.language {
-        match language {
-            Some(value) => {
-                updated_language = Some(
-                    validate_language(&value).map_err(|e| AppError::bad_request(e.to_string()))?,
-                );
-            }
-            None => {
-                updated_language = None;
-                clear_language = true;
-            }
-        }
+        updated_language = language
+            .map(|value| validate_language(&value))
+            .transpose()
+            .map_err(|e| AppError::bad_request(e.to_string()))?;
     }
 
-    let mut clear_country = false;
     if let Some(country) = update.country {
-        match country {
-            Some(value) => {
-                updated_country = Some(
-                    validate_country(&value).map_err(|e| AppError::bad_request(e.to_string()))?,
-                );
-            }
-            None => {
-                updated_country = None;
-                clear_country = true;
-            }
-        }
+        updated_country = country
+            .map(|value| validate_country(&value))
+            .transpose()
+            .map_err(|e| AppError::bad_request(e.to_string()))?;
     }
 
     // `name_key` is rederived inside `update`; pass the prior key (not empty)
@@ -370,7 +354,7 @@ async fn update_library(
     };
 
     let outcome = db.transaction_mut(|t| -> Result<Library, db::libraries::LibraryUpdateError> {
-        db::libraries::update(t, &updated, clear_language, clear_country)
+        db::libraries::update(t, &updated)
     });
     let stored = match outcome {
         Ok(library) => library,

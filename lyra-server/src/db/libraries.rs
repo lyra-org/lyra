@@ -471,10 +471,8 @@ impl From<agdb::DbError> for LibraryUpdateError {
 /// Re-derives `name_key`; excludes self from the uniqueness check. No
 /// directory edits.
 pub(crate) fn update(
-    db: &mut impl super::DbAccess,
+    db: &mut DbAnyTransactionMut<'_>,
     library: &Library,
-    clear_language: bool,
-    clear_country: bool,
 ) -> Result<Library, LibraryUpdateError> {
     let library_db_id = library
         .db_id
@@ -493,23 +491,15 @@ pub(crate) fn update(
         ..library.clone()
     };
 
-    if clear_language {
-        db.exec_mut(
-            QueryBuilder::remove()
-                .values(["language".to_string()])
-                .ids(library_db_id)
-                .query(),
-        )?;
-    }
-    if clear_country {
-        db.exec_mut(
-            QueryBuilder::remove()
-                .values(["country".to_string()])
-                .ids(library_db_id)
-                .query(),
-        )?;
-    }
-    db.exec_mut(QueryBuilder::insert().element(&stored).query())?;
+    super::replace_element_in_transaction(
+        db,
+        library_db_id,
+        [
+            ("language", stored.language.is_none()),
+            ("country", stored.country.is_none()),
+        ],
+        &stored,
+    )?;
 
     Ok(stored)
 }
@@ -864,6 +854,48 @@ mod tests {
     }
 
     #[test]
+    fn update_clears_absent_optional_fields() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let seeded = db.transaction_mut(|t| -> anyhow::Result<Library> {
+            let mut request = insert_request("Music", "clear-optionals");
+            request.language = Some("en".to_string());
+            request.country = Some("us".to_string());
+            Ok(create_system(t, request)?)
+        })?;
+        let library_db_id = seeded.db_id.expect("created library has a db_id");
+
+        db.transaction_mut(|t| -> anyhow::Result<()> {
+            update(
+                t,
+                &Library {
+                    language: None,
+                    country: None,
+                    ..seeded
+                },
+            )?;
+            Ok(())
+        })?;
+
+        let keys = crate::db::test_db::stored_keys(&db, library_db_id)?;
+        assert_eq!(
+            keys,
+            [
+                "db_element_id",
+                "id",
+                "name",
+                "name_key",
+                "path",
+                "path_key"
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+            "only non-Option keys may remain after an all-None update"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn update_rejects_rename_to_existing_library() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         db.transaction_mut(|t| -> anyhow::Result<()> {
@@ -878,8 +910,7 @@ mod tests {
             name: "Music".to_string(),
             ..other
         };
-        let outcome =
-            db.transaction_mut(|t| -> anyhow::Result<_> { Ok(update(t, &renamed, false, false)) })?;
+        let outcome = db.transaction_mut(|t| -> anyhow::Result<_> { Ok(update(t, &renamed)) })?;
         assert!(matches!(outcome, Err(LibraryUpdateError::NameInUse(_))));
         Ok(())
     }
@@ -891,8 +922,7 @@ mod tests {
             Ok(create_system(t, insert_request("Music", "self"))?)
         })?;
 
-        let outcome =
-            db.transaction_mut(|t| -> anyhow::Result<_> { Ok(update(t, &lib, false, false)) })?;
+        let outcome = db.transaction_mut(|t| -> anyhow::Result<_> { Ok(update(t, &lib)) })?;
         assert!(outcome.is_ok());
         Ok(())
     }

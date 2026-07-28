@@ -8,6 +8,7 @@ pub(crate) mod display;
 use super::DbAccess;
 use agdb::{
     CountComparison,
+    DbAnyTransactionMut,
     DbElement,
     DbId,
     QueryBuilder,
@@ -118,7 +119,7 @@ pub(crate) fn remove(db: &mut impl DbAccess, release_db_id: DbId) -> anyhow::Res
 /// Insert or update the Cover node for a release, creating the owned edge if new.
 /// Returns the persisted Cover with its `db_id` populated.
 pub(crate) fn upsert(
-    db: &mut impl DbAccess,
+    db: &mut DbAnyTransactionMut<'_>,
     release_db_id: DbId,
     mut cover: Cover,
 ) -> anyhow::Result<Cover> {
@@ -127,7 +128,12 @@ pub(crate) fn upsert(
             .db_id
             .ok_or_else(|| anyhow::anyhow!("existing cover missing db_id"))?;
         cover.db_id = Some(existing_id);
-        db.exec_mut(QueryBuilder::insert().element(&cover).query())?;
+        super::replace_element_in_transaction(
+            db,
+            existing_id,
+            [("blurhash", cover.blurhash.is_none())],
+            &cover,
+        )?;
     } else {
         let qr = db.exec_mut(QueryBuilder::insert().element(&cover).query())?;
         let cover_id = qr
@@ -168,6 +174,10 @@ mod tests {
 
     fn new_test_db() -> anyhow::Result<DbAny> {
         Ok(TestDb::with_root_aliases(&["releases", "covers"])?.into_inner())
+    }
+
+    fn upsert_cover(db: &mut DbAny, release_db_id: DbId, cover: Cover) -> anyhow::Result<Cover> {
+        db.transaction_mut(|t| upsert(t, release_db_id, cover))
     }
 
     fn insert_release(db: &mut DbAny) -> anyhow::Result<DbId> {
@@ -226,7 +236,7 @@ mod tests {
             blurhash: None,
         };
 
-        let cover = upsert(&mut db, release_db_id, cover)?;
+        let cover = upsert_cover(&mut db, release_db_id, cover)?;
         let cover_id = cover
             .db_id
             .ok_or_else(|| anyhow!("upsert did not set db_id"))?;
@@ -250,13 +260,40 @@ mod tests {
             hash: "a".repeat(64),
             blurhash: None,
         };
-        upsert(&mut db, release_db_id, cover)?;
+        upsert_cover(&mut db, release_db_id, cover)?;
 
         let cover = get_by_public_id(&db, "cover-public")?
             .ok_or_else(|| anyhow!("cover should be found by public id"))?;
 
         assert_eq!(cover.id, "cover-public");
         assert_eq!(cover.mime_type, "image/jpeg");
+        Ok(())
+    }
+
+    #[test]
+    fn upsert_clears_a_dropped_blurhash() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_db_id = insert_release(&mut db)?;
+        let cover = Cover {
+            db_id: None,
+            id: nanoid!(),
+            path: "/music/test/cover.jpg".to_string(),
+            mime_type: "image/jpeg".to_string(),
+            hash: "a".repeat(64),
+            blurhash: Some("LKO2?U%2Tw=w]~RBVZRi};RPxuwH".to_string()),
+        };
+        let mut cover = upsert_cover(&mut db, release_db_id, cover)?;
+
+        // Replacement artwork that blurhash encoding could not process.
+        cover.hash = "b".repeat(64);
+        cover.blurhash = None;
+        upsert_cover(&mut db, release_db_id, cover)?;
+
+        let stored = get(&db, release_db_id)?.ok_or_else(|| anyhow!("cover should exist"))?;
+        assert_eq!(
+            stored.blurhash, None,
+            "a blurhash that could not be recomputed must not describe the new artwork"
+        );
         Ok(())
     }
 
@@ -272,7 +309,7 @@ mod tests {
             hash: "b".repeat(64),
             blurhash: None,
         };
-        let mut cover = upsert(&mut db, release_db_id, cover)?;
+        let mut cover = upsert_cover(&mut db, release_db_id, cover)?;
         let original_id = cover
             .db_id
             .ok_or_else(|| anyhow!("upsert did not set db_id"))?;
@@ -280,11 +317,11 @@ mod tests {
         cover.hash = "c".repeat(64);
         cover.blurhash = Some("LKO2?U%2Tw=w]~RBVZRi};RPxuwH".to_string());
 
-        let cover = upsert(&mut db, release_db_id, cover)?;
+        let cover = upsert_cover(&mut db, release_db_id, cover)?;
         let first_id = cover
             .db_id
             .ok_or_else(|| anyhow!("upsert did not set db_id"))?;
-        let cover = upsert(&mut db, release_db_id, cover)?;
+        let cover = upsert_cover(&mut db, release_db_id, cover)?;
         let second_id = cover
             .db_id
             .ok_or_else(|| anyhow!("upsert did not set db_id"))?;
