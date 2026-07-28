@@ -305,11 +305,12 @@ async fn get_playbacks(
     let principal = require_principal(&headers).await?;
 
     let current_ms = now_ms()?;
-    {
+    // Release this read endpoint's write guard before dispatching cleanup updates.
+    let evicted_playbacks = {
         let mut db = STATE.db.write().await;
-        let evicted_playbacks = playbacks::cleanup_evicted_playbacks(&mut db, current_ms)?;
-        dispatch_evicted_updates(evicted_playbacks);
-    }
+        playbacks::cleanup_evicted_playbacks(&mut db, current_ms)?
+    };
+    dispatch_evicted_updates(evicted_playbacks);
 
     let db = STATE.db.read().await;
     let mut response = Vec::new();
@@ -553,11 +554,12 @@ async fn get_active_sessions(
     let principal = require_principal(&headers).await?;
 
     let current_ms = now_ms()?;
-    {
+    // Release this read endpoint's write guard before dispatching cleanup updates.
+    let evicted_playbacks = {
         let mut db = STATE.db.write().await;
-        let evicted_playbacks = playbacks::cleanup_evicted_playbacks(&mut db, current_ms)?;
-        dispatch_evicted_updates(evicted_playbacks);
-    }
+        playbacks::cleanup_evicted_playbacks(&mut db, current_ms)?
+    };
+    dispatch_evicted_updates(evicted_playbacks);
 
     let db = STATE.db.read().await;
     let connections = remote_registry::list_connections().await;
