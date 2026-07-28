@@ -1410,18 +1410,20 @@ mod tests {
     };
 
     fn insert_cover(db: &mut agdb::DbAny, release_db_id: DbId, id: &str) -> anyhow::Result<()> {
-        covers::upsert(
-            db,
-            release_db_id,
-            covers::Cover {
-                db_id: None,
-                id: id.to_string(),
-                path: format!("/tmp/{id}.jpg"),
-                mime_type: "image/jpeg".to_string(),
-                hash: "a".repeat(64),
-                blurhash: None,
-            },
-        )?;
+        db.transaction_mut(|t| {
+            covers::upsert(
+                t,
+                release_db_id,
+                covers::Cover {
+                    db_id: None,
+                    id: id.to_string(),
+                    path: format!("/tmp/{id}.jpg"),
+                    mime_type: "image/jpeg".to_string(),
+                    hash: "a".repeat(64),
+                    blurhash: None,
+                },
+            )
+        })?;
         Ok(())
     }
 

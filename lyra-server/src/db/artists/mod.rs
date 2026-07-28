@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use agdb::{
     CountComparison,
     DbAny,
+    DbAnyTransactionMut,
     DbElement,
     DbError,
     DbId,
@@ -356,44 +357,32 @@ pub(crate) fn get_by_id(
     super::graph::fetch_typed_by_id(db, artist_db_id, "Artist")
 }
 
-pub(crate) fn update(db: &mut impl super::DbAccess, artist: &Artist) -> anyhow::Result<()> {
-    db.exec_mut(QueryBuilder::insert().element(artist).query())?;
-    Ok(())
+/// Atomically aligns the stored row to `artist`.
+pub(crate) fn update(db: &mut DbAny, artist: &Artist) -> anyhow::Result<()> {
+    db.transaction_mut(|t| update_in_transaction(t, artist))
 }
 
-pub(crate) fn update_with_clears(
-    db: &mut DbAny,
+pub(crate) fn update_in_transaction(
+    db: &mut DbAnyTransactionMut<'_>,
     artist: &Artist,
-    clear_sort_name: bool,
-    clear_description: bool,
 ) -> anyhow::Result<()> {
     let artist_db_id = artist
         .db_id
         .clone()
         .map(DbId::from)
         .ok_or_else(|| anyhow!("artist update missing db_id"))?;
-    db.transaction_mut(|t| -> anyhow::Result<()> {
-        if clear_sort_name {
-            t.exec_mut(
-                QueryBuilder::remove()
-                    .values(["sort_name".to_string()])
-                    .ids(artist_db_id)
-                    .query(),
-            )?;
-        }
-        if clear_description {
-            t.exec_mut(
-                QueryBuilder::remove()
-                    .values(["description".to_string()])
-                    .ids(artist_db_id)
-                    .query(),
-            )?;
-        }
-        t.exec_mut(QueryBuilder::insert().element(artist).query())?;
-        Ok(())
-    })?;
-
-    Ok(())
+    super::replace_element_in_transaction(
+        db,
+        artist_db_id,
+        [
+            ("sort_name", artist.sort_name.is_none()),
+            ("artist_type", artist.artist_type.is_none()),
+            ("description", artist.description.is_none()),
+            ("locked", artist.locked.is_none()),
+            ("created_at", artist.created_at.is_none()),
+        ],
+        artist,
+    )
 }
 
 #[derive(Clone)]
@@ -898,6 +887,62 @@ mod tests {
         insert_release,
         new_test_db,
     };
+
+    #[test]
+    fn update_clears_absent_optional_fields() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let artist_db_id = insert_artist(&mut db, "Drift Guard")?;
+        let db_id = Some(artist_db_id.into());
+
+        update(
+            &mut db,
+            &Artist {
+                db_id: db_id.clone(),
+                id: "drift-guard".to_string(),
+                artist_name: "Drift Guard".to_string(),
+                scan_name: "drift guard".to_string(),
+                sort_name: Some("Guard, Drift".to_string()),
+                artist_type: Some(ArtistType::Group),
+                description: Some("A band".to_string()),
+                verified: true,
+                locked: Some(true),
+                created_at: Some(1),
+            },
+        )?;
+
+        update(
+            &mut db,
+            &Artist {
+                db_id,
+                id: "drift-guard".to_string(),
+                artist_name: "Drift Guard".to_string(),
+                scan_name: "drift guard".to_string(),
+                sort_name: None,
+                artist_type: None,
+                description: None,
+                verified: true,
+                locked: None,
+                created_at: None,
+            },
+        )?;
+
+        let keys = crate::db::test_db::stored_keys(&db, artist_db_id)?;
+        assert_eq!(
+            keys,
+            [
+                "db_element_id",
+                "id",
+                "artist_name",
+                "scan_name",
+                "verified"
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+            "only non-Option keys may remain after an all-None update"
+        );
+        Ok(())
+    }
 
     #[test]
     fn get_credited_filters_out_non_credit_neighbors() -> anyhow::Result<()> {

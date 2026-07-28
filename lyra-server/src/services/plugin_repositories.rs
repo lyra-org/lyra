@@ -412,7 +412,7 @@ pub(crate) async fn refresh_repository(
     record.refreshed_at_ms = now_ms();
     {
         let mut db = STATE.db.write().await;
-        repo_db::update(&mut *db, &record).map_err(PluginRepoError::Internal)?;
+        repo_db::update(&mut db, &record).map_err(PluginRepoError::Internal)?;
     }
 
     Ok((record, preview))

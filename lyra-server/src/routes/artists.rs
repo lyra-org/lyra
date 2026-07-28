@@ -1190,18 +1190,20 @@ mod tests {
     }
 
     fn insert_cover_for(db: &mut DbAny, owner_db_id: DbId) -> anyhow::Result<db::Cover> {
-        db::covers::upsert(
-            db,
-            owner_db_id,
-            db::Cover {
-                db_id: None,
-                id: nanoid!(),
-                path: "/music/cover.jpg".to_string(),
-                mime_type: "image/jpeg".to_string(),
-                hash: "a".repeat(64),
-                blurhash: Some("LKO2?U%2Tw=w]~RBVZRi};RPxuwH".to_string()),
-            },
-        )
+        db.transaction_mut(|t| {
+            db::covers::upsert(
+                t,
+                owner_db_id,
+                db::Cover {
+                    db_id: None,
+                    id: nanoid!(),
+                    path: "/music/cover.jpg".to_string(),
+                    mime_type: "image/jpeg".to_string(),
+                    hash: "a".repeat(64),
+                    blurhash: Some("LKO2?U%2Tw=w]~RBVZRi};RPxuwH".to_string()),
+                },
+            )
+        })
     }
 
     #[test]

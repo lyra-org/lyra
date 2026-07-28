@@ -4,6 +4,8 @@
 // www.meshiplaw.com/lyra.
 
 use agdb::{
+    DbAny,
+    DbAnyTransactionMut,
     DbElement,
     DbId,
     QueryBuilder,
@@ -47,15 +49,27 @@ pub(crate) fn create(
     Ok(repo_db_id)
 }
 
-pub(crate) fn update(
-    db: &mut impl super::DbAccess,
+/// Atomically aligns the stored row to `record`.
+pub(crate) fn update(db: &mut DbAny, record: &PluginRepository) -> anyhow::Result<()> {
+    db.transaction_mut(|t| update_in_transaction(t, record))
+}
+
+pub(crate) fn update_in_transaction(
+    db: &mut DbAnyTransactionMut<'_>,
     record: &PluginRepository,
 ) -> anyhow::Result<()> {
-    if record.db_id.is_none() {
-        anyhow::bail!("cannot update plugin repository without db_id");
-    }
-    db.exec_mut(QueryBuilder::insert().element(record).query())?;
-    Ok(())
+    let repo_db_id = record
+        .db_id
+        .ok_or_else(|| anyhow::anyhow!("cannot update plugin repository without db_id"))?;
+    super::replace_element_in_transaction(
+        db,
+        repo_db_id,
+        [
+            ("git_ref", record.git_ref.is_none()),
+            ("last_commit", record.last_commit.is_none()),
+        ],
+        record,
+    )
 }
 
 pub(crate) fn list(db: &impl super::DbAccess) -> anyhow::Result<Vec<PluginRepository>> {
@@ -159,6 +173,27 @@ mod tests {
 
         remove(&mut db, db_id)?;
         assert!(list(&db)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn update_clears_a_dropped_last_commit() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+
+        let mut record = repository("https://github.com/lyra/plugins");
+        record.db_id = Some(create(&mut db, &record)?);
+        record.last_commit = Some("a".repeat(40));
+        update(&mut db, &record)?;
+
+        // A later refresh where the forge commit API call failed.
+        record.last_commit = None;
+        update(&mut db, &record)?;
+
+        let fetched = get_by_id(&db, &record.id)?.expect("repository exists");
+        assert_eq!(
+            fetched.last_commit, None,
+            "an unresolved commit must not leave a stale SHA driving update checks"
+        );
         Ok(())
     }
 

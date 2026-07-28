@@ -894,19 +894,21 @@ mod tests {
         entry_db_id: DbId,
     ) -> anyhow::Result<()> {
         let source_key = format!("entry:{}:embedded", entry_db_id.0);
-        db::track_sources::upsert(
-            db,
-            track_db_id,
-            entry_db_id,
-            db::track_sources::TrackSourceUpsert {
-                source_kind: "embedded_tags".to_string(),
-                source_key,
-                is_primary: true,
-                start_ms: None,
-                end_ms: None,
-            },
-            None,
-        )?;
+        db.transaction_mut(|t| {
+            db::track_sources::upsert(
+                t,
+                track_db_id,
+                entry_db_id,
+                db::track_sources::TrackSourceUpsert {
+                    source_kind: "embedded_tags".to_string(),
+                    source_key,
+                    is_primary: true,
+                    start_ms: None,
+                    end_ms: None,
+                },
+                None,
+            )
+        })?;
         Ok(())
     }
 

@@ -128,7 +128,7 @@ fn parsed_relation_type_to_db(
 }
 
 fn set_artist_type_if_missing(
-    db: &mut impl DbAccess,
+    db: &mut DbAnyTransactionMut<'_>,
     artist_id: DbId,
     artist_type: Option<lyra_metadata::ParsedArtistType>,
 ) -> anyhow::Result<()> {
@@ -140,13 +140,13 @@ fn set_artist_type_if_missing(
     };
     if artist.artist_type.is_none() {
         artist.set_artist_type(parsed_artist_type_to_db(artist_type));
-        db::artists::update(db, &artist)?;
+        db::artists::update_in_transaction(db, &artist)?;
     }
     Ok(())
 }
 
 fn sync_scanned_artist_relations(
-    db: &mut impl DbAccess,
+    db: &mut DbAnyTransactionMut<'_>,
     relations: &[lyra_metadata::ArtistRelationMetadata],
     cache: &mut HashMap<String, DbId>,
 ) -> anyhow::Result<()> {

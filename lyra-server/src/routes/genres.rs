@@ -724,18 +724,20 @@ mod tests {
         release_db_id: DbId,
         cover_id: &str,
     ) -> anyhow::Result<db::Cover> {
-        db::covers::upsert(
-            db,
-            release_db_id,
-            db::Cover {
-                db_id: None,
-                id: cover_id.to_string(),
-                path: format!("/music/{cover_id}.jpg"),
-                mime_type: "image/jpeg".to_string(),
-                hash: "a".repeat(64),
-                blurhash: None,
-            },
-        )
+        db.transaction_mut(|t| {
+            db::covers::upsert(
+                t,
+                release_db_id,
+                db::Cover {
+                    db_id: None,
+                    id: cover_id.to_string(),
+                    path: format!("/music/{cover_id}.jpg"),
+                    mime_type: "image/jpeg".to_string(),
+                    hash: "a".repeat(64),
+                    blurhash: None,
+                },
+            )
+        })
     }
 
     fn record_listen(
