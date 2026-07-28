@@ -58,6 +58,7 @@ use crate::{
         AppError,
         covers as route_covers,
         deserialize_inc,
+        double_option,
     },
     services::{
         auth::{
@@ -85,6 +86,7 @@ struct CreatePlaylistRequest {
 #[derive(Deserialize)]
 struct UpdatePlaylistRequest {
     name: Option<String>,
+    #[serde(default, deserialize_with = "double_option")]
     description: Option<Option<String>>,
     is_public: Option<bool>,
 }
@@ -758,7 +760,7 @@ async fn update_playlist(
         &playlists::UpdatePlaylistRequest {
             playlist_id: QueryId::Id(playlist_db_id),
             name: request.name,
-            description: request.description.flatten(),
+            description: request.description,
             is_public: request.is_public,
             updated_at: Some(now_epoch()),
         },
@@ -1086,6 +1088,30 @@ mod tests {
         DbId,
         QueryBuilder,
     };
+
+    use super::UpdatePlaylistRequest;
+
+    /// `Some(None)` must be reachable from the wire. A plain
+    /// `Option<Option<T>>` derive maps JSON `null` to the outer `None`, making
+    /// an explicit clear indistinguishable from an omitted field.
+    #[test]
+    fn update_playlist_request_distinguishes_null_from_absent_description() {
+        let cleared: UpdatePlaylistRequest =
+            serde_json::from_str(r#"{"description":null}"#).expect("null body parses");
+        assert_eq!(cleared.description, Some(None), "explicit null clears");
+
+        let absent: UpdatePlaylistRequest =
+            serde_json::from_str(r#"{"name":"n"}"#).expect("absent body parses");
+        assert_eq!(
+            absent.description, None,
+            "omitted field leaves it untouched"
+        );
+
+        let set: UpdatePlaylistRequest =
+            serde_json::from_str(r#"{"description":"d"}"#).expect("value body parses");
+        assert_eq!(set.description, Some(Some("d".to_string())));
+    }
+
     use anyhow::anyhow;
     use nanoid::nanoid;
 

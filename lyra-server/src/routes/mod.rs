@@ -189,6 +189,20 @@ fn unix_ms_to_rfc3339_i128(milliseconds: i128) -> String {
         .expect("RFC3339 formatting should succeed")
 }
 
+/// Distinguishes an absent JSON field from an explicit `null` in a PATCH body.
+///
+/// The field must also carry `#[serde(default)]`: this runs only when the key
+/// is present, so absence falls through to `Default` (`None`) while a present
+/// `null` yields `Some(None)`. Without it, serde collapses both to `None` and
+/// the clear is unreachable from the wire.
+pub(crate) fn double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
 fn deserialize_optional_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
 where
     D: Deserializer<'de>,

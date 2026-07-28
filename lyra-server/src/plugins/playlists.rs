@@ -149,7 +149,9 @@ impl PlaylistUpdateRequest {
         playlist_service::UpdatePlaylistRequest {
             playlist_id,
             name: self.name,
-            description: self.description,
+            // A Luau table cannot express "present but nil", so this surface
+            // can only set a description, never clear it.
+            description: self.description.map(Some),
             is_public: self.is_public,
             updated_at: self.updated_at,
         }

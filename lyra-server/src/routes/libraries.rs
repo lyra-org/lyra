@@ -40,7 +40,10 @@ use crate::{
         validate_country,
         validate_language,
     },
-    routes::AppError,
+    routes::{
+        AppError,
+        double_option,
+    },
     services::{
         LibraryRefreshRunOptions,
         SyncRunStartResponse,
@@ -116,11 +119,13 @@ struct LibraryUpdateRequest {
         feature = "docgen",
         schemars(description = "Updated language code; set to null to clear.")
     )]
+    #[serde(default, deserialize_with = "double_option")]
     language: Option<Option<String>>,
     #[cfg_attr(
         feature = "docgen",
         schemars(description = "Updated country code; set to null to clear.")
     )]
+    #[serde(default, deserialize_with = "double_option")]
     country: Option<Option<String>>,
 }
 
@@ -664,6 +669,25 @@ mod tests {
         db,
         services::auth::sessions,
     };
+
+    /// An explicit `null` must reach the service as `Some(None)` (a clear) and
+    /// must not trip the "no fields provided" 400 guard.
+    #[test]
+    fn library_update_request_distinguishes_null_from_absent() {
+        let cleared: LibraryUpdateRequest =
+            serde_json::from_str(r#"{"language":null,"country":null}"#).expect("null body parses");
+        assert_eq!(cleared.language, Some(None));
+        assert_eq!(cleared.country, Some(None));
+        assert!(
+            !(cleared.name.is_none() && cleared.language.is_none() && cleared.country.is_none()),
+            "explicit null must not be treated as an empty patch"
+        );
+
+        let absent: LibraryUpdateRequest =
+            serde_json::from_str(r#"{"name":"n"}"#).expect("absent body parses");
+        assert_eq!(absent.language, None);
+        assert_eq!(absent.country, None);
+    }
 
     fn bearer_headers(token: &str) -> HeaderMap {
         let mut headers = HeaderMap::new();
