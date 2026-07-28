@@ -207,8 +207,7 @@ pub(crate) fn add_track(
     playlist_db_id: DbId,
     track_db_id: DbId,
 ) -> anyhow::Result<PlaylistTrack> {
-    let max_position = get_max_position(db, playlist_db_id)?;
-    let position = max_position + 1;
+    let position = next_position(db, playlist_db_id)?;
     let entry_id = nanoid!();
 
     let edge_id = db
@@ -244,11 +243,10 @@ pub(crate) fn add_tracks(
     playlist_db_id: DbId,
     track_db_ids: &[DbId],
 ) -> anyhow::Result<Vec<PlaylistTrack>> {
-    let mut position = get_max_position(db, playlist_db_id)?;
+    let mut position = next_position(db, playlist_db_id)?;
     let mut results = Vec::with_capacity(track_db_ids.len());
 
     for &track_db_id in track_db_ids {
-        position += 1;
         let entry_id = nanoid!();
 
         let edge_id = db
@@ -276,6 +274,7 @@ pub(crate) fn add_tracks(
             entry_id,
             position,
         });
+        position += 1;
     }
 
     Ok(results)
@@ -438,9 +437,15 @@ pub(crate) fn get_by_track(db: &impl DbAccess, track_db_id: DbId) -> anyhow::Res
     Ok(playlist_db_ids)
 }
 
-fn get_max_position(db: &impl DbAccess, playlist_db_id: DbId) -> anyhow::Result<u64> {
+/// Next append slot. Positions are 0-based, matching the index base
+/// [`move_track`] renumbers with.
+fn next_position(db: &impl DbAccess, playlist_db_id: DbId) -> anyhow::Result<u64> {
     let tracks = get_tracks(db, playlist_db_id)?;
-    Ok(tracks.iter().map(|t| t.position).max().unwrap_or(0))
+    Ok(tracks
+        .iter()
+        .map(|t| t.position.saturating_add(1))
+        .max()
+        .unwrap_or(0))
 }
 
 #[cfg(test)]
@@ -601,12 +606,73 @@ mod tests {
 
         let tracks = get_tracks(&db, playlist_db_id)?;
         assert_eq!(tracks.len(), 2);
-        assert_eq!(tracks[0].position, 1);
-        assert_eq!(tracks[1].position, 2);
+        assert_eq!(tracks[0].position, 0);
+        assert_eq!(tracks[1].position, 1);
 
         let track_ids = resolve_edge_targets(&db, &[tracks[0].edge_id, tracks[1].edge_id])?;
         assert_eq!(track_ids[0], track_a);
         assert_eq!(track_ids[1], track_b);
+
+        Ok(())
+    }
+
+    /// Appends and `move_track` must share one position base. `move_track`
+    /// treats `new_position` as a 0-based index, so moving an entry to the
+    /// position the API already reports for it has to be a no-op.
+    #[test]
+    fn append_positions_match_move_track_index_base() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = create_test_user(&mut db)?;
+        let track_a = create_test_track(&mut db, "Track A")?;
+        let track_b = create_test_track(&mut db, "Track B")?;
+        let track_c = create_test_track(&mut db, "Track C")?;
+
+        let playlist = Playlist {
+            db_id: None,
+            id: nanoid!(),
+            name: "Position Base".to_string(),
+            description: None,
+            is_public: None,
+            created_at: None,
+            updated_at: None,
+        };
+        let playlist_db_id = create(&mut db, &playlist, user_db_id)?;
+
+        let first = add_track(&mut db, playlist_db_id, track_a)?;
+        assert_eq!(first.position, 0, "first append into empty playlist");
+        let appended = add_tracks(&mut db, playlist_db_id, &[track_b, track_c])?;
+        assert_eq!(appended[0].position, 1);
+        assert_eq!(appended[1].position, 2);
+
+        let before = get_tracks(&db, playlist_db_id)?;
+        let head = &before[0];
+        move_track(&mut db, playlist_db_id, head.edge_id, head.position)?;
+        let after = get_tracks(&db, playlist_db_id)?;
+        assert_eq!(
+            after.iter().map(|t| t.entry_id.clone()).collect::<Vec<_>>(),
+            before
+                .iter()
+                .map(|t| t.entry_id.clone())
+                .collect::<Vec<_>>(),
+            "moving an entry to its reported position must not reorder"
+        );
+
+        let empty = create(
+            &mut db,
+            &Playlist {
+                db_id: None,
+                id: nanoid!(),
+                name: "Bulk Base".to_string(),
+                description: None,
+                is_public: None,
+                created_at: None,
+                updated_at: None,
+            },
+            user_db_id,
+        )?;
+        let bulk = add_tracks(&mut db, empty, &[track_a, track_b])?;
+        assert_eq!(bulk[0].position, 0);
+        assert_eq!(bulk[1].position, 1);
 
         Ok(())
     }
