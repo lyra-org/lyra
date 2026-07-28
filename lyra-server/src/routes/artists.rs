@@ -49,6 +49,7 @@ use crate::{
     routes::{
         covers as route_covers,
         deserialize_inc,
+        double_option,
         ratings::RatingFilterQuery,
         releases as route_releases,
         responses::{
@@ -145,11 +146,13 @@ struct ArtistUpdateRequest {
         feature = "docgen",
         schemars(description = "Updated sort name; set to null to clear.")
     )]
+    #[serde(default, deserialize_with = "double_option")]
     sort_name: Option<Option<String>>,
     #[cfg_attr(
         feature = "docgen",
         schemars(description = "Updated description; set to null to clear.")
     )]
+    #[serde(default, deserialize_with = "double_option")]
     description: Option<Option<String>>,
 }
 
@@ -1058,6 +1061,7 @@ pub(crate) fn artist_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::{
         db::test_db::{
             connect,
@@ -1075,6 +1079,28 @@ mod tests {
             runtime_test_lock,
         },
     };
+
+    /// An explicit `null` must reach the service as `Some(None)` (a clear) and
+    /// must not trip the "no fields provided" 400 guard.
+    #[test]
+    fn artist_update_request_distinguishes_null_from_absent() {
+        let cleared: ArtistUpdateRequest =
+            serde_json::from_str(r#"{"sort_name":null,"description":null}"#)
+                .expect("null body parses");
+        assert_eq!(cleared.sort_name, Some(None));
+        assert_eq!(cleared.description, Some(None));
+        assert!(
+            !(cleared.name.is_none()
+                && cleared.sort_name.is_none()
+                && cleared.description.is_none()),
+            "explicit null must not be treated as an empty patch"
+        );
+
+        let absent: ArtistUpdateRequest =
+            serde_json::from_str(r#"{"name":"n"}"#).expect("absent body parses");
+        assert_eq!(absent.sort_name, None);
+        assert_eq!(absent.description, None);
+    }
     use agdb::{
         DbAny,
         DbId,

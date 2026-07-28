@@ -44,7 +44,8 @@ pub(crate) struct CreatePlaylistRequest {
 pub(crate) struct UpdatePlaylistRequest {
     pub(crate) playlist_id: QueryId,
     pub(crate) name: Option<String>,
-    pub(crate) description: Option<String>,
+    /// Outer `None` leaves the description untouched; `Some(None)` clears it.
+    pub(crate) description: Option<Option<String>>,
     pub(crate) is_public: Option<bool>,
     pub(crate) updated_at: Option<u64>,
 }
@@ -248,7 +249,7 @@ pub(crate) fn update(
         playlist.name = validate_name(name)?;
     }
     if let Some(description) = &request.description {
-        playlist.description = Some(description.clone());
+        playlist.description = description.clone();
     }
     if let Some(is_public) = request.is_public {
         playlist.is_public = Some(is_public);
@@ -415,6 +416,56 @@ mod tests {
                 updated_at: None,
             },
         )
+    }
+
+    /// `Some(None)` is an explicit clear and must reach storage; `None` leaves
+    /// the stored description alone.
+    #[test]
+    fn update_distinguishes_absent_description_from_explicit_clear() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = db::users::create(&mut db, &test_user("describer")?)?;
+        let playlist_db_id = create(
+            &mut db,
+            &CreatePlaylistRequest {
+                user_db_id,
+                name: "Described".to_string(),
+                description: Some("original".to_string()),
+                is_public: None,
+                created_at: None,
+                updated_at: None,
+            },
+        )?;
+
+        let untouched = update(
+            &mut db,
+            &UpdatePlaylistRequest {
+                playlist_id: QueryId::Id(playlist_db_id),
+                name: Some("Renamed".to_string()),
+                description: None,
+                is_public: None,
+                updated_at: None,
+            },
+        )?
+        .ok_or_else(|| anyhow::anyhow!("playlist missing"))?;
+        assert_eq!(untouched.description.as_deref(), Some("original"));
+
+        update(
+            &mut db,
+            &UpdatePlaylistRequest {
+                playlist_id: QueryId::Id(playlist_db_id),
+                name: None,
+                description: Some(None),
+                is_public: None,
+                updated_at: None,
+            },
+        )?
+        .ok_or_else(|| anyhow::anyhow!("playlist missing"))?;
+
+        let stored = db::playlists::get_by_id(&db, playlist_db_id)?
+            .ok_or_else(|| anyhow::anyhow!("playlist missing"))?;
+        assert_eq!(stored.description, None);
+        assert_eq!(stored.name, "Renamed");
+        Ok(())
     }
 
     #[test]
