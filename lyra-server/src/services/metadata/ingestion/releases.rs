@@ -14,6 +14,7 @@ use std::time::{
 
 use agdb::{
     DbAny,
+    DbAnyTransactionMut,
     DbId,
     QueryBuilder,
 };
@@ -193,7 +194,7 @@ pub(crate) fn persist_release(
 }
 
 fn persist_release_inner(
-    db: &mut impl DbAccess,
+    db: &mut DbAnyTransactionMut<'_>,
     library_db_id: DbId,
     release_title: &str,
     release_tracks: Vec<TrackIngest>,
@@ -254,7 +255,7 @@ fn persist_release_inner(
             }
         }
         release.ctime = earliest_ctime;
-        db::releases::update(db, &release)?;
+        db::releases::update_in_transaction(db, &release)?;
         (release_db_id, release_provider_fields)
     } else {
         let release = Release {
@@ -473,7 +474,7 @@ fn persist_release_inner(
             existing.bit_depth = bit_depth;
             existing.bitrate_bps = bitrate_bps;
             existing.ctime = entry_ctime;
-            db::tracks::update(db, &existing)?;
+            db::tracks::update_in_transaction(db, &existing)?;
             track_db_id
         } else {
             let track_db = Track {

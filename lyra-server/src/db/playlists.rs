@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use agdb::{
     CountComparison,
     DbAny,
+    DbAnyTransactionMut,
     DbElement,
     DbId,
     DbValue,
@@ -132,9 +133,31 @@ pub(crate) fn get_by_id(
     super::graph::fetch_typed_by_id(db, playlist_db_id, "Playlist")
 }
 
-pub(crate) fn update(db: &mut impl super::DbAccess, playlist: &Playlist) -> anyhow::Result<()> {
-    db.exec_mut(QueryBuilder::insert().element(playlist).query())?;
-    Ok(())
+/// Atomically aligns the stored row to `playlist`.
+pub(crate) fn update(db: &mut DbAny, playlist: &Playlist) -> anyhow::Result<()> {
+    db.transaction_mut(|t| update_in_transaction(t, playlist))
+}
+
+pub(crate) fn update_in_transaction(
+    db: &mut DbAnyTransactionMut<'_>,
+    playlist: &Playlist,
+) -> anyhow::Result<()> {
+    let playlist_db_id = playlist
+        .db_id
+        .clone()
+        .map(DbId::from)
+        .ok_or_else(|| anyhow::anyhow!("playlist update missing db_id"))?;
+    super::replace_element_in_transaction(
+        db,
+        playlist_db_id,
+        [
+            ("description", playlist.description.is_none()),
+            ("is_public", playlist.is_public.is_none()),
+            ("created_at", playlist.created_at.is_none()),
+            ("updated_at", playlist.updated_at.is_none()),
+        ],
+        playlist,
+    )
 }
 
 pub(crate) fn delete(db: &mut DbAny, playlist_db_id: DbId) -> anyhow::Result<()> {
@@ -585,6 +608,105 @@ mod tests {
         assert_eq!(track_ids[0], track_a);
         assert_eq!(track_ids[1], track_b);
 
+        Ok(())
+    }
+
+    /// Guards the hand-maintained clear list in `update` against struct drift.
+    #[test]
+    fn update_clears_every_optional_key() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = create_test_user(&mut db)?;
+        let playlist_db_id = create(
+            &mut db,
+            &Playlist {
+                db_id: None,
+                id: "drift-guard".to_string(),
+                name: "Drift Guard".to_string(),
+                description: None,
+                is_public: None,
+                created_at: None,
+                updated_at: None,
+            },
+            user_db_id,
+        )?;
+        let db_id = Some(super::super::NodeId::from(playlist_db_id));
+
+        update(
+            &mut db,
+            &Playlist {
+                db_id: db_id.clone(),
+                id: "drift-guard".to_string(),
+                name: "Drift Guard".to_string(),
+                description: Some("d".to_string()),
+                is_public: Some(true),
+                created_at: Some(1),
+                updated_at: Some(2),
+            },
+        )?;
+
+        update(
+            &mut db,
+            &Playlist {
+                db_id,
+                id: "drift-guard".to_string(),
+                name: "Drift Guard".to_string(),
+                description: None,
+                is_public: None,
+                created_at: None,
+                updated_at: None,
+            },
+        )?;
+
+        let keys = crate::db::test_db::stored_keys(&db, playlist_db_id)?;
+        assert_eq!(
+            keys,
+            ["db_element_id", "id", "name"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            "only non-Option keys may remain after an all-None update"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn update_in_transaction_rolls_back_clears() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = create_test_user(&mut db)?;
+        let playlist_db_id = create(
+            &mut db,
+            &Playlist {
+                db_id: None,
+                id: "rollback".to_string(),
+                name: "Before".to_string(),
+                description: Some("keep".to_string()),
+                is_public: None,
+                created_at: None,
+                updated_at: None,
+            },
+            user_db_id,
+        )?;
+
+        let result = db.transaction_mut(|t| -> anyhow::Result<()> {
+            update_in_transaction(
+                t,
+                &Playlist {
+                    db_id: Some(super::super::NodeId::from(playlist_db_id)),
+                    id: "rollback".to_string(),
+                    name: "After".to_string(),
+                    description: None,
+                    is_public: None,
+                    created_at: None,
+                    updated_at: None,
+                },
+            )?;
+            anyhow::bail!("force rollback")
+        });
+        assert!(result.is_err());
+
+        let stored = get_by_id(&db, playlist_db_id)?.expect("playlist remains");
+        assert_eq!(stored.name, "Before");
+        assert_eq!(stored.description.as_deref(), Some("keep"));
         Ok(())
     }
 
