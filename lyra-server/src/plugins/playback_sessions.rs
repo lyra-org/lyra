@@ -59,7 +59,6 @@ use crate::{
             constants::RemoteAction,
             messages::{
                 ForwardedCommand,
-                ForwardedCommandData,
                 OutgoingMessage,
             },
             registry,
@@ -666,29 +665,34 @@ fn send_command_callback(
             )));
         }
 
-        let data = match action {
+        let forwarded = match action {
             RemoteAction::Seek => {
                 let position_ms = request.position_ms.ok_or_else(|| {
                     crate::plugins::runtime_error("position_ms required for seek")
                 })?;
-                ForwardedCommandData::Seek { position_ms }
+                ForwardedCommand::Seek {
+                    from: None,
+                    position_ms,
+                }
             }
             RemoteAction::SetVolume => {
                 let level = request.level.ok_or_else(|| {
                     crate::plugins::runtime_error("level required for set_volume")
                 })?;
-                ForwardedCommandData::Volume {
+                ForwardedCommand::SetVolume {
+                    from: None,
                     level: level.clamp(0.0, 1.0),
                 }
             }
-            _ => ForwardedCommandData::Simple,
+            RemoteAction::Play => ForwardedCommand::Play { from: None },
+            RemoteAction::Pause => ForwardedCommand::Pause { from: None },
+            RemoteAction::Unpause => ForwardedCommand::Unpause { from: None },
+            RemoteAction::Stop => ForwardedCommand::Stop { from: None },
+            RemoteAction::NextTrack => ForwardedCommand::NextTrack { from: None },
+            RemoteAction::PreviousTrack => ForwardedCommand::PreviousTrack { from: None },
         };
 
-        let forwarded = OutgoingMessage::Command(ForwardedCommand {
-            action,
-            from: None,
-            data,
-        });
+        let forwarded = OutgoingMessage::Command(forwarded);
         registry::send_to_connection(target.connection_id, forwarded)
             .await
             .map_err(|error| {
