@@ -42,11 +42,10 @@ const DISPATCH_RATE_PER_SECOND: f64 = 10.0;
 const DISPATCH_BURST: f64 = 50.0;
 const DEFAULT_DISPATCH_CALLER: &str = "route";
 
-/// Generation-owned playback update state: registered callbacks, the WS
-/// event broadcast channel, and per-caller dispatch rate-limit buckets.
+/// Generation-owned playback update state.
 pub(crate) struct PlaybackUpdateRegistries {
     callbacks: Arc<RwLock<PlaybackCallbackRegistry>>,
-    event_broadcast: broadcast::Sender<PlaybackUpdatePayload>,
+    event_broadcasts: Mutex<HashMap<String, broadcast::Sender<PlaybackUpdatePayload>>>,
     dispatch_buckets: Mutex<HashMap<String, DispatchBucket>>,
 }
 
@@ -54,7 +53,7 @@ impl Default for PlaybackUpdateRegistries {
     fn default() -> Self {
         Self {
             callbacks: Arc::default(),
-            event_broadcast: broadcast::channel(EVENT_BROADCAST_CAPACITY).0,
+            event_broadcasts: Mutex::new(HashMap::new()),
             dispatch_buckets: Mutex::new(HashMap::new()),
         }
     }
@@ -91,12 +90,50 @@ impl DispatchBucket {
     }
 }
 
-pub(crate) fn subscribe_playback_events() -> broadcast::Receiver<PlaybackUpdatePayload> {
-    crate::STATE
-        .generation()
+pub(crate) fn subscribe_playback_events(
+    user_public_id: &str,
+) -> broadcast::Receiver<PlaybackUpdatePayload> {
+    let generation = crate::STATE.generation();
+    let mut broadcasts = generation
         .playback_updates
-        .event_broadcast
+        .event_broadcasts
+        .lock()
+        .expect("playback event broadcast mutex poisoned");
+    broadcasts
+        .entry(user_public_id.to_string())
+        .or_insert_with(|| broadcast::channel(EVENT_BROADCAST_CAPACITY).0)
         .subscribe()
+}
+
+pub(crate) fn unsubscribe_playback_events(user_public_id: &str) {
+    let generation = crate::STATE.generation();
+    let mut broadcasts = generation
+        .playback_updates
+        .event_broadcasts
+        .lock()
+        .expect("playback event broadcast mutex poisoned");
+    if broadcasts
+        .get(user_public_id)
+        .is_some_and(|sender| sender.receiver_count() == 0)
+    {
+        broadcasts.remove(user_public_id);
+    }
+}
+
+fn broadcast_playback_event(payload: PlaybackUpdatePayload) {
+    let generation = crate::STATE.generation();
+    let mut broadcasts = generation
+        .playback_updates
+        .event_broadcasts
+        .lock()
+        .expect("playback event broadcast mutex poisoned");
+    let user_public_id = payload.user_public_id.clone();
+    let remove_idle = broadcasts
+        .get(&user_public_id)
+        .is_some_and(|sender| sender.send(payload).is_err());
+    if remove_idle {
+        broadcasts.remove(&user_public_id);
+    }
 }
 
 /// Callbacks registered via `lyra.playback_sessions.on_update`, bucketed per
@@ -121,7 +158,7 @@ pub(crate) async fn teardown_plugin_callbacks(plugin_id: &PluginId) {
         .await;
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct PlaybackUpdatePayload {
     pub event: String,
     pub state: PlaybackState,
@@ -224,23 +261,19 @@ pub(crate) fn dispatch_update_for_caller(
     payload: PlaybackUpdatePayload,
 ) {
     let caller = caller.into();
+    let generation = crate::STATE.generation();
+
+    broadcast_playback_event(payload.clone());
+
     if !dispatch_allowed(&caller) {
         tracing::warn!(
             caller = %caller,
             playback_session_public_id = %payload.playback_session_public_id,
             event = %payload.event,
-            "playback update dispatch rate-limited"
+            "playback update plugin dispatch rate-limited"
         );
         return;
     }
-
-    let generation = crate::STATE.generation();
-
-    // Fan out to WS broadcast (best-effort, dropped if no subscribers or lagging).
-    let _ = generation
-        .playback_updates
-        .event_broadcast
-        .send(payload.clone());
 
     if let Some(runtime) = generation.plugin_runtime.get()
         && let Err(error) = runtime.dispatch_playback_update(payload)
@@ -279,5 +312,78 @@ mod tests {
         }
         assert!(!bucket.allow(now));
         assert!(bucket.allow(now + std::time::Duration::from_millis(100)));
+    }
+
+    fn test_payload(session: &str, user_public_id: &str) -> PlaybackUpdatePayload {
+        PlaybackUpdatePayload {
+            event: "evicted".to_string(),
+            state: PlaybackState::Stopped,
+            playback_session_public_id: session.to_string(),
+            track_public_id: "track".to_string(),
+            user_public_id: user_public_id.to_string(),
+            library_public_id: None,
+            position_ms: 0,
+            duration_ms: None,
+            activity_ms: 0,
+            qualifies_single_listen: false,
+            updated_at_ms: 0,
+        }
+    }
+
+    /// The bucket bounds plugin dispatch only. WS subscribers must still see
+    /// every payload, so the broadcast channel's own Lagged contract stays the
+    /// single source of truth for dropped updates.
+    #[test]
+    fn rate_limited_updates_still_reach_event_broadcast() {
+        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+        crate::testing::init_default_test_state().expect("init test state");
+
+        let mut receiver = subscribe_playback_events("user");
+        let sends = DISPATCH_BURST as usize + 5;
+        for index in 0..sends {
+            dispatch_update_for_caller(
+                DEFAULT_DISPATCH_CALLER,
+                test_payload(&format!("session-{index}"), "user"),
+            );
+        }
+
+        let received = (0..sends)
+            .map(|_| receiver.try_recv())
+            .take_while(Result::is_ok)
+            .count();
+        assert_eq!(received, sends.min(EVENT_BROADCAST_CAPACITY));
+    }
+
+    #[test]
+    fn playback_event_lag_is_isolated_by_user() {
+        let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+        crate::testing::init_default_test_state().expect("init test state");
+
+        let mut flooded = subscribe_playback_events("flooded");
+        let mut unrelated = subscribe_playback_events("unrelated");
+        for index in 0..=EVENT_BROADCAST_CAPACITY {
+            dispatch_update_for_caller(
+                DEFAULT_DISPATCH_CALLER,
+                test_payload(&format!("flood-{index}"), "flooded"),
+            );
+        }
+
+        assert!(matches!(
+            flooded.try_recv(),
+            Err(broadcast::error::TryRecvError::Lagged(1))
+        ));
+        assert!(matches!(
+            unrelated.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
+
+        dispatch_update_for_caller(
+            DEFAULT_DISPATCH_CALLER,
+            test_payload("unrelated-event", "unrelated"),
+        );
+        assert_eq!(
+            unrelated.try_recv().expect("unrelated event"),
+            test_payload("unrelated-event", "unrelated")
+        );
     }
 }
