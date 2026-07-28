@@ -136,7 +136,10 @@ use agdb::{
     DbAnyTransactionMut,
     DbError,
     DbId,
+    DbType,
+    DbValue,
     Query,
+    QueryBuilder,
     QueryMut,
     QueryResult,
 };
@@ -208,6 +211,30 @@ impl DbAccess for DbAnyTransactionMut<'_> {
     fn exec_mut<T: QueryMut>(&mut self, query: T) -> Result<QueryResult, DbError> {
         DbAnyTransactionMut::exec_mut(self, query)
     }
+}
+
+/// Atomically clears absent optional fields before replacing a typed element.
+pub(crate) fn replace_element_in_transaction<'a, T: DbType>(
+    db: &mut DbAnyTransactionMut<'_>,
+    db_id: DbId,
+    optional_fields: impl IntoIterator<Item = (&'a str, bool)>,
+    element: &T,
+) -> anyhow::Result<()> {
+    let absent_keys = optional_fields
+        .into_iter()
+        .filter(|(_, is_absent)| *is_absent)
+        .map(|(key, _)| DbValue::from(key))
+        .collect::<Vec<_>>();
+    if !absent_keys.is_empty() {
+        db.exec_mut(
+            QueryBuilder::remove()
+                .values(absent_keys)
+                .ids(db_id)
+                .query(),
+        )?;
+    }
+    db.exec_mut(QueryBuilder::insert().element(element).query())?;
+    Ok(())
 }
 
 pub(crate) use ids::{

@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
+    collections::HashSet,
     panic::Location,
     path::Path,
     sync::atomic::{
@@ -313,6 +314,18 @@ fn db_name() -> String {
         ))
         .to_string_lossy()
         .into_owned()
+}
+
+/// Key names actually stored on `db_id`, for asserting that an `update` removed
+/// the keys whose struct field is `None`.
+pub(crate) fn stored_keys(db: &DbAny, db_id: DbId) -> anyhow::Result<HashSet<String>> {
+    Ok(db
+        .exec(QueryBuilder::select().keys().ids(db_id).query())?
+        .elements
+        .into_iter()
+        .flat_map(|element| element.values)
+        .map(|kv| kv.key.string().cloned())
+        .collect::<Result<HashSet<String>, _>>()?)
 }
 
 #[cfg(test)]

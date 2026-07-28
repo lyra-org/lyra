@@ -11,6 +11,7 @@ use std::collections::{
 
 use agdb::{
     DbAny,
+    DbAnyTransactionMut,
     DbElement,
     DbId,
     QueryBuilder,
@@ -395,9 +396,41 @@ pub(crate) fn get_by_entry(db: &DbAny, entry_db_id: DbId) -> anyhow::Result<Vec<
     Ok(tracks)
 }
 
-pub(crate) fn update(db: &mut impl super::DbAccess, track: &Track) -> anyhow::Result<()> {
-    db.exec_mut(QueryBuilder::insert().element(track).query())?;
-    Ok(())
+/// Atomically aligns the stored row to `track`.
+pub(crate) fn update(db: &mut DbAny, track: &Track) -> anyhow::Result<()> {
+    db.transaction_mut(|t| update_in_transaction(t, track))
+}
+
+pub(crate) fn update_in_transaction(
+    db: &mut DbAnyTransactionMut<'_>,
+    track: &Track,
+) -> anyhow::Result<()> {
+    let track_db_id = track
+        .db_id
+        .clone()
+        .map(DbId::from)
+        .ok_or_else(|| anyhow::anyhow!("track update missing db_id"))?;
+    super::replace_element_in_transaction(
+        db,
+        track_db_id,
+        [
+            ("sort_title", track.sort_title.is_none()),
+            ("year", track.year.is_none()),
+            ("disc", track.disc.is_none()),
+            ("disc_total", track.disc_total.is_none()),
+            ("track", track.track.is_none()),
+            ("track_total", track.track_total.is_none()),
+            ("duration_ms", track.duration_ms.is_none()),
+            ("sample_rate_hz", track.sample_rate_hz.is_none()),
+            ("channel_count", track.channel_count.is_none()),
+            ("bit_depth", track.bit_depth.is_none()),
+            ("bitrate_bps", track.bitrate_bps.is_none()),
+            ("locked", track.locked.is_none()),
+            ("created_at", track.created_at.is_none()),
+            ("ctime", track.ctime.is_none()),
+        ],
+        track,
+    )
 }
 
 #[derive(Clone)]
@@ -781,6 +814,99 @@ mod tests {
         assert_eq!(tracks.len(), 1);
         assert_eq!(tracks[0].db_id.clone().map(DbId::from), Some(track_db_id));
 
+        Ok(())
+    }
+
+    #[test]
+    fn update_clears_optional_fields_set_to_none() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let track_db_id = insert_track(&mut db, "Clearable Track")?;
+
+        let mut track = get_by_id(&db, track_db_id)?.expect("track should exist");
+        track.year = Some(1999);
+        track.track = Some(3);
+        track.duration_ms = Some(180_000);
+        update(&mut db, &track)?;
+
+        let mut track = get_by_id(&db, track_db_id)?.expect("track should exist");
+        assert_eq!(track.year, Some(1999));
+        track.year = None;
+        track.track = None;
+        track.duration_ms = None;
+        update(&mut db, &track)?;
+
+        let track = get_by_id(&db, track_db_id)?.expect("track should exist");
+        assert_eq!(track.year, None);
+        assert_eq!(track.track, None);
+        assert_eq!(track.duration_ms, None);
+        assert_eq!(track.track_title, "Clearable Track");
+        Ok(())
+    }
+
+    /// Guards the hand-maintained clear list in `update` against struct drift.
+    /// Adding an `Option` field to `Track` without adding it to that list leaves
+    /// its key stored here, and adding any field breaks the exhaustive literal.
+    #[test]
+    fn update_clears_every_optional_key() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let track_db_id = insert_track(&mut db, "Drift Guard")?;
+        let db_id = Some(super::super::NodeId::from(track_db_id));
+
+        update(
+            &mut db,
+            &Track {
+                db_id: db_id.clone(),
+                id: "drift-guard".to_string(),
+                track_title: "Drift Guard".to_string(),
+                sort_title: Some("Drift".to_string()),
+                year: Some(1999),
+                disc: Some(1),
+                disc_total: Some(2),
+                track: Some(3),
+                track_total: Some(4),
+                duration_ms: Some(5),
+                sample_rate_hz: Some(44_100),
+                channel_count: Some(2),
+                bit_depth: Some(16),
+                bitrate_bps: Some(900_000),
+                locked: Some(true),
+                created_at: Some(6),
+                ctime: Some(7),
+            },
+        )?;
+
+        update(
+            &mut db,
+            &Track {
+                db_id,
+                id: "drift-guard".to_string(),
+                track_title: "Drift Guard".to_string(),
+                sort_title: None,
+                year: None,
+                disc: None,
+                disc_total: None,
+                track: None,
+                track_total: None,
+                duration_ms: None,
+                sample_rate_hz: None,
+                channel_count: None,
+                bit_depth: None,
+                bitrate_bps: None,
+                locked: None,
+                created_at: None,
+                ctime: None,
+            },
+        )?;
+
+        let keys = crate::db::test_db::stored_keys(&db, track_db_id)?;
+        assert_eq!(
+            keys,
+            ["db_element_id", "id", "track_title"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            "only non-Option keys may remain after an all-None update"
+        );
         Ok(())
     }
 

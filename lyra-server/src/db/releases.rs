@@ -13,6 +13,7 @@ use agdb::{
     Comparison,
     CountComparison,
     DbAny,
+    DbAnyTransactionMut,
     DbElement,
     DbError,
     DbId,
@@ -703,9 +704,33 @@ pub(crate) fn get_by_tracks(
     Ok(related)
 }
 
-pub(crate) fn update(db: &mut impl super::DbAccess, release: &Release) -> anyhow::Result<()> {
-    db.exec_mut(QueryBuilder::insert().element(release).query())?;
-    Ok(())
+/// Atomically aligns the stored row to `release`.
+pub(crate) fn update(db: &mut DbAny, release: &Release) -> anyhow::Result<()> {
+    db.transaction_mut(|t| update_in_transaction(t, release))
+}
+
+pub(crate) fn update_in_transaction(
+    db: &mut DbAnyTransactionMut<'_>,
+    release: &Release,
+) -> anyhow::Result<()> {
+    let release_db_id = release
+        .db_id
+        .clone()
+        .map(DbId::from)
+        .ok_or_else(|| anyhow::anyhow!("release update missing db_id"))?;
+    super::replace_element_in_transaction(
+        db,
+        release_db_id,
+        [
+            ("sort_title", release.sort_title.is_none()),
+            ("release_type", release.release_type.is_none()),
+            ("release_date", release.release_date.is_none()),
+            ("locked", release.locked.is_none()),
+            ("created_at", release.created_at.is_none()),
+            ("ctime", release.ctime.is_none()),
+        ],
+        release,
+    )
 }
 
 #[derive(Clone)]
@@ -991,6 +1016,78 @@ mod tests {
 
         let release = get_by_id(&db, release_id)?.expect("release should exist");
         assert_eq!(release.release_title, "Test Release");
+        Ok(())
+    }
+
+    #[test]
+    fn update_clears_optional_fields_set_to_none() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_db_id = insert_release(&mut db, "Clearable Release")?;
+
+        let mut release = get_by_id(&db, release_db_id)?.expect("release should exist");
+        release.release_date = Some("1999-01-01".to_string());
+        release.sort_title = Some("Clearable".to_string());
+        update(&mut db, &release)?;
+
+        let mut release = get_by_id(&db, release_db_id)?.expect("release should exist");
+        assert_eq!(release.release_date.as_deref(), Some("1999-01-01"));
+        release.release_date = None;
+        release.sort_title = None;
+        update(&mut db, &release)?;
+
+        let release = get_by_id(&db, release_db_id)?.expect("release should exist");
+        assert_eq!(release.release_date, None);
+        assert_eq!(release.sort_title, None);
+        assert_eq!(release.release_title, "Clearable Release");
+        Ok(())
+    }
+
+    /// Guards the hand-maintained clear list in `update` against struct drift.
+    #[test]
+    fn update_clears_every_optional_key() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_db_id = insert_release(&mut db, "Drift Guard")?;
+        let db_id = Some(super::super::NodeId::from(release_db_id));
+
+        update(
+            &mut db,
+            &Release {
+                db_id: db_id.clone(),
+                id: "drift-guard".to_string(),
+                release_title: "Drift Guard".to_string(),
+                sort_title: Some("Drift".to_string()),
+                release_type: Some(ReleaseType::Album),
+                release_date: Some("1999-01-01".to_string()),
+                locked: Some(true),
+                created_at: Some(1),
+                ctime: Some(2),
+            },
+        )?;
+
+        update(
+            &mut db,
+            &Release {
+                db_id,
+                id: "drift-guard".to_string(),
+                release_title: "Drift Guard".to_string(),
+                sort_title: None,
+                release_type: None,
+                release_date: None,
+                locked: None,
+                created_at: None,
+                ctime: None,
+            },
+        )?;
+
+        let keys = crate::db::test_db::stored_keys(&db, release_db_id)?;
+        assert_eq!(
+            keys,
+            ["db_element_id", "id", "release_title"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            "only non-Option keys may remain after an all-None update"
+        );
         Ok(())
     }
 

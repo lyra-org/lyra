@@ -4,6 +4,8 @@
 // www.meshiplaw.com/lyra.
 
 use agdb::{
+    DbAny,
+    DbAnyTransactionMut,
     DbElement,
     DbId,
     DbValue,
@@ -55,12 +57,29 @@ pub(crate) fn create(
     Ok(run_db_id)
 }
 
-pub(crate) fn update(db: &mut impl super::DbAccess, record: &SyncRunRecord) -> anyhow::Result<()> {
-    if record.db_id.is_none() {
+/// Atomically aligns the stored row to `record`.
+pub(crate) fn update(db: &mut DbAny, record: &SyncRunRecord) -> anyhow::Result<()> {
+    db.transaction_mut(|t| update_in_transaction(t, record))
+}
+
+pub(crate) fn update_in_transaction(
+    db: &mut DbAnyTransactionMut<'_>,
+    record: &SyncRunRecord,
+) -> anyhow::Result<()> {
+    let Some(record_db_id) = record.db_id else {
         anyhow::bail!("cannot update sync run without db_id");
-    }
-    db.exec_mut(QueryBuilder::insert().element(record).query())?;
-    Ok(())
+    };
+    super::replace_element_in_transaction(
+        db,
+        record_db_id,
+        [
+            ("finished_at_ms", record.finished_at_ms.is_none()),
+            ("error", record.error.is_none()),
+            ("current_stage", record.current_stage.is_none()),
+            ("current_subject", record.current_subject.is_none()),
+        ],
+        record,
+    )
 }
 
 pub(crate) fn list(db: &impl super::DbAccess) -> anyhow::Result<Vec<SyncRunRecord>> {
@@ -218,6 +237,127 @@ mod tests {
             Some("run-a".to_string())
         );
         assert!(active_for_library(&db, "lib-a")?.is_none());
+        Ok(())
+    }
+
+    /// Guards the hand-maintained clear list in `update` against struct drift.
+    #[test]
+    fn update_clears_every_optional_key() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let populated = SyncRunRecord {
+            db_id: None,
+            id: "drift-guard".to_string(),
+            library_id: "lib".to_string(),
+            kind: "library_sync".to_string(),
+            status: "running".to_string(),
+            started_at_ms: 1,
+            updated_at_ms: 2,
+            finished_at_ms: Some(3),
+            error: Some("e".to_string()),
+            cancellation_requested: false,
+            sequence: 0,
+            progress_mode: "determinate".to_string(),
+            total_state: "final".to_string(),
+            completed_units: 0,
+            failed_units: 0,
+            skipped_units: 0,
+            total_units: 0,
+            current_stage: Some("provider_refresh".to_string()),
+            current_subject: Some("s".to_string()),
+            active_units: 0,
+            failure_count: 0,
+        };
+        let record_db_id = create(&mut db, &populated)?;
+        update(
+            &mut db,
+            &SyncRunRecord {
+                db_id: Some(record_db_id),
+                ..populated.clone()
+            },
+        )?;
+
+        update(
+            &mut db,
+            &SyncRunRecord {
+                db_id: Some(record_db_id),
+                finished_at_ms: None,
+                error: None,
+                current_stage: None,
+                current_subject: None,
+                ..populated
+            },
+        )?;
+
+        let keys = crate::db::test_db::stored_keys(&db, record_db_id)?;
+        assert_eq!(
+            keys,
+            [
+                "db_element_id",
+                "id",
+                "library_id",
+                "kind",
+                "status",
+                "started_at_ms",
+                "updated_at_ms",
+                "cancellation_requested",
+                "sequence",
+                "progress_mode",
+                "total_state",
+                "completed_units",
+                "failed_units",
+                "skipped_units",
+                "total_units",
+                "active_units",
+                "failure_count",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+            "only non-Option keys may remain after an all-None update"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn update_clears_optional_fields_set_to_none() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let mut record = SyncRunRecord {
+            db_id: None,
+            id: "run-b".to_string(),
+            library_id: "lib-b".to_string(),
+            kind: "library_sync".to_string(),
+            status: "running".to_string(),
+            started_at_ms: 10,
+            updated_at_ms: 10,
+            finished_at_ms: None,
+            error: None,
+            cancellation_requested: false,
+            sequence: 0,
+            progress_mode: "determinate".to_string(),
+            total_state: "final".to_string(),
+            completed_units: 1,
+            failed_units: 0,
+            skipped_units: 0,
+            total_units: 4,
+            current_stage: Some("provider_refresh".to_string()),
+            current_subject: Some("provider-a".to_string()),
+            active_units: 1,
+            failure_count: 0,
+        };
+
+        record.db_id = Some(create(&mut db, &record)?);
+        record.status = "succeeded".to_string();
+        record.finished_at_ms = Some(20);
+        record.current_stage = None;
+        record.current_subject = None;
+        record.active_units = 0;
+        update(&mut db, &record)?;
+
+        let fetched = get_by_id(&db, "run-b")?.expect("run should exist");
+        assert_eq!(fetched.status, "succeeded");
+        assert_eq!(fetched.current_stage, None);
+        assert_eq!(fetched.current_subject, None);
+        assert_eq!(fetched.finished_at_ms, Some(20));
         Ok(())
     }
 }
