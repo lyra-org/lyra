@@ -55,6 +55,7 @@ pub(crate) use updates::{
     dispatch_playback_update_for_caller,
     subscribe_playback_events,
     teardown_plugin_callbacks,
+    unsubscribe_playback_events,
 };
 
 pub(crate) const ACTIVE_SESSION_TTL_MS: u64 = 5 * 60 * 1000;

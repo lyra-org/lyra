@@ -53,6 +53,7 @@ use crate::services::playback_sessions as playbacks;
 use crate::services::playback_sessions::{
     PlaybackUpdatePayload,
     subscribe_playback_events,
+    unsubscribe_playback_events,
 };
 
 const NATIVE_SOURCE_ID: &str = "native";
@@ -224,7 +225,9 @@ fn mark_sync_required_pending(sync_required_pending: &mut bool) -> bool {
 }
 
 enum AuthStatus {
-    Valid,
+    /// Carries the re-resolved library access set so a long-lived connection
+    /// picks up grants and revocations made after it was established.
+    Valid(HashSet<String>),
     Revoked,
     Error,
 }
@@ -235,7 +238,7 @@ async fn check_auth(token: &Option<String>, expected_user_public_id: &str) -> Au
     match auth::resolve_auth_from_bearer(token.as_deref()).await {
         Ok(Some(auth)) => {
             if auth.principal.user_public_id == expected_user_public_id {
-                AuthStatus::Valid
+                AuthStatus::Valid(auth.principal.accessible_library_ids)
             } else {
                 AuthStatus::Revoked
             }
@@ -294,14 +297,14 @@ pub(crate) async fn run(
     mut socket: WebSocket,
     connection_id: ConnectionId,
     user_public_id: String,
-    accessible_library_ids: HashSet<String>,
+    mut accessible_library_ids: HashSet<String>,
     cancel: Arc<Notify>,
     token: Option<String>,
     mut command_rx: mpsc::Receiver<OutgoingMessage>,
 ) {
     let mut ping_interval = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
     let mut auth_interval = interval_at(Instant::now() + AUTH_CHECK_INTERVAL, AUTH_CHECK_INTERVAL);
-    let mut event_rx = subscribe_playback_events();
+    let mut event_rx = subscribe_playback_events(&user_public_id);
     let mut awaiting_pong = false;
     let mut pong_deadline: Option<Instant> = None;
     let mut consecutive_auth_errors: u32 = 0;
@@ -403,8 +406,9 @@ pub(crate) async fn run(
 
             _ = auth_interval.tick() => {
                 match check_auth(&token, &user_public_id).await {
-                    AuthStatus::Valid => {
+                    AuthStatus::Valid(refreshed_library_ids) => {
                         consecutive_auth_errors = 0;
+                        accessible_library_ids = refreshed_library_ids;
                     }
                     AuthStatus::Revoked => {
                         tracing::info!(connection_id, "session revoked, closing connection");
@@ -450,6 +454,8 @@ pub(crate) async fn run(
         }
     }
 
+    drop(event_rx);
+    unsubscribe_playback_events(&user_public_id);
     let handle = registry::unregister(connection_id).await;
     if let Some(handle) = &handle {
         tracing::info!(
@@ -484,7 +490,7 @@ mod tests {
     }
 
     #[test]
-    fn playback_event_visibility_uses_connection_access_snapshot() {
+    fn playback_event_visibility_filters_by_user_and_library_access() {
         let accessible = HashSet::from(["library-a".to_string()]);
 
         assert!(playback_event_visible_to_connection(
@@ -507,6 +513,60 @@ mod tests {
             "user-a",
             &accessible,
         ));
+    }
+
+    /// A valid auth recheck returns the principal's current library access set.
+    #[tokio::test]
+    async fn check_auth_valid_carries_fresh_accessible_library_ids() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
+            directory: std::path::PathBuf::from("."),
+            language: None,
+            country: None,
+        })
+        .await?;
+
+        let (user_db_id, user_public_id) = {
+            let mut db = STATE.db.write().await;
+            let user = crate::db::test_db::test_user("ws-access")?;
+            let user_public_id = user.id.clone();
+            let user_db_id = crate::db::users::create(&mut db, &user)?;
+            (user_db_id, user_public_id)
+        };
+        let token = crate::services::auth::sessions::create_session_for_user(
+            user_db_id,
+            Default::default(),
+        )
+        .await?
+        .token;
+
+        assert!(matches!(
+            check_auth(&Some(token.clone()), &user_public_id).await,
+            AuthStatus::Valid(ref ids) if ids.is_empty()
+        ));
+
+        let library_id = {
+            let mut db = STATE.db.write().await;
+            let path =
+                std::path::PathBuf::from(format!("/tmp/lyra-ws-access-{}", nanoid::nanoid!()));
+            let insert = crate::db::libraries::LibraryInsert {
+                id: nanoid::nanoid!(),
+                name: "WS Access".to_string(),
+                path_key: crate::db::libraries::path_key_for(&path),
+                path,
+                language: None,
+                country: None,
+            };
+            db.transaction_mut(|t| -> anyhow::Result<String> {
+                Ok(crate::db::libraries::create_with_creator(t, insert, user_db_id)?.id)
+            })?
+        };
+
+        let AuthStatus::Valid(refreshed) = check_auth(&Some(token), &user_public_id).await else {
+            anyhow::bail!("session should still be valid");
+        };
+        assert!(refreshed.contains(&library_id));
+        Ok(())
     }
 
     #[test]
