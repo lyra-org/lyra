@@ -70,7 +70,8 @@ async fn sweep_expired_datastore_entries(db: &DbAsync, now_ms: u64) {
 }
 
 async fn sweep_stale_playback_sessions(db: &DbAsync, now_ms: u64) {
-    // Drop the write guard before dispatch — handlers may re-enter the DB.
+    // Drop the write guard before dispatch to cut contention; the sends
+    // themselves are non-blocking.
     let evicted = {
         let mut db_write = db.write().await;
         match playback_sessions::cleanup_evicted_playbacks(&mut db_write, now_ms) {

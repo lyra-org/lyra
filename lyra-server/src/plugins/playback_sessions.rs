@@ -696,7 +696,7 @@ fn send_command_callback(
         registry::send_to_connection(target.connection_id, forwarded)
             .await
             .map_err(|error| {
-                crate::plugins::runtime_error(format!("command delivery failed: {error}"))
+                crate::plugins::runtime_error(format!("command dispatch failed: {error}"))
             })?;
 
         if let Ok(now_ms) = playbacks::now_ms() {
