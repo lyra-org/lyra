@@ -1248,13 +1248,13 @@ mod benches {
     #[bench]
     fn list_for_user_with_100_tags(b: &mut Bencher) {
         let (db, user, _) = seed_user_with_tags(100);
-        b.iter(|| list_for_user(&db, user, 500, None).unwrap());
+        b.iter(|| list_for_user(&db, user).unwrap());
     }
 
     #[bench]
     fn list_for_user_with_1000_tags(b: &mut Bencher) {
         let (db, user, _) = seed_user_with_tags(1_000);
-        b.iter(|| list_for_user(&db, user, 500, None).unwrap());
+        b.iter(|| list_for_user(&db, user).unwrap());
     }
 
     // Rename onto itself is idempotent — safe to re-run in a loop against seeded state.
