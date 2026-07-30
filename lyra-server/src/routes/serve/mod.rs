@@ -3,17 +3,29 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+mod decision;
 mod download;
 mod hls;
 mod ranged_file;
 mod stream;
 
+pub(crate) use decision::{
+    DeliveryTarget,
+    TranscodeKnobs,
+    ValidatedRequest,
+    apply_transcode_policy,
+    resolve_delivery,
+    validate_request,
+};
 pub use download::download_routes;
 pub(crate) use download::{
     DownloadTrackRequest,
     download_track_response,
 };
-pub(crate) use hls::serve_hls_playlist_for_track;
+pub(crate) use hls::{
+    resolve_hls_profile,
+    serve_hls_playlist_for_track,
+};
 pub(crate) use ranged_file::build_ranged_file_body;
 pub(crate) use stream::stream_track_response;
 
@@ -32,8 +44,6 @@ use axum::{
 use lyra_ffmpeg::{
     AudioCodec,
     AudioFormat,
-    AudioVbrMode,
-    Output,
 };
 use std::path::{
     Path as FsPath,
@@ -287,294 +297,6 @@ pub async fn validate_and_get_track_source(
     })
 }
 
-pub struct ValidatedRequest {
-    pub format: Option<AudioFormat>,
-    pub preferred_codecs: Vec<AudioCodec>,
-}
-
-fn parse_preferred_codecs(codec: Option<String>) -> Result<Vec<AudioCodec>, AppError> {
-    let Some(codec) = codec else {
-        return Ok(Vec::new());
-    };
-
-    let mut preferred_codecs = Vec::new();
-    for raw_codec in codec.split(',') {
-        let trimmed = raw_codec.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let parsed = AudioCodec::parse(trimmed).ok_or_else(|| {
-            AppError::bad_request(format!(
-                "Unsupported codec: {}. Supported codecs: {:?}",
-                trimmed,
-                lyra_ffmpeg::SUPPORTED_CODECS
-            ))
-        })?;
-        preferred_codecs.push(parsed);
-    }
-
-    Ok(preferred_codecs)
-}
-
-fn codec_names(codecs: &[AudioCodec]) -> String {
-    codecs
-        .iter()
-        .map(AudioCodec::as_str)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn incompatible_codecs_error(
-    output_format: AudioFormat,
-    preferred_codecs: &[AudioCodec],
-) -> AppError {
-    AppError::bad_request(format!(
-        "Requested codecs [{}] are not compatible with format '{}'. Supported codecs: [{}]",
-        codec_names(preferred_codecs),
-        output_format.extension(),
-        codec_names(output_format.compatible_codecs())
-    ))
-}
-
-pub fn validate_request(
-    format: Option<String>,
-    codec: Option<String>,
-) -> Result<ValidatedRequest, AppError> {
-    let format = match format {
-        Some(fmt) => {
-            let parsed = AudioFormat::parse(&fmt).ok_or_else(|| {
-                AppError::bad_request(format!(
-                    "Unsupported format: {}. Supported formats: {:?}",
-                    fmt,
-                    lyra_ffmpeg::SUPPORTED_FORMATS
-                ))
-            })?;
-            Some(parsed)
-        }
-        None => None,
-    };
-    let preferred_codecs = parse_preferred_codecs(codec)?;
-    Ok(ValidatedRequest {
-        format,
-        preferred_codecs,
-    })
-}
-
-pub fn resolve_output_format(
-    requested_format: Option<AudioFormat>,
-    preferred_codecs: &[AudioCodec],
-    entry_format: Option<AudioFormat>,
-    entry_path: &FsPath,
-    allow_copy: bool,
-) -> Result<AudioFormat, AppError> {
-    if let Some(fmt) = requested_format {
-        return Ok(fmt);
-    }
-
-    if allow_copy
-        && matches!(preferred_codecs.first(), Some(AudioCodec::Copy))
-        && let Some(entry_format) = entry_format
-    {
-        return Ok(entry_format);
-    }
-
-    for codec in preferred_codecs {
-        if matches!(codec, AudioCodec::Copy) {
-            continue;
-        }
-        if let Some(fmt) = codec.preferred_format() {
-            return Ok(fmt);
-        }
-    }
-
-    entry_format.ok_or_else(|| {
-        AppError::bad_request(format!(
-            "Track source has unsupported format: {}",
-            entry_path.to_string_lossy()
-        ))
-    })
-}
-
-pub fn resolve_codec(
-    preferred_codecs: &[AudioCodec],
-    output_format: AudioFormat,
-    entry_format: Option<AudioFormat>,
-    allow_copy: bool,
-) -> Result<AudioCodec, AppError> {
-    if !preferred_codecs.is_empty() {
-        for codec in preferred_codecs {
-            if matches!(codec, AudioCodec::Copy) {
-                if allow_copy && Some(output_format) == entry_format {
-                    return Ok(AudioCodec::Copy);
-                }
-                continue;
-            }
-            if output_format.supports_codec(*codec) {
-                return Ok(*codec);
-            }
-        }
-
-        return Err(incompatible_codecs_error(output_format, preferred_codecs));
-    }
-
-    if allow_copy && Some(output_format) == entry_format {
-        return Ok(AudioCodec::Copy);
-    }
-
-    Ok(output_format.default_codec())
-}
-
-#[derive(Debug, Clone)]
-pub struct TranscodePolicy {
-    pub bitrate_bps: Option<u32>,
-    pub sample_rate_hz: Option<u32>,
-    pub channels: Option<u32>,
-    pub prefer_vbr: bool,
-}
-
-pub fn apply_transcode_policy(
-    requested_bitrate_bps: Option<u32>,
-    requested_sample_rate_hz: Option<u32>,
-    requested_channels: Option<u32>,
-    prefer_vbr: Option<bool>,
-    output_codec: AudioCodec,
-    source_bitrate_bps: Option<u32>,
-) -> Result<TranscodePolicy, AppError> {
-    let bitrate_bps = match requested_bitrate_bps {
-        None => None,
-        Some(0) => {
-            return Err(AppError::bad_request(
-                "bitrate_bps must be greater than zero",
-            ));
-        }
-        Some(bps) => {
-            if output_codec.is_lossless() {
-                tracing::info!(
-                    target: "transcode_policy",
-                    codec = ?output_codec,
-                    requested_bps = bps,
-                    "bitrate cap ignored for lossless codec"
-                );
-                None
-            } else if let Some(source) = source_bitrate_bps
-                && bps > source
-            {
-                // source bitrate is the average for VBR sources; peaks may exceed it and are not preserved here.
-                tracing::info!(
-                    target: "transcode_policy",
-                    codec = ?output_codec,
-                    requested_bps = bps,
-                    source_bps = source,
-                    "cap above source bitrate; dropping cap so quality is not inflated"
-                );
-                None
-            } else if let Some(min) = output_codec.min_bitrate_bps()
-                && bps < min
-            {
-                tracing::info!(
-                    target: "transcode_policy",
-                    codec = ?output_codec,
-                    requested_bps = bps,
-                    clamped_bps = min,
-                    "bitrate below codec minimum; clamping"
-                );
-                Some(min)
-            } else {
-                Some(bps)
-            }
-        }
-    };
-
-    let sample_rate_hz = match requested_sample_rate_hz {
-        None => None,
-        Some(0) => {
-            return Err(AppError::bad_request(
-                "sample_rate_hz must be greater than zero",
-            ));
-        }
-        Some(hz) => match output_codec.native_sample_rate_hz() {
-            Some(native) if hz != native => {
-                tracing::info!(
-                    target: "transcode_policy",
-                    codec = ?output_codec,
-                    requested_hz = hz,
-                    delivered_hz = native,
-                    "codec substitutes sample rate; delivering native rate"
-                );
-                Some(native)
-            }
-            _ => Some(hz),
-        },
-    };
-
-    let channels = match requested_channels {
-        None => None,
-        Some(0) => {
-            return Err(AppError::bad_request("channels must be greater than zero"));
-        }
-        Some(ch) => Some(ch),
-    };
-
-    Ok(TranscodePolicy {
-        bitrate_bps,
-        sample_rate_hz,
-        channels,
-        prefer_vbr: prefer_vbr.unwrap_or(false),
-    })
-}
-
-fn apply_lossy_rate_control(
-    output: Output,
-    codec: AudioCodec,
-    bitrate_bps: Option<u32>,
-    channels: Option<u32>,
-    prefer_vbr: bool,
-) -> Output {
-    let bitrate_kbps = bitrate_bps
-        .map(|bps| bps.saturating_add(999) / 1000)
-        .filter(|kbps| *kbps > 0)
-        .unwrap_or(192);
-
-    if prefer_vbr
-        && let Some(mode) = codec.vbr_mode(
-            bitrate_bps.unwrap_or(bitrate_kbps.saturating_mul(1000)),
-            channels.unwrap_or(2),
-        )
-    {
-        return match mode {
-            AudioVbrMode::Quality(quality) => output.audio_global_quality(quality),
-            AudioVbrMode::Abr => output.audio_abr_bitrate_kbps(bitrate_kbps),
-        };
-    }
-
-    output.audio_bitrate_kbps(bitrate_kbps)
-}
-
-pub fn configure_output(
-    output: Output,
-    format: AudioFormat,
-    codec: AudioCodec,
-    policy: &TranscodePolicy,
-) -> Output {
-    let mut output = output.audio_format(format).codec(codec);
-    if !matches!(codec, AudioCodec::Copy) && !codec.is_lossless() {
-        output = apply_lossy_rate_control(
-            output,
-            codec,
-            policy.bitrate_bps,
-            policy.channels,
-            policy.prefer_vbr,
-        );
-    }
-    if let Some(hz) = policy.sample_rate_hz {
-        output = output.sample_rate_hz(hz);
-    }
-    if let Some(ch) = policy.channels {
-        output = output.channels(ch);
-    }
-    output
-}
-
 pub fn temp_output_path(track_db_id: DbId, format: AudioFormat) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -690,16 +412,11 @@ mod tests {
         ServeTrackOptions,
         ValidatedTrackSource,
         apply_request_start_offset,
-        configure_output,
         require_download_access,
         require_hls_playlist_access,
         require_stream_access,
-        resolve_codec,
-        resolve_output_format,
-        validate_request,
     };
     use std::{
-        path::Path,
         path::PathBuf,
         time::{
             SystemTime,
@@ -715,7 +432,6 @@ mod tests {
     use lyra_ffmpeg::{
         AudioCodec,
         AudioFormat,
-        Output,
     };
     use nanoid::nanoid;
 
@@ -883,299 +599,6 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
-    }
-
-    fn policy_passthrough(
-        bitrate_bps: Option<u32>,
-        sample_rate_hz: Option<u32>,
-        channels: Option<u32>,
-    ) -> super::TranscodePolicy {
-        super::TranscodePolicy {
-            bitrate_bps,
-            sample_rate_hz,
-            channels,
-            prefer_vbr: false,
-        }
-    }
-
-    #[test]
-    fn configure_output_defaults_bitrate_to_192_kbps_when_unset() {
-        let output = configure_output(
-            Output::with_callback(|_| 0),
-            AudioFormat::Mp3,
-            AudioCodec::Mp3,
-            &policy_passthrough(None, None, None),
-        );
-        assert_eq!(output.configured_audio_bitrate_kbps(), Some(192));
-        assert_eq!(output.configured_sample_rate_hz(), None);
-        assert_eq!(output.configured_channels(), None);
-    }
-
-    #[test]
-    fn configure_output_applies_supplied_bitrate_sample_rate_and_channels() {
-        let output = configure_output(
-            Output::with_callback(|_| 0),
-            AudioFormat::Opus,
-            AudioCodec::Opus,
-            &policy_passthrough(Some(96_000), Some(48_000), Some(2)),
-        );
-        assert_eq!(output.configured_audio_bitrate_kbps(), Some(96));
-        assert_eq!(output.configured_sample_rate_hz(), Some(48_000));
-        assert_eq!(output.configured_channels(), Some(2));
-    }
-
-    #[test]
-    fn configure_output_rounds_bitrate_upward_to_the_nearest_kbps() {
-        let output = configure_output(
-            Output::with_callback(|_| 0),
-            AudioFormat::Mp3,
-            AudioCodec::Mp3,
-            &policy_passthrough(Some(127_500), None, None),
-        );
-        assert_eq!(output.configured_audio_bitrate_kbps(), Some(128));
-    }
-
-    #[test]
-    fn configure_output_uses_vbr_when_preferred() {
-        let output = configure_output(
-            Output::with_callback(|_| 0),
-            AudioFormat::Mp3,
-            AudioCodec::Mp3,
-            &super::TranscodePolicy {
-                bitrate_bps: Some(192_000),
-                sample_rate_hz: None,
-                channels: Some(2),
-                prefer_vbr: true,
-            },
-        );
-        assert_eq!(output.configured_audio_global_quality(), Some(2));
-        assert_eq!(output.configured_audio_bitrate_kbps(), None);
-    }
-
-    #[test]
-    fn policy_rejects_zero_bitrate() {
-        let err = super::apply_transcode_policy(Some(0), None, None, None, AudioCodec::Mp3, None)
-            .expect_err("bitrate_bps=0 must fail fast, not silently fall back to the default");
-        assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
-    }
-
-    #[test]
-    fn policy_rejects_zero_sample_rate() {
-        let err = super::apply_transcode_policy(None, Some(0), None, None, AudioCodec::Mp3, None)
-            .expect_err("sample_rate_hz=0 must fail fast");
-        assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
-    }
-
-    #[test]
-    fn policy_rejects_zero_channels() {
-        let err = super::apply_transcode_policy(None, None, Some(0), None, AudioCodec::Mp3, None)
-            .expect_err("channels=0 must fail fast");
-        assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
-    }
-
-    #[test]
-    fn policy_clamps_bitrate_below_codec_minimum() {
-        let policy =
-            super::apply_transcode_policy(Some(1), None, None, None, AudioCodec::Mp3, None)
-                .expect("below-minimum bitrate should clamp, not reject");
-        assert_eq!(
-            policy.bitrate_bps,
-            Some(AudioCodec::Mp3.min_bitrate_bps().unwrap())
-        );
-    }
-
-    #[test]
-    fn policy_drops_bitrate_cap_for_lossless_codec() {
-        let policy =
-            super::apply_transcode_policy(Some(96_000), None, None, None, AudioCodec::Flac, None)
-                .expect("lossless codec ignores bitrate cap");
-        assert_eq!(
-            policy.bitrate_bps, None,
-            "flac output must drop the bitrate cap entirely rather than advertise a cap it cannot honor"
-        );
-    }
-
-    #[test]
-    fn policy_rewrites_opus_sample_rate_to_native_48000() {
-        let policy =
-            super::apply_transcode_policy(None, Some(44_100), None, None, AudioCodec::Opus, None)
-                .expect("opus substitutes non-48kHz sample rates");
-        assert_eq!(
-            policy.sample_rate_hz,
-            Some(48_000),
-            "opus substitutes internally; advertise what we deliver"
-        );
-    }
-
-    #[test]
-    fn policy_passes_matching_opus_sample_rate_through() {
-        let policy =
-            super::apply_transcode_policy(None, Some(48_000), None, None, AudioCodec::Opus, None)
-                .expect("48kHz request for opus should pass through");
-        assert_eq!(policy.sample_rate_hz, Some(48_000));
-    }
-
-    #[test]
-    fn policy_passes_bitrate_through_when_source_unknown() {
-        let policy =
-            super::apply_transcode_policy(Some(192_000), None, None, None, AudioCodec::Mp3, None)
-                .expect("source_bitrate_bps=None must not block the cap");
-        assert_eq!(
-            policy.bitrate_bps,
-            Some(192_000),
-            "when source bitrate is unknown, the requested cap flows through untouched"
-        );
-    }
-
-    #[test]
-    fn policy_drops_bitrate_cap_above_source_bitrate() {
-        let policy = super::apply_transcode_policy(
-            Some(320_000),
-            None,
-            None,
-            None,
-            AudioCodec::Mp3,
-            Some(128_000),
-        )
-        .expect("cap above source should not inflate quality");
-        assert_eq!(
-            policy.bitrate_bps, None,
-            "a 320 kbps cap on a 128 kbps source should drop to no cap so we don't upsample quality"
-        );
-    }
-
-    #[test]
-    fn policy_retains_bitrate_cap_below_source_bitrate() {
-        let policy = super::apply_transcode_policy(
-            Some(96_000),
-            None,
-            None,
-            None,
-            AudioCodec::Mp3,
-            Some(320_000),
-        )
-        .expect("legitimate cap below source should pass through");
-        assert_eq!(policy.bitrate_bps, Some(96_000));
-    }
-
-    #[test]
-    fn policy_preserves_untouched_knobs_for_lossy_passthrough_values() {
-        let policy = super::apply_transcode_policy(
-            Some(128_000),
-            Some(44_100),
-            Some(2),
-            None,
-            AudioCodec::Mp3,
-            None,
-        )
-        .expect("in-range lossy values should pass through");
-        assert_eq!(policy.bitrate_bps, Some(128_000));
-        assert_eq!(policy.sample_rate_hz, Some(44_100));
-        assert_eq!(policy.channels, Some(2));
-    }
-
-    #[test]
-    fn validate_request_parses_ordered_codec_preferences() {
-        let validated = validate_request(
-            Some("webm".to_string()),
-            Some("copy, opus,vorbis".to_string()),
-        )
-        .expect("ordered codec preferences should parse");
-        assert_eq!(validated.format, Some(AudioFormat::Webm));
-        assert_eq!(
-            validated.preferred_codecs,
-            vec![AudioCodec::Copy, AudioCodec::Opus, AudioCodec::Vorbis]
-        );
-    }
-
-    #[test]
-    fn resolve_output_format_uses_next_preference_when_copy_is_disallowed() {
-        let entry_path = Path::new("track.flac");
-        let preferred_codecs = vec![AudioCodec::Copy, AudioCodec::Opus];
-        assert_eq!(
-            resolve_output_format(
-                None,
-                &preferred_codecs,
-                Some(AudioFormat::Flac),
-                entry_path,
-                true
-            )
-            .expect("copy-allowed output format"),
-            AudioFormat::Flac
-        );
-        assert_eq!(
-            resolve_output_format(
-                None,
-                &preferred_codecs,
-                Some(AudioFormat::Flac),
-                entry_path,
-                false
-            )
-            .expect("copy-disallowed output format"),
-            AudioFormat::Opus
-        );
-    }
-
-    #[test]
-    fn resolve_codec_matches_first_compatible_codec_for_requested_format() {
-        let preferred_codecs = vec![AudioCodec::Opus, AudioCodec::Flac];
-        let codec = resolve_codec(
-            &preferred_codecs,
-            AudioFormat::Ogg,
-            Some(AudioFormat::Flac),
-            true,
-        )
-        .expect("first compatible codec should be selected");
-        assert_eq!(codec, AudioCodec::Opus);
-    }
-
-    #[test]
-    fn resolve_codec_accepts_24_bit_pcm_for_wav() {
-        let preferred_codecs = vec![AudioCodec::PcmS24Le];
-        let codec = resolve_codec(
-            &preferred_codecs,
-            AudioFormat::Wav,
-            Some(AudioFormat::Flac),
-            true,
-        )
-        .expect("24-bit PCM should be valid for wav");
-        assert_eq!(codec, AudioCodec::PcmS24Le);
-    }
-
-    #[test]
-    fn resolve_codec_rejects_incompatible_requested_codec_list() {
-        let err = resolve_codec(
-            &[AudioCodec::Copy],
-            AudioFormat::Mp3,
-            Some(AudioFormat::Flac),
-            false,
-        )
-        .expect_err("copy cannot satisfy an explicit mp3 transcode request");
-        assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
-    }
-
-    #[test]
-    fn resolve_codec_prefers_copy_for_matching_mp3_source_before_transcoding() {
-        let codec = resolve_codec(
-            &[AudioCodec::Copy, AudioCodec::Mp3],
-            AudioFormat::Mp3,
-            Some(AudioFormat::Mp3),
-            true,
-        )
-        .expect("mp3 source should preserve copy before mp3 transcode");
-        assert_eq!(codec, AudioCodec::Copy);
-    }
-
-    #[test]
-    fn resolve_codec_falls_back_to_mp3_transcode_when_source_is_not_mp3() {
-        let codec = resolve_codec(
-            &[AudioCodec::Copy, AudioCodec::Mp3],
-            AudioFormat::Mp3,
-            Some(AudioFormat::Flac),
-            true,
-        )
-        .expect("non-mp3 source should fall back to mp3 transcode");
-        assert_eq!(codec, AudioCodec::Mp3);
     }
 
     #[test]
@@ -1351,19 +774,20 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn stream_forces_transcode_when_knob_supplied_with_matching_format() -> anyhow::Result<()>
+    async fn stream_forces_transcode_when_a_knob_asks_for_a_downward_change() -> anyhow::Result<()>
     {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
         let track_id = prepare_streamable_track(&test_dir).await?;
         let headers = HeaderMap::new();
 
+        // The fixture is 44.1 kHz, so 22.05 kHz is a real downsample.
         let response = super::stream::stream_track_response(
             &headers,
             agdb::DbId(track_id),
             ServeTrackOptions {
                 format: Some("flac".to_string()),
-                sample_rate_hz: Some(48_000),
+                sample_rate_hz: Some(22_050),
                 ..ServeTrackOptions::default()
             },
         )
@@ -1377,7 +801,7 @@ mod tests {
                 .get(axum::http::header::ACCEPT_RANGES)
                 .and_then(|v| v.to_str().ok()),
             Some("none"),
-            "a sample-rate knob alone must still force the transcoded (chunked) path even when the output format matches the source"
+            "a sample-rate knob below the source must force the transcoded (chunked) path even when the output format matches the source"
         );
         assert_eq!(
             response
@@ -1386,6 +810,45 @@ mod tests {
                 .and_then(|v| v.to_str().ok()),
             Some("chunked"),
         );
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stream_keeps_direct_copy_when_knobs_ask_for_no_downward_change() -> anyhow::Result<()>
+    {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = HeaderMap::new();
+
+        // The fixture is 44.1 kHz mono. Asking for exactly that, or for more, asks for no
+        // change we are willing to make, so the knobs must not destroy the passthrough.
+        for (sample_rate_hz, channels) in [(44_100, 1), (48_000, 2)] {
+            let response = super::stream::stream_track_response(
+                &headers,
+                agdb::DbId(track_id),
+                ServeTrackOptions {
+                    format: Some("flac".to_string()),
+                    sample_rate_hz: Some(sample_rate_hz),
+                    channels: Some(channels),
+                    ..ServeTrackOptions::default()
+                },
+            )
+            .await
+            .map_err(|err| anyhow::anyhow!("stream failed: {err:?}"))?;
+
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response
+                    .headers()
+                    .get(axum::http::header::ACCEPT_RANGES)
+                    .and_then(|v| v.to_str().ok()),
+                Some("bytes"),
+                "sample_rate_hz={sample_rate_hz} channels={channels} asks for no downsample or downmix, so the source must still be served byte-exact"
+            );
+        }
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
