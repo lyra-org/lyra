@@ -289,6 +289,24 @@ impl AudioCodec {
         }
     }
 
+    /// Returns a hard encoder bitrate ceiling when the selected encoder has one.
+    pub fn max_bitrate_bps(&self, channels: u32) -> Option<u32> {
+        match self {
+            Self::Opus => Some(256_000_u32.saturating_mul(channels.max(1))),
+            Self::Mp3
+            | Self::Aac
+            | Self::Vorbis
+            | Self::Wma
+            | Self::Flac
+            | Self::Alac
+            | Self::PcmS16Le
+            | Self::PcmS16Be
+            | Self::PcmS24Le
+            | Self::PcmS24Be
+            | Self::Copy => None,
+        }
+    }
+
     pub fn native_sample_rate_hz(&self) -> Option<u32> {
         match self {
             Self::Opus => Some(48_000),
@@ -378,6 +396,14 @@ mod tests {
             AudioCodec::PcmS24Be.preferred_format(),
             Some(AudioFormat::Aiff)
         );
+    }
+
+    #[test]
+    fn opus_maximum_bitrate_scales_with_channel_count() {
+        assert_eq!(AudioCodec::Opus.max_bitrate_bps(0), Some(256_000));
+        assert_eq!(AudioCodec::Opus.max_bitrate_bps(1), Some(256_000));
+        assert_eq!(AudioCodec::Opus.max_bitrate_bps(2), Some(512_000));
+        assert_eq!(AudioCodec::Mp3.max_bitrate_bps(2), None);
     }
 
     #[test]

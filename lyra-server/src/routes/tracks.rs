@@ -659,46 +659,66 @@ fn build_download_url(id: &str, token: &str, query: &PlaybackUrlQuery) -> String
     build_media_url(format!("/api/download/{id}"), pairs)
 }
 
-fn validate_playback_url_query(query: &PlaybackUrlQuery) -> Result<(), AppError> {
-    if matches!(query.bitrate_bps, Some(0)) {
-        return Err(AppError::bad_request(
-            "bitrate_bps must be greater than zero",
-        ));
+fn playback_transcode_knobs(query: &PlaybackUrlQuery) -> super::serve::TranscodeKnobs {
+    super::serve::TranscodeKnobs {
+        bitrate_bps: query.bitrate_bps,
+        sample_rate_hz: query.sample_rate_hz,
+        channels: query.channels,
+        prefer_vbr: query.prefer_vbr,
     }
-    if matches!(query.sample_rate_hz, Some(0)) {
-        return Err(AppError::bad_request(
-            "sample_rate_hz must be greater than zero",
-        ));
-    }
-    if matches!(query.channels, Some(0)) {
-        return Err(AppError::bad_request("channels must be greater than zero"));
-    }
-
-    Ok(())
 }
 
-fn validate_playback_url_output(
+// Runs before `require_authenticated`, so zero-value rejections stay 400 instead of
+// becoming 401. The decision domain remains the single authority for the validation.
+fn validate_playback_url_query(query: &PlaybackUrlQuery) -> Result<(), AppError> {
+    playback_transcode_knobs(query).validate().map(|_| ())
+}
+
+/// Which transports can serve this request.
+///
+/// HLS is not represented because it always survives: the playlist handler
+/// transcodes whatever the source is, and a codec it cannot honor is rejected
+/// here as a request error rather than as an absent transport.
+#[derive(Debug)]
+struct PlaybackTransports {
+    stream: bool,
+}
+
+/// Resolves the request once against the source and reports which transports can
+/// carry it.
+///
+/// Request-level failures — unparseable or incompatible `format`/`codec`/
+/// `hls_codec`, a start offset past the source, a codec that cannot produce the
+/// requested container — fail the whole request. Only transport *capability*
+/// outcomes, such as a container that cannot be streamed, remove a transport.
+fn resolve_playback_transports(
     query: &PlaybackUrlQuery,
-    source: &super::serve::ValidatedTrackSource,
-) -> Result<(), AppError> {
+    source: super::serve::ValidatedTrackSource,
+) -> Result<PlaybackTransports, AppError> {
     let stream_request = super::serve::validate_request(query.format.clone(), query.codec.clone())?;
-    let stream_format = super::serve::resolve_output_format(
-        stream_request.format,
-        &stream_request.preferred_codecs,
-        source.entry_format,
-        &source.full_path,
-        true,
+    let source = super::serve::apply_request_start_offset(source, query.start_offset_ms)?;
+    let knobs = playback_transcode_knobs(query);
+
+    // `Download` here means "no transport constraint": it resolves the request without
+    // rejecting containers that only /api/download can carry, so streamability becomes an
+    // availability answer instead of a whole-request failure. Every other way the request
+    // can fail still fails it, for every transport.
+    let decision = super::serve::resolve_delivery(
+        &stream_request,
+        &source,
+        knobs,
+        super::serve::DeliveryTarget::Download,
     )?;
-    if !stream_format.supports_streaming() {
-        return Err(AppError::bad_request(format!(
-            "Format '{}' does not support streaming. Use /api/download or choose a streamable format (mp3, flac, wav, ogg, webm, aac, opus, aiff).",
-            stream_format.extension()
-        )));
-    }
 
-    super::serve::validate_request(None, query.hls_codec.clone())?;
+    // Parsed last so an unusable hls_codec never outranks a stream-request error, then
+    // checked against the real profile so an hls_url is only minted when the playlist
+    // handler would answer the same way.
+    let hls_request = super::serve::validate_request(None, query.hls_codec.clone())?;
+    super::serve::resolve_hls_profile(&source, &hls_request, knobs)?;
 
-    Ok(())
+    Ok(PlaybackTransports {
+        stream: decision.output_format.supports_streaming(),
+    })
 }
 
 async fn create_track_playback_url(
@@ -723,11 +743,22 @@ async fn create_track_playback_url(
     };
 
     let source = super::serve::validate_and_get_track_source(track_db_id).await?;
-    validate_playback_url_output(&query, &source)?;
+    let transports = resolve_playback_transports(&query, source)?;
 
-    let stream_token = issue_media_token(track_db_id, MediaTokenPurpose::Stream);
+    // HLS always survives, which is what keeps `expires_at` total and the response
+    // non-empty; tokens for the other transports are only minted when they are usable.
     let hls_token = issue_media_token(track_db_id, MediaTokenPurpose::HlsPlaylist);
-    let mut expires_at = stream_token.expires_at.min(hls_token.expires_at);
+    let mut expires_at = hls_token.expires_at;
+    let hls_url = build_hls_url(&id, &hls_token.token, &query);
+
+    let stream_url = if transports.stream {
+        let stream_token = issue_media_token(track_db_id, MediaTokenPurpose::Stream);
+        expires_at = expires_at.min(stream_token.expires_at);
+        Some(build_stream_url(&id, &stream_token.token, &query))
+    } else {
+        None
+    };
+
     let download_url = if require_permission(&principal, db::Permission::Download).is_ok() {
         let download_token = issue_media_token(track_db_id, MediaTokenPurpose::Download);
         expires_at = expires_at.min(download_token.expires_at);
@@ -737,8 +768,8 @@ async fn create_track_playback_url(
     };
 
     Ok(Json(PlaybackUrlResponse {
-        stream_url: build_stream_url(&id, &stream_token.token, &query),
-        hls_url: build_hls_url(&id, &hls_token.token, &query),
+        stream_url,
+        hls_url,
         download_url,
         expires_at: super::unix_secs_to_rfc3339_i64(expires_at),
         idle_expires_after_seconds: MEDIA_TOKEN_IDLE_TTL_SECONDS,
@@ -858,9 +889,20 @@ struct PlaybackUrlQuery {
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 struct PlaybackUrlResponse {
-    stream_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(
+            description = "Absent when the resolved container cannot be streamed (m4a, alac, caf)."
+        )
+    )]
+    stream_url: Option<String>,
     hls_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "docgen",
+        schemars(description = "Absent when the caller lacks download permission.")
+    )]
     download_url: Option<String>,
     #[cfg_attr(
         feature = "docgen",
@@ -880,8 +922,18 @@ fn create_track_playback_url_docs(op: TransformOperation) -> TransformOperation 
         "Returns browser-friendly stream and HLS URLs containing scoped media tokens for the track. \
          The caller must authenticate with a bearer session token or API key and have access to the \
          track. Returned media tokens are limited to this track and endpoint purpose, expire after \
-         a fixed maximum lifetime, and also expire after an idle period. `download_url` is included \
-         only when the caller has download permission.",
+         a fixed maximum lifetime, and also expire after an idle period.\n\n\
+         The request is resolved once against the track's source, and a transport is omitted when \
+         it cannot carry the result. `stream_url` is omitted when the final resolved container does \
+         not support streaming (m4a, alac, caf); use `hls_url` or `download_url` instead. \
+         `download_url` is omitted when the caller lacks download permission. `hls_url` is always \
+         present: HLS transcodes any source, and a track whose duration is not yet known returns a \
+         retryable 503 from the playlist endpoint rather than being omitted here. A token is minted \
+         only for a transport that is present, and `expires_at` is the earliest expiry among them.\n\n\
+         Problems with the request itself are still errors rather than omissions: an unsupported or \
+         unparseable `format`, `codec`, or `hls_codec`, a zero-valued knob, a `start_offset_ms` past \
+         the end of the source, and a `codec` that cannot produce the requested `format` all return \
+         400.",
     )
 }
 
@@ -1592,6 +1644,161 @@ mod tests {
         assert!(url.contains("prefer_vbr=true"));
         assert!(url.contains("start_offset_ms=12345"));
         assert!(!url.contains("hls_codec"));
+    }
+
+    fn playback_url_query(
+        format: Option<&str>,
+        codec: Option<&str>,
+        hls_codec: Option<&str>,
+    ) -> PlaybackUrlQuery {
+        PlaybackUrlQuery {
+            format: format.map(str::to_string),
+            codec: codec.map(str::to_string),
+            hls_codec: hls_codec.map(str::to_string),
+            bitrate_bps: None,
+            sample_rate_hz: None,
+            channels: None,
+            prefer_vbr: None,
+            start_offset_ms: None,
+        }
+    }
+
+    fn flac_playback_source() -> crate::routes::serve::ValidatedTrackSource {
+        crate::routes::serve::ValidatedTrackSource {
+            source_id: DbId(2),
+            source_public_id: "source-pub".to_string(),
+            track_public_id: "track-pub".to_string(),
+            input_path: "track.flac".to_string(),
+            entry_format: Some(lyra_ffmpeg::AudioFormat::Flac),
+            source_codec: Some(lyra_ffmpeg::AudioCodec::Flac),
+            full_path: std::path::PathBuf::from("track.flac"),
+            duration_ms: Some(20_000),
+            start_ms: None,
+            end_ms: None,
+            source_bitrate_bps: Some(900_000),
+            source_sample_rate_hz: Some(96_000),
+            source_channels: Some(2),
+        }
+    }
+
+    #[test]
+    fn resolve_playback_transports_accepts_a_resolvable_stream_request() {
+        let transports = resolve_playback_transports(
+            &playback_url_query(Some("mp3"), None, None),
+            flac_playback_source(),
+        )
+        .expect("a plain mp3 transcode request stays valid");
+        assert!(transports.stream);
+    }
+
+    #[test]
+    fn resolve_playback_transports_rejects_copy_that_cannot_produce_the_requested_format() {
+        // Deliberate widening: this used to pass validation and hand back a stream_url that
+        // failed with this exact status and message on the first GET. Fail fast instead.
+        let err = resolve_playback_transports(
+            &playback_url_query(Some("mp3"), Some("copy"), None),
+            flac_playback_source(),
+        )
+        .expect_err("copy cannot produce mp3 from a flac source");
+        assert_eq!(
+            format!("{err:?}"),
+            "AppError(400 Bad Request: Requested codecs [copy] are not compatible with \
+             format 'mp3'. Supported codecs: [mp3])"
+        );
+    }
+
+    #[test]
+    fn resolve_playback_transports_omits_stream_for_non_streamable_formats() {
+        // Previously a whole-request 400. A non-streamable container is a transport
+        // capability answer, not a bad request: hls and download still work.
+        let transports = resolve_playback_transports(
+            &playback_url_query(Some("m4a"), None, None),
+            flac_playback_source(),
+        )
+        .expect("m4a is downloadable even though it cannot be streamed");
+        assert!(!transports.stream);
+    }
+
+    #[test]
+    fn resolve_playback_transports_omits_stream_for_non_streamable_sources() {
+        // The live bug: with no query parameters at all, an m4a track used to 400 outright.
+        let mut source = flac_playback_source();
+        source.entry_format = Some(lyra_ffmpeg::AudioFormat::M4a);
+        source.source_codec = Some(lyra_ffmpeg::AudioCodec::Alac);
+        source.input_path = "track.m4a".to_string();
+        source.full_path = std::path::PathBuf::from("track.m4a");
+
+        let transports = resolve_playback_transports(&playback_url_query(None, None, None), source)
+            .expect("an m4a source must still yield hls and download urls");
+        assert!(!transports.stream);
+    }
+
+    #[test]
+    fn resolve_playback_transports_answers_the_question_the_stream_endpoint_asks() {
+        // With `codec=copy,<x>` and a surviving knob, the provisional copy container and
+        // final transcode container differ. The minted URL must follow the final answer.
+        let downmix = |codec: &str| PlaybackUrlQuery {
+            channels: Some(1),
+            ..playback_url_query(None, Some(codec), None)
+        };
+
+        let mut m4a = flac_playback_source();
+        m4a.entry_format = Some(lyra_ffmpeg::AudioFormat::M4a);
+        m4a.source_codec = Some(lyra_ffmpeg::AudioCodec::Alac);
+        let transports = resolve_playback_transports(&downmix("copy,mp3"), m4a)
+            .expect("the request is fine for download");
+        assert!(
+            transports.stream,
+            "the final mp3 container is streamable, so a stream_url should be minted"
+        );
+
+        let mut mp3 = flac_playback_source();
+        mp3.entry_format = Some(lyra_ffmpeg::AudioFormat::Mp3);
+        mp3.source_codec = Some(lyra_ffmpeg::AudioCodec::Mp3);
+        let transports = resolve_playback_transports(&downmix("copy,aac"), mp3)
+            .expect("the request is fine for download");
+        assert!(
+            !transports.stream,
+            "the final m4a container is not streamable, so no stream_url should be minted"
+        );
+    }
+
+    #[test]
+    fn resolve_playback_transports_rejects_an_hls_codec_the_playlist_cannot_honor() {
+        // opus parses as a codec name but has no HLS profile, so the minted hls_url would
+        // have failed at GET time with this same message.
+        let err = resolve_playback_transports(
+            &playback_url_query(None, None, Some("opus")),
+            flac_playback_source(),
+        )
+        .expect_err("opus is not an HLS codec");
+        assert_eq!(
+            format!("{err:?}"),
+            "AppError(400 Bad Request: Unsupported HLS codec. Supported values: copy, aac, alac, flac.)"
+        );
+    }
+
+    #[test]
+    fn resolve_playback_transports_accepts_hls_copy_for_a_copyable_source() {
+        let transports = resolve_playback_transports(
+            &playback_url_query(None, None, Some("copy")),
+            flac_playback_source(),
+        )
+        .expect("a flac source can be segmented by stream copy");
+        assert!(transports.stream);
+    }
+
+    #[test]
+    fn resolve_playback_transports_reports_stream_request_errors_before_hls_codec_errors() {
+        let err = resolve_playback_transports(
+            &playback_url_query(Some("mp3"), Some("copy"), Some("opus")),
+            flac_playback_source(),
+        )
+        .expect_err("both are broken");
+        assert!(
+            format!("{err:?}").contains("are not compatible with format 'mp3'"),
+            "the stream request error must keep outranking the hls codec error"
+        );
     }
 }
 

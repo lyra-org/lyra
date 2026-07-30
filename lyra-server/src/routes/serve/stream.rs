@@ -24,7 +24,6 @@ use axum::{
 };
 use bytes::Bytes;
 use lyra_ffmpeg::{
-    AudioCodec,
     FfmpegContext,
     Output,
     SeekRequest,
@@ -50,13 +49,12 @@ use tokio::sync::{
 use crate::routes::AppError;
 
 use super::{
+    DeliveryTarget,
     ServeTrackOptions,
+    TranscodeKnobs,
     apply_request_start_offset,
-    apply_transcode_policy,
-    configure_output,
     file_response,
-    resolve_codec,
-    resolve_output_format,
+    resolve_delivery,
     validate_and_get_track_source,
     validate_request,
 };
@@ -171,77 +169,20 @@ pub(crate) async fn stream_track_response(
         start_offset_ms,
     )?;
 
-    let initial_output_format = resolve_output_format(
-        validated.format,
-        &validated.preferred_codecs,
-        source.entry_format,
-        &source.full_path,
-        true,
+    let delivery = resolve_delivery(
+        &validated,
+        &source,
+        TranscodeKnobs {
+            bitrate_bps,
+            sample_rate_hz,
+            channels,
+            prefer_vbr,
+        },
+        DeliveryTarget::Stream,
     )?;
 
-    if !initial_output_format.supports_streaming() {
-        return Err(AppError::bad_request(format!(
-            "Format '{}' does not support streaming. Use /download endpoint or choose a streamable format (mp3, flac, wav, ogg, webm, aac, opus, aiff).",
-            initial_output_format.extension()
-        )));
-    }
-
-    let initial_codec = resolve_codec(
-        &validated.preferred_codecs,
-        initial_output_format,
-        source.entry_format,
-        true,
-    )?;
-    let provisional_output_format = if matches!(initial_codec, AudioCodec::Copy) {
-        resolve_output_format(
-            validated.format,
-            &validated.preferred_codecs,
-            source.entry_format,
-            &source.full_path,
-            false,
-        )?
-    } else {
-        initial_output_format
-    };
-    let provisional_codec = if matches!(initial_codec, AudioCodec::Copy) {
-        resolve_codec(
-            &validated.preferred_codecs,
-            provisional_output_format,
-            source.entry_format,
-            false,
-        )?
-    } else {
-        initial_codec
-    };
-    let policy = apply_transcode_policy(
-        bitrate_bps,
-        sample_rate_hz,
-        channels,
-        prefer_vbr,
-        provisional_codec,
-        source.source_bitrate_bps,
-    )?;
-    let forcing_transcode = policy.bitrate_bps.is_some()
-        || policy.sample_rate_hz.is_some()
-        || policy.channels.is_some();
-
-    let mut output_format = initial_output_format;
-    let mut codec = initial_codec;
-    if (source.start_ms.is_some() || source.end_ms.is_some() || forcing_transcode)
-        && matches!(codec, AudioCodec::Copy)
-    {
-        output_format = provisional_output_format;
-        codec = provisional_codec;
-    }
-    let output_mime = output_format.mime_type(true);
-
-    if matches!(codec, AudioCodec::Copy)
-        && source.entry_format == Some(output_format)
-        && source.start_ms.is_none()
-        && source.end_ms.is_none()
-        && !forcing_transcode
-    {
-        return file_response(&source.full_path, output_mime, headers).await;
+    if delivery.direct_passthrough {
+        return file_response(&source.full_path, delivery.content_type, headers).await;
     }
 
     let (sync_tx, sync_rx) = std_mpsc::sync_channel::<Vec<u8>>(1024);
@@ -277,7 +218,7 @@ pub(crate) async fn stream_track_response(
     let output = Output::with_callback(write_callback)
         .streaming()
         .set_seek_callback(seek_callback);
-    let output = configure_output(output, output_format, codec, &policy);
+    let output = delivery.configure_output(output);
 
     let context = FfmpegContext::builder()
         .input(source.input_path)
@@ -384,7 +325,7 @@ pub(crate) async fn stream_track_response(
     let body = Body::from_stream(stream);
 
     let response = Response::builder()
-        .header(header::CONTENT_TYPE, output_mime)
+        .header(header::CONTENT_TYPE, delivery.content_type)
         .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
         .header(header::TRANSFER_ENCODING, "chunked")
         .header(header::ACCEPT_RANGES, "none")

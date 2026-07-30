@@ -21,7 +21,6 @@ use axum::{
     },
 };
 use lyra_ffmpeg::{
-    AudioCodec,
     FfmpegContext,
     Output,
 };
@@ -30,13 +29,12 @@ use serde::Deserialize;
 use crate::routes::AppError;
 
 use super::{
+    DeliveryTarget,
     ServeTrackOptions,
+    TranscodeKnobs,
     apply_request_start_offset,
-    apply_transcode_policy,
-    configure_output,
     file_response,
-    resolve_codec,
-    resolve_output_format,
+    resolve_delivery,
     temp_file_response,
     temp_output_path,
     validate_and_get_track_source,
@@ -169,75 +167,25 @@ pub(crate) async fn download_track_response(
         start_offset_ms,
     )?;
 
-    let initial_output_format = resolve_output_format(
-        validated.format,
-        &validated.preferred_codecs,
-        source.entry_format,
-        &source.full_path,
-        true,
+    let delivery = resolve_delivery(
+        &validated,
+        &source,
+        TranscodeKnobs {
+            bitrate_bps,
+            sample_rate_hz,
+            channels,
+            prefer_vbr,
+        },
+        DeliveryTarget::Download,
     )?;
 
-    let initial_codec = resolve_codec(
-        &validated.preferred_codecs,
-        initial_output_format,
-        source.entry_format,
-        true,
-    )?;
-    let provisional_output_format = if matches!(initial_codec, AudioCodec::Copy) {
-        resolve_output_format(
-            validated.format,
-            &validated.preferred_codecs,
-            source.entry_format,
-            &source.full_path,
-            false,
-        )?
-    } else {
-        initial_output_format
-    };
-    let provisional_codec = if matches!(initial_codec, AudioCodec::Copy) {
-        resolve_codec(
-            &validated.preferred_codecs,
-            provisional_output_format,
-            source.entry_format,
-            false,
-        )?
-    } else {
-        initial_codec
-    };
-    let policy = apply_transcode_policy(
-        bitrate_bps,
-        sample_rate_hz,
-        channels,
-        prefer_vbr,
-        provisional_codec,
-        source.source_bitrate_bps,
-    )?;
-    let forcing_transcode = policy.bitrate_bps.is_some()
-        || policy.sample_rate_hz.is_some()
-        || policy.channels.is_some();
-
-    let mut output_format = initial_output_format;
-    let mut codec = initial_codec;
-    if (source.start_ms.is_some() || source.end_ms.is_some() || forcing_transcode)
-        && matches!(codec, AudioCodec::Copy)
-    {
-        output_format = provisional_output_format;
-        codec = provisional_codec;
-    }
-    let output_mime = output_format.mime_type(false);
-
-    if matches!(codec, AudioCodec::Copy)
-        && source.entry_format == Some(output_format)
-        && source.start_ms.is_none()
-        && source.end_ms.is_none()
-        && !forcing_transcode
-    {
-        return file_response(&source.full_path, output_mime, headers).await;
+    if delivery.direct_passthrough {
+        return file_response(&source.full_path, delivery.content_type, headers).await;
     }
 
-    let temp_path = temp_output_path(track_db_id, output_format);
+    let temp_path = temp_output_path(track_db_id, delivery.output_format);
     let temp_path_string = temp_path.to_string_lossy().into_owned();
-    let output = configure_output(Output::new(temp_path_string), output_format, codec, &policy);
+    let output = delivery.configure_output(Output::new(temp_path_string));
 
     let context = FfmpegContext::builder()
         .input(source.input_path)
@@ -260,7 +208,7 @@ pub(crate) async fn download_track_response(
         Ok(Ok(())) => {}
     }
 
-    let response = temp_file_response(&temp_path, output_mime, headers).await;
+    let response = temp_file_response(&temp_path, delivery.content_type, headers).await;
     if response.is_err() {
         let _ = tokio::fs::remove_file(&temp_path).await;
     }

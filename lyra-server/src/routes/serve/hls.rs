@@ -38,6 +38,7 @@ use crate::{
     db,
     routes::AppError,
     services::hls::{
+        HlsError,
         codec::{
             HLS_SEGMENT_TIME_SECONDS,
             HlsCodecProfile,
@@ -58,6 +59,8 @@ use crate::{
 use agdb::DbId;
 
 use super::{
+    TranscodeKnobs,
+    ValidatedRequest,
     apply_request_start_offset,
     apply_transcode_policy,
     file_response,
@@ -282,6 +285,44 @@ fn hls_copy_is_eligible_for_request(
     true
 }
 
+/// Picks the HLS codec profile for a request: stream copy when the source can be
+/// segmented untouched, otherwise the requested (or default AAC) encoder.
+///
+/// `POST /api/tracks/{id}/playback-url` calls this at mint time so an `hls_url`
+/// is only handed out when the same question answers the same way at GET time.
+pub(crate) fn resolve_hls_profile(
+    source: &super::ValidatedTrackSource,
+    validated: &ValidatedRequest,
+    knobs: TranscodeKnobs,
+) -> Result<HlsCodecProfile, HlsError> {
+    let copy_requested = validated
+        .preferred_codecs
+        .iter()
+        .any(|codec| matches!(codec, lyra_ffmpeg::AudioCodec::Copy));
+    let requested_hls_codec = validated
+        .preferred_codecs
+        .iter()
+        .copied()
+        .find(|codec| !matches!(codec, lyra_ffmpeg::AudioCodec::Copy));
+
+    if hls_copy_is_eligible_for_request(
+        source,
+        copy_requested,
+        requested_hls_codec,
+        knobs.bitrate_bps,
+        knobs.sample_rate_hz,
+        knobs.channels,
+    ) {
+        return HlsCodecProfile::for_copy_source(
+            source
+                .source_codec
+                .expect("copy eligibility requires an inferred source codec"),
+        );
+    }
+
+    HlsCodecProfile::from_requested_codecs(&validated.preferred_codecs)
+}
+
 fn resolve_hls_audio_bitrate_kbps(
     profile: HlsCodecProfile,
     bitrate_bps: Option<u32>,
@@ -396,40 +437,17 @@ pub(crate) async fn serve_hls_playlist_for_track(
                 AppError::service_unavailable("HLS requires a known positive track duration")
             })?;
     let validated = validate_request(None, codec)?;
-    let copy_requested = validated
-        .preferred_codecs
-        .iter()
-        .any(|codec| matches!(codec, lyra_ffmpeg::AudioCodec::Copy));
-    let requested_hls_codec = validated
-        .preferred_codecs
-        .iter()
-        .copied()
-        .find(|codec| !matches!(codec, lyra_ffmpeg::AudioCodec::Copy));
-    let profile = if hls_copy_is_eligible_for_request(
-        &source,
-        copy_requested,
-        requested_hls_codec,
-        bitrate_bps,
-        sample_rate_hz,
-        channels,
-    ) {
-        HlsCodecProfile::for_copy_source(
-            source
-                .source_codec
-                .expect("copy eligibility requires an inferred source codec"),
-        )?
-    } else {
-        HlsCodecProfile::from_requested_codecs(&validated.preferred_codecs)?
-    };
-    let policy = apply_transcode_policy(
+    let knobs = TranscodeKnobs {
         bitrate_bps,
         sample_rate_hz,
         channels,
         prefer_vbr,
-        profile.codec,
-        source.source_bitrate_bps,
-    )?;
-    let audio_bitrate_kbps = resolve_hls_audio_bitrate_kbps(profile, policy.bitrate_bps);
+    };
+    let profile = resolve_hls_profile(&source, &validated, knobs)?;
+    let policy = apply_transcode_policy(knobs, profile.codec, (&source).into())?;
+    // The encoder-side value, not the constraining cap: a cap dropped for asking at or
+    // above the source must still target the source rather than the HLS default.
+    let audio_bitrate_kbps = resolve_hls_audio_bitrate_kbps(profile, policy.encoder_bitrate_bps);
     let output_sample_rate_hz = if profile.is_copy {
         None
     } else {
@@ -614,6 +632,47 @@ pub(crate) fn hls_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hls_transcode_bitrate_follows_the_source_when_a_cap_is_dropped() {
+        let profile = HlsCodecProfile::from_requested(Some(lyra_ffmpeg::AudioCodec::Aac))
+            .expect("aac is an hls profile");
+        // A lossy source: only then is its bitrate a target the encoder should pin to.
+        let source = super::super::decision::SourceAudio {
+            bitrate_bps: Some(96_000),
+            lossy: true,
+            ..super::super::decision::SourceAudio::default()
+        };
+
+        // A cap at the source is dropped, but the encoder must still target 96 kbps rather
+        // than falling back to the 192 kbps HLS default.
+        let policy = apply_transcode_policy(
+            TranscodeKnobs {
+                bitrate_bps: Some(96_000),
+                ..TranscodeKnobs::default()
+            },
+            profile.codec,
+            source,
+        )
+        .expect("policy");
+        assert_eq!(policy.bitrate_bps, None);
+        assert_eq!(
+            resolve_hls_audio_bitrate_kbps(profile, policy.encoder_bitrate_bps),
+            Some(96),
+        );
+
+        // With no cap at all the default still applies.
+        let policy = apply_transcode_policy(TranscodeKnobs::default(), profile.codec, source)
+            .expect("policy");
+        assert_eq!(
+            resolve_hls_audio_bitrate_kbps(profile, policy.encoder_bitrate_bps),
+            Some(crate::services::hls::codec::HLS_AUDIO_BITRATE_KBPS),
+        );
+
+        // A stream-copy profile still carries no bitrate.
+        let copy = HlsCodecProfile::for_copy_source(lyra_ffmpeg::AudioCodec::Aac).expect("copy");
+        assert_eq!(resolve_hls_audio_bitrate_kbps(copy, Some(96_000)), None);
+    }
     use crate::services::hls::state::{
         HlsJobKey,
         HlsSession,
@@ -719,7 +778,9 @@ mod tests {
 
     #[tokio::test]
     async fn get_hls_segment_allows_public_session_without_auth_header() {
+        let _runtime_guard = crate::testing::runtime_test_lock().await;
         let _guard = HLS_TEST_MUTEX.lock().await;
+        crate::services::shutdown::reset();
         reset_hls_state_for_test().await;
 
         let track_public_id = "track-pub-812".to_string();
