@@ -34,6 +34,14 @@ pub(crate) struct PlaybackSessionScope {
     /// Set on command dispatch, cleared on any scope upsert (including
     /// non-state-changing reports). Scope is degraded if this exceeds the timeout.
     pub(crate) command_dispatched_at_ms: Option<u64>,
+    pub(crate) current_binding_epoch: u64,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CurrentBindingSnapshot {
+    pub(crate) playback_session_id: DbId,
+    pub(crate) playback_session_public_id: String,
+    pub(crate) epoch: u64,
 }
 
 pub(crate) struct PlaybackScopeKey<'a> {
@@ -126,6 +134,7 @@ pub(crate) fn upsert_playback_session(
             previous_expires_at_ms: None,
             updated_at_ms: now_ms,
             command_dispatched_at_ms: None,
+            current_binding_epoch: 0,
         });
     entry.clone()
 }
@@ -150,10 +159,12 @@ pub(crate) fn bind_current_playback_session_scope(
         previous_expires_at_ms: None,
         updated_at_ms: now_ms,
         command_dispatched_at_ms: None,
+        current_binding_epoch: 0,
     });
 
     entry.updated_at_ms = now_ms;
     entry.command_dispatched_at_ms = None;
+    entry.current_binding_epoch = entry.current_binding_epoch.wrapping_add(1);
 
     if entry.current_playback_session_id == Some(playback_session_id) {
         entry.current_playback_session_public_id = Some(playback_session_public_id);
@@ -249,6 +260,64 @@ pub(crate) fn clear_playback_session_scope(scope: &PlaybackScopeKey<'_>) {
         .write()
         .expect("playback session scopes RwLock poisoned");
     scopes.remove(&key);
+}
+
+pub(crate) fn snapshot_current_binding(
+    scope_key: &PlaybackScopeKey<'_>,
+) -> Option<CurrentBindingSnapshot> {
+    let scope = get_playback_session(scope_key)?;
+    Some(CurrentBindingSnapshot {
+        playback_session_id: scope.current_playback_session_id?,
+        playback_session_public_id: scope.current_playback_session_public_id?,
+        epoch: scope.current_binding_epoch,
+    })
+}
+
+pub(crate) fn clear_current_binding_if_unchanged(
+    scope_key: &PlaybackScopeKey<'_>,
+    expected: &CurrentBindingSnapshot,
+) -> bool {
+    let key = scope_key.owned();
+    let scopes_handle = playback_scopes();
+    let mut scopes = scopes_handle
+        .write()
+        .expect("playback session scopes RwLock poisoned");
+    let Some(scope) = scopes.get_mut(&key) else {
+        return false;
+    };
+    if scope.current_playback_session_id == Some(expected.playback_session_id)
+        && scope.current_playback_session_public_id.as_deref()
+            == Some(expected.playback_session_public_id.as_str())
+        && scope.current_binding_epoch == expected.epoch
+    {
+        scope.current_playback_session_id = None;
+        scope.current_playback_session_public_id = None;
+        if scope.previous_playback_session_id.is_none() {
+            scopes.remove(&key);
+        }
+        return true;
+    }
+    false
+}
+
+pub(crate) fn with_no_current_binding_for_playback<T>(
+    playback_session_id: DbId,
+    playback_session_public_id: &str,
+    f: impl FnOnce() -> T,
+) -> Option<T> {
+    let scopes_handle = playback_scopes();
+    let scopes = scopes_handle
+        .read()
+        .expect("playback session scopes RwLock poisoned");
+    if scopes.values().any(|scope| {
+        scope.current_playback_session_id == Some(playback_session_id)
+            && scope.current_playback_session_public_id.as_deref()
+                == Some(playback_session_public_id)
+    }) {
+        None
+    } else {
+        Some(f())
+    }
 }
 
 pub(crate) fn clear_session_bindings_for_playback(

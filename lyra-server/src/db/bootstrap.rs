@@ -36,6 +36,7 @@ pub(crate) const ROOT_COLLECTION_ALIASES: &[&str] = &[
     "api_keys",
     "users",
     "sessions",
+    "playbacks",
     "playback_sessions",
     "listens",
     "libraries",

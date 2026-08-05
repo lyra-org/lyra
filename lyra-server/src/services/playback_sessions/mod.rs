@@ -27,21 +27,29 @@ mod workflow;
 
 pub(crate) use self::sessions::PlaybackScopes;
 pub(crate) use self::sessions::{
+    CurrentBindingSnapshot,
     PlaybackScopeKey,
     bind_current_playback_session_scope,
+    clear_current_binding_if_unchanged,
     clear_playback_session_scope,
+    clear_session_bindings_for_playback,
     get_playback_session,
+    snapshot_current_binding,
+    with_no_current_binding_for_playback,
     is_remote_control_degraded,
     mark_command_dispatched,
 };
 pub(crate) use self::workflow::{
     cleanup_evicted_playbacks,
     list_playbacks,
+    pause_playback_in_transaction,
     pause_playing_scopes_on_disconnect,
     playback_activity_ms,
+    report_playback_in_transaction,
     report_playback_session_with_cleanup,
     report_playback_with_cleanup,
     resolve_merged_track_ids_for_play_count,
+    start_playback_in_transaction,
     start_playback_with_cleanup,
 };
 pub(crate) use crate::db::PlaybackSession;
@@ -89,7 +97,13 @@ impl PlaybackServiceError {
     }
 }
 
-type ServiceResult<T> = std::result::Result<T, PlaybackServiceError>;
+impl From<agdb::DbError> for PlaybackServiceError {
+    fn from(error: agdb::DbError) -> Self {
+        Self::internal(error)
+    }
+}
+
+pub(crate) type ServiceResult<T> = std::result::Result<T, PlaybackServiceError>;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ActivityPolicy {
@@ -159,6 +173,12 @@ pub(crate) struct PlaybackRecord {
     pub(crate) user_public_id: String,
     pub(crate) library_public_id: Option<String>,
     pub(crate) playback: PlaybackSession,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TransactionPlaybackUpdate {
+    pub(crate) playback: PlaybackRecord,
+    pub(crate) event: String,
 }
 
 #[derive(Clone, Debug)]

@@ -46,6 +46,7 @@ use super::{
     ServiceResult,
     SessionPlaybackReportRequest,
     StartPlaybackRequest,
+    TransactionPlaybackUpdate,
 };
 
 fn event_for_state(state: PlaybackState, active_event: ActiveEvent) -> String {
@@ -244,6 +245,7 @@ fn persist_playback_session_state(
     updated.previous_demoted_at_ms = state.previous_demoted_at_ms;
     updated.previous_expires_at_ms = state.previous_expires_at_ms;
     updated.command_dispatched_at_ms = None;
+    updated.current_binding_epoch = updated.current_binding_epoch.wrapping_add(1);
     sessions::update_playback_session(scope, &updated);
 }
 
@@ -303,13 +305,12 @@ fn effective_playback_position_ms(playback: &PlaybackSession, now_ms: u64) -> u6
     position_ms
 }
 
-fn maybe_record_listen(
-    db: &mut DbAny,
-    playback_record: &mut PlaybackRecord,
+fn listen_for_playback(
+    playback_record: &PlaybackRecord,
     now_ms: u64,
-) -> ServiceResult<()> {
+) -> Option<(db::Listen, PlaybackSession)> {
     if playback_record.playback.listen_recorded.unwrap_or(false) {
-        return Ok(());
+        return None;
     }
 
     let activity_ms = playback_activity_ms(&playback_record.playback);
@@ -317,7 +318,7 @@ fn maybe_record_listen(
         activity_ms,
         playback_record.playback.duration_ms,
     ) {
-        return Ok(());
+        return None;
     }
 
     let listen = db::Listen {
@@ -333,7 +334,38 @@ fn maybe_record_listen(
     };
     let mut playback_session = playback_record.playback.clone();
     playback_session.listen_recorded = Some(true);
+    Some((listen, playback_session))
+}
+
+pub(crate) fn maybe_record_listen(
+    db: &mut DbAny,
+    playback_record: &mut PlaybackRecord,
+    now_ms: u64,
+) -> ServiceResult<()> {
+    let Some((listen, playback_session)) = listen_for_playback(playback_record, now_ms) else {
+        return Ok(());
+    };
     map_internal(db::listens::create_and_mark_recorded(
+        db,
+        &listen,
+        playback_record.track_db_id,
+        playback_record.user_db_id,
+        &playback_session,
+    ))?;
+    playback_record.playback = playback_session;
+
+    Ok(())
+}
+
+fn maybe_record_listen_in_transaction(
+    db: &mut impl db::DbAccess,
+    playback_record: &mut PlaybackRecord,
+    now_ms: u64,
+) -> ServiceResult<()> {
+    let Some((listen, playback_session)) = listen_for_playback(playback_record, now_ms) else {
+        return Ok(());
+    };
+    map_internal(db::listens::insert_and_mark_recorded(
         db,
         &listen,
         playback_record.track_db_id,
@@ -510,7 +542,7 @@ pub(crate) fn list_playbacks(db: &DbAny, user_db_id: DbId) -> ServiceResult<Vec<
         .collect())
 }
 
-pub(super) fn apply_playback_mutation(
+pub(crate) fn apply_playback_mutation(
     playback: &mut PlaybackSession,
     mutation: &PlaybackMutation,
     now_ms: u64,
@@ -565,11 +597,10 @@ pub(super) fn apply_playback_mutation(
 
 fn finalize_playback_update(
     db: &mut DbAny,
-    mut playback: PlaybackRecord,
+    playback: PlaybackRecord,
     active_event: ActiveEvent,
     now_ms: u64,
 ) -> ServiceResult<PlaybackUpdateResult> {
-    maybe_record_listen(db, &mut playback, now_ms)?;
     let event = event_for_state(playback.playback.state, active_event);
     let evicted_playbacks = cleanup_evicted_playbacks(db, now_ms)?;
 
@@ -707,13 +738,21 @@ pub(crate) fn start_playback(
     db: &mut DbAny,
     request: StartPlaybackRequest,
 ) -> ServiceResult<PlaybackRecord> {
+    let update = db.transaction_mut(|t| start_playback_in_transaction(t, request))?;
+    Ok(update.playback)
+}
+
+pub(crate) fn start_playback_in_transaction(
+    db: &mut impl db::DbAccess,
+    request: StartPlaybackRequest,
+) -> ServiceResult<TransactionPlaybackUpdate> {
     let StartPlaybackRequest {
         track_db_id,
         user_db_id,
         client_name,
         mutation,
         now_ms,
-        active_event: _,
+        active_event,
     } = request;
     if map_internal(db::tracks::get_by_id(db, track_db_id))?.is_none() {
         return Err(PlaybackServiceError::not_found(format!(
@@ -728,11 +767,42 @@ pub(crate) fn start_playback(
         )));
     }
 
+    let playback = new_playback_session(client_name, mutation, now_ms)?;
+
+    let playback_session_id = map_internal(db::playback_sessions::insert(
+        db,
+        &playback,
+        track_db_id,
+        user_db_id,
+    ))?;
+
+    let mut playback = require_playback_record(
+        db,
+        playback_session_id,
+        track_db_id,
+        user_db_id,
+        PlaybackSession {
+            db_id: Some(playback_session_id),
+            ..playback
+        },
+    )?;
+    maybe_record_listen_in_transaction(db, &mut playback, now_ms)?;
+    Ok(TransactionPlaybackUpdate {
+        event: event_for_state(playback.playback.state, active_event),
+        playback,
+    })
+}
+
+fn new_playback_session(
+    client_name: Option<String>,
+    mutation: PlaybackMutation,
+    now_ms: u64,
+) -> ServiceResult<PlaybackSession> {
     let state = mutation.state.unwrap_or(PlaybackState::Playing);
     let position_ms = mutation.position_ms.unwrap_or(0);
     ensure_position_within_duration(position_ms, mutation.duration_ms)?;
 
-    let playback = PlaybackSession {
+    Ok(PlaybackSession {
         db_id: None,
         id: nanoid!(),
         client_name,
@@ -744,38 +814,34 @@ pub(crate) fn start_playback(
         listen_recorded: None,
         updated_at_ms: now_ms,
         created_at_ms: now_ms,
-    };
-
-    let playback_session_id = map_internal(db::playback_sessions::create(
-        db,
-        &playback,
-        track_db_id,
-        user_db_id,
-    ))?;
-
-    require_playback_record(
-        db,
-        playback_session_id,
-        track_db_id,
-        user_db_id,
-        PlaybackSession {
-            db_id: Some(playback_session_id),
-            ..playback
-        },
-    )
+    })
 }
 
 pub(crate) fn report_playback(
     db: &mut DbAny,
     request: ReportPlaybackRequest,
 ) -> ServiceResult<PlaybackRecord> {
+    let update = db.transaction_mut(|t| report_playback_in_transaction(t, request))?;
+    if update.playback.playback.state.is_terminal() {
+        sessions::clear_session_bindings_for_playback(
+            update.playback.playback_session_id,
+            &update.playback.playback_session_public_id,
+        );
+    }
+    Ok(update.playback)
+}
+
+pub(crate) fn report_playback_in_transaction(
+    db: &mut impl db::DbAccess,
+    request: ReportPlaybackRequest,
+) -> ServiceResult<TransactionPlaybackUpdate> {
     let ReportPlaybackRequest {
         playback_session_id,
         user_db_id: expected_user_db_id,
         mutation,
         now_ms,
         activity_policy,
-        active_event: _,
+        active_event,
     } = request;
     let mut playback = map_internal(db::playback_sessions::get_by_id(db, playback_session_id))?
         .ok_or_else(|| {
@@ -804,10 +870,6 @@ pub(crate) fn report_playback(
     apply_playback_mutation(&mut playback, &mutation, now_ms, activity_policy)?;
     playback.db_id = Some(playback_session_id);
     map_internal(db::playback_sessions::update(db, &playback))?;
-    if playback.state.is_terminal() {
-        sessions::clear_session_bindings_for_playback(playback_session_id, &playback.id);
-    }
-
     let track_db_id = map_internal(db::playback_sessions::get_track_id(db, playback_session_id))?
         .ok_or_else(|| {
         PlaybackServiceError::not_found(format!(
@@ -817,7 +879,57 @@ pub(crate) fn report_playback(
     })?;
     let user_db_id = playback_user_db_id.unwrap_or(DbId(0));
 
-    require_playback_record(db, playback_session_id, track_db_id, user_db_id, playback)
+    let mut playback = require_playback_record(
+        db,
+        playback_session_id,
+        track_db_id,
+        user_db_id,
+        playback,
+    )?;
+    maybe_record_listen_in_transaction(db, &mut playback, now_ms)?;
+    Ok(TransactionPlaybackUpdate {
+        event: event_for_state(playback.playback.state, active_event),
+        playback,
+    })
+}
+
+pub(crate) fn pause_playback_in_transaction(
+    db: &mut impl db::DbAccess,
+    playback_session_id: DbId,
+    user_db_id: DbId,
+    now_ms: u64,
+) -> ServiceResult<Option<TransactionPlaybackUpdate>> {
+    let playback = map_internal(db::playback_sessions::get_by_id(db, playback_session_id))?
+        .ok_or_else(|| {
+            PlaybackServiceError::not_found(format!(
+                "playback session not found: {}",
+                playback_session_id.0
+            ))
+        })?;
+    if !matches!(
+        playback.state,
+        PlaybackState::Playing | PlaybackState::Buffering
+    ) {
+        return Ok(None);
+    }
+    let pause_at_ms = now_ms.max(playback.updated_at_ms);
+    let position_ms = effective_playback_position_ms(&playback, pause_at_ms);
+    report_playback_in_transaction(
+        db,
+        ReportPlaybackRequest {
+            playback_session_id,
+            user_db_id: Some(user_db_id),
+            mutation: PlaybackMutation {
+                position_ms: Some(position_ms),
+                duration_ms: None,
+                state: Some(PlaybackState::Paused),
+            },
+            now_ms: pause_at_ms,
+            activity_policy: ActivityPolicy::AnyState,
+            active_event: ActiveEvent::Progress,
+        },
+    )
+    .map(Some)
 }
 
 pub(crate) fn report_playback_session(
