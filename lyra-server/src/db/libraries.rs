@@ -619,6 +619,51 @@ pub(crate) fn accessible_library_ids(
     Ok(ids)
 }
 
+pub(crate) fn accessible_track_ids(
+    db: &impl super::DbAccess,
+    user_db_id: DbId,
+    track_db_ids: &[DbId],
+) -> anyhow::Result<HashSet<DbId>> {
+    let requested = super::dedup_positive_ids(track_db_ids)
+        .into_iter()
+        .collect::<HashSet<_>>();
+    if requested.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let accessible_libraries = read_outbound_access_edges(db, user_db_id)?
+        .into_iter()
+        .filter_map(|edge| (edge.to.0 > 0).then_some(edge.to))
+        .collect::<Vec<_>>();
+    if accessible_libraries.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let requested_ids = requested.iter().copied().collect::<Vec<_>>();
+    let result = db.exec(
+        QueryBuilder::search()
+            .from("libraries")
+            .where_()
+            .ids(requested_ids.clone())
+            .and()
+            .not_beyond()
+            .where_()
+            .key("db_element_id")
+            .value("Library")
+            .and()
+            .not()
+            .ids(accessible_libraries)
+            .end_where()
+            .and()
+            .not_beyond()
+            .ids(requested_ids)
+            .query(),
+    )?;
+    Ok(result
+        .ids()
+        .into_iter()
+        .filter(|track_db_id| requested.contains(track_db_id))
+        .collect())
+}
+
 /// Cascade hook for `db::users::delete_user`.
 pub(crate) fn remove_access_edges_for_user(
     db: &mut impl super::DbAccess,
@@ -961,6 +1006,51 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].username, "creator");
 
+        Ok(())
+    }
+
+    #[test]
+    fn accessible_track_ids_accepts_any_accessible_library_path() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = create_test_user(&mut db, "listener")?;
+        let inaccessible = db.transaction_mut(|t| -> anyhow::Result<Library> {
+            Ok(create_system(t, insert_request("Private", "private"))?)
+        })?;
+        let accessible = db.transaction_mut(|t| -> anyhow::Result<Library> {
+            Ok(create_with_creator(
+                t,
+                insert_request("Shared", "shared"),
+                user_db_id,
+            )?)
+        })?;
+        let shared_track = crate::db::test_db::insert_track(&mut db, "Shared track")?;
+        let private_track = crate::db::test_db::insert_track(&mut db, "Private track")?;
+        db.transaction_mut(|t| -> anyhow::Result<()> {
+            crate::db::graph::ensure_owned_edge(
+                t,
+                inaccessible.db_id.expect("private library db_id"),
+                shared_track,
+            )?;
+            crate::db::graph::ensure_owned_edge(
+                t,
+                inaccessible.db_id.expect("private library db_id"),
+                private_track,
+            )?;
+            crate::db::graph::ensure_owned_edge(
+                t,
+                accessible.db_id.expect("shared library db_id"),
+                shared_track,
+            )?;
+            Ok(())
+        })?;
+
+        let visible = accessible_track_ids(
+            &db,
+            user_db_id,
+            &[shared_track, private_track],
+        )?;
+        assert!(visible.contains(&shared_track));
+        assert!(!visible.contains(&private_track));
         Ok(())
     }
 

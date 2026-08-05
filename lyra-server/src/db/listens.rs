@@ -35,42 +35,52 @@ pub(crate) fn create_and_mark_recorded(
     user_db_id: DbId,
     playback_session: &super::playback_sessions::PlaybackSession,
 ) -> anyhow::Result<()> {
-    db.transaction_mut(|t| -> anyhow::Result<()> {
-        let listen_id = t
-            .exec_mut(QueryBuilder::insert().element(listen).query())?
-            .ids()[0];
-
-        t.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("listens")
-                .to(listen_id)
-                .query(),
-        )?;
-        t.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from(listen_id)
-                .to(track_db_id)
-                .query(),
-        )?;
-        t.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from(listen_id)
-                .to(user_db_id)
-                .query(),
-        )?;
-        super::covers::display::record_genre_listen(
-            t,
-            track_db_id,
-            user_db_id,
-            listen.listened_at_ms,
-        )?;
-        t.exec_mut(QueryBuilder::insert().element(playback_session).query())?;
-
-        Ok(())
+    db.transaction_mut(|t| {
+        insert_and_mark_recorded(t, listen, track_db_id, user_db_id, playback_session)
     })
+}
+
+pub(crate) fn insert_and_mark_recorded(
+    db: &mut impl super::DbAccess,
+    listen: &Listen,
+    track_db_id: DbId,
+    user_db_id: DbId,
+    playback_session: &super::playback_sessions::PlaybackSession,
+) -> anyhow::Result<()> {
+    let listen_id = db
+        .exec_mut(QueryBuilder::insert().element(listen).query())?
+        .ids()[0];
+
+    db.exec_mut(
+        QueryBuilder::insert()
+            .edges()
+            .from("listens")
+            .to(listen_id)
+            .query(),
+    )?;
+    db.exec_mut(
+        QueryBuilder::insert()
+            .edges()
+            .from(listen_id)
+            .to(track_db_id)
+            .query(),
+    )?;
+    db.exec_mut(
+        QueryBuilder::insert()
+            .edges()
+            .from(listen_id)
+            .to(user_db_id)
+            .query(),
+    )?;
+    super::covers::display::record_genre_listen(
+        db,
+        track_db_id,
+        user_db_id,
+        listen.listened_at_ms,
+    )?;
+    db.exec_mut(QueryBuilder::insert().element(playback_session).query())?;
+
+    Ok(())
 }
 
 fn get_listen_ids_for_target(db: &DbAny, target_id: DbId) -> anyhow::Result<Vec<DbId>> {

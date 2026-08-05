@@ -106,6 +106,7 @@ pub(crate) mod lyrics;
 pub(crate) mod metadata;
 pub(crate) mod mixers;
 pub(crate) mod playback_sessions;
+pub(crate) mod playbacks;
 pub(crate) mod playlists;
 pub(crate) mod plugin;
 pub(crate) mod plugin_repositories;

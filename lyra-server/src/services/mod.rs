@@ -50,6 +50,7 @@ pub(crate) mod origin;
 pub(crate) mod pagination;
 pub(crate) mod playback_sessions;
 pub(crate) mod playback_sources;
+pub(crate) mod playbacks;
 pub(crate) mod playlists;
 pub(crate) mod plugin_repositories;
 pub(crate) mod plugin_settings;

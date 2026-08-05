@@ -3,9 +3,13 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::fmt;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 use agdb::{
+    CountComparison,
     DbAny,
     DbElement,
     DbError,
@@ -110,7 +114,7 @@ impl LuauTypeInfo for PlaybackState {
     }
 }
 
-#[derive(DbElement, Clone, Debug)]
+#[derive(DbElement, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PlaybackSession {
     pub(crate) db_id: Option<DbId>,
     pub(crate) id: String,
@@ -132,7 +136,16 @@ pub(crate) struct EvictedPlayback {
     pub(crate) user_db_id: DbId,
 }
 
-pub(crate) fn get_track_id(db: &DbAny, playback_session_id: DbId) -> anyhow::Result<Option<DbId>> {
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PlaybackSessionListProjection {
+    pub(crate) state: PlaybackState,
+    pub(crate) updated_at_ms: u64,
+}
+
+pub(crate) fn get_track_id(
+    db: &impl super::DbAccess,
+    playback_session_id: DbId,
+) -> anyhow::Result<Option<DbId>> {
     for edge in super::graph::direct_edges_from(db, playback_session_id)? {
         let target_id = edge.to;
         if target_id.0 == 0 {
@@ -146,7 +159,10 @@ pub(crate) fn get_track_id(db: &DbAny, playback_session_id: DbId) -> anyhow::Res
     Ok(None)
 }
 
-pub(crate) fn get_user_id(db: &DbAny, playback_session_id: DbId) -> anyhow::Result<Option<DbId>> {
+pub(crate) fn get_user_id(
+    db: &impl super::DbAccess,
+    playback_session_id: DbId,
+) -> anyhow::Result<Option<DbId>> {
     for edge in super::graph::direct_edges_from(db, playback_session_id)? {
         let target_id = edge.to;
         if target_id.0 == 0 {
@@ -166,35 +182,42 @@ pub(crate) fn create(
     track_db_id: DbId,
     user_db_id: DbId,
 ) -> anyhow::Result<DbId> {
-    db.transaction_mut(|t| -> anyhow::Result<DbId> {
-        let playback_session_id = t
-            .exec_mut(QueryBuilder::insert().element(playback_session).query())?
-            .ids()[0];
+    db.transaction_mut(|t| insert(t, playback_session, track_db_id, user_db_id))
+}
 
-        t.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("playback_sessions")
-                .to(playback_session_id)
-                .query(),
-        )?;
-        t.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from(playback_session_id)
-                .to(track_db_id)
-                .query(),
-        )?;
-        t.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from(playback_session_id)
-                .to(user_db_id)
-                .query(),
-        )?;
+pub(crate) fn insert(
+    db: &mut impl super::DbAccess,
+    playback_session: &PlaybackSession,
+    track_db_id: DbId,
+    user_db_id: DbId,
+) -> anyhow::Result<DbId> {
+    let playback_session_id = db
+        .exec_mut(QueryBuilder::insert().element(playback_session).query())?
+        .ids()[0];
 
-        Ok(playback_session_id)
-    })
+    db.exec_mut(
+        QueryBuilder::insert()
+            .edges()
+            .from("playback_sessions")
+            .to(playback_session_id)
+            .query(),
+    )?;
+    db.exec_mut(
+        QueryBuilder::insert()
+            .edges()
+            .from(playback_session_id)
+            .to(track_db_id)
+            .query(),
+    )?;
+    db.exec_mut(
+        QueryBuilder::insert()
+            .edges()
+            .from(playback_session_id)
+            .to(user_db_id)
+            .query(),
+    )?;
+
+    Ok(playback_session_id)
 }
 
 pub(crate) fn get_by_id(
@@ -202,6 +225,141 @@ pub(crate) fn get_by_id(
     playback_session_id: DbId,
 ) -> anyhow::Result<Option<PlaybackSession>> {
     super::graph::fetch_typed_by_id(db, playback_session_id, "PlaybackSession")
+}
+
+pub(crate) fn get_list_projections_by_ids(
+    db: &impl super::DbAccess,
+    playback_session_ids: Vec<DbId>,
+) -> anyhow::Result<HashMap<DbId, PlaybackSessionListProjection>> {
+    if playback_session_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let typed_ids = db
+        .exec(
+            QueryBuilder::select()
+                .values(vec![DbValue::from("db_element_id")])
+                .ids(playback_session_ids)
+                .query(),
+        )?
+        .elements
+        .into_iter()
+        .filter_map(|element| {
+            element.values.iter().any(|kv| {
+                kv.key == DbValue::from("db_element_id")
+                    && kv.value == DbValue::from("PlaybackSession")
+            }).then_some(element.id)
+        })
+        .collect::<Vec<_>>();
+    if typed_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let elements = db.exec(
+        QueryBuilder::select()
+            .values(vec![DbValue::from("state"), DbValue::from("updated_at_ms")])
+            .ids(typed_ids)
+            .query(),
+    )?;
+    let mut projections = HashMap::with_capacity(elements.elements.len());
+    for element in elements.elements {
+        let value = |key: &str| {
+            element
+                .values
+                .iter()
+                .find(|kv| kv.key == DbValue::from(key))
+                .map(|kv| kv.value.clone())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("playback session {} missing {key}", element.id.0)
+                })
+        };
+        let state = PlaybackState::try_from(value("state")?)?;
+        let updated_at_ms = match value("updated_at_ms")? {
+            DbValue::U64(value) => value,
+            value => anyhow::bail!(
+                "playback session {} has invalid updated_at_ms: {value:?}",
+                element.id.0
+            ),
+        };
+        projections.insert(
+            element.id,
+            PlaybackSessionListProjection {
+                state,
+                updated_at_ms,
+            },
+        );
+    }
+    Ok(projections)
+}
+
+pub(crate) fn track_ids_for_sessions(
+    db: &impl super::DbAccess,
+    playback_session_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, DbId>> {
+    if playback_session_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let session_ids = playback_session_ids.iter().copied().collect::<HashSet<_>>();
+    let edges = db.exec(
+        QueryBuilder::select()
+            .search()
+            .from("playback_sessions")
+            .where_()
+            .edge()
+            .and()
+            .distance(CountComparison::Equal(3))
+            .and()
+            .not_beyond()
+            .where_()
+            .key("db_element_id")
+            .value("PlaybackSession")
+            .and()
+            .not()
+            .ids(playback_session_ids.to_vec())
+            .end_where()
+            .and()
+            .not_beyond()
+            .distance(CountComparison::Equal(3))
+            .query(),
+    )?;
+    let candidates = edges
+        .elements
+        .into_iter()
+        .filter_map(|edge| {
+            (edge.id.0 < 0 && session_ids.contains(&edge.from) && edge.to.0 > 0)
+                .then_some((edge.from, edge.to))
+        })
+        .collect::<Vec<_>>();
+    let target_ids = candidates
+        .iter()
+        .map(|(_, target)| *target)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let typed = if target_ids.is_empty() {
+        Vec::new()
+    } else {
+        db.exec(
+            QueryBuilder::select()
+                .values(vec![DbValue::from("db_element_id")])
+                .ids(target_ids)
+                .query(),
+        )?
+        .elements
+    };
+    let track_ids = typed
+        .into_iter()
+        .filter_map(|element| {
+            element.values.iter().any(|kv| {
+                kv.key == DbValue::from("db_element_id")
+                    && kv.value == DbValue::from("Track")
+            }).then_some(element.id)
+        })
+        .collect::<HashSet<_>>();
+    Ok(candidates
+        .into_iter()
+        .filter_map(|(session_id, target_id)| {
+            track_ids.contains(&target_id).then_some((session_id, target_id))
+        })
+        .collect())
 }
 
 pub(crate) fn get(db: &DbAny) -> anyhow::Result<Vec<PlaybackSession>> {
@@ -418,6 +576,15 @@ mod tests {
         let fetched = get_by_id(&db, session_id)?.expect("session should exist");
         assert_eq!(fetched.position_ms, 0);
         assert_eq!(fetched.state, PlaybackState::Playing);
+        let projection = get_list_projections_by_ids(&db, vec![session_id])?
+            .remove(&session_id)
+            .expect("session projection should exist");
+        assert_eq!(projection.state, PlaybackState::Playing);
+        assert_eq!(projection.updated_at_ms, 1000);
+        assert_eq!(
+            track_ids_for_sessions(&db, &[session_id])?.get(&session_id),
+            Some(&track_id)
+        );
         Ok(())
     }
 

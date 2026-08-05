@@ -243,7 +243,10 @@ pub(crate) fn has_permission(permissions: &[Permission], required: Permission) -
     permissions.contains(&Permission::Admin) || permissions.contains(&required)
 }
 
-pub(crate) fn has_admin_role(db: &DbAny, user_db_id: DbId) -> anyhow::Result<bool> {
+pub(crate) fn has_admin_role(
+    db: &impl super::DbAccess,
+    user_db_id: DbId,
+) -> anyhow::Result<bool> {
     let role = get_role_for_user(db, user_db_id)?;
     Ok(role
         .map(|r| r.permissions.contains(&Permission::Admin))

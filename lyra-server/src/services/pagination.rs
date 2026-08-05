@@ -32,6 +32,10 @@ const MAX_SNAPSHOTS_PER_OWNER: usize = 8;
 const MAX_ITEMS_PER_SNAPSHOT: usize = 1_000_000;
 const MAX_TOTAL_ITEMS: usize = 2_000_000;
 
+pub(crate) const fn snapshot_item_capacity() -> usize {
+    MAX_ITEMS_PER_SNAPSHOT
+}
+
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PaginationError {
     #[error("malformed cursor")]
