@@ -16,7 +16,7 @@ mod listens;
 mod metadata;
 mod mix;
 mod pagination;
-mod playback_sessions;
+mod playbacks;
 mod playlists;
 mod plugins;
 mod providers;
@@ -67,7 +67,7 @@ pub(crate) use pagination::{
     SnapshotPageRequest,
     load_snapshot_items,
 };
-pub use playback_sessions::playback_session_routes;
+pub use playbacks::playback_routes;
 pub use playlists::playlist_routes;
 pub use plugins::plugin_routes;
 pub use providers::{

@@ -46,6 +46,7 @@ pub(crate) struct AppError {
     error: anyhow::Error,
     status_code: StatusCode,
     retry_after: Option<Duration>,
+    json_body: Option<serde_json::Value>,
 }
 
 impl std::fmt::Debug for AppError {
@@ -60,6 +61,7 @@ impl AppError {
             error: anyhow::anyhow!(message),
             status_code,
             retry_after: None,
+            json_body: None,
         }
     }
 
@@ -81,6 +83,15 @@ impl AppError {
 
     pub fn conflict(message: impl Into<String>) -> Self {
         Self::with_status(StatusCode::CONFLICT, message.into())
+    }
+
+    pub fn json_conflict(body: serde_json::Value) -> Self {
+        Self {
+            error: anyhow::anyhow!("conflict"),
+            status_code: StatusCode::CONFLICT,
+            retry_after: None,
+            json_body: Some(body),
+        }
     }
 
     pub fn service_unavailable(message: impl Into<String>) -> Self {
@@ -108,7 +119,9 @@ impl AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let mut response = if self.status_code == StatusCode::INTERNAL_SERVER_ERROR {
+        let mut response = if let Some(body) = self.json_body {
+            (self.status_code, axum::Json(body)).into_response()
+        } else if self.status_code == StatusCode::INTERNAL_SERVER_ERROR {
             tracing::error!(error = %self.error, "internal server error");
             (self.status_code, "Error: internal server error").into_response()
         } else {
@@ -255,6 +268,7 @@ impl From<anyhow::Error> for AppError {
             error: err,
             status_code: StatusCode::INTERNAL_SERVER_ERROR,
             retry_after: None,
+            json_body: None,
         }
     }
 }

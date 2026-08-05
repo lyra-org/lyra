@@ -17,6 +17,7 @@ use tokio::sync::{
     broadcast,
     mpsc,
 };
+use tokio::task::JoinSet;
 use tokio::time::{
     Instant,
     interval_at,
@@ -31,6 +32,7 @@ use super::constants::{
     RemoteAction,
     WRITE_TIMEOUT,
 };
+use super::handoffs;
 use super::messages::{
     ClientCommand,
     EventMessage,
@@ -56,6 +58,7 @@ use crate::services::playback_sessions::{
 };
 
 const NATIVE_SOURCE_ID: &str = "native";
+const MAX_IN_FLIGHT_COMMANDS: usize = 16;
 
 async fn send_message(socket: &mut WebSocket, msg: Message) -> bool {
     tokio::time::timeout(WRITE_TIMEOUT, socket.send(msg))
@@ -98,6 +101,24 @@ async fn handle_message(cmd: ClientCommand, connection_id: ConnectionId) -> Outg
     OutgoingMessage::Response(response)
 }
 
+fn is_detached_command(command: &ClientCommand) -> bool {
+    matches!(command, ClientCommand::HandoffQueue(_))
+}
+
+fn spawn_handoff_response(
+    responses: &mut JoinSet<OutgoingMessage>,
+    command: ClientCommand,
+    connection_id: ConnectionId,
+) {
+    debug_assert!(is_detached_command(&command));
+    responses.spawn(handle_message(command, connection_id));
+}
+
+async fn abort_handoff_responses(responses: &mut JoinSet<OutgoingMessage>) {
+    responses.abort_all();
+    while responses.join_next().await.is_some() {}
+}
+
 async fn handle_command(cmd: ClientCommand, connection_id: ConnectionId) -> ResponseMessage {
     match cmd {
         ClientCommand::DeclareCapabilities { id, commands } => {
@@ -110,7 +131,8 @@ async fn handle_command(cmd: ClientCommand, connection_id: ConnectionId) -> Resp
         | ClientCommand::Seek(_)
         | ClientCommand::NextTrack(_)
         | ClientCommand::PreviousTrack(_)
-        | ClientCommand::SetVolume(_) => handle_remote_control(cmd, connection_id).await,
+        | ClientCommand::SetVolume(_)
+        | ClientCommand::HandoffQueue(_) => handle_remote_control(cmd, connection_id).await,
     }
 }
 
@@ -162,6 +184,20 @@ async fn handle_remote_control(cmd: ClientCommand, connection_id: ConnectionId) 
         return ResponseMessage::error(id, format!("target does not support command: {action:?}"));
     }
 
+    if let ClientCommand::HandoffQueue(command) = &cmd {
+        return match handoffs::dispatch_and_wait(
+            Some(connection_id),
+            &target_snap,
+            &command.playback_id,
+            command.queue_revision,
+        )
+        .await
+        {
+            Ok(()) => ResponseMessage::ok(id),
+            Err(error) => ResponseMessage::error(id, error),
+        };
+    }
+
     let forwarded = match &cmd {
         ClientCommand::Seek(c) => ForwardedCommand::Seek {
             from: Some(connection_id),
@@ -191,6 +227,9 @@ async fn handle_remote_control(cmd: ClientCommand, connection_id: ConnectionId) 
         },
         ClientCommand::DeclareCapabilities { .. } => {
             return ResponseMessage::error(id, "not a remote control action");
+        }
+        ClientCommand::HandoffQueue(_) => {
+            return ResponseMessage::error(id, "not a direct remote control action");
         }
     };
 
@@ -326,6 +365,7 @@ pub(crate) async fn run(
     let mut pong_deadline: Option<Instant> = None;
     let mut consecutive_auth_errors: u32 = 0;
     let mut sync_required_pending = false;
+    let mut handoff_responses = JoinSet::new();
 
     loop {
         let sleep = async {
@@ -353,6 +393,22 @@ pub(crate) async fn run(
                     }
                     Some(Ok(Message::Text(text))) => {
                         let response = match serde_json::from_str::<ClientCommand>(&text) {
+                            Ok(msg) if is_detached_command(&msg)
+                                && handoff_responses.len() < MAX_IN_FLIGHT_COMMANDS => {
+                                spawn_handoff_response(
+                                    &mut handoff_responses,
+                                    msg,
+                                    connection_id,
+                                );
+                                continue;
+                            }
+                            Ok(msg) if is_detached_command(&msg) => {
+                                let id = extract_id(&text);
+                                OutgoingMessage::Response(ResponseMessage::error(
+                                    id,
+                                    "too many handoffs in flight",
+                                ))
+                            }
                             Ok(msg) => handle_message(msg, connection_id).await,
                             Err(err) => {
                                 let id = extract_id(&text);
@@ -377,6 +433,19 @@ pub(crate) async fn run(
             Some(forwarded) = command_rx.recv() => {
                 if !send(&mut socket, forwarded).await {
                     break;
+                }
+            }
+
+            Some(result) = handoff_responses.join_next(), if !handoff_responses.is_empty() => {
+                match result {
+                    Ok(response) => {
+                        if !send(&mut socket, response).await {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(connection_id, error = %error, "command task failed");
+                    }
                 }
             }
 
@@ -471,6 +540,7 @@ pub(crate) async fn run(
         }
     }
 
+    abort_handoff_responses(&mut handoff_responses).await;
     drop(event_rx);
     unsubscribe_playback_events(&user_public_id);
     let handle = registry::unregister(connection_id).await;
@@ -489,6 +559,96 @@ pub(crate) async fn run(
 mod tests {
     use super::*;
     use crate::db::PlaybackState;
+
+    #[test]
+    fn only_handoff_queue_is_detached() {
+        let handoff: ClientCommand = serde_json::from_str(
+            r#"{"action":"handoff_queue","id":"handoff","target":"target","playback_id":"playback","queue_revision":1}"#,
+        )
+        .unwrap();
+        let ordinary: ClientCommand = serde_json::from_str(
+            r#"{"action":"declare_capabilities","id":"ordinary","commands":[]}"#,
+        )
+        .unwrap();
+
+        assert!(is_detached_command(&handoff));
+        assert!(!is_detached_command(&ordinary));
+    }
+
+    #[tokio::test]
+    async fn pending_handoff_preserves_inline_command_liveness_and_order() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        for connection in registry::list_connections().await {
+            registry::unregister(connection.connection_id).await;
+        }
+        let registered = registry::register(
+            agdb::DbId(9),
+            "user".to_string(),
+            None,
+            "source".to_string(),
+            Arc::new(Notify::new()),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let connection_id = registered.connection_id;
+        let mut handoff_responses = JoinSet::new();
+        handoff_responses.spawn(std::future::pending::<OutgoingMessage>());
+
+        let mut response_ids = Vec::new();
+        for id in ["first", "second"] {
+            let response = tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                handle_message(
+                    ClientCommand::DeclareCapabilities {
+                        id: id.to_string(),
+                        commands: Vec::new(),
+                    },
+                    connection_id,
+                ),
+            )
+            .await
+            .expect("inline command should not wait for detached handoff");
+            let OutgoingMessage::Response(response) = response else {
+                anyhow::bail!("ordinary command should produce a response");
+            };
+            response_ids.push(response.id);
+        }
+        assert_eq!(response_ids, ["first", "second"]);
+
+        abort_handoff_responses(&mut handoff_responses).await;
+        registry::unregister(connection_id).await;
+        drop(registered.command_rx);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn socket_exit_aborts_and_drains_detached_handoffs() {
+        struct DropSignal(Option<tokio::sync::oneshot::Sender<()>>);
+
+        impl Drop for DropSignal {
+            fn drop(&mut self) {
+                if let Some(sender) = self.0.take() {
+                    let _ = sender.send(());
+                }
+            }
+        }
+
+        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
+        let guard = DropSignal(Some(dropped_tx));
+        let mut responses = JoinSet::new();
+        responses.spawn(async move {
+            let _guard = guard;
+            std::future::pending::<OutgoingMessage>().await
+        });
+
+        abort_handoff_responses(&mut responses).await;
+
+        assert!(responses.is_empty());
+        tokio::time::timeout(std::time::Duration::from_millis(100), dropped_rx)
+            .await
+            .expect("aborted handoff should be dropped before cleanup")
+            .expect("drop signal should be delivered");
+    }
 
     fn payload(user_public_id: &str, library_public_id: Option<&str>) -> PlaybackUpdatePayload {
         PlaybackUpdatePayload {

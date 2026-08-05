@@ -161,6 +161,8 @@ struct SendCommandRequest {
     action: String,
     position_ms: Option<u64>,
     level: Option<f32>,
+    playback_id: Option<String>,
+    queue_revision: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -665,6 +667,24 @@ fn send_command_callback(
             )));
         }
 
+        if action == RemoteAction::HandoffQueue {
+            let playback_public_id = request.playback_id.as_deref().ok_or_else(|| {
+                crate::plugins::runtime_error("playback_id required for handoff_queue")
+            })?;
+            let queue_revision = request.queue_revision.ok_or_else(|| {
+                crate::plugins::runtime_error("queue_revision required for handoff_queue")
+            })?;
+            crate::services::remote::handoffs::dispatch_and_wait(
+                None,
+                &target,
+                playback_public_id,
+                queue_revision,
+            )
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+            return Ok(());
+        }
+
         let forwarded = match action {
             RemoteAction::Seek => {
                 let position_ms = request.position_ms.ok_or_else(|| {
@@ -690,6 +710,7 @@ fn send_command_callback(
             RemoteAction::Stop => ForwardedCommand::Stop { from: None },
             RemoteAction::NextTrack => ForwardedCommand::NextTrack { from: None },
             RemoteAction::PreviousTrack => ForwardedCommand::PreviousTrack { from: None },
+            RemoteAction::HandoffQueue => unreachable!("handoff returns before direct dispatch"),
         };
 
         let forwarded = OutgoingMessage::Command(forwarded);
@@ -1050,6 +1071,16 @@ impl DescribeInterface for SendCommandRequest {
                 ty: Option::<f32>::luau_type(),
                 description: None,
             },
+            FieldDescriptor {
+                name: "playback_id",
+                ty: Option::<String>::luau_type(),
+                description: Some("Durable playback ID required for handoff_queue."),
+            },
+            FieldDescriptor {
+                name: "queue_revision",
+                ty: Option::<u64>::luau_type(),
+                description: Some("Exact queue revision required for handoff_queue."),
+            },
         ]);
         descriptor
     }
@@ -1150,4 +1181,27 @@ fn playback_request_fields<const N: usize>(leading: [FieldDescriptor; N]) -> Vec
         },
     ]);
     fields
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn send_command_descriptor_includes_durable_handoff_queue() {
+        let descriptor = SendCommandRequest::interface_descriptor();
+        let playback_id = descriptor
+            .fields
+            .iter()
+            .find(|field| field.name == "playback_id")
+            .expect("playback_id must be exposed to Luau");
+        let queue_revision = descriptor
+            .fields
+            .iter()
+            .find(|field| field.name == "queue_revision")
+            .expect("queue_revision must be exposed to Luau");
+
+        assert_eq!(playback_id.ty, Option::<String>::luau_type());
+        assert_eq!(queue_revision.ty, Option::<u64>::luau_type());
+    }
 }

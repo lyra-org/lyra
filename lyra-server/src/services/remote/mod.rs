@@ -5,5 +5,6 @@
 
 pub(crate) mod connection;
 pub(crate) mod constants;
+pub(crate) mod handoffs;
 pub(crate) mod messages;
 pub(crate) mod registry;
