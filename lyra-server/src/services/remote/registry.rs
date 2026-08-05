@@ -17,13 +17,20 @@ use tokio::sync::{
     Notify,
     RwLock,
     mpsc,
+    oneshot,
 };
 
 use super::constants::{
     MAX_CONNECTIONS_PER_USER,
     RemoteAction,
 };
+use super::handoffs::{
+    AppliedProgress,
+    ExpectedSourceBinding,
+    PendingHandoffs,
+};
 use super::messages::OutgoingMessage;
+use crate::services::playback_sessions;
 
 pub(crate) type ConnectionId = u64;
 
@@ -49,6 +56,7 @@ struct ConnectionRegistry {
     connections: HashMap<ConnectionId, ConnectionHandle>,
     tokens: HashMap<String, ConnectionId>,
     next_id: ConnectionId,
+    pending_handoffs: PendingHandoffs,
 }
 
 impl ConnectionRegistry {
@@ -57,6 +65,7 @@ impl ConnectionRegistry {
             connections: HashMap::new(),
             tokens: HashMap::new(),
             next_id: 1,
+            pending_handoffs: PendingHandoffs::new(),
         }
     }
 
@@ -79,8 +88,7 @@ impl ConnectionRegistry {
             (h.user_public_id == user_public_id && h.session_key == session_key).then_some(id)
         });
         if let Some(id) = dup_id {
-            let handle = self.connections.remove(&id)?;
-            self.tokens.remove(&handle.token);
+            let handle = self.remove(id)?;
             handle.cancel.notify_one();
             Some(handle)
         } else {
@@ -130,6 +138,7 @@ impl ConnectionRegistry {
     fn remove(&mut self, id: ConnectionId) -> Option<ConnectionHandle> {
         let handle = self.connections.remove(&id)?;
         self.tokens.remove(&handle.token);
+        self.pending_handoffs.fail_for_connection(id);
         Some(handle)
     }
 
@@ -247,6 +256,176 @@ pub(crate) async fn send_to_connection(
         .command_tx
         .try_send(msg)
         .map_err(|_| "could not queue message for target connection".to_string())
+}
+
+pub(super) async fn insert_handoff(
+    source_id: Option<ConnectionId>,
+    target_id: ConnectionId,
+    user_db_id: DbId,
+    playback_id: String,
+    queue_revision: u64,
+) -> Result<(String, oneshot::Receiver<Result<(), String>>, Arc<Notify>), String> {
+    let mut registry = REGISTRY.write().await;
+    if source_id.is_some_and(|source_id| !registry.connections.contains_key(&source_id)) {
+        return Err("source connection not found".to_string());
+    }
+    if !registry.connections.contains_key(&target_id) {
+        return Err("target connection not found".to_string());
+    }
+    let source_binding = source_id
+        .and_then(|source_id| registry.connections.get(&source_id))
+        .and_then(|source| {
+            let scope_key = playback_sessions::PlaybackScopeKey {
+                plugin_id: "native",
+                user_db_id: source.user_db_id,
+                session_key: &source.session_key,
+            };
+            playback_sessions::snapshot_current_binding(&scope_key).map(|snapshot| {
+                ExpectedSourceBinding {
+                    user_db_id: source.user_db_id,
+                    session_key: source.session_key.clone(),
+                    snapshot,
+                }
+            })
+        });
+    registry.pending_handoffs.begin(
+        source_id,
+        source_binding,
+        target_id,
+        user_db_id,
+        playback_id,
+        queue_revision,
+    )
+}
+
+pub(super) async fn queue_handoff_command(
+    token: &str,
+    target_id: ConnectionId,
+    msg: OutgoingMessage,
+) -> Result<(), String> {
+    let registry = REGISTRY.write().await;
+    let pending_target = registry.pending_handoffs.pending_target(token)?;
+    if pending_target != target_id {
+        return Err("handoff command target changed".to_string());
+    }
+    let handle = registry
+        .connections
+        .get(&target_id)
+        .ok_or_else(|| format!("target connection {target_id} not found"))?;
+    handle
+        .command_tx
+        .try_send(msg)
+        .map_err(|_| "could not queue message for target connection".to_string())
+}
+
+pub(super) async fn claim_handoff_progress(
+    token: &str,
+    user_db_id: DbId,
+    session_key: &str,
+    playback_id: &str,
+    queue_revision: u64,
+) -> Result<(), String> {
+    let mut registry = REGISTRY.write().await;
+    let target_id = registry.pending_handoffs.validate_progress_reference(
+        token,
+        user_db_id,
+        playback_id,
+        queue_revision,
+    )?;
+    let target = registry
+        .connections
+        .get(&target_id)
+        .ok_or_else(|| "handoff target connection not found".to_string())?;
+    if target.user_db_id != user_db_id || target.session_key != session_key {
+        return Err("handoff progress did not come from the designated target".to_string());
+    }
+    registry.pending_handoffs.claim_progress(token)
+}
+
+pub(super) enum FinishProgress {
+    Completed,
+    Failed,
+    Missing,
+}
+
+pub(super) async fn finish_handoff_progress(
+    token: &str,
+    applied: &AppliedProgress,
+) -> FinishProgress {
+    let mut registry = REGISTRY.write().await;
+    let Some(result) = registry.pending_handoffs.progress_result(token) else {
+        return FinishProgress::Missing;
+    };
+    let Ok(ready) = result else {
+        registry.pending_handoffs.finish_progress(token);
+        return FinishProgress::Failed;
+    };
+    let Some(target) = registry.connections.get(&ready.target_id) else {
+        registry.pending_handoffs.fail(token, "handoff target connection disconnected");
+        registry.pending_handoffs.finish_progress(token);
+        return FinishProgress::Failed;
+    };
+    playback_sessions::bind_current_playback_session_scope(
+        &playback_sessions::PlaybackScopeKey {
+            plugin_id: "native",
+            user_db_id: target.user_db_id,
+            session_key: &target.session_key,
+        },
+        applied
+            .expected_session
+            .db_id
+            .expect("applied handoff progress must retain its session database ID"),
+        applied.expected_session.id.clone(),
+        applied.expected_session.updated_at_ms,
+    );
+    if let Some(source) = ready.source_binding {
+        playback_sessions::clear_current_binding_if_unchanged(
+            &playback_sessions::PlaybackScopeKey {
+                plugin_id: "native",
+                user_db_id: source.user_db_id,
+                session_key: &source.session_key,
+            },
+            &source.snapshot,
+        );
+    }
+    registry.pending_handoffs.finish_progress(token);
+    FinishProgress::Completed
+}
+
+pub(super) async fn abort_handoff_progress(token: &str, error: String) -> bool {
+    REGISTRY
+        .write()
+        .await
+        .pending_handoffs
+        .abort_progress(token, error)
+}
+
+#[cfg(test)]
+pub(super) async fn hold_write_lock_for_test() -> impl Drop {
+    REGISTRY.write().await
+}
+
+pub(super) async fn fail_handoff(token: &str, error: impl Into<String>) -> bool {
+    REGISTRY.write().await.pending_handoffs.fail(token, error)
+}
+
+pub(super) async fn fail_handoffs_for_playback_revision(
+    playback_id: &str,
+    current_revision: u64,
+) -> usize {
+    REGISTRY
+        .write()
+        .await
+        .pending_handoffs
+        .fail_for_playback_revision(playback_id, current_revision)
+}
+
+pub(super) async fn fail_handoffs_for_playback(playback_id: &str) -> usize {
+    REGISTRY
+        .write()
+        .await
+        .pending_handoffs
+        .fail_for_playback(playback_id)
 }
 
 pub(crate) async fn resolve_token(token: &str) -> Option<ConnectionSnapshot> {

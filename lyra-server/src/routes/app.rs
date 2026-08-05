@@ -38,7 +38,7 @@ pub(crate) fn build_core_api() -> Result<CoreApi> {
         .nest("/api/metadata", super::metadata_routes())
         .nest("/api/tags", super::tag_routes())
         .nest("/api/tracks", super::track_routes())
-        .nest("/api/playback-sessions", super::playback_session_routes())
+        .nest("/api/playbacks", super::playback_routes())
         .nest("/api/listens", super::listen_routes())
         .nest("/api/playlists", super::playlist_routes())
         .nest("/api/stream", super::stream_routes())
@@ -85,8 +85,8 @@ pub(crate) fn build_openapi_spec() -> OpenApi {
         .nest("/api/tags", super::tags::tag_openapi_routes())
         .nest("/api/tracks", super::tracks::track_openapi_routes())
         .nest(
-            "/api/playback-sessions",
-            super::playback_sessions::playback_session_openapi_routes(),
+            "/api/playbacks",
+            super::playbacks::playback_openapi_routes(),
         )
         .nest("/api/listens", super::listens::listen_openapi_routes())
         .nest(
@@ -288,13 +288,13 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("PUT", "/api/tracks/{id}/lyrics/shared"),
     ("DELETE", "/api/tracks/{id}/lyrics/shared"),
     ("POST", "/api/tracks/{id}/lyrics/refresh"),
-    ("GET", "/api/playback-sessions/"),
-    ("POST", "/api/playback-sessions/"),
-    ("GET", "/api/playback-sessions/active"),
-    (
-        "POST",
-        "/api/playback-sessions/{playback_session_id}/progress",
-    ),
+    ("GET", "/api/playbacks/"),
+    ("POST", "/api/playbacks/"),
+    ("GET", "/api/playbacks/{id}"),
+    ("DELETE", "/api/playbacks/{id}"),
+    ("GET", "/api/playbacks/{id}/queue"),
+    ("PUT", "/api/playbacks/{id}/queue"),
+    ("POST", "/api/playbacks/{id}/progress"),
     ("GET", "/api/listens/"),
     ("GET", "/api/playlists/"),
     ("POST", "/api/playlists/"),

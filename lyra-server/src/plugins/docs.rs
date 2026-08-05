@@ -398,6 +398,26 @@ mod tests {
 
         assert!(json.get("openapi").is_some());
         assert_eq!(json["info"]["title"], "Lyra Server REST API");
+        let create_properties =
+            &json["components"]["schemas"]["PlaybackCreateRequest"]["properties"];
+        for field in [
+            "track_ids",
+            "current_index",
+            "repeat_mode",
+            "shuffle_enabled",
+        ] {
+            assert!(
+                create_properties.get(field).is_some(),
+                "playback creation schema missing initial queue field {field}"
+            );
+        }
+        assert!(create_properties.get("track_id").is_none());
+        assert!(
+            json["components"]["schemas"]["PlaybackProgressRequest"]["properties"]
+                .get("handoff_token")
+                .is_some(),
+            "playback progress schema must expose the handoff application token"
+        );
     }
 
     #[test]
@@ -406,5 +426,10 @@ mod tests {
 
         assert!(json.get("asyncapi").is_some());
         assert_eq!(json["info"]["title"], "Lyra WebSocket Remote Control");
+        let forwarded =
+            serde_json::to_string(&json["components"]["messages"]["Command"]["payload"])
+                .expect("forwarded command schema must serialize");
+        assert!(forwarded.contains("handoff_queue"));
+        assert!(forwarded.contains("handoff_token"));
     }
 }

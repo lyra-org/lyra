@@ -48,6 +48,11 @@ pub(crate) enum ClientCommand {
     PreviousTrack(RemoteControlCommand),
     #[cfg_attr(feature = "docgen", asyncapi(summary = "Set volume level on target"))]
     SetVolume(SetVolumeCommand),
+    #[cfg_attr(
+        feature = "docgen",
+        asyncapi(summary = "Ask target to fetch and apply an exact durable playback queue")
+    )]
+    HandoffQueue(HandoffQueueCommand),
 }
 
 impl ClientCommand {
@@ -62,6 +67,7 @@ impl ClientCommand {
             | Self::PreviousTrack(c) => &c.id,
             Self::Seek(c) => &c.id,
             Self::SetVolume(c) => &c.id,
+            Self::HandoffQueue(c) => &c.id,
         }
     }
 
@@ -75,6 +81,7 @@ impl ClientCommand {
             Self::NextTrack(_) => Some(RemoteAction::NextTrack),
             Self::PreviousTrack(_) => Some(RemoteAction::PreviousTrack),
             Self::SetVolume(_) => Some(RemoteAction::SetVolume),
+            Self::HandoffQueue(_) => Some(RemoteAction::HandoffQueue),
             Self::DeclareCapabilities { .. } => None,
         }
     }
@@ -89,6 +96,7 @@ impl ClientCommand {
             | Self::PreviousTrack(c) => Some(&c.target),
             Self::Seek(c) => Some(&c.target),
             Self::SetVolume(c) => Some(&c.target),
+            Self::HandoffQueue(c) => Some(&c.target),
             Self::DeclareCapabilities { .. } => None,
         }
     }
@@ -115,6 +123,15 @@ pub(crate) struct SetVolumeCommand {
     pub(crate) id: String,
     pub(crate) target: String,
     pub(crate) level: f32,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct HandoffQueueCommand {
+    pub(crate) id: String,
+    pub(crate) target: String,
+    pub(crate) playback_id: String,
+    pub(crate) queue_revision: u64,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -173,6 +190,14 @@ pub(crate) enum ForwardedCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         from: Option<u64>,
         level: f32,
+    },
+    HandoffQueue {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        from: Option<u64>,
+        playback_id: String,
+        queue_revision: u64,
+        /// Opaque correlation token whose exact progress report completes the handoff.
+        handoff_token: String,
     },
 }
 
@@ -281,6 +306,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_handoff_queue_command() {
+        let json = r#"{"action":"handoff_queue","id":"1","target":"opaque","playback_id":"p1","queue_revision":7}"#;
+        let msg: ClientCommand = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientCommand::HandoffQueue(command) => {
+                assert_eq!(command.playback_id, "p1");
+                assert_eq!(command.queue_revision, 7);
+                assert_eq!(command.target, "opaque");
+            }
+            _ => panic!("expected HandoffQueue"),
+        }
+    }
+
+    #[test]
     fn parse_declare_capabilities() {
         let json =
             r#"{"action":"declare_capabilities","id":"1","commands":["play","pause","seek"]}"#;
@@ -362,6 +401,12 @@ mod tests {
             OutgoingMessage::Command(ForwardedCommand::SetVolume {
                 from: None,
                 level: 0.5,
+            }),
+            OutgoingMessage::Command(ForwardedCommand::HandoffQueue {
+                from: Some(7),
+                playback_id: "p1".to_string(),
+                queue_revision: 3,
+                handoff_token: "opaque".to_string(),
             }),
         ] {
             let json = serde_json::to_string(&msg).unwrap();

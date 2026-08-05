@@ -28,4 +28,5 @@ pub(crate) enum RemoteAction {
     NextTrack,
     PreviousTrack,
     SetVolume,
+    HandoffQueue,
 }
