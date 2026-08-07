@@ -120,6 +120,7 @@ pub(crate) enum ReplaceQueueError {
     Database(#[from] DbError),
 }
 
+#[cfg(test)]
 pub(crate) fn create(
     db: &mut DbAny,
     playback: &Playback,
@@ -220,7 +221,7 @@ pub(crate) fn list_projections_for_user(
             .to(user_db_id)
             .limit((MAX_PLAYBACKS_PER_USER + 1) as u64)
             .where_()
-            .distance(CountComparison::Equal(1))
+            .distance(CountComparison::Equal(2))
             .and()
             .node()
             .and()
@@ -249,7 +250,7 @@ pub(crate) fn count_for_user_up_to_limit(
             .to(user_db_id)
             .limit(MAX_PLAYBACKS_PER_USER as u64)
             .where_()
-            .distance(CountComparison::Equal(1))
+            .distance(CountComparison::Equal(2))
             .and()
             .node()
             .and()
@@ -425,6 +426,7 @@ fn remove_current_session_edge(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn replace_queue(
     db: &mut DbAny,
     playback_db_id: DbId,

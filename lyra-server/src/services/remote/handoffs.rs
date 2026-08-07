@@ -401,7 +401,7 @@ async fn finish_committed_progress(token: &str, applied: &AppliedProgress) -> bo
             };
             match update {
                 Ok(Some(update)) => {
-                    playback_sessions::dispatch_playback_update(&update.playback, update.event);
+                    playback_sessions::dispatch_playback_update(&update.session, update.event);
                     playback_sessions::dispatch_evicted_updates(update.evicted_playbacks);
                 }
                 Ok(None) => {}
@@ -636,6 +636,7 @@ mod tests {
     #[tokio::test]
     async fn cancelled_committed_progress_still_completes() -> anyhow::Result<()> {
         let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
         for connection in registry::list_connections().await {
             registry::unregister(connection.connection_id).await;
         }
@@ -676,6 +677,11 @@ mod tests {
                 .expect("completion sender should remain live")
                 .is_ok()
         );
+        playback_sessions::clear_playback_session_scope(&playback_sessions::PlaybackScopeKey {
+            plugin_id: "native",
+            user_db_id: DbId(9),
+            session_key: "target-session",
+        });
         registry::unregister(registered.connection_id).await;
         drop(registered.command_rx);
         Ok(())
@@ -684,6 +690,7 @@ mod tests {
     #[tokio::test]
     async fn successful_progress_moves_native_scope_from_source_to_target() -> anyhow::Result<()> {
         let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
         for connection in registry::list_connections().await {
             registry::unregister(connection.connection_id).await;
         }
@@ -764,6 +771,7 @@ mod tests {
     #[tokio::test]
     async fn disconnected_target_cannot_be_bound_after_progress_claim() -> anyhow::Result<()> {
         let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
         for connection in registry::list_connections().await {
             registry::unregister(connection.connection_id).await;
         }

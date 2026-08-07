@@ -31,6 +31,7 @@ pub(crate) struct QueueSnapshot {
 }
 
 impl QueueSnapshot {
+    #[cfg(test)]
     pub(crate) fn single(track_id: String) -> Self {
         Self {
             track_ids: vec![track_id],
@@ -445,6 +446,8 @@ pub(crate) enum HandoffValidationError {
     },
     #[error("playback queue is no longer accessible")]
     Inaccessible,
+    #[error(transparent)]
+    Database(#[from] agdb::DbError),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }

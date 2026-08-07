@@ -176,6 +176,7 @@ pub(crate) fn get_user_id(
     Ok(None)
 }
 
+#[cfg(test)]
 pub(crate) fn create(
     db: &mut DbAny,
     playback_session: &PlaybackSession,
