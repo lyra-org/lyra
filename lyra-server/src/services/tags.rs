@@ -804,6 +804,42 @@ mod tests {
     }
 
     #[test]
+    fn detach_final_target_preserves_manageable_empty_tag() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        setup_id_index(&mut db)?;
+        let user = create_user(&mut db, "alice")?;
+        let (_, track_id, _) = create_accessible_track(&mut db, user)?;
+
+        create(&mut db, user, &track_id, "Keep", "blue")?;
+        let original = list_for_user(&db, user)?.pop().expect("tag present");
+        let tag_db_id = original.db_id.clone().expect("tag db id").into();
+
+        remove_target_by_tag_id(&mut db, user, tag_db_id, &track_id)?;
+        remove_target_by_tag_id(&mut db, user, tag_db_id, &track_id)?;
+
+        let detached = get_by_public_id(&db, user, &original.id)?;
+        assert_eq!(detached.id, original.id);
+        assert_eq!(detached.tag, original.tag);
+        assert_eq!(detached.color, original.color);
+        assert_eq!(detached.created_at_ms, original.created_at_ms);
+        assert_eq!(list_for_user(&db, user)?.len(), 1);
+        assert!(list_targets(&db, user, tag_db_id)?.is_empty());
+
+        let updated = update(&mut db, user, tag_db_id, Some("Detached"), Some("red"))?;
+        assert_eq!(updated.id, original.id);
+        assert_eq!(updated.tag, "Detached");
+        assert_eq!(updated.color, "red");
+        assert!(list_targets(&db, user, tag_db_id)?.is_empty());
+
+        delete(&mut db, user, tag_db_id)?;
+        assert!(matches!(
+            get_by_public_id(&db, user, &original.id),
+            Err(TagServiceError::NotFound),
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn create_rejects_bad_tag_name() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         setup_id_index(&mut db)?;
