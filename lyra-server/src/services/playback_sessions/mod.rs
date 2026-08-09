@@ -34,10 +34,10 @@ pub(crate) use self::sessions::{
     clear_playback_session_scope,
     clear_session_bindings_for_playback,
     get_playback_session,
-    snapshot_current_binding,
-    with_no_current_binding_for_playback,
     is_remote_control_degraded,
     mark_command_dispatched,
+    snapshot_current_binding,
+    with_no_current_binding_for_playback,
 };
 pub(crate) use self::workflow::{
     cleanup_evicted_playbacks,

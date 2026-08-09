@@ -879,13 +879,8 @@ pub(crate) fn report_playback_in_transaction(
     })?;
     let user_db_id = playback_user_db_id.unwrap_or(DbId(0));
 
-    let mut playback = require_playback_record(
-        db,
-        playback_session_id,
-        track_db_id,
-        user_db_id,
-        playback,
-    )?;
+    let mut playback =
+        require_playback_record(db, playback_session_id, track_db_id, user_db_id, playback)?;
     maybe_record_listen_in_transaction(db, &mut playback, now_ms)?;
     Ok(TransactionPlaybackUpdate {
         event: event_for_state(playback.playback.state, active_event),

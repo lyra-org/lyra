@@ -51,6 +51,7 @@ use crate::{
             require_auth,
             require_principal,
         },
+        pagination::SnapshotKey,
         playback_sessions::{
             self as sessions,
             PlaybackMutation,
@@ -66,7 +67,6 @@ use crate::{
             handoffs as remote_handoffs,
             registry as remote_registry,
         },
-        pagination::SnapshotKey,
     },
 };
 
@@ -381,20 +381,16 @@ async fn list_playbacks(
                 continue;
             };
             if let Some(record) = playbacks::get_visible_detail(&db, playback_db_id, &principal)
-            .map_err(map_playback_error)?
+                .map_err(map_playback_error)?
             {
                 records.push(record);
             }
         }
         (records, page.next_cursor)
     } else {
-        let mut projections = playbacks::list_visible_projections(
-            &db,
-            &principal,
-            active_only,
-            current_ms,
-        )
-            .map_err(map_playback_error)?;
+        let mut projections =
+            playbacks::list_visible_projections(&db, &principal, active_only, current_ms)
+                .map_err(map_playback_error)?;
         projections.sort_by(|left, right| {
             right
                 .updated_at_ms

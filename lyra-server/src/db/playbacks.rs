@@ -267,8 +267,7 @@ fn projection_from_element(
 ) -> anyhow::Result<Option<PlaybackListProjection>> {
     if element.id.0 <= 0
         || !element.values.iter().any(|kv| {
-            kv.key == DbValue::from("db_element_id")
-                && kv.value == DbValue::from("Playback")
+            kv.key == DbValue::from("db_element_id") && kv.value == DbValue::from("Playback")
         })
     {
         return Ok(None);
@@ -308,8 +307,7 @@ pub(crate) fn get_projection_by_id(
     )?;
     if !typed.elements.into_iter().any(|element| {
         element.values.iter().any(|kv| {
-            kv.key == DbValue::from("db_element_id")
-                && kv.value == DbValue::from("Playback")
+            kv.key == DbValue::from("db_element_id") && kv.value == DbValue::from("Playback")
         })
     }) {
         return Ok(None);
@@ -337,7 +335,10 @@ pub(crate) fn current_session_ids(
     if playback_ids.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
-    let playback_ids = playback_ids.iter().copied().collect::<std::collections::HashSet<_>>();
+    let playback_ids = playback_ids
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
     let result = db.exec(
         QueryBuilder::select()
             .search()
@@ -366,9 +367,7 @@ pub(crate) fn current_session_ids(
         .elements
         .into_iter()
         .filter_map(|element| {
-            (element.id.0 < 0
-                && playback_ids.contains(&element.from)
-                && element.to.0 > 0)
+            (element.id.0 < 0 && playback_ids.contains(&element.from) && element.to.0 > 0)
                 .then_some((element.from, element.to))
         })
         .collect())
@@ -464,29 +463,29 @@ pub(crate) fn replace_queue_in_transaction(
     updated_at_ms: u64,
     clear_current_session: bool,
 ) -> Result<Playback, ReplaceQueueError> {
-        let mut playback = get_by_id(db, playback_db_id)
-            .map_err(ReplaceQueueError::Internal)?
-            .ok_or(ReplaceQueueError::NotFound)?;
-        if playback.queue_revision != expected_revision {
-            return Err(ReplaceQueueError::RevisionConflict {
-                expected_revision,
-                current_revision: playback.queue_revision,
-            });
-        }
-        playback.queue_revision = playback
-            .queue_revision
-            .checked_add(1)
-            .ok_or(ReplaceQueueError::RevisionExhausted)?;
-        playback.track_ids = track_ids;
-        playback.current_index = current_index;
-        playback.repeat_mode = repeat_mode;
-        playback.shuffle_enabled = shuffle_enabled;
-        playback.updated_at_ms = updated_at_ms;
-        db.exec_mut(QueryBuilder::insert().element(&playback).query())?;
-        if clear_current_session {
-            remove_current_session_edge(db, playback_db_id)?;
-        }
-        Ok(playback)
+    let mut playback = get_by_id(db, playback_db_id)
+        .map_err(ReplaceQueueError::Internal)?
+        .ok_or(ReplaceQueueError::NotFound)?;
+    if playback.queue_revision != expected_revision {
+        return Err(ReplaceQueueError::RevisionConflict {
+            expected_revision,
+            current_revision: playback.queue_revision,
+        });
+    }
+    playback.queue_revision = playback
+        .queue_revision
+        .checked_add(1)
+        .ok_or(ReplaceQueueError::RevisionExhausted)?;
+    playback.track_ids = track_ids;
+    playback.current_index = current_index;
+    playback.repeat_mode = repeat_mode;
+    playback.shuffle_enabled = shuffle_enabled;
+    playback.updated_at_ms = updated_at_ms;
+    db.exec_mut(QueryBuilder::insert().element(&playback).query())?;
+    if clear_current_session {
+        remove_current_session_edge(db, playback_db_id)?;
+    }
+    Ok(playback)
 }
 
 pub(crate) fn delete(db: &mut DbAny, playback_db_id: DbId) -> anyhow::Result<()> {
@@ -567,10 +566,7 @@ mod tests {
     #[test]
     fn repeat_mode_uses_stable_string_db_values() -> anyhow::Result<()> {
         assert_eq!(DbValue::from(RepeatMode::All), DbValue::from("all"));
-        assert_eq!(
-            RepeatMode::try_from(DbValue::from("one"))?,
-            RepeatMode::One
-        );
+        assert_eq!(RepeatMode::try_from(DbValue::from("one"))?, RepeatMode::One);
         assert!(RepeatMode::try_from(DbValue::from("invalid")).is_err());
         Ok(())
     }
