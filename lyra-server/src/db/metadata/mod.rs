@@ -112,7 +112,7 @@ pub(crate) fn collect_custom_field_ids(
         .collect())
 }
 
-/// Cascade-remove entity nodes, their inbound favorite + tag edges, and orphan tags.
+/// Cascade-remove entity nodes and their inbound favorite, rating, and tag edges.
 /// Callers already inside a `transaction_mut` must use [`cascade_remove_entities_in_txn`]
 /// — agdb transactions are not reentrant.
 pub(crate) fn cascade_remove_entities(db: &mut DbAny, node_ids: &[DbId]) -> anyhow::Result<()> {
@@ -195,7 +195,6 @@ fn cascade_remove_favorites_and_nodes(
         super::favorites::remove_inbound_for_target(db, id)?;
         super::ratings::remove_inbound_for_target(db, id)?;
     }
-    super::tags::remove_inbound_for_target_with_orphan_cleanup(db, node_ids)?;
     db.exec_mut(QueryBuilder::remove().ids(node_ids).query())?;
     Ok(())
 }

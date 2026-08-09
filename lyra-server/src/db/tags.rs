@@ -527,7 +527,7 @@ fn get_targets_by_tag_with_cap(
     Ok(out)
 }
 
-/// Detach a target from a named tag. Auto-removes the tag node when its last target detaches.
+/// Detach a target from a named tag while preserving the tag node.
 pub(crate) fn remove_target(
     db: &mut impl DbAccess,
     owner_db_id: DbId,
@@ -547,10 +547,6 @@ pub(crate) fn remove_target(
     };
 
     db.exec_mut(QueryBuilder::remove().ids(edge_id).query())?;
-
-    if get_targets(db, tag_id)?.is_empty() {
-        db.exec_mut(QueryBuilder::remove().ids(tag_id).query())?;
-    }
     Ok(true)
 }
 
@@ -620,47 +616,6 @@ pub(crate) fn remove_outbound_for_user(
     if !tag_ids.is_empty() {
         db.exec_mut(QueryBuilder::remove().ids(tag_ids).query())?;
     }
-    Ok(())
-}
-
-/// Remove inbound tag edges for a batch of deleted targets, then drop any tag node left
-/// empty. Dedupes impacted tags and checks emptiness per-tag once, AFTER all its edges are
-/// gone — so a tag with two targets in the same batch isn't dropped prematurely.
-pub(crate) fn remove_inbound_for_target_with_orphan_cleanup(
-    db: &mut impl DbAccess,
-    target_db_ids: &[DbId],
-) -> anyhow::Result<()> {
-    if target_db_ids.is_empty() {
-        return Ok(());
-    }
-
-    let mut impacted_tag_ids: HashSet<DbId> = HashSet::new();
-    let mut edge_ids_to_remove: Vec<DbId> = Vec::new();
-
-    for &target_db_id in target_db_ids {
-        for element in inbound_tag_edges(db, target_db_id)? {
-            let from_id = element.from;
-            if from_id.0 != 0 {
-                impacted_tag_ids.insert(from_id);
-            }
-            edge_ids_to_remove.push(element.id);
-        }
-    }
-
-    if !edge_ids_to_remove.is_empty() {
-        db.exec_mut(QueryBuilder::remove().ids(edge_ids_to_remove).query())?;
-    }
-
-    let mut orphan_tag_ids = Vec::new();
-    for tag_id in impacted_tag_ids {
-        if get_targets(db, tag_id)?.is_empty() {
-            orphan_tag_ids.push(tag_id);
-        }
-    }
-    if !orphan_tag_ids.is_empty() {
-        db.exec_mut(QueryBuilder::remove().ids(orphan_tag_ids).query())?;
-    }
-
     Ok(())
 }
 
@@ -964,22 +919,33 @@ mod tests {
     }
 
     #[test]
-    fn remove_target_cleans_up_empty_tag() -> anyhow::Result<()> {
+    fn remove_target_preserves_empty_tag() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user = create_test_user(&mut db)?;
         let track = create_test_track(&mut db)?;
 
         let (tag_id, _) = create(&mut db, user, track, "Only", "blue", 1)?;
         assert!(remove_target(&mut db, user, track, "Only")?);
-        assert!(
-            get_by_id(&db, tag_id)?.is_none(),
-            "tag node must be removed when last target detaches",
+        assert!(!remove_target(&mut db, user, track, "Only")?);
+
+        let tag = get_by_id(&db, tag_id)?.expect("empty tag must remain gettable");
+        assert_eq!(tag.tag, "Only");
+        assert_eq!(tag.color, "blue");
+        assert_eq!(tag.created_at_ms, 1);
+        assert_eq!(get_owner(&db, tag_id)?, Some(user));
+        assert!(get_targets(&db, tag_id)?.is_empty());
+        assert_eq!(
+            list_for_user(&db, user)?
+                .into_iter()
+                .map(|tag| tag.tag)
+                .collect::<Vec<_>>(),
+            vec!["Only"],
         );
         Ok(())
     }
 
     #[test]
-    fn orphan_cleanup_batched_across_multiple_targets_on_same_tag() -> anyhow::Result<()> {
+    fn cascade_remove_entities_preserves_tag_emptied_by_deleted_targets() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user = create_test_user(&mut db)?;
         let track_a = create_test_track(&mut db)?;
@@ -989,33 +955,42 @@ mod tests {
         create(&mut db, user, track_b, "Shared", "blue", 2)?;
         assert_eq!(get_targets(&db, tag_id)?.len(), 2);
 
-        remove_inbound_for_target_with_orphan_cleanup(&mut db, &[track_a, track_b])?;
+        crate::db::metadata::cascade_remove_entities(&mut db, &[track_a, track_b])?;
 
         assert!(
-            get_by_id(&db, tag_id)?.is_none(),
-            "tag node must be orphan-cleaned when all its targets are in one cascade batch",
+            get_by_id(&db, tag_id)?.is_some(),
+            "tag node must survive when target deletion removes all its edges",
         );
+        assert!(get_targets(&db, tag_id)?.is_empty());
 
         Ok(())
     }
 
     #[test]
-    fn orphan_cleanup_preserves_tag_with_surviving_target() -> anyhow::Result<()> {
+    fn delete_playlist_preserves_tag_emptied_by_deleted_target() -> anyhow::Result<()> {
+        use nanoid::nanoid;
+
         let mut db = new_test_db()?;
         let user = create_test_user(&mut db)?;
-        let track_a = create_test_track(&mut db)?;
-        let track_b = create_test_track(&mut db)?;
+        let playlist = crate::db::Playlist {
+            db_id: None,
+            id: nanoid!(),
+            name: "Tagged playlist".to_string(),
+            description: None,
+            is_public: Some(false),
+            created_at: None,
+            updated_at: None,
+        };
+        let playlist_db_id = crate::db::playlists::create(&mut db, &playlist, user)?;
+        let (tag_id, _) = create(&mut db, user, playlist_db_id, "Playlist", "blue", 1)?;
 
-        let (tag_id, _) = create(&mut db, user, track_a, "Shared", "blue", 1)?;
-        create(&mut db, user, track_b, "Shared", "blue", 2)?;
-
-        remove_inbound_for_target_with_orphan_cleanup(&mut db, &[track_a])?;
+        crate::db::playlists::delete(&mut db, playlist_db_id)?;
 
         assert!(
             get_by_id(&db, tag_id)?.is_some(),
-            "tag node must survive while at least one target remains",
+            "tag node must survive when its playlist target is deleted",
         );
-        assert_eq!(get_targets(&db, tag_id)?, vec![track_b]);
+        assert!(get_targets(&db, tag_id)?.is_empty());
 
         Ok(())
     }
@@ -1057,11 +1032,15 @@ mod tests {
         let bob = create_test_user(&mut db)?;
         let track = create_test_track(&mut db)?;
 
-        create(&mut db, alice, track, "Alice's Tag", "blue", 1)?;
+        let (alice_tag_id, _) = create(&mut db, alice, track, "Alice's Tag", "blue", 1)?;
         create(&mut db, bob, track, "Bob's Tag", "red", 2)?;
 
         remove_outbound_for_user(&mut db, alice)?;
 
+        assert!(
+            get_by_id(&db, alice_tag_id)?.is_none(),
+            "owner cleanup must delete the tag node",
+        );
         assert!(!has_target(&db, alice, track, "Alice's Tag")?);
         assert!(
             has_target(&db, bob, track, "Bob's Tag")?,

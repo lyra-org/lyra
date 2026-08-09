@@ -427,8 +427,9 @@ fn delete_tag_target_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Detach tag from target")
         .description(
             "Detaches a target from one of the authenticated user's tags. Idempotent for valid \
-         tag and target resources. No visibility gate is applied: authenticated users can \
-         remove their tag edge even when the target later becomes non-visible.",
+         tag and target resources. The tag remains available when its final target is detached. \
+         No visibility gate is applied: authenticated users can remove their tag edge even when \
+         the target later becomes non-visible.",
         )
         .response::<204, ()>()
 }

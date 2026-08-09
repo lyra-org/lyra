@@ -163,7 +163,6 @@ pub(crate) fn update_in_transaction(
 pub(crate) fn delete(db: &mut DbAny, playlist_db_id: DbId) -> anyhow::Result<()> {
     db.transaction_mut(|t| -> anyhow::Result<()> {
         super::favorites::remove_inbound_for_target(t, playlist_db_id)?;
-        super::tags::remove_inbound_for_target_with_orphan_cleanup(t, &[playlist_db_id])?;
         super::covers::display::remove_playlist_cover_profile(t, playlist_db_id)?;
         t.exec_mut(QueryBuilder::remove().ids(playlist_db_id).query())?;
         Ok(())
