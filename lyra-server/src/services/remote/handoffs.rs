@@ -29,7 +29,10 @@ use crate::{
     STATE,
     services::{
         playback_sessions,
-        playbacks::{self, validate_handoff_queue},
+        playbacks::{
+            self,
+            validate_handoff_queue,
+        },
     },
 };
 
@@ -169,10 +172,7 @@ impl PendingHandoffs {
         Ok(())
     }
 
-    pub(super) fn progress_result(
-        &self,
-        token: &str,
-    ) -> Option<Result<ProgressReady, String>> {
+    pub(super) fn progress_result(&self, token: &str) -> Option<Result<ProgressReady, String>> {
         let pending = self.entries.get(token)?;
         let HandoffPhase::Applying { failure } = &pending.phase else {
             return None;

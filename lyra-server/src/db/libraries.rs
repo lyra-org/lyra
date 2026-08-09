@@ -1044,11 +1044,7 @@ mod tests {
             Ok(())
         })?;
 
-        let visible = accessible_track_ids(
-            &db,
-            user_db_id,
-            &[shared_track, private_track],
-        )?;
+        let visible = accessible_track_ids(&db, user_db_id, &[shared_track, private_track])?;
         assert!(visible.contains(&shared_track));
         assert!(!visible.contains(&private_track));
         Ok(())

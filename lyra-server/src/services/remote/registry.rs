@@ -361,7 +361,9 @@ pub(super) async fn finish_handoff_progress(
         return FinishProgress::Failed;
     };
     let Some(target) = registry.connections.get(&ready.target_id) else {
-        registry.pending_handoffs.fail(token, "handoff target connection disconnected");
+        registry
+            .pending_handoffs
+            .fail(token, "handoff target connection disconnected");
         registry.pending_handoffs.finish_progress(token);
         return FinishProgress::Failed;
     };

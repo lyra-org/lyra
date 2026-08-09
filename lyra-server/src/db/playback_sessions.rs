@@ -4,7 +4,10 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{
+        HashMap,
+        HashSet,
+    },
     fmt,
 };
 
@@ -245,10 +248,14 @@ pub(crate) fn get_list_projections_by_ids(
         .elements
         .into_iter()
         .filter_map(|element| {
-            element.values.iter().any(|kv| {
-                kv.key == DbValue::from("db_element_id")
-                    && kv.value == DbValue::from("PlaybackSession")
-            }).then_some(element.id)
+            element
+                .values
+                .iter()
+                .any(|kv| {
+                    kv.key == DbValue::from("db_element_id")
+                        && kv.value == DbValue::from("PlaybackSession")
+                })
+                .then_some(element.id)
         })
         .collect::<Vec<_>>();
     if typed_ids.is_empty() {
@@ -268,9 +275,7 @@ pub(crate) fn get_list_projections_by_ids(
                 .iter()
                 .find(|kv| kv.key == DbValue::from(key))
                 .map(|kv| kv.value.clone())
-                .ok_or_else(|| {
-                    anyhow::anyhow!("playback session {} missing {key}", element.id.0)
-                })
+                .ok_or_else(|| anyhow::anyhow!("playback session {} missing {key}", element.id.0))
         };
         let state = PlaybackState::try_from(value("state")?)?;
         let updated_at_ms = match value("updated_at_ms")? {
@@ -349,16 +354,21 @@ pub(crate) fn track_ids_for_sessions(
     let track_ids = typed
         .into_iter()
         .filter_map(|element| {
-            element.values.iter().any(|kv| {
-                kv.key == DbValue::from("db_element_id")
-                    && kv.value == DbValue::from("Track")
-            }).then_some(element.id)
+            element
+                .values
+                .iter()
+                .any(|kv| {
+                    kv.key == DbValue::from("db_element_id") && kv.value == DbValue::from("Track")
+                })
+                .then_some(element.id)
         })
         .collect::<HashSet<_>>();
     Ok(candidates
         .into_iter()
         .filter_map(|(session_id, target_id)| {
-            track_ids.contains(&target_id).then_some((session_id, target_id))
+            track_ids
+                .contains(&target_id)
+                .then_some((session_id, target_id))
         })
         .collect())
 }
