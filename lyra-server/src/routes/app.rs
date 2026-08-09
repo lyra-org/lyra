@@ -44,7 +44,10 @@ pub(crate) fn build_core_api() -> Result<CoreApi> {
         .nest("/api/stream", super::stream_routes())
         .nest("/api/download", super::download_routes())
         .nest("/api/providers", super::provider_routes())
-        .nest("/api/entities", super::entity_routes())
+        .nest(
+            "/api/entities",
+            super::entity_routes().merge(super::entity_metadata_routes()),
+        )
         .nest("/api/ratings", super::rating_routes())
         .nest("/api/plugins", super::plugin_routes())
         .nest("/api/sync", super::sync_routes())
@@ -99,7 +102,11 @@ pub(crate) fn build_openapi_spec() -> OpenApi {
             "/api/providers",
             super::providers::provider_openapi_routes(),
         )
-        .nest("/api/entities", super::providers::entity_openapi_routes())
+        .nest(
+            "/api/entities",
+            super::providers::entity_openapi_routes()
+                .merge(super::entity_metadata::entity_metadata_openapi_routes()),
+        )
         .nest("/api/ratings", super::ratings::rating_openapi_routes())
         .nest("/api/plugins", super::plugins::plugin_openapi_routes())
         .nest("/api/sync", super::sync::sync_openapi_routes())
@@ -247,7 +254,6 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("POST", "/api/releases/{id}/covers/search"),
     ("GET", "/api/artists/"),
     ("GET", "/api/artists/{id}"),
-    ("PATCH", "/api/artists/{id}"),
     ("GET", "/api/artists/{id}/mix"),
     ("POST", "/api/artists/{id}/covers/search"),
     ("GET", "/api/entries/"),
@@ -322,6 +328,9 @@ const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("PUT", "/api/entities/{id}/lock"),
     ("DELETE", "/api/entities/{id}/lock"),
     ("POST", "/api/entities/{id}/refresh"),
+    ("GET", "/api/entities/{id}/metadata"),
+    ("PATCH", "/api/entities/{id}/metadata"),
+    ("POST", "/api/entities/{id}/metadata/preview"),
     ("GET", "/api/plugins/"),
     ("GET", "/api/plugins/settings"),
     ("POST", "/api/plugins/{plugin_id}/restart"),

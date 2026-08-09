@@ -5,6 +5,7 @@
 
 pub(crate) mod cleanup;
 mod cue;
+pub(crate) mod editing;
 pub(crate) mod ingestion;
 pub(crate) mod layers;
 pub(crate) mod lyrics;

@@ -21,7 +21,6 @@ use axum::{
     Router,
     routing::{
         get,
-        patch,
         post,
     },
 };
@@ -49,7 +48,6 @@ use crate::{
     routes::{
         covers as route_covers,
         deserialize_inc,
-        double_option,
         ratings::RatingFilterQuery,
         releases as route_releases,
         responses::{
@@ -65,8 +63,8 @@ use crate::{
         artists as artist_service,
         auth::{
             Principal,
+            access,
             require_authenticated,
-            require_manage_metadata,
         },
         covers,
         pagination::SnapshotKey,
@@ -135,25 +133,6 @@ pub(crate) struct ArtistListOptions {
     sort_order: Option<String>,
     rating_filter: db::ratings::RatingFilter,
     page_request: super::SnapshotPageRequest,
-}
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Deserialize)]
-struct ArtistUpdateRequest {
-    #[cfg_attr(feature = "docgen", schemars(description = "Updated artist name."))]
-    name: Option<String>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Updated sort name; set to null to clear.")
-    )]
-    #[serde(default, deserialize_with = "double_option")]
-    sort_name: Option<Option<String>>,
-    #[cfg_attr(
-        feature = "docgen",
-        schemars(description = "Updated description; set to null to clear.")
-    )]
-    #[serde(default, deserialize_with = "double_option")]
-    description: Option<Option<String>>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -544,26 +523,7 @@ fn artist_accessible_to_principal(
     principal: &Principal,
     artist_db_id: DbId,
 ) -> anyhow::Result<bool> {
-    if is_admin(principal) {
-        return Ok(true);
-    }
-    for release in db::releases::get_by_artist(db, artist_db_id)? {
-        let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
-            continue;
-        };
-        if release_accessible_to_principal(db, principal, release_db_id)? {
-            return Ok(true);
-        }
-    }
-    for track in db::tracks::get_by_artist(db, artist_db_id)? {
-        let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
-            continue;
-        };
-        if track_accessible_to_principal(db, principal, track_db_id)? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    access::artist_accessible(db, principal, artist_db_id)
 }
 
 fn filter_accessible_releases(
@@ -934,70 +894,6 @@ async fn search_artist_covers(
     }))
 }
 
-async fn update_artist(
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Json(update): Json<ArtistUpdateRequest>,
-) -> Result<Json<ArtistResponse>, AppError> {
-    let principal = require_manage_metadata(&headers).await?;
-
-    if update.name.is_none() && update.sort_name.is_none() && update.description.is_none() {
-        return Err(AppError::bad_request("no artist fields provided"));
-    }
-
-    let ArtistUpdateRequest {
-        name: update_name,
-        sort_name: update_sort_name,
-        description: update_description,
-    } = update;
-
-    let mut db = STATE.db.write().await;
-    let artist_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
-        .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-    if !artist_accessible_to_principal(&db, &principal, artist_db_id)? {
-        return Err(AppError::not_found(format!("Artist not found: {id}")));
-    }
-    if let Some(name) = update_name.as_ref()
-        && name.trim().is_empty()
-    {
-        return Err(AppError::bad_request("name cannot be empty"));
-    }
-
-    if let Some(Some(sort_name)) = update_sort_name.as_ref()
-        && sort_name.trim().is_empty()
-    {
-        return Err(AppError::bad_request("sort_name cannot be empty"));
-    }
-
-    if let Some(Some(description)) = update_description.as_ref()
-        && description.trim().is_empty()
-    {
-        return Err(AppError::bad_request("description cannot be empty"));
-    }
-
-    let updated = artist_service::update(
-        &mut db,
-        artist_db_id,
-        update_name,
-        update_sort_name,
-        update_description,
-    )?
-    .ok_or_else(|| AppError::not_found(format!("Artist not found: {}", id)))?;
-
-    Ok(Json(ArtistResponse {
-        id: updated.id,
-        name: updated.artist_name,
-        sort_name: updated.sort_name,
-        description: updated.description,
-        verified: updated.verified,
-        credit: None,
-        releases: None,
-        tracks: None,
-        relations: None,
-        cover: None,
-    }))
-}
-
 #[cfg(feature = "docgen")]
 fn list_artists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List artists").description(
@@ -1021,26 +917,18 @@ fn search_artist_covers_docs(op: TransformOperation) -> TransformOperation {
     )
 }
 
-#[cfg(feature = "docgen")]
-fn update_artist_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Update artist")
-        .description("Updates artist name, sort name, and description. Set sort_name or description to null to clear.")
-}
-
 pub fn artist_routes() -> Router {
     Router::new()
         .route("/", get(get_artists))
         .route("/{id}", get(get_artist))
         .route("/{id}/mix", get(super::mix::get_artist_mix))
         .route("/{id}/covers/search", post(search_artist_covers))
-        .route("/{id}", patch(update_artist))
 }
 
 #[cfg(feature = "docgen")]
 pub(crate) fn artist_openapi_routes() -> aide::axum::ApiRouter {
     use aide::axum::routing::{
         get_with,
-        patch_with,
         post_with,
     };
 
@@ -1055,7 +943,6 @@ pub(crate) fn artist_openapi_routes() -> aide::axum::ApiRouter {
             "/{id}/covers/search",
             post_with(search_artist_covers, search_artist_covers_docs),
         )
-        .api_route("/{id}", patch_with(update_artist, update_artist_docs))
 }
 
 #[cfg(test)]
@@ -1080,27 +967,6 @@ mod tests {
         },
     };
 
-    /// An explicit `null` must reach the service as `Some(None)` (a clear) and
-    /// must not trip the "no fields provided" 400 guard.
-    #[test]
-    fn artist_update_request_distinguishes_null_from_absent() {
-        let cleared: ArtistUpdateRequest =
-            serde_json::from_str(r#"{"sort_name":null,"description":null}"#)
-                .expect("null body parses");
-        assert_eq!(cleared.sort_name, Some(None));
-        assert_eq!(cleared.description, Some(None));
-        assert!(
-            !(cleared.name.is_none()
-                && cleared.sort_name.is_none()
-                && cleared.description.is_none()),
-            "explicit null must not be treated as an empty patch"
-        );
-
-        let absent: ArtistUpdateRequest =
-            serde_json::from_str(r#"{"name":"n"}"#).expect("absent body parses");
-        assert_eq!(absent.sort_name, None);
-        assert_eq!(absent.description, None);
-    }
     use agdb::{
         DbAny,
         DbId,

@@ -3,10 +3,14 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashMap;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 
 use agdb::{
     DbAny,
+    DbAnyTransactionMut,
     DbId,
 };
 use serde::{
@@ -17,16 +21,39 @@ use serde::{
 use crate::db::{
     self,
     Artist,
+    DbAccess,
     MetadataLayer,
     ProviderConfig,
     Release,
     Track,
+    metadata::manual_overrides::ManualMetadataField,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct MergedMetadata {
     pub(crate) fields: HashMap<String, serde_json::Value>,
     pub(crate) provenance: HashMap<String, String>,
+    manual_fields: HashSet<ManualMetadataField>,
+}
+
+fn overlay_manual_metadata(
+    db: &impl DbAccess,
+    node_id: DbId,
+    mut merged: MergedMetadata,
+) -> anyhow::Result<MergedMetadata> {
+    let Some(manual) = db::metadata::manual_overrides::get(db, node_id)? else {
+        return Ok(merged);
+    };
+    for (field, value) in manual.parsed_fields()? {
+        if field.is_graph() {
+            merged.fields.remove(field.as_str());
+        } else {
+            merged.fields.insert(field.as_str().to_string(), value);
+        }
+        merged.provenance.remove(field.as_str());
+        merged.manual_fields.insert(field);
+    }
+    Ok(merged)
 }
 
 pub(crate) fn merge_layers(
@@ -84,23 +111,32 @@ pub(crate) fn merge_layers(
     MergedMetadata {
         fields: merged_fields,
         provenance,
+        manual_fields: HashSet::new(),
     }
 }
 
 /// Apply merged metadata from all layers to an entity.
 /// Call this after saving a layer to update the entity with merged values.
 pub(crate) fn apply_merged_metadata_to_entity(db: &mut DbAny, node_id: DbId) -> anyhow::Result<()> {
+    db.transaction_mut(|transaction| {
+        apply_merged_metadata_to_entity_inside_tx(transaction, node_id)
+    })
+}
+
+pub(crate) fn apply_merged_metadata_to_entity_inside_tx(
+    db: &mut DbAnyTransactionMut<'_>,
+    node_id: DbId,
+) -> anyhow::Result<()> {
     let layers = db::metadata::layers::get_for_entity(db, node_id)?;
     let providers = db::providers::get(db)?;
-    let merged = merge_layers(layers, &providers);
+    let merged = overlay_manual_metadata(db, node_id, merge_layers(layers, &providers))?;
 
     if let Some(mut release) = db::releases::get_by_id(db, node_id)? {
         let is_locked = release.locked.unwrap_or(false);
         if apply_to_release(&mut release, &merged) {
-            db::releases::update(db, &release)?;
+            db::releases::update_in_transaction(db, &release)?;
         }
-        let genre_names = extract_genre_names(&merged);
-        if !genre_names.is_empty() {
+        if let Some(genre_names) = extract_genre_names(&merged) {
             db::genres::sync_release_genres(db, node_id, &genre_names)?;
         }
         // Locked releases skip the sync: a merge triggered by e.g. the dedup
@@ -108,22 +144,22 @@ pub(crate) fn apply_merged_metadata_to_entity(db: &mut DbAny, node_id: DbId) -> 
         // curated labels — the lock exists to prevent exactly that. Mirrors
         // the gate in `plugins/labels.rs::sync_for_release`.
         if !is_locked && let Some(label_inputs) = extract_label_inputs(&merged) {
-            db::labels::sync_release_labels(db, node_id, &label_inputs)?;
+            db::labels::sync_release_labels_inside_tx(db, node_id, &label_inputs)?;
         }
     } else if let Some(mut track) = db::tracks::get_by_id(db, node_id)? {
         if apply_to_track(&mut track, &merged) {
-            db::tracks::update(db, &track)?;
+            db::tracks::update_in_transaction(db, &track)?;
         }
     } else if let Some(mut artist) = db::artists::get_by_id(db, node_id)?
         && apply_to_artist(&mut artist, &merged)
     {
-        db::artists::update(db, &artist)?;
+        db::artists::update_in_transaction(db, &artist)?;
     }
 
     Ok(())
 }
 
-fn extract_genre_names(merged: &MergedMetadata) -> Vec<String> {
+fn extract_genre_names(merged: &MergedMetadata) -> Option<Vec<String>> {
     merged
         .fields
         .get("genres")
@@ -134,7 +170,6 @@ fn extract_genre_names(merged: &MergedMetadata) -> Vec<String> {
                 .filter_map(|v| v.as_str().map(String::from))
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 /// Parse the merged `labels` field into `LabelInput`s.
@@ -152,6 +187,28 @@ fn extract_genre_names(merged: &MergedMetadata) -> Vec<String> {
 /// orphan Labels on every ingestion.
 fn extract_label_inputs(merged: &MergedMetadata) -> Option<Vec<db::labels::LabelInput>> {
     let raw = merged.fields.get("labels")?;
+    parse_label_inputs(raw)
+}
+
+pub(crate) fn materialize_provider_labels_if_manually_owned(
+    db: &mut DbAny,
+    node_id: DbId,
+) -> anyhow::Result<()> {
+    if db::releases::get_by_id(db, node_id)?.is_none()
+        || !db::metadata::manual_overrides::owns_field(db, node_id, ManualMetadataField::Labels)?
+    {
+        return Ok(());
+    }
+    let layers = db::metadata::layers::get_for_entity(db, node_id)?;
+    let providers = db::providers::get(db)?;
+    let merged = merge_layers(layers, &providers);
+    if let Some(inputs) = extract_label_inputs(&merged) {
+        db::labels::materialize_labels(db, &inputs)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn parse_label_inputs(raw: &serde_json::Value) -> Option<Vec<db::labels::LabelInput>> {
     let Some(arr) = raw.as_array() else {
         tracing::warn!(
             ?raw,
@@ -259,31 +316,48 @@ fn apply_to_release(release: &mut Release, merged: &MergedMetadata) -> bool {
         release.set_release_title(title.to_string());
         changed = true;
     }
-    if let Some(sort_title) = merged.fields.get("sort_title").and_then(|v| v.as_str())
-        && release.sort_title.as_deref() != Some(sort_title)
-    {
-        release.set_sort_title(sort_title.to_string());
-        changed = true;
+    if let Some(value) = merged.fields.get("sort_title") {
+        let next = if value.is_null() {
+            Some(None)
+        } else {
+            value.as_str().map(|value| Some(value.to_string()))
+        };
+        if let Some(next) = next
+            && release.sort_title != next
+        {
+            release.sort_title = next;
+            changed = true;
+        }
     }
-    if let Some(release_type_str) = merged.fields.get("release_type").and_then(|v| v.as_str()) {
-        let next = db::releases::ReleaseType::from_db_str(release_type_str)
-            .ok()
-            .map(Some)
-            .unwrap_or(release.release_type);
-        if release.release_type != next {
+    if let Some(value) = merged.fields.get("release_type") {
+        let next = if value.is_null() {
+            Some(None)
+        } else {
+            value
+                .as_str()
+                .and_then(|value| db::releases::ReleaseType::from_db_str(value).ok())
+                .map(Some)
+        };
+        if let Some(next) = next
+            && release.release_type != next
+        {
             release.release_type = next;
             changed = true;
         }
     }
-    if let Some(release_date) = merged
-        .fields
-        .get("release_date")
-        .and_then(|v| v.as_str())
-        .and_then(db::releases::normalize_release_date)
-    {
-        let next = Some(release_date.clone());
-        if release.release_date != next {
-            release.set_release_date(release_date);
+    if let Some(value) = merged.fields.get("release_date") {
+        let next = if value.is_null() {
+            Some(None)
+        } else {
+            value
+                .as_str()
+                .and_then(db::releases::normalize_release_date)
+                .map(Some)
+        };
+        if let Some(next) = next
+            && release.release_date != next
+        {
+            release.release_date = next;
             changed = true;
         }
     }
@@ -300,44 +374,45 @@ fn apply_to_track(track: &mut Track, merged: &MergedMetadata) -> bool {
         track.set_track_title(title.to_string());
         changed = true;
     }
-    if let Some(sort_title) = merged.fields.get("sort_title").and_then(|v| v.as_str())
-        && track.sort_title.as_deref() != Some(sort_title)
-    {
-        track.set_sort_title(sort_title.to_string());
-        changed = true;
-    }
-    if let Some(year) = merged.fields.get("year").and_then(|v| v.as_u64()) {
-        let next = Some(year as u32);
-        if track.year != next {
-            track.set_year(year as u32);
+    if let Some(value) = merged.fields.get("sort_title") {
+        let next = if value.is_null() {
+            Some(None)
+        } else {
+            value.as_str().map(|value| Some(value.to_string()))
+        };
+        if let Some(next) = next
+            && track.sort_title != next
+        {
+            if let Some(sort_title) = next {
+                track.set_sort_title(sort_title);
+            } else {
+                track.sort_title = None;
+            }
             changed = true;
         }
     }
-    if let Some(disc) = merged.fields.get("disc").and_then(|v| v.as_u64()) {
-        let next = Some(disc as u32);
-        if track.disc != next {
-            track.set_disc(disc as u32);
-            changed = true;
-        }
-    }
-    if let Some(disc_total) = merged.fields.get("disc_total").and_then(|v| v.as_u64()) {
-        let next = Some(disc_total as u32);
-        if track.disc_total != next {
-            track.set_disc_total(disc_total as u32);
-            changed = true;
-        }
-    }
-    if let Some(track_num) = merged.fields.get("track").and_then(|v| v.as_u64()) {
-        let next = Some(track_num as u32);
-        if track.track != next {
-            track.set_track(track_num as u32);
-            changed = true;
-        }
-    }
-    if let Some(track_total) = merged.fields.get("track_total").and_then(|v| v.as_u64()) {
-        let next = Some(track_total as u32);
-        if track.track_total != next {
-            track.set_track_total(track_total as u32);
+    for (field, target) in [
+        ("year", &mut track.year),
+        ("disc", &mut track.disc),
+        ("disc_total", &mut track.disc_total),
+        ("track", &mut track.track),
+        ("track_total", &mut track.track_total),
+    ] {
+        let Some(value) = merged.fields.get(field) else {
+            continue;
+        };
+        let next = if value.is_null() {
+            Some(None)
+        } else {
+            value
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .map(Some)
+        };
+        if let Some(next) = next
+            && *target != next
+        {
+            *target = next;
             changed = true;
         }
     }
@@ -354,40 +429,64 @@ fn apply_to_artist(artist: &mut Artist, merged: &MergedMetadata) -> bool {
         artist.set_artist_name(name.to_string());
         changed = true;
     }
-    if let Some(at_str) = merged.fields.get("artist_type").and_then(|v| v.as_str()) {
-        match crate::db::ArtistType::from_db_str(at_str) {
-            Ok(at) => {
-                if artist.artist_type.is_some_and(|existing| existing != at) {
-                    tracing::warn!(
-                        artist_id = artist.id,
-                        existing_artist_type = ?artist.artist_type,
-                        incoming_artist_type = %at,
-                        "ignoring merged artist_type that conflicts with existing artist type"
-                    );
-                } else if artist.artist_type != Some(at) {
-                    artist.set_artist_type(at);
-                    changed = true;
-                }
+    if let Some(value) = merged.fields.get("artist_type") {
+        if value.is_null() {
+            if artist.artist_type.is_some() {
+                artist.artist_type = None;
+                changed = true;
             }
-            Err(_) => {
-                tracing::warn!(
-                    artist_type = at_str,
-                    "ignoring unrecognized artist_type in merged metadata"
-                );
+        } else if let Some(at_str) = value.as_str() {
+            match crate::db::ArtistType::from_db_str(at_str) {
+                Ok(at) => {
+                    let is_manual = merged
+                        .manual_fields
+                        .contains(&ManualMetadataField::ArtistType);
+                    if !is_manual && artist.artist_type.is_some_and(|existing| existing != at) {
+                        tracing::warn!(
+                            artist_id = artist.id,
+                            existing_artist_type = ?artist.artist_type,
+                            incoming_artist_type = %at,
+                            "ignoring merged artist_type that conflicts with existing artist type"
+                        );
+                    } else if artist.artist_type != Some(at) {
+                        artist.set_artist_type(at);
+                        changed = true;
+                    }
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        artist_type = at_str,
+                        "ignoring unrecognized artist_type in merged metadata"
+                    );
+                }
             }
         }
     }
-    if let Some(sort_name) = merged.fields.get("sort_name").and_then(|v| v.as_str())
-        && artist.sort_name.as_deref() != Some(sort_name)
-    {
-        artist.set_sort_name(sort_name.to_string());
-        changed = true;
+    if let Some(value) = merged.fields.get("sort_name") {
+        let next = if value.is_null() {
+            Some(None)
+        } else {
+            value.as_str().map(|value| Some(value.to_string()))
+        };
+        if let Some(next) = next
+            && artist.sort_name != next
+        {
+            artist.sort_name = next;
+            changed = true;
+        }
     }
-    if let Some(description) = merged.fields.get("description").and_then(|v| v.as_str())
-        && artist.description.as_deref() != Some(description)
-    {
-        artist.set_description(description.to_string());
-        changed = true;
+    if let Some(value) = merged.fields.get("description") {
+        let next = if value.is_null() {
+            Some(None)
+        } else {
+            value.as_str().map(|value| Some(value.to_string()))
+        };
+        if let Some(next) = next
+            && artist.description != next
+        {
+            artist.description = next;
+            changed = true;
+        }
     }
 
     changed
@@ -445,6 +544,7 @@ mod tests {
         MergedMetadata {
             fields,
             provenance: HashMap::new(),
+            manual_fields: HashSet::new(),
         }
     }
 
@@ -480,6 +580,7 @@ mod tests {
         let merged = MergedMetadata {
             fields: HashMap::new(),
             provenance: HashMap::new(),
+            manual_fields: HashSet::new(),
         };
         assert!(extract_label_inputs(&merged).is_none());
     }

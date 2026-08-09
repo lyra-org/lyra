@@ -242,7 +242,10 @@ pub(crate) fn get_by_library(db: &DbAny, library_id: DbId) -> anyhow::Result<Vec
     Ok(tracks)
 }
 
-pub(crate) fn get_by_artist(db: &DbAny, artist_db_id: DbId) -> anyhow::Result<Vec<Track>> {
+pub(crate) fn get_by_artist(
+    db: &impl super::DbAccess,
+    artist_db_id: DbId,
+) -> anyhow::Result<Vec<Track>> {
     // Walk: Artist ← Credit (neighbor) ← Track (neighbor of credit).
     let credits: Vec<super::Credit> = db
         .exec(
@@ -397,6 +400,7 @@ pub(crate) fn get_by_entry(db: &DbAny, entry_db_id: DbId) -> anyhow::Result<Vec<
 }
 
 /// Atomically aligns the stored row to `track`.
+#[cfg(test)]
 pub(crate) fn update(db: &mut DbAny, track: &Track) -> anyhow::Result<()> {
     db.transaction_mut(|t| update_in_transaction(t, track))
 }

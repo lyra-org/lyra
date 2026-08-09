@@ -188,6 +188,8 @@ pub(crate) fn save_provider_layer(
         }
     }
 
+    super::merging::materialize_provider_labels_if_manually_owned(db, node_id)?;
+
     save_provider_custom_fields(
         db,
         node_id,

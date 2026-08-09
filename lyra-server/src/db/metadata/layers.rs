@@ -11,7 +11,10 @@ use agdb::{
 };
 use serde::Serialize;
 
-use super::super::NodeId;
+use super::super::{
+    DbAccess,
+    NodeId,
+};
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(DbElement, Serialize, Clone, Debug)]
@@ -44,62 +47,68 @@ pub(crate) fn get_for_entity(
 }
 
 pub(crate) fn upsert(db: &mut DbAny, node_id: DbId, layer: &MetadataLayer) -> anyhow::Result<DbId> {
-    db.transaction_mut(|t| -> anyhow::Result<DbId> {
-        let layers: Vec<MetadataLayer> = t
-            .exec(
-                QueryBuilder::select()
-                    .elements::<MetadataLayer>()
-                    .search()
-                    .from(node_id)
-                    .where_()
-                    .neighbor()
-                    .end_where()
-                    .query(),
-            )?
-            .try_into()?;
-        let existing = layers
-            .into_iter()
-            .find(|existing| existing.provider_id == layer.provider_id);
+    db.transaction_mut(|t| upsert_inside_tx(t, node_id, layer))
+}
 
-        // Avoid no-op rewrites when provider fields are unchanged.
-        if let Some(existing_layer) = &existing
-            && existing_layer.fields == layer.fields
-            && let Some(db_id) = existing_layer.db_id.clone()
-        {
-            return Ok(db_id.into());
-        }
+pub(crate) fn upsert_inside_tx(
+    db: &mut impl DbAccess,
+    node_id: DbId,
+    layer: &MetadataLayer,
+) -> anyhow::Result<DbId> {
+    let layers: Vec<MetadataLayer> = db
+        .exec(
+            QueryBuilder::select()
+                .elements::<MetadataLayer>()
+                .search()
+                .from(node_id)
+                .where_()
+                .neighbor()
+                .end_where()
+                .query(),
+        )?
+        .try_into()?;
+    let existing = layers
+        .into_iter()
+        .find(|existing| existing.provider_id == layer.provider_id);
 
-        let mut layer_to_save = layer.clone();
-        if let Some(existing_layer) = &existing {
-            layer_to_save.db_id = existing_layer.db_id.clone();
-        }
+    // Avoid no-op rewrites when provider fields are unchanged.
+    if let Some(existing_layer) = &existing
+        && existing_layer.fields == layer.fields
+        && let Some(db_id) = existing_layer.db_id.clone()
+    {
+        return Ok(db_id.into());
+    }
 
-        let result = t.exec_mut(QueryBuilder::insert().element(&layer_to_save).query())?;
-        let layer_db_id = existing
-            .as_ref()
-            .and_then(|existing_layer| existing_layer.db_id.clone())
-            .map(DbId::from)
-            .or_else(|| result.elements.first().map(|element| element.id))
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "upsert metadata layer returned no id (node_id={}, provider_id='{}')",
-                    node_id.0,
-                    layer.provider_id
-                )
-            })?;
+    let mut layer_to_save = layer.clone();
+    if let Some(existing_layer) = &existing {
+        layer_to_save.db_id = existing_layer.db_id.clone();
+    }
 
-        if existing.is_none() {
-            t.exec_mut(
-                QueryBuilder::insert()
-                    .edges()
-                    .from(node_id)
-                    .to(layer_db_id)
-                    .query(),
-            )?;
-        }
+    let result = db.exec_mut(QueryBuilder::insert().element(&layer_to_save).query())?;
+    let layer_db_id = existing
+        .as_ref()
+        .and_then(|existing_layer| existing_layer.db_id.clone())
+        .map(DbId::from)
+        .or_else(|| result.elements.first().map(|element| element.id))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "upsert metadata layer returned no id (node_id={}, provider_id='{}')",
+                node_id.0,
+                layer.provider_id
+            )
+        })?;
 
-        Ok(layer_db_id)
-    })
+    if existing.is_none() {
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(node_id)
+                .to(layer_db_id)
+                .query(),
+        )?;
+    }
+
+    Ok(layer_db_id)
 }
 
 #[cfg(test)]

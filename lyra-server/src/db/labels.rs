@@ -66,6 +66,12 @@ pub(crate) struct LabelExternalIdInput {
     pub(crate) id_value: String,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct LabelLinkInput {
+    pub(crate) label_id: DbId,
+    pub(crate) catalog_number: Option<String>,
+}
+
 /// Joined result for `get_for_release` / `get_for_releases_many`.
 #[derive(Clone, Debug)]
 pub(crate) struct LabelForRelease {
@@ -411,8 +417,17 @@ fn label_has_other_release_labels(
 ///
 /// Call BEFORE the loser's cascade deletion so the shared Label isn't GC'd
 /// while we still need it.
+#[cfg(test)]
 pub(crate) fn migrate_release_labels(
     db: &mut DbAny,
+    winner: DbId,
+    loser: DbId,
+) -> anyhow::Result<()> {
+    db.transaction_mut(|transaction| migrate_release_labels_inside_tx(transaction, winner, loser))
+}
+
+pub(crate) fn migrate_release_labels_inside_tx(
+    db: &mut DbAnyTransactionMut<'_>,
     winner: DbId,
     loser: DbId,
 ) -> anyhow::Result<()> {
@@ -420,10 +435,7 @@ pub(crate) fn migrate_release_labels(
         return Ok(());
     }
 
-    let loser_entries = {
-        let db_ref: &DbAny = db;
-        get_release_label_entries(db_ref, loser)?
-    };
+    let loser_entries = get_release_label_entries(db, loser)?;
     if loser_entries.is_empty() {
         return Ok(());
     }
@@ -433,20 +445,18 @@ pub(crate) fn migrate_release_labels(
         .map(|e| e.label_id)
         .collect();
 
-    db.transaction_mut(|t| -> anyhow::Result<()> {
-        for entry in loser_entries {
-            if winner_label_ids.contains(&entry.label_id) {
-                continue;
-            }
-            upsert_release_label(
-                t,
-                winner,
-                entry.label_id,
-                CatalogNumberUpdate::Replace(entry.catalog_number.as_deref()),
-            )?;
+    for entry in loser_entries {
+        if winner_label_ids.contains(&entry.label_id) {
+            continue;
         }
-        Ok(())
-    })
+        upsert_release_label(
+            db,
+            winner,
+            entry.label_id,
+            CatalogNumberUpdate::Replace(entry.catalog_number.as_deref()),
+        )?;
+    }
+    Ok(())
 }
 
 /// Remove every `ReleaseLabel` owned by a release before the release node is
@@ -516,11 +526,55 @@ pub(crate) fn sync_release_labels(
     })
 }
 
+pub(crate) fn materialize_labels(db: &mut DbAny, inputs: &[LabelInput]) -> anyhow::Result<()> {
+    db.transaction_mut(|transaction| {
+        resolve_label_inputs(transaction, inputs)?;
+        Ok(())
+    })
+}
+
+fn resolve_label_inputs(
+    db: &mut impl DbAccess,
+    inputs: &[LabelInput],
+) -> anyhow::Result<Vec<LabelLinkInput>> {
+    let mut resolved = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        let external_id = input
+            .external_id
+            .as_ref()
+            .map(|external_id| ResolveExternalId {
+                provider_id: &external_id.provider_id,
+                id_type: &external_id.id_type,
+                id_value: &external_id.id_value,
+            });
+        resolved.push(LabelLinkInput {
+            label_id: resolve_inside_tx(
+                db,
+                &ResolveLabel {
+                    name: &input.name,
+                    external_id,
+                },
+            )?,
+            catalog_number: input.catalog_number.clone(),
+        });
+    }
+    Ok(resolved)
+}
+
 /// Transaction-capable variant of [`sync_release_labels`].
 pub(crate) fn sync_release_labels_inside_tx(
     db: &mut DbAnyTransactionMut<'_>,
     release_id: DbId,
     inputs: &[LabelInput],
+) -> anyhow::Result<()> {
+    let resolved = resolve_label_inputs(db, inputs)?;
+    sync_release_label_links_inside_tx(db, release_id, &resolved)
+}
+
+pub(crate) fn sync_release_label_links_inside_tx(
+    db: &mut DbAnyTransactionMut<'_>,
+    release_id: DbId,
+    inputs: &[LabelLinkInput],
 ) -> anyhow::Result<()> {
     let existing = get_release_label_entries(db, release_id)?;
 
@@ -529,21 +583,9 @@ pub(crate) fn sync_release_labels_inside_tx(
     let mut desired_keys: HashSet<(DbId, Option<String>)> = HashSet::new();
     let mut desired_by_label: HashMap<DbId, Option<String>> = HashMap::new();
     for input in inputs {
-        let ext = input.external_id.as_ref().map(|e| ResolveExternalId {
-            provider_id: &e.provider_id,
-            id_type: &e.id_type,
-            id_value: &e.id_value,
-        });
-        let label_id = resolve_inside_tx(
-            db,
-            &ResolveLabel {
-                name: &input.name,
-                external_id: ext,
-            },
-        )?;
-        let key = desired_diff_key(label_id, input.catalog_number.as_deref());
+        let key = desired_diff_key(input.label_id, input.catalog_number.as_deref());
         if desired_keys.insert(key) {
-            desired_by_label.insert(label_id, input.catalog_number.clone());
+            desired_by_label.insert(input.label_id, input.catalog_number.clone());
         }
     }
 

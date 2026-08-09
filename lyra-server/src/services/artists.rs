@@ -335,32 +335,6 @@ pub(crate) fn get_details(
         .next())
 }
 
-pub(crate) fn update(
-    db: &mut DbAny,
-    artist_db_id: DbId,
-    update_name: Option<String>,
-    update_sort_name: Option<Option<String>>,
-    update_description: Option<Option<String>>,
-) -> anyhow::Result<Option<Artist>> {
-    let Some(artist_entity) = db::artists::get_by_id(db, artist_db_id)? else {
-        return Ok(None);
-    };
-
-    let mut updated = artist_entity;
-    if let Some(name) = update_name {
-        updated.artist_name = name;
-    }
-    if let Some(sort_name) = update_sort_name {
-        updated.sort_name = sort_name;
-    }
-    if let Some(description) = update_description {
-        updated.description = description;
-    }
-
-    db::artists::update(db, &updated)?;
-    Ok(Some(updated))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,41 +422,6 @@ mod tests {
                 .to(artist_id)
                 .query(),
         )?;
-        Ok(())
-    }
-
-    #[test]
-    fn update_clears_requested_fields_and_preserves_the_rest() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let artist_db_id = insert_artist(&mut db, "Coltrane")?;
-
-        let mut seeded = db::artists::get_by_id(&db, artist_db_id)?.expect("artist exists");
-        seeded.set_sort_name("Coltrane, John".to_string());
-        seeded.set_description("Saxophonist".to_string());
-        seeded.set_artist_type(db::ArtistType::Person);
-        seeded.locked = Some(true);
-        seeded.created_at = Some(42);
-        db::artists::update(&mut db, &seeded)?;
-
-        let updated =
-            update(&mut db, artist_db_id, None, Some(None), None)?.expect("artist exists");
-
-        assert_eq!(updated.sort_name, None, "explicit null clears sort_name");
-        assert_eq!(updated.description.as_deref(), Some("Saxophonist"));
-        assert_eq!(updated.artist_type, Some(db::ArtistType::Person));
-        assert_eq!(updated.locked, Some(true));
-        assert_eq!(updated.created_at, Some(42));
-
-        let stored = db::artists::get_by_id(&db, artist_db_id)?.expect("artist exists");
-        assert_eq!(stored.sort_name, None);
-        assert_eq!(stored.description.as_deref(), Some("Saxophonist"));
-        assert_eq!(
-            stored.artist_type,
-            Some(db::ArtistType::Person),
-            "an unrelated field must survive a targeted clear"
-        );
-        assert_eq!(stored.locked, Some(true));
-        assert_eq!(stored.created_at, Some(42));
         Ok(())
     }
 

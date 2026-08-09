@@ -13,6 +13,7 @@ use std::{
 
 use agdb::{
     DbAny,
+    DbAnyTransactionMut,
     DbId,
 };
 
@@ -62,6 +63,14 @@ pub(super) fn select_release_merge_winner(
 }
 
 fn merge_release_into(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Result<()> {
+    db.transaction_mut(|transaction| merge_release_into_inside_tx(transaction, winner, loser))
+}
+
+fn merge_release_into_inside_tx(
+    db: &mut DbAnyTransactionMut<'_>,
+    winner: DbId,
+    loser: DbId,
+) -> anyhow::Result<()> {
     if winner == loser {
         return Ok(());
     }
@@ -73,7 +82,7 @@ fn merge_release_into(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Resu
         db::graph::ensure_owned_edge(db, library_db_id, winner)?;
     }
 
-    for track in db::tracks::get(db, loser)? {
+    for track in db::tracks::get_direct(db, loser)? {
         let Some(track_db_id) = track.db_id.map(Into::into) else {
             continue;
         };
@@ -81,8 +90,33 @@ fn merge_release_into(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Resu
         db::releases::unlink_track(db, loser, track_db_id)?;
     }
 
+    let winner_manual_fields: HashSet<_> = db::metadata::manual_overrides::field_names(db, winner)?
+        .into_iter()
+        .collect();
+    let loser_manual_fields: HashSet<_> = db::metadata::manual_overrides::field_names(db, loser)?
+        .into_iter()
+        .collect();
+    let winner_genres_are_manual =
+        winner_manual_fields.contains(&db::metadata::manual_overrides::ManualMetadataField::Genres);
+    let loser_genres_are_manual =
+        loser_manual_fields.contains(&db::metadata::manual_overrides::ManualMetadataField::Genres);
+    if !winner_genres_are_manual && loser_genres_are_manual {
+        let genres = db::genres::get_for_release(db, loser)?
+            .into_iter()
+            .map(|genre| genre.name)
+            .collect::<Vec<_>>();
+        db::genres::sync_release_genres(db, winner, &genres)?;
+    }
+
     // Migrate Credit nodes from loser to winner.
     // First, collect artist IDs already credited on the winner to avoid duplicates.
+    let winner_credits_are_manual = winner_manual_fields
+        .contains(&db::metadata::manual_overrides::ManualMetadataField::Credits);
+    let loser_credits_are_manual =
+        loser_manual_fields.contains(&db::metadata::manual_overrides::ManualMetadataField::Credits);
+    if !winner_credits_are_manual && loser_credits_are_manual {
+        db::credits::replace_for_owner(db, winner, &[])?;
+    }
     let winner_artists: HashSet<DbId> = db::artists::get(db, winner)?
         .into_iter()
         .filter_map(|p| p.db_id.map(Into::into))
@@ -113,10 +147,11 @@ fn merge_release_into(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Resu
             .iter()
             .find_map(|e| (e.to.0 > 0).then_some(e.to));
 
-        let should_migrate = match artist_db_id {
-            Some(pid) => !winner_artists.contains(&pid),
-            None => false,
-        };
+        let should_migrate = !winner_credits_are_manual
+            && match artist_db_id {
+                Some(pid) => !winner_artists.contains(&pid),
+                None => false,
+            };
 
         if should_migrate {
             let order = loser_edge_orders.get(&credit_db_id).copied().unwrap_or(0);
@@ -139,13 +174,13 @@ fn merge_release_into(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Resu
         }
     }
 
-    for external_id in db::external_ids::get_for_entity(db, loser)? {
+    for external_id in db::external_ids::get_for_entity_inside_tx(db, loser)? {
         let id_value = external_id.id_value.trim();
         if id_value.is_empty() {
             continue;
         }
 
-        db::external_ids::upsert(
+        db::external_ids::upsert_inside_tx(
             db,
             winner,
             &external_id.provider_id,
@@ -170,12 +205,24 @@ fn merge_release_into(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Resu
 
         let mut layer_to_upsert = layer.clone();
         layer_to_upsert.db_id = None;
-        db::metadata::layers::upsert(db, winner, &layer_to_upsert)?;
+        db::metadata::layers::upsert_inside_tx(db, winner, &layer_to_upsert)?;
         winner_layers_by_provider.insert(layer.provider_id.clone(), layer);
         wrote_layer = true;
     }
-    if wrote_layer {
-        crate::services::metadata::merging::apply_merged_metadata_to_entity(db, winner)?;
+    let winner_labels_are_manual =
+        winner_manual_fields.contains(&db::metadata::manual_overrides::ManualMetadataField::Labels);
+    let loser_labels_are_manual =
+        loser_manual_fields.contains(&db::metadata::manual_overrides::ManualMetadataField::Labels);
+    if !winner_labels_are_manual {
+        if loser_labels_are_manual {
+            db::labels::sync_release_labels_inside_tx(db, winner, &[])?;
+        }
+        db::labels::migrate_release_labels_inside_tx(db, winner, loser)?;
+    }
+
+    db::metadata::manual_overrides::merge_into(db, winner, loser)?;
+    if wrote_layer || db::metadata::manual_overrides::get(db, winner)?.is_some() {
+        crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(db, winner)?;
     }
 
     db::metadata::custom_fields::copy_between_entities(db, loser, winner)?;
@@ -189,13 +236,7 @@ fn merge_release_into(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Resu
         db::covers::display::offer_release_to_playlist_covers(db, winner)?;
     }
 
-    // Migrate label pairings onto the winner before cascade. Cascade calls
-    // `cascade_remove_release_labels_for_owner` on the loser, which would GC
-    // orphaned Labels; doing the winner-side upsert first keeps each Label
-    // referenced by at least one RL through the deletion.
-    db::labels::migrate_release_labels(db, winner, loser)?;
-
-    db::metadata::cascade_remove_entities(db, &[loser])?;
+    db::metadata::cascade_remove_entities_in_txn(db, &[loser])?;
 
     Ok(())
 }
@@ -338,4 +379,50 @@ pub(super) fn deduplicate_releases_by_external_id(
     }
 
     Ok(merged_count)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use serde_json::Value;
+
+    use super::*;
+    use crate::db::{
+        labels::LabelInput,
+        metadata::manual_overrides::ManualMetadataField,
+        test_db::{
+            insert_release,
+            new_test_db,
+        },
+    };
+
+    fn label(name: &str) -> LabelInput {
+        LabelInput {
+            name: name.to_string(),
+            catalog_number: None,
+            external_id: None,
+        }
+    }
+
+    #[test]
+    fn release_merge_does_not_pollute_manual_winner_labels() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let winner = insert_release(&mut db, "Winner")?;
+        let loser = insert_release(&mut db, "Loser")?;
+        db::labels::sync_release_labels(&mut db, winner, &[label("Manual")])?;
+        db::labels::sync_release_labels(&mut db, loser, &[label("Provider")])?;
+        db::metadata::manual_overrides::upsert(
+            &mut db,
+            winner,
+            &BTreeMap::from([(ManualMetadataField::Labels, Value::Bool(true))]),
+        )?;
+
+        merge_release_into(&mut db, winner, loser)?;
+
+        let labels = db::labels::get_for_release(&db, winner)?;
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].label.name, "Manual");
+        Ok(())
+    }
 }
