@@ -146,6 +146,11 @@ fn add_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
         if !can_mutate_release(&db, principal.as_ref(), release_id)? {
             return Ok(DbId(0));
         }
+        if db::manual_metadata_owns_field(&db, release_id, db::ManualMetadataField::Labels)
+            .map_err(crate::plugins::runtime_error)?
+        {
+            return Ok(DbId(0));
+        }
         if db::releases::get_by_id(&db, release_id)
             .map_err(crate::plugins::runtime_error)?
             .is_some_and(|release| release.locked.unwrap_or(false))
@@ -203,6 +208,11 @@ fn sync_for_release_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::R
     futures::executor::block_on(async {
         let mut db = STATE.db.write().await;
         if !can_mutate_release(&db, principal.as_ref(), release_id)? {
+            return Ok(());
+        }
+        if db::manual_metadata_owns_field(&db, release_id, db::ManualMetadataField::Labels)
+            .map_err(crate::plugins::runtime_error)?
+        {
             return Ok(());
         }
         if db::releases::get_by_id(&db, release_id)

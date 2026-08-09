@@ -12,6 +12,7 @@ use std::collections::{
 use agdb::{
     CountComparison,
     DbAny,
+    DbAnyTransactionMut,
     DbId,
     QueryBuilder,
 };
@@ -318,8 +319,26 @@ pub(crate) fn deduplicate_artists_by_external_id(db: &mut DbAny) -> anyhow::Resu
                 external_id = %key,
                 "merging duplicate artist"
             );
-            migrate_metadata(db, winner, loser)?;
-            db.transaction_mut(|t| merge_artist_into(t, winner, loser))?;
+            let winner_relations_are_manual = db::metadata::manual_overrides::owns_field(
+                db,
+                winner,
+                db::metadata::manual_overrides::ManualMetadataField::Relations,
+            )?;
+            let loser_relations_are_manual = db::metadata::manual_overrides::owns_field(
+                db,
+                loser,
+                db::metadata::manual_overrides::ManualMetadataField::Relations,
+            )?;
+            db.transaction_mut(|t| {
+                migrate_metadata(t, winner, loser)?;
+                merge_artist_into(
+                    t,
+                    winner,
+                    loser,
+                    winner_relations_are_manual,
+                    loser_relations_are_manual,
+                )
+            })?;
             merged_count += 1;
         }
         winners.push(winner);
@@ -392,7 +411,49 @@ fn merge_artist_into(
     db: &mut impl crate::db::DbAccess,
     winner: DbId,
     loser: DbId,
+    winner_relations_are_manual: bool,
+    loser_relations_are_manual: bool,
 ) -> anyhow::Result<()> {
+    let incoming_relations = db::artists::relations::get_relations_to(db, loser, None)?;
+    let outgoing_relations = db::artists::relations::get_relations_from(db, loser, None)?;
+    let relation_edge_ids: HashSet<DbId> = incoming_relations
+        .iter()
+        .chain(&outgoing_relations)
+        .filter_map(|(relation, _)| relation.db_id.clone().map(DbId::from))
+        .collect();
+
+    for (relation, source_id) in incoming_relations {
+        if source_id != winner
+            && !db::artists::relations::exists(db, source_id, winner, relation.relation_type)?
+        {
+            db::artists::relations::link(
+                db,
+                source_id,
+                winner,
+                relation.relation_type,
+                relation.attributes,
+            )?;
+        }
+    }
+    if !winner_relations_are_manual {
+        if loser_relations_are_manual {
+            db::artists::relations::replace_from(db, winner, &[])?;
+        }
+        for (relation, target_id) in outgoing_relations {
+            if target_id != winner
+                && !db::artists::relations::exists(db, winner, target_id, relation.relation_type)?
+            {
+                db::artists::relations::link(
+                    db,
+                    winner,
+                    target_id,
+                    relation.relation_type,
+                    relation.attributes,
+                )?;
+            }
+        }
+    }
+
     let incoming = db.exec(
         QueryBuilder::search()
             .to(loser)
@@ -404,6 +465,9 @@ fn merge_artist_into(
     )?;
 
     for element in &incoming.elements {
+        if relation_edge_ids.contains(&element.id) {
+            continue;
+        }
         let from_id = element.from;
         if from_id.0 != 0 {
             ensure_owned_edge(db, from_id, winner)?;
@@ -417,7 +481,11 @@ fn merge_artist_into(
     Ok(())
 }
 
-fn migrate_metadata(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Result<()> {
+fn migrate_metadata(
+    db: &mut DbAnyTransactionMut<'_>,
+    winner: DbId,
+    loser: DbId,
+) -> anyhow::Result<()> {
     let loser_layers = db::metadata::layers::get_for_entity(db, loser)?;
     let winner_layers = db::metadata::layers::get_for_entity(db, winner)?;
     let winner_provider_ids: HashSet<&str> = winner_layers
@@ -431,16 +499,17 @@ fn migrate_metadata(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Result
         }
         let mut migrated = layer.clone();
         migrated.db_id = None;
-        db::metadata::layers::upsert(db, winner, &migrated)?;
+        db::metadata::layers::upsert_inside_tx(db, winner, &migrated)?;
     }
 
-    let loser_ext_ids = db::external_ids::get_for_entity(db, loser)?;
+    let loser_ext_ids = db::external_ids::get_for_entity_inside_tx(db, loser)?;
     for ext_id in &loser_ext_ids {
-        let existing = db::external_ids::get(db, winner, &ext_id.provider_id, &ext_id.id_type)?;
+        let existing =
+            db::external_ids::get_inside_tx(db, winner, &ext_id.provider_id, &ext_id.id_type)?;
         if existing.is_some() {
             continue;
         }
-        db::external_ids::upsert(
+        db::external_ids::upsert_inside_tx(
             db,
             winner,
             &ext_id.provider_id,
@@ -451,6 +520,10 @@ fn migrate_metadata(db: &mut DbAny, winner: DbId, loser: DbId) -> anyhow::Result
     }
 
     db::metadata::custom_fields::copy_between_entities(db, loser, winner)?;
+    db::metadata::manual_overrides::merge_into(db, winner, loser)?;
+    if db::metadata::manual_overrides::get(db, winner)?.is_some() {
+        crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(db, winner)?;
+    }
 
     Ok(())
 }
@@ -615,6 +688,63 @@ mod tests {
             "winner should have inherited loser's provider-b external ID"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn artist_merge_retargets_relations_without_losing_metadata() -> anyhow::Result<()> {
+        let mut db = test_db::new_test_db()?;
+        let source = test_db::insert_artist(&mut db, "Source")?;
+        let winner = test_db::insert_artist(&mut db, "Winner")?;
+        let loser = test_db::insert_artist(&mut db, "Loser")?;
+        let target = test_db::insert_artist(&mut db, "Target")?;
+        db::artists::relations::link(
+            &mut db,
+            source,
+            winner,
+            db::ArtistRelationType::MemberOf,
+            Some("existing incoming".to_string()),
+        )?;
+        db::artists::relations::link(
+            &mut db,
+            winner,
+            target,
+            db::ArtistRelationType::VoiceActor,
+            Some("existing outgoing".to_string()),
+        )?;
+        db::artists::relations::link(
+            &mut db,
+            source,
+            loser,
+            db::ArtistRelationType::MemberOf,
+            Some("incoming".to_string()),
+        )?;
+        db::artists::relations::link(
+            &mut db,
+            loser,
+            target,
+            db::ArtistRelationType::VoiceActor,
+            Some("outgoing".to_string()),
+        )?;
+
+        db.transaction_mut(|transaction| {
+            merge_artist_into(transaction, winner, loser, false, false)
+        })?;
+
+        let incoming = db::artists::relations::get_relations_from(&db, source, None)?;
+        assert_eq!(incoming.len(), 1);
+        assert_eq!(incoming[0].1, winner);
+        assert_eq!(
+            incoming[0].0.attributes.as_deref(),
+            Some("existing incoming")
+        );
+        let outgoing = db::artists::relations::get_relations_from(&db, winner, None)?;
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(outgoing[0].1, target);
+        assert_eq!(
+            outgoing[0].0.attributes.as_deref(),
+            Some("existing outgoing")
+        );
         Ok(())
     }
 }

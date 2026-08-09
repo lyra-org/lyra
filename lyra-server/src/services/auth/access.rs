@@ -227,6 +227,44 @@ pub(crate) fn entity_accessible(
         .any(|library| principal_can_access_library(principal, &library)))
 }
 
+pub(crate) fn artist_accessible(
+    db: &impl db::DbAccess,
+    principal: &Principal,
+    artist_db_id: DbId,
+) -> anyhow::Result<bool> {
+    if principal.permissions.contains(&db::Permission::Admin) {
+        return Ok(true);
+    }
+    for release in db::releases::get_by_artist(db, artist_db_id)? {
+        let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
+            continue;
+        };
+        if db::libraries::get_by_release(db, release_db_id)?
+            .into_iter()
+            .any(|library| principal_can_access_library(principal, &library))
+        {
+            return Ok(true);
+        }
+    }
+    for track in db::tracks::get_by_artist(db, artist_db_id)? {
+        let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
+            continue;
+        };
+        for release in db::releases::get_by_track(db, track_db_id)? {
+            let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
+                continue;
+            };
+            if db::libraries::get_by_release(db, release_db_id)?
+                .into_iter()
+                .any(|library| principal_can_access_library(principal, &library))
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 pub(crate) fn require_entity_accessible<E>(
     db: &impl db::DbAccess,
     principal: &Principal,

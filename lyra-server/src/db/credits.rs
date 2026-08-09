@@ -6,8 +6,10 @@
 use agdb::{
     DbElement,
     DbError,
+    DbId,
     DbTypeMarker,
     DbValue,
+    QueryBuilder,
 };
 use serde::{
     Deserialize,
@@ -17,6 +19,13 @@ use serde::{
 use super::NodeId;
 
 pub(crate) const EDGE_ORDER_KEY: &str = "artist_order";
+
+#[derive(Clone, Debug)]
+pub(crate) struct CreditLinkInput {
+    pub(crate) artist_id: DbId,
+    pub(crate) credit_type: CreditType,
+    pub(crate) detail: Option<String>,
+}
 
 #[harmony_macros::userdata(name = "CreditType")]
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -113,6 +122,74 @@ pub(crate) struct Credit {
     pub(crate) id: String,
     pub(crate) credit_type: CreditType,
     pub(crate) detail: Option<String>,
+}
+
+pub(crate) fn replace_for_owner(
+    db: &mut impl super::DbAccess,
+    owner_id: DbId,
+    desired: &[CreditLinkInput],
+) -> anyhow::Result<()> {
+    let existing: Vec<Credit> = db
+        .exec(
+            QueryBuilder::select()
+                .elements::<Credit>()
+                .search()
+                .from(owner_id)
+                .where_()
+                .neighbor()
+                .end_where()
+                .query(),
+        )?
+        .try_into()?;
+    let existing_ids: Vec<DbId> = existing
+        .into_iter()
+        .filter_map(|credit| credit.db_id.map(Into::into))
+        .collect();
+    if !existing_ids.is_empty() {
+        db.exec_mut(QueryBuilder::remove().ids(existing_ids).query())?;
+    }
+
+    for (order, input) in desired.iter().enumerate() {
+        let credit = Credit {
+            db_id: None,
+            id: nanoid::nanoid!(),
+            credit_type: input.credit_type,
+            detail: input.detail.clone(),
+        };
+        let credit_id = db
+            .exec_mut(QueryBuilder::insert().element(&credit).query())?
+            .ids()
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("credit insert returned no id"))?;
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from("credits")
+                .to(credit_id)
+                .query(),
+        )?;
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(owner_id)
+                .to(credit_id)
+                .values_uniform([
+                    ("owned", 1_u64).into(),
+                    (EDGE_ORDER_KEY, order as u64).into(),
+                ])
+                .query(),
+        )?;
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(credit_id)
+                .to(input.artist_id)
+                .query(),
+        )?;
+    }
+
+    Ok(())
 }
 
 impl_luau_record_userdata!(

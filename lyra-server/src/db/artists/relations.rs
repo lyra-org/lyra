@@ -9,6 +9,8 @@ use std::collections::{
 };
 
 use agdb::{
+    CountComparison,
+    DbAny,
     DbElement,
     DbError,
     DbId,
@@ -25,7 +27,6 @@ use serde::{
 
 use super::super::{
     DbAccess,
-    DbAny,
     NodeId,
 };
 
@@ -91,6 +92,13 @@ impl TryFrom<DbValue> for ArtistRelationType {
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug)]
 pub(crate) struct ArtistRelation {
     pub(crate) db_id: Option<NodeId>,
+    pub(crate) relation_type: ArtistRelationType,
+    pub(crate) attributes: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ArtistRelationLinkInput {
+    pub(crate) target_artist_id: DbId,
     pub(crate) relation_type: ArtistRelationType,
     pub(crate) attributes: Option<String>,
 }
@@ -178,6 +186,59 @@ pub(crate) fn link(
     Ok(edge_id)
 }
 
+pub(crate) fn exists(
+    db: &impl DbAccess,
+    from_artist_id: DbId,
+    to_artist_id: DbId,
+    relation_type: ArtistRelationType,
+) -> anyhow::Result<bool> {
+    let edge_ids = super::super::graph::direct_edge_ids(db, from_artist_id, to_artist_id)?;
+    if edge_ids.is_empty() {
+        return Ok(false);
+    }
+    let result = db.exec(QueryBuilder::select().ids(&edge_ids).query())?;
+    Ok(result.elements.iter().any(|element| {
+        ArtistRelation::from_db_element(element)
+            .is_ok_and(|relation| relation.relation_type == relation_type)
+    }))
+}
+
+pub(crate) fn replace_from(
+    db: &mut impl DbAccess,
+    from_artist_id: DbId,
+    desired: &[ArtistRelationLinkInput],
+) -> anyhow::Result<()> {
+    let existing = db.exec(
+        QueryBuilder::select()
+            .elements::<ArtistRelation>()
+            .search()
+            .from(from_artist_id)
+            .where_()
+            .distance(CountComparison::Equal(1))
+            .end_where()
+            .query(),
+    )?;
+    let edge_ids: Vec<DbId> = existing
+        .elements
+        .into_iter()
+        .filter_map(|element| (element.id.0 < 0).then_some(element.id))
+        .collect();
+    if !edge_ids.is_empty() {
+        db.exec_mut(QueryBuilder::remove().ids(edge_ids).query())?;
+    }
+
+    for input in desired {
+        link(
+            db,
+            from_artist_id,
+            input.target_artist_id,
+            input.relation_type,
+            input.attributes.clone(),
+        )?;
+    }
+    Ok(())
+}
+
 fn collect_relations<F>(
     result: QueryResult,
     relation_type: Option<ArtistRelationType>,
@@ -206,7 +267,7 @@ where
 }
 
 pub(crate) fn get_relations_to(
-    db: &DbAny,
+    db: &impl DbAccess,
     artist_id: DbId,
     relation_type: Option<ArtistRelationType>,
 ) -> anyhow::Result<Vec<(ArtistRelation, DbId)>> {
@@ -215,14 +276,16 @@ pub(crate) fn get_relations_to(
             .elements::<ArtistRelation>()
             .search()
             .to(artist_id)
-            .limit(100)
+            .where_()
+            .distance(CountComparison::Equal(1))
+            .end_where()
             .query(),
     )?;
     collect_relations(result, relation_type, |e| (e.from.0 != 0).then_some(e.from))
 }
 
 pub(crate) fn get_relations_from(
-    db: &DbAny,
+    db: &impl DbAccess,
     artist_id: DbId,
     relation_type: Option<ArtistRelationType>,
 ) -> anyhow::Result<Vec<(ArtistRelation, DbId)>> {
@@ -231,7 +294,9 @@ pub(crate) fn get_relations_from(
             .elements::<ArtistRelation>()
             .search()
             .from(artist_id)
-            .limit(100)
+            .where_()
+            .distance(CountComparison::Equal(1))
+            .end_where()
             .query(),
     )?;
     collect_relations(result, relation_type, |e| (e.to.0 != 0).then_some(e.to))

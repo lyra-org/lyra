@@ -6,6 +6,7 @@
 mod app;
 mod artists;
 mod covers;
+mod entity_metadata;
 mod entries;
 mod error;
 mod favorites;
@@ -55,6 +56,7 @@ use agdb::DbId;
 pub(crate) use app::build_core_api;
 pub use artists::artist_routes;
 pub use covers::cover_routes;
+pub(crate) use entity_metadata::entity_metadata_routes;
 pub use entries::entry_routes;
 pub(crate) use error::AppError;
 pub use favorites::favorite_routes;

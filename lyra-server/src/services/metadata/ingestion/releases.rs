@@ -38,7 +38,10 @@ use crate::db::{
     Track,
     graph::ensure_owned_edge,
     indexes::ensure_index,
-    metadata::get_connected_artist_ids,
+    metadata::{
+        get_connected_artist_ids,
+        manual_overrides::ManualMetadataField,
+    },
 };
 
 pub(crate) struct TrackIngest {
@@ -69,17 +72,20 @@ fn select_release_id(db: &impl DbAccess, track_ids: &[DbId]) -> anyhow::Result<O
         .map(|(id, _)| id))
 }
 
-fn provider_owned_fields_for_entity(
+fn metadata_owned_fields_for_entity(
     db: &impl DbAccess,
     node_id: DbId,
     providers: &[db::ProviderConfig],
 ) -> anyhow::Result<HashSet<String>> {
     let layers = db::metadata::layers::get_for_entity(db, node_id)?;
-    if layers.is_empty() || providers.is_empty() {
-        return Ok(HashSet::new());
-    }
     let merged = merge_layers(layers, providers);
-    Ok(merged.provenance.into_keys().collect())
+    let mut owned: HashSet<String> = merged.provenance.into_keys().collect();
+    owned.extend(
+        db::metadata::manual_overrides::field_names(db, node_id)?
+            .into_iter()
+            .map(|field| field.as_str().to_string()),
+    );
+    Ok(owned)
 }
 
 fn infer_release_artists(release_tracks: &[TrackIngest]) -> Vec<String> {
@@ -131,10 +137,14 @@ fn set_artist_type_if_missing(
     db: &mut DbAnyTransactionMut<'_>,
     artist_id: DbId,
     artist_type: Option<lyra_metadata::ParsedArtistType>,
+    is_manual: bool,
 ) -> anyhow::Result<()> {
     let Some(artist_type) = artist_type else {
         return Ok(());
     };
+    if is_manual {
+        return Ok(());
+    }
     let Some(mut artist) = db::artists::get_by_id(db, artist_id)? else {
         return Ok(());
     };
@@ -145,10 +155,34 @@ fn set_artist_type_if_missing(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+struct ArtistManualOwnership {
+    artist_type: bool,
+    relations: bool,
+}
+
+fn manual_ownership_for_artist(
+    db: &impl DbAccess,
+    ownership_by_artist: &mut HashMap<DbId, ArtistManualOwnership>,
+    artist_id: DbId,
+) -> anyhow::Result<ArtistManualOwnership> {
+    if let Some(ownership) = ownership_by_artist.get(&artist_id) {
+        return Ok(*ownership);
+    }
+    let fields = db::metadata::manual_overrides::field_names(db, artist_id)?;
+    let ownership = ArtistManualOwnership {
+        artist_type: fields.contains(&ManualMetadataField::ArtistType),
+        relations: fields.contains(&ManualMetadataField::Relations),
+    };
+    ownership_by_artist.insert(artist_id, ownership);
+    Ok(ownership)
+}
+
 fn sync_scanned_artist_relations(
     db: &mut DbAnyTransactionMut<'_>,
     relations: &[lyra_metadata::ArtistRelationMetadata],
     cache: &mut HashMap<String, DbId>,
+    manual_ownership_by_artist: &mut HashMap<DbId, ArtistManualOwnership>,
 ) -> anyhow::Result<()> {
     for relation in relations {
         let source_ids =
@@ -162,8 +196,26 @@ fn sync_scanned_artist_relations(
             continue;
         };
 
-        set_artist_type_if_missing(db, source_artist_id, relation.source_artist_type)?;
-        set_artist_type_if_missing(db, target_artist_id, relation.target_artist_type)?;
+        let source_manual =
+            manual_ownership_for_artist(db, manual_ownership_by_artist, source_artist_id)?;
+        let target_manual =
+            manual_ownership_for_artist(db, manual_ownership_by_artist, target_artist_id)?;
+
+        set_artist_type_if_missing(
+            db,
+            source_artist_id,
+            relation.source_artist_type,
+            source_manual.artist_type,
+        )?;
+        set_artist_type_if_missing(
+            db,
+            target_artist_id,
+            relation.target_artist_type,
+            target_manual.artist_type,
+        )?;
+        if source_manual.relations {
+            continue;
+        }
         db::artists::relations::link(
             db,
             source_artist_id,
@@ -202,6 +254,7 @@ fn persist_release_inner(
     ensure_index(db, "scan_name")?;
 
     let mut artist_cache: HashMap<String, DbId> = HashMap::new();
+    let mut manual_ownership_by_artist = HashMap::new();
     let first_track = release_tracks[0].meta.clone();
     let release_date = release_tracks
         .iter()
@@ -231,7 +284,7 @@ fn persist_release_inner(
     let (release_db_id, release_provider_fields) = if let Some(release_db_id) = existing_release_id
     {
         let release_provider_fields =
-            provider_owned_fields_for_entity(db, release_db_id, &providers)?;
+            metadata_owned_fields_for_entity(db, release_db_id, &providers)?;
         let mut release = db::releases::get_by_id(db, release_db_id)?.unwrap_or(Release {
             db_id: Some(release_db_id.into()),
             id: nanoid!(),
@@ -243,10 +296,10 @@ fn persist_release_inner(
             created_at: now_secs,
             ctime: earliest_ctime,
         });
-        if !release_provider_fields.contains("release_title") {
+        if !release_provider_fields.contains(ManualMetadataField::ReleaseTitle.as_str()) {
             release.set_release_title(release_title.to_string());
         }
-        if !release_provider_fields.contains("release_date") {
+        if !release_provider_fields.contains(ManualMetadataField::ReleaseDate.as_str()) {
             if let Some(release_date) = release_date {
                 release.set_release_date(release_date);
             } else {
@@ -286,7 +339,7 @@ fn persist_release_inner(
 
     ensure_owned_edge(db, library_db_id, release_db_id)?;
 
-    if !release_provider_fields.contains("genres")
+    if !release_provider_fields.contains(ManualMetadataField::Genres.as_str())
         && let Some(genres) = &first_track.genres
         && !genres.is_empty()
     {
@@ -300,7 +353,7 @@ fn persist_release_inner(
     // name. Prevents Frankensteining a (label, cat#) pair that no single
     // track actually carries — and cat# tagged on a later track with the
     // same label is still recovered.
-    if !release_provider_fields.contains("labels") {
+    if !release_provider_fields.contains(ManualMetadataField::Labels.as_str()) {
         let release_label_name = release_tracks.iter().find_map(|t| {
             t.meta
                 .label
@@ -352,7 +405,9 @@ fn persist_release_inner(
     } else {
         resolve_artist_ids(db, &release_artists, &mut artist_cache)?
     };
-    sync_artist_edges(db, release_db_id, &release_artist_ids, CreditType::Artist)?;
+    if !release_provider_fields.contains(ManualMetadataField::Credits.as_str()) {
+        sync_artist_edges(db, release_db_id, &release_artist_ids, CreditType::Artist)?;
+    }
 
     let inferred_disc_total = release_tracks
         .iter()
@@ -364,7 +419,7 @@ fn persist_release_inner(
     for track in release_tracks {
         let is_existing_track = track.track_db_id.is_some();
         let track_provider_fields = if let Some(track_db_id) = track.track_db_id {
-            provider_owned_fields_for_entity(db, track_db_id, &providers)?
+            metadata_owned_fields_for_entity(db, track_db_id, &providers)?
         } else {
             HashSet::new()
         };
@@ -426,38 +481,38 @@ fn persist_release_inner(
                 created_at: now_secs,
                 ctime: entry_ctime,
             });
-            if !track_provider_fields.contains("track_title") {
+            if !track_provider_fields.contains(ManualMetadataField::TrackTitle.as_str()) {
                 existing.set_track_title(title.unwrap_or_default());
             }
-            if !track_provider_fields.contains("year") {
+            if !track_provider_fields.contains(ManualMetadataField::Year.as_str()) {
                 if let Some(year) = year {
                     existing.set_year(year);
                 } else {
                     existing.year = None;
                 }
             }
-            if !track_provider_fields.contains("disc") {
+            if !track_provider_fields.contains(ManualMetadataField::Disc.as_str()) {
                 if let Some(disc) = disc {
                     existing.set_disc(disc);
                 } else {
                     existing.disc = None;
                 }
             }
-            if !track_provider_fields.contains("disc_total") {
+            if !track_provider_fields.contains(ManualMetadataField::DiscTotal.as_str()) {
                 if let Some(explicit_disc_total) = disc_total {
                     existing.set_disc_total(explicit_disc_total);
                 } else if existing.disc_total.is_none() {
                     existing.disc_total = inferred_disc_total;
                 }
             }
-            if !track_provider_fields.contains("track") {
+            if !track_provider_fields.contains(ManualMetadataField::Track.as_str()) {
                 if let Some(track_number) = track_number {
                     existing.set_track(track_number);
                 } else {
                     existing.track = None;
                 }
             }
-            if !track_provider_fields.contains("track_total") {
+            if !track_provider_fields.contains(ManualMetadataField::TrackTotal.as_str()) {
                 if let Some(track_total) = track_total {
                     existing.set_track_total(track_total);
                 } else {
@@ -581,8 +636,15 @@ fn persist_release_inner(
         } else {
             resolve_artist_ids(db, &track_artist_names, &mut artist_cache)?
         };
-        sync_artist_edges(db, track_db_id, &track_artist_ids, CreditType::Artist)?;
-        sync_scanned_artist_relations(db, &artist_relations, &mut artist_cache)?;
+        if !track_provider_fields.contains(ManualMetadataField::Credits.as_str()) {
+            sync_artist_edges(db, track_db_id, &track_artist_ids, CreditType::Artist)?;
+        }
+        sync_scanned_artist_relations(
+            db,
+            &artist_relations,
+            &mut artist_cache,
+            &mut manual_ownership_by_artist,
+        )?;
 
         let current_releases = db::releases::get_by_track(db, track_db_id)?;
         for release in current_releases {

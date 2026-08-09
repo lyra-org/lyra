@@ -5,6 +5,7 @@
 
 pub(crate) mod custom_fields;
 pub(crate) mod layers;
+pub(crate) mod manual_overrides;
 pub(crate) mod mapping_config;
 
 use agdb::{
@@ -15,6 +16,7 @@ use agdb::{
 
 use self::custom_fields::ProviderCustomFields;
 use self::layers::MetadataLayer;
+use self::manual_overrides::ManualMetadataOverride;
 use super::DbAccess;
 use super::providers::external_ids::ExternalId;
 
@@ -64,6 +66,29 @@ pub(crate) fn collect_layer_ids(
         .collect())
 }
 
+pub(crate) fn collect_manual_override_ids(
+    db: &impl DbAccess,
+    entity_id: DbId,
+) -> anyhow::Result<Vec<DbId>> {
+    let rows: Vec<ManualMetadataOverride> = db
+        .exec(
+            QueryBuilder::select()
+                .elements::<ManualMetadataOverride>()
+                .search()
+                .from(entity_id)
+                .where_()
+                .neighbor()
+                .end_where()
+                .query(),
+        )?
+        .try_into()?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| row.db_id.map(Into::into))
+        .collect())
+}
+
 pub(crate) fn collect_custom_field_ids(
     db: &impl DbAccess,
     track_db_id: DbId,
@@ -95,8 +120,8 @@ pub(crate) fn cascade_remove_entities(db: &mut DbAny, node_ids: &[DbId]) -> anyh
         return Ok(());
     }
     let playlist_db_ids = super::covers::display::playlist_ids_for_tracks(db, node_ids)?;
-    cascade_remove_entities_pre_favorites(db, node_ids)?;
     db.transaction_mut(|t| -> anyhow::Result<()> {
+        cascade_remove_entities_pre_favorites(t, node_ids)?;
         cascade_remove_favorites_and_nodes(t, node_ids)?;
         super::covers::display::sync_playlist_covers(t, &playlist_db_ids)
     })
@@ -122,6 +147,9 @@ fn cascade_remove_entities_pre_favorites(
     for &id in node_ids {
         for layer_id in collect_layer_ids(db, id)? {
             db.exec_mut(QueryBuilder::remove().ids(layer_id).query())?;
+        }
+        for override_id in collect_manual_override_ids(db, id)? {
+            db.exec_mut(QueryBuilder::remove().ids(override_id).query())?;
         }
         for custom_field_id in collect_custom_field_ids(db, id)? {
             db.exec_mut(QueryBuilder::remove().ids(custom_field_id).query())?;

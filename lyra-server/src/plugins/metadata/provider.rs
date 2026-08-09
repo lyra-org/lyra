@@ -839,6 +839,11 @@ fn link_credit_callback(
                 "provider:link_credit: artist_id does not reference an artist",
             ));
         }
+        if db::manual_metadata_owns_field(&db_write, owner_id, db::ManualMetadataField::Credits)
+            .map_err(crate::plugins::runtime_error)?
+        {
+            return Ok(());
+        }
 
         let existing_credits: Vec<server_db::Credit> = db_write
             .exec(
@@ -955,6 +960,15 @@ fn link_artist_relation_callback(
             return Err(crate::plugins::runtime_error(
                 "provider:link_artist_relation: to_artist_id does not reference an artist",
             ));
+        }
+        if db::manual_metadata_owns_field(
+            &db_write,
+            from_artist_id,
+            db::ManualMetadataField::Relations,
+        )
+        .map_err(crate::plugins::runtime_error)?
+        {
+            return Ok(());
         }
 
         server_db::artists::relations::link(

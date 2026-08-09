@@ -181,12 +181,16 @@ fn add_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
         let is_locked = db::releases::get_by_id(&db, release_id)
             .map_err(crate::plugins::runtime_error)?
             .is_some_and(|release| release.locked.unwrap_or(false));
+        let is_manual =
+            db::manual_metadata_owns_field(&db, release_id, db::ManualMetadataField::Genres)
+                .map_err(crate::plugins::runtime_error)?;
+        if is_locked || is_manual {
+            return Ok(DbId(0));
+        }
         let genre_id =
             resolve_genre_from_request(&mut db, &request).map_err(crate::plugins::runtime_error)?;
-        if !is_locked {
-            db::genres::link_to_release(&mut db, genre_id, release_id)
-                .map_err(crate::plugins::runtime_error)?;
-        }
+        db::genres::link_to_release(&mut db, genre_id, release_id)
+            .map_err(crate::plugins::runtime_error)?;
         Ok::<_, luau::Error>(genre_id)
     })?;
 
