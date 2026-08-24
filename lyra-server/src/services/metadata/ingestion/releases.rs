@@ -415,6 +415,9 @@ fn persist_release_inner(
         .max();
 
     let mut persisted_track_ids = Vec::new();
+    let mut changed_track_ids = Vec::new();
+    let mut changed_track_id_set = HashSet::new();
+    let mut target_gained_track = false;
 
     for track in release_tracks {
         let is_existing_track = track.track_db_id.is_some();
@@ -646,22 +649,22 @@ fn persist_release_inner(
             &mut manual_ownership_by_artist,
         )?;
 
-        let current_releases = db::releases::get_by_track(db, track_db_id)?;
-        for release in current_releases {
-            let Some(other_db_id) = release.db_id.map(Into::into) else {
-                continue;
-            };
-            if other_db_id != release_db_id {
-                db::releases::unlink_track(db, other_db_id, track_db_id)?;
-            }
+        let release_delta = db::releases::replace_track_release(db, release_db_id, track_db_id)?;
+        if release_delta.membership_changed && changed_track_id_set.insert(track_db_id) {
+            changed_track_ids.push(track_db_id);
         }
-
-        db::releases::unlink_track(db, release_db_id, track_db_id)?;
-        db::releases::link_track(db, release_db_id, track_db_id)?;
+        target_gained_track |= release_delta.target_added;
         if !persisted_track_ids.contains(&track_db_id) {
             persisted_track_ids.push(track_db_id);
         }
     }
+
+    if target_gained_track {
+        db::covers::display::mark_genre_profiles_dirty_for_release(db, release_db_id)?;
+    }
+    let affected_playlist_ids =
+        db::covers::display::playlist_ids_for_tracks(db, &changed_track_ids)?;
+    db::covers::display::sync_playlist_covers(db, &affected_playlist_ids)?;
 
     Ok(ReleaseIngestResult {
         release_db_id,
