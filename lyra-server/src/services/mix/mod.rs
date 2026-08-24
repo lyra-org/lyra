@@ -152,14 +152,15 @@ fn filter_existing_tracks(db: &DbAny, tracks: Vec<Track>) -> anyhow::Result<Vec<
     if track_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let existing = db::tracks::get_by_ids(db, &track_ids)?;
+    let existing = db::tracks::get_existing_by_ids(db, &track_ids)?;
     Ok(tracks
         .into_iter()
-        .filter(|t| {
-            t.db_id
-                .clone()
-                .map(DbId::from)
-                .is_some_and(|id| existing.contains_key(&id))
+        .filter_map(|track| {
+            let track_db_id = track.db_id.clone().map(DbId::from)?;
+            existing
+                .get(&track_db_id)
+                .filter(|current| current.id == track.id)
+                .cloned()
         })
         .collect())
 }
@@ -420,8 +421,7 @@ async fn tracks_from_mixer_ids(track_ids: Vec<DbId>) -> anyhow::Result<Vec<Track
 
     let requested_count = track_ids.len();
     let db = STATE.db.read().await;
-    let tracks_by_id: HashMap<DbId, Track> =
-        db::graph::bulk_fetch_typed(&db, track_ids.clone(), "Track")?;
+    let tracks_by_id = db::tracks::get_existing_by_ids(&db, &track_ids)?;
 
     let mut tracks = Vec::with_capacity(requested_count);
     for id in &track_ids {
@@ -1814,6 +1814,14 @@ mod tests {
         connect(&mut db, visible_release, visible_b)?;
         connect(&mut db, visible_release, seed_id)?;
 
+        let replaced_id = insert_track(&mut db, "Replaced Candidate")?;
+        connect(&mut db, visible_release, replaced_id)?;
+        let replaced = db::tracks::get_by_id(&db, replaced_id)?.expect("candidate exists");
+        let mut replacement = replaced.clone();
+        replacement.id = nanoid::nanoid!();
+        replacement.track_title = "Replacement Track".to_string();
+        db::tracks::update(&mut db, &replacement)?;
+
         let missing_id = insert_track(&mut db, "Deleted Candidate")?;
         let missing = db::tracks::get_by_id(&db, missing_id)?.expect("candidate exists");
         db.exec_mut(QueryBuilder::remove().ids(missing_id).query())?;
@@ -1826,6 +1834,7 @@ mod tests {
             hidden_a.clone(),
             missing.clone(),
             hidden_b.clone(),
+            replaced,
             visible_b.clone(),
             visible_a.clone(),
             seed.clone(),

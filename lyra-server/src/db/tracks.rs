@@ -218,6 +218,29 @@ pub(crate) fn get_by_ids(
     super::graph::bulk_fetch_typed(db, unique_ids, "Track")
 }
 
+/// Fetches the Track nodes that still exist, tolerating missing or wrong-type IDs.
+///
+/// agdb rejects an explicit multi-ID select when any ID is missing. Resolve the
+/// surviving nodes first so the typed bulk fetch remains the normal fast path.
+pub(crate) fn get_existing_by_ids(
+    db: &impl super::DbAccess,
+    track_db_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, Track>> {
+    let unique_ids = super::dedup_positive_ids(track_db_ids);
+    if unique_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let existing_public_ids = super::lookup::find_ids_by_db_ids(db, &unique_ids)?;
+    let existing_ids = unique_ids
+        .into_iter()
+        .filter(|id| existing_public_ids.contains_key(id))
+        .collect::<Vec<_>>();
+    if existing_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    super::graph::bulk_fetch_typed(db, existing_ids, "Track")
+}
+
 /// Returns all tracks belonging to a library via its releases.
 pub(crate) fn get_by_library(db: &DbAny, library_id: DbId) -> anyhow::Result<Vec<Track>> {
     let release_ids: Vec<DbId> = super::releases::get_direct(db, library_id)?
@@ -1017,6 +1040,26 @@ mod tests {
         let tracks = get_by_entry(&db, entry_db_id)?;
         assert!(tracks.is_empty());
 
+        Ok(())
+    }
+
+    #[test]
+    fn get_existing_by_ids_skips_missing_and_wrong_type_nodes() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let existing_track = insert_track(&mut db, "Existing Track")?;
+        let deleted_track = insert_track(&mut db, "Deleted Track")?;
+        let artist = insert_artist(&mut db, "Not a Track")?;
+        db.exec_mut(QueryBuilder::remove().ids(deleted_track).query())?;
+
+        let tracks = get_existing_by_ids(&db, &[deleted_track, artist, existing_track])?;
+
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(
+            tracks
+                .get(&existing_track)
+                .map(|track| track.track_title.as_str()),
+            Some("Existing Track")
+        );
         Ok(())
     }
 
