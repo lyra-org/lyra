@@ -571,6 +571,39 @@ pub(crate) async fn dispatch_and_wait(
 mod tests {
     use super::*;
 
+    async fn durable_applied_progress() -> anyhow::Result<AppliedProgress> {
+        let mut db = STATE.db.write().await;
+        let user_db_id =
+            crate::db::users::create(&mut db, &crate::db::test_db::test_user("handoff-user")?)?;
+        let track_db_id = crate::db::test_db::insert_track(&mut db, "Handoff Track")?;
+        let track_public_id = crate::db::lookup::find_id_by_db_id(&db, track_db_id)?
+            .expect("test track must have a public ID");
+        let update = playbacks::create_playback(
+            &mut db,
+            playbacks::CreatePlaybackRequest {
+                id: "playback".to_string(),
+                user_db_id,
+                client_name: None,
+                queue: playbacks::ValidatedQueue {
+                    snapshot: playbacks::QueueSnapshot::single(track_public_id),
+                    current_track_db_id: track_db_id,
+                },
+                mutation: playback_sessions::PlaybackMutation::default(),
+                now_ms: 1,
+            },
+        )?;
+        Ok(AppliedProgress {
+            user_db_id,
+            playback_db_id: update
+                .playback
+                .db_id
+                .expect("persisted playback must have a database ID"),
+            playback_public_id: update.playback.id,
+            queue_revision: update.playback.queue_revision,
+            expected_session: update.session.playback,
+        })
+    }
+
     fn pending_handoff(
         store: &mut PendingHandoffs,
     ) -> (String, oneshot::Receiver<Result<(), String>>) {
@@ -580,7 +613,7 @@ mod tests {
         (token, completion_rx)
     }
 
-    fn test_applied_progress() -> AppliedProgress {
+    fn synthetic_applied_progress() -> AppliedProgress {
         AppliedProgress {
             user_db_id: DbId(9),
             playback_db_id: DbId(20),
@@ -696,8 +729,9 @@ mod tests {
         for connection in registry::list_connections().await {
             registry::unregister(connection.connection_id).await;
         }
+        let applied = durable_applied_progress().await?;
         let registered = registry::register(
-            DbId(9),
+            applied.user_db_id,
             "user".to_string(),
             None,
             "target-session".to_string(),
@@ -708,20 +742,30 @@ mod tests {
         let (token, completion_rx) = begin(
             None,
             registered.connection_id,
-            DbId(9),
-            "playback".to_string(),
-            4,
+            applied.user_db_id,
+            applied.playback_public_id.clone(),
+            applied.queue_revision,
         )
         .await
         .map_err(anyhow::Error::msg)?;
-        let committed = claim_progress(&token, DbId(9), "target-session", "playback", 4)
-            .await
-            .map_err(anyhow::Error::msg)?
-            .commit(test_applied_progress());
+        let committed = claim_progress(
+            &token,
+            applied.user_db_id,
+            "target-session",
+            &applied.playback_public_id,
+            applied.queue_revision,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?
+        .commit(applied.clone());
 
         let registry_guard = registry::hold_write_lock_for_test().await;
-        let finish_task = tokio::spawn(async move { committed.finish().await });
-        tokio::task::yield_now().await;
+        let (db_locked_tx, db_locked_rx) = oneshot::channel();
+        let finish_task =
+            tokio::spawn(async move { committed.finish_after_db_lock(db_locked_tx).await });
+        db_locked_rx
+            .await
+            .expect("committed progress must finish durable revalidation");
         finish_task.abort();
         assert!(finish_task.await.unwrap_err().is_cancelled());
         drop(registry_guard);
@@ -733,11 +777,17 @@ mod tests {
                 .expect("completion sender should remain live")
                 .is_ok()
         );
-        playback_sessions::clear_playback_session_scope(&playback_sessions::PlaybackScopeKey {
+        let target_scope = playback_sessions::PlaybackScopeKey {
             plugin_id: "native",
-            user_db_id: DbId(9),
+            user_db_id: applied.user_db_id,
             session_key: "target-session",
-        });
+        };
+        assert_eq!(
+            playback_sessions::get_playback_session(&target_scope)
+                .and_then(|scope| scope.current_playback_session_id),
+            applied.expected_session.db_id
+        );
+        playback_sessions::clear_playback_session_scope(&target_scope);
         registry::unregister(registered.connection_id).await;
         drop(registered.command_rx);
         Ok(())
@@ -750,8 +800,14 @@ mod tests {
         for connection in registry::list_connections().await {
             registry::unregister(connection.connection_id).await;
         }
+        let applied = durable_applied_progress().await?;
+        let playback_session_id = applied
+            .expected_session
+            .db_id
+            .expect("persisted playback session must have a database ID");
+        let playback_session_public_id = applied.expected_session.id.clone();
         let source = registry::register(
-            DbId(9),
+            applied.user_db_id,
             "user".to_string(),
             None,
             "source-session".to_string(),
@@ -760,7 +816,7 @@ mod tests {
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         let target = registry::register(
-            DbId(9),
+            applied.user_db_id,
             "user".to_string(),
             None,
             "target-session".to_string(),
@@ -770,56 +826,137 @@ mod tests {
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         let source_scope = playback_sessions::PlaybackScopeKey {
             plugin_id: "native",
-            user_db_id: DbId(9),
+            user_db_id: applied.user_db_id,
             session_key: "source-session",
         };
         playback_sessions::bind_current_playback_session_scope(
             &source_scope,
-            DbId(10),
-            "playback-session".to_string(),
+            playback_session_id,
+            playback_session_public_id,
             1,
         );
         let (token, completion_rx) = begin(
             Some(source.connection_id),
             target.connection_id,
-            DbId(9),
-            "playback".to_string(),
-            4,
+            applied.user_db_id,
+            applied.playback_public_id.clone(),
+            applied.queue_revision,
         )
         .await
         .map_err(anyhow::Error::msg)?;
+        let newer_source_playback_id = DbId(playback_session_id.0 + 10_000);
         playback_sessions::bind_current_playback_session_scope(
             &source_scope,
-            DbId(11),
+            newer_source_playback_id,
             "newer-source-playback".to_string(),
             2,
         );
-        let committed = claim_progress(&token, DbId(9), "target-session", "playback", 4)
-            .await
-            .map_err(anyhow::Error::msg)?
-            .commit(test_applied_progress());
+        let committed = claim_progress(
+            &token,
+            applied.user_db_id,
+            "target-session",
+            &applied.playback_public_id,
+            applied.queue_revision,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?
+        .commit(applied.clone());
 
         assert!(committed.finish().await);
         assert!(completion_rx.await?.is_ok());
         let source_after = playback_sessions::get_playback_session(&source_scope)
             .expect("newer source binding must survive handoff completion");
-        assert_eq!(source_after.current_playback_session_id, Some(DbId(11)));
-        assert_eq!(source_after.previous_playback_session_id, Some(DbId(10)));
+        assert_eq!(
+            source_after.current_playback_session_id,
+            Some(newer_source_playback_id)
+        );
+        assert_eq!(
+            source_after.previous_playback_session_id,
+            Some(playback_session_id)
+        );
         let target_scope = playback_sessions::PlaybackScopeKey {
             plugin_id: "native",
-            user_db_id: DbId(9),
+            user_db_id: applied.user_db_id,
             session_key: "target-session",
         };
         assert_eq!(
             playback_sessions::get_playback_session(&target_scope)
                 .and_then(|scope| scope.current_playback_session_id),
-            Some(DbId(10))
+            Some(playback_session_id)
         );
         playback_sessions::clear_playback_session_scope(&target_scope);
         playback_sessions::clear_playback_session_scope(&source_scope);
         registry::unregister(source.connection_id).await;
         registry::unregister(target.connection_id).await;
         drop(source.command_rx);
+        drop(target.command_rx);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn committed_progress_requires_exact_durable_session() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
+        for connection in registry::list_connections().await {
+            registry::unregister(connection.connection_id).await;
+        }
+        let durable = durable_applied_progress().await?;
+        let target = registry::register(
+            durable.user_db_id,
+            "user".to_string(),
+            None,
+            "target-session".to_string(),
+            Arc::new(Notify::new()),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let (token, completion_rx) = begin(
+            None,
+            target.connection_id,
+            durable.user_db_id,
+            durable.playback_public_id.clone(),
+            durable.queue_revision,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        let mut stale = durable.clone();
+        stale.expected_session.position_ms += 1;
+        let committed = claim_progress(
+            &token,
+            stale.user_db_id,
+            "target-session",
+            &stale.playback_public_id,
+            stale.queue_revision,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?
+        .commit(stale);
+
+        assert!(!committed.finish().await);
+        assert_eq!(
+            completion_rx.await?.unwrap_err(),
+            "playback changed while applying handoff progress"
+        );
+        let db = STATE.db.read().await;
+        assert!(
+            playbacks::current_handoff_playback(
+                &*db,
+                durable.playback_db_id,
+                &durable.playback_public_id,
+                durable.queue_revision,
+                durable.user_db_id,
+                &durable.expected_session,
+            )?
+            .is_some()
+        );
+        drop(db);
+        let target_scope = playback_sessions::PlaybackScopeKey {
+            plugin_id: "native",
+            user_db_id: durable.user_db_id,
+            session_key: "target-session",
+        };
+        assert!(playback_sessions::get_playback_session(&target_scope).is_none());
+        registry::unregister(target.connection_id).await;
         drop(target.command_rx);
         Ok(())
     }
@@ -853,7 +990,7 @@ mod tests {
             .await
             .map_err(anyhow::Error::msg)?;
         registry::unregister(target.connection_id).await;
-        let applied = test_applied_progress();
+        let applied = synthetic_applied_progress();
 
         assert!(matches!(
             registry::finish_handoff_progress(&token, &applied, None).await,
