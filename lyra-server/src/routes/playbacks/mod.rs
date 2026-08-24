@@ -108,6 +108,7 @@ struct PlaybackDetailQuery {
 #[derive(Serialize)]
 struct CurrentPlaybackResponse {
     track_id: String,
+    client_name: Option<String>,
     position_ms: u64,
     duration_ms: Option<u64>,
     state: PlaybackState,
@@ -203,6 +204,7 @@ fn current_to_response(
     let playback = &current.playback;
     CurrentPlaybackResponse {
         track_id: current.track_public_id.clone(),
+        client_name: playback.client_name.clone(),
         position_ms: playback.position_ms,
         duration_ms: playback.duration_ms,
         state: playback.state,
