@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::collections::HashSet;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 
 use agdb::{
     DbAny,
@@ -391,7 +394,7 @@ pub(crate) fn compensate_failed_handoff_progress(
                     &expected_session,
                 )?
                 else {
-                    return Ok(None);
+                    return Ok::<_, PlaybackError>(None);
                 };
                 if !matches!(
                     expected_session.state,
@@ -654,22 +657,32 @@ pub(crate) fn validate_queue(
     }
 
     let mut current_track_db_id = None;
+    let mut validated_tracks = HashMap::new();
     for (index, public_id) in snapshot.track_ids.iter().enumerate() {
         if public_id.trim().is_empty() {
             return Err(PlaybackError::InvalidQueue(format!(
                 "track_ids[{index}] cannot be blank"
             )));
         }
-        let track_db_id = db::lookup::find_node_id_by_id(db, public_id)?
-            .ok_or_else(|| PlaybackError::InvalidQueue(format!("track not found: {public_id}")))?;
-        if db::tracks::get_by_id(db, track_db_id)?.is_none() {
-            return Err(PlaybackError::InvalidQueue(format!(
-                "track not found: {public_id}"
-            )));
-        }
-        access::require_entity_accessible(db, principal, track_db_id, || {
-            PlaybackError::InvalidQueue(format!("track not found: {public_id}"))
-        })?;
+        let track_db_id = match validated_tracks.get(public_id.as_str()) {
+            Some(track_db_id) => *track_db_id,
+            None => {
+                let track_db_id =
+                    db::lookup::find_node_id_by_id(db, public_id)?.ok_or_else(|| {
+                        PlaybackError::InvalidQueue(format!("track not found: {public_id}"))
+                    })?;
+                if db::tracks::get_by_id(db, track_db_id)?.is_none() {
+                    return Err(PlaybackError::InvalidQueue(format!(
+                        "track not found: {public_id}"
+                    )));
+                }
+                access::require_entity_accessible(db, principal, track_db_id, || {
+                    PlaybackError::InvalidQueue(format!("track not found: {public_id}"))
+                })?;
+                validated_tracks.insert(public_id.as_str(), track_db_id);
+                track_db_id
+            }
+        };
         if index == current_index {
             current_track_db_id = Some(track_db_id);
         }
@@ -869,6 +882,39 @@ mod tests {
         test_user,
     };
     use agdb::QueryBuilder;
+    use std::cell::Cell;
+
+    struct CountingDb<'a> {
+        db: &'a DbAny,
+        reads: Cell<usize>,
+    }
+
+    impl CountingDb<'_> {
+        fn new(db: &DbAny) -> CountingDb<'_> {
+            CountingDb {
+                db,
+                reads: Cell::new(0),
+            }
+        }
+
+        fn reads(&self) -> usize {
+            self.reads.get()
+        }
+    }
+
+    impl db::DbAccess for CountingDb<'_> {
+        fn exec<T: agdb::Query>(&self, query: T) -> Result<agdb::QueryResult, agdb::DbError> {
+            self.reads.set(self.reads.get() + 1);
+            self.db.exec(query)
+        }
+
+        fn exec_mut<T: agdb::QueryMut>(
+            &mut self,
+            _query: T,
+        ) -> Result<agdb::QueryResult, agdb::DbError> {
+            unreachable!("queue validation is read-only")
+        }
+    }
 
     fn setup() -> anyhow::Result<(DbAny, DbId, DbId, DbId, String, String)> {
         let mut db = new_test_db()?;
@@ -903,6 +949,45 @@ mod tests {
         assert_eq!(queue.current_track_id(), "track");
         assert_eq!(queue.repeat_mode, RepeatMode::None);
         assert!(!queue.shuffle_enabled);
+    }
+
+    #[test]
+    fn repeated_queue_tracks_share_validation_queries() -> anyhow::Result<()> {
+        let (db, user_db_id, first_track_db_id, _, first_track_id, _) = setup()?;
+        let principal = Principal {
+            user_db_id,
+            user_public_id: "user".to_string(),
+            username: "user".to_string(),
+            permissions: vec![db::Permission::Admin],
+            role_name: None,
+            accessible_library_ids: HashSet::new(),
+        };
+        let single_db = CountingDb::new(&db);
+        let single = validate_queue(
+            &single_db,
+            &principal,
+            QueueSnapshot::single(first_track_id.clone()),
+        )?;
+        assert_eq!(single.current_track_db_id, first_track_db_id);
+
+        let repeated_db = CountingDb::new(&db);
+        let repeated = validate_queue(
+            &repeated_db,
+            &principal,
+            QueueSnapshot {
+                track_ids: vec![first_track_id; QUEUE_ITEM_HARD_CAP],
+                current_index: (QUEUE_ITEM_HARD_CAP - 1) as u64,
+                repeat_mode: RepeatMode::None,
+                shuffle_enabled: false,
+            },
+        )?;
+        assert_eq!(repeated.current_track_db_id, first_track_db_id);
+        assert_eq!(
+            repeated_db.reads(),
+            single_db.reads(),
+            "duplicate public IDs must reuse their validated track"
+        );
+        Ok(())
     }
 
     #[test]

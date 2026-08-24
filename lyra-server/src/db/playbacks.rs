@@ -100,6 +100,7 @@ pub(crate) struct Playback {
 pub(crate) struct PlaybackListProjection {
     pub(crate) db_id: DbId,
     pub(crate) id: String,
+    pub(crate) queue_revision: u64,
     pub(crate) updated_at_ms: u64,
 }
 
@@ -210,7 +211,7 @@ pub(crate) fn list_projections_for_user(
     db: &impl DbAccess,
     user_db_id: DbId,
 ) -> anyhow::Result<Vec<PlaybackListProjection>> {
-    let keys = ["db_element_id", "id", "updated_at_ms"]
+    let keys = ["db_element_id", "id", "queue_revision", "updated_at_ms"]
         .into_iter()
         .map(DbValue::from)
         .collect::<Vec<_>>();
@@ -281,6 +282,13 @@ fn projection_from_element(
             .ok_or_else(|| anyhow::anyhow!("playback {} missing {key}", element.id.0))
     };
     let id = value("id")?.string()?.clone();
+    let queue_revision = match value("queue_revision")? {
+        DbValue::U64(value) => value,
+        value => anyhow::bail!(
+            "playback {} has invalid queue_revision: {value:?}",
+            element.id.0
+        ),
+    };
     let updated_at_ms = match value("updated_at_ms")? {
         DbValue::U64(value) => value,
         value => anyhow::bail!(
@@ -291,6 +299,7 @@ fn projection_from_element(
     Ok(Some(PlaybackListProjection {
         db_id: element.id,
         id,
+        queue_revision,
         updated_at_ms,
     }))
 }
@@ -317,6 +326,7 @@ pub(crate) fn get_projection_by_id(
             .values(vec![
                 DbValue::from("db_element_id"),
                 DbValue::from("id"),
+                DbValue::from("queue_revision"),
                 DbValue::from("updated_at_ms"),
             ])
             .ids(playback_db_id)
