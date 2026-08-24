@@ -973,9 +973,15 @@ mod tests {
     };
     use axum::{
         Json,
+        body::{
+            Body,
+            to_bytes,
+        },
         extract::Path,
         http::{
             HeaderMap,
+            Request,
+            StatusCode,
             header::AUTHORIZATION,
         },
     };
@@ -988,6 +994,7 @@ mod tests {
             UNIX_EPOCH,
         },
     };
+    use tower::ServiceExt;
 
     struct TestDirGuard(PathBuf);
 
@@ -1571,6 +1578,87 @@ mod tests {
         let names: Vec<String> = page.items.into_iter().map(|artist| artist.name).collect();
         assert_eq!(names, vec!["Charlie", "Bravo", "Alpha"]);
         assert!(page.next_cursor.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn artist_mix_filters_release_tracks_before_shuffle_and_limit() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let _test_dir = initialize_test_runtime().await?;
+
+        let (user_db_id, artist_public_id) = {
+            let mut db = STATE.db.write().await;
+            db::roles::ensure_builtin_roles(&mut db)?;
+            let user_db_id =
+                db::users::create(&mut db, &db::test_db::test_user("artist-mix-viewer")?)?;
+            let visible_library = insert_library(&mut db, "Visible Mix", "/tmp/lyra-visible-mix")?;
+            let hidden_library = insert_library(&mut db, "Hidden Mix", "/tmp/lyra-hidden-mix")?;
+            db::libraries::grant_access(
+                &mut *db,
+                user_db_id,
+                visible_library,
+                db::libraries::AccessKind::ReadWrite,
+            )?;
+
+            let artist = insert_artist(&mut db, "Release Credit Mix Artist")?;
+            let visible_release = insert_release(&mut db, "Visible Mix Release")?;
+            let hidden_release = insert_release(&mut db, "Hidden Mix Release")?;
+            connect(&mut db, visible_library, visible_release)?;
+            connect(&mut db, hidden_library, hidden_release)?;
+            connect_artist(&mut db, visible_release, artist)?;
+            connect_artist(&mut db, hidden_release, artist)?;
+
+            for index in 0..55 {
+                let track = insert_track(&mut db, &format!("Visible Track {index:02}"))?;
+                connect(&mut db, visible_release, track)?;
+            }
+            for index in 0..60 {
+                let track = insert_track(&mut db, &format!("Hidden Track {index:02}"))?;
+                connect(&mut db, hidden_release, track)?;
+            }
+            assert_eq!(db::releases::get_by_artist(&db, artist)?.len(), 2);
+
+            let artist_public_id = db::artists::get_by_id(&db, artist)?
+                .expect("artist exists")
+                .id;
+            (user_db_id, artist_public_id)
+        };
+        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let authorization = format!("Bearer {}", session.token);
+        let routes = artist_routes();
+
+        for _ in 0..2 {
+            let response = routes
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/{artist_public_id}/mix?limit=50"))
+                        .header(AUTHORIZATION, &authorization)
+                        .body(Body::empty())?,
+                )
+                .await?;
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = to_bytes(response.into_body(), usize::MAX).await?;
+            let tracks: serde_json::Value = serde_json::from_slice(&body)?;
+            let tracks = tracks.as_array().expect("mix response is an array");
+            let ids = tracks
+                .iter()
+                .map(|track| {
+                    let title = track["title"].as_str().expect("track title is a string");
+                    assert!(
+                        title.starts_with("Visible Track"),
+                        "unexpected title: {title}"
+                    );
+                    track["id"]
+                        .as_str()
+                        .expect("track id is a string")
+                        .to_string()
+                })
+                .collect::<HashSet<_>>();
+            assert_eq!(tracks.len(), 50);
+            assert_eq!(ids.len(), 50);
+        }
+
         Ok(())
     }
 

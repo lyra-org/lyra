@@ -46,8 +46,8 @@ pub(crate) struct MixOptions {
     /// unheard/heard partition and forwarded to plugins as `ctx.user_id`.
     /// Distinct from the seed identity — see `MixSeed`.
     pub(crate) viewer: Option<DbId>,
-    /// Current library visibility for the viewer. When present, recent-listen
-    /// seeds are filtered before they reach built-in or plugin mix handlers.
+    /// Current library visibility for the viewer. When present, built-in
+    /// candidates and recent-listen seeds are filtered before shuffle and limits.
     pub(crate) viewer_accessible_library_ids: Option<HashSet<String>>,
     /// Query-param options coerced via `declare_option` for `ctx.options`.
     pub(crate) extra: HashMap<String, String>,
@@ -683,6 +683,11 @@ fn tracks_for_genres(
         tier_flat.shuffle(&mut rng);
         all_tracks.extend(tier_flat);
     }
+    all_tracks = filter_tracks_by_library_visibility(
+        db,
+        all_tracks,
+        options.viewer_accessible_library_ids.as_ref(),
+    )?;
 
     // Partition into unheard and heard, preserving score order within each
     let (unheard, heard) = partition_by_listen_history(db, all_tracks, options.viewer)?;
@@ -724,6 +729,11 @@ fn fallback_from_seed_tracks(
     mut tracks: Vec<Track>,
     options: &MixOptions,
 ) -> anyhow::Result<Vec<Track>> {
+    tracks = filter_tracks_by_library_visibility(
+        db,
+        tracks,
+        options.viewer_accessible_library_ids.as_ref(),
+    )?;
     if tracks.is_empty() {
         return Ok(tracks);
     }
@@ -733,6 +743,31 @@ fn fallback_from_seed_tracks(
     let mut combined = unheard;
     combined.extend(heard);
     cap_per_artist(db, combined, options.limit.unwrap_or(DEFAULT_LIMIT))
+}
+
+fn filter_tracks_by_library_visibility(
+    db: &DbAny,
+    mut tracks: Vec<Track>,
+    accessible_library_ids: Option<&HashSet<String>>,
+) -> anyhow::Result<Vec<Track>> {
+    let Some(accessible_library_ids) = accessible_library_ids else {
+        return Ok(tracks);
+    };
+    let track_ids = tracks
+        .iter()
+        .filter_map(|track| track.db_id.clone().map(DbId::from))
+        .collect::<Vec<_>>();
+    let library_db_ids = db::libraries::db_ids_for_public_ids(db, accessible_library_ids)?;
+    let accessible_track_ids =
+        db::libraries::accessible_track_ids_for_library_db_ids(db, &library_db_ids, &track_ids)?;
+    tracks.retain(|track| {
+        track
+            .db_id
+            .clone()
+            .map(DbId::from)
+            .is_some_and(|id| accessible_track_ids.contains(&id))
+    });
+    Ok(tracks)
 }
 
 fn release_weighted_scores(

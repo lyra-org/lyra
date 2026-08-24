@@ -631,6 +631,20 @@ pub(crate) fn accessible_track_ids(
     accessible_track_ids_for_library_db_ids(db, &accessible_libraries, track_db_ids)
 }
 
+pub(crate) fn db_ids_for_public_ids(
+    db: &impl super::DbAccess,
+    public_ids: &HashSet<String>,
+) -> anyhow::Result<Vec<DbId>> {
+    if public_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(get(db)?
+        .into_iter()
+        .filter(|library| public_ids.contains(&library.id))
+        .filter_map(|library| library.db_id)
+        .collect())
+}
+
 pub(crate) fn accessible_track_ids_for_library_db_ids(
     db: &impl super::DbAccess,
     accessible_libraries: &[DbId],
