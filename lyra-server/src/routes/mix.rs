@@ -99,7 +99,8 @@ fn mix_options(query: &MixQueryParams, principal: &Principal) -> mix::MixOptions
     mix::MixOptions {
         limit: query.limit,
         viewer: Some(principal.user_db_id),
-        viewer_accessible_library_ids: Some(principal.accessible_library_ids.clone()),
+        viewer_accessible_library_ids: (!principal.permissions.contains(&db::Permission::Admin))
+            .then(|| principal.accessible_library_ids.clone()),
         extra: sanitize_extra(query.extra.clone()),
     }
 }

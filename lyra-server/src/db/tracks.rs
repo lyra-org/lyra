@@ -275,13 +275,7 @@ pub(crate) fn get_bounded_ids_by_artist(
     }
 
     let accessible_library_db_ids = if let Some(library_ids) = accessible_library_ids {
-        Some(
-            super::libraries::get(db)?
-                .into_iter()
-                .filter(|library| library_ids.contains(&library.id))
-                .filter_map(|library| library.db_id)
-                .collect::<Vec<_>>(),
-        )
+        Some(super::libraries::db_ids_for_public_ids(db, library_ids)?)
     } else {
         None
     };
