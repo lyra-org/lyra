@@ -504,6 +504,72 @@ mod tests {
         }
     }
 
+    fn insert_release_cover(db: &mut DbAny, release_db_id: DbId, id: &str) -> anyhow::Result<()> {
+        db.transaction_mut(|t| {
+            db::covers::upsert(
+                t,
+                release_db_id,
+                db::covers::Cover {
+                    db_id: None,
+                    id: id.to_string(),
+                    path: format!("/tmp/{id}.jpg"),
+                    mime_type: "image/jpeg".to_string(),
+                    hash: "a".repeat(64),
+                    blurhash: None,
+                },
+            )?;
+            Ok(())
+        })
+    }
+
+    fn playlist_with_tracks(
+        db: &mut DbAny,
+        username: &str,
+        track_db_ids: &[DbId],
+    ) -> anyhow::Result<DbId> {
+        let user_db_id = db::users::create(db, &test_db::test_user(username)?)?;
+        let playlist = db::playlists::Playlist {
+            db_id: None,
+            id: nanoid!(),
+            name: "Ingestion Cover Regression".to_string(),
+            description: None,
+            is_public: None,
+            created_at: None,
+            updated_at: None,
+        };
+        let playlist_db_id = db::playlists::create(db, &playlist, user_db_id)?;
+        db.transaction_mut(|t| -> anyhow::Result<()> {
+            db::playlists::add_tracks(t, playlist_db_id, track_db_ids)?;
+            Ok(())
+        })?;
+        Ok(playlist_db_id)
+    }
+
+    fn playlist_cover_winner(db: &DbAny, playlist_db_id: DbId) -> anyhow::Result<Option<DbId>> {
+        use db::covers::display::{
+            DisplayCoverScope,
+            DisplayCoverTargetKind,
+            DisplayCoverWinnerKind,
+        };
+
+        let playlist = db::playlists::get_by_id(db, playlist_db_id)?
+            .ok_or_else(|| anyhow!("playlist missing"))?;
+        let Some((_, profile)) = db::covers::display::get_profile(
+            db,
+            DisplayCoverScope::Instance,
+            DisplayCoverTargetKind::Playlist,
+            None,
+            &playlist.id,
+        )?
+        else {
+            return Ok(None);
+        };
+        Ok(
+            db::covers::display::get_winner(db, &profile, DisplayCoverWinnerKind::Random)?
+                .map(|winner| winner.release_db_id),
+        )
+    }
+
     async fn add_metadata(
         db: &mut DbAny,
         library: &Library,
@@ -2767,6 +2833,145 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].label.name, "Curated Label");
         assert_eq!(labels[0].catalog_number.as_deref(), Some("CUR-001"));
+        Ok(())
+    }
+
+    #[test]
+    fn unchanged_multi_track_rescan_skips_playlist_cover_recomputation() -> anyhow::Result<()> {
+        let mut db = TestDb::initialized()?.into_inner();
+        let library = test_db::insert_test_library_node(
+            &mut db,
+            "Unchanged Cover Library",
+            PathBuf::from("/music"),
+        )?;
+        let library_db_id = library
+            .db_id
+            .ok_or_else(|| anyhow!("library missing db_id"))?;
+
+        let mut metadata = Vec::new();
+        for track_number in 1..=3 {
+            let entry_db_id = insert_entry(
+                &mut db,
+                &format!("/music/unchanged/track-{track_number}.flac"),
+            )?;
+            connect(&mut db, library_db_id, entry_db_id)?;
+            metadata.push(track_metadata(
+                entry_db_id.0,
+                "Unchanged Album",
+                "Artist",
+                Some(2026),
+                Some(1),
+                track_number,
+            ));
+        }
+
+        let first = apply_metadata(&mut db, library_db_id, metadata.clone())?;
+        let release_db_id = first.releases[0];
+        let playlist_db_id = playlist_with_tracks(&mut db, "unchanged-covers", &first.tracks)?;
+        insert_release_cover(&mut db, release_db_id, "unchanged-cover")?;
+        db::covers::display::sync_playlist_cover(&mut db, playlist_db_id)?;
+        assert_eq!(
+            playlist_cover_winner(&db, playlist_db_id)?,
+            Some(release_db_id)
+        );
+
+        db::covers::display::reset_playlist_cover_sync_count();
+        let second = apply_metadata(&mut db, library_db_id, metadata)?;
+
+        assert_eq!(second.releases, vec![release_db_id]);
+        assert_eq!(
+            db::covers::display::playlist_cover_sync_count(),
+            0,
+            "an unchanged logical release membership must not publish cover work"
+        );
+        assert_eq!(
+            playlist_cover_winner(&db, playlist_db_id)?,
+            Some(release_db_id)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn moved_tracks_recompute_each_affected_playlist_once() -> anyhow::Result<()> {
+        let mut db = TestDb::initialized()?.into_inner();
+        let library = test_db::insert_test_library_node(
+            &mut db,
+            "Moved Cover Library",
+            PathBuf::from("/music"),
+        )?;
+        let library_db_id = library
+            .db_id
+            .ok_or_else(|| anyhow!("library missing db_id"))?;
+
+        let mut target_metadata = Vec::new();
+        for track_number in 1..=3 {
+            let entry_db_id =
+                insert_entry(&mut db, &format!("/music/target/track-{track_number}.flac"))?;
+            connect(&mut db, library_db_id, entry_db_id)?;
+            target_metadata.push(track_metadata(
+                entry_db_id.0,
+                "Target Album",
+                "Artist",
+                Some(2026),
+                Some(1),
+                track_number,
+            ));
+        }
+        let target = apply_metadata(&mut db, library_db_id, target_metadata.clone())?;
+        let target_release_db_id = target.releases[0];
+
+        let mut moved_metadata = Vec::new();
+        for track_number in 1..=2 {
+            let entry_db_id =
+                insert_entry(&mut db, &format!("/music/source/track-{track_number}.flac"))?;
+            connect(&mut db, library_db_id, entry_db_id)?;
+            moved_metadata.push(track_metadata(
+                entry_db_id.0,
+                "Source Album",
+                "Artist",
+                Some(2026),
+                Some(1),
+                track_number,
+            ));
+        }
+        let source = apply_metadata(&mut db, library_db_id, moved_metadata.clone())?;
+        let source_release_db_id = source.releases[0];
+        let playlist_db_id = playlist_with_tracks(&mut db, "moved-covers", &source.tracks)?;
+        insert_release_cover(&mut db, source_release_db_id, "source-cover")?;
+        insert_release_cover(&mut db, target_release_db_id, "target-cover")?;
+        db::covers::display::sync_playlist_cover(&mut db, playlist_db_id)?;
+        assert_eq!(
+            playlist_cover_winner(&db, playlist_db_id)?,
+            Some(source_release_db_id)
+        );
+
+        for (index, track) in moved_metadata.iter_mut().enumerate() {
+            track.album = Some("Target Album".to_string());
+            track.track = Some((index + 4) as u32);
+        }
+        target_metadata.extend(moved_metadata);
+
+        db::covers::display::reset_playlist_cover_sync_count();
+        let result = apply_metadata(&mut db, library_db_id, target_metadata)?;
+
+        assert_eq!(result.releases, vec![target_release_db_id]);
+        assert_eq!(
+            db::covers::display::playlist_cover_sync_count(),
+            1,
+            "two moved tracks in one playlist must publish one final-state recomputation"
+        );
+        assert_eq!(
+            playlist_cover_winner(&db, playlist_db_id)?,
+            Some(target_release_db_id)
+        );
+        for track_db_id in source.tracks {
+            let releases = db::releases::get_by_track(&db, track_db_id)?;
+            assert_eq!(releases.len(), 1);
+            assert_eq!(
+                releases[0].db_id.clone().map(DbId::from),
+                Some(target_release_db_id)
+            );
+        }
         Ok(())
     }
 }

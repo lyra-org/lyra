@@ -383,6 +383,40 @@ pub(crate) fn unlink_track(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TrackReleaseDelta {
+    pub(crate) membership_changed: bool,
+    pub(crate) target_added: bool,
+}
+
+/// Make `release_db_id` the track's sole release without publishing per-edge
+/// display-cover updates. The caller owns batching those updates for the wider
+/// operation from the returned logical membership delta.
+pub(crate) fn replace_track_release(
+    db: &mut impl DbAccess,
+    release_db_id: DbId,
+    track_db_id: DbId,
+) -> anyhow::Result<TrackReleaseDelta> {
+    let mut removed_other = false;
+    let mut seen = HashSet::new();
+    for release in get_by_track(db, track_db_id)? {
+        let Some(current_release_db_id) = release.db_id.map(DbId::from) else {
+            continue;
+        };
+        if current_release_db_id == release_db_id || !seen.insert(current_release_db_id) {
+            continue;
+        }
+        removed_other |=
+            super::graph::remove_edges_between(db, current_release_db_id, track_db_id)?;
+    }
+
+    let target_added = super::graph::ensure_owned_edge(db, release_db_id, track_db_id)?;
+    Ok(TrackReleaseDelta {
+        membership_changed: removed_other || target_added,
+        target_added,
+    })
+}
+
 pub(crate) fn get_by_artist(
     db: &impl DbAccess,
     artist_db_id: DbId,

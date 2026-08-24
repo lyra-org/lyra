@@ -955,6 +955,9 @@ pub(crate) fn sync_playlist_cover(
     db: &mut impl DbAccess,
     playlist_db_id: DbId,
 ) -> anyhow::Result<()> {
+    #[cfg(test)]
+    PLAYLIST_COVER_SYNC_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+
     let Some(playlist) = playlists::get_by_id(db, playlist_db_id)? else {
         return Ok(());
     };
@@ -1386,6 +1389,21 @@ pub(crate) fn sync_playlist_covers(
         sync_playlist_cover(db, playlist_db_id)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static PLAYLIST_COVER_SYNC_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_playlist_cover_sync_count() {
+    PLAYLIST_COVER_SYNC_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn playlist_cover_sync_count() -> usize {
+    PLAYLIST_COVER_SYNC_COUNT.with(std::cell::Cell::get)
 }
 
 pub(crate) fn profile_is_clean(profile: &DisplayCoverProfile) -> bool {
