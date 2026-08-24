@@ -382,36 +382,28 @@ pub(crate) fn compensate_failed_handoff_progress(
         &expected_session.id,
         || {
             db.transaction_mut(|t| {
-                if db::playbacks::get_owner_id(t, playback_db_id)? != Some(user_db_id) {
-                    return Ok::<_, PlaybackError>(None);
-                }
-                let Some(mut playback) = db::playbacks::get_by_id(t, playback_db_id)? else {
-                    return Ok(None);
-                };
-                if playback.id != playback_public_id
-                    || playback.queue_revision != queue_revision
-                    || db::playbacks::get_current_session_id(t, playback_db_id)?
-                        != Some(playback_session_id)
-                {
-                    return Ok(None);
-                }
-                let Some(session) = db::playback_sessions::get_by_id(t, playback_session_id)?
+                let Some(mut playback) = current_handoff_playback(
+                    t,
+                    playback_db_id,
+                    &playback_public_id,
+                    queue_revision,
+                    user_db_id,
+                    &expected_session,
+                )?
                 else {
                     return Ok(None);
                 };
-                if session != expected_session
-                    || !matches!(
-                        session.state,
-                        db::PlaybackState::Playing | db::PlaybackState::Buffering
-                    )
-                {
+                if !matches!(
+                    expected_session.state,
+                    db::PlaybackState::Playing | db::PlaybackState::Buffering
+                ) {
                     return Ok(None);
                 }
                 let Some(session) = playback_sessions::pause_playback_in_transaction(
                     t,
                     playback_session_id,
                     user_db_id,
-                    now_ms.max(session.updated_at_ms),
+                    now_ms.max(expected_session.updated_at_ms),
                 )?
                 else {
                     return Ok(None);
@@ -435,6 +427,36 @@ pub(crate) fn compensate_failed_handoff_progress(
         session: session.playback,
         evicted_playbacks,
     }))
+}
+
+pub(crate) fn current_handoff_playback(
+    db: &impl db::DbAccess,
+    playback_db_id: DbId,
+    playback_public_id: &str,
+    queue_revision: u64,
+    user_db_id: DbId,
+    expected_session: &db::PlaybackSession,
+) -> Result<Option<db::playbacks::Playback>, PlaybackError> {
+    let Some(playback_session_id) = expected_session.db_id else {
+        return Ok(None);
+    };
+    if db::playbacks::get_owner_id(db, playback_db_id)? != Some(user_db_id) {
+        return Ok(None);
+    }
+    let Some(playback) = db::playbacks::get_by_id(db, playback_db_id)? else {
+        return Ok(None);
+    };
+    if playback.id != playback_public_id
+        || playback.queue_revision != queue_revision
+        || db::playbacks::get_current_session_id(db, playback_db_id)? != Some(playback_session_id)
+    {
+        return Ok(None);
+    }
+    if db::playback_sessions::get_by_id(db, playback_session_id)?.as_ref() != Some(expected_session)
+    {
+        return Ok(None);
+    }
+    Ok(Some(playback))
 }
 
 #[derive(Debug, thiserror::Error)]

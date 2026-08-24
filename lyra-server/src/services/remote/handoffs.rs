@@ -376,10 +376,61 @@ impl CommittedProgress {
             .await
             .unwrap_or(false)
     }
+
+    #[cfg(test)]
+    pub(crate) async fn finish_after_db_lock(mut self, db_locked: oneshot::Sender<()>) -> bool {
+        let token = self
+            .token
+            .take()
+            .expect("committed progress must retain its token");
+        let applied = self
+            .applied
+            .take()
+            .expect("committed progress must retain its applied session");
+        tokio::spawn(async move {
+            finish_committed_progress_observed(&token, &applied, || {
+                let _ = db_locked.send(());
+            })
+            .await
+        })
+        .await
+        .unwrap_or(false)
+    }
 }
 
 async fn finish_committed_progress(token: &str, applied: &AppliedProgress) -> bool {
-    match registry::finish_handoff_progress(token, applied).await {
+    finish_committed_progress_observed(token, applied, || {}).await
+}
+
+async fn finish_committed_progress_observed(
+    token: &str,
+    applied: &AppliedProgress,
+    after_db_lock: impl FnOnce(),
+) -> bool {
+    let finish = {
+        // Durable playback mutations acquire the DB before invalidating the
+        // registry. Retaining this read guard through binding makes that order
+        // total: either the handoff finishes first or its reference is stale.
+        let db = STATE.db.read().await;
+        let invalid_reference = match playbacks::current_handoff_playback(
+            &*db,
+            applied.playback_db_id,
+            &applied.playback_public_id,
+            applied.queue_revision,
+            applied.user_db_id,
+            &applied.expected_session,
+        ) {
+            Ok(Some(_)) => None,
+            Ok(None) => Some("playback changed while applying handoff progress".to_string()),
+            Err(error) => {
+                tracing::error!(%error, "failed to validate committed handoff progress");
+                Some("failed to validate committed handoff progress".to_string())
+            }
+        };
+        after_db_lock();
+        registry::finish_handoff_progress(token, applied, invalid_reference).await
+    };
+    match finish {
         registry::FinishProgress::Completed => true,
         registry::FinishProgress::Failed | registry::FinishProgress::Missing => {
             let now_ms = playback_sessions::now_ms()
@@ -468,6 +519,11 @@ pub(crate) async fn fail_for_playback_revision(playback_id: &str, current_revisi
 
 pub(crate) async fn fail_for_playback(playback_id: &str) -> usize {
     registry::fail_handoffs_for_playback(playback_id).await
+}
+
+#[cfg(test)]
+pub(crate) async fn hold_registry_write_lock_for_test() -> impl Drop {
+    registry::hold_write_lock_for_test().await
 }
 
 pub(crate) async fn dispatch_and_wait(
@@ -800,7 +856,7 @@ mod tests {
         let applied = test_applied_progress();
 
         assert!(matches!(
-            registry::finish_handoff_progress(&token, &applied).await,
+            registry::finish_handoff_progress(&token, &applied, None).await,
             registry::FinishProgress::Failed
         ));
         assert!(completion_rx.await?.is_err());

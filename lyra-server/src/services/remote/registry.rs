@@ -351,8 +351,16 @@ pub(super) enum FinishProgress {
 pub(super) async fn finish_handoff_progress(
     token: &str,
     applied: &AppliedProgress,
+    invalid_reference: Option<String>,
 ) -> FinishProgress {
     let mut registry = REGISTRY.write().await;
+    if let Some(error) = invalid_reference {
+        if !registry.pending_handoffs.fail(token, error) {
+            return FinishProgress::Missing;
+        }
+        registry.pending_handoffs.finish_progress(token);
+        return FinishProgress::Failed;
+    }
     let Some(result) = registry.pending_handoffs.progress_result(token) else {
         return FinishProgress::Missing;
     };

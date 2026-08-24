@@ -527,6 +527,7 @@ async fn delete_playback(
         None => None,
     };
     db::playbacks::delete(&mut db, record.db_id)?;
+    remote_handoffs::fail_for_playback(&record.id).await;
     if let Some((playback_session_id, playback_session_public_id)) = current {
         sessions::clear_session_bindings_for_playback(
             playback_session_id,
@@ -534,7 +535,6 @@ async fn delete_playback(
         );
     }
     drop(db);
-    remote_handoffs::fail_for_playback(&record.id).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

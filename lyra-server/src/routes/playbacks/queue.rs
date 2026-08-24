@@ -71,6 +71,7 @@ pub(super) async fn replace_queue(
         current_ms,
     )
     .map_err(map_playback_error)?;
+    remote_handoffs::fail_for_playback_revision(&id, updated.playback.queue_revision).await;
     if let Some(detached) = updated.detached_session.as_ref() {
         sessions::clear_session_bindings_for_playback(
             detached.playback_session_id,
@@ -89,7 +90,6 @@ pub(super) async fn replace_queue(
     if let Some(detached_update) = detached_update {
         dispatch_playback_update(&detached_update.playback, detached_update.event);
     }
-    remote_handoffs::fail_for_playback_revision(&id, response.revision).await;
     Ok(Json(response))
 }
 
