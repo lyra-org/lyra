@@ -60,6 +60,7 @@ pub(super) async fn replace_queue(
     let current_ms = now_ms()?;
     let mut db = STATE.db.write().await;
     let record = resolve_owned_playback_projection(&db, &principal, &id)?;
+    require_revision(request.expected_revision, record.queue_revision)?;
     let queue = playbacks::validate_queue(&*db, &principal, request.snapshot)
         .map_err(map_playback_error)?;
     let updated = playbacks::replace_queue(

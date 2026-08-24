@@ -296,7 +296,7 @@ async fn create_replace_queue_and_advance_current_track() -> anyhow::Result<()> 
         Path(created.id.clone()),
         Json(QueueReplaceRequest {
             expected_revision: 1,
-            snapshot: replaced.snapshot.clone(),
+            snapshot: QueueSnapshot::single("missing-track".to_string()),
         }),
     )
     .await
@@ -523,7 +523,7 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
             .map_err(anyhow::Error::msg)?;
 
     let committed = {
-        let current_ms = now_ms()?;
+        let current_ms = now_ms().map_err(|error| anyhow::anyhow!("{error:?}"))?;
         let mut db = STATE.db.write().await;
         let playback_db_id = db::lookup::find_node_id_by_id(&*db, &created.id)?
             .expect("created playback should remain present");
@@ -571,7 +571,7 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
         .await
         .expect("handoff finish should report after acquiring the DB read guard");
     assert!(
-        STATE.db.try_write().is_err(),
+        STATE.db.get().try_write_owned().is_err(),
         "handoff finish must retain the DB guard while waiting for the registry"
     );
 
