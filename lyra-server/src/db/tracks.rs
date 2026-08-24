@@ -246,61 +246,89 @@ pub(crate) fn get_by_artist(
     db: &impl super::DbAccess,
     artist_db_id: DbId,
 ) -> anyhow::Result<Vec<Track>> {
-    // Walk: Artist ← Credit (neighbor) ← Track (neighbor of credit).
-    let credits: Vec<super::Credit> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<super::Credit>()
-                .search()
-                .to(artist_db_id)
-                .where_()
-                .neighbor()
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
-
-    if credits.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut owner_ids = Vec::new();
-    let mut seen_owners = HashSet::new();
-    for credit in &credits {
-        let Some(credit_db_id) = credit.db_id.clone().map(DbId::from) else {
-            continue;
-        };
-        let incoming: Vec<DbId> = db
-            .exec(
-                QueryBuilder::search()
-                    .to(credit_db_id)
-                    .where_()
-                    .edge()
-                    .and()
-                    .distance(agdb::CountComparison::Equal(1))
-                    .query(),
-            )?
-            .elements
-            .iter()
-            .filter_map(|e| (e.from.0 > 0).then_some(e.from))
-            .collect();
-        for owner_id in incoming {
-            if seen_owners.insert(owner_id) {
-                owner_ids.push(owner_id);
-            }
-        }
-    }
-
+    let owner_ids = super::credits::owner_ids_by_artist::<Track>(db, artist_db_id, 0, 0)?;
     if owner_ids.is_empty() {
         return Ok(Vec::new());
     }
 
-    let tracks_by_id: HashMap<DbId, Track> =
-        super::graph::bulk_fetch_typed(db, owner_ids, "Track")?;
+    let mut tracks_by_id: HashMap<DbId, Track> =
+        super::graph::bulk_fetch_typed(db, owner_ids.clone(), "Track")?;
 
-    Ok(tracks_by_id.into_values().collect())
+    Ok(owner_ids
+        .into_iter()
+        .filter_map(|owner_id| tracks_by_id.remove(&owner_id))
+        .collect())
 }
 
+const ARTIST_CREDIT_CANDIDATE_PAGE_SIZE: usize = 200;
+
+/// Returns at most `limit` track-credit owners in stable newest-credit-first order,
+/// continuing past tracks outside `accessible_library_ids` when visibility is provided.
+pub(crate) fn get_bounded_ids_by_artist(
+    db: &impl super::DbAccess,
+    artist_db_id: DbId,
+    accessible_library_ids: Option<&HashSet<String>>,
+    limit: usize,
+) -> anyhow::Result<Vec<DbId>> {
+    if limit == 0 || accessible_library_ids.is_some_and(HashSet::is_empty) {
+        return Ok(Vec::new());
+    }
+
+    let accessible_library_db_ids = if let Some(library_ids) = accessible_library_ids {
+        Some(
+            super::libraries::get(db)?
+                .into_iter()
+                .filter(|library| library_ids.contains(&library.id))
+                .filter_map(|library| library.db_id)
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        None
+    };
+    if accessible_library_db_ids
+        .as_ref()
+        .is_some_and(Vec::is_empty)
+    {
+        return Ok(Vec::new());
+    }
+    let mut result = Vec::with_capacity(limit);
+    let mut offset = 0;
+    loop {
+        let page_limit = if accessible_library_ids.is_some() {
+            ARTIST_CREDIT_CANDIDATE_PAGE_SIZE
+        } else {
+            limit
+        };
+        let candidates =
+            super::credits::owner_ids_by_artist::<Track>(db, artist_db_id, offset, page_limit)?;
+        if candidates.is_empty() {
+            break;
+        }
+        let accessible = accessible_library_db_ids
+            .as_deref()
+            .map(|library_ids| {
+                super::libraries::accessible_track_ids_for_library_db_ids(
+                    db,
+                    library_ids,
+                    &candidates,
+                )
+            })
+            .transpose()?;
+
+        result.extend(candidates.iter().copied().filter(|track_db_id| {
+            accessible
+                .as_ref()
+                .is_none_or(|ids| ids.contains(track_db_id))
+        }));
+        result.truncate(limit);
+        if result.len() == limit || candidates.len() < page_limit {
+            break;
+        }
+        offset += candidates.len();
+    }
+
+    Ok(result)
+}
 pub(crate) fn get_by_artists(db: &DbAny, artist_db_ids: &[DbId]) -> anyhow::Result<Vec<Track>> {
     let mut tracks = Vec::new();
     let mut seen = HashSet::new();
@@ -760,9 +788,30 @@ mod tests {
 
     use super::*;
     use crate::db::test_db::{
+        connect_artist,
+        insert_artist,
         insert_track,
         new_test_db,
     };
+
+    #[test]
+    fn artist_credit_tracks_are_returned_in_stable_reverse_credit_order() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let artist_db_id = insert_artist(&mut db, "Featured Artist")?;
+        let first = insert_track(&mut db, "First")?;
+        let second = insert_track(&mut db, "Second")?;
+        let third = insert_track(&mut db, "Third")?;
+        connect_artist(&mut db, first, artist_db_id)?;
+        connect_artist(&mut db, second, artist_db_id)?;
+        connect_artist(&mut db, third, artist_db_id)?;
+
+        let first_read = get_bounded_ids_by_artist(&db, artist_db_id, None, 2)?;
+        let second_read = get_bounded_ids_by_artist(&db, artist_db_id, None, 2)?;
+
+        assert_eq!(first_read, vec![third, second]);
+        assert_eq!(second_read, first_read);
+        Ok(())
+    }
 
     #[test]
     fn get_by_entry_traverses_through_track_source() -> anyhow::Result<()> {

@@ -493,11 +493,12 @@ fn builtin_from_artist_track_credits(
     artist_db_id: DbId,
     options: &MixOptions,
 ) -> anyhow::Result<Vec<Track>> {
-    let track_ids: Vec<DbId> = db::tracks::get_by_artist(db, artist_db_id)?
-        .into_iter()
-        .filter_map(|track| track.db_id.map(DbId::from))
-        .take(TRACK_CREDIT_SEED_COUNT)
-        .collect();
+    let track_ids = db::tracks::get_bounded_ids_by_artist(
+        db,
+        artist_db_id,
+        options.viewer_accessible_library_ids.as_ref(),
+        TRACK_CREDIT_SEED_COUNT,
+    )?;
     builtin_from_seed_track_ids(db, &track_ids, options)
 }
 
@@ -1053,6 +1054,70 @@ mod tests {
         let titles: HashSet<&str> = result.iter().map(|t| t.track_title.as_str()).collect();
         assert_eq!(titles, HashSet::from(["Remix A", "Remix B"]));
 
+        Ok(())
+    }
+
+    #[test]
+    fn artist_track_credit_seeds_filter_visibility_before_deterministic_cap() -> anyhow::Result<()>
+    {
+        let mut db = new_test_db()?;
+
+        let artist = insert_artist(&mut db, "Prolific Guest")?;
+        let visible_library = insert_library(&mut db, "Visible", "/music/visible")?;
+        let hidden_library = insert_library(&mut db, "Hidden", "/music/hidden")?;
+        let visible_library_public_id = db::libraries::get_by_id(&db, visible_library)?
+            .expect("visible library exists")
+            .id;
+        let visible_release = insert_release(&mut db, "Visible Release")?;
+        let hidden_release = insert_release(&mut db, "Hidden Release")?;
+        connect(&mut db, visible_library, visible_release)?;
+        connect(&mut db, hidden_library, hidden_release)?;
+
+        let mut visible_track_ids = Vec::new();
+        for index in 0..55 {
+            let track = insert_track(&mut db, &format!("Visible {index:02}"))?;
+            connect(&mut db, visible_release, track)?;
+            connect_artist(&mut db, track, artist)?;
+            visible_track_ids.push(track);
+        }
+        for index in 0..60 {
+            let track = insert_track(&mut db, &format!("Hidden {index:02}"))?;
+            connect(&mut db, hidden_release, track)?;
+            connect_artist(&mut db, track, artist)?;
+        }
+        assert!(db::releases::get_by_artist(&db, artist)?.is_empty());
+
+        let options = MixOptions {
+            viewer_accessible_library_ids: Some(HashSet::from([visible_library_public_id])),
+            ..MixOptions::default()
+        };
+        let expected_seed_ids = visible_track_ids
+            .into_iter()
+            .rev()
+            .take(TRACK_CREDIT_SEED_COUNT)
+            .collect::<Vec<_>>();
+        let first_seed_ids = db::tracks::get_bounded_ids_by_artist(
+            &db,
+            artist,
+            options.viewer_accessible_library_ids.as_ref(),
+            TRACK_CREDIT_SEED_COUNT,
+        )?;
+        let second_seed_ids = db::tracks::get_bounded_ids_by_artist(
+            &db,
+            artist,
+            options.viewer_accessible_library_ids.as_ref(),
+            TRACK_CREDIT_SEED_COUNT,
+        )?;
+        assert_eq!(first_seed_ids, expected_seed_ids);
+        assert_eq!(second_seed_ids, expected_seed_ids);
+
+        let result = builtin_from_artist(&db, artist, &options)?;
+        let result_ids = result
+            .iter()
+            .filter_map(|track| track.db_id.clone().map(DbId::from))
+            .collect::<HashSet<_>>();
+        assert_eq!(result.len(), TRACK_CREDIT_SEED_COUNT);
+        assert_eq!(result_ids, expected_seed_ids.into_iter().collect());
         Ok(())
     }
 

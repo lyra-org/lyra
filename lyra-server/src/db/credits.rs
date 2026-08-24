@@ -4,9 +4,11 @@
 // www.meshiplaw.com/lyra.
 
 use agdb::{
+    CountComparison,
     DbElement,
     DbError,
     DbId,
+    DbType,
     DbTypeMarker,
     DbValue,
     QueryBuilder,
@@ -122,6 +124,38 @@ pub(crate) struct Credit {
     pub(crate) id: String,
     pub(crate) credit_type: CreditType,
     pub(crate) detail: Option<String>,
+}
+
+/// Walks `Artist ← Credit ← Owner` without hydrating intermediate credits.
+/// Depth-first traversal lets a bounded query stop after `offset + limit` owners.
+pub(crate) fn owner_ids_by_artist<Owner: DbType>(
+    db: &impl super::DbAccess,
+    artist_db_id: DbId,
+    offset: usize,
+    limit: usize,
+) -> anyhow::Result<Vec<DbId>> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .depth_first()
+                .to(artist_db_id)
+                .offset(offset as u64)
+                .limit(limit as u64)
+                .where_()
+                .node()
+                .and()
+                .distance(CountComparison::Equal(4))
+                .and()
+                .element::<Owner>()
+                .and()
+                .not_beyond()
+                .distance(CountComparison::Equal(4))
+                .query(),
+        )?
+        .ids()
+        .into_iter()
+        .filter(|id| id.0 > 0)
+        .collect())
 }
 
 pub(crate) fn replace_for_owner(

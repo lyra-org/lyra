@@ -421,60 +421,18 @@ pub(crate) fn get_by_artist(
     db: &impl DbAccess,
     artist_db_id: DbId,
 ) -> anyhow::Result<Vec<Release>> {
-    // Walk: Artist ← Credit (neighbor) ← Release (neighbor of credit).
-    let credits: Vec<super::Credit> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<super::Credit>()
-                .search()
-                .to(artist_db_id)
-                .where_()
-                .neighbor()
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
-
-    if credits.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Collect all owner IDs first, then batch-fetch Release data.
-    let mut owner_ids = Vec::new();
-    let mut seen_owners = HashSet::new();
-    for credit in &credits {
-        let Some(credit_db_id) = credit.db_id.clone().map(DbId::from) else {
-            continue;
-        };
-        let incoming: Vec<DbId> = db
-            .exec(
-                QueryBuilder::search()
-                    .to(credit_db_id)
-                    .where_()
-                    .edge()
-                    .and()
-                    .distance(agdb::CountComparison::Equal(1))
-                    .query(),
-            )?
-            .elements
-            .iter()
-            .filter_map(|e| (e.from.0 > 0).then_some(e.from))
-            .collect();
-        for owner_id in incoming {
-            if seen_owners.insert(owner_id) {
-                owner_ids.push(owner_id);
-            }
-        }
-    }
-
+    let owner_ids = super::credits::owner_ids_by_artist::<Release>(db, artist_db_id, 0, 0)?;
     if owner_ids.is_empty() {
         return Ok(Vec::new());
     }
 
-    let releases_by_id: HashMap<DbId, Release> =
-        super::graph::bulk_fetch_typed(db, owner_ids, "Release")?;
+    let mut releases_by_id: HashMap<DbId, Release> =
+        super::graph::bulk_fetch_typed(db, owner_ids.clone(), "Release")?;
 
-    Ok(releases_by_id.into_values().collect())
+    Ok(owner_ids
+        .into_iter()
+        .filter_map(|owner_id| releases_by_id.remove(&owner_id))
+        .collect())
 }
 
 pub(crate) fn get_by_artists(db: &DbAny, artist_db_ids: &[DbId]) -> anyhow::Result<Vec<Release>> {
