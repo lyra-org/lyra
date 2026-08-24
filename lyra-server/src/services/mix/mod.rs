@@ -140,7 +140,7 @@ pub(crate) async fn from_seed(
     Ok(Some(tracks))
 }
 
-/// Drops tracks deleted between `parse_mix_result` and the post-dispatch guard.
+/// Drops missing or wrong-type tracks while preserving provider order.
 fn filter_existing_tracks(db: &DbAny, tracks: Vec<Track>) -> anyhow::Result<Vec<Track>> {
     if tracks.is_empty() {
         return Ok(tracks);
@@ -162,6 +162,22 @@ fn filter_existing_tracks(db: &DbAny, tracks: Vec<Track>) -> anyhow::Result<Vec<
                 .is_some_and(|id| existing.contains_key(&id))
         })
         .collect())
+}
+
+/// Applies server-owned mixer result policy while preserving provider order.
+fn finalize_mixer_tracks(
+    db: &DbAny,
+    tracks: Vec<Track>,
+    options: &MixOptions,
+) -> anyhow::Result<Vec<Track>> {
+    let tracks = filter_existing_tracks(db, tracks)?;
+    let mut tracks = filter_tracks_by_library_visibility(
+        db,
+        tracks,
+        options.viewer_accessible_library_ids.as_ref(),
+    )?;
+    tracks.truncate(options.limit.unwrap_or(DEFAULT_LIMIT));
+    Ok(tracks)
 }
 
 /// Pins the seed at index 0 under one read guard, then truncates to `limit`.
@@ -297,10 +313,16 @@ async fn dispatch_mixer(
         )
         .await?
         {
-            HandlerOutcome::Tracks(mut tracks) => {
-                let limit = options.limit.unwrap_or(DEFAULT_LIMIT);
-                tracks.truncate(limit);
-                return Ok(Some(tracks));
+            HandlerOutcome::Tracks(tracks) => {
+                let tracks = {
+                    let db = STATE.db.read().await;
+                    finalize_mixer_tracks(&db, tracks, options)?
+                };
+                if tracks.is_empty() {
+                    tracing::debug!(mixer = %mixer_id, "mixer returned no accessible tracks, trying next");
+                } else {
+                    return Ok(Some(tracks));
+                }
             }
             HandlerOutcome::FellThrough => {}
         }
@@ -1767,6 +1789,91 @@ mod tests {
     }
 
     // --- pin_seed_and_truncate (instant_mix_from_audio's novel control flow) ---
+
+    #[test]
+    fn plugin_candidates_filter_before_limit_and_preserve_instant_pin() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let visible_library = insert_library(&mut db, "Visible", "/music/visible-plugin-mix")?;
+        let hidden_library = insert_library(&mut db, "Hidden", "/music/hidden-plugin-mix")?;
+        let visible_library_public_id = db::libraries::get_by_id(&db, visible_library)?
+            .expect("visible library exists")
+            .id;
+        let visible_release = insert_release(&mut db, "Visible Release")?;
+        let hidden_release = insert_release(&mut db, "Hidden Release")?;
+        connect(&mut db, visible_library, visible_release)?;
+        connect(&mut db, hidden_library, hidden_release)?;
+
+        let hidden_a = insert_track(&mut db, "Hidden A")?;
+        let hidden_b = insert_track(&mut db, "Hidden B")?;
+        let visible_a = insert_track(&mut db, "Visible A")?;
+        let visible_b = insert_track(&mut db, "Visible B")?;
+        let seed_id = insert_track(&mut db, "Visible Seed")?;
+        connect(&mut db, hidden_release, hidden_a)?;
+        connect(&mut db, hidden_release, hidden_b)?;
+        connect(&mut db, visible_release, visible_a)?;
+        connect(&mut db, visible_release, visible_b)?;
+        connect(&mut db, visible_release, seed_id)?;
+
+        let missing_id = insert_track(&mut db, "Deleted Candidate")?;
+        let missing = db::tracks::get_by_id(&db, missing_id)?.expect("candidate exists");
+        db.exec_mut(QueryBuilder::remove().ids(missing_id).query())?;
+        let hidden_a = db::tracks::get_by_id(&db, hidden_a)?.expect("hidden A exists");
+        let hidden_b = db::tracks::get_by_id(&db, hidden_b)?.expect("hidden B exists");
+        let visible_a = db::tracks::get_by_id(&db, visible_a)?.expect("visible A exists");
+        let visible_b = db::tracks::get_by_id(&db, visible_b)?.expect("visible B exists");
+        let seed = db::tracks::get_by_id(&db, seed_id)?.expect("seed exists");
+        let provider_candidates = vec![
+            hidden_a.clone(),
+            missing.clone(),
+            hidden_b.clone(),
+            visible_b.clone(),
+            visible_a.clone(),
+            seed.clone(),
+        ];
+
+        let restricted = finalize_mixer_tracks(
+            &db,
+            provider_candidates.clone(),
+            &MixOptions {
+                limit: Some(2),
+                viewer_accessible_library_ids: Some(HashSet::from([visible_library_public_id])),
+                ..MixOptions::default()
+            },
+        )?;
+        assert_eq!(
+            restricted
+                .iter()
+                .map(|track| track.track_title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Visible B", "Visible A"],
+        );
+
+        let unrestricted = finalize_mixer_tracks(
+            &db,
+            provider_candidates,
+            &MixOptions {
+                limit: Some(2),
+                ..MixOptions::default()
+            },
+        )?;
+        assert_eq!(
+            unrestricted
+                .iter()
+                .map(|track| track.track_title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Hidden A", "Hidden B"],
+        );
+
+        let instant = pin_seed_and_truncate(seed, restricted, 2);
+        assert_eq!(
+            instant
+                .iter()
+                .map(|track| track.track_title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Visible Seed", "Visible B"],
+        );
+        Ok(())
+    }
 
     fn track_with_id(db: &mut DbAny, title: &str) -> anyhow::Result<Track> {
         let id = insert_track(db, title)?;
