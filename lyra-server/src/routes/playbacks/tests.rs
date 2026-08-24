@@ -27,7 +27,10 @@ use axum::{
     },
 };
 use std::sync::Arc;
-use tokio::sync::Notify;
+use tokio::sync::{
+    Notify,
+    oneshot,
+};
 
 struct RouteFixture {
     headers: HeaderMap,
@@ -419,6 +422,130 @@ async fn changed_track_handoff_progress_creates_session_and_completes() -> anyho
         fixture.second_track_id
     );
     assert!(completion_rx.await.expect("handoff completion").is_ok());
+    remote_registry::unregister(target_id).await;
+    drop(registered.command_rx);
+    Ok(())
+}
+
+#[tokio::test]
+async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow::Result<()> {
+    let _guard = crate::testing::runtime_test_lock().await;
+    let fixture = setup_admin_with_tracks().await?;
+    let (_, Json(created)) = create_playback(
+        fixture.headers.clone(),
+        Json(PlaybackCreateRequest {
+            queue: QueueSnapshot::single(fixture.first_track_id.clone()),
+            position_ms: Some(0),
+            duration_ms: Some(100_000),
+            state: Some(PlaybackState::Playing),
+            connection_session_key: None,
+        }),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    let registered = remote_registry::register(
+        fixture.user_db_id,
+        fixture.user_public_id,
+        Some("Target".to_string()),
+        "target-session".to_string(),
+        Arc::new(Notify::new()),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let target_id = registered.connection_id;
+    let (handoff_token, completion_rx) =
+        handoffs::begin(None, target_id, fixture.user_db_id, created.id.clone(), 1)
+            .await
+            .map_err(anyhow::Error::msg)?;
+
+    let committed = {
+        let current_ms = now_ms()?;
+        let mut db = STATE.db.write().await;
+        let playback_db_id = db::lookup::find_node_id_by_id(&*db, &created.id)?
+            .expect("created playback should remain present");
+        let current_track_db_id = db::lookup::find_node_id_by_id(&*db, &fixture.first_track_id)?
+            .expect("created track should remain present");
+        let claim = handoffs::claim_progress(
+            &handoff_token,
+            fixture.user_db_id,
+            "target-session",
+            &created.id,
+            1,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        let update = playbacks::report_progress(
+            &mut db,
+            playbacks::ReportProgressRequest {
+                playback_db_id,
+                user_db_id: fixture.user_db_id,
+                client_name: Some("Target".to_string()),
+                queue_revision: 1,
+                current_track_db_id,
+                mutation: PlaybackMutation {
+                    position_ms: Some(100),
+                    duration_ms: Some(100_000),
+                    state: Some(PlaybackState::Playing),
+                },
+                now_ms: current_ms,
+                require_full_queue_access: true,
+            },
+        )?;
+        claim.commit(handoffs::AppliedProgress {
+            user_db_id: fixture.user_db_id,
+            playback_db_id,
+            playback_public_id: created.id.clone(),
+            queue_revision: 1,
+            expected_session: update.session.playback.clone(),
+        })
+    };
+
+    let registry_guard = handoffs::hold_registry_write_lock_for_test().await;
+    let (db_locked_tx, db_locked_rx) = oneshot::channel();
+    let finish_task = tokio::spawn(committed.finish_after_db_lock(db_locked_tx));
+    db_locked_rx
+        .await
+        .expect("handoff finish should report after acquiring the DB read guard");
+    assert!(
+        STATE.db.try_write().is_err(),
+        "handoff finish must retain the DB guard while waiting for the registry"
+    );
+
+    let (replacement_started_tx, replacement_started_rx) = oneshot::channel();
+    let replacement_task = tokio::spawn(async move {
+        let _ = replacement_started_tx.send(());
+        replace_queue(
+            fixture.headers,
+            Path(created.id.clone()),
+            Json(QueueReplaceRequest {
+                expected_revision: 1,
+                snapshot: QueueSnapshot::single(fixture.second_track_id),
+            }),
+        )
+        .await
+    });
+    replacement_started_rx
+        .await
+        .expect("queue replacement should start while handoff finish holds the DB guard");
+    drop(registry_guard);
+
+    assert!(finish_task.await?);
+    assert!(completion_rx.await?.is_ok());
+    let Json(replaced) = replacement_task
+        .await?
+        .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    assert_eq!(replaced.revision, 2);
+    let target_scope = sessions::PlaybackScopeKey {
+        plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
+        user_db_id: fixture.user_db_id,
+        session_key: "target-session",
+    };
+    assert_eq!(
+        sessions::get_playback_session(&target_scope)
+            .and_then(|scope| scope.current_playback_session_id),
+        None,
+        "the later queue replacement must clear the serialized handoff binding"
+    );
     remote_registry::unregister(target_id).await;
     drop(registered.command_rx);
     Ok(())
