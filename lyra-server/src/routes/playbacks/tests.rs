@@ -178,6 +178,70 @@ async fn queue_revision_conflict_body_is_machine_readable() {
 }
 
 #[tokio::test]
+async fn response_keeps_initiating_and_controlling_client_names_distinct() -> anyhow::Result<()> {
+    let _guard = crate::testing::runtime_test_lock().await;
+    let mut fixture = setup_admin_with_tracks().await?;
+    let session = crate::services::auth::sessions::create_session_for_user(
+        fixture.user_db_id,
+        crate::services::auth::sessions::SessionMetadata {
+            client_name: Some("Initiating Client".to_string()),
+            ..Default::default()
+        },
+    )
+    .await?;
+    fixture
+        .headers
+        .insert(AUTHORIZATION, format!("Bearer {}", session.token).parse()?);
+    let registered = remote_registry::register(
+        fixture.user_db_id,
+        fixture.user_public_id,
+        Some("Controlling Client".to_string()),
+        "controller-session".to_string(),
+        Arc::new(Notify::new()),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let target_id = registered.connection_id;
+
+    let (_, Json(created)) = create_playback(
+        fixture.headers.clone(),
+        Json(PlaybackCreateRequest {
+            queue: QueueSnapshot::single(fixture.first_track_id),
+            position_ms: Some(0),
+            duration_ms: Some(100_000),
+            state: Some(PlaybackState::Playing),
+            connection_session_key: Some("controller-session".to_string()),
+        }),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    assert_eq!(
+        created
+            .current
+            .as_ref()
+            .and_then(|current| current.client_name.as_deref()),
+        Some("Initiating Client")
+    );
+
+    let Json(detail) = get_playback(
+        fixture.headers,
+        Path(created.id),
+        Query(PlaybackDetailQuery {
+            inc: Some(vec!["controller".to_string()]),
+        }),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    let json = serde_json::to_value(detail)?;
+    assert_eq!(json["current"]["client_name"], "Initiating Client");
+    assert_eq!(json["controller"]["client_name"], "Controlling Client");
+
+    remote_registry::unregister(target_id).await;
+    drop(registered.command_rx);
+    Ok(())
+}
+
+#[tokio::test]
 async fn create_replace_queue_and_advance_current_track() -> anyhow::Result<()> {
     let _guard = crate::testing::runtime_test_lock().await;
     let fixture = setup_admin_with_tracks().await?;
