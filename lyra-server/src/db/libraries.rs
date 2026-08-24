@@ -624,16 +624,24 @@ pub(crate) fn accessible_track_ids(
     user_db_id: DbId,
     track_db_ids: &[DbId],
 ) -> anyhow::Result<HashSet<DbId>> {
+    let accessible_libraries = read_outbound_access_edges(db, user_db_id)?
+        .into_iter()
+        .filter_map(|edge| (edge.to.0 > 0).then_some(edge.to))
+        .collect::<Vec<_>>();
+    accessible_track_ids_for_library_db_ids(db, &accessible_libraries, track_db_ids)
+}
+
+pub(crate) fn accessible_track_ids_for_library_db_ids(
+    db: &impl super::DbAccess,
+    accessible_libraries: &[DbId],
+    track_db_ids: &[DbId],
+) -> anyhow::Result<HashSet<DbId>> {
     let requested = super::dedup_positive_ids(track_db_ids)
         .into_iter()
         .collect::<HashSet<_>>();
     if requested.is_empty() {
         return Ok(HashSet::new());
     }
-    let accessible_libraries = read_outbound_access_edges(db, user_db_id)?
-        .into_iter()
-        .filter_map(|edge| (edge.to.0 > 0).then_some(edge.to))
-        .collect::<Vec<_>>();
     if accessible_libraries.is_empty() {
         return Ok(HashSet::new());
     }
@@ -650,7 +658,7 @@ pub(crate) fn accessible_track_ids(
             .value("Library")
             .and()
             .not()
-            .ids(accessible_libraries)
+            .ids(accessible_libraries.to_vec())
             .end_where()
             .and()
             .not_beyond()
