@@ -23,7 +23,7 @@ resolver = "2"
 anyhow = "1"
 base64 = "0.22"
 blake3 = "1.8"
-ffmpeg-sys-next = "8.0"
+ffmpeg-sys-next = "9.0"
 flate2 = "1"
 json5 = { git = "https://github.com/StayBlue/json5-rs.git", rev = "3bf73f7937c9e4db7c19564e22fa8168404c75c0" }
 harmony-luau-sys = { git = "https://github.com/lyra-org/harmony-luau-sys" }

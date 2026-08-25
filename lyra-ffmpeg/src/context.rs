@@ -4,7 +4,10 @@
 // www.meshiplaw.com/lyra.
 
 use std::collections::HashMap;
-use std::ffi::CString;
+use std::ffi::{
+    CString,
+    c_void,
+};
 use std::marker::PhantomData;
 use std::panic::{
     AssertUnwindSafe,
@@ -517,6 +520,41 @@ mod tests {
         assert_eq!(
             unsafe { interrupt_callback((&abort_flag as *const AtomicBool).cast_mut().cast()) },
             1
+        );
+    }
+
+    #[test]
+    fn sample_rate_selection_uses_exact_or_nearest_supported_rate() {
+        let supported = [44_100, 48_000, 96_000];
+
+        assert_eq!(select_sample_rate(48_000, Some(&supported)), 48_000);
+        assert_eq!(select_sample_rate(47_000, Some(&supported)), 48_000);
+        assert_eq!(select_sample_rate(45_000, Some(&supported)), 44_100);
+        assert_eq!(select_sample_rate(50_000, None), 50_000);
+    }
+
+    #[test]
+    fn sample_format_selection_honors_supported_and_unrestricted_requests() {
+        let supported = [
+            AVSampleFormat::AV_SAMPLE_FMT_FLTP,
+            AVSampleFormat::AV_SAMPLE_FMT_S16,
+        ];
+
+        assert_eq!(
+            select_sample_format(Some(AVSampleFormat::AV_SAMPLE_FMT_S16), Some(&supported)),
+            AVSampleFormat::AV_SAMPLE_FMT_S16
+        );
+        assert_eq!(
+            select_sample_format(Some(AVSampleFormat::AV_SAMPLE_FMT_DBL), Some(&supported)),
+            AVSampleFormat::AV_SAMPLE_FMT_FLTP
+        );
+        assert_eq!(
+            select_sample_format(Some(AVSampleFormat::AV_SAMPLE_FMT_S16), None),
+            AVSampleFormat::AV_SAMPLE_FMT_S16
+        );
+        assert_eq!(
+            select_sample_format(None, Some(&[])),
+            AVSampleFormat::AV_SAMPLE_FMT_FLTP
         );
     }
 }
@@ -1219,10 +1257,9 @@ unsafe fn setup_encoder(
         let enc_ctx_ptr = enc_ctx.as_mut_ptr();
 
         let input_sample_rate = (*in_codecpar).sample_rate.max(1);
-        let output_sample_rate = match output.audio_sample_rate {
-            Some(rate) => select_encoder_sample_rate(encoder, rate),
-            None => select_encoder_sample_rate(encoder, input_sample_rate),
-        };
+        let requested_sample_rate = output.audio_sample_rate.unwrap_or(input_sample_rate);
+        let output_sample_rate =
+            select_encoder_sample_rate(enc_ctx_ptr, encoder, requested_sample_rate)?;
 
         (*enc_ctx_ptr).sample_rate = output_sample_rate;
         if let Some(channels) = output.audio_channels.filter(|&c| c > 0) {
@@ -1238,17 +1275,11 @@ unsafe fn setup_encoder(
             den: output_sample_rate,
         };
 
-        let mut sample_fmt = if !(*encoder).sample_fmts.is_null() {
-            *(*encoder).sample_fmts
-        } else {
-            AVSampleFormat::AV_SAMPLE_FMT_FLTP
-        };
-        if let Some(requested) = output.audio_sample_fmt
-            && encoder_supports_sample_fmt(encoder, requested.as_ffmpeg())
-        {
-            sample_fmt = requested.as_ffmpeg();
-        }
-        (*enc_ctx_ptr).sample_fmt = sample_fmt;
+        (*enc_ctx_ptr).sample_fmt = select_encoder_sample_format(
+            enc_ctx_ptr,
+            encoder,
+            output.audio_sample_fmt.map(|format| format.as_ffmpeg()),
+        )?;
 
         for (key, value) in &output.audio_codec_opts {
             let key_c = to_cstring(key.as_str(), "codec option key")?;
@@ -1284,53 +1315,96 @@ unsafe fn setup_encoder(
     }
 }
 
-unsafe fn select_encoder_sample_rate(encoder: *const AVCodec, input_rate: i32) -> i32 {
+unsafe fn query_encoder_supported_config(
+    enc_ctx: *const AVCodecContext,
+    encoder: *const AVCodec,
+    config: AVCodecConfig,
+    operation: &'static str,
+) -> Result<Option<(*const c_void, usize)>> {
     unsafe {
-        if (*encoder).supported_samplerates.is_null() {
-            return input_rate;
+        let mut configs = null();
+        let mut config_count = 0;
+        let ret = avcodec_get_supported_config(
+            enc_ctx,
+            encoder,
+            config,
+            0,
+            &mut configs,
+            &mut config_count,
+        );
+        if ret < 0 {
+            return Err(ffmpeg_operation_error(operation, ret));
         }
-
-        let mut best_rate = 0;
-        let mut min_diff = i32::MAX;
-        let mut i = 0;
-        loop {
-            let rate = *(*encoder).supported_samplerates.add(i);
-            if rate == 0 {
-                break;
-            }
-            if rate == input_rate {
-                return input_rate;
-            }
-            let diff = (rate - input_rate).abs();
-            if diff < min_diff {
-                min_diff = diff;
-                best_rate = rate;
-            }
-            i += 1;
+        if configs.is_null() {
+            return Ok(None);
         }
+        let config_count = usize::try_from(config_count)
+            .map_err(|_| Error::OpenEncoder("invalid supported configuration count".into()))?;
 
-        if best_rate > 0 { best_rate } else { input_rate }
+        Ok(Some((configs, config_count)))
     }
 }
 
-unsafe fn encoder_supports_sample_fmt(encoder: *const AVCodec, sample_fmt: AVSampleFormat) -> bool {
+unsafe fn select_encoder_sample_rate(
+    enc_ctx: *const AVCodecContext,
+    encoder: *const AVCodec,
+    input_rate: i32,
+) -> Result<i32> {
     unsafe {
-        if (*encoder).sample_fmts.is_null() {
-            return false;
-        }
+        let supported = query_encoder_supported_config(
+            enc_ctx,
+            encoder,
+            AVCodecConfig::AV_CODEC_CONFIG_SAMPLE_RATE,
+            "query encoder sample rates",
+        )?;
+        let supported =
+            supported.map(|(configs, len)| std::slice::from_raw_parts(configs.cast::<i32>(), len));
 
-        let mut i = 0;
-        loop {
-            let fmt = *(*encoder).sample_fmts.add(i);
-            if fmt == AVSampleFormat::AV_SAMPLE_FMT_NONE {
-                break;
-            }
-            if fmt == sample_fmt {
-                return true;
-            }
-            i += 1;
-        }
-        false
+        Ok(select_sample_rate(input_rate, supported))
+    }
+}
+
+fn select_sample_rate(input_rate: i32, supported: Option<&[i32]>) -> i32 {
+    supported
+        .and_then(|rates| {
+            rates
+                .iter()
+                .copied()
+                .min_by_key(|&rate| (i64::from(rate) - i64::from(input_rate)).abs())
+        })
+        .unwrap_or(input_rate)
+}
+
+unsafe fn select_encoder_sample_format(
+    enc_ctx: *const AVCodecContext,
+    encoder: *const AVCodec,
+    requested: Option<AVSampleFormat>,
+) -> Result<AVSampleFormat> {
+    unsafe {
+        let supported = query_encoder_supported_config(
+            enc_ctx,
+            encoder,
+            AVCodecConfig::AV_CODEC_CONFIG_SAMPLE_FORMAT,
+            "query encoder sample formats",
+        )?;
+        let supported = supported.map(|(configs, len)| {
+            std::slice::from_raw_parts(configs.cast::<AVSampleFormat>(), len)
+        });
+
+        Ok(select_sample_format(requested, supported))
+    }
+}
+
+fn select_sample_format(
+    requested: Option<AVSampleFormat>,
+    supported: Option<&[AVSampleFormat]>,
+) -> AVSampleFormat {
+    match supported {
+        None => requested.unwrap_or(AVSampleFormat::AV_SAMPLE_FMT_FLTP),
+        Some(formats) => requested
+            .filter(|requested| formats.contains(requested))
+            .or_else(|| formats.first().copied())
+            .unwrap_or(AVSampleFormat::AV_SAMPLE_FMT_FLTP),
     }
 }
 
