@@ -65,6 +65,8 @@ use crate::{
     },
 };
 
+mod similarity;
+
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 #[non_exhaustive]
@@ -799,6 +801,7 @@ pub fn release_routes() -> Router {
     Router::new()
         .route("/", get(get_releases))
         .route("/{id}", get(get_release))
+        .route("/{id}/similar", get(similarity::get_similar_releases))
         .route("/{id}/mix", get(super::mix::get_release_mix))
         .route("/{id}/covers/search", post(search_release_covers))
 }
@@ -813,6 +816,13 @@ pub(crate) fn release_openapi_routes() -> aide::axum::ApiRouter {
     aide::axum::ApiRouter::new()
         .api_route("/", get_with(get_releases, list_releases_docs))
         .api_route("/{id}", get_with(get_release, get_release_docs))
+        .api_route(
+            "/{id}/similar",
+            get_with(
+                similarity::get_similar_releases,
+                similarity::get_similar_releases_docs,
+            ),
+        )
         .api_route(
             "/{id}/mix",
             get_with(super::mix::get_release_mix, super::mix::release_mix_docs),
@@ -1127,6 +1137,37 @@ mod tests {
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].title, "Visible Release");
         assert!(page.next_cursor.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_similar_releases_returns_empty_array_without_handlers() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let release_id = {
+            let mut db = STATE.db.write().await;
+            let library = insert_library(&mut db, "Similar", "/tmp/lyra-similar")?;
+            let release_db_id = insert_test_release(&mut db, "Seed Release")?;
+            connect(&mut db, library, release_db_id)?;
+            db::releases::get_by_id(&*db, release_db_id)?
+                .ok_or_else(|| anyhow::anyhow!("seed release missing"))?
+                .id
+        };
+        let headers = create_admin_headers("similar-release-admin").await?;
+
+        let Json(items) = similarity::get_similar_releases(
+            headers,
+            Path(release_id),
+            Query(similarity::SimilarReleasesQuery {
+                limit: None,
+                inc: None,
+            }),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        assert!(items.is_empty());
         Ok(())
     }
 

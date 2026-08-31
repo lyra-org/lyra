@@ -44,8 +44,14 @@ pub(crate) struct ProviderRegistries {
     call_locks: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
+impl ProviderRegistries {
+    pub(crate) fn registry(&self) -> Arc<RwLock<ProviderRegistry>> {
+        self.registry.clone()
+    }
+}
+
 pub(crate) fn provider_registry() -> Arc<RwLock<ProviderRegistry>> {
-    crate::STATE.generation().providers.registry.clone()
+    crate::STATE.generation().providers.registry()
 }
 
 pub(crate) fn sync_locks() -> Arc<tokio::sync::Mutex<HashSet<String>>> {
@@ -58,10 +64,6 @@ pub(crate) fn library_refresh_locks() -> Arc<tokio::sync::Mutex<HashSet<agdb::Db
         .providers
         .library_refresh_locks
         .clone()
-}
-
-fn provider_call_locks() -> Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> {
-    crate::STATE.generation().providers.call_locks.clone()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -90,8 +92,9 @@ where
     F: FnOnce() -> Fut,
     Fut: Future<Output = T>,
 {
+    let generation = crate::STATE.generation();
     let lock = {
-        let mut locks = provider_call_locks().lock_owned().await;
+        let mut locks = generation.providers.call_locks.clone().lock_owned().await;
         locks
             .entry(provider_id.to_string())
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
@@ -323,6 +326,18 @@ impl ProviderRegistry {
         for (provider_id, state) in self.iter_states() {
             for spec in state.id_specs.values() {
                 if spec.entity == entity && spec.unique {
+                    pairs.insert((provider_id.clone(), spec.id_type.clone()));
+                }
+            }
+        }
+        pairs
+    }
+
+    pub(crate) fn id_pairs(&self, entity: EntityType) -> HashSet<(String, String)> {
+        let mut pairs = HashSet::new();
+        for (provider_id, state) in self.iter_states() {
+            for spec in state.id_specs.values() {
+                if spec.entity == entity {
                     pairs.insert((provider_id.clone(), spec.id_type.clone()));
                 }
             }
