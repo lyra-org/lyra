@@ -11,6 +11,7 @@ use std::{
     },
     future::Future,
     pin::Pin,
+    rc::Rc,
     sync::{
         Arc,
         Condvar,
@@ -127,6 +128,46 @@ pub struct TaskHandle {
     group: TaskGroupId,
 }
 
+#[derive(Default)]
+pub struct LocalLuauTaskCompletion {
+    result: RefCell<Option<std::result::Result<Vec<luau::Value>, String>>>,
+    waker: RefCell<Option<Waker>>,
+}
+
+impl LocalLuauTaskCompletion {
+    fn complete(&self, result: std::result::Result<Vec<luau::Value>, String>) {
+        *self.result.borrow_mut() = Some(result);
+        if let Some(waker) = self.waker.borrow_mut().take() {
+            waker.wake();
+        }
+    }
+
+    pub fn poll(
+        &self,
+        cx: &mut Context<'_>,
+    ) -> Poll<std::result::Result<Vec<luau::Value>, String>> {
+        if let Some(result) = self.result.borrow_mut().take() {
+            return Poll::Ready(result);
+        }
+        *self.waker.borrow_mut() = Some(cx.waker().clone());
+        Poll::Pending
+    }
+}
+
+struct LuauTaskOptions {
+    resume_budget: Option<Duration>,
+    completion: Option<Rc<LocalLuauTaskCompletion>>,
+}
+
+enum LuauThreadStart {
+    Immediate,
+    Delayed(Duration),
+    Budgeted {
+        resume_budget: Duration,
+        completion: Option<Rc<LocalLuauTaskCompletion>>,
+    },
+}
+
 impl TaskHandle {
     pub fn id(self) -> TaskId {
         self.id
@@ -230,6 +271,26 @@ impl Scheduler {
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) -> TaskHandle {
+        self.spawn_luau_thread_with_options(
+            context,
+            vm,
+            thread,
+            args,
+            LuauTaskOptions {
+                resume_budget: self.luau_resume_budget,
+                completion: None,
+            },
+        )
+    }
+
+    fn spawn_luau_thread_with_options(
+        &mut self,
+        context: CallContext,
+        vm: luau::Vm,
+        thread: luau::Thread,
+        args: Vec<luau::Value>,
+        options: LuauTaskOptions,
+    ) -> TaskHandle {
         let pending_start = !thread.is_started();
         self.insert_work(
             context,
@@ -240,6 +301,7 @@ impl Scheduler {
                 pending_start,
             },
             None,
+            options,
         )
     }
 
@@ -264,6 +326,7 @@ impl Scheduler {
                 pending_start,
             },
             Some(wake_at),
+            self.default_luau_task_options(),
         )
     }
 
@@ -274,7 +337,12 @@ impl Scheduler {
         thread: luau::Thread,
         future: luau::ScheduledFuture,
     ) -> TaskHandle {
-        self.insert_work(context, TaskWork::LuauFuture { vm, thread, future }, None)
+        self.insert_work(
+            context,
+            TaskWork::LuauFuture { vm, thread, future },
+            None,
+            self.default_luau_task_options(),
+        )
     }
 
     pub fn spawn_luau_future_after(
@@ -292,6 +360,7 @@ impl Scheduler {
             context,
             TaskWork::LuauFuture { vm, thread, future },
             Some(wake_at),
+            self.default_luau_task_options(),
         )
     }
 
@@ -328,7 +397,12 @@ impl Scheduler {
         future: ScheduledFuture,
         wake_at: Option<Instant>,
     ) -> TaskHandle {
-        self.insert_work(context, TaskWork::Future(future), wake_at)
+        self.insert_work(
+            context,
+            TaskWork::Future(future),
+            wake_at,
+            self.default_luau_task_options(),
+        )
     }
 
     fn insert_work(
@@ -336,6 +410,7 @@ impl Scheduler {
         context: CallContext,
         work: TaskWork,
         wake_at: Option<Instant>,
+        options: LuauTaskOptions,
     ) -> TaskHandle {
         let id = TaskId(self.next_task_id);
         self.next_task_id = self.next_task_id.saturating_add(1);
@@ -357,10 +432,19 @@ impl Scheduler {
                 error: None,
                 output: None,
                 wake_at,
+                luau_resume_budget: options.resume_budget,
+                completion: options.completion,
             },
         );
 
         handle
+    }
+
+    fn default_luau_task_options(&self) -> LuauTaskOptions {
+        LuauTaskOptions {
+            resume_budget: self.luau_resume_budget,
+            completion: None,
+        }
     }
 
     fn take_pending_luau_thread_start(
@@ -404,6 +488,9 @@ impl Scheduler {
         task.work = None;
         task.state = TaskState::Cancelled;
         task.wake_at = None;
+        if let Some(completion) = task.completion.as_ref() {
+            completion.complete(Err(format!("Luau task {} was cancelled", id.0)));
+        }
         true
     }
 
@@ -441,23 +528,38 @@ impl Scheduler {
                 queue: self.wake_queue.clone(),
             }));
             let mut cx = Context::from_waker(&waker);
-            match poll_work(&task.context, work, &mut cx, self.luau_resume_budget) {
+            match poll_work(&task.context, work, &mut cx, task.luau_resume_budget) {
                 WorkPoll::Completed { output } => {
+                    if let Some(completion) = task.completion.as_ref() {
+                        completion.complete(Ok(output.unwrap_or_default()));
+                        task.output = None;
+                    } else {
+                        task.output = output;
+                    }
                     task.work = None;
                     task.state = TaskState::Completed;
                     task.wake_at = None;
-                    {
-                        task.output = output;
-                    }
+                    completed += 1;
+                }
+                WorkPoll::Parked => {
+                    task.work = None;
+                    task.state = TaskState::Completed;
+                    task.wake_at = None;
                     completed += 1;
                 }
                 WorkPoll::Cancelled => {
+                    if let Some(completion) = task.completion.as_ref() {
+                        completion.complete(Err(format!("Luau task {} was cancelled", id.0)));
+                    }
                     task.work = None;
                     task.state = TaskState::Cancelled;
                     task.wake_at = None;
                     completed += 1;
                 }
                 WorkPoll::Failed(error) => {
+                    if let Some(completion) = task.completion.as_ref() {
+                        completion.complete(Err(format!("Luau task {} failed: {error}", id.0)));
+                    }
                     task.work = None;
                     task.state = TaskState::Failed;
                     task.wake_at = None;
@@ -652,6 +754,7 @@ pub struct LocalScheduler {
     task_threads: RefCell<HashMap<TaskId, (luau::Vm, luau::Thread)>>,
     parked_threads: RefCell<HashSet<(u64, usize)>>,
     pending_luau_work: RefCell<Vec<PendingLuauWork>>,
+    pending_luau_cancellations: RefCell<Vec<luau::Thread>>,
     polling: Cell<bool>,
 }
 
@@ -675,19 +778,7 @@ impl LocalScheduler {
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) -> TaskHandle {
-        let key = luau_thread_key(&thread);
-        let args = self.prepare_luau_thread_start_args(key, &thread, args, None);
-        let handle = self.scheduler.borrow_mut().spawn_luau_thread(
-            context,
-            vm.clone(),
-            thread.clone(),
-            args,
-        );
-        self.thread_tasks.borrow_mut().insert(key, handle);
-        self.task_threads
-            .borrow_mut()
-            .insert(handle.id(), (vm, thread));
-        handle
+        self.spawn_luau_thread_start(context, vm, thread, args, LuauThreadStart::Immediate)
     }
 
     pub fn schedule_luau_thread(
@@ -697,20 +788,123 @@ impl LocalScheduler {
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) {
+        self.schedule_luau_thread_start(context, vm, thread, args, LuauThreadStart::Immediate);
+    }
+
+    pub fn schedule_luau_thread_with_budget(
+        &self,
+        context: CallContext,
+        vm: luau::Vm,
+        thread: luau::Thread,
+        args: Vec<luau::Value>,
+        resume_budget: Duration,
+    ) {
+        self.schedule_luau_thread_start(
+            context,
+            vm,
+            thread,
+            args,
+            LuauThreadStart::Budgeted {
+                resume_budget,
+                completion: None,
+            },
+        );
+    }
+
+    pub fn schedule_luau_thread_with_budget_and_completion(
+        &self,
+        context: CallContext,
+        vm: luau::Vm,
+        thread: luau::Thread,
+        args: Vec<luau::Value>,
+        resume_budget: Duration,
+        completion: Rc<LocalLuauTaskCompletion>,
+    ) {
+        self.schedule_luau_thread_start(
+            context,
+            vm,
+            thread,
+            args,
+            LuauThreadStart::Budgeted {
+                resume_budget,
+                completion: Some(completion),
+            },
+        );
+    }
+
+    fn schedule_luau_thread_start(
+        &self,
+        context: CallContext,
+        vm: luau::Vm,
+        thread: luau::Thread,
+        args: Vec<luau::Value>,
+        start: LuauThreadStart,
+    ) {
         if self.polling.get() {
             self.pending_luau_work
                 .borrow_mut()
                 .push(PendingLuauWork::Thread {
                     context,
-                    delay: None,
                     vm,
                     thread,
                     args,
+                    start,
                 });
             return;
         }
 
-        self.spawn_luau_thread(context, vm, thread, args);
+        self.spawn_luau_thread_start(context, vm, thread, args, start);
+    }
+
+    fn spawn_luau_thread_start(
+        &self,
+        context: CallContext,
+        vm: luau::Vm,
+        thread: luau::Thread,
+        args: Vec<luau::Value>,
+        start: LuauThreadStart,
+    ) -> TaskHandle {
+        let key = luau_thread_key(&thread);
+        let wake_at = match &start {
+            LuauThreadStart::Delayed(delay) => Some(
+                Instant::now()
+                    .checked_add(*delay)
+                    .unwrap_or_else(Instant::now),
+            ),
+            LuauThreadStart::Immediate | LuauThreadStart::Budgeted { .. } => None,
+        };
+        let args = self.prepare_luau_thread_start_args(key, &thread, args, wake_at);
+        let handle =
+            match start {
+                LuauThreadStart::Immediate => self.scheduler.borrow_mut().spawn_luau_thread(
+                    context,
+                    vm.clone(),
+                    thread.clone(),
+                    args,
+                ),
+                LuauThreadStart::Delayed(delay) => self
+                    .scheduler
+                    .borrow_mut()
+                    .spawn_luau_thread_after(context, delay, vm.clone(), thread.clone(), args),
+                LuauThreadStart::Budgeted {
+                    resume_budget,
+                    completion,
+                } => self.scheduler.borrow_mut().spawn_luau_thread_with_options(
+                    context,
+                    vm.clone(),
+                    thread.clone(),
+                    args,
+                    LuauTaskOptions {
+                        resume_budget: Some(resume_budget),
+                        completion,
+                    },
+                ),
+            };
+        self.thread_tasks.borrow_mut().insert(key, handle);
+        self.task_threads
+            .borrow_mut()
+            .insert(handle.id(), (vm, thread));
+        handle
     }
 
     pub fn spawn_luau_thread_after(
@@ -721,23 +915,7 @@ impl LocalScheduler {
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) -> TaskHandle {
-        let key = luau_thread_key(&thread);
-        let wake_at = Instant::now()
-            .checked_add(delay)
-            .unwrap_or_else(Instant::now);
-        let args = self.prepare_luau_thread_start_args(key, &thread, args, Some(wake_at));
-        let handle = self.scheduler.borrow_mut().spawn_luau_thread_after(
-            context,
-            delay,
-            vm.clone(),
-            thread.clone(),
-            args,
-        );
-        self.thread_tasks.borrow_mut().insert(key, handle);
-        self.task_threads
-            .borrow_mut()
-            .insert(handle.id(), (vm, thread));
-        handle
+        self.spawn_luau_thread_start(context, vm, thread, args, LuauThreadStart::Delayed(delay))
     }
 
     pub fn schedule_luau_thread_after(
@@ -748,20 +926,7 @@ impl LocalScheduler {
         thread: luau::Thread,
         args: Vec<luau::Value>,
     ) {
-        if self.polling.get() {
-            self.pending_luau_work
-                .borrow_mut()
-                .push(PendingLuauWork::Thread {
-                    context,
-                    delay: Some(delay),
-                    vm,
-                    thread,
-                    args,
-                });
-            return;
-        }
-
-        self.spawn_luau_thread_after(context, delay, vm, thread, args);
+        self.schedule_luau_thread_start(context, vm, thread, args, LuauThreadStart::Delayed(delay));
     }
 
     pub fn schedule_luau_future(
@@ -832,19 +997,39 @@ impl LocalScheduler {
     }
 
     pub fn cancel(&self, id: TaskId) -> bool {
-        let cancelled = self.scheduler.borrow_mut().cancel(id);
+        let cancelled = { self.scheduler.borrow_mut().cancel(id) };
         if cancelled {
             self.clear_luau_context_for_task(id);
         }
+        self.flush_pending_luau_cancellations();
         cancelled
     }
 
     pub fn cancel_luau_thread(&self, thread: &luau::Thread) -> bool {
         let key = luau_thread_key(thread);
+        if self.polling.get() {
+            let scheduled = self.thread_tasks.borrow().contains_key(&key)
+                || self
+                    .pending_luau_work
+                    .borrow()
+                    .iter()
+                    .any(|work| match work {
+                        PendingLuauWork::Thread { thread, .. }
+                        | PendingLuauWork::Future { thread, .. } => luau_thread_key(thread) == key,
+                    });
+            self.pending_luau_cancellations
+                .borrow_mut()
+                .push(thread.clone());
+            return scheduled;
+        }
         let Some(handle) = self.thread_tasks.borrow_mut().remove(&key) else {
             return self.cancel_pending_luau_thread_work(key);
         };
         self.cancel(handle.id())
+    }
+
+    pub fn schedule_cancel_luau_thread(&self, thread: luau::Thread) {
+        self.pending_luau_cancellations.borrow_mut().push(thread);
     }
 
     pub fn remove(&self, id: TaskId) -> bool {
@@ -852,7 +1037,9 @@ impl LocalScheduler {
             .borrow_mut()
             .retain(|_, handle| handle.id() != id);
         self.clear_luau_context_for_task(id);
-        self.scheduler.borrow_mut().remove(id)
+        let removed = { self.scheduler.borrow_mut().remove(id) };
+        self.flush_pending_luau_cancellations();
+        removed
     }
 
     pub fn park_luau_thread(&self, thread: &luau::Thread) {
@@ -888,6 +1075,7 @@ impl LocalScheduler {
         let completed = self.scheduler.borrow_mut().poll_ready();
         self.polling.set(false);
         self.flush_pending_luau_threads();
+        self.flush_pending_luau_cancellations();
         completed
     }
 
@@ -933,7 +1121,9 @@ impl LocalScheduler {
         for id in &finished_ids {
             self.clear_luau_context_for_task(*id);
         }
-        self.scheduler.borrow_mut().remove_finished()
+        let removed = { self.scheduler.borrow_mut().remove_finished() };
+        self.flush_pending_luau_cancellations();
+        removed
     }
 
     fn prepare_luau_thread_start_args(
@@ -981,16 +1171,12 @@ impl LocalScheduler {
             match pending {
                 PendingLuauWork::Thread {
                     context,
-                    delay,
                     vm,
                     thread,
                     args,
+                    start,
                 } => {
-                    if let Some(delay) = delay {
-                        self.spawn_luau_thread_after(context, delay, vm, thread, args);
-                    } else {
-                        self.spawn_luau_thread(context, vm, thread, args);
-                    }
+                    self.spawn_luau_thread_start(context, vm, thread, args, start);
                 }
                 PendingLuauWork::Future {
                     target,
@@ -1051,6 +1237,13 @@ impl LocalScheduler {
         }
     }
 
+    fn flush_pending_luau_cancellations(&self) {
+        let pending = std::mem::take(&mut *self.pending_luau_cancellations.borrow_mut());
+        for thread in pending {
+            self.cancel_luau_thread(&thread);
+        }
+    }
+
     fn clear_luau_context_for_task(&self, id: TaskId) {
         if let Some((vm, thread)) = self.task_threads.borrow_mut().remove(&id) {
             let _ = vm.clear_thread_call_context(&thread);
@@ -1073,10 +1266,10 @@ fn start_wake_is_not_later(new_wake_at: Option<Instant>, old_wake_at: Option<Ins
 enum PendingLuauWork {
     Thread {
         context: CallContext,
-        delay: Option<Duration>,
         vm: luau::Vm,
         thread: luau::Thread,
         args: Vec<luau::Value>,
+        start: LuauThreadStart,
     },
     Future {
         target: Option<TaskHandle>,
@@ -1095,6 +1288,8 @@ struct Task {
     error: Option<Arc<str>>,
     output: Option<Vec<luau::Value>>,
     wake_at: Option<Instant>,
+    luau_resume_budget: Option<Duration>,
+    completion: Option<Rc<LocalLuauTaskCompletion>>,
 }
 
 enum TaskWork {
@@ -1114,6 +1309,7 @@ enum TaskWork {
 
 enum WorkPoll {
     Completed { output: Option<Vec<luau::Value>> },
+    Parked,
     Cancelled,
     Failed(String),
     Pending,
@@ -1215,7 +1411,7 @@ fn poll_luau_resume(
             if let Ok(scheduler) = vm.data().get::<LocalScheduler>()
                 && scheduler.take_parked_luau_thread(thread)
             {
-                WorkPoll::Completed { output: None }
+                WorkPoll::Parked
             } else {
                 WorkPoll::Pending
             }
@@ -1460,6 +1656,94 @@ mod tests {
                 .as_deref()
                 .is_some_and(|error| error.contains("root failed"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn per_task_luau_budget_does_not_leak_to_other_tasks() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        let timed_function = vm.load_chunk(&luau::Chunk::new(
+            Arc::<[u8]>::from(&b"while true do end"[..]),
+            luau::ChunkOrigin::default(),
+        ))?;
+        let ordinary_function = vm.load_chunk(&luau::Chunk::new(
+            Arc::<[u8]>::from(
+                &b"local total = 0; for value = 1, 100000 do total += value end; return total"[..],
+            ),
+            luau::ChunkOrigin::default(),
+        ))?;
+        let timed_thread = vm.create_thread(&timed_function)?;
+        let ordinary_thread = vm.create_thread(&ordinary_function)?;
+        let mut scheduler = Scheduler::new();
+        let timed = scheduler.spawn_luau_thread_with_options(
+            CallContext::default(),
+            vm.clone(),
+            timed_thread,
+            Vec::new(),
+            LuauTaskOptions {
+                resume_budget: Some(Duration::ZERO),
+                completion: None,
+            },
+        );
+        let ordinary =
+            scheduler.spawn_luau_thread(CallContext::default(), vm, ordinary_thread, Vec::new());
+
+        assert_eq!(scheduler.poll_ready(), 2);
+        assert_eq!(
+            scheduler.snapshot(timed.id()).expect("timed task").state,
+            TaskState::Failed
+        );
+        assert_eq!(
+            scheduler
+                .snapshot(ordinary.id())
+                .expect("ordinary task")
+                .state,
+            TaskState::Completed
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pending_budgeted_luau_thread_preserves_budget_and_completion() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        let function = vm.load_chunk(&luau::Chunk::new(
+            Arc::<[u8]>::from(&b"return 42"[..]),
+            luau::ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&function)?;
+        let scheduler = LocalScheduler::new();
+        let completion = Rc::new(LocalLuauTaskCompletion::default());
+
+        scheduler.polling.set(true);
+        scheduler.schedule_luau_thread_with_budget_and_completion(
+            CallContext::default(),
+            vm,
+            thread.clone(),
+            Vec::new(),
+            Duration::from_secs(1),
+            completion.clone(),
+        );
+        scheduler.polling.set(false);
+        scheduler.flush_pending_luau_threads();
+
+        let handle = scheduler
+            .luau_thread_handle(&thread)
+            .expect("scheduled thread handle");
+        let inner = scheduler.scheduler.borrow();
+        let task = inner.tasks.get(&handle.id()).expect("scheduled task");
+        assert_eq!(task.luau_resume_budget, Some(Duration::from_secs(1)));
+        assert!(Rc::ptr_eq(
+            task.completion.as_ref().expect("task completion"),
+            &completion
+        ));
+        drop(inner);
+
+        assert_eq!(scheduler.poll_ready(), 1);
+        let mut cx = Context::from_waker(Waker::noop());
+        let Poll::Ready(Ok(values)) = completion.poll(&mut cx) else {
+            panic!("completion should contain the Luau result");
+        };
+        assert!(matches!(values.as_slice(), [luau::Value::Number(42.0)]));
         Ok(())
     }
 }
