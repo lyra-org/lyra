@@ -20,13 +20,20 @@ pub(crate) use self::messages::{
     ApiHandlerResponse,
     ApiResponseBody,
     ApiResponseKind,
+    MetadataDispatchContext,
+    MetadataRefreshCancellation,
     MetadataRefreshRequest,
     MetadataRefreshResult,
     MixHandlerRequest,
     MixHandlerResult,
+    SimilarReleaseCandidate,
+    SimilarReleaseExternalRef,
+    SimilarReleasesDispatchRequest,
+    SimilarReleasesDispatchResult,
     WebSocketStartRequest,
     WebSocketState,
 };
+pub(crate) use self::metadata::dispatch_similar_releases_in_vm;
 pub(crate) use self::modules::plugin_scope_ids_for_test;
 
 use std::{

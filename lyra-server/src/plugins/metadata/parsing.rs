@@ -21,7 +21,8 @@ use crate::services::{
         OptionType,
     },
     providers::{
-        ProviderCoverRequireSpec,
+        DEFAULT_SIMILAR_RELEASES_HANDLER_TIMEOUT,
+        MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT,
         ProviderIdSpec,
         ProviderRequireSpec,
     },
@@ -184,6 +185,27 @@ pub(super) fn parse_cover_spec(
     )?;
     let require = parse_provider_require(vm, config, "provider:cover")?;
     Ok((priority, timeout, require))
+}
+
+pub(super) fn parse_similar_releases_spec(
+    vm: &luau::Vm,
+    config: &luau::Table,
+) -> luau::runtime::Result<(Duration, ProviderRequireSpec)> {
+    let timeout = optional_timeout(
+        vm,
+        config,
+        "timeout_ms",
+        "provider:similar_releases",
+        DEFAULT_SIMILAR_RELEASES_HANDLER_TIMEOUT,
+    )?;
+    if timeout > MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT {
+        return Err(crate::plugins::runtime_error(format!(
+            "provider:similar_releases config.timeout_ms must be <= {}",
+            MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT.as_millis()
+        )));
+    }
+    let require = parse_provider_require(vm, config, "provider:similar_releases")?;
+    Ok((timeout, require))
 }
 
 pub(super) fn parse_lyrics_spec(

@@ -67,6 +67,8 @@ pub(crate) use refresh::{
 #[cfg(test)]
 pub(crate) use registry::tests as registry_tests;
 pub(crate) use registry::{
+    DEFAULT_SIMILAR_RELEASES_HANDLER_TIMEOUT,
+    MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT,
     ProviderCallStage,
     ProviderCallbackHandle,
     ProviderCoverSpec,
@@ -74,6 +76,7 @@ pub(crate) use registry::{
     ProviderIdUrlGenerator,
     ProviderRegistries,
     ProviderRequireSpec,
+    ProviderSimilarReleasesSpec,
     library_refresh_locks,
     provider_registry,
     sync_locks,

@@ -462,6 +462,152 @@ fn plugin_executor_declares_metadata_provider_ids_and_options() -> Result<()> {
 }
 
 #[test]
+fn plugin_executor_registers_similar_releases_handler() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
+    let runtime = runtime_with_scopes(&["lyra.metadata"])?;
+    runtime.eval_plugin_source(
+        "demo",
+        "init.luau",
+        &br#"
+            local metadata = require("@lyra/metadata")
+            local provider = metadata.Provider.new("similar-provider")
+            provider:similar_releases({
+                timeout_ms = 4200,
+                require = {
+                    all_of = { "external_ids.musicbrainz.release_group_id" },
+                    any_of = { "genres", "artist_names" },
+                },
+            }, function(_ctx)
+                return { candidates = {} }
+            end)
+
+            local default_provider = metadata.Provider.new("default-similar-provider")
+            default_provider:similar_releases({}, function(_ctx)
+                return nil
+            end)
+        "#[..],
+    )?;
+
+    let registry =
+        futures::executor::block_on(crate::services::providers::provider_registry().read_owned());
+    let spec = registry
+        .get_similar_releases_handler("similar-provider")
+        .context("similar releases handler")?;
+    assert_eq!(spec.timeout, std::time::Duration::from_millis(4200));
+    assert_eq!(
+        spec.require.all_of,
+        ["external_ids.musicbrainz.release_group_id"]
+    );
+    assert_eq!(spec.require.any_of, ["genres", "artist_names"]);
+    assert!(spec.handler.handler_id > 0);
+
+    let default_spec = registry
+        .get_similar_releases_handler("default-similar-provider")
+        .context("default similar releases handler")?;
+    assert_eq!(default_spec.timeout, std::time::Duration::from_secs(10));
+    assert!(default_spec.require.all_of.is_empty());
+    assert!(default_spec.require.any_of.is_empty());
+    Ok(())
+}
+
+#[test]
+fn plugin_executor_rejects_invalid_similar_releases_config() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
+    let runtime = runtime_with_scopes(&["lyra.metadata"])?;
+    let error = runtime
+        .eval_plugin_source(
+            "demo",
+            "init.luau",
+            &br#"
+                local metadata = require("@lyra/metadata")
+                local provider = metadata.Provider.new("invalid-similar-provider")
+                provider:similar_releases({ timeout_ms = 0 }, function(_ctx)
+                    return { candidates = {} }
+                end)
+            "#[..],
+        )
+        .expect_err("zero timeout must be rejected");
+
+    assert!(
+        error
+            .to_string()
+            .contains("provider:similar_releases config.timeout_ms must be an integer >= 1")
+    );
+
+    let error = runtime
+        .eval_plugin_source(
+            "demo",
+            "too-long.luau",
+            &br#"
+                local metadata = require("@lyra/metadata")
+                local provider = metadata.Provider.new("too-long-similar-provider")
+                provider:similar_releases({ timeout_ms = 10001 }, function(_ctx)
+                    return { candidates = {} }
+                end)
+            "#[..],
+        )
+        .expect_err("timeout above the maximum must be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("provider:similar_releases config.timeout_ms must be <= 10000")
+    );
+    Ok(())
+}
+
+#[test]
+fn plugin_executor_bounds_similar_release_result_before_json_conversion() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
+    let runtime = runtime_with_scopes(&["lyra.metadata"])?;
+    runtime.eval_plugin_source(
+        "demo",
+        "init.luau",
+        &br#"
+            local metadata = require("@lyra/metadata")
+            local provider = metadata.Provider.new("bounded-similar-provider")
+            provider:similar_releases({}, function(_ctx)
+                local candidates = {}
+                for index = 1, 1000 do
+                    candidates[index] = {
+                        external_id = {
+                            provider_id = "bounded-similar-provider",
+                            id_type = "release_group_id",
+                            id_value = tostring(index),
+                        },
+                    }
+                end
+                return { candidates = candidates }
+            end)
+        "#[..],
+    )?;
+    let handler_id = {
+        let registry = futures::executor::block_on(
+            crate::services::providers::provider_registry().read_owned(),
+        );
+        registry
+            .get_similar_releases_handler("bounded-similar-provider")
+            .context("similar releases handler")?
+            .handler
+            .handler_id
+    };
+
+    let result = runtime.dispatch_similar_releases(SimilarReleasesDispatchRequest {
+        provider_id: "bounded-similar-provider".to_string(),
+        handler_id,
+        context: serde_json::json!({}),
+        timeout: std::time::Duration::from_secs(1),
+        cancellation: MetadataRefreshCancellation::default(),
+        max_candidates: 3,
+    })?;
+
+    assert_eq!(result.candidates.len(), 3);
+    Ok(())
+}
+
+#[test]
 fn plugin_executor_reads_server_info_from_vm_context() -> Result<()> {
     let runtime = PluginExecutor::with_runtime_state(
         Arc::from(vec![manifest("demo", &["lyra.server"])]),

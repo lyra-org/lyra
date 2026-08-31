@@ -31,6 +31,9 @@ use crate::plugins::lifecycle::{
 use crate::services::EntityType;
 use crate::services::metadata::lyrics::providers::unregister_handlers_for_plugin as unregister_lyrics_handlers_for_plugin;
 
+pub(crate) const DEFAULT_SIMILAR_RELEASES_HANDLER_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Generation-owned provider state: the registry itself plus the in-flight
 /// sync/refresh/call locks keyed by provider and library ids.
 #[derive(Default)]
@@ -145,6 +148,13 @@ pub(crate) struct ProviderRequireSpec {
 pub(crate) struct ProviderCoverSpec {
     pub(crate) priority: i64,
     /// Per-call handler timeout, defaulted while parsing provider config.
+    pub(crate) timeout: Duration,
+    pub(crate) require: ProviderRequireSpec,
+    pub(crate) handler: ProviderCallbackHandle,
+}
+
+#[derive(Clone)]
+pub(crate) struct ProviderSimilarReleasesSpec {
     pub(crate) timeout: Duration,
     pub(crate) require: ProviderRequireSpec,
     pub(crate) handler: ProviderCallbackHandle,
@@ -279,6 +289,24 @@ impl ProviderRegistry {
     ) -> Option<&ProviderCoverSpec> {
         self.state(provider_id)
             .and_then(|provider| provider.cover_handlers.get(&entity_type))
+    }
+
+    pub(crate) fn set_similar_releases_handler(
+        &mut self,
+        provider_id: &str,
+        spec: ProviderSimilarReleasesSpec,
+    ) {
+        if let Some(provider) = self.state_mut(provider_id) {
+            provider.similar_releases_handler = Some(spec);
+        }
+    }
+
+    pub(crate) fn get_similar_releases_handler(
+        &self,
+        provider_id: &str,
+    ) -> Option<&ProviderSimilarReleasesSpec> {
+        self.state(provider_id)
+            .and_then(|provider| provider.similar_releases_handler.as_ref())
     }
 
     pub(crate) fn get_sync_filter_callback(
@@ -466,6 +494,7 @@ struct ProviderState {
     refresh_callbacks: HashMap<EntityType, ProviderCallbackHandle>,
     sync_filter_callbacks: HashMap<EntityType, ProviderCallbackHandle>,
     cover_handlers: HashMap<EntityType, ProviderCoverSpec>,
+    similar_releases_handler: Option<ProviderSimilarReleasesSpec>,
     options: Vec<OptionDeclaration>,
 }
 

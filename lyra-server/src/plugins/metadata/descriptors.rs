@@ -126,6 +126,23 @@ fn metadata_type_aliases() -> Vec<TypeAliasDescriptor> {
             ),
         ),
         alias(
+            "SimilarReleaseCandidate",
+            union([
+                LuauType::object(vec![field("external_id", ty("ExternalReleaseRef"))]),
+                LuauType::object(vec![
+                    field("release_db_id", number()),
+                    field("release_id", string()),
+                ]),
+            ]),
+        ),
+        alias(
+            "SimilarReleasesHandler",
+            LuauType::function(
+                vec![fn_param("ctx", ty("SimilarReleaseContext"))],
+                vec![opt(ty("SimilarReleasesResult"))],
+            ),
+        ),
+        alias(
             "ProviderLyricsHitResult",
             LuauType::object(vec![
                 field("kind", LuauType::string_literal("hit")),
@@ -410,18 +427,49 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
             ],
         ),
         interface(
-            "ProviderLyricsRequire",
+            "ExternalReleaseRef",
             vec![
-                field("all_of", opt(array(string()))),
-                field("any_of", opt(array(string()))),
+                field("provider_id", string()),
+                field("id_type", string()),
+                field("id_value", string()),
             ],
+        ),
+        interface(
+            "SimilarReleasesConfig",
+            vec![
+                described_field(
+                    "timeout_ms",
+                    opt(number()),
+                    "Handler deadline in milliseconds. Defaults to 10000 and cannot exceed 10000.",
+                ),
+                field("require", opt(ty("ProviderRequire"))),
+            ],
+        ),
+        interface(
+            "SimilarReleaseContext",
+            vec![
+                field("db_id", number()),
+                field("id", string()),
+                field("release_title", string()),
+                field("sort_title", opt(string())),
+                field("release_date", opt(string())),
+                field("ids", ty("ProviderExternalIdMap")),
+                field("external_ids", ty("ExternalIdsByProvider")),
+                field("artist_names", array(string())),
+                field("genres", array(string())),
+                field("limit", number()),
+            ],
+        ),
+        interface(
+            "SimilarReleasesResult",
+            vec![field("candidates", array(ty("SimilarReleaseCandidate")))],
         ),
         interface(
             "ProviderLyricsConfig",
             vec![
                 field("priority", opt(number())),
                 field("timeout_ms", opt(number())),
-                field("require", opt(ty("ProviderLyricsRequire"))),
+                field("require", opt(ty("ProviderRequire"))),
             ],
         ),
         interface(
@@ -579,6 +627,14 @@ fn provider_class() -> ClassDescriptor {
             vec![],
         ),
         method(
+            "similar_releases",
+            vec![
+                param("config", ty("SimilarReleasesConfig")),
+                param("handler", ty("SimilarReleasesHandler")),
+            ],
+            vec![],
+        ),
+        method(
             "refresh",
             vec![
                 param("entity", ty("EntityType")),
@@ -650,6 +706,15 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
         name,
         ty,
         description: None,
+    }
+}
+
+#[cfg(feature = "docgen")]
+fn described_field(name: &'static str, ty: LuauType, description: &'static str) -> FieldDescriptor {
+    FieldDescriptor {
+        name,
+        ty,
+        description: Some(description),
     }
 }
 

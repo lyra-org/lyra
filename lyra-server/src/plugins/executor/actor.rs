@@ -34,6 +34,8 @@ use super::{
     MixHandlerRequest,
     MixHandlerResult,
     PluginExecutor,
+    SimilarReleasesDispatchRequest,
+    SimilarReleasesDispatchResult,
     WebSocketStartRequest,
 };
 
@@ -197,6 +199,14 @@ impl PluginExecutorHandle {
             .await
     }
 
+    pub(crate) async fn dispatch_similar_releases(
+        &self,
+        request: SimilarReleasesDispatchRequest,
+    ) -> Result<SimilarReleasesDispatchResult> {
+        self.request_async(|reply| PluginExecutorCommand::SimilarReleases { request, reply })
+            .await
+    }
+
     pub(crate) async fn dispatch_api_handler(
         &self,
         request: ApiHandlerRequest,
@@ -278,6 +288,13 @@ fn handle_plugin_executor_command(runtime: &PluginExecutor, command: PluginExecu
         PluginExecutorCommand::MetadataRefresh { request, reply } => {
             reply_if_open(reply, || runtime.dispatch_metadata_refresh(request));
         }
+        PluginExecutorCommand::SimilarReleases { request, reply } => {
+            if request.cancellation.is_cancelled() {
+                reply_cancelled_similar_releases(reply);
+                return;
+            }
+            reply_if_open(reply, || runtime.dispatch_similar_releases(request));
+        }
         PluginExecutorCommand::ApiHandler { request, reply } => {
             reply_if_open(reply, || runtime.dispatch_api_handler(request));
         }
@@ -299,6 +316,14 @@ fn reply_if_open<T>(
     if !reply.is_closed() {
         let _ = reply.send(operation());
     }
+}
+
+fn reply_cancelled_similar_releases(
+    reply: tokio::sync::oneshot::Sender<Result<SimilarReleasesDispatchResult>>,
+) {
+    reply_if_open(reply, || {
+        Err(anyhow::anyhow!("metadata handler dispatch was cancelled"))
+    });
 }
 
 #[cfg(test)]
@@ -381,4 +406,13 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn cancelled_similar_releases_gets_explicit_error() -> Result<()> {
+        let (reply, rx) = tokio::sync::oneshot::channel();
+        reply_cancelled_similar_releases(reply);
+
+        let error = rx.await?.unwrap_err();
+        assert_eq!(error.to_string(), "metadata handler dispatch was cancelled");
+        Ok(())
+    }
 }
