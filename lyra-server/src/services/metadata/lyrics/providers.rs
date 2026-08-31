@@ -51,6 +51,8 @@ use crate::{
     },
     services::providers::{
         ProviderCallStage,
+        ProviderRequireSpec,
+        requirements_match_with,
         with_provider_call,
     },
 };
@@ -145,13 +147,6 @@ pub(crate) fn parse_handler_result(value: serde_json::Value) -> Result<LyricsHan
     }
 }
 
-/// Paths reference the [`LyricsTrackContext`] tree.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct LyricsRequireSpec {
-    pub all_of: Vec<String>,
-    pub any_of: Vec<String>,
-}
-
 pub(crate) type HandlerFuture = Pin<Box<dyn Future<Output = Result<LyricsHandlerResult>> + Send>>;
 pub(crate) type HandlerFn =
     Arc<dyn Fn(LyricsTrackContext) -> HandlerFuture + Send + Sync + 'static>;
@@ -162,7 +157,7 @@ pub(crate) struct RegisteredHandler {
     pub(crate) plugin_id: PluginId,
     pub(crate) priority: i32,
     pub(crate) timeout: Duration,
-    pub(crate) require: LyricsRequireSpec,
+    pub(crate) require: ProviderRequireSpec,
     pub(crate) handler: HandlerFn,
     pub(crate) cancel: CancellationToken,
 }
@@ -499,23 +494,8 @@ async fn record_hit(
     Ok(())
 }
 
-fn require_matches(context: &LyricsTrackContext, require: &LyricsRequireSpec) -> bool {
-    if !require
-        .all_of
-        .iter()
-        .all(|path| context_path_present(context, path))
-    {
-        return false;
-    }
-    if !require.any_of.is_empty()
-        && !require
-            .any_of
-            .iter()
-            .any(|path| context_path_present(context, path))
-    {
-        return false;
-    }
-    true
+fn require_matches(context: &LyricsTrackContext, require: &ProviderRequireSpec) -> bool {
+    requirements_match_with(require, |path| context_path_present(context, path))
 }
 
 fn context_path_present(context: &LyricsTrackContext, path: &str) -> bool {
@@ -755,7 +735,7 @@ mod tests {
             plugin_id,
             priority: 1,
             timeout: Duration::from_secs(5),
-            require: LyricsRequireSpec::default(),
+            require: ProviderRequireSpec::default(),
             handler: handler_fn,
             cancel,
         }

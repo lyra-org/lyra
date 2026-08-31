@@ -31,6 +31,7 @@ mod admin;
 mod dedup;
 mod refresh;
 mod registry;
+mod requirements;
 mod sync;
 
 mod capture {
@@ -68,16 +69,20 @@ pub(crate) use registry::tests as registry_tests;
 pub(crate) use registry::{
     ProviderCallStage,
     ProviderCallbackHandle,
-    ProviderCoverRequireSpec,
     ProviderCoverSpec,
     ProviderIdSpec,
     ProviderIdUrlGenerator,
     ProviderRegistries,
+    ProviderRequireSpec,
     library_refresh_locks,
     provider_registry,
     sync_locks,
     teardown_plugin_providers,
     with_provider_call,
+};
+pub(crate) use requirements::{
+    requirements_match,
+    requirements_match_with,
 };
 pub(crate) use sync::{
     run_provider_sync,
