@@ -37,6 +37,7 @@ use crate::services::{
         ProviderCallbackHandle,
         ProviderCoverSpec,
         ProviderIdUrlGenerator,
+        ProviderSimilarReleasesSpec,
         provider_registry,
     },
 };
@@ -53,6 +54,7 @@ use super::parsing::{
     parse_id_url_template,
     parse_lyrics_spec,
     parse_option_declaration,
+    parse_similar_releases_spec,
     require_positive_id,
     required_table_string,
     string_array_from_table,
@@ -213,6 +215,16 @@ impl MetadataProvider {
         handler: luau::Function,
     ) -> luau::runtime::Result<()> {
         lyrics_callback(self, vm, context, config, handler)
+    }
+
+    fn similar_releases(
+        &self,
+        vm: &luau::Vm,
+        context: &luau::CallContext,
+        config: luau::Table,
+        handler: luau::Function,
+    ) -> luau::runtime::Result<()> {
+        similar_releases_callback(self, vm, context, config, handler)
     }
 
     fn refresh(
@@ -486,6 +498,39 @@ fn lyrics_callback(
             cancel,
         })
         .await;
+    });
+    Ok(())
+}
+
+fn similar_releases_callback(
+    provider: &MetadataProvider,
+    vm: &luau::Vm,
+    context: &luau::CallContext,
+    config: luau::Table,
+    handler: luau::Function,
+) -> luau::runtime::Result<()> {
+    ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
+    ensure_registration_open(&provider.plugin_id)?;
+    let (timeout, require) = parse_similar_releases_spec(vm, &config)?;
+    let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
+    let context = core_call_context(context);
+    let handler_id = handlers.register(
+        provider.provider_id.clone(),
+        EntityType::Release,
+        handler,
+        context,
+    );
+
+    futures::executor::block_on(async {
+        let mut registry = provider_registry().write_owned().await;
+        registry.set_similar_releases_handler(
+            &provider.provider_id,
+            ProviderSimilarReleasesSpec {
+                timeout,
+                require,
+                handler: ProviderCallbackHandle { handler_id },
+            },
+        );
     });
     Ok(())
 }

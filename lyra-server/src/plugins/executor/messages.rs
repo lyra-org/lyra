@@ -13,6 +13,7 @@ use std::{
             Ordering,
         },
     },
+    time::Duration,
 };
 
 use anyhow::Result;
@@ -71,6 +72,10 @@ pub(super) enum PluginExecutorCommand {
         request: MetadataRefreshRequest,
         reply: tokio::sync::oneshot::Sender<Result<MetadataRefreshResult>>,
     },
+    SimilarReleases {
+        request: SimilarReleasesDispatchRequest,
+        reply: tokio::sync::oneshot::Sender<Result<SimilarReleasesDispatchResult>>,
+    },
     ApiHandler {
         request: ApiHandlerRequest,
         reply: tokio::sync::oneshot::Sender<Result<ApiHandlerResponse>>,
@@ -98,6 +103,28 @@ pub(crate) struct MixHandlerResult {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct MetadataDispatchContext;
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct MetadataRefreshCancellation {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl MetadataRefreshCancellation {
+    pub(crate) fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn flag(&self) -> Arc<AtomicBool> {
+        self.cancelled.clone()
+    }
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct MetadataRefreshRequest {
     pub(crate) handler_id: u64,
     pub(crate) context: serde_json::Value,
@@ -106,6 +133,37 @@ pub(crate) struct MetadataRefreshRequest {
 #[derive(Clone, Debug)]
 pub(crate) struct MetadataRefreshResult {
     pub(crate) values: Vec<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct SimilarReleaseExternalRef {
+    pub(crate) provider_id: String,
+    pub(crate) id_type: String,
+    pub(crate) id_value: String,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum SimilarReleaseCandidate {
+    External(SimilarReleaseExternalRef),
+    Local {
+        release_db_id: i64,
+        release_id: String,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SimilarReleasesDispatchRequest {
+    pub(crate) provider_id: String,
+    pub(crate) handler_id: u64,
+    pub(crate) context: serde_json::Value,
+    pub(crate) timeout: Duration,
+    pub(crate) cancellation: MetadataRefreshCancellation,
+    pub(crate) max_candidates: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SimilarReleasesDispatchResult {
+    pub(crate) candidates: Vec<SimilarReleaseCandidate>,
 }
 
 #[derive(Clone, Debug)]
