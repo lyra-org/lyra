@@ -33,12 +33,13 @@ pub use modules::{
     SourceRequest,
     UserDataSpec,
 };
-pub use scheduler::LocalScheduler;
 pub use scheduler::{
     CallContext,
     CapabilityId,
     ChunkOrigin,
     ContextBag,
+    LocalLuauTaskCompletion,
+    LocalScheduler,
     ModuleId,
     ScheduledFuture,
     Scheduler,

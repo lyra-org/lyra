@@ -1,6 +1,15 @@
-use std::time::{
-    Duration,
-    Instant,
+use std::{
+    sync::{
+        Arc,
+        atomic::{
+            AtomicBool,
+            Ordering,
+        },
+    },
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
 use anyhow::{
@@ -24,11 +33,12 @@ pub use crate::modules::{
     install_luau_require as install_require,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct ThreadDriveOptions {
     pub timeout: Duration,
     pub max_wait: Duration,
     pub idle_wait: Duration,
+    pub cancellation: Option<Arc<AtomicBool>>,
 }
 
 impl Default for ThreadDriveOptions {
@@ -37,6 +47,7 @@ impl Default for ThreadDriveOptions {
             timeout: Duration::from_secs(300),
             max_wait: Duration::from_millis(25),
             idle_wait: Duration::from_millis(1),
+            cancellation: None,
         }
     }
 }
@@ -49,6 +60,24 @@ pub fn drive_thread(
 ) -> Result<Vec<luau::Value>> {
     let deadline = Instant::now() + options.timeout;
     loop {
+        if options
+            .cancellation
+            .as_ref()
+            .is_some_and(|cancelled| cancelled.load(Ordering::Acquire))
+        {
+            let task_id = scheduler
+                .luau_thread_handle(thread)
+                .map(|handle| handle.id());
+            scheduler.cancel_luau_thread(thread);
+            if let Some(task_id) = task_id {
+                scheduler.remove(task_id);
+            }
+            bail!(
+                "Luau thread {}:{} was cancelled",
+                thread.vm_id(),
+                thread.state_id()
+            );
+        }
         {
             let _guard = tokio_runtime.enter();
             scheduler.poll_ready();
@@ -92,6 +121,13 @@ pub fn drive_thread(
         scheduler.wait_for_wake(Some(wait));
     }
 
+    let task_id = scheduler
+        .luau_thread_handle(thread)
+        .map(|handle| handle.id());
+    scheduler.cancel_luau_thread(thread);
+    if let Some(task_id) = task_id {
+        scheduler.remove(task_id);
+    }
     bail!(
         "Luau thread {}:{} did not complete",
         thread.vm_id(),
@@ -102,7 +138,10 @@ pub fn drive_thread(
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::Arc,
+        sync::{
+            Arc,
+            atomic::AtomicBool,
+        },
         time::Duration,
     };
 
@@ -118,6 +157,7 @@ mod tests {
             timeout,
             max_wait: Duration::from_millis(5),
             idle_wait: Duration::from_millis(1),
+            cancellation: None,
         }
     }
 
@@ -210,6 +250,30 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_flag_stops_and_removes_thread() -> Result<()> {
+        let tokio_runtime = runtime()?;
+        let vm = luau::Vm::new()?;
+        let scheduler = LocalScheduler::new();
+        let function = vm.load_chunk(&luau::Chunk::new(
+            Arc::<[u8]>::from(&b"coroutine.yield(); return 1"[..]),
+            luau::ChunkOrigin::default(),
+        ))?;
+        let thread = vm.create_thread(&function)?;
+        let handle =
+            scheduler.spawn_luau_thread(CallContext::default(), vm, thread.clone(), Vec::new());
+        let cancellation = Arc::new(AtomicBool::new(true));
+        let mut options = options(Duration::from_secs(1));
+        options.cancellation = Some(cancellation);
+
+        let error = drive_thread(&tokio_runtime, &scheduler, &thread, options)
+            .expect_err("thread should be cancelled");
+
+        assert!(error.to_string().contains("cancelled"));
+        assert!(scheduler.snapshot(handle.id()).is_none());
+        Ok(())
+    }
+
+    #[test]
     fn pending_thread_times_out() -> Result<()> {
         let tokio_runtime = runtime()?;
         let vm = luau::Vm::new()?;
@@ -232,8 +296,7 @@ mod tests {
         .expect_err("thread should time out");
 
         assert!(error.to_string().contains("did not complete"));
-        assert!(scheduler.snapshot(handle.id()).is_some());
-        scheduler.remove(handle.id());
+        assert!(scheduler.snapshot(handle.id()).is_none());
         Ok(())
     }
 
