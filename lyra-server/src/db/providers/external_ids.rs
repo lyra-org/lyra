@@ -178,16 +178,11 @@ pub(crate) fn get_owner(
     id_value: &str,
     owner_discriminator: Option<&str>,
 ) -> anyhow::Result<Option<DbId>> {
-    let Ok(index_result) = db.exec(
-        QueryBuilder::search()
-            .index("id_value")
-            .value(id_value)
-            .query(),
-    ) else {
-        return Ok(None);
+    let indexed_ids = match indexed_external_id_ids(db, id_value) {
+        Ok(ids) => ids,
+        Err(_) => return Ok(None),
     };
-
-    for ext_id_db_id in index_result.ids().into_iter().filter(|id| id.0 > 0) {
+    for ext_id_db_id in indexed_ids {
         let ext_ids: Vec<ExternalId> = db
             .exec(QueryBuilder::select().ids(ext_id_db_id).query())?
             .try_into()?;
@@ -215,6 +210,88 @@ pub(crate) fn get_owner(
         return Ok(Some(owner_id));
     }
     Ok(None)
+}
+
+pub(crate) fn get_owners(
+    db: &impl DbAccess,
+    provider_id: &str,
+    id_type: &str,
+    id_value: &str,
+    owner_discriminator: Option<&str>,
+) -> anyhow::Result<Vec<DbId>> {
+    let matching_ids = matching_external_id_ids(db, provider_id, id_type, id_value)?;
+    if matching_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut owner_ids = Vec::new();
+    for external_id in matching_ids {
+        owner_ids.extend(
+            db.exec(
+                QueryBuilder::search()
+                    .to(external_id)
+                    .where_()
+                    .not()
+                    .edge()
+                    .and()
+                    .distance(agdb::CountComparison::Equal(2))
+                    .query(),
+            )?
+            .ids()
+            .into_iter()
+            .filter(|id| id.0 > 0),
+        );
+    }
+    owner_ids.sort_by_key(|id| id.0);
+    owner_ids.dedup();
+    if owner_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    if let Some(discriminator) = owner_discriminator {
+        let selected = db.exec(QueryBuilder::select().ids(owner_ids.clone()).query())?;
+        let matching_owner_ids = selected
+            .elements
+            .into_iter()
+            .filter(|element| super::super::graph::is_element_type(element, discriminator))
+            .map(|element| element.id)
+            .collect::<std::collections::HashSet<_>>();
+        owner_ids.retain(|id| matching_owner_ids.contains(id));
+    }
+    Ok(owner_ids)
+}
+
+fn matching_external_id_ids(
+    db: &impl DbAccess,
+    provider_id: &str,
+    id_type: &str,
+    id_value: &str,
+) -> anyhow::Result<Vec<DbId>> {
+    let indexed_ids = indexed_external_id_ids(db, id_value)?;
+    let external_ids =
+        super::super::graph::bulk_fetch_typed::<ExternalId>(db, indexed_ids.clone(), "ExternalId")?;
+    Ok(indexed_ids
+        .into_iter()
+        .filter(|id| {
+            external_ids.get(id).is_some_and(|external_id| {
+                external_id.provider_id == provider_id && external_id.id_type == id_type
+            })
+        })
+        .collect())
+}
+
+fn indexed_external_id_ids(db: &impl DbAccess, id_value: &str) -> anyhow::Result<Vec<DbId>> {
+    let index_result = db.exec(
+        QueryBuilder::search()
+            .index("id_value")
+            .value(id_value)
+            .query(),
+    )?;
+
+    Ok(index_result
+        .ids()
+        .into_iter()
+        .filter(|id| id.0 > 0)
+        .collect())
 }
 
 pub(crate) fn get(
@@ -373,6 +450,10 @@ mod tests {
         Ok(TestDb::new()?.into_inner())
     }
 
+    fn new_initialized_test_db() -> anyhow::Result<DbAny> {
+        Ok(TestDb::initialized()?.into_inner())
+    }
+
     fn insert_entity(db: &mut DbAny) -> anyhow::Result<DbId> {
         let result = db.exec_mut(QueryBuilder::insert().nodes().count(1).query())?;
         result
@@ -492,6 +573,94 @@ mod tests {
             element_value(&element, "source"),
             Some(DbValue::from("plugin"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn plural_owner_lookup_propagates_index_errors() -> anyhow::Result<()> {
+        let db = new_test_db()?;
+
+        assert!(get_owners(&db, "discogs", "release_id", "abc-1", None).is_err());
+        assert_eq!(
+            get_owner(&db, "discogs", "release_id", "abc-1", None)?,
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn get_owners_returns_all_matching_owners_deduplicated_and_filtered() -> anyhow::Result<()> {
+        let mut db = new_initialized_test_db()?;
+        let release_a = crate::db::test_db::insert_release(&mut db, "Release A")?;
+        let release_b = crate::db::test_db::insert_release(&mut db, "Release B")?;
+        let track = crate::db::test_db::insert_track(&mut db, "Track")?;
+
+        let release_b_external_id = upsert(
+            &mut db,
+            release_b,
+            "musicbrainz",
+            "release_group_id",
+            "group-1",
+            IdSource::Plugin,
+        )?;
+        upsert(
+            &mut db,
+            release_a,
+            "musicbrainz",
+            "release_group_id",
+            "group-1",
+            IdSource::Plugin,
+        )?;
+        upsert(
+            &mut db,
+            track,
+            "musicbrainz",
+            "release_group_id",
+            "group-1",
+            IdSource::Plugin,
+        )?;
+
+        assert_eq!(
+            get_owner(
+                &db,
+                "musicbrainz",
+                "release_group_id",
+                "group-1",
+                Some("Release"),
+            )?,
+            Some(release_b)
+        );
+
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(release_a)
+                .to(release_b_external_id)
+                .query(),
+        )?;
+
+        let mut expected_all = vec![release_a, release_b, track];
+        expected_all.sort_by_key(|id| id.0);
+        assert_eq!(
+            get_owners(&db, "musicbrainz", "release_group_id", "group-1", None,)?,
+            expected_all
+        );
+
+        let mut expected_releases = vec![release_a, release_b];
+        expected_releases.sort_by_key(|id| id.0);
+        assert_eq!(
+            get_owners(
+                &db,
+                "musicbrainz",
+                "release_group_id",
+                "group-1",
+                Some("Release"),
+            )?,
+            expected_releases
+        );
+        assert!(get_owners(&db, "musicbrainz", "release_id", "group-1", None,)?.is_empty());
+        assert!(get_owners(&db, "discogs", "release_group_id", "group-1", None,)?.is_empty());
+
         Ok(())
     }
 }
