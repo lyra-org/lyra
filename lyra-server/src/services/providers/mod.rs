@@ -5,6 +5,28 @@
 
 use super::EntityType;
 
+pub(crate) fn enabled_provider_configs_by_priority(
+    db: &agdb::DbAny,
+    provider_filter: Option<&str>,
+) -> anyhow::Result<Vec<crate::db::ProviderConfig>> {
+    let mut providers = crate::db::providers::get(db)?
+        .into_iter()
+        .filter(|provider| provider.enabled)
+        .collect::<Vec<_>>();
+    if let Some(provider_filter) = provider_filter
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        providers.retain(|provider| provider.provider_id == provider_filter);
+    }
+    providers.sort_by(|a, b| {
+        b.priority
+            .cmp(&a.priority)
+            .then_with(|| a.provider_id.cmp(&b.provider_id))
+    });
+    Ok(providers)
+}
+
 mod admin;
 mod dedup;
 mod refresh;

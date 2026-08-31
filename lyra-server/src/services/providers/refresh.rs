@@ -762,16 +762,7 @@ async fn sync_library_covers_after_refresh(
 
 async fn enabled_providers() -> anyhow::Result<Vec<ProviderConfig>> {
     let db = STATE.db.read().await;
-    let mut providers = db::providers::get(&db)?
-        .into_iter()
-        .filter(|provider| provider.enabled)
-        .collect::<Vec<_>>();
-    providers.sort_by(|a, b| {
-        b.priority
-            .cmp(&a.priority)
-            .then(a.provider_id.cmp(&b.provider_id))
-    });
-    Ok(providers)
+    super::enabled_provider_configs_by_priority(&db, None)
 }
 
 async fn refresh_callbacks_for(
