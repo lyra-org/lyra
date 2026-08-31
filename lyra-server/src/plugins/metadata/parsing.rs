@@ -15,10 +15,7 @@ use crate::plugins::lifecycle::PluginId;
 use crate::services::{
     EntityType,
     covers::providers::DEFAULT_COVER_HANDLER_TIMEOUT,
-    metadata::lyrics::providers::{
-        DEFAULT_HANDLER_TIMEOUT,
-        LyricsRequireSpec,
-    },
+    metadata::lyrics::providers::DEFAULT_HANDLER_TIMEOUT,
     options::{
         OptionDeclaration,
         OptionType,
@@ -26,6 +23,7 @@ use crate::services::{
     providers::{
         ProviderCoverRequireSpec,
         ProviderIdSpec,
+        ProviderRequireSpec,
     },
 };
 
@@ -175,7 +173,7 @@ pub(super) fn parse_id_spec(
 pub(super) fn parse_cover_spec(
     vm: &luau::Vm,
     config: &luau::Table,
-) -> luau::runtime::Result<(i64, Duration, ProviderCoverRequireSpec)> {
+) -> luau::runtime::Result<(i64, Duration, ProviderRequireSpec)> {
     let priority = optional_i64(vm, config, "priority", "provider:cover")?.unwrap_or(50);
     let timeout = optional_timeout(
         vm,
@@ -184,14 +182,14 @@ pub(super) fn parse_cover_spec(
         "provider:cover",
         DEFAULT_COVER_HANDLER_TIMEOUT,
     )?;
-    let require = parse_cover_require(vm, config, "provider:cover")?;
+    let require = parse_provider_require(vm, config, "provider:cover")?;
     Ok((priority, timeout, require))
 }
 
 pub(super) fn parse_lyrics_spec(
     vm: &luau::Vm,
     config: &luau::Table,
-) -> luau::runtime::Result<(i32, Duration, LyricsRequireSpec)> {
+) -> luau::runtime::Result<(i32, Duration, ProviderRequireSpec)> {
     let priority = optional_i64(vm, config, "priority", "provider:lyrics")?.unwrap_or(50);
     let priority = i32::try_from(priority).map_err(|_| {
         crate::plugins::runtime_error("provider:lyrics config.priority must fit in i32")
@@ -203,7 +201,7 @@ pub(super) fn parse_lyrics_spec(
         "provider:lyrics",
         DEFAULT_HANDLER_TIMEOUT,
     )?;
-    let require = parse_lyrics_require(vm, config)?;
+    let require = parse_provider_require(vm, config, "provider:lyrics")?;
     Ok((priority, timeout, require))
 }
 
@@ -244,36 +242,19 @@ fn optional_timeout(
     Ok(Duration::from_millis(value as u64))
 }
 
-fn parse_cover_require(
+fn parse_provider_require(
     vm: &luau::Vm,
     config: &luau::Table,
     method: &str,
-) -> luau::runtime::Result<ProviderCoverRequireSpec> {
+) -> luau::runtime::Result<ProviderRequireSpec> {
     match config.get_raw(vm, "require")? {
-        luau::Value::Nil => Ok(ProviderCoverRequireSpec::default()),
-        luau::Value::Table(require) => Ok(ProviderCoverRequireSpec {
+        luau::Value::Nil => Ok(ProviderRequireSpec::default()),
+        luau::Value::Table(require) => Ok(ProviderRequireSpec {
             all_of: parse_require_paths(vm, &require, "all_of", method)?,
             any_of: parse_require_paths(vm, &require, "any_of", method)?,
         }),
         other => Err(crate::plugins::runtime_error(format!(
             "{method} config.require must be a table, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
-fn parse_lyrics_require(
-    vm: &luau::Vm,
-    config: &luau::Table,
-) -> luau::runtime::Result<LyricsRequireSpec> {
-    match config.get_raw(vm, "require")? {
-        luau::Value::Nil => Ok(LyricsRequireSpec::default()),
-        luau::Value::Table(require) => Ok(LyricsRequireSpec {
-            all_of: parse_require_paths(vm, &require, "all_of", "provider:lyrics")?,
-            any_of: parse_require_paths(vm, &require, "any_of", "provider:lyrics")?,
-        }),
-        other => Err(crate::plugins::runtime_error(format!(
-            "provider:lyrics config.require must be a table, got {}",
             other.type_name()
         ))),
     }

@@ -136,7 +136,7 @@ pub(crate) struct ProviderCallbackHandle {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ProviderCoverRequireSpec {
+pub(crate) struct ProviderRequireSpec {
     pub(crate) all_of: Vec<String>,
     pub(crate) any_of: Vec<String>,
 }
@@ -144,11 +144,9 @@ pub(crate) struct ProviderCoverRequireSpec {
 #[derive(Clone)]
 pub(crate) struct ProviderCoverSpec {
     pub(crate) priority: i64,
-    /// Per-call handler timeout. Mirrors the lyrics dispatcher's `timeout`
-    /// field; defaulted at parse time to `DEFAULT_COVER_HANDLER_TIMEOUT`
-    /// so existing plugins that don't pass `timeout_ms` keep working.
+    /// Per-call handler timeout, defaulted while parsing provider config.
     pub(crate) timeout: Duration,
-    pub(crate) require: ProviderCoverRequireSpec,
+    pub(crate) require: ProviderRequireSpec,
     pub(crate) handler: ProviderCallbackHandle,
 }
 

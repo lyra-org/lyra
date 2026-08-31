@@ -346,7 +346,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
             ],
         ),
         interface(
-            "ProviderCoverRequire",
+            "ProviderRequire",
             vec![
                 field("all_of", opt(array(string()))),
                 field("any_of", opt(array(string()))),
@@ -357,7 +357,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
             vec![
                 field("priority", opt(number())),
                 field("timeout_ms", opt(number())),
-                field("require", opt(ty("ProviderCoverRequire"))),
+                field("require", opt(ty("ProviderRequire"))),
             ],
         ),
         interface(

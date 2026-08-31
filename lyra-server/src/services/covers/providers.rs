@@ -35,8 +35,9 @@ use crate::{
     plugins::executor::MetadataRefreshRequest,
     services::providers::{
         ProviderCallStage,
-        ProviderCoverRequireSpec,
+        enabled_provider_configs_by_priority,
         provider_registry,
+        requirements_match,
         with_provider_call,
     },
 };
@@ -455,50 +456,6 @@ fn library_context_value(library: &Library) -> Value {
     })
 }
 
-fn value_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
-    let mut cursor = value;
-    for segment in path.split('.') {
-        let Value::Object(object) = cursor else {
-            return None;
-        };
-        cursor = object.get(segment)?;
-    }
-    Some(cursor)
-}
-
-fn is_present(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::String(value) => !value.trim().is_empty(),
-        Value::Array(values) => !values.is_empty(),
-        Value::Object(values) => !values.is_empty(),
-        _ => true,
-    }
-}
-
-fn path_is_present(context: &Value, path: &str) -> bool {
-    value_at_path(context, path).is_some_and(is_present)
-}
-
-fn cover_requirements_match(context: &Value, require: &ProviderCoverRequireSpec) -> bool {
-    if !require
-        .all_of
-        .iter()
-        .all(|path| path_is_present(context, path))
-    {
-        return false;
-    }
-    if !require.any_of.is_empty()
-        && !require
-            .any_of
-            .iter()
-            .any(|path| path_is_present(context, path))
-    {
-        return false;
-    }
-    true
-}
-
 fn extract_cover_handler_url(obj: &serde_json::Map<String, Value>) -> Option<String> {
     for key in ["url", "cover_url", "cover_image_url", "cover"] {
         if let Some(value) = obj.get(key).and_then(Value::as_str) {
@@ -768,7 +725,7 @@ async fn search_provider_cover(
         provider_cover_cache_put(cache_key, None).await;
         return Ok(None);
     };
-    if !cover_requirements_match(context, &spec.require) {
+    if !requirements_match(context, &spec.require) {
         provider_cover_cache_put(cache_key, None).await;
         return Ok(None);
     }
@@ -873,20 +830,7 @@ pub(crate) async fn search_release_cover_candidates(
         let artists = db::artists::get(&db, release_id)?;
         let library = library_for_release(&db, release_id)?;
 
-        let mut providers = db::providers::get(&db)?;
-        providers.retain(|provider| provider.enabled);
-        if let Some(provider_filter) = provider_filter
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            providers.retain(|provider| provider.provider_id == provider_filter);
-        }
-        providers.sort_by(|a, b| {
-            b.priority
-                .cmp(&a.priority)
-                .then(a.provider_id.cmp(&b.provider_id))
-        });
-
+        let providers = enabled_provider_configs_by_priority(&db, provider_filter)?;
         let mut provider_contexts = Vec::new();
         for provider in providers {
             let provider_id = provider.provider_id;
@@ -923,20 +867,7 @@ pub(crate) async fn search_artist_cover_candidates(
         let artist = db::artists::get_by_id(&db, artist_id)?
             .ok_or_else(|| anyhow!("artist not found: {}", artist_id.0))?;
 
-        let mut providers = db::providers::get(&db)?;
-        providers.retain(|provider| provider.enabled);
-        if let Some(provider_filter) = provider_filter
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            providers.retain(|provider| provider.provider_id == provider_filter);
-        }
-        providers.sort_by(|a, b| {
-            b.priority
-                .cmp(&a.priority)
-                .then(a.provider_id.cmp(&b.provider_id))
-        });
-
+        let providers = enabled_provider_configs_by_priority(&db, provider_filter)?;
         let mut provider_contexts = Vec::new();
         for provider in providers {
             let provider_id = provider.provider_id;
@@ -1071,39 +1002,6 @@ mod tests {
 
         crate::STATE.generation().plugin_runtime.replace(None);
         Ok(())
-    }
-
-    #[test]
-    fn cover_requirements_match_handles_all_of_and_any_of() {
-        let context = json!({
-            "ids": {
-                "release_id": "release-1"
-            },
-            "artist_names": ["Artist A"]
-        });
-        let require = ProviderCoverRequireSpec {
-            all_of: vec!["ids.release_id".to_string()],
-            any_of: vec![
-                "ids.release_group_id".to_string(),
-                "artist_names".to_string(),
-            ],
-        };
-
-        assert!(cover_requirements_match(&context, &require));
-    }
-
-    #[test]
-    fn cover_requirements_match_fails_when_required_paths_missing() {
-        let context = json!({
-            "ids": {},
-            "artist_names": []
-        });
-        let require = ProviderCoverRequireSpec {
-            all_of: vec!["ids.release_id".to_string()],
-            any_of: vec!["artist_names".to_string()],
-        };
-
-        assert!(!cover_requirements_match(&context, &require));
     }
 
     #[test]
