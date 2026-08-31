@@ -72,6 +72,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(get_by_artist_spec())
         .function(get_appearances_spec())
         .function(list_many_spec())
+        .function(similar_spec())
         .install(|_| Ok(ModuleExport::new(ReleasesModule)))
 }
 
@@ -113,6 +114,16 @@ fn list_many_spec() -> FunctionSpec {
         .args::<Vec<u64>>()
         .returns::<luau::Table>()
         .call_async(std::sync::Arc::new(list_many_callback))
+}
+
+fn similar_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("similar")
+        .arg_name("release_db_id")
+        .args::<i64>()
+        .arg_name("opts")
+        .args::<Option<luau::Table>>()
+        .returns::<Option<Vec<Release>>>()
+        .call_async(std::sync::Arc::new(similar_callback))
 }
 
 fn list_callback(
@@ -248,6 +259,111 @@ fn list_many_callback(
         }
         table.into_luau_return()
     }))
+}
+
+fn similar_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    if frame
+        .context
+        .caller
+        .get::<crate::plugins::executor::MetadataDispatchContext>()
+        .is_ok()
+    {
+        return Err(crate::plugins::runtime_error(
+            "releases.similar cannot be called from a metadata provider callback",
+        ));
+    }
+    let release_db_id = frame.args.read_named::<i64>("release_db_id")?;
+    if release_db_id <= 0 {
+        return Err(crate::plugins::runtime_error(
+            "releases.similar release_db_id must be a positive integer",
+        ));
+    }
+    let request = parse_similar_options(frame.vm, frame.args.read_optional_named("opts")?)?;
+    let provider_vm = frame.vm.clone();
+    let store = frame
+        .vm
+        .data()
+        .get::<ReleasesModuleStore>()?
+        .as_ref()
+        .clone();
+    let db = store.db()?;
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let accessible_library_ids = if let Some(user_id) = request.user_id {
+            let db = db.read().await;
+            release_service::accessible_library_ids_for_user(&db, user_id)
+                .map_err(crate::plugins::runtime_error)?
+        } else {
+            None
+        };
+        let options = release_service::SimilarReleaseOptions {
+            limit: request.limit,
+            accessible_library_ids,
+        };
+        let releases = release_service::similar_in_vm(DbId(release_db_id), &options, provider_vm)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        match releases {
+            Some(releases) => harmony_luau::serializable_to_luau_owned(releases),
+            None => Ok(luau::Value::Nil),
+        }
+    }))
+}
+
+struct SimilarReleaseRequest {
+    limit: usize,
+    user_id: Option<DbId>,
+}
+
+fn parse_similar_options(
+    vm: &luau::Vm,
+    opts: Option<luau::Table>,
+) -> luau::runtime::Result<SimilarReleaseRequest> {
+    let Some(opts) = opts else {
+        return Ok(SimilarReleaseRequest {
+            limit: release_service::DEFAULT_SIMILAR_RELEASE_LIMIT,
+            user_id: None,
+        });
+    };
+    let limit = parse_optional_similar_positive_integer(vm, &opts, "limit")?
+        .map(|value| {
+            usize::try_from(value).map_err(|_| {
+                crate::plugins::runtime_error("releases.similar opts.limit is too large")
+            })
+        })
+        .transpose()?
+        .unwrap_or(release_service::DEFAULT_SIMILAR_RELEASE_LIMIT);
+    if limit > release_service::MAX_SIMILAR_RELEASE_LIMIT {
+        return Err(crate::plugins::runtime_error(format!(
+            "releases.similar opts.limit must be <= {}, got {limit}",
+            release_service::MAX_SIMILAR_RELEASE_LIMIT
+        )));
+    }
+    let user_id = parse_optional_similar_positive_integer(vm, &opts, "user_id")?.map(DbId);
+    Ok(SimilarReleaseRequest { limit, user_id })
+}
+
+fn parse_optional_similar_positive_integer(
+    vm: &luau::Vm,
+    opts: &luau::Table,
+    field: &str,
+) -> luau::runtime::Result<Option<i64>> {
+    let value = luau::table::optional_i64_field(vm, opts, field).map_err(|_| {
+        crate::plugins::runtime_error(format!(
+            "releases.similar opts.{field} must be a positive integer"
+        ))
+    })?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value <= 0 {
+        return Err(crate::plugins::runtime_error(format!(
+            "releases.similar opts.{field} must be a positive integer"
+        )));
+    }
+    Ok(Some(value))
 }
 
 struct ReleaseQueryRequest {
@@ -470,6 +586,15 @@ fn field(name: &'static str, ty: LuauType) -> FieldDescriptor {
 }
 
 #[cfg(feature = "docgen")]
+fn described_field(name: &'static str, ty: LuauType, description: &'static str) -> FieldDescriptor {
+    FieldDescriptor {
+        name,
+        ty,
+        description: Some(description),
+    }
+}
+
+#[cfg(feature = "docgen")]
 fn resolve_id_type() -> LuauType {
     LuauType::union(vec![i64::luau_type(), String::luau_type()])
 }
@@ -553,6 +678,24 @@ fn release_query_options() -> InterfaceDescriptor {
 }
 
 #[cfg(feature = "docgen")]
+fn similar_release_options() -> InterfaceDescriptor {
+    let mut descriptor = InterfaceDescriptor::new("SimilarReleaseOptions", None);
+    descriptor.fields.extend([
+        described_field(
+            "limit",
+            Option::<i64>::luau_type(),
+            "Maximum number of releases to return. Defaults to 20 and cannot exceed 100.",
+        ),
+        described_field(
+            "user_id",
+            Option::<i64>::luau_type(),
+            "Optional viewer DB ID. When supplied, the seed and candidates are restricted to that user's accessible libraries. Omit only for an unrestricted internal lookup.",
+        ),
+    ]);
+    descriptor
+}
+
+#[cfg(feature = "docgen")]
 fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Releases",
@@ -598,6 +741,23 @@ fn module_descriptor() -> ModuleDescriptor {
                 )],
                 yields: true,
             },
+            ModuleFunctionDescriptor {
+                path: vec!["similar"],
+                description: Some(
+                    "Returns provider-ranked releases related to a local release. Returns nil when the seed release does not exist or is inaccessible to the supplied user.",
+                ),
+                params: vec![
+                    param("release_db_id", i64::luau_type()),
+                    param(
+                        "opts",
+                        LuauType::optional(LuauType::named("SimilarReleaseOptions")),
+                    ),
+                ],
+                returns: vec![LuauType::optional(LuauType::array(LuauType::named(
+                    "Release",
+                )))],
+                yields: true,
+            },
         ],
     }
 }
@@ -607,7 +767,45 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
     render_definition_file_with_support(
         &module_descriptor(),
         &release_type_aliases(),
-        &[release_query_options()],
+        &[release_query_options(), similar_release_options()],
         &[],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn similar_options_read_fields_directly_from_table() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        let empty = vm.create_table()?;
+        let defaults = parse_similar_options(&vm, Some(empty))?;
+        assert_eq!(
+            defaults.limit,
+            release_service::DEFAULT_SIMILAR_RELEASE_LIMIT
+        );
+        assert_eq!(defaults.user_id, None);
+
+        let opts = vm.create_table()?;
+        opts.set_raw(&vm, "limit", luau::Value::Integer(7))?;
+        opts.set_raw(&vm, "user_id", luau::Value::Number(42.0))?;
+        let parsed = parse_similar_options(&vm, Some(opts))?;
+        assert_eq!(parsed.limit, 7);
+        assert_eq!(parsed.user_id, Some(DbId(42)));
+        Ok(())
+    }
+
+    #[test]
+    fn similar_options_reject_invalid_integer_fields() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        let opts = vm.create_table()?;
+        opts.set_raw(&vm, "limit", luau::Value::Integer(0))?;
+        assert!(parse_similar_options(&vm, Some(opts)).is_err());
+
+        let opts = vm.create_table()?;
+        opts.set_raw(&vm, "user_id", luau::Value::Number(4.5))?;
+        assert!(parse_similar_options(&vm, Some(opts)).is_err());
+        Ok(())
+    }
 }

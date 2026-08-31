@@ -608,6 +608,190 @@ fn plugin_executor_bounds_similar_release_result_before_json_conversion() -> Res
 }
 
 #[test]
+fn releases_similar_dispatches_provider_on_current_executor() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
+    let (seed, candidate, candidate_public_id) = futures::executor::block_on(async {
+        let mut db = crate::STATE.db.write().await;
+        let seed = crate::plugins::db::test_db::insert_release(&mut db, "Seed")?;
+        let candidate = crate::plugins::db::test_db::insert_release(&mut db, "Candidate")?;
+        let public_id = crate::plugins::db::releases::get_by_id(&db, candidate)?
+            .context("candidate release")?
+            .id;
+        Ok::<_, anyhow::Error>((seed, candidate, public_id))
+    })?;
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("demo", &["lyra.metadata", "lyra.releases"])]),
+        default_server_info(),
+        crate::STATE.db.get(),
+    )?;
+    let source = format!(
+        r#"
+            local metadata = require("@lyra/metadata")
+            local releases = require("@lyra/releases")
+            local provider = metadata.Provider.new("in-vm-similar-provider")
+            provider:similar_releases({{}}, function()
+                return {{ candidates = {{{{
+                    release_db_id = {},
+                    release_id = {:?},
+                }}}} }}
+            end)
+            local matches = releases.similar({})
+            return matches[1].id
+        "#,
+        candidate.0, candidate_public_id, seed.0
+    );
+
+    let values = runtime.eval_plugin_source("demo", "init.luau", source.as_bytes())?;
+
+    assert_eq!(
+        values,
+        vec![luau::Value::String(candidate_public_id.into_bytes())]
+    );
+    Ok(())
+}
+
+#[test]
+fn awaited_background_similar_provider_result_survives_executor_polling() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
+    let (seed, candidate, candidate_public_id) = futures::executor::block_on(async {
+        let mut db = crate::STATE.db.write().await;
+        let seed = crate::plugins::db::test_db::insert_release(&mut db, "Seed")?;
+        let candidate = crate::plugins::db::test_db::insert_release(&mut db, "Candidate")?;
+        let public_id = crate::plugins::db::releases::get_by_id(&db, candidate)?
+            .context("candidate release")?
+            .id;
+        Ok::<_, anyhow::Error>((seed, candidate, public_id))
+    })?;
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest(
+            "demo",
+            &["harmony.task", "lyra.metadata", "lyra.releases"],
+        )]),
+        default_server_info(),
+        crate::STATE.db.get(),
+    )?;
+    let source = format!(
+        r#"
+            local task = require("@harmony/task")
+            local metadata = require("@lyra/metadata")
+            local releases = require("@lyra/releases")
+            local provider = metadata.Provider.new("background-similar-provider")
+            provider:similar_releases({{}}, function()
+                task.wait(0)
+                return {{ candidates = {{{{
+                    release_db_id = {},
+                    release_id = {:?},
+                }}}} }}
+            end)
+            similar_done = false
+            similar_result_id = nil
+            task.spawn(function()
+                local matches = releases.similar({})
+                similar_result_id = matches[1].id
+                similar_done = true
+            end)
+        "#,
+        candidate.0, candidate_public_id, seed.0
+    );
+    runtime.eval_plugin_source("demo", "init.luau", source.as_bytes())?;
+
+    for _ in 0..50 {
+        runtime.poll_background_tasks();
+        runtime.poll_background_tasks();
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let values = runtime.eval_plugin_source(
+        "demo",
+        "check.luau",
+        &b"return similar_done, similar_result_id"[..],
+    )?;
+
+    assert_eq!(values[0], luau::Value::Boolean(true));
+    assert_eq!(
+        values[1],
+        luau::Value::String(candidate_public_id.into_bytes())
+    );
+    Ok(())
+}
+
+#[test]
+fn cancelling_awaited_similar_release_call_keeps_executor_usable() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
+    let seed = futures::executor::block_on(async {
+        let mut db = crate::STATE.db.write().await;
+        crate::plugins::db::test_db::insert_release(&mut db, "Seed")
+    })?;
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest(
+            "demo",
+            &["harmony.task", "lyra.metadata", "lyra.releases"],
+        )]),
+        default_server_info(),
+        crate::STATE.db.get(),
+    )?;
+    let source = format!(
+        r#"
+            local task = require("@harmony/task")
+            local metadata = require("@lyra/metadata")
+            local releases = require("@lyra/releases")
+            local provider = metadata.Provider.new("cancelled-similar-provider")
+            provider_started = false
+            provider_release = false
+            provider:similar_releases({{}}, function()
+                provider_started = true
+                while not provider_release do
+                    task.wait(0.01)
+                end
+                return {{ candidates = {{}} }}
+            end)
+            similar_resumed = false
+            similar_thread = task.spawn(function()
+                releases.similar({})
+                similar_resumed = true
+            end)
+        "#,
+        seed.0
+    );
+    runtime.eval_plugin_source("demo", "init.luau", source.as_bytes())?;
+    let mut provider_started = false;
+    for _ in 0..10 {
+        runtime.poll_background_tasks();
+        let values = runtime.eval_plugin_source(
+            "demo",
+            "started.luau",
+            &b"return provider_started, similar_resumed"[..],
+        )?;
+        provider_started = values[0] == luau::Value::Boolean(true);
+        assert_eq!(values[1], luau::Value::Boolean(false));
+        if provider_started {
+            break;
+        }
+    }
+    assert!(provider_started, "similar releases provider did not start");
+
+    runtime.eval_plugin_source(
+        "demo",
+        "cancel.luau",
+        &br#"
+            local task = require("@harmony/task")
+            task.cancel(similar_thread)
+        "#[..],
+    )?;
+    runtime.poll_background_tasks();
+    let values =
+        runtime.eval_plugin_source("demo", "check.luau", &b"return similar_resumed, 42"[..])?;
+
+    assert_eq!(
+        values,
+        vec![luau::Value::Boolean(false), luau::Value::Number(42.0)]
+    );
+    Ok(())
+}
+
+#[test]
 fn plugin_executor_reads_server_info_from_vm_context() -> Result<()> {
     let runtime = PluginExecutor::with_runtime_state(
         Arc::from(vec![manifest("demo", &["lyra.server"])]),

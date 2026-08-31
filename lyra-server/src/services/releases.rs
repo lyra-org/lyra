@@ -25,6 +25,17 @@ use super::entities::{
     relations,
 };
 
+mod similarity;
+
+pub(crate) use similarity::{
+    DEFAULT_SIMILAR_RELEASE_LIMIT,
+    MAX_SIMILAR_RELEASE_LIMIT,
+    SimilarReleaseOptions,
+    accessible_library_ids_for_user,
+    similar,
+    similar_in_vm,
+};
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ReleaseIncludes {
     pub(crate) artists: bool,
