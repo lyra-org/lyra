@@ -44,6 +44,8 @@ type DataStoreJsonValue = datastore.JsonValue
 type ProviderCoverCandidate = metadata.ProviderCoverCandidate
 type ProviderCoverContext = metadata.ProviderCoverContext
 type ProviderCoverResult = metadata.ProviderCoverResult
+type SimilarReleaseContext = metadata.SimilarReleaseContext
+type SimilarReleasesResult = metadata.SimilarReleasesResult
 type LookupHintLibrary = text_helpers.LookupHintLibrary
 type LocalArtist = track_helpers.LocalArtist
 type LocalTrack = track_helpers.LocalTrack
@@ -367,6 +369,24 @@ for _, id_spec in id_specs do
 		unique = id_spec.unique,
 	}, BASE_URL .. "/" .. id_spec.id_type .. "/{id}")
 end
+
+provider:similar_releases({
+	require = {
+		all_of = { "ids.release_group_id" },
+	},
+}, function(ctx: SimilarReleaseContext): SimilarReleasesResult
+	return {
+		candidates = {
+			{
+				external_id = {
+					provider_id = "musicbrainz",
+					id_type = "release_group_id",
+					id_value = ctx.ids.release_group_id,
+				},
+			},
+		},
+	}
+end)
 
 local function release_cover_handler(ctx: ProviderCoverContext): ProviderCoverResult?
 	local cache_hit, cached_release_id = read_cached_cover_release_id(ctx)
