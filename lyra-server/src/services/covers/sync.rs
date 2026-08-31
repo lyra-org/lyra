@@ -32,13 +32,15 @@ use url::Url;
 
 use nanoid::nanoid;
 
-use crate::db::{
-    self,
-    Artist,
-    Cover,
-    ProviderConfig,
-    Release,
-    Track,
+use crate::{
+    db::{
+        self,
+        Artist,
+        Cover,
+        Release,
+        Track,
+    },
+    services::providers::enabled_provider_configs_by_priority,
 };
 
 use super::{
@@ -70,25 +72,6 @@ use super::{
 };
 
 const MAX_COVER_BYTES: usize = 20 * 1024 * 1024;
-
-fn sorted_enabled_providers(
-    mut providers: Vec<ProviderConfig>,
-    provider_filter: Option<&str>,
-) -> Vec<ProviderConfig> {
-    providers.retain(|provider| provider.enabled);
-    if let Some(provider_filter) = provider_filter
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        providers.retain(|provider| provider.provider_id == provider_filter);
-    }
-    providers.sort_by(|a, b| {
-        b.priority
-            .cmp(&a.priority)
-            .then(a.provider_id.cmp(&b.provider_id))
-    });
-    providers
-}
 
 fn extension_from_url(url: &str) -> Option<&'static str> {
     let parsed = Url::parse(url).ok()?;
@@ -210,7 +193,7 @@ pub(crate) async fn sync_release_cover_for_tracks(
 
     let (existing_cover, candidate_dirs, provider_contexts) = {
         let db_read = db.read().await;
-        let providers = db::providers::get(&db_read)?;
+        let sorted_providers = enabled_provider_configs_by_priority(&db_read, None)?;
         let library = library_for_release(&db_read, release_id)?;
         let existing_cover = resolve_cover_for_release(&db_read, release_id, tracks, paths)?;
         let configured_target_dir = configured_cover_dir_for_release(paths.covers_root, release_id);
@@ -220,13 +203,6 @@ pub(crate) async fn sync_release_cover_for_tracks(
             cover_dirs_for_release(&db_read, tracks, paths.library_root)?
         };
 
-        let mut sorted_providers = providers;
-        sorted_providers.retain(|provider| provider.enabled);
-        sorted_providers.sort_by(|a, b| {
-            b.priority
-                .cmp(&a.priority)
-                .then(a.provider_id.cmp(&b.provider_id))
-        });
         let mut provider_contexts = Vec::new();
         for provider in sorted_providers {
             let provider_ids =
@@ -362,7 +338,7 @@ pub(crate) async fn sync_artist_cover(
 
     let (existing_cover, candidate_dirs, provider_contexts) = {
         let db_read = db.read().await;
-        let providers = db::providers::get(&db_read)?;
+        let sorted_providers = enabled_provider_configs_by_priority(&db_read, provider_filter)?;
         let existing_cover = resolve_cover_for_artist_id(&db_read, artist_id, paths)?;
         let configured_target_dir = configured_cover_dir_for_artist(paths.covers_root, artist_id);
         let candidate_dirs = if let Some(ref configured_dir) = configured_target_dir {
@@ -375,7 +351,6 @@ pub(crate) async fn sync_artist_cover(
                 .collect()
         };
 
-        let sorted_providers = sorted_enabled_providers(providers, provider_filter);
         let mut provider_contexts = Vec::new();
         for provider in sorted_providers {
             let provider_ids =
@@ -653,8 +628,7 @@ pub(crate) async fn sync_release_covers_for_library(
         let db_read = db.read().await;
         let releases = db::releases::get(&db_read, library_id)?;
 
-        let sorted_providers =
-            sorted_enabled_providers(db::providers::get(&db_read)?, provider_filter);
+        let sorted_providers = enabled_provider_configs_by_priority(&db_read, provider_filter)?;
         if sorted_providers.is_empty() {
             return Ok(0);
         }
