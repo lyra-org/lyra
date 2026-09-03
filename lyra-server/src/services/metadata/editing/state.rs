@@ -35,7 +35,6 @@ use super::{
     },
 };
 
-#[derive(Clone)]
 pub(super) struct EntityState {
     pub(super) db_id: DbId,
     pub(super) public_id: String,

@@ -29,7 +29,6 @@ use super::{
         MetadataValueSource,
     },
     normalize::{
-        normalize_label_edits,
         normalize_provider_labels,
         normalized_set_value,
         validate_target,
@@ -79,7 +78,7 @@ fn inherited_value(
     }
 }
 
-pub(super) fn build_plan(
+pub(super) fn build_diff(
     db: &impl DbAccess,
     principal: &Principal,
     state: &EntityState,
@@ -91,11 +90,9 @@ pub(super) fn build_plan(
         ));
     }
 
-    let mut seen = BTreeSet::new();
-    let mut targets = BTreeMap::new();
     let mut fields = BTreeMap::new();
     for change in changes {
-        if !seen.insert(change.field) {
+        if fields.contains_key(&change.field) {
             return Err(MetadataEditingError::BadRequest(format!(
                 "duplicate metadata field '{}'",
                 change.field.as_str(),
@@ -103,10 +100,6 @@ pub(super) fn build_plan(
         }
         let before = state.field_state(change.field)?.clone();
         let (value, source) = match &change.edit {
-            MetadataEditOperation::Set { value } if change.field == MetadataField::Labels => (
-                normalize_label_edits(db, principal, value)?,
-                MetadataValueSource::Manual,
-            ),
             MetadataEditOperation::Set { value } => (
                 normalized_set_value(db, principal, state, change.field, value)?,
                 MetadataValueSource::Manual,
@@ -124,7 +117,6 @@ pub(super) fn build_plan(
                 (target, MetadataValueSource::Resolved)
             }
         };
-        targets.insert(change.field, value.clone());
         fields.insert(
             change.field,
             MetadataFieldDiff {
@@ -134,12 +126,12 @@ pub(super) fn build_plan(
             },
         );
     }
-    validate_target(state, &targets)?;
-
-    Ok(fields
+    let diff: Vec<MetadataFieldDiff> = fields
         .into_values()
         .filter(|diff| diff.before != diff.after)
-        .collect())
+        .collect();
+    validate_target(state, &diff)?;
+    Ok(diff)
 }
 
 pub(super) fn check_expected(

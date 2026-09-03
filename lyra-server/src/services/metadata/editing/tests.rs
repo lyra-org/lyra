@@ -70,50 +70,28 @@ fn inherit(field: MetadataField) -> MetadataChangeRequest {
     }
 }
 
-#[derive(Debug)]
-struct Previewed {
-    changes: Vec<MetadataChangeRequest>,
-    diff: Vec<MetadataFieldDiff>,
-}
-
 fn preview_edit(
     db: &DbAny,
     principal: &Principal,
     entity_id: DbId,
-    request: &MetadataPreviewRequest,
-) -> Result<Previewed, MetadataEditingError> {
-    let diff = preview(db, principal, entity_id, request)?;
-    Ok(Previewed {
-        changes: request.changes.clone(),
-        diff,
-    })
-}
-
-fn apply_preview(
-    db: &mut DbAny,
-    principal: &Principal,
-    entity_id: DbId,
-    preview: Previewed,
-) -> Result<MetadataSnapshot, MetadataEditingError> {
-    apply(
+    changes: Vec<MetadataChangeRequest>,
+) -> Result<MetadataApplyRequest, MetadataEditingError> {
+    let expected = preview(
         db,
         principal,
         entity_id,
-        &MetadataApplyRequest {
-            changes: preview.changes,
-            expected: preview.diff,
+        &MetadataPreviewRequest {
+            changes: changes.clone(),
         },
-    )
+    )?;
+    Ok(MetadataApplyRequest { changes, expected })
 }
 
 #[test]
-fn requests_reject_removed_contract_fields() {
+fn requests_deny_unknown_fields() {
     let change = json!({"field": "title", "operation": "set", "value": "Title"});
-    let diff = json!({
-        "field": "title",
-        "before": {"value": "Old", "source": "resolved"},
-        "after": {"value": "Title", "source": "manual"}
-    });
+    let field_state = json!({"value": "Title", "source": "manual"});
+    let diff = json!({"field": "title", "before": field_state, "after": field_state});
     assert!(serde_json::from_value::<MetadataPreviewRequest>(json!({"changes": [change]})).is_ok());
     assert!(
         serde_json::from_value::<MetadataApplyRequest>(json!({
@@ -122,54 +100,28 @@ fn requests_reject_removed_contract_fields() {
         }))
         .is_ok()
     );
+
+    let with_unexpected = |value: &Value| {
+        let mut value = value.clone();
+        value["unexpected"] = json!(true);
+        value
+    };
     assert!(
-        serde_json::from_value::<MetadataPreviewRequest>(json!({
-            "entity_type": "track",
-            "changes": [change]
-        }))
+        serde_json::from_value::<MetadataPreviewRequest>(with_unexpected(
+            &json!({"changes": [change]})
+        ))
         .is_err()
     );
     assert!(
-        serde_json::from_value::<MetadataApplyRequest>(json!({
-            "preview_id": "preview",
+        serde_json::from_value::<MetadataApplyRequest>(with_unexpected(&json!({
             "changes": [change],
             "expected": [diff]
-        }))
+        })))
         .is_err()
     );
-    assert!(
-        serde_json::from_value::<MetadataChangeRequest>(json!({
-            "field": "title",
-            "operation": "clear"
-        }))
-        .is_err()
-    );
-    assert!(
-        serde_json::from_value::<MetadataChangeRequest>(json!({
-            "field": "title",
-            "operation": "set",
-            "value": "Title",
-            "unexpected": true
-        }))
-        .is_err()
-    );
-    assert!(
-        serde_json::from_value::<MetadataFieldDiff>(json!({
-            "field": "title",
-            "before": {"value": "Old", "source": "resolved"},
-            "after": {"value": "Title", "source": "manual"},
-            "source_after": "manual"
-        }))
-        .is_err()
-    );
-    assert!(
-        serde_json::from_value::<FieldState>(json!({
-            "value": "Old",
-            "source": "resolved",
-            "manual": false
-        }))
-        .is_err()
-    );
+    assert!(serde_json::from_value::<MetadataChangeRequest>(with_unexpected(&change)).is_err());
+    assert!(serde_json::from_value::<MetadataFieldDiff>(with_unexpected(&diff)).is_err());
+    assert!(serde_json::from_value::<FieldState>(with_unexpected(&field_state)).is_err());
 }
 
 #[test]
@@ -178,16 +130,14 @@ fn preview_is_read_only_and_apply_persists_normalized_edit() -> anyhow::Result<(
     let principal = principal("user-1");
     let track_id = insert_track(&mut db, "Old title")?;
 
-    let preview = preview_edit(
+    let edit = preview_edit(
         &db,
         &principal,
         track_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(MetadataField::Title, json!("  New title  "))],
-        },
+        vec![set(MetadataField::Title, json!("  New title  "))],
     )?;
-    assert_eq!(preview.diff[0].after.value, json!("New title"));
-    let preview_json = serde_json::to_value(&preview.diff)?;
+    assert_eq!(edit.expected[0].after.value, json!("New title"));
+    let preview_json = serde_json::to_value(&edit.expected)?;
     let entry = &preview_json.as_array().expect("diff array")[0];
     assert_eq!(entry.as_object().expect("diff entry").len(), 3);
     assert_eq!(entry["field"], json!("title"));
@@ -206,7 +156,7 @@ fn preview_is_read_only_and_apply_persists_normalized_edit() -> anyhow::Result<(
         "Old title"
     );
 
-    let result = apply_preview(&mut db, &principal, track_id, preview)?;
+    let result = apply(&mut db, &principal, track_id, &edit)?;
     let result_json = serde_json::to_value(&result)?;
     assert!(result_json.get("entity_id").is_some());
     assert!(result_json.get("entity").is_none());
@@ -227,21 +177,19 @@ fn apply_rejects_a_field_changed_after_preview() -> anyhow::Result<()> {
     let mut db = new_test_db()?;
     let principal = principal("user-1");
     let track_id = insert_track(&mut db, "First")?;
-    let preview = preview_edit(
+    let edit = preview_edit(
         &db,
         &principal,
         track_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(MetadataField::Title, json!("Second"))],
-        },
+        vec![set(MetadataField::Title, json!("Second"))],
     )?;
 
     let mut concurrent = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
     concurrent.set_track_title("Concurrent".to_string());
     db::tracks::update(&mut db, &concurrent)?;
 
-    let error = apply_preview(&mut db, &principal, track_id, preview)
-        .expect_err("stale preview must conflict");
+    let error =
+        apply(&mut db, &principal, track_id, &edit).expect_err("stale preview must conflict");
     let MetadataEditingError::Conflict(current) = error else {
         panic!("expected a metadata conflict");
     };
@@ -259,14 +207,12 @@ fn apply_conflicts_with_an_empty_diff_when_the_edit_was_already_applied() -> any
     let other_user = principal("user-2");
     let principal = principal("user-1");
     let track_id = insert_track(&mut db, "First")?;
-    let request = MetadataPreviewRequest {
-        changes: vec![set(MetadataField::Title, json!("Second"))],
-    };
-    let preview = preview_edit(&db, &principal, track_id, &request)?;
-    let other = preview_edit(&db, &other_user, track_id, &request)?;
-    apply_preview(&mut db, &other_user, track_id, other)?;
+    let changes = vec![set(MetadataField::Title, json!("Second"))];
+    let edit = preview_edit(&db, &principal, track_id, changes.clone())?;
+    let other = preview_edit(&db, &other_user, track_id, changes)?;
+    apply(&mut db, &other_user, track_id, &other)?;
 
-    let error = apply_preview(&mut db, &principal, track_id, preview)
+    let error = apply(&mut db, &principal, track_id, &edit)
         .expect_err("an already applied edit must conflict");
     let MetadataEditingError::Conflict(current) = error else {
         panic!("expected a metadata conflict");
@@ -378,20 +324,18 @@ fn apply_revalidates_track_number_invariants_against_current_state() -> anyhow::
     track.set_track_total(3);
     db::tracks::update(&mut db, &track)?;
 
-    let preview = preview_edit(
+    let edit = preview_edit(
         &db,
         &principal,
         track_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(MetadataField::Track, json!(2))],
-        },
+        vec![set(MetadataField::Track, json!(2))],
     )?;
 
     let mut concurrent = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
     concurrent.set_track_total(1);
     db::tracks::update(&mut db, &concurrent)?;
 
-    let error = apply_preview(&mut db, &principal, track_id, preview)
+    let error = apply(&mut db, &principal, track_id, &edit)
         .expect_err("the current track_total must be revalidated");
     assert!(matches!(error, MetadataEditingError::BadRequest(_)));
     let stored = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
@@ -411,18 +355,16 @@ fn manual_clear_overrides_later_provider_values() -> anyhow::Result<()> {
     track.set_year(1999);
     db::tracks::update(&mut db, &track)?;
 
-    let preview = preview_edit(
+    let edit = preview_edit(
         &db,
         &principal,
         track_id,
-        &MetadataPreviewRequest {
-            changes: vec![
-                set(MetadataField::SortTitle, Value::Null),
-                set(MetadataField::Year, Value::Null),
-            ],
-        },
+        vec![
+            set(MetadataField::SortTitle, Value::Null),
+            set(MetadataField::Year, Value::Null),
+        ],
     )?;
-    apply_preview(&mut db, &principal, track_id, preview)?;
+    apply(&mut db, &principal, track_id, &edit)?;
 
     db::providers::upsert(
         &mut db,
@@ -462,9 +404,7 @@ fn set_accepts_null_and_empty_lists_only_for_clearable_fields() -> anyhow::Resul
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(MetadataField::Title, Value::Null)],
-        },
+        vec![set(MetadataField::Title, Value::Null)],
     )
     .expect_err("title cannot be cleared");
     let MetadataEditingError::BadRequest(message) = error else {
@@ -476,28 +416,35 @@ fn set_accepts_null_and_empty_lists_only_for_clearable_fields() -> anyhow::Resul
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(MetadataField::Genres, Value::Null)],
-        },
+        vec![set(MetadataField::Genres, Value::Null)],
     )
     .expect_err("list fields are cleared with []");
     assert!(matches!(error, MetadataEditingError::BadRequest(_)));
-
-    let preview = preview_edit(
+    let error = preview_edit(
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![
-                set(MetadataField::ReleaseType, Value::Null),
-                set(MetadataField::Genres, json!([])),
-                set(MetadataField::Labels, json!([])),
-                set(MetadataField::Credits, json!([])),
-            ],
-        },
+        vec![set(MetadataField::Labels, Value::Null)],
+    )
+    .expect_err("labels are cleared with []");
+    let MetadataEditingError::BadRequest(message) = error else {
+        panic!("expected bad request, got {error:?}");
+    };
+    assert!(message.contains("use [] to clear"));
+
+    let edit = preview_edit(
+        &db,
+        &principal,
+        release_id,
+        vec![
+            set(MetadataField::ReleaseType, Value::Null),
+            set(MetadataField::Genres, json!([])),
+            set(MetadataField::Labels, json!([])),
+            set(MetadataField::Credits, json!([])),
+        ],
     )?;
-    let after: HashMap<_, _> = preview
-        .diff
+    let after: HashMap<_, _> = edit
+        .expected
         .iter()
         .map(|entry| (entry.field, entry.after.value.clone()))
         .collect();
@@ -518,11 +465,9 @@ fn inherit_relinquishes_ownership_and_restores_resolved_value() -> anyhow::Resul
         &db,
         &principal,
         track_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(MetadataField::Title, json!("Manual"))],
-        },
+        vec![set(MetadataField::Title, json!("Manual"))],
     )?;
-    apply_preview(&mut db, &principal, track_id, manual)?;
+    apply(&mut db, &principal, track_id, &manual)?;
 
     db::providers::upsert(
         &mut db,
@@ -556,16 +501,14 @@ fn inherit_relinquishes_ownership_and_restores_resolved_value() -> anyhow::Resul
         &db,
         &principal,
         track_id,
-        &MetadataPreviewRequest {
-            changes: vec![inherit(MetadataField::Title)],
-        },
+        vec![inherit(MetadataField::Title)],
     )?;
-    assert_eq!(inherited.diff[0].after.value, json!("Resolved"));
+    assert_eq!(inherited.expected[0].after.value, json!("Resolved"));
     assert_eq!(
-        inherited.diff[0].after.source,
+        inherited.expected[0].after.source,
         MetadataValueSource::Resolved
     );
-    let result = apply_preview(&mut db, &principal, track_id, inherited)?;
+    let result = apply(&mut db, &principal, track_id, &inherited)?;
     assert_eq!(result.fields["title"].value, json!("Resolved"));
     assert!(
         result
@@ -608,22 +551,18 @@ fn inherit_graph_field_restores_provider_resolved_value() -> anyhow::Result<()> 
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(MetadataField::Genres, json!(["Manual"]))],
-        },
+        vec![set(MetadataField::Genres, json!(["Manual"]))],
     )?;
-    apply_preview(&mut db, &principal, release_id, manual)?;
+    apply(&mut db, &principal, release_id, &manual)?;
 
     let inherited = preview_edit(
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![inherit(MetadataField::Genres)],
-        },
+        vec![inherit(MetadataField::Genres)],
     )?;
-    assert_eq!(inherited.diff[0].after.value, json!(["Provider"]));
-    let result = apply_preview(&mut db, &principal, release_id, inherited)?;
+    assert_eq!(inherited.expected[0].after.value, json!(["Provider"]));
+    let result = apply(&mut db, &principal, release_id, &inherited)?;
     assert_eq!(result.fields["genres"].value, json!(["Provider"]));
     assert!(
         result
@@ -661,24 +600,20 @@ fn inherit_conflicts_when_provider_resolution_changes_after_preview() -> anyhow:
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(MetadataField::Genres, json!(["Manual"]))],
-        },
+        vec![set(MetadataField::Genres, json!(["Manual"]))],
     )?;
-    apply_preview(&mut db, &principal, release_id, manual)?;
+    apply(&mut db, &principal, release_id, &manual)?;
 
     let inherited = preview_edit(
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![inherit(MetadataField::Genres)],
-        },
+        vec![inherit(MetadataField::Genres)],
     )?;
-    assert_eq!(inherited.diff[0].after.value, json!(["First"]));
+    assert_eq!(inherited.expected[0].after.value, json!(["First"]));
     db::metadata::layers::upsert(&mut db, release_id, &provider_layer(&["Second"], 20))?;
 
-    let error = apply_preview(&mut db, &principal, release_id, inherited)
+    let error = apply(&mut db, &principal, release_id, &inherited)
         .expect_err("provider resolution changed after preview");
     let MetadataEditingError::Conflict(current) = error else {
         panic!("expected a metadata conflict");
@@ -749,22 +684,23 @@ fn label_edits_use_stable_label_identity() -> anyhow::Result<()> {
     })?;
     let second = db::labels::get_by_id(&db, second_label_id)?.expect("label exists");
 
-    let preview = preview_edit(
+    let edit = preview_edit(
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(
-                MetadataField::Labels,
-                json!([{
-                    "id": second.id,
-                    "catalog_number": "CAT-2"
-                }]),
-            )],
-        },
+        vec![set(
+            MetadataField::Labels,
+            json!([{
+                "id": second.id,
+                "catalog_number": "CAT-2"
+            }]),
+        )],
     )?;
-    assert_eq!(preview.diff[0].after.value[0]["name"], json!("Shared Name"));
-    apply_preview(&mut db, &principal, release_id, preview)?;
+    assert_eq!(
+        edit.expected[0].after.value[0]["name"],
+        json!("Shared Name")
+    );
+    apply(&mut db, &principal, release_id, &edit)?;
 
     let labels = db::labels::get_for_release(&db, release_id)?;
     assert_eq!(labels.len(), 1);
@@ -864,28 +800,24 @@ fn inherit_labels_restores_resolvable_provider_labels() -> anyhow::Result<()> {
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(
-                MetadataField::Labels,
-                json!([{"id": manual_label.id, "catalog_number": null}]),
-            )],
-        },
+        vec![set(
+            MetadataField::Labels,
+            json!([{"id": manual_label.id, "catalog_number": null}]),
+        )],
     )?;
-    apply_preview(&mut db, &principal, release_id, manual)?;
+    apply(&mut db, &principal, release_id, &manual)?;
 
     let inherited = preview_edit(
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![inherit(MetadataField::Labels)],
-        },
+        vec![inherit(MetadataField::Labels)],
     )?;
     assert_eq!(
-        inherited.diff[0].after.value[0]["id"],
+        inherited.expected[0].after.value[0]["id"],
         json!(provider_label.id)
     );
-    let result = apply_preview(&mut db, &principal, release_id, inherited)?;
+    let result = apply(&mut db, &principal, release_id, &inherited)?;
     assert_eq!(
         result.fields["labels"].value[0]["id"],
         json!(provider_label.id)
@@ -957,22 +889,18 @@ fn inherit_labels_does_not_fall_back_by_name_for_an_external_identity() -> anyho
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(
-                MetadataField::Labels,
-                json!([{"id": local_label.id, "catalog_number": null}]),
-            )],
-        },
+        vec![set(
+            MetadataField::Labels,
+            json!([{"id": local_label.id, "catalog_number": null}]),
+        )],
     )?;
-    apply_preview(&mut db, &principal, release_id, manual)?;
+    apply(&mut db, &principal, release_id, &manual)?;
 
     let error = preview_edit(
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![inherit(MetadataField::Labels)],
-        },
+        vec![inherit(MetadataField::Labels)],
     )
     .expect_err("an external identity must not resolve by name");
     let MetadataEditingError::BadRequest(message) = error else {
@@ -1050,14 +978,12 @@ fn unchanged_provider_refresh_rematerializes_a_manually_masked_label() -> anyhow
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(
-                MetadataField::Labels,
-                json!([{"id": manual_label.id, "catalog_number": null}]),
-            )],
-        },
+        vec![set(
+            MetadataField::Labels,
+            json!([{"id": manual_label.id, "catalog_number": null}]),
+        )],
     )?;
-    apply_preview(&mut db, &principal, release_id, manual)?;
+    apply(&mut db, &principal, release_id, &manual)?;
     assert!(db::labels::get_by_id(&db, provider_label_id)?.is_none());
 
     crate::services::metadata::layers::save_provider_layer(
@@ -1083,11 +1009,9 @@ fn unchanged_provider_refresh_rematerializes_a_manually_masked_label() -> anyhow
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![inherit(MetadataField::Labels)],
-        },
+        vec![inherit(MetadataField::Labels)],
     )?;
-    apply_preview(&mut db, &principal, release_id, inherited)?;
+    apply(&mut db, &principal, release_id, &inherited)?;
     let labels = db::labels::get_for_release(&db, release_id)?;
     assert_eq!(labels.len(), 1);
     assert_eq!(
@@ -1121,20 +1045,18 @@ fn label_disappearance_after_preview_is_rejected() -> anyhow::Result<()> {
             }],
         )
     })?;
-    let preview = preview_edit(
+    let edit = preview_edit(
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(
-                MetadataField::Labels,
-                json!([{"id": label.id, "catalog_number": null}]),
-            )],
-        },
+        vec![set(
+            MetadataField::Labels,
+            json!([{"id": label.id, "catalog_number": null}]),
+        )],
     )?;
     db.exec_mut(QueryBuilder::remove().ids(label_id).query())?;
 
-    let error = apply_preview(&mut db, &principal, release_id, preview)
+    let error = apply(&mut db, &principal, release_id, &edit)
         .expect_err("a disappeared label must be rejected");
     assert!(matches!(error, MetadataEditingError::BadRequest(_)));
     assert!(db::metadata::manual_overrides::get(&db, release_id)?.is_none());
@@ -1229,25 +1151,21 @@ fn inherited_label_disappearance_after_preview_is_rejected() -> anyhow::Result<(
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(
-                MetadataField::Labels,
-                json!([{"id": manual_label.id, "catalog_number": null}]),
-            )],
-        },
+        vec![set(
+            MetadataField::Labels,
+            json!([{"id": manual_label.id, "catalog_number": null}]),
+        )],
     )?;
-    apply_preview(&mut db, &principal, release_id, manual)?;
+    apply(&mut db, &principal, release_id, &manual)?;
     let inherited = preview_edit(
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![inherit(MetadataField::Labels)],
-        },
+        vec![inherit(MetadataField::Labels)],
     )?;
     db.exec_mut(QueryBuilder::remove().ids(provider_label_id).query())?;
 
-    let error = apply_preview(&mut db, &principal, release_id, inherited)
+    let error = apply(&mut db, &principal, release_id, &inherited)
         .expect_err("an inherited label disappearing after preview must be rejected");
     assert!(matches!(error, MetadataEditingError::BadRequest(_)));
     assert!(db::metadata::manual_overrides::owns_field(
@@ -1265,20 +1183,18 @@ fn credit_reference_disappearance_after_preview_is_rejected() -> anyhow::Result<
     let release_id = insert_release(&mut db, "Release")?;
     let artist_id = insert_artist(&mut db, "Temporary Artist")?;
     let artist = db::artists::get_by_id(&db, artist_id)?.expect("artist exists");
-    let preview = preview_edit(
+    let edit = preview_edit(
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(
-                MetadataField::Credits,
-                json!([{"artist_id": artist.id, "type": "artist", "detail": null}]),
-            )],
-        },
+        vec![set(
+            MetadataField::Credits,
+            json!([{"artist_id": artist.id, "type": "artist", "detail": null}]),
+        )],
     )?;
     db.exec_mut(QueryBuilder::remove().ids(artist_id).query())?;
 
-    let error = apply_preview(&mut db, &principal, release_id, preview)
+    let error = apply(&mut db, &principal, release_id, &edit)
         .expect_err("an artist disappearing after preview must be rejected");
     assert!(matches!(error, MetadataEditingError::BadRequest(_)));
     assert!(db::metadata::manual_overrides::get(&db, release_id)?.is_none());
@@ -1293,18 +1209,16 @@ fn graph_edits_store_only_ownership_markers() -> anyhow::Result<()> {
     let artist_id = insert_artist(&mut db, "Artist")?;
     let artist = db::artists::get_by_id(&db, artist_id)?.expect("artist exists");
 
-    let preview = preview_edit(
+    let edit = preview_edit(
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(
-                MetadataField::Credits,
-                json!([{"artist_id": artist.id, "type": "artist", "detail": null}]),
-            )],
-        },
+        vec![set(
+            MetadataField::Credits,
+            json!([{"artist_id": artist.id, "type": "artist", "detail": null}]),
+        )],
     )?;
-    apply_preview(&mut db, &principal, release_id, preview)?;
+    apply(&mut db, &principal, release_id, &edit)?;
 
     assert_eq!(credit_values(&db, release_id)?.len(), 1);
     let fields = db::metadata::manual_overrides::get(&db, release_id)?
@@ -1325,29 +1239,25 @@ fn inherit_graph_field_without_a_provider_value_clears_manual_edges() -> anyhow:
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(
-                MetadataField::Credits,
-                json!([{"artist_id": artist.id, "type": "artist", "detail": null}]),
-            )],
-        },
+        vec![set(
+            MetadataField::Credits,
+            json!([{"artist_id": artist.id, "type": "artist", "detail": null}]),
+        )],
     )?;
-    apply_preview(&mut db, &principal, release_id, manual)?;
+    apply(&mut db, &principal, release_id, &manual)?;
 
     let inherited = preview_edit(
         &db,
         &principal,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![inherit(MetadataField::Credits)],
-        },
+        vec![inherit(MetadataField::Credits)],
     )?;
-    assert_eq!(inherited.diff[0].after.value, json!([]));
+    assert_eq!(inherited.expected[0].after.value, json!([]));
     assert_eq!(
-        inherited.diff[0].after.source,
+        inherited.expected[0].after.source,
         MetadataValueSource::Resolved
     );
-    let result = apply_preview(&mut db, &principal, release_id, inherited)?;
+    let result = apply(&mut db, &principal, release_id, &inherited)?;
 
     assert!(credit_values(&db, release_id)?.is_empty());
     assert!(
@@ -1385,16 +1295,14 @@ fn referenced_artists_must_be_accessible_to_the_principal() -> anyhow::Result<()
         &db,
         &scoped,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(
-                MetadataField::Credits,
-                json!([{
-                    "artist_id": hidden_artist.id,
-                    "type": "artist",
-                    "detail": null
-                }]),
-            )],
-        },
+        vec![set(
+            MetadataField::Credits,
+            json!([{
+                "artist_id": hidden_artist.id,
+                "type": "artist",
+                "detail": null
+            }]),
+        )],
     )
     .expect_err("hidden artist reference must be rejected");
     assert!(matches!(error, MetadataEditingError::BadRequest(_)));
@@ -1402,23 +1310,21 @@ fn referenced_artists_must_be_accessible_to_the_principal() -> anyhow::Result<()
     scoped
         .accessible_library_ids
         .insert(hidden_library.id.clone());
-    let preview = preview_edit(
+    let edit = preview_edit(
         &db,
         &scoped,
         release_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(
-                MetadataField::Credits,
-                json!([{
-                    "artist_id": hidden_artist.id,
-                    "type": "artist",
-                    "detail": null
-                }]),
-            )],
-        },
+        vec![set(
+            MetadataField::Credits,
+            json!([{
+                "artist_id": hidden_artist.id,
+                "type": "artist",
+                "detail": null
+            }]),
+        )],
     )?;
     scoped.accessible_library_ids.remove(&hidden_library.id);
-    apply_preview(&mut db, &scoped, release_id, preview)
+    apply(&mut db, &scoped, release_id, &edit)
         .expect_err("artist access must be revalidated when the preview is applied");
     Ok(())
 }
@@ -1451,9 +1357,7 @@ fn hidden_relation_targets_are_neither_exposed_nor_replaceable() -> anyhow::Resu
         &db,
         &scoped,
         source_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(MetadataField::Relations, json!([]))],
-        },
+        vec![set(MetadataField::Relations, json!([]))],
     )
     .expect_err("relations with hidden targets must not be replaceable");
     assert!(matches!(error, MetadataEditingError::BadRequest(_)));
@@ -1486,20 +1390,18 @@ fn hidden_relation_added_after_preview_is_rejected_without_replacement() -> anyh
     let mut scoped = principal("scoped");
     scoped.permissions = vec![Permission::ManageMetadata];
     scoped.accessible_library_ids = HashSet::from([visible_library.id]);
-    let preview = preview_edit(
+    let edit = preview_edit(
         &db,
         &scoped,
         source_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(
-                MetadataField::Relations,
-                json!([{
-                    "target_artist_id": visible_target.id,
-                    "type": "member_of",
-                    "attributes": null
-                }]),
-            )],
-        },
+        vec![set(
+            MetadataField::Relations,
+            json!([{
+                "target_artist_id": visible_target.id,
+                "type": "member_of",
+                "attributes": null
+            }]),
+        )],
     )?;
     db::artists::relations::link(
         &mut db,
@@ -1509,7 +1411,7 @@ fn hidden_relation_added_after_preview_is_rejected_without_replacement() -> anyh
         Some("hidden detail".to_string()),
     )?;
 
-    let error = apply_preview(&mut db, &scoped, source_id, preview)
+    let error = apply(&mut db, &scoped, source_id, &edit)
         .expect_err("a newly hidden relation must be rejected");
     assert!(matches!(error, MetadataEditingError::BadRequest(_)));
     let relations = db::artists::relations::get_relations_from(&db, source_id, None)?;
@@ -1555,12 +1457,10 @@ fn hidden_label_ids_are_rejected_without_disclosing_their_names() -> anyhow::Res
         &db,
         &scoped,
         visible_release_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(
-                MetadataField::Labels,
-                json!([{"id": label.id, "catalog_number": null}]),
-            )],
-        },
+        vec![set(
+            MetadataField::Labels,
+            json!([{"id": label.id, "catalog_number": null}]),
+        )],
     )
     .expect_err("hidden label must not be accepted");
     let MetadataEditingError::BadRequest(message) = error else {
@@ -1605,20 +1505,18 @@ fn label_access_loss_after_preview_is_rejected() -> anyhow::Result<()> {
     scoped.permissions = vec![Permission::ManageMetadata];
     scoped.accessible_library_ids =
         HashSet::from([target_library.id.clone(), source_library.id.clone()]);
-    let preview = preview_edit(
+    let edit = preview_edit(
         &db,
         &scoped,
         target_release_id,
-        &MetadataPreviewRequest {
-            changes: vec![set(
-                MetadataField::Labels,
-                json!([{"id": label.id, "catalog_number": null}]),
-            )],
-        },
+        vec![set(
+            MetadataField::Labels,
+            json!([{"id": label.id, "catalog_number": null}]),
+        )],
     )?;
     scoped.accessible_library_ids.remove(&source_library.id);
 
-    let error = apply_preview(&mut db, &scoped, target_release_id, preview)
+    let error = apply(&mut db, &scoped, target_release_id, &edit)
         .expect_err("label access must be revalidated at apply");
     assert!(matches!(error, MetadataEditingError::BadRequest(_)));
     assert!(db::labels::get_for_release(&db, target_release_id)?.is_empty());

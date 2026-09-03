@@ -29,6 +29,7 @@ use super::{
         MetadataCreditValue,
         MetadataEntityType,
         MetadataField,
+        MetadataFieldDiff,
         MetadataLabelEditValue,
         MetadataLabelValue,
         MetadataRelationValue,
@@ -155,7 +156,7 @@ fn finish_normalized_labels(
     Ok(serde_json::to_value(labels)?)
 }
 
-pub(super) fn normalize_label_edits(
+fn normalize_label_edits(
     db: &impl DbAccess,
     principal: &Principal,
     value: &Value,
@@ -251,26 +252,18 @@ fn require_artist_id(
     public_id: &str,
     field: MetadataField,
 ) -> Result<DbId, MetadataEditingError> {
-    let db_id = db::lookup::find_node_id_by_id(db, public_id)?.ok_or_else(|| {
+    let unknown = || {
         MetadataEditingError::BadRequest(format!(
             "field '{}' references unknown artist '{}'",
             field.as_str(),
             public_id,
         ))
-    })?;
-    if db::artists::get_by_id(db, db_id)?.is_none() {
-        return Err(MetadataEditingError::BadRequest(format!(
-            "field '{}' reference '{}' is not an artist",
-            field.as_str(),
-            public_id,
-        )));
-    }
-    if !access::artist_accessible(db, principal, db_id)? {
-        return Err(MetadataEditingError::BadRequest(format!(
-            "field '{}' references unknown artist '{}'",
-            field.as_str(),
-            public_id,
-        )));
+    };
+    let db_id = db::lookup::find_node_id_by_id(db, public_id)?.ok_or_else(unknown)?;
+    if db::artists::get_by_id(db, db_id)?.is_none()
+        || !access::artist_accessible(db, principal, db_id)?
+    {
+        return Err(unknown());
     }
     Ok(db_id)
 }
@@ -403,9 +396,7 @@ pub(super) fn normalized_set_value(
             Ok(Value::String(normalized))
         }
         MetadataField::Genres => normalize_genres(value),
-        MetadataField::Labels => Err(MetadataEditingError::Internal(anyhow::anyhow!(
-            "label edits require identity-aware normalization"
-        ))),
+        MetadataField::Labels => normalize_label_edits(db, principal, value),
         MetadataField::Credits => normalize_credits(db, principal, value),
         MetadataField::Year => normalize_positive_u32(value, field, 9999),
         MetadataField::Disc
@@ -429,7 +420,7 @@ fn optional_u32(fields: &BTreeMap<MetadataField, Value>, field: MetadataField) -
 
 pub(super) fn validate_target(
     state: &EntityState,
-    targets: &BTreeMap<MetadataField, Value>,
+    diff: &[MetadataFieldDiff],
 ) -> Result<(), MetadataEditingError> {
     if state.entity_type != MetadataEntityType::Track {
         return Ok(());
@@ -439,8 +430,8 @@ pub(super) fn validate_target(
         .iter()
         .map(|(field, state)| (*field, state.value.clone()))
         .collect();
-    for (field, value) in targets {
-        fields.insert(*field, value.clone());
+    for entry in diff {
+        fields.insert(entry.field, entry.after.value.clone());
     }
     if let (Some(disc), Some(total)) = (
         optional_u32(&fields, MetadataField::Disc),
