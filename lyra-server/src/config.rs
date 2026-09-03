@@ -177,7 +177,7 @@ pub(crate) struct DbConfig {
 
 #[derive(Clone, Deserialize)]
 pub(crate) struct AuthConfig {
-    #[serde(default)]
+    #[serde(default = "default_auth_enabled")]
     pub(crate) enabled: bool,
     #[serde(default = "default_allow_default_login_when_disabled")]
     pub(crate) allow_default_login_when_disabled: bool,
@@ -219,7 +219,7 @@ impl Default for DbConfig {
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: default_auth_enabled(),
             allow_default_login_when_disabled: default_allow_default_login_when_disabled(),
             session_ttl_seconds: default_session_ttl_seconds(),
         }
@@ -278,6 +278,10 @@ fn default_login_rate_limit_per_minute() -> u32 {
 
 fn default_login_rate_limit_burst() -> u32 {
     3
+}
+
+fn default_auth_enabled() -> bool {
+    true
 }
 
 fn default_allow_default_login_when_disabled() -> bool {
@@ -865,6 +869,15 @@ mod tests {
             config.covers_path.as_deref(),
             Some(std::path::Path::new("/srv/covers"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn partial_auth_block_keeps_auth_enabled() -> anyhow::Result<()> {
+        let config: Config = serde_json::from_str(r#"{"auth": {"session_ttl_seconds": 60}}"#)?;
+
+        assert!(config.auth.enabled);
+        assert_eq!(config.auth.session_ttl_seconds, 60);
         Ok(())
     }
 
