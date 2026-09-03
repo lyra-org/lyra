@@ -113,7 +113,6 @@ type Config = {
   auth?: {
     enabled?: boolean; // default true
     allow_default_login_when_disabled?: boolean; // default true
-    default_username?: string; // default "default"
     session_ttl_seconds?: number; // u64, default 2592000
   };
 

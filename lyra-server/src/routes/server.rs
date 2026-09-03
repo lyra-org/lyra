@@ -34,8 +34,7 @@ async fn get_server_info() -> Result<Json<ServerInfoResponse>, AppError> {
         db::server::get(&db)?.ok_or_else(|| AppError::not_found("server info not initialized"))?;
 
     let config = STATE.config.get();
-    let default_username = &config.auth.default_username;
-    let setup_complete = db::roles::has_non_default_admin(&db, default_username)?;
+    let setup_complete = db::roles::has_non_default_admin(&db)?;
 
     Ok(Json(ServerInfoResponse {
         server_id: info.id,

@@ -65,6 +65,7 @@ use crate::{
     services::auth::{
         AuthCredential,
         AuthError,
+        DEFAULT_USERNAME,
         ResolvedAuth,
         api_keys,
         login_with_password,
@@ -313,10 +314,10 @@ async fn create_user(
     Json(user): Json<UserRequest>,
 ) -> Result<(StatusCode, Json<PublicUser>), AppError> {
     let normalized_username = validate_username(&user.username)?;
-    if normalized_username == STATE.config.get().auth.default_username.to_lowercase() {
+    if normalized_username == DEFAULT_USERNAME {
         return Err(AppError::bad_request(format!(
             "username '{}' is reserved",
-            STATE.config.get().auth.default_username
+            DEFAULT_USERNAME
         )));
     }
 
@@ -331,8 +332,7 @@ async fn create_user(
 
     let mut db = STATE.db.write().await;
 
-    let default_username = &STATE.config.get().auth.default_username;
-    let has_admin = db::roles::has_non_default_admin(&db, default_username)?;
+    let has_admin = db::roles::has_non_default_admin(&db)?;
 
     let role_name = if has_admin {
         let principal =
@@ -488,7 +488,7 @@ async fn update_role(
     let current_is_admin = db::roles::has_admin_role(&db, user_db_id)?;
 
     if current_is_admin && !target_has_admin {
-        if user.username == STATE.config.get().auth.default_username.to_lowercase() {
+        if user.username == DEFAULT_USERNAME {
             return Err(AppError::bad_request("cannot demote the default user"));
         }
         if user_db_id == principal.user_db_id {
@@ -605,13 +605,12 @@ async fn login_user(
 ) -> Result<Json<LoginResponse>, AppError> {
     let config = STATE.config.get();
     if !config.auth.enabled {
-        let default_username = config.auth.default_username.to_lowercase();
         if !config.auth.allow_default_login_when_disabled {
             return Err(AppError::forbidden(
                 "password login is disabled because authentication is disabled",
             ));
         }
-        if body.username.trim().to_lowercase() != default_username {
+        if body.username.trim().to_lowercase() != DEFAULT_USERNAME {
             return Err(AppError::forbidden(
                 "password login for non-default users is disabled because authentication is disabled",
             ));

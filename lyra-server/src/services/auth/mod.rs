@@ -44,6 +44,10 @@ static DUMMY_PASSWORD_HASH: LazyLock<String> = LazyLock::new(|| {
         .to_string()
 });
 
+/// Username of the built-in default user, promoted to admin on every boot.
+/// Already lowercase, so it compares directly against stored usernames.
+pub(crate) const DEFAULT_USERNAME: &str = "default";
+
 pub(crate) mod access;
 pub(crate) mod api_keys;
 pub(crate) mod media_tokens;
@@ -438,21 +442,14 @@ pub(crate) async fn resolve_auth_from_bearer(
 }
 
 async fn resolve_default_principal() -> AuthResult<Principal> {
-    let username = STATE.config.get().auth.default_username.to_lowercase();
+    let username = DEFAULT_USERNAME;
 
     let db = STATE.db.read().await;
-    let user = db::users::get_by_username(&db, &username)?.ok_or_else(|| {
-        anyhow::anyhow!(
-            "default user '{}' does not exist",
-            STATE.config.get().auth.default_username
-        )
-    })?;
-    let user_db_id = user.db_id.ok_or_else(|| {
-        anyhow::anyhow!(
-            "default user '{}' has no db_id",
-            STATE.config.get().auth.default_username
-        )
-    })?;
+    let user = db::users::get_by_username(&db, username)?
+        .ok_or_else(|| anyhow::anyhow!("default user '{}' does not exist", DEFAULT_USERNAME))?;
+    let user_db_id = user
+        .db_id
+        .ok_or_else(|| anyhow::anyhow!("default user '{}' has no db_id", DEFAULT_USERNAME))?;
 
     Ok(resolve_principal(&db, user_db_id, user.id, user.username))
 }
@@ -501,20 +498,15 @@ pub(crate) async fn login_with_password(
             return Ok(None);
         }
 
-        let default_username = STATE.config.get().auth.default_username.to_lowercase();
+        let default_username = DEFAULT_USERNAME;
         if username.to_lowercase() != default_username {
             return Ok(None);
         }
 
         let db = STATE.db.read().await;
-        let user = db::users::get_by_username(&db, &default_username)
+        let user = db::users::get_by_username(&db, default_username)
             .map_err(AuthError::from)?
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "default user '{}' does not exist",
-                    STATE.config.get().auth.default_username
-                )
-            })
+            .ok_or_else(|| anyhow::anyhow!("default user '{}' does not exist", DEFAULT_USERNAME))
             .map_err(AuthError::from)?;
 
         let user_db_id = user
@@ -604,15 +596,14 @@ pub(crate) async fn resolve_optional_auth(headers: &HeaderMap) -> AuthResult<Opt
 pub(crate) async fn ensure_default_user(config: &Config) -> anyhow::Result<()> {
     {
         let mut db_write = STATE.db.write().await;
-        let user_db_id =
-            db::users::ensure_default_user(&mut db_write, &config.auth.default_username)?;
+        let user_db_id = db::users::ensure_default_user(&mut db_write)?;
         db::roles::ensure_builtin_roles(&mut db_write)?;
         db::roles::ensure_user_has_role(&mut db_write, user_db_id, db::roles::BUILTIN_ADMIN_ROLE)?;
     }
     let _ = &*DUMMY_PASSWORD_HASH;
     if !config.auth.enabled {
         tracing::warn!(
-            default_user = %config.auth.default_username,
+            default_user = DEFAULT_USERNAME,
             "authentication is disabled; all requests have admin privileges — do not use in production"
         );
     }
@@ -982,10 +973,7 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("default auth should resolve"))?;
 
         assert_eq!(auth.credential, AuthCredential::Default);
-        assert_eq!(
-            auth.principal.username,
-            STATE.config.get().auth.default_username.to_lowercase()
-        );
+        assert_eq!(auth.principal.username, DEFAULT_USERNAME);
 
         Ok(())
     }

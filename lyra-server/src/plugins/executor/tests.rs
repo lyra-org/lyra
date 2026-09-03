@@ -30,7 +30,6 @@ fn default_auth_capabilities() -> crate::plugins::auth::AuthCapabilities {
     crate::plugins::auth::AuthCapabilities {
         enabled: false,
         allow_default_login_when_disabled: true,
-        default_username: "default".to_string(),
     }
 }
 

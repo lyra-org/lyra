@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use crate::services::auth::DEFAULT_USERNAME;
 use agdb::{
     CountComparison,
     DbAny,
@@ -300,11 +301,10 @@ pub(crate) fn count_admins(db: &DbAny) -> anyhow::Result<usize> {
     Ok(get_admin_users(db)?.len())
 }
 
-pub(crate) fn has_non_default_admin(db: &DbAny, default_username: &str) -> anyhow::Result<bool> {
-    let default_lower = default_username.to_lowercase();
+pub(crate) fn has_non_default_admin(db: &DbAny) -> anyhow::Result<bool> {
     Ok(get_admin_users(db)?
         .iter()
-        .any(|user| user.username != default_lower))
+        .any(|user| user.username != DEFAULT_USERNAME))
 }
 
 pub(crate) fn ensure_builtin_roles(db: &mut DbAny) -> anyhow::Result<()> {
@@ -504,13 +504,13 @@ mod tests {
         let mut db = new_test_db()?;
         ensure_builtin_roles(&mut db)?;
 
-        let default_id = users::ensure_default_user(&mut db, "default")?;
+        let default_id = users::ensure_default_user(&mut db)?;
         ensure_user_has_role(&mut db, default_id, "admin")?;
-        assert!(!has_non_default_admin(&db, "default")?);
+        assert!(!has_non_default_admin(&db)?);
 
         let alice = users::create(&mut db, &test_user("alice")?)?;
         ensure_user_has_role(&mut db, alice, "admin")?;
-        assert!(has_non_default_admin(&db, "default")?);
+        assert!(has_non_default_admin(&db)?);
 
         Ok(())
     }
@@ -575,7 +575,7 @@ mod tests {
         let mut db = new_test_db()?;
         ensure_builtin_roles(&mut db)?;
 
-        let default_id = users::ensure_default_user(&mut db, "default")?;
+        let default_id = users::ensure_default_user(&mut db)?;
         ensure_user_has_role(&mut db, default_id, "admin")?;
 
         let custom_admin_role = Role {
@@ -589,7 +589,7 @@ mod tests {
         let alice = users::create(&mut db, &test_user("alice")?)?;
         assign_role_to_user(&mut db, alice, custom_admin_role_id)?;
 
-        assert!(has_non_default_admin(&db, "default")?);
+        assert!(has_non_default_admin(&db)?);
         Ok(())
     }
 
