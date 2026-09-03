@@ -115,7 +115,7 @@ async fn apply_entity_metadata(
 #[cfg(feature = "docgen")]
 fn get_entity_metadata_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get editable entity metadata").description(
-        "Returns the canonical editable metadata projection for a release, track, or artist. The keys in `fields` are the authoritative editable inventory; `manual_fields` is the manually owned subset, and every other returned field is resolved. Omitted fields are unavailable. Requires ManageMetadata.",
+        "Returns the canonical editable metadata projection for a release, track, or artist. The keys in `fields` are the authoritative editable inventory; each entry carries the current `value` and its `source`, `manual` when the field is manually owned and `resolved` otherwise. Omitted fields are unavailable. Requires ManageMetadata.",
     )
 }
 

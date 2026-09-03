@@ -26,6 +26,7 @@ use super::{
     EditPlan,
     MetadataEditingError,
     model::{
+        FieldState,
         MetadataCreditValue,
         MetadataEntityType,
         MetadataField,
@@ -110,17 +111,14 @@ fn apply_release_fields(
     Ok(())
 }
 
-fn reference_conflict(
-    field: MetadataField,
-    expected: &Value,
-    source: MetadataValueSource,
-) -> MetadataEditingError {
+fn reference_conflict(field: MetadataField, expected: &FieldState) -> MetadataEditingError {
     MetadataEditingError::Conflict(vec![MetadataFieldConflict {
         field,
         expected: expected.clone(),
-        current: Value::Null,
-        expected_source: source,
-        current_source: source,
+        current: FieldState {
+            value: Value::Null,
+            source: expected.source,
+        },
     }])
 }
 
@@ -129,15 +127,14 @@ fn resolve_artist_reference(
     principal: &Principal,
     public_id: &str,
     field: MetadataField,
-    expected: &Value,
-    source: MetadataValueSource,
+    expected: &FieldState,
 ) -> Result<DbId, MetadataEditingError> {
     let db_id = db::lookup::find_node_id_by_id(db, public_id)?
-        .ok_or_else(|| reference_conflict(field, expected, source))?;
+        .ok_or_else(|| reference_conflict(field, expected))?;
     if db::artists::get_by_id(db, db_id)?.is_none()
         || !access::artist_accessible(db, principal, db_id)?
     {
-        return Err(reference_conflict(field, expected, source));
+        return Err(reference_conflict(field, expected));
     }
     Ok(db_id)
 }
@@ -150,21 +147,21 @@ pub(super) fn prepare_references(
 ) -> Result<PreparedReferences, MetadataEditingError> {
     let mut prepared = PreparedReferences::default();
     if let Some(planned) = plan.fields.get(&MetadataField::Labels) {
-        let value = &planned.after;
-        let source = planned.source_after;
-        let labels: Vec<MetadataLabelValue> = serde_json::from_value(value.clone())?;
+        let after = &planned.after;
+        let labels: Vec<MetadataLabelValue> = serde_json::from_value(after.value.clone())?;
         let mut inputs = Vec::with_capacity(labels.len());
         for label in labels {
             let label_id = db::lookup::find_node_id_by_id(db, &label.id)?
-                .ok_or_else(|| reference_conflict(MetadataField::Labels, value, source))?;
+                .ok_or_else(|| reference_conflict(MetadataField::Labels, after))?;
             let stored = db::labels::get_by_id(db, label_id)?
-                .ok_or_else(|| reference_conflict(MetadataField::Labels, value, source))?;
+                .ok_or_else(|| reference_conflict(MetadataField::Labels, after))?;
             if stored.id != label.id || stored.name != label.name {
-                return Err(reference_conflict(MetadataField::Labels, value, source));
+                return Err(reference_conflict(MetadataField::Labels, after));
             }
-            if source == MetadataValueSource::Manual && !label_accessible(db, principal, label_id)?
+            if after.source == MetadataValueSource::Manual
+                && !label_accessible(db, principal, label_id)?
             {
-                return Err(reference_conflict(MetadataField::Labels, value, source));
+                return Err(reference_conflict(MetadataField::Labels, after));
             }
             inputs.push(db::labels::LabelLinkInput {
                 label_id,
@@ -174,9 +171,8 @@ pub(super) fn prepare_references(
         prepared.labels = Some(inputs);
     }
     if let Some(planned) = plan.fields.get(&MetadataField::Credits) {
-        let value = &planned.after;
-        let source = planned.source_after;
-        let credits: Vec<MetadataCreditValue> = serde_json::from_value(value.clone())?;
+        let after = &planned.after;
+        let credits: Vec<MetadataCreditValue> = serde_json::from_value(after.value.clone())?;
         let mut inputs = Vec::with_capacity(credits.len());
         for credit in credits {
             inputs.push(db::credits::CreditLinkInput {
@@ -185,8 +181,7 @@ pub(super) fn prepare_references(
                     principal,
                     &credit.artist_id,
                     MetadataField::Credits,
-                    value,
-                    source,
+                    after,
                 )?,
                 credit_type: credit.credit_type,
                 detail: credit.detail,
@@ -195,9 +190,8 @@ pub(super) fn prepare_references(
         prepared.credits = Some(inputs);
     }
     if let Some(planned) = plan.fields.get(&MetadataField::Relations) {
-        let value = &planned.after;
-        let source = planned.source_after;
-        let relations: Vec<MetadataRelationValue> = serde_json::from_value(value.clone())?;
+        let after = &planned.after;
+        let relations: Vec<MetadataRelationValue> = serde_json::from_value(after.value.clone())?;
         let mut inputs = Vec::with_capacity(relations.len());
         for relation in relations {
             let target_artist_id = resolve_artist_reference(
@@ -205,11 +199,10 @@ pub(super) fn prepare_references(
                 principal,
                 &relation.target_artist_id,
                 MetadataField::Relations,
-                value,
-                source,
+                after,
             )?;
             if target_artist_id == state.db_id {
-                return Err(reference_conflict(MetadataField::Relations, value, source));
+                return Err(reference_conflict(MetadataField::Relations, after));
             }
             inputs.push(db::artists::relations::ArtistRelationLinkInput {
                 target_artist_id,
