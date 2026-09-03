@@ -247,6 +247,7 @@ pub fn outbound_user_agent() -> String {
 }
 
 pub async fn run_server(capture_path: Option<String>) -> Result<()> {
+    let _tracing_guard = services::startup::init_tracing();
     let config = load_config()?;
     // Bind first: a port collision with a running server must fail fast
     // instead of blocking on that server's DB process lock.
@@ -290,6 +291,7 @@ pub async fn run_plugins_add(url: &str, git_ref: Option<&str>) -> Result<()> {
 /// Force-compact the DB from the CLI. Reserves the configured port first, opens
 /// in `DbFile` regardless of `config.kind`, and skips schema init.
 pub async fn run_db_optimize() -> Result<()> {
+    let _tracing_guard = services::startup::init_tracing();
     let config = load_config()?;
     if matches!(config.db.kind, config::DbKind::Memory) {
         anyhow::bail!(
@@ -297,9 +299,17 @@ pub async fn run_db_optimize() -> Result<()> {
         );
     }
 
+    let db_path = config.db.path.clone();
+    if !db_path.is_file() {
+        anyhow::bail!(
+            "nothing to optimize: no database file at {}",
+            db_path.display()
+        );
+    }
+    tracing::info!(path = %db_path.display(), "optimizing db");
+
     let _lock_guard =
         db::process_lock::acquire(&config.db, db::process_lock::LockMode::NonBlocking)?;
-    let db_path = config.db.path.clone();
 
     // After the open: WAL recovery may have grown the file before optimize runs.
     let mut db = db::bootstrap::open(config::DbKind::File, db_path.to_string_lossy().as_ref())?;

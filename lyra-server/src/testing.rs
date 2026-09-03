@@ -97,34 +97,36 @@ pub async fn runtime_test_lock() -> MutexGuard<'static, ()> {
 /// [`runtime_test_lock`].
 #[cfg(test)]
 pub(crate) fn init_default_test_state() -> anyhow::Result<()> {
-    STATE.initialize(Config::default())
+    STATE.initialize(memory_db_config()?)
 }
 
-pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Result<()> {
+/// Default config backed by a uniquely named in-memory DB so tests never
+/// touch the data directory or any on-disk database.
+fn memory_db_config() -> anyhow::Result<Config> {
     let unique_db_name = format!(
         "lyra-harmony-test-{}-{}",
         std::process::id(),
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
     );
+    Ok(Config {
+        db: config::DbConfig {
+            kind: config::DbKind::Memory,
+            path: PathBuf::from(unique_db_name),
+        },
+        ..Config::default()
+    })
+}
+
+pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Result<()> {
     let config = Config {
         port: 0,
-        published_url: None,
-        cors: config::CorsConfig::default(),
-        rate_limit: config::RateLimitConfig::default(),
         library: Some(config::LibraryConfig {
             path: Some(library.directory.clone()),
             name: None,
             language: library.language.clone(),
             country: library.country.clone(),
         }),
-        covers_path: None,
-        db: config::DbConfig {
-            kind: config::DbKind::Memory,
-            path: PathBuf::from(unique_db_name),
-        },
-        auth: config::AuthConfig::default(),
-        sync: config::SyncConfig::default(),
-        hls: config::HlsConfig::default(),
+        ..memory_db_config()?
     };
 
     STATE.initialize(config)?;

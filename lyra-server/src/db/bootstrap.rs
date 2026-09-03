@@ -155,18 +155,11 @@ pub(crate) fn initialize(db: &mut DbAny) -> anyhow::Result<()> {
 pub(crate) fn create(config: &DbConfig) -> anyhow::Result<Created> {
     let lock = process_lock::acquire(config, LockMode::Blocking)?;
     let db_path = config.path.to_string_lossy();
-    if !matches!(config.kind, DbKind::Memory) {
-        tracing::info!(
-            path = %config.path.display(),
-            kind = kind_label(config.kind),
-            "opening db"
-        );
-    } else {
-        tracing::debug!(
-            path = %config.path.display(),
-            "opening in-memory db"
-        );
-    }
+    tracing::info!(
+        path = %config.path.display(),
+        kind = kind_label(config.kind),
+        "opening db"
+    );
     let mut db = open(config.kind, db_path.as_ref())?;
     initialize(&mut db)?;
     optimize_storage(&mut db, config);

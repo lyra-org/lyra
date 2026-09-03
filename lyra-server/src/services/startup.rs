@@ -49,8 +49,6 @@ pub(crate) async fn bind_configured_listener(port: u16) -> Result<TcpListener> {
 }
 
 pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListener) -> Result<()> {
-    let _tracing_guard = init_tracing();
-
     let capture_mode = capture_path.is_some();
     let shutdown_token = services::shutdown::reset();
     let config = STATE.config.get();
@@ -140,7 +138,7 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
     Ok(())
 }
 
-fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
+pub(crate) fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     // Non-blocking: a plugin warn-loop can't stall the scheduler on sync stderr.
     let (non_blocking, guard) = tracing_appender::non_blocking(std::io::stderr());
 
