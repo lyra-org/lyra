@@ -60,13 +60,6 @@ fn set(field: MetadataField, value: Value) -> MetadataChangeRequest {
     }
 }
 
-fn clear(field: MetadataField) -> MetadataChangeRequest {
-    MetadataChangeRequest {
-        field,
-        edit: MetadataEditOperation::Clear,
-    }
-}
-
 fn inherit(field: MetadataField) -> MetadataChangeRequest {
     MetadataChangeRequest {
         field,
@@ -288,7 +281,10 @@ fn manual_clear_overrides_later_provider_values() -> anyhow::Result<()> {
         &principal,
         track_id,
         &MetadataPreviewRequest {
-            changes: vec![clear(MetadataField::SortTitle), clear(MetadataField::Year)],
+            changes: vec![
+                set(MetadataField::SortTitle, Value::Null),
+                set(MetadataField::Year, Value::Null),
+            ],
         },
     )?;
     apply_preview(&mut db, &principal, track_id, preview)?;
@@ -318,6 +314,62 @@ fn manual_clear_overrides_later_provider_values() -> anyhow::Result<()> {
     let stored = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
     assert_eq!(stored.sort_title, None);
     assert_eq!(stored.year, None);
+    Ok(())
+}
+
+#[test]
+fn set_accepts_null_and_empty_lists_only_for_clearable_fields() -> anyhow::Result<()> {
+    let mut db = new_test_db()?;
+    let principal = principal("user-1");
+    let release_id = insert_release(&mut db, "Release")?;
+
+    let error = preview(
+        &db,
+        &principal,
+        release_id,
+        &MetadataPreviewRequest {
+            changes: vec![set(MetadataField::Title, Value::Null)],
+        },
+    )
+    .expect_err("title cannot be cleared");
+    let MetadataEditingError::BadRequest(message) = error else {
+        panic!("expected bad request, got {error:?}");
+    };
+    assert!(message.contains("cannot be cleared"));
+
+    let error = preview(
+        &db,
+        &principal,
+        release_id,
+        &MetadataPreviewRequest {
+            changes: vec![set(MetadataField::Genres, Value::Null)],
+        },
+    )
+    .expect_err("list fields are cleared with []");
+    assert!(matches!(error, MetadataEditingError::BadRequest(_)));
+
+    let preview = preview(
+        &db,
+        &principal,
+        release_id,
+        &MetadataPreviewRequest {
+            changes: vec![
+                set(MetadataField::ReleaseType, Value::Null),
+                set(MetadataField::Genres, json!([])),
+                set(MetadataField::Labels, json!([])),
+                set(MetadataField::Credits, json!([])),
+            ],
+        },
+    )?;
+    let after: HashMap<_, _> = preview
+        .diff
+        .iter()
+        .map(|entry| (entry.field, entry.after.clone()))
+        .collect();
+    assert_eq!(after[&MetadataField::ReleaseType], Value::Null);
+    assert_eq!(after[&MetadataField::Genres], json!([]));
+    assert_eq!(after[&MetadataField::Labels], json!([]));
+    assert_eq!(after[&MetadataField::Credits], json!([]));
     Ok(())
 }
 

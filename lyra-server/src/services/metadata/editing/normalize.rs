@@ -367,6 +367,21 @@ pub(super) fn normalized_set_value(
     field: MetadataField,
     value: &Value,
 ) -> Result<Value, MetadataEditingError> {
+    if value.is_null() {
+        return match field {
+            MetadataField::Title | MetadataField::Name => Err(MetadataEditingError::BadRequest(
+                format!("field '{}' cannot be cleared", field.as_str()),
+            )),
+            MetadataField::Genres
+            | MetadataField::Labels
+            | MetadataField::Credits
+            | MetadataField::Relations => Err(MetadataEditingError::BadRequest(format!(
+                "field '{}' must be a list; use [] to clear it",
+                field.as_str(),
+            ))),
+            _ => Ok(Value::Null),
+        };
+    }
     match field {
         MetadataField::Title | MetadataField::Name => {
             Ok(Value::String(normalize_nonempty_string(value, field)?))
@@ -402,19 +417,6 @@ pub(super) fn normalized_set_value(
             Ok(serde_json::to_value(value)?)
         }
         MetadataField::Relations => normalize_relations(db, principal, state.db_id, value),
-    }
-}
-
-pub(super) fn normalized_clear_value(field: MetadataField) -> Result<Value, MetadataEditingError> {
-    match field {
-        MetadataField::Title | MetadataField::Name => Err(MetadataEditingError::BadRequest(
-            format!("field '{}' cannot be cleared", field.as_str()),
-        )),
-        MetadataField::Genres
-        | MetadataField::Labels
-        | MetadataField::Credits
-        | MetadataField::Relations => Ok(Value::Array(Vec::new())),
-        _ => Ok(Value::Null),
     }
 }
 
