@@ -16,7 +16,6 @@ use agdb::{
     DbAny,
     DbId,
 };
-use serde_json::Value;
 
 use crate::services::auth::Principal;
 
@@ -31,6 +30,7 @@ use model::{
     MetadataEntityType,
     MetadataField,
     MetadataFieldConflict,
+    MetadataFieldDiff,
     MetadataPreviewRequest,
     MetadataPreviewResponse,
     MetadataSnapshot,
@@ -63,14 +63,7 @@ impl From<serde_json::Error> for MetadataEditingError {
 
 struct EditPlan {
     entity_type: MetadataEntityType,
-    fields: BTreeMap<MetadataField, PlannedField>,
-}
-
-struct PlannedField {
-    before: Value,
-    source_before: model::MetadataValueSource,
-    after: Value,
-    source_after: model::MetadataValueSource,
+    fields: BTreeMap<MetadataField, MetadataFieldDiff>,
 }
 
 pub(crate) fn get_snapshot(

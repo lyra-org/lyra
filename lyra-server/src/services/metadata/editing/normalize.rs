@@ -434,7 +434,11 @@ pub(super) fn validate_target(
     if state.entity_type != MetadataEntityType::Track {
         return Ok(());
     }
-    let mut fields = state.fields.clone();
+    let mut fields: BTreeMap<MetadataField, Value> = state
+        .fields
+        .iter()
+        .map(|(field, state)| (*field, state.value.clone()))
+        .collect();
     for (field, value) in targets {
         fields.insert(*field, value.clone());
     }

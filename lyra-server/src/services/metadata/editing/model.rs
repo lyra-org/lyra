@@ -101,6 +101,13 @@ pub(crate) enum MetadataValueSource {
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct FieldState {
+    pub(crate) value: Value,
+    pub(crate) source: MetadataValueSource,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MetadataApplyRequest {
@@ -108,13 +115,11 @@ pub(crate) struct MetadataApplyRequest {
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct MetadataFieldDiff {
     pub(crate) field: MetadataField,
-    pub(crate) before: Value,
-    pub(crate) after: Value,
-    pub(crate) source_before: MetadataValueSource,
-    pub(crate) source_after: MetadataValueSource,
+    pub(crate) before: FieldState,
+    pub(crate) after: FieldState,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -122,8 +127,7 @@ pub(crate) struct MetadataFieldDiff {
 pub(crate) struct MetadataSnapshot {
     pub(crate) entity_id: String,
     pub(crate) entity_type: MetadataEntityType,
-    pub(crate) fields: BTreeMap<String, Value>,
-    pub(crate) manual_fields: Vec<MetadataField>,
+    pub(crate) fields: BTreeMap<String, FieldState>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -137,10 +141,8 @@ pub(crate) struct MetadataPreviewResponse {
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct MetadataFieldConflict {
     pub(crate) field: MetadataField,
-    pub(crate) expected: Value,
-    pub(crate) current: Value,
-    pub(crate) expected_source: MetadataValueSource,
-    pub(crate) current_source: MetadataValueSource,
+    pub(crate) expected: FieldState,
+    pub(crate) current: FieldState,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]

@@ -48,8 +48,8 @@ fn invalid_preview() -> MetadataEditingError {
 fn estimated_bytes(plan: &EditPlan) -> usize {
     plan.fields.values().fold(0, |total, field| {
         total
-            .saturating_add(field.before.to_string().len())
-            .saturating_add(field.after.to_string().len())
+            .saturating_add(field.before.value.to_string().len())
+            .saturating_add(field.after.value.to_string().len())
             .saturating_add(128)
     })
 }
@@ -153,13 +153,12 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
-    use crate::services::metadata::editing::{
-        PlannedField,
-        model::{
-            MetadataEntityType,
-            MetadataField,
-            MetadataValueSource,
-        },
+    use crate::services::metadata::editing::model::{
+        FieldState,
+        MetadataEntityType,
+        MetadataField,
+        MetadataFieldDiff,
+        MetadataValueSource,
     };
 
     fn plan(before: Value) -> EditPlan {
@@ -167,11 +166,16 @@ mod tests {
             entity_type: MetadataEntityType::Track,
             fields: BTreeMap::from([(
                 MetadataField::Title,
-                PlannedField {
-                    before,
-                    source_before: MetadataValueSource::Resolved,
-                    after: Value::String("after".to_string()),
-                    source_after: MetadataValueSource::Manual,
+                MetadataFieldDiff {
+                    field: MetadataField::Title,
+                    before: FieldState {
+                        value: before,
+                        source: MetadataValueSource::Resolved,
+                    },
+                    after: FieldState {
+                        value: Value::String("after".to_string()),
+                        source: MetadataValueSource::Manual,
+                    },
                 },
             )]),
         }

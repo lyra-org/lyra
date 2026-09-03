@@ -24,6 +24,7 @@ use crate::services::auth::{
 use super::{
     MetadataEditingError,
     model::{
+        FieldState,
         MetadataCreditValue,
         MetadataEntityType,
         MetadataField,
@@ -39,20 +40,14 @@ pub(super) struct EntityState {
     pub(super) db_id: DbId,
     pub(super) public_id: String,
     pub(super) entity_type: MetadataEntityType,
-    pub(super) fields: BTreeMap<MetadataField, Value>,
-    pub(super) manual_fields: BTreeSet<MetadataField>,
+    pub(super) fields: BTreeMap<MetadataField, FieldState>,
 }
 
 impl EntityState {
-    pub(super) fn source(&self, field: MetadataField) -> MetadataValueSource {
-        if self.manual_fields.contains(&field) {
-            MetadataValueSource::Manual
-        } else {
-            MetadataValueSource::Resolved
-        }
-    }
-
-    pub(super) fn value(&self, field: MetadataField) -> Result<&Value, MetadataEditingError> {
+    pub(super) fn field_state(
+        &self,
+        field: MetadataField,
+    ) -> Result<&FieldState, MetadataEditingError> {
         self.fields.get(&field).ok_or_else(|| {
             MetadataEditingError::BadRequest(format!(
                 "field '{}' is not editable for {}",
@@ -69,9 +64,8 @@ impl EntityState {
             fields: self
                 .fields
                 .iter()
-                .map(|(field, value)| (field.as_str().to_string(), value.clone()))
+                .map(|(field, state)| (field.as_str().to_string(), state.clone()))
                 .collect(),
-            manual_fields: self.manual_fields.iter().copied().collect(),
         }
     }
 }
@@ -332,12 +326,22 @@ pub(super) fn load_entity_state(
         };
         manual_fields.insert(field);
     }
+    let fields = fields
+        .into_iter()
+        .map(|(field, value)| {
+            let source = if manual_fields.contains(&field) {
+                MetadataValueSource::Manual
+            } else {
+                MetadataValueSource::Resolved
+            };
+            (field, FieldState { value, source })
+        })
+        .collect();
 
     Ok(EntityState {
         db_id,
         public_id,
         entity_type,
         fields,
-        manual_fields,
     })
 }

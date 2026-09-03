@@ -137,7 +137,7 @@ fn preview_is_read_only_and_apply_persists_normalized_edit() -> anyhow::Result<(
             changes: vec![set(MetadataField::Title, json!("  New title  "))],
         },
     )?;
-    assert_eq!(preview.diff[0].after, json!("New title"));
+    assert_eq!(preview.diff[0].after.value, json!("New title"));
     let preview_json = serde_json::to_value(&preview)?;
     assert_eq!(preview_json.as_object().expect("preview object").len(), 2);
     assert!(preview_json.get("preview_id").is_some());
@@ -154,8 +154,8 @@ fn preview_is_read_only_and_apply_persists_normalized_edit() -> anyhow::Result<(
     assert!(result_json.get("entity_id").is_some());
     assert!(result_json.get("entity").is_none());
     assert!(result_json.get("diff").is_none());
-    assert_eq!(result.fields["title"], json!("New title"));
-    assert_eq!(result.manual_fields, vec![MetadataField::Title]);
+    assert_eq!(result.fields["title"].value, json!("New title"));
+    assert_eq!(result.fields["title"].source, MetadataValueSource::Manual);
     assert_eq!(
         db::metadata::manual_overrides::get(&db, track_id)?
             .expect("manual override exists")
@@ -228,7 +228,7 @@ fn apply_rejects_a_field_changed_after_preview() -> anyhow::Result<()> {
     };
     assert_eq!(conflicts.len(), 1);
     assert_eq!(conflicts[0].field, MetadataField::Title);
-    assert_eq!(conflicts[0].current, json!("Concurrent"));
+    assert_eq!(conflicts[0].current.value, json!("Concurrent"));
     assert!(db::metadata::manual_overrides::get(&db, track_id)?.is_none());
     Ok(())
 }
@@ -364,7 +364,7 @@ fn set_accepts_null_and_empty_lists_only_for_clearable_fields() -> anyhow::Resul
     let after: HashMap<_, _> = preview
         .diff
         .iter()
-        .map(|entry| (entry.field, entry.after.clone()))
+        .map(|entry| (entry.field, entry.after.value.clone()))
         .collect();
     assert_eq!(after[&MetadataField::ReleaseType], Value::Null);
     assert_eq!(after[&MetadataField::Genres], json!([]));
@@ -425,14 +425,19 @@ fn inherit_relinquishes_ownership_and_restores_resolved_value() -> anyhow::Resul
             changes: vec![inherit(MetadataField::Title)],
         },
     )?;
-    assert_eq!(inherited.diff[0].after, json!("Resolved"));
+    assert_eq!(inherited.diff[0].after.value, json!("Resolved"));
     assert_eq!(
-        inherited.diff[0].source_after,
+        inherited.diff[0].after.source,
         MetadataValueSource::Resolved
     );
     let result = apply_preview(&mut db, &principal, track_id, inherited)?;
-    assert_eq!(result.fields["title"], json!("Resolved"));
-    assert!(result.manual_fields.is_empty());
+    assert_eq!(result.fields["title"].value, json!("Resolved"));
+    assert!(
+        result
+            .fields
+            .values()
+            .all(|field| field.source == MetadataValueSource::Resolved)
+    );
     assert!(db::metadata::manual_overrides::get(&db, track_id)?.is_none());
     Ok(())
 }
@@ -482,10 +487,15 @@ fn inherit_graph_field_restores_provider_resolved_value() -> anyhow::Result<()> 
             changes: vec![inherit(MetadataField::Genres)],
         },
     )?;
-    assert_eq!(inherited.diff[0].after, json!(["Provider"]));
+    assert_eq!(inherited.diff[0].after.value, json!(["Provider"]));
     let result = apply_preview(&mut db, &principal, release_id, inherited)?;
-    assert_eq!(result.fields["genres"], json!(["Provider"]));
-    assert!(result.manual_fields.is_empty());
+    assert_eq!(result.fields["genres"].value, json!(["Provider"]));
+    assert!(
+        result
+            .fields
+            .values()
+            .all(|field| field.source == MetadataValueSource::Resolved)
+    );
     Ok(())
 }
 
@@ -538,8 +548,8 @@ fn inherit_conflicts_when_provider_resolution_changes_after_preview() -> anyhow:
         panic!("expected a metadata conflict");
     };
     assert_eq!(conflicts[0].field, MetadataField::Genres);
-    assert_eq!(conflicts[0].expected, json!(["First"]));
-    assert_eq!(conflicts[0].current, json!(["Second"]));
+    assert_eq!(conflicts[0].expected.value, json!(["First"]));
+    assert_eq!(conflicts[0].current.value, json!(["Second"]));
     assert_eq!(
         db::genres::get_for_release(&db, release_id)?[0].name,
         "Manual"
@@ -617,7 +627,7 @@ fn label_edits_use_stable_label_identity() -> anyhow::Result<()> {
             )],
         },
     )?;
-    assert_eq!(preview.diff[0].after[0]["name"], json!("Shared Name"));
+    assert_eq!(preview.diff[0].after.value[0]["name"], json!("Shared Name"));
     apply_preview(&mut db, &principal, release_id, preview)?;
 
     let labels = db::labels::get_for_release(&db, release_id)?;
@@ -735,10 +745,21 @@ fn inherit_labels_restores_resolvable_provider_labels() -> anyhow::Result<()> {
             changes: vec![inherit(MetadataField::Labels)],
         },
     )?;
-    assert_eq!(inherited.diff[0].after[0]["id"], json!(provider_label.id));
+    assert_eq!(
+        inherited.diff[0].after.value[0]["id"],
+        json!(provider_label.id)
+    );
     let result = apply_preview(&mut db, &principal, release_id, inherited)?;
-    assert_eq!(result.fields["labels"][0]["id"], json!(provider_label.id));
-    assert!(result.manual_fields.is_empty());
+    assert_eq!(
+        result.fields["labels"].value[0]["id"],
+        json!(provider_label.id)
+    );
+    assert!(
+        result
+            .fields
+            .values()
+            .all(|field| field.source == MetadataValueSource::Resolved)
+    );
     Ok(())
 }
 
@@ -1096,9 +1117,9 @@ fn inherited_label_disappearance_after_preview_conflicts() -> anyhow::Result<()>
         panic!("expected a metadata conflict");
     };
     assert_eq!(conflicts[0].field, MetadataField::Labels);
-    assert_eq!(conflicts[0].current, Value::Null);
-    assert_eq!(conflicts[0].expected_source, MetadataValueSource::Resolved);
-    assert_eq!(conflicts[0].current_source, MetadataValueSource::Resolved);
+    assert_eq!(conflicts[0].current.value, Value::Null);
+    assert_eq!(conflicts[0].expected.source, MetadataValueSource::Resolved);
+    assert_eq!(conflicts[0].current.source, MetadataValueSource::Resolved);
     assert!(db::metadata::manual_overrides::owns_field(
         &db,
         release_id,
@@ -1133,9 +1154,9 @@ fn credit_reference_disappearance_after_preview_conflicts() -> anyhow::Result<()
         panic!("expected a metadata conflict");
     };
     assert_eq!(conflicts[0].field, MetadataField::Credits);
-    assert_eq!(conflicts[0].current, Value::Null);
-    assert_eq!(conflicts[0].expected_source, MetadataValueSource::Manual);
-    assert_eq!(conflicts[0].current_source, MetadataValueSource::Manual);
+    assert_eq!(conflicts[0].current.value, Value::Null);
+    assert_eq!(conflicts[0].expected.source, MetadataValueSource::Manual);
+    assert_eq!(conflicts[0].current.source, MetadataValueSource::Manual);
     assert!(db::metadata::manual_overrides::get(&db, release_id)?.is_none());
     Ok(())
 }
@@ -1197,15 +1218,20 @@ fn inherit_graph_field_without_a_provider_value_clears_manual_edges() -> anyhow:
             changes: vec![inherit(MetadataField::Credits)],
         },
     )?;
-    assert_eq!(inherited.diff[0].after, json!([]));
+    assert_eq!(inherited.diff[0].after.value, json!([]));
     assert_eq!(
-        inherited.diff[0].source_after,
+        inherited.diff[0].after.source,
         MetadataValueSource::Resolved
     );
     let result = apply_preview(&mut db, &principal, release_id, inherited)?;
 
     assert!(credit_values(&db, release_id)?.is_empty());
-    assert!(result.manual_fields.is_empty());
+    assert!(
+        result
+            .fields
+            .values()
+            .all(|field| field.source == MetadataValueSource::Resolved)
+    );
     Ok(())
 }
 
@@ -1365,7 +1391,7 @@ fn hidden_relation_added_after_preview_conflicts_without_replacement() -> anyhow
         panic!("expected a metadata conflict");
     };
     assert_eq!(conflicts[0].field, MetadataField::Relations);
-    assert_eq!(conflicts[0].current, Value::Null);
+    assert_eq!(conflicts[0].current.value, Value::Null);
     let relations = db::artists::relations::get_relations_from(&db, source_id, None)?;
     assert_eq!(relations.len(), 1);
     assert_eq!(relations[0].1, hidden_target_id);
