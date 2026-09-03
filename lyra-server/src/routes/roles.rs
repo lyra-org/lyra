@@ -181,10 +181,9 @@ fn ensure_admin_permission_removal_allowed(
     }
 
     let assigned_users = db::roles::get_users_with_role(db, role_db_id)?;
-    let default_username = STATE.config.get().auth.default_username.to_lowercase();
     if assigned_users
         .iter()
-        .any(|user| user.username == default_username)
+        .any(|user| user.username == crate::services::auth::DEFAULT_USERNAME)
     {
         return Err(AppError::bad_request(
             "cannot remove admin permission from a role assigned to the default user",

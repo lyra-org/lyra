@@ -25,6 +25,7 @@ use nanoid::nanoid;
 use serde::Serialize;
 
 use super::NodeId;
+use crate::services::auth::DEFAULT_USERNAME;
 
 pub(crate) fn now_secs() -> i64 {
     std::time::SystemTime::now()
@@ -176,13 +177,8 @@ fn hash_random_secret() -> anyhow::Result<String> {
     Ok(hash)
 }
 
-pub(crate) fn ensure_default_user(db: &mut DbAny, default_username: &str) -> anyhow::Result<DbId> {
-    let username = default_username.trim().to_lowercase();
-    if username.is_empty() {
-        return Err(anyhow::anyhow!("default username cannot be empty"));
-    }
-
-    if let Some(user) = get_by_username(db, &username)?
+pub(crate) fn ensure_default_user(db: &mut DbAny) -> anyhow::Result<DbId> {
+    if let Some(user) = get_by_username(db, DEFAULT_USERNAME)?
         && let Some(db_id) = user.db_id
     {
         return Ok(db_id);
@@ -193,7 +189,7 @@ pub(crate) fn ensure_default_user(db: &mut DbAny, default_username: &str) -> any
         &User {
             db_id: None,
             id: nanoid!(),
-            username,
+            username: DEFAULT_USERNAME.to_string(),
             password: hash_random_secret()?,
         },
     )
@@ -373,8 +369,8 @@ mod tests {
     fn ensure_default_user_is_idempotent() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
-        let first = ensure_default_user(&mut db, "default")?;
-        let second = ensure_default_user(&mut db, "default")?;
+        let first = ensure_default_user(&mut db)?;
+        let second = ensure_default_user(&mut db)?;
         assert_eq!(first, second);
 
         let user = get_by_username(&db, "default")?;
@@ -449,7 +445,7 @@ mod tests {
     #[test]
     fn default_user_has_valid_hash() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let user_db_id = ensure_default_user(&mut db, "default")?;
+        let user_db_id = ensure_default_user(&mut db)?;
         let user =
             get_by_id(&db, user_db_id)?.ok_or_else(|| anyhow!("default user should exist"))?;
 

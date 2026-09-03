@@ -181,8 +181,6 @@ pub(crate) struct AuthConfig {
     pub(crate) enabled: bool,
     #[serde(default = "default_allow_default_login_when_disabled")]
     pub(crate) allow_default_login_when_disabled: bool,
-    #[serde(default = "default_default_username")]
-    pub(crate) default_username: String,
     #[serde(default = "default_session_ttl_seconds")]
     pub(crate) session_ttl_seconds: u64,
 }
@@ -223,7 +221,6 @@ impl Default for AuthConfig {
         Self {
             enabled: true,
             allow_default_login_when_disabled: default_allow_default_login_when_disabled(),
-            default_username: default_default_username(),
             session_ttl_seconds: default_session_ttl_seconds(),
         }
     }
@@ -285,10 +282,6 @@ fn default_login_rate_limit_burst() -> u32 {
 
 fn default_allow_default_login_when_disabled() -> bool {
     true
-}
-
-fn default_default_username() -> String {
-    "default".to_string()
 }
 
 fn default_session_ttl_seconds() -> u64 {

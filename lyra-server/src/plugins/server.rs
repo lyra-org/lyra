@@ -67,8 +67,7 @@ pub(crate) async fn load_server_info() -> anyhow::Result<ServerInfo> {
         .map_err(|error| anyhow::anyhow!(error.to_string()))?
         .ok_or_else(|| anyhow::anyhow!("server info not initialized"))?;
 
-    let default_username = &STATE.config.get().auth.default_username;
-    let setup_complete = db::roles::has_non_default_admin(&db, default_username)
+    let setup_complete = db::roles::has_non_default_admin(&db)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
 
     let config = STATE.config.get();

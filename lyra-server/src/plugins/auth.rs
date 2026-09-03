@@ -110,7 +110,6 @@ impl LoginOutcome {
 pub(crate) struct AuthCapabilities {
     pub(crate) enabled: bool,
     pub(crate) allow_default_login_when_disabled: bool,
-    pub(crate) default_username: String,
 }
 
 impl AuthCapabilities {
@@ -118,7 +117,6 @@ impl AuthCapabilities {
         Self {
             enabled: config.enabled,
             allow_default_login_when_disabled: config.allow_default_login_when_disabled,
-            default_username: config.default_username.clone(),
         }
     }
 }
@@ -372,15 +370,11 @@ fn auth_capabilities_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::
     Ok(())
 }
 fn auth_capabilities_table(capabilities: &AuthCapabilities) -> luau::OwnedTable {
-    let mut table = luau::OwnedTable::with_capacity(0, 3);
+    let mut table = luau::OwnedTable::with_capacity(0, 2);
     table.set_field("enabled", luau::Value::Boolean(capabilities.enabled));
     table.set_field(
         "allow_default_login_when_disabled",
         luau::Value::Boolean(capabilities.allow_default_login_when_disabled),
-    );
-    table.set_field(
-        "default_username",
-        luau::Value::String(capabilities.default_username.clone().into_bytes()),
     );
     table
 }
@@ -552,11 +546,6 @@ impl DescribeInterface for AuthCapabilities {
             FieldDescriptor {
                 name: "allow_default_login_when_disabled",
                 ty: bool::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "default_username",
-                ty: String::luau_type(),
                 description: None,
             },
         ]);
