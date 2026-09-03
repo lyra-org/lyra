@@ -7,10 +7,7 @@ mod apply;
 pub(crate) mod model;
 mod normalize;
 mod plan;
-mod previews;
 mod state;
-
-use std::collections::BTreeMap;
 
 use agdb::{
     DbAny,
@@ -23,23 +20,15 @@ use apply::{
     apply_plan,
     prepare_references,
 };
-use normalize::validate_target;
-
 use model::{
     MetadataApplyRequest,
-    MetadataEntityType,
-    MetadataField,
-    MetadataFieldConflict,
     MetadataFieldDiff,
     MetadataPreviewRequest,
-    MetadataPreviewResponse,
     MetadataSnapshot,
 };
 use plan::{
     build_plan,
-    check_inherited_preconditions,
-    check_preconditions,
-    plan_diff,
+    check_expected,
 };
 use state::load_entity_state;
 
@@ -50,7 +39,7 @@ pub(crate) enum MetadataEditingError {
     #[error("entity not found: {0}")]
     EntityNotFound(String),
     #[error("metadata changed after preview")]
-    Conflict(Vec<MetadataFieldConflict>),
+    Conflict(Vec<MetadataFieldDiff>),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -59,11 +48,6 @@ impl From<serde_json::Error> for MetadataEditingError {
     fn from(error: serde_json::Error) -> Self {
         Self::Internal(error.into())
     }
-}
-
-struct EditPlan {
-    entity_type: MetadataEntityType,
-    fields: BTreeMap<MetadataField, MetadataFieldDiff>,
 }
 
 pub(crate) fn get_snapshot(
@@ -79,17 +63,15 @@ pub(crate) fn preview(
     principal: &Principal,
     db_id: DbId,
     request: &MetadataPreviewRequest,
-) -> Result<MetadataPreviewResponse, MetadataEditingError> {
+) -> Result<Vec<MetadataFieldDiff>, MetadataEditingError> {
     let state = load_entity_state(db, principal, db_id)?;
-    let plan = build_plan(db, principal, &state, &request.changes)?;
-    let diff = plan_diff(&plan);
+    let diff = build_plan(db, principal, &state, &request.changes)?;
     if diff.is_empty() {
         return Err(MetadataEditingError::BadRequest(
             "metadata edit has no effect".to_string(),
         ));
     }
-    let preview_id = previews::issue(&principal.user_public_id, &state.public_id, plan)?;
-    Ok(MetadataPreviewResponse { preview_id, diff })
+    Ok(diff)
 }
 
 pub(crate) fn apply(
@@ -99,21 +81,9 @@ pub(crate) fn apply(
     request: &MetadataApplyRequest,
 ) -> Result<MetadataSnapshot, MetadataEditingError> {
     let state = load_entity_state(db, principal, db_id)?;
-    let plan = previews::take(
-        &request.preview_id,
-        &principal.user_public_id,
-        &state.public_id,
-    )?;
-    if state.entity_type != plan.entity_type {
-        return Err(MetadataEditingError::BadRequest(
-            "preview_id no longer matches the entity type".to_string(),
-        ));
-    }
-    let targets = plan::targets(&plan);
-    check_preconditions(&state, &plan)?;
-    check_inherited_preconditions(db, principal, &state, &plan)?;
-    validate_target(&state, &targets)?;
-    let references = prepare_references(db, principal, &state, &plan)?;
+    let plan = build_plan(db, principal, &state, &request.changes)?;
+    check_expected(&request.changes, &request.expected, &plan)?;
+    let references = prepare_references(db, &plan)?;
     apply_plan(db, &state, &plan, &references)?;
     Ok(load_entity_state(db, principal, db_id)?.response())
 }

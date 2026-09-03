@@ -17,25 +17,18 @@ use crate::db::{
     self,
     DbAccess,
 };
-use crate::services::auth::{
-    Principal,
-    access,
-};
 
 use super::{
-    EditPlan,
     MetadataEditingError,
     model::{
-        FieldState,
         MetadataCreditValue,
         MetadataEntityType,
         MetadataField,
-        MetadataFieldConflict,
+        MetadataFieldDiff,
         MetadataLabelValue,
         MetadataRelationValue,
         MetadataValueSource,
     },
-    normalize::label_accessible,
     state::{
         EntityState,
         internal_field_name,
@@ -111,106 +104,73 @@ fn apply_release_fields(
     Ok(())
 }
 
-fn reference_conflict(field: MetadataField, expected: &FieldState) -> MetadataEditingError {
-    MetadataEditingError::Conflict(vec![MetadataFieldConflict {
-        field,
-        expected: expected.clone(),
-        current: FieldState {
-            value: Value::Null,
-            source: expected.source,
-        },
-    }])
+fn require_node_id(db: &impl DbAccess, public_id: &str) -> Result<DbId, MetadataEditingError> {
+    db::lookup::find_node_id_by_id(db, public_id)?.ok_or_else(|| {
+        MetadataEditingError::Internal(anyhow::anyhow!(
+            "normalized metadata reference '{public_id}' disappeared before apply"
+        ))
+    })
 }
 
-fn resolve_artist_reference(
-    db: &impl DbAccess,
-    principal: &Principal,
-    public_id: &str,
+fn planned_value<T: DeserializeOwned>(
+    plan: &[MetadataFieldDiff],
     field: MetadataField,
-    expected: &FieldState,
-) -> Result<DbId, MetadataEditingError> {
-    let db_id = db::lookup::find_node_id_by_id(db, public_id)?
-        .ok_or_else(|| reference_conflict(field, expected))?;
-    if db::artists::get_by_id(db, db_id)?.is_none()
-        || !access::artist_accessible(db, principal, db_id)?
-    {
-        return Err(reference_conflict(field, expected));
-    }
-    Ok(db_id)
+) -> Result<Option<T>, MetadataEditingError> {
+    plan.iter()
+        .find(|diff| diff.field == field)
+        .map(|diff| normalized(&diff.after.value))
+        .transpose()
+        .map_err(Into::into)
 }
 
 pub(super) fn prepare_references(
     db: &impl DbAccess,
-    principal: &Principal,
-    state: &EntityState,
-    plan: &EditPlan,
+    plan: &[MetadataFieldDiff],
 ) -> Result<PreparedReferences, MetadataEditingError> {
     let mut prepared = PreparedReferences::default();
-    if let Some(planned) = plan.fields.get(&MetadataField::Labels) {
-        let after = &planned.after;
-        let labels: Vec<MetadataLabelValue> = serde_json::from_value(after.value.clone())?;
-        let mut inputs = Vec::with_capacity(labels.len());
-        for label in labels {
-            let label_id = db::lookup::find_node_id_by_id(db, &label.id)?
-                .ok_or_else(|| reference_conflict(MetadataField::Labels, after))?;
-            let stored = db::labels::get_by_id(db, label_id)?
-                .ok_or_else(|| reference_conflict(MetadataField::Labels, after))?;
-            if stored.id != label.id || stored.name != label.name {
-                return Err(reference_conflict(MetadataField::Labels, after));
-            }
-            if after.source == MetadataValueSource::Manual
-                && !label_accessible(db, principal, label_id)?
-            {
-                return Err(reference_conflict(MetadataField::Labels, after));
-            }
-            inputs.push(db::labels::LabelLinkInput {
-                label_id,
-                catalog_number: label.catalog_number,
-            });
-        }
-        prepared.labels = Some(inputs);
+    if let Some(labels) = planned_value::<Vec<MetadataLabelValue>>(plan, MetadataField::Labels)? {
+        prepared.labels = Some(
+            labels
+                .into_iter()
+                .map(|label| -> Result<_, MetadataEditingError> {
+                    Ok(db::labels::LabelLinkInput {
+                        label_id: require_node_id(db, &label.id)?,
+                        catalog_number: label.catalog_number,
+                    })
+                })
+                .collect::<Result<_, _>>()?,
+        );
     }
-    if let Some(planned) = plan.fields.get(&MetadataField::Credits) {
-        let after = &planned.after;
-        let credits: Vec<MetadataCreditValue> = serde_json::from_value(after.value.clone())?;
-        let mut inputs = Vec::with_capacity(credits.len());
-        for credit in credits {
-            inputs.push(db::credits::CreditLinkInput {
-                artist_id: resolve_artist_reference(
-                    db,
-                    principal,
-                    &credit.artist_id,
-                    MetadataField::Credits,
-                    after,
-                )?,
-                credit_type: credit.credit_type,
-                detail: credit.detail,
-            });
-        }
-        prepared.credits = Some(inputs);
+    if let Some(credits) = planned_value::<Vec<MetadataCreditValue>>(plan, MetadataField::Credits)?
+    {
+        prepared.credits = Some(
+            credits
+                .into_iter()
+                .map(|credit| -> Result<_, MetadataEditingError> {
+                    Ok(db::credits::CreditLinkInput {
+                        artist_id: require_node_id(db, &credit.artist_id)?,
+                        credit_type: credit.credit_type,
+                        detail: credit.detail,
+                    })
+                })
+                .collect::<Result<_, _>>()?,
+        );
     }
-    if let Some(planned) = plan.fields.get(&MetadataField::Relations) {
-        let after = &planned.after;
-        let relations: Vec<MetadataRelationValue> = serde_json::from_value(after.value.clone())?;
-        let mut inputs = Vec::with_capacity(relations.len());
-        for relation in relations {
-            let target_artist_id = resolve_artist_reference(
-                db,
-                principal,
-                &relation.target_artist_id,
-                MetadataField::Relations,
-                after,
-            )?;
-            if target_artist_id == state.db_id {
-                return Err(reference_conflict(MetadataField::Relations, after));
-            }
-            inputs.push(db::artists::relations::ArtistRelationLinkInput {
-                target_artist_id,
-                relation_type: relation.relation_type,
-                attributes: relation.attributes,
-            });
-        }
-        prepared.relations = Some(inputs);
+    if let Some(relations) =
+        planned_value::<Vec<MetadataRelationValue>>(plan, MetadataField::Relations)?
+    {
+        prepared.relations = Some(
+            relations
+                .into_iter()
+                .map(|relation| -> Result<_, MetadataEditingError> {
+                    Ok(db::artists::relations::ArtistRelationLinkInput {
+                        target_artist_id: require_node_id(db, &relation.target_artist_id)?,
+                        relation_type: relation.relation_type,
+                        attributes: relation.attributes,
+                    })
+                })
+                .collect::<Result<_, _>>()?,
+        );
     }
     Ok(prepared)
 }
@@ -305,11 +265,13 @@ fn apply_artist_fields(
 pub(super) fn apply_plan(
     db: &mut DbAny,
     state: &EntityState,
-    plan: &EditPlan,
+    plan: &[MetadataFieldDiff],
     references: &PreparedReferences,
 ) -> anyhow::Result<()> {
-    let targets = super::plan::targets(plan);
-    let inherited_fields = super::plan::inherited_fields(plan);
+    let targets: BTreeMap<MetadataField, Value> = plan
+        .iter()
+        .map(|diff| (diff.field, diff.after.value.clone()))
+        .collect();
     db.transaction_mut(|transaction| -> anyhow::Result<()> {
         match state.entity_type {
             MetadataEntityType::Release => {
@@ -323,22 +285,22 @@ pub(super) fn apply_plan(
             }
         }
 
-        let mut manual_fields = db::metadata::manual_overrides::get(transaction, state.db_id)?
+        let mut overrides = db::metadata::manual_overrides::get(transaction, state.db_id)?
             .map(|row| row.parsed_fields())
             .transpose()?
             .unwrap_or_default();
-        for (field, value) in &targets {
-            let internal_name = internal_field_name(state.entity_type, *field)
+        for diff in plan {
+            let internal_name = internal_field_name(state.entity_type, diff.field)
                 .ok_or_else(|| anyhow::anyhow!("invalid manual metadata field"))?;
-            if inherited_fields.contains(field) {
-                manual_fields.remove(&internal_name);
+            if diff.after.source == MetadataValueSource::Resolved {
+                overrides.remove(&internal_name);
             } else if internal_name.is_graph() {
-                manual_fields.insert(internal_name, Value::Bool(true));
+                overrides.insert(internal_name, Value::Bool(true));
             } else {
-                manual_fields.insert(internal_name, value.clone());
+                overrides.insert(internal_name, diff.after.value.clone());
             }
         }
-        db::metadata::manual_overrides::replace(transaction, state.db_id, &manual_fields)?;
+        db::metadata::manual_overrides::replace(transaction, state.db_id, &overrides)?;
         Ok(())
     })
 }

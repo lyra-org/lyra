@@ -122,7 +122,7 @@ fn normalized_catalog_number(value: Option<String>) -> Option<String> {
     })
 }
 
-pub(super) fn label_accessible(
+fn label_accessible(
     db: &impl DbAccess,
     principal: &Principal,
     label_id: DbId,

@@ -19,14 +19,12 @@ use crate::{
 };
 
 use super::{
-    EditPlan,
     MetadataEditingError,
     model::{
         FieldState,
         MetadataChangeRequest,
         MetadataEditOperation,
         MetadataField,
-        MetadataFieldConflict,
         MetadataFieldDiff,
         MetadataValueSource,
     },
@@ -86,7 +84,7 @@ pub(super) fn build_plan(
     principal: &Principal,
     state: &EntityState,
     changes: &[MetadataChangeRequest],
-) -> Result<EditPlan, MetadataEditingError> {
+) -> Result<Vec<MetadataFieldDiff>, MetadataEditingError> {
     if changes.is_empty() {
         return Err(MetadataEditingError::BadRequest(
             "no metadata changes provided".to_string(),
@@ -138,98 +136,40 @@ pub(super) fn build_plan(
     }
     validate_target(state, &targets)?;
 
-    Ok(EditPlan {
-        entity_type: state.entity_type,
-        fields,
-    })
+    Ok(fields
+        .into_values()
+        .filter(|diff| diff.before != diff.after)
+        .collect())
 }
 
-pub(super) fn targets(plan: &EditPlan) -> BTreeMap<MetadataField, Value> {
-    plan.fields
-        .iter()
-        .map(|(field, planned)| (*field, planned.after.value.clone()))
-        .collect()
-}
-
-pub(super) fn inherited_fields(plan: &EditPlan) -> BTreeSet<MetadataField> {
-    plan.fields
-        .iter()
-        .filter_map(|(field, planned)| {
-            (planned.after.source == MetadataValueSource::Resolved).then_some(*field)
-        })
-        .collect()
-}
-
-pub(super) fn plan_diff(plan: &EditPlan) -> Vec<MetadataFieldDiff> {
-    plan.fields
-        .values()
-        .filter(|planned| planned.before != planned.after)
-        .cloned()
-        .collect()
-}
-
-pub(super) fn check_preconditions(
-    state: &EntityState,
-    plan: &EditPlan,
+pub(super) fn check_expected(
+    changes: &[MetadataChangeRequest],
+    expected: &[MetadataFieldDiff],
+    current: &[MetadataFieldDiff],
 ) -> Result<(), MetadataEditingError> {
-    let mut conflicts = Vec::new();
-    for (field, planned) in &plan.fields {
-        let current = state.fields.get(field).cloned().unwrap_or(FieldState {
-            value: Value::Null,
-            source: MetadataValueSource::Resolved,
-        });
-        if planned.before != current {
-            conflicts.push(MetadataFieldConflict {
-                field: *field,
-                expected: planned.before.clone(),
-                current,
-            });
+    if expected.is_empty() {
+        return Err(MetadataEditingError::BadRequest(
+            "no expected metadata diff provided".to_string(),
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    for diff in expected {
+        if !seen.insert(diff.field) {
+            return Err(MetadataEditingError::BadRequest(format!(
+                "duplicate expected metadata field '{}'",
+                diff.field.as_str(),
+            )));
+        }
+        if !changes.iter().any(|change| change.field == diff.field) {
+            return Err(MetadataEditingError::BadRequest(format!(
+                "expected metadata field '{}' is not in changes",
+                diff.field.as_str(),
+            )));
         }
     }
-    if conflicts.is_empty() {
+    if expected.len() == current.len() && expected.iter().all(|diff| current.contains(diff)) {
         Ok(())
     } else {
-        Err(MetadataEditingError::Conflict(conflicts))
-    }
-}
-
-pub(super) fn check_inherited_preconditions(
-    db: &impl DbAccess,
-    principal: &Principal,
-    state: &EntityState,
-    plan: &EditPlan,
-) -> Result<(), MetadataEditingError> {
-    let mut conflicts = Vec::new();
-    for (field, planned) in &plan.fields {
-        if planned.after.source != MetadataValueSource::Resolved {
-            continue;
-        }
-        let current_provider_value = provider_value(db, state, *field)?;
-        let current = match inherited_value(
-            db,
-            principal,
-            state,
-            *field,
-            current_provider_value.as_ref(),
-        ) {
-            Ok(current) => current,
-            Err(MetadataEditingError::BadRequest(_)) => Value::Null,
-            Err(error) => return Err(error),
-        };
-        if planned.after.value != current {
-            conflicts.push(MetadataFieldConflict {
-                field: *field,
-                expected: planned.after.clone(),
-                current: FieldState {
-                    value: current,
-                    source: MetadataValueSource::Resolved,
-                },
-            });
-        }
-    }
-    if conflicts.is_empty() {
-        Ok(())
-    } else {
-        Err(MetadataEditingError::Conflict(conflicts))
+        Err(MetadataEditingError::Conflict(current.to_vec()))
     }
 }

@@ -307,7 +307,7 @@ pub(super) fn load_entity_state(
             return Err(MetadataEditingError::EntityNotFound(db_id.0.to_string()));
         };
 
-    let mut manual_fields = BTreeSet::new();
+    let mut manual = BTreeSet::new();
     for internal_name in db::metadata::manual_overrides::field_names(db, db_id)? {
         let Some(field) =
             api_field_from_internal(entity_type, fields.keys().copied(), internal_name)
@@ -324,12 +324,12 @@ pub(super) fn load_entity_state(
                 public_id,
             )));
         };
-        manual_fields.insert(field);
+        manual.insert(field);
     }
     let fields = fields
         .into_iter()
         .map(|(field, value)| {
-            let source = if manual_fields.contains(&field) {
+            let source = if manual.contains(&field) {
                 MetadataValueSource::Manual
             } else {
                 MetadataValueSource::Resolved
