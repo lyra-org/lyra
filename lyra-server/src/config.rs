@@ -17,7 +17,10 @@ use std::{
         Ipv4Addr,
         Ipv6Addr,
     },
-    path::PathBuf,
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 
 use crate::locale::{
@@ -26,13 +29,6 @@ use crate::locale::{
 };
 
 fn config_candidate_paths() -> Vec<PathBuf> {
-    if let Some(path) = env::var_os("LYRA_CONFIG_PATH") {
-        let path = PathBuf::from(path);
-        if !path.as_os_str().is_empty() {
-            return vec![path];
-        }
-    }
-
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let manifest_parent = manifest_dir
         .parent()
@@ -59,13 +55,48 @@ fn config_candidate_paths() -> Vec<PathBuf> {
 }
 
 pub(crate) const DEFAULT_PORT: u16 = 4746;
+const LYRA_CONFIG_PATH_ENV: &str = "LYRA_CONFIG_PATH";
+const LYRA_DATA_DIR_ENV: &str = "LYRA_DATA_DIR";
 const LYRA_DB_DIR_ENV: &str = "LYRA_DB_DIR";
+const LYRA_PORT_ENV: &str = "LYRA_PORT";
+const DEFAULT_DATA_DIR: &str = "data";
 const DEFAULT_DB_FILE_NAME: &str = "lyra.db";
+const DEFAULT_COVERS_DIR_NAME: &str = "covers";
+
+/// Boot-class environment overrides. Read once from the process environment;
+/// tests construct it directly so they never touch real variables.
+#[derive(Default)]
+struct BootEnv {
+    config_path: Option<OsString>,
+    data_dir: Option<OsString>,
+    db_dir: Option<OsString>,
+    port: Option<OsString>,
+}
+
+impl BootEnv {
+    fn from_process() -> Self {
+        Self {
+            config_path: env::var_os(LYRA_CONFIG_PATH_ENV),
+            data_dir: env::var_os(LYRA_DATA_DIR_ENV),
+            db_dir: env::var_os(LYRA_DB_DIR_ENV),
+            port: env::var_os(LYRA_PORT_ENV),
+        }
+    }
+}
+
+fn non_empty_path(raw: Option<OsString>) -> Option<PathBuf> {
+    raw.map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+}
 
 #[derive(Clone, Deserialize)]
 #[serde(default)]
 pub(crate) struct Config {
     pub(crate) port: u16,
+    /// Root for server-owned state. Resolved from `LYRA_DATA_DIR` at boot;
+    /// not settable from the config file.
+    #[serde(skip)]
+    pub(crate) data_dir: PathBuf,
     pub(crate) published_url: Option<String>,
     pub(crate) cors: CorsConfig,
     pub(crate) rate_limit: RateLimitConfig,
@@ -81,6 +112,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             port: DEFAULT_PORT,
+            data_dir: PathBuf::from(DEFAULT_DATA_DIR),
             published_url: None,
             cors: CorsConfig::default(),
             rate_limit: RateLimitConfig::default(),
@@ -171,16 +203,16 @@ pub(crate) struct HlsConfig {
 #[derive(Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DbKind {
-    #[default]
     Memory,
     File,
+    #[default]
     Mmap,
 }
 
 impl Default for DbConfig {
     fn default() -> Self {
         Self {
-            kind: DbKind::Memory,
+            kind: DbKind::Mmap,
             path: default_db_path(),
         }
     }
@@ -263,13 +295,16 @@ fn default_session_ttl_seconds() -> u64 {
     2_592_000 // 30 days
 }
 
-fn normalize_db_path(config: &mut Config) -> Result<()> {
-    normalize_db_path_with_dir(config, env::var_os(LYRA_DB_DIR_ENV))
-}
-
-fn normalize_db_path_with_dir(config: &mut Config, raw: Option<OsString>) -> Result<()> {
-    let Some(db_dir) = configured_db_dir(raw)? else {
+/// Memory-kind paths are pure identifiers and stay as written: agdb's
+/// `DbMemory::new` would otherwise load a stale on-disk file of that name.
+fn normalize_db_path(config: &mut Config, raw: Option<OsString>) -> Result<()> {
+    if matches!(config.db.kind, DbKind::Memory) {
         return Ok(());
+    }
+
+    let db_dir = match configured_db_dir(raw)? {
+        Some(db_dir) => db_dir,
+        None => config.data_dir.clone(),
     };
 
     if config.db.path.is_relative() {
@@ -280,44 +315,138 @@ fn normalize_db_path_with_dir(config: &mut Config, raw: Option<OsString>) -> Res
 }
 
 fn configured_db_dir(raw: Option<OsString>) -> Result<Option<PathBuf>> {
-    let Some(raw) = raw else {
+    let Some(path) = non_empty_path(raw) else {
         return Ok(None);
     };
 
-    let path = PathBuf::from(raw);
-    if path.as_os_str().is_empty() {
-        return Ok(None);
-    }
-
-    if !path.is_dir() {
-        return Err(anyhow!(
+    std::fs::create_dir_all(&path).with_context(|| {
+        format!(
             "{LYRA_DB_DIR_ENV} points to '{}' but it is not a directory",
             path.display()
-        ));
-    }
+        )
+    })?;
 
     Ok(Some(path))
 }
 
-pub(crate) fn load_config() -> Result<Config> {
-    let candidates = config_candidate_paths();
-    let Some(path) = candidates.iter().find(|path| path.is_file()).cloned() else {
-        if let Ok(explicit) = env::var("LYRA_CONFIG_PATH") {
+fn data_dir_path(raw: Option<OsString>) -> Result<PathBuf> {
+    let path = non_empty_path(raw).unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR));
+    if path.is_absolute() {
+        return Ok(path);
+    }
+
+    let cwd = env::current_dir().context("failed to resolve the current working directory")?;
+    Ok(cwd.join(path))
+}
+
+fn ensure_data_dir(path: &Path) -> Result<()> {
+    std::fs::create_dir_all(path).with_context(|| {
+        format!(
+            "{LYRA_DATA_DIR_ENV} points to '{}' but it could not be created as a directory",
+            path.display()
+        )
+    })
+}
+
+fn apply_port_override(config: &mut Config, raw: Option<OsString>) -> Result<()> {
+    let Some(raw) = raw else {
+        return Ok(());
+    };
+    let value = raw.to_string_lossy();
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+
+    config.port = trimmed
+        .parse::<u16>()
+        .map_err(|err| anyhow!("invalid {LYRA_PORT_ENV} value '{trimmed}': {err}"))?;
+    Ok(())
+}
+
+/// Returns the config file to load: the explicit `LYRA_CONFIG_PATH`, which
+/// must exist, or the first candidate found on disk, or none.
+fn locate_config_file(explicit: Option<OsString>) -> Result<Option<PathBuf>> {
+    if let Some(path) = non_empty_path(explicit) {
+        if !path.exists() {
             return Err(anyhow!(
-                "config file not found at LYRA_CONFIG_PATH '{explicit}'"
+                "config file not found at {LYRA_CONFIG_PATH_ENV} '{}'",
+                path.display()
             ));
         }
+        require_regular_file(&path)?;
+        return Ok(Some(path));
+    }
+
+    for path in config_candidate_paths() {
+        if path.exists() {
+            require_regular_file(&path)?;
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+/// A bind mount of a missing host file yields a directory; loading defaults
+/// silently in that case would hide the misconfiguration.
+fn require_regular_file(path: &Path) -> Result<()> {
+    if !path.is_file() {
         return Err(anyhow!(
-            "failed to locate config.json at any known location"
+            "config path '{}' exists but is not a regular file",
+            path.display()
         ));
+    }
+    Ok(())
+}
+
+fn read_config_file(path: &Path) -> Result<Config> {
+    let contents = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read config file at {}", path.display()))?;
+    serde_json::from_str(&contents)
+        .with_context(|| format!("failed to parse config file at {}", path.display()))
+}
+
+pub(crate) fn load_config() -> Result<Config> {
+    let BootEnv {
+        config_path,
+        data_dir,
+        db_dir,
+        port,
+    } = BootEnv::from_process();
+    let file = match locate_config_file(config_path)? {
+        Some(path) => {
+            let config = read_config_file(&path)?;
+            tracing::info!(path = %path.display(), "loaded config file");
+            Some(config)
+        }
+        None => {
+            tracing::info!("no config file found; using defaults");
+            None
+        }
     };
 
-    let contents = std::fs::read_to_string(&path)
-        .with_context(|| format!("failed to read config file at {}", path.display()))?;
-    let mut config: Config = serde_json::from_str(&contents)
-        .with_context(|| format!("failed to parse config file at {}", path.display()))?;
+    let config = finalize_config(
+        file.unwrap_or_default(),
+        BootEnv {
+            config_path: None,
+            data_dir,
+            db_dir,
+            port,
+        },
+    )?;
+    ensure_data_dir(&config.data_dir)?;
+    Ok(config)
+}
 
-    normalize_db_path(&mut config)?;
+/// Applies boot-class environment overrides and defaults derived from them
+/// (env > file > default). Only `LYRA_DB_DIR` touches the filesystem.
+fn finalize_config(mut config: Config, boot: BootEnv) -> Result<Config> {
+    apply_port_override(&mut config, boot.port)?;
+    config.data_dir = data_dir_path(boot.data_dir)?;
+    normalize_db_path(&mut config, boot.db_dir)?;
+    if config.covers_path.is_none() {
+        config.covers_path = Some(config.data_dir.join(DEFAULT_COVERS_DIR_NAME));
+    }
     normalize_config_library_locale_inputs(&mut config)?;
     normalize_published_url(&mut config)?;
     normalize_cors_allowed_origins(&mut config)?;
@@ -436,6 +565,7 @@ fn normalize_config_library_locale_inputs(config: &mut Config) -> Result<()> {
 mod tests {
     use super::{
         AuthConfig,
+        BootEnv,
         Config,
         CorsConfig,
         DEFAULT_PORT,
@@ -445,17 +575,26 @@ mod tests {
         LibraryConfig,
         RateLimitConfig,
         SyncConfig,
+        apply_port_override,
         configured_db_dir,
+        data_dir_path,
+        ensure_data_dir,
+        finalize_config,
+        locate_config_file,
         normalize_config_library_locale_inputs,
         normalize_cors_allowed_origins,
-        normalize_db_path_with_dir,
+        normalize_db_path,
         normalize_published_url,
     };
-    use std::path::PathBuf;
+    use std::{
+        ffi::OsString,
+        path::PathBuf,
+    };
 
     fn base_config_with_library(library: Option<LibraryConfig>) -> Config {
         Config {
             port: DEFAULT_PORT,
+            data_dir: PathBuf::from("data"),
             published_url: None,
             cors: CorsConfig::default(),
             rate_limit: RateLimitConfig::default(),
@@ -481,7 +620,7 @@ mod tests {
         config.db.kind = DbKind::Mmap;
         config.db.path = PathBuf::from("custom.db");
 
-        normalize_db_path_with_dir(
+        normalize_db_path(
             &mut config,
             Some(db_dir.path().to_path_buf().into_os_string()),
         )?;
@@ -497,7 +636,7 @@ mod tests {
         config.db.kind = DbKind::Mmap;
         config.db.path = PathBuf::from("/var/lib/lyra/custom.db");
 
-        normalize_db_path_with_dir(
+        normalize_db_path(
             &mut config,
             Some(db_dir.path().to_path_buf().into_os_string()),
         )?;
@@ -516,13 +655,223 @@ mod tests {
 
     #[test]
     fn db_dir_env_rejects_non_directories() -> anyhow::Result<()> {
+        let parent = temp_dir("file-db-dir")?;
+        let path = parent.path().join("file");
+        std::fs::write(&path, "")?;
+
+        let error = configured_db_dir(Some(path.into_os_string()))
+            .expect_err("file at db directory should be rejected");
+
+        assert!(error.to_string().contains("LYRA_DB_DIR"));
+        Ok(())
+    }
+
+    #[test]
+    fn db_dir_env_creates_missing_directories() -> anyhow::Result<()> {
         let parent = temp_dir("missing-db-dir")?;
         let path = parent.path().join("missing");
 
-        let error = configured_db_dir(Some(path.into_os_string()))
-            .expect_err("missing db directory should be rejected");
+        let resolved = configured_db_dir(Some(path.clone().into_os_string()))?;
 
-        assert!(error.to_string().contains("LYRA_DB_DIR"));
+        assert_eq!(resolved, Some(path.clone()));
+        assert!(path.is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn memory_db_paths_are_not_joined_with_data_dir() -> anyhow::Result<()> {
+        let data_dir = temp_dir("data-dir")?;
+        let mut config = Config {
+            data_dir: data_dir.path().to_path_buf(),
+            ..Config::default()
+        };
+        config.db.kind = DbKind::Memory;
+        config.db.path = PathBuf::from("scratch");
+
+        normalize_db_path(&mut config, None)?;
+
+        assert_eq!(config.db.path, PathBuf::from("scratch"));
+        Ok(())
+    }
+
+    #[test]
+    fn config_candidates_that_are_directories_are_rejected() -> anyhow::Result<()> {
+        let parent = temp_dir("dir-config")?;
+        let path = parent.path().join("config.json");
+        std::fs::create_dir(&path)?;
+
+        let error = locate_config_file(Some(path.into_os_string()))
+            .expect_err("directory at config path should be rejected");
+
+        assert!(error.to_string().contains("not a regular file"));
+        Ok(())
+    }
+
+    #[test]
+    fn finalize_config_derives_defaults_from_data_dir() -> anyhow::Result<()> {
+        let data_dir = temp_dir("data-dir")?;
+        let boot = BootEnv {
+            data_dir: Some(data_dir.path().as_os_str().to_owned()),
+            ..BootEnv::default()
+        };
+
+        let config = finalize_config(Config::default(), boot)?;
+
+        assert_eq!(config.port, DEFAULT_PORT);
+        assert!(matches!(config.db.kind, DbKind::Mmap));
+        assert_eq!(config.data_dir, data_dir.path());
+        assert_eq!(
+            config.covers_path.as_deref(),
+            Some(data_dir.path().join("covers").as_path())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_config_path_must_exist() -> anyhow::Result<()> {
+        let parent = temp_dir("missing-config")?;
+        let path = parent.path().join("config.json");
+
+        let error = locate_config_file(Some(path.into_os_string()))
+            .expect_err("missing explicit config file should be rejected");
+
+        assert!(error.to_string().contains("LYRA_CONFIG_PATH"));
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_config_path_is_used_when_present() -> anyhow::Result<()> {
+        let parent = temp_dir("config")?;
+        let path = parent.path().join("config.json");
+        std::fs::write(&path, "{}")?;
+
+        let located = locate_config_file(Some(path.clone().into_os_string()))?;
+
+        assert_eq!(located, Some(path));
+        Ok(())
+    }
+
+    #[test]
+    fn port_env_overrides_file_value() -> anyhow::Result<()> {
+        let mut config = Config {
+            port: 5000,
+            ..Config::default()
+        };
+
+        apply_port_override(&mut config, Some(OsString::from("6000")))?;
+        assert_eq!(config.port, 6000);
+
+        apply_port_override(&mut config, None)?;
+        assert_eq!(config.port, 6000);
+
+        apply_port_override(&mut config, Some(OsString::new()))?;
+        assert_eq!(config.port, 6000);
+        Ok(())
+    }
+
+    #[test]
+    fn port_env_rejects_invalid_values() {
+        let mut config = Config::default();
+
+        let error = apply_port_override(&mut config, Some(OsString::from("not-a-port")))
+            .expect_err("invalid port should be rejected");
+        assert!(error.to_string().contains("LYRA_PORT"));
+
+        let error = apply_port_override(&mut config, Some(OsString::from("70000")))
+            .expect_err("out-of-range port should be rejected");
+        assert!(error.to_string().contains("LYRA_PORT"));
+    }
+
+    #[test]
+    fn data_dir_defaults_to_data_under_cwd() -> anyhow::Result<()> {
+        let resolved = data_dir_path(None)?;
+
+        assert_eq!(resolved, std::env::current_dir()?.join("data"));
+        assert_eq!(data_dir_path(Some(OsString::new()))?, resolved);
+        Ok(())
+    }
+
+    #[test]
+    fn data_dir_env_relative_values_resolve_under_cwd() -> anyhow::Result<()> {
+        let resolved = data_dir_path(Some(OsString::from("state/lyra")))?;
+
+        assert_eq!(resolved, std::env::current_dir()?.join("state/lyra"));
+        Ok(())
+    }
+
+    #[test]
+    fn data_dir_is_created_when_missing() -> anyhow::Result<()> {
+        let parent = temp_dir("data-dir")?;
+        let path = parent.path().join("nested").join("data");
+
+        ensure_data_dir(&path)?;
+
+        assert!(path.is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn data_dir_rejects_files() -> anyhow::Result<()> {
+        let parent = temp_dir("data-dir")?;
+        let path = parent.path().join("data");
+        std::fs::write(&path, "")?;
+
+        let error = ensure_data_dir(&path).expect_err("file at data dir should be rejected");
+
+        assert!(error.to_string().contains("LYRA_DATA_DIR"));
+        Ok(())
+    }
+
+    #[test]
+    fn db_dir_defaults_to_data_dir() -> anyhow::Result<()> {
+        let data_dir = temp_dir("data-dir")?;
+        let mut config = Config {
+            data_dir: data_dir.path().to_path_buf(),
+            ..Config::default()
+        };
+
+        normalize_db_path(&mut config, None)?;
+
+        assert_eq!(config.db.path, data_dir.path().join("lyra.db"));
+        Ok(())
+    }
+
+    #[test]
+    fn db_dir_env_takes_precedence_over_data_dir() -> anyhow::Result<()> {
+        let data_dir = temp_dir("data-dir")?;
+        let db_dir = temp_dir("db-dir")?;
+        let mut config = Config {
+            data_dir: data_dir.path().to_path_buf(),
+            ..Config::default()
+        };
+
+        normalize_db_path(
+            &mut config,
+            Some(db_dir.path().to_path_buf().into_os_string()),
+        )?;
+
+        assert_eq!(config.db.path, db_dir.path().join("lyra.db"));
+        Ok(())
+    }
+
+    #[test]
+    fn configured_covers_path_is_preserved() -> anyhow::Result<()> {
+        let data_dir = temp_dir("data-dir")?;
+        let boot = BootEnv {
+            data_dir: Some(data_dir.path().as_os_str().to_owned()),
+            ..BootEnv::default()
+        };
+        let config = Config {
+            covers_path: Some(PathBuf::from("/srv/covers")),
+            ..Config::default()
+        };
+
+        let config = finalize_config(config, boot)?;
+
+        assert_eq!(
+            config.covers_path.as_deref(),
+            Some(std::path::Path::new("/srv/covers"))
+        );
         Ok(())
     }
 

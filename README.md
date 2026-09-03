@@ -8,7 +8,7 @@ Lyra is a music server with a Luau plugin system and an emphasis on metadata cor
 
 ## Installation
 
-The recommended installation method is Docker Compose. Create a directory for Lyra, add a `config.json`, put any web UI/static assets in `./static`, and start the container with a compose file like this:
+The recommended installation method is Docker Compose. Create a directory for Lyra, put any web UI/static assets in `./static`, and start the container with a compose file like this:
 
 ```yaml
 services:
@@ -18,14 +18,12 @@ services:
     ports:
       - "4746:4746"
     # These match the image defaults. Uncomment and adjust them only if you
-    # mount config, the database, plugins, or static assets somewhere else.
+    # mount server state, plugins, or static assets somewhere else.
     # environment:
-    #   LYRA_CONFIG_PATH: /lyra/config.json
-    #   LYRA_DB_DIR: /lyra/data
+    #   LYRA_DATA_DIR: /lyra/data
     #   LYRA_PLUGINS_DIR: /lyra/plugins
     #   LYRA_STATIC_DIR: /lyra/static
     volumes:
-      - ./config.json:/lyra/config.json:ro
       - ./static:/lyra/static:ro
       - lyra-data:/lyra/data
       - /path/to/music:/music:ro
@@ -40,21 +38,22 @@ Then start Lyra:
 docker compose up -d
 ```
 
-Use container paths in `config.json`. A minimal persistent setup looks like this:
+No `config.json` is required: the container stores its database and covers under `/lyra/data` (the `lyra-data` volume) and listens on port 4746. To configure a library or anything else from a file, mount one at `/lyra/config.json` using container paths:
+
+```yaml
+    volumes:
+      - ./config.json:/lyra/config.json:ro
+```
 
 ```json
 {
   "library": {
     "path": "/music"
-  },
-  "covers_path": "/lyra/data/covers",
-  "db": {
-    "kind": "mmap"
   }
 }
 ```
 
-`LYRA_DB_DIR` controls the directory used for relative `db.path` values inside the container. The image defaults it to `/lyra/data`, so omitting `db.path` stores the persistent database at `/lyra/data/lyra.db`; change both the environment value and volume target if you want to mount the database somewhere else. Absolute `db.path` values are used as written.
+`LYRA_DATA_DIR` is the root for everything the server owns (database, covers). The image defaults it to `/lyra/data`; change both the environment value and volume target if you want to mount the state somewhere else.
 
 `LYRA_STATIC_DIR` controls the directory used for static assets inside the container. The image defaults it to `/lyra/static`; change both the environment value and volume target if you want to mount the assets somewhere else.
 
@@ -73,9 +72,22 @@ It is highly recommended that you also grab the plugins in `plugins`, especially
 
 ## Configuration
 
-The runtime configuration is loaded from `config.json`. In Docker, the default path is `/lyra/config.json`; for local Cargo installs, you can drop it in the same directory as `plugins`.
+Lyra starts without any configuration: the database is stored under the data directory (`./data` next to where you run the binary, `/lyra/data` in Docker) and the server listens on port 4746.
 
-We recommend that you set the `"kind"` in `"db"` to `"mmap"` or `"file"` for persistence.
+An optional `config.json` refines that. It is looked up in the working directory, next to the binary, and in the source tree; set `LYRA_CONFIG_PATH` to load a specific file (the server fails to start if that file is missing). `LYRA_PORT` takes precedence over `port` from the file.
+
+### Environment variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LYRA_CONFIG_PATH` | searched | Explicit path to `config.json`; must exist when set |
+| `LYRA_DATA_DIR` | `./data` | Root for server-owned state; created at boot |
+| `LYRA_DB_DIR` | data dir | Directory for relative `db.path` values; created at boot |
+| `LYRA_PORT` | `4746` | Listening port; overrides `port` from the file |
+| `LYRA_PLUGINS_DIR` | `./plugins` | Directory plugins are loaded from |
+| `LYRA_STATIC_DIR` | searched | Directory for static web assets |
+
+Set `"kind"` in `"db"` to `"memory"` for a throwaway database that does not touch the disk.
 
 ### Schema
 
@@ -91,11 +103,11 @@ type Config = {
     language?: string | null; // ISO 639-1, ISO 639-3, or language name
     country?: string | null; // country code or name
   } | null;
-  covers_path?: string | null;
+  covers_path?: string | null; // default "<data dir>/covers"
 
   db?: {
-    kind?: "memory" | "file" | "mmap"; // default "memory"
-    path?: string; // default "lyra.db"; relative paths use LYRA_DB_DIR when set
+    kind?: "memory" | "file" | "mmap"; // default "mmap"
+    path?: string; // default "lyra.db"; relative paths resolve under LYRA_DB_DIR, else the data dir
   };
 
   auth?: {
