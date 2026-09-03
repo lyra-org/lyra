@@ -129,7 +129,7 @@ fn preview_entity_metadata_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn apply_entity_metadata_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Apply a previewed entity metadata edit").description(
-        "Atomically applies a release, track, or artist metadata edit. The body carries the `changes` and the `expected` diff returned by preview; the diff is recomputed against current metadata and the edit is applied only when it equals `expected`. Returns the fresh canonical metadata snapshot. Responds 400 for invalid changes, an `expected` entry whose field is not in `changes`, or references that no longer resolve, and 409 with `current` (the recomputed diff, possibly empty) when metadata changed after preview. Requires ManageMetadata.",
+        "Atomically applies a release, track, or artist metadata edit. The body carries the `changes` and the `expected` diff returned by preview. The diff is recomputed against current metadata; on a match the edit is applied and the fresh snapshot is returned. Responds 400 for anything preview rejects or an `expected` entry whose field is not in `changes`, and 409 with `current` (the recomputed diff, possibly empty) when it differs from `expected`. Requires ManageMetadata.",
     )
 }
 

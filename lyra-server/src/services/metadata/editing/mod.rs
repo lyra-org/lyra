@@ -16,10 +16,7 @@ use agdb::{
 
 use crate::services::auth::Principal;
 
-use apply::{
-    apply_plan,
-    prepare_references,
-};
+use apply::apply_diff;
 use model::{
     MetadataApplyRequest,
     MetadataFieldDiff,
@@ -27,7 +24,7 @@ use model::{
     MetadataSnapshot,
 };
 use plan::{
-    build_plan,
+    build_diff,
     check_expected,
 };
 use state::load_entity_state;
@@ -65,7 +62,7 @@ pub(crate) fn preview(
     request: &MetadataPreviewRequest,
 ) -> Result<Vec<MetadataFieldDiff>, MetadataEditingError> {
     let state = load_entity_state(db, principal, db_id)?;
-    let diff = build_plan(db, principal, &state, &request.changes)?;
+    let diff = build_diff(db, principal, &state, &request.changes)?;
     if diff.is_empty() {
         return Err(MetadataEditingError::BadRequest(
             "metadata edit has no effect".to_string(),
@@ -81,10 +78,9 @@ pub(crate) fn apply(
     request: &MetadataApplyRequest,
 ) -> Result<MetadataSnapshot, MetadataEditingError> {
     let state = load_entity_state(db, principal, db_id)?;
-    let plan = build_plan(db, principal, &state, &request.changes)?;
-    check_expected(&request.changes, &request.expected, &plan)?;
-    let references = prepare_references(db, &plan)?;
-    apply_plan(db, &state, &plan, &references)?;
+    let diff = build_diff(db, principal, &state, &request.changes)?;
+    check_expected(&request.changes, &request.expected, &diff)?;
+    apply_diff(db, &state, &diff)?;
     Ok(load_entity_state(db, principal, db_id)?.response())
 }
 
