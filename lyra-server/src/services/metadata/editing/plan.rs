@@ -33,7 +33,6 @@ use super::{
     normalize::{
         normalize_label_edits,
         normalize_provider_labels,
-        normalized_clear_value,
         normalized_set_value,
         validate_target,
     },
@@ -71,7 +70,7 @@ fn inherited_value(
                 | MetadataField::Credits
                 | MetadataField::Relations
         ) {
-            return normalized_clear_value(field);
+            return Ok(Value::Array(Vec::new()));
         }
         return Ok(state.value(field)?.clone());
     };
@@ -112,10 +111,6 @@ pub(super) fn build_plan(
             ),
             MetadataEditOperation::Set { value } => (
                 normalized_set_value(db, principal, state, change.field, value)?,
-                MetadataValueSource::Manual,
-            ),
-            MetadataEditOperation::Clear => (
-                normalized_clear_value(change.field)?,
                 MetadataValueSource::Manual,
             ),
             MetadataEditOperation::Inherit => {

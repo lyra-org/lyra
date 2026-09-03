@@ -74,7 +74,6 @@ impl MetadataField {
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum MetadataEditOperation {
     Set { value: Value },
-    Clear,
     Inherit,
 }
 
