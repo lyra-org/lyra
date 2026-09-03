@@ -31,8 +31,8 @@ use crate::{
             MetadataEditingError,
             model::{
                 MetadataApplyRequest,
+                MetadataFieldDiff,
                 MetadataPreviewRequest,
-                MetadataPreviewResponse,
                 MetadataSnapshot,
             },
         },
@@ -65,10 +65,10 @@ fn editing_error(error: MetadataEditingError) -> AppError {
         MetadataEditingError::EntityNotFound(id) => {
             AppError::not_found(format!("Entity not found: {id}"))
         }
-        MetadataEditingError::Conflict(conflicts) => AppError::json_conflict(serde_json::json!({
+        MetadataEditingError::Conflict(current) => AppError::json_conflict(serde_json::json!({
             "code": "metadata_edit_conflict",
             "message": "metadata changed after preview",
-            "conflicts": conflicts,
+            "current": current,
         })),
         MetadataEditingError::Internal(error) => AppError::from(error),
     }
@@ -90,7 +90,7 @@ async fn preview_entity_metadata(
     headers: HeaderMap,
     Path(id): Path<String>,
     Json(request): Json<MetadataPreviewRequest>,
-) -> Result<Json<MetadataPreviewResponse>, AppError> {
+) -> Result<Json<Vec<MetadataFieldDiff>>, AppError> {
     let principal = require_manage_metadata(&headers).await?;
     let db = STATE.db.read().await;
     let entity_id = require_entity_access(&*db, &principal, &id)?;
@@ -122,14 +122,14 @@ fn get_entity_metadata_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn preview_entity_metadata_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Preview an entity metadata edit").description(
-        "Validates and normalizes a proposed edit without modifying metadata. Returns the authoritative field diff and an opaque, short-lived preview ID required by PATCH. Requires ManageMetadata.",
+        "Validates and normalizes a proposed edit without modifying metadata and returns the resulting field diff: one entry per field whose value or source would change, each with its `before` and `after` state. Edits with no effect, invalid values, and references that do not resolve are rejected with 400. Requires ManageMetadata.",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn apply_entity_metadata_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Apply a previewed entity metadata edit").description(
-        "Consumes a short-lived preview ID and atomically applies that exact release, track, or artist metadata edit when every previewed field value and source still matches. Returns the fresh canonical metadata snapshot, or 409 with machine-readable field conflicts when metadata changed after preview. Requires ManageMetadata.",
+        "Atomically applies a release, track, or artist metadata edit. The body carries the `changes` and the `expected` diff returned by preview; the diff is recomputed against current metadata and the edit is applied only when it equals `expected`. Returns the fresh canonical metadata snapshot. Responds 400 for invalid changes, an `expected` entry whose field is not in `changes`, or references that no longer resolve, and 409 with `current` (the recomputed diff, possibly empty) when metadata changed after preview. Requires ManageMetadata.",
     )
 }
 
