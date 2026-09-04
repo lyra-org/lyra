@@ -144,6 +144,9 @@ pub(crate) struct RateLimitConfig {
     pub(crate) login_burst: u32,
 }
 
+/// The config `library` block: a developer bootstrap that seeds one library
+/// at startup. Not the supported way to add a library — that is
+/// `POST /api/libraries`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct LibraryConfig {
     pub(crate) path: Option<PathBuf>,

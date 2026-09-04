@@ -6,6 +6,7 @@
 use std::{
     future::IntoFuture,
     net::SocketAddr,
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
@@ -49,8 +50,17 @@ pub(crate) async fn bind_configured_listener(port: u16) -> Result<TcpListener> {
         .with_context(|| format!("configured port {port} is already in use or unavailable"))
 }
 
-pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListener) -> Result<()> {
-    let capture_mode = capture_path.is_some();
+/// `serve --capture <output-path> --library <dir>`: syncs the library at
+/// `library_path` and writes the provider capture to `output_path` instead
+/// of serving.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CaptureArgs {
+    pub output_path: String,
+    pub library_path: PathBuf,
+}
+
+pub(crate) async fn run_server(capture: Option<CaptureArgs>, listener: TcpListener) -> Result<()> {
+    let capture_mode = capture.is_some();
     let shutdown_token = services::shutdown::reset();
     let config = STATE.config();
     log_setting_overrides();
@@ -71,19 +81,15 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
 
     let plugin_runtime = plugin_bootstrap::initialize_harmony().await?;
 
-    if let Some(output_path) = capture_path {
+    if let Some(capture) = capture {
         // sync_library dispatches handlers that resolve STATE.generation().plugin_runtime; publish first.
         plugin_bootstrap::exec_for_capture(plugin_runtime.clone()).await?;
         plugin_bootstrap::publish_runtime(plugin_runtime);
-        let configured_library =
-            services::libraries::prepare_configured_library(&config, true).await?;
-        let capture_library_db_id = configured_library
-            .as_ref()
-            .and_then(|library| library.db_id)
-            .ok_or_else(|| {
-                anyhow::anyhow!("--capture requires a library configured in config.json")
-            })?;
-        return services::providers::run_capture(capture_library_db_id, &output_path).await;
+        let library = services::libraries::prepare_capture_library(capture.library_path).await?;
+        let library_db_id = library
+            .db_id
+            .ok_or_else(|| anyhow::anyhow!("capture library missing db_id"))?;
+        return services::providers::run_capture(library_db_id, &capture.output_path).await;
     }
 
     let core_api = routes::build_core_api()?;
@@ -112,9 +118,7 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
             return;
         }
 
-        if let Err(err) =
-            services::libraries::prepare_configured_library(&config_for_bg, false).await
-        {
+        if let Err(err) = services::libraries::prepare_configured_library(&config_for_bg).await {
             tracing::error!(error = %err, "configured library preparation failed");
             return;
         }
