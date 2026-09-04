@@ -49,9 +49,17 @@ use time::{
 
 use crate::{
     db,
-    services::entities::ResolvedCreditedArtist,
+    services::{
+        auth::{
+            AuthCredential,
+            ResolvedAuth,
+            require_auth,
+        },
+        entities::ResolvedCreditedArtist,
+    },
 };
 use agdb::DbId;
+use axum::http::HeaderMap;
 
 pub(crate) use app::build_core_api;
 pub use artists::artist_routes;
@@ -159,6 +167,20 @@ pub(crate) struct PageQuery {
         )
     )]
     cursor: Option<String>,
+}
+
+/// Operations that change credentials or server-wide behavior require an
+/// interactive session; an API key alone must not be able to perform them.
+pub(super) async fn forbid_api_key_credential(
+    headers: &HeaderMap,
+) -> Result<ResolvedAuth, AppError> {
+    let auth = require_auth(headers).await?;
+    match auth.credential {
+        AuthCredential::ApiKey { .. } => Err(AppError::forbidden(
+            "this operation cannot be performed with an api key credential",
+        )),
+        AuthCredential::Session { .. } | AuthCredential::Default => Ok(auth),
+    }
 }
 
 pub(crate) fn unix_secs_to_rfc3339_u64(seconds: u64) -> String {

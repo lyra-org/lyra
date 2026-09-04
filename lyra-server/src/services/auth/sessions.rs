@@ -164,7 +164,7 @@ pub(crate) async fn create_session_for_user(
     let token = random_hex_secret::<SESSION_TOKEN_BYTES>();
     let token_hash = hash_secret(&token);
     let now = db::users::now_secs();
-    let ttl = STATE.config.get().auth.session_ttl_seconds;
+    let ttl = STATE.config().auth.session_ttl_seconds;
     let expires_at = if ttl > 0 {
         now.saturating_add(ttl as i64)
     } else {

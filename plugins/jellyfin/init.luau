@@ -24,7 +24,6 @@ local config = plugins.declare_settings(constants.declare_settings)
 local server_info = server.info()
 constants.configure_settings(config)
 constants.configure_server_id(server_info.id)
-constants.configure_auth_enabled(auth.capabilities().enabled)
 
 local ROOT_ID_STORE_NAME = "jellyfin:identity"
 local ROOT_ITEM_ID_KEY = "root_item_id"
@@ -364,6 +363,7 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 end, "public")
 
 local function public_system_info<T>(extra: T): T & PublicSystemInfo
+	local server_info = server.info()
 	local public_address: string? = if server_info.published_url then `{server_info.published_url}{P}` else nil
 	local info: T & PublicSystemInfo = extra
 	info.ServerName = "Lyra"

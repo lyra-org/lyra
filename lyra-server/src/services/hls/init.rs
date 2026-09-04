@@ -8,12 +8,11 @@ use super::{
         ensure_hls_cleanup_worker_started,
         reset_cleanup_worker_state,
     },
-    state::refresh_hls_transcode_semaphore,
+    state::notify_transcode_capacity_changed,
 };
-use crate::config::Config;
 
-pub(crate) async fn initialize_for_config(config: &Config) {
-    refresh_hls_transcode_semaphore(config).await;
+pub(crate) async fn initialize() {
+    notify_transcode_capacity_changed();
     reset_cleanup_worker_state();
     ensure_hls_cleanup_worker_started().await;
 }

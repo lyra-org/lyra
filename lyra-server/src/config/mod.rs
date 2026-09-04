@@ -115,14 +115,14 @@ impl Config {
     /// config without a file or database.
     #[cfg(test)]
     pub(crate) fn for_tests() -> Self {
-        crate::services::settings::server::resolve(
+        let resolved = crate::services::settings::server::resolve(
             &BootConfig::default(),
             None,
-            &FileSettings::default(),
+            FileSettings::default(),
             &[],
         )
-        .expect("default config resolves")
-        .config
+        .expect("default config resolves");
+        (*resolved.config).clone()
     }
 }
 

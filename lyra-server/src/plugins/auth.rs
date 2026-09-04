@@ -351,19 +351,25 @@ fn auth_capabilities_spec() -> FunctionSpec {
 #[derive(Clone)]
 pub(crate) struct AuthCapabilitiesModuleStore {
     capabilities: AuthCapabilities,
+    settings: Option<crate::SettingsHandle>,
 }
 impl AuthCapabilitiesModuleStore {
-    pub(crate) fn new(capabilities: AuthCapabilities) -> Self {
-        Self { capabilities }
+    pub(crate) fn new(
+        capabilities: AuthCapabilities,
+        settings: Option<crate::SettingsHandle>,
+    ) -> Self {
+        Self {
+            capabilities,
+            settings,
+        }
     }
 }
 fn auth_capabilities_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let capabilities = frame
-        .vm
-        .data()
-        .get::<AuthCapabilitiesModuleStore>()?
-        .capabilities
-        .clone();
+    let store = frame.vm.data().get::<AuthCapabilitiesModuleStore>()?;
+    let capabilities = match &store.settings {
+        Some(settings) => AuthCapabilities::from_config(&settings.get().config.auth),
+        None => store.capabilities.clone(),
+    };
     frame
         .returns
         .write(auth_capabilities_table(&capabilities))?;

@@ -56,6 +56,7 @@ impl PluginExecutor {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn discover_from_plugins_dir_with_db_and_modules(
         plugins_dir: impl Into<PathBuf>,
         server_info: crate::plugins::server::ServerInfo,
@@ -146,10 +147,12 @@ impl PluginExecutor {
                 vm.data()
                     .insert(crate::plugins::server::ServerInfoModuleStore::new(
                         server_info,
+                        stores.server_settings.clone(),
                     ))?;
                 vm.data()
                     .insert(crate::plugins::auth::AuthCapabilitiesModuleStore::new(
                         auth_capabilities,
+                        stores.server_settings.clone(),
                     ))?;
                 stores.install_into(vm)?;
                 vm.data()

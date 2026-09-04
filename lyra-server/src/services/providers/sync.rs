@@ -3,7 +3,10 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::Duration,
+};
 
 use tokio::{
     sync::{
@@ -11,6 +14,7 @@ use tokio::{
         Semaphore,
     },
     task::JoinSet,
+    time::Instant,
 };
 
 use crate::{
@@ -112,20 +116,38 @@ async fn run_provider_sync_inner(provider_id: &str) -> Result<(), ProviderServic
     Ok(())
 }
 
-pub(crate) async fn run_provider_sync_loop(interval_secs: u64, shutdown: Arc<Notify>) {
-    run_all_provider_syncs().await;
-
+/// When the next sync is due for the interval currently configured, or
+/// `None` while syncing is disabled or the interval is too far out to
+/// represent.
+fn next_sync_due(interval_secs: u64, last_run: Instant) -> Option<Instant> {
     if interval_secs == 0 {
-        return;
+        return None;
     }
+    last_run.checked_add(Duration::from_secs(interval_secs))
+}
 
-    let interval = std::time::Duration::from_secs(interval_secs);
+async fn sleep_until_due(due: Option<Instant>) {
+    match due {
+        Some(due) => tokio::time::sleep_until(due).await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Reads `sync.interval_secs` from the live config: every settings
+/// publish wakes the loop so a changed interval reschedules immediately.
+pub(crate) async fn run_provider_sync_loop(shutdown: Arc<Notify>) {
+    run_all_provider_syncs().await;
+    let mut last_run = Instant::now();
+
     loop {
+        let due = next_sync_due(STATE.config().sync.interval_secs, last_run);
         tokio::select! {
-            _ = tokio::time::sleep(interval) => {
+            _ = sleep_until_due(due) => {
                 tracing::info!("running scheduled provider sync");
                 run_all_provider_syncs().await;
+                last_run = Instant::now();
             }
+            _ = STATE.settings_changed.notified() => {}
             _ = shutdown.notified() => {
                 tracing::info!("background sync loop shutting down");
                 break;
@@ -159,5 +181,27 @@ async fn run_all_provider_syncs() {
         if let Err(err) = run_provider_sync(provider_id).await {
             tracing::warn!(provider_id, error = %err, "provider sync failed");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn next_sync_due_is_none_when_disabled_and_set_when_enabled() {
+        let last_run = Instant::now();
+
+        assert!(next_sync_due(0, last_run).is_none());
+        assert_eq!(
+            next_sync_due(30, last_run),
+            Some(last_run + Duration::from_secs(30))
+        );
+        assert!(next_sync_due(0, last_run).is_none());
+    }
+
+    #[test]
+    fn next_sync_due_is_none_when_the_interval_overflows() {
+        assert!(next_sync_due(u64::MAX, Instant::now()).is_none());
     }
 }

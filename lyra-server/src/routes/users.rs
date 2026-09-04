@@ -61,16 +61,15 @@ use crate::{
     routes::{
         AppError,
         deserialize_inc,
+        forbid_api_key_credential,
     },
     services::auth::{
         AuthCredential,
         AuthError,
         DEFAULT_USERNAME,
-        ResolvedAuth,
         api_keys,
         login_with_password,
         logout_with_token,
-        require_auth,
         require_grantable_permissions,
         require_manage_roles,
         require_manage_users,
@@ -297,16 +296,6 @@ fn hash_password(password: &str) -> Result<String, AppError> {
 fn parse_me_includes(inc: Option<Vec<String>>) -> Result<bool, AppError> {
     let values = super::parse_inc_values(inc, &["permissions"])?;
     Ok(values.iter().any(|value| value == "permissions"))
-}
-
-async fn forbid_api_key_credential(headers: &HeaderMap) -> Result<ResolvedAuth, AppError> {
-    let auth = require_auth(headers).await?;
-    match auth.credential {
-        AuthCredential::ApiKey { .. } => Err(AppError::forbidden(
-            "this operation cannot be performed with an api key credential",
-        )),
-        AuthCredential::Session { .. } | AuthCredential::Default => Ok(auth),
-    }
 }
 
 async fn create_user(
@@ -603,7 +592,7 @@ async fn login_user(
     headers: HeaderMap,
     Json(body): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, AppError> {
-    let config = STATE.config.get();
+    let config = STATE.config();
     if !config.auth.enabled {
         if !config.auth.allow_default_login_when_disabled {
             return Err(AppError::forbidden(
@@ -983,9 +972,9 @@ mod tests {
     {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
-        let mut config = STATE.config.get().as_ref().clone();
+        let mut config = STATE.config().as_ref().clone();
         config.auth.enabled = false;
-        STATE.config.replace(std::sync::Arc::new(config));
+        crate::testing::publish_config(config);
 
         let err = match login_user(
             ConnectInfo(SocketAddr::from(([203, 0, 113, 40], 4746))),
@@ -1485,11 +1474,14 @@ mod tests {
     async fn login_rate_limit_returns_retry_after() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
-        let mut config = STATE.config.get().as_ref().clone();
+        let mut config = STATE.config().as_ref().clone();
         config.rate_limit.enabled = true;
         config.rate_limit.login_per_minute = 60;
         config.rate_limit.login_burst = 2;
-        STATE.config.replace(std::sync::Arc::new(config));
+        STATE
+            .startup_config
+            .replace(std::sync::Arc::new(config.clone()));
+        crate::testing::publish_config(config);
 
         let attempt = || {
             login_user(

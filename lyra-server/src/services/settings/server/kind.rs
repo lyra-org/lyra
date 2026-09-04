@@ -121,8 +121,14 @@ fn path_value(path: PathBuf) -> Result<Value> {
         .ok_or_else(|| anyhow!("path '{}' is not valid UTF-8", path.display()))
 }
 
+/// Accepts integral floats too: JSON clients round-trip large integers
+/// through doubles.
 fn integer_of(value: &Value, max: u64) -> Result<u64> {
-    let Some(number) = value.as_u64() else {
+    let integral_float = value
+        .as_f64()
+        .filter(|float| float.fract() == 0.0 && *float >= 0.0 && *float < u64::MAX as f64)
+        .map(|float| float as u64);
+    let Some(number) = value.as_u64().or(integral_float) else {
         bail!("must be a non-negative integer");
     };
     if number > max {
@@ -201,7 +207,9 @@ mod tests {
     fn integers_must_be_whole_and_non_negative() {
         let kind = Kind::U32 { default: 0 };
         assert_eq!(normalize(kind, json!(7)).unwrap(), json!(7));
+        assert_eq!(normalize(kind, json!(7.0)).unwrap(), json!(7));
         assert!(normalize(kind, json!(7.5)).is_err());
+        assert!(normalize(kind, json!(-1.0)).is_err());
         assert!(normalize(kind, json!(-1)).is_err());
         assert!(normalize(kind, json!("7")).is_err());
         assert!(normalize(kind, json!(null)).is_err());
@@ -215,6 +223,11 @@ mod tests {
             normalize(Kind::U64 { default: 0 }, above_u32.clone()).unwrap(),
             above_u32
         );
+        assert_eq!(
+            normalize(Kind::U64 { default: 0 }, json!(u64::MAX)).unwrap(),
+            json!(u64::MAX)
+        );
+        assert!(normalize(Kind::U64 { default: 0 }, json!(1.0e20)).is_err());
     }
 
     #[test]

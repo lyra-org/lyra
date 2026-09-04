@@ -224,9 +224,6 @@ impl From<HlsError> for AppError {
             HlsError::UnsupportedCodec => {
                 Self::bad_request("Unsupported HLS codec. Supported values: copy, aac, alac, flac.")
             }
-            HlsError::TranscodeCapacityUnavailable => {
-                Self::service_unavailable("transcode capacity unavailable")
-            }
             HlsError::JobNotFound => Self::not_found("HLS transcode job not found"),
             HlsError::Internal(err) => err.into(),
         }

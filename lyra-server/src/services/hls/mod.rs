@@ -12,8 +12,6 @@ pub(crate) mod state;
 pub(crate) enum HlsError {
     #[error("Unsupported HLS codec. Supported values: copy, aac, alac, flac.")]
     UnsupportedCodec,
-    #[error("transcode capacity unavailable")]
-    TranscodeCapacityUnavailable,
     #[error("HLS transcode job not found")]
     JobNotFound,
     #[error(transparent)]

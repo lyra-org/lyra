@@ -31,7 +31,7 @@ use super::{
 };
 
 pub(crate) fn configured_covers_root() -> PathBuf {
-    STATE.config.get().covers_path.clone()
+    STATE.config().covers_path.clone()
 }
 
 pub(crate) fn configured_cover_dir_for_release(covers_root: &Path, release_id: DbId) -> PathBuf {

@@ -62,6 +62,16 @@ pub(crate) enum DbKind {
     Mmap,
 }
 
+impl DbKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Memory => "memory",
+            Self::File => "file",
+            Self::Mmap => "mmap",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct DbConfig {
     pub(crate) kind: DbKind,

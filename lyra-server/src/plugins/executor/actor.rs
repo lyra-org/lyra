@@ -107,6 +107,7 @@ impl PluginExecutorHandle {
         auth_capabilities: crate::plugins::auth::AuthCapabilities,
         db: crate::plugins::db::DbAsync,
         module_overrides: Vec<ModuleSpec>,
+        settings: Option<crate::SettingsHandle>,
     ) -> Result<(Self, Vec<PluginLoadError>)> {
         let plugins_dir = plugins_dir.into();
         let (tx, rx) = plugin_executor_channel(EXECUTOR_QUEUE_CAPACITY);
@@ -115,11 +116,13 @@ impl PluginExecutorHandle {
         thread::Builder::new()
             .name("lyra-plugin-executor".to_string())
             .spawn(move || {
-                match PluginExecutor::discover_from_plugins_dir_with_db_and_modules(
+                let mut stores = super::stores::PluginModuleStores::with_db(db);
+                stores.server_settings = settings;
+                match PluginExecutor::discover_from_plugins_dir_with_stores(
                     plugins_dir,
                     server_info,
                     auth_capabilities,
-                    db,
+                    stores,
                     module_overrides,
                 ) {
                     Ok((runtime, errors)) => {

@@ -7,6 +7,7 @@ use anyhow::Result;
 use harmony_luau as luau;
 
 pub(super) struct PluginModuleStores {
+    pub(super) server_settings: Option<crate::SettingsHandle>,
     artists: crate::plugins::artists::ArtistsModuleStore,
     chromaprint: crate::plugins::chromaprint::ChromaprintModuleStore,
     covers: crate::plugins::covers::CoversModuleStore,
@@ -33,6 +34,7 @@ pub(super) struct PluginModuleStores {
 impl PluginModuleStores {
     pub(super) fn empty() -> Self {
         Self {
+            server_settings: None,
             artists: crate::plugins::artists::ArtistsModuleStore::empty(),
             chromaprint: crate::plugins::chromaprint::ChromaprintModuleStore::empty(),
             covers: crate::plugins::covers::CoversModuleStore::empty(),
@@ -60,6 +62,7 @@ impl PluginModuleStores {
 
     pub(super) fn with_db(db: crate::plugins::db::DbAsync) -> Self {
         Self {
+            server_settings: None,
             artists: crate::plugins::artists::ArtistsModuleStore::with_db(db.clone()),
             chromaprint: crate::plugins::chromaprint::ChromaprintModuleStore::with_db(db.clone()),
             covers: crate::plugins::covers::CoversModuleStore::with_db(db.clone()),
