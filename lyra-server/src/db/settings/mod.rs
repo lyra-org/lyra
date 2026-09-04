@@ -18,6 +18,7 @@ use super::{
 };
 
 pub(crate) mod plugins;
+pub(crate) mod server;
 
 #[derive(DbElement, Serialize, Clone, Debug)]
 pub(crate) struct SettingEntry {

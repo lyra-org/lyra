@@ -11,13 +11,15 @@ use agdb::{
 };
 use nanoid::nanoid;
 
+use super::DbAccess;
+
 #[derive(DbElement, Clone, Debug)]
 pub(crate) struct ServerInfo {
     pub(crate) db_id: Option<DbId>,
     pub(crate) id: String,
 }
 
-pub(crate) fn get(db: &DbAny) -> anyhow::Result<Option<ServerInfo>> {
+pub(crate) fn get<A: DbAccess>(db: &A) -> anyhow::Result<Option<ServerInfo>> {
     let mut infos: Vec<ServerInfo> = db
         .exec(
             QueryBuilder::select()
@@ -34,17 +36,16 @@ pub(crate) fn get(db: &DbAny) -> anyhow::Result<Option<ServerInfo>> {
 }
 
 pub(crate) fn ensure(db: &mut DbAny) -> anyhow::Result<ServerInfo> {
-    if let Some(info) = get(db)? {
-        return Ok(info);
-    }
+    db.transaction_mut(|t| -> anyhow::Result<ServerInfo> {
+        if let Some(info) = get(t)? {
+            return Ok(info);
+        }
 
-    let id = nanoid!();
-    let info = ServerInfo {
-        db_id: None,
-        id: id.clone(),
-    };
-
-    let db_id = db.transaction_mut(|t| -> anyhow::Result<DbId> {
+        let id = nanoid!();
+        let info = ServerInfo {
+            db_id: None,
+            id: id.clone(),
+        };
         let db_id = t
             .exec_mut(QueryBuilder::insert().element(&info).query())?
             .ids()[0];
@@ -55,12 +56,11 @@ pub(crate) fn ensure(db: &mut DbAny) -> anyhow::Result<ServerInfo> {
                 .to(db_id)
                 .query(),
         )?;
-        Ok(db_id)
-    })?;
 
-    Ok(ServerInfo {
-        db_id: Some(db_id),
-        id,
+        Ok(ServerInfo {
+            db_id: Some(db_id),
+            id,
+        })
     })
 }
 
