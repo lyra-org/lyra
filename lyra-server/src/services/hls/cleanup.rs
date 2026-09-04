@@ -40,7 +40,6 @@ use super::state::{
 const HLS_SESSION_TTL: Duration = Duration::from_secs(15 * 60);
 const HLS_JOB_IDLE_GRACE: Duration = Duration::from_secs(30);
 const HLS_CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
-const HLS_CLEANUP_STARTUP_PURGE_DEFAULT: bool = true;
 
 /// Generation-owned HLS cleanup worker state: the started flag plus the
 /// start lock that serializes worker spawn.
@@ -83,12 +82,7 @@ fn hls_temp_disk_budget_bytes() -> Option<u64> {
 }
 
 fn hls_cleanup_startup_purge_enabled() -> bool {
-    STATE
-        .config
-        .get()
-        .hls
-        .cleanup_startup_purge
-        .unwrap_or(HLS_CLEANUP_STARTUP_PURGE_DEFAULT)
+    STATE.config.get().hls.cleanup_startup_purge
 }
 
 fn is_hls_temp_job_dir_name(name: &str) -> bool {

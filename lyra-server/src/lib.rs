@@ -41,6 +41,7 @@ pub mod testing;
 use config::{
     BootConfig,
     Config,
+    LibraryConfig,
 };
 pub(crate) use db::Library;
 use db::{
@@ -59,6 +60,11 @@ use services::playback_sessions::{
     PlaybackUpdateRegistries,
 };
 use services::providers::ProviderRegistries;
+use services::settings::server::{
+    self as server_settings,
+    EffectiveSetting,
+    ResolvedSettings,
+};
 
 #[derive(Clone)]
 pub(crate) struct SwapHandle<T: Clone> {
@@ -126,6 +132,7 @@ impl DbHandle {
 
 pub(crate) type BootHandle = SwapHandle<Arc<BootConfig>>;
 pub(crate) type ConfigHandle = SwapHandle<Arc<Config>>;
+pub(crate) type SettingsHandle = SwapHandle<Arc<[EffectiveSetting]>>;
 pub(crate) type PluginManifestHandle = SwapHandle<Arc<[PluginManifest]>>;
 pub(crate) type PluginRuntimeHandle = SwapHandle<Option<crate::plugins::bootstrap::PluginRuntime>>;
 
@@ -165,14 +172,17 @@ pub(crate) struct AppState {
     /// Canonical home for port, data dir, and db location.
     pub(crate) boot: BootHandle,
     pub(crate) config: ConfigHandle,
+    /// Per-setting provenance for the values in `config`.
+    pub(crate) settings: SettingsHandle,
     generation: SwapHandle<Arc<GenerationState>>,
 }
 
-fn build_app_state(boot: BootConfig, created: db::Created, config: Config) -> AppState {
+fn build_app_state(boot: BootConfig, created: db::Created, resolved: ResolvedSettings) -> AppState {
     AppState {
         db: DbHandle::new(created),
         boot: BootHandle::new(Arc::new(boot)),
-        config: ConfigHandle::new(Arc::new(config)),
+        config: ConfigHandle::new(Arc::new(resolved.config)),
+        settings: SettingsHandle::new(resolved.effective.into()),
         generation: SwapHandle::default(),
     }
 }
@@ -187,10 +197,11 @@ impl AppState {
     /// `created` was opened while the live DB still held its process lock,
     /// so it must not share a lockfile with the live one (memory DBs, or a
     /// different path).
-    fn reset(&self, boot: BootConfig, created: db::Created, config: Config) {
+    fn reset(&self, boot: BootConfig, created: db::Created, resolved: ResolvedSettings) {
         self.db.reset(created);
         self.boot.replace(Arc::new(boot));
-        self.config.replace(Arc::new(config));
+        self.config.replace(Arc::new(resolved.config));
+        self.settings.replace(resolved.effective.into());
         self.generation.replace(Arc::default());
     }
 }
@@ -204,7 +215,8 @@ pub(crate) struct StateCell {
 }
 
 impl StateCell {
-    /// Publishes an already-open database with its boot and runtime config.
+    /// Publishes an already-open database with its boot config and resolved
+    /// settings.
     /// First call builds the state; later calls swap in a fresh
     /// DB/config/generation via [`AppState::reset`] (test-harness reuse), so
     /// a later `created` must not share a lockfile with the live DB or
@@ -214,16 +226,16 @@ impl StateCell {
         &self,
         boot: BootConfig,
         created: db::Created,
-        config: Config,
+        resolved: ResolvedSettings,
     ) -> Result<()> {
         match self.inner.get() {
             Some(state) => {
-                state.reset(boot, created, config);
+                state.reset(boot, created, resolved);
                 Ok(())
             }
             None => self
                 .inner
-                .set(build_app_state(boot, created, config))
+                .set(build_app_state(boot, created, resolved))
                 .map_err(|_| anyhow::anyhow!("application state initialized concurrently")),
         }
     }
@@ -257,14 +269,31 @@ pub async fn run_server(capture_path: Option<String>) -> Result<()> {
     let _tracing_guard = services::startup::init_tracing();
     let loaded = config::load()?;
     // Validate the file before touching the port, directories, or database.
-    let config = Config::resolve(&loaded.file, &loaded.boot)?;
+    let library = LibraryConfig::resolve(loaded.file.library.as_ref())?;
+    let file_settings = server_settings::normalize_file(&loaded.file.settings, &loaded.boot)?;
     // Bind first: a port collision with a running server must fail fast
     // instead of blocking on that server's DB process lock.
     let listener = services::startup::bind_configured_listener(loaded.boot.port).await?;
     loaded.boot.ensure_directories()?;
-    let created = create(&loaded.boot.db)?;
-    STATE.initialize(loaded.boot, created, config)?;
+    let mut created = create(&loaded.boot.db)?;
+    let resolved = resolve_settings(&mut created, &loaded.boot, library, file_settings)?;
+    STATE.initialize(loaded.boot, created, resolved)?;
     services::startup::run_server(capture_path, listener).await
+}
+
+/// Reads stored server settings and resolves the runtime config against the
+/// freshly opened, not yet shared database.
+pub(crate) fn resolve_settings(
+    created: &mut db::Created,
+    boot: &BootConfig,
+    library: Option<LibraryConfig>,
+    file_settings: config::FileSettings,
+) -> Result<ResolvedSettings> {
+    let db = Arc::get_mut(&mut created.db)
+        .ok_or_else(|| anyhow::anyhow!("database was shared before settings were resolved"))?
+        .get_mut();
+    let stored = server_settings::load_stored(db)?;
+    server_settings::resolve(boot, library, &file_settings, &stored)
 }
 
 #[cfg(feature = "docgen")]
@@ -299,30 +328,53 @@ pub async fn run_plugins_add(url: &str, git_ref: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Force-compact the DB from the CLI. Reserves the configured port first, opens
-/// in `DbFile` regardless of `config.kind`, and skips schema init.
-pub async fn run_db_optimize() -> Result<()> {
-    let _tracing_guard = services::startup::init_tracing();
+/// A persistent database opened for a CLI subcommand: the process lock is
+/// held for as long as the value lives. Opens in `DbFile` regardless of the
+/// configured kind and skips schema init.
+struct CliDb {
+    db: DbAny,
+    path: std::path::PathBuf,
+    _lock: Option<db::process_lock::DbProcessLock>,
+}
+
+/// `command` is the CLI command name (for example `db optimize`) used in
+/// diagnostics; `verb` describes the action in "nothing to <verb>" errors.
+fn open_cli_db(command: &'static str, verb: &str) -> Result<CliDb> {
     let boot = config::load()?.boot;
     if matches!(boot.db.kind, config::DbKind::Memory) {
         anyhow::bail!(
-            "nothing to optimize: db kind is memory; configure DbKind::File or DbKind::Mmap to use this command"
+            "nothing to {verb}: db kind is memory; configure DbKind::File or DbKind::Mmap to use this command"
         );
     }
 
-    let db_path = boot.db.path.clone();
-    if !db_path.is_file() {
-        anyhow::bail!(
-            "nothing to optimize: no database file at {}",
-            db_path.display()
-        );
+    let path = boot.db.path.clone();
+    if !path.is_file() {
+        anyhow::bail!("nothing to {verb}: no database file at {}", path.display());
     }
+
+    let lock = db::process_lock::acquire(
+        &boot.db,
+        db::process_lock::LockMode::NonBlocking { command },
+    )?;
+    let db = db::bootstrap::open(config::DbKind::File, path.to_string_lossy().as_ref())?;
+    Ok(CliDb {
+        db,
+        path,
+        _lock: lock,
+    })
+}
+
+/// Force-compact the DB from the CLI.
+pub async fn run_db_optimize() -> Result<()> {
+    let _tracing_guard = services::startup::init_tracing();
+    let CliDb {
+        mut db,
+        path: db_path,
+        _lock,
+    } = open_cli_db("db optimize", "optimize")?;
     tracing::info!(path = %db_path.display(), "optimizing db");
 
-    let _lock_guard = db::process_lock::acquire(&boot.db, db::process_lock::LockMode::NonBlocking)?;
-
     // After the open: WAL recovery may have grown the file before optimize runs.
-    let mut db = db::bootstrap::open(config::DbKind::File, db_path.to_string_lossy().as_ref())?;
     let before_logical = db.size();
     let before_file = std::fs::metadata(&db_path)
         .with_context(|| {
@@ -351,5 +403,23 @@ pub async fn run_db_optimize() -> Result<()> {
     eprintln!("  logical bytes: {before_logical} -> {after_logical}");
     eprintln!("  file bytes:    {before_file} -> {after_file} (reclaimed {reclaimed})");
 
+    Ok(())
+}
+
+/// Clears every stored server setting so a database whose entries no longer
+/// validate can start again.
+pub async fn run_settings_reset() -> Result<()> {
+    let _tracing_guard = services::startup::init_tracing();
+    let mut cli = open_cli_db("settings reset", "reset")?;
+    let removed = server_settings::reset_stored(&mut cli.db)?;
+
+    if removed.is_empty() {
+        eprintln!("no stored server settings to remove");
+    } else {
+        eprintln!("removed {} stored server setting(s):", removed.len());
+        for key in removed {
+            eprintln!("  {key}");
+        }
+    }
     Ok(())
 }

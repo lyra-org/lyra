@@ -6,12 +6,14 @@
 use agdb::{
     DbAny,
     DbElement,
+    DbId,
     QueryBuilder,
 };
 use anyhow::anyhow;
 use nanoid::nanoid;
 use serde::Serialize;
 
+use super::SettingEntry;
 use crate::db::{
     DbAccess,
     NodeId,
@@ -74,10 +76,36 @@ pub(crate) fn ensure(db: &mut DbAny) -> anyhow::Result<ServerSettings> {
     })
 }
 
+fn parent_id<A: DbAccess>(db: &A) -> anyhow::Result<DbId> {
+    find_with(db)?
+        .and_then(|node| node.db_id)
+        .map(DbId::from)
+        .ok_or_else(|| anyhow!("server settings node missing; restart the server to recreate it"))
+}
+
+pub(crate) fn get_all_with<A: DbAccess>(db: &A) -> anyhow::Result<Vec<SettingEntry>> {
+    super::get_all_settings_with(db, parent_id(db)?)
+}
+
+pub(crate) fn clear_with<A: DbAccess>(db: &mut A) -> anyhow::Result<()> {
+    let entry_ids: Vec<DbId> = get_all_with(db)?
+        .into_iter()
+        .map(|entry| {
+            entry.db_id.map(DbId::from).ok_or_else(|| {
+                anyhow!("setting entry missing db_id while clearing server settings")
+            })
+        })
+        .collect::<anyhow::Result<_>>()?;
+
+    if !entry_ids.is_empty() {
+        db.exec_mut(QueryBuilder::remove().ids(&entry_ids).query())?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use agdb::DbId;
-
     use super::*;
     use crate::db::{
         server as server_info,
@@ -155,6 +183,32 @@ mod tests {
 
         db.transaction_mut(|t| plugins::remove_with(t, "demo"))?;
         assert_eq!(get_all_settings_with(&db, server_parent)?.len(), 2);
+        Ok(())
+    }
+    #[test]
+    fn read_wrappers_fail_without_ensure() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+
+        assert!(get_all_with(&db).is_err());
+        assert!(clear_with(&mut db).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn clear_removes_entries_and_keeps_parent() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let node = ensure(&mut db)?;
+        let parent = parent_id(&node);
+
+        upsert_setting_with(&mut db, parent, "a".into(), "1".into())?;
+        upsert_setting_with(&mut db, parent, "b".into(), "2".into())?;
+        clear_with(&mut db)?;
+
+        assert!(get_all_with(&db)?.is_empty());
+        assert_eq!(find_with(&db)?.map(|found| found.id), Some(node.id));
+
+        upsert_setting_with(&mut db, parent, "c".into(), "3".into())?;
+        assert_eq!(entry_keys(&get_all_with(&db)?), vec!["c"]);
         Ok(())
     }
 }

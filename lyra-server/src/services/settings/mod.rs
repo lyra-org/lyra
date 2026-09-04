@@ -5,6 +5,7 @@
 
 pub(crate) mod plugins;
 mod schema;
+pub(crate) mod server;
 
 pub(crate) use self::schema::{
     ChoiceOption,

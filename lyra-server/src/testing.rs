@@ -35,7 +35,7 @@ use serde::{
 use crate::STATE;
 use crate::config::{
     self,
-    Config,
+    LibraryConfig,
 };
 use crate::db::{
     self,
@@ -127,9 +127,11 @@ fn initialize_state(file: config::ConfigFile) -> anyhow::Result<()> {
         matches!(boot.db.kind, config::DbKind::Memory),
         "test state must use a memory database"
     );
-    let config = Config::resolve(&file, &boot)?;
-    let created = db::create(&boot.db)?;
-    STATE.initialize(boot, created, config)
+    let library = LibraryConfig::resolve(file.library.as_ref())?;
+    let file_settings = services::settings::server::normalize_file(&file.settings, &boot)?;
+    let mut created = db::create(&boot.db)?;
+    let resolved = crate::resolve_settings(&mut created, &boot, library, file_settings)?;
+    STATE.initialize(boot, created, resolved)
 }
 
 pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Result<()> {

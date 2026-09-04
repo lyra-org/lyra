@@ -68,11 +68,10 @@ static TRANSCODE_SEMAPHORE: LazyLock<RwLock<Option<Arc<Semaphore>>>> =
 
 pub(crate) async fn refresh_hls_transcode_semaphore(config: &Config) {
     let mut guard = TRANSCODE_SEMAPHORE.write().await;
-    *guard = config
-        .hls
-        .max_concurrent_transcodes
-        .filter(|n| *n > 0)
-        .map(|n| Arc::new(Semaphore::new(n as usize)));
+    *guard = match config.hls.max_concurrent_transcodes {
+        0 => None,
+        limit => Some(Arc::new(Semaphore::new(limit as usize))),
+    };
 }
 
 pub(crate) async fn acquire_hls_transcode_permit() -> Result<Option<OwnedSemaphorePermit>, HlsError>
