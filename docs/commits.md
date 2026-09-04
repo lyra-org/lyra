@@ -58,6 +58,7 @@ server/plugins
 server/providers
 server/routes
 server/services
+server/settings
 server/tags
 ```
 
