@@ -693,7 +693,7 @@ mod tests {
     async fn publish_test_runtime(plugin: &TempSimilarPluginDir) -> Result<PluginExecutorHandle> {
         let server_info = crate::plugins::server::load_server_info().await?;
         let auth_capabilities =
-            crate::plugins::auth::AuthCapabilities::from_config(&STATE.config.get().auth);
+            crate::plugins::auth::AuthCapabilities::from_config(&STATE.config().auth);
         let (runtime, errors) =
             crate::plugins::executor::PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
                 plugin.root.clone(),
@@ -701,6 +701,7 @@ mod tests {
                 auth_capabilities,
                 STATE.db.get(),
                 Vec::new(),
+                Some(STATE.settings.clone()),
             )?;
         assert!(errors.is_empty(), "{errors:?}");
         runtime.exec_plugin("similartest").await?;

@@ -6,7 +6,10 @@
 //! Server settings: declared once in [`definitions`], resolved from defaults,
 //! stored database values, and `config.json` into the runtime [`Config`].
 
-use std::collections::BTreeSet;
+use std::{
+    collections::BTreeSet,
+    sync::Arc,
+};
 
 use anyhow::{
     Context,
@@ -27,14 +30,39 @@ use crate::{
 
 mod definitions;
 mod kind;
+mod update;
 
-pub(super) use kind::Kind;
+pub(crate) use kind::Kind;
+pub(crate) use update::{
+    UpdateError,
+    apply_live,
+    apply_updates,
+    republish,
+    validate_updates,
+};
 
-const RECOVERY_HINT: &str = "run `lyra settings reset` to clear stored server settings";
+pub(super) const RECOVERY_HINT: &str = "run `lyra settings reset` to clear stored server settings";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ApplyMode {
+    Live,
+    RestartRequired,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SettingGroup {
+    pub(crate) id: &'static str,
+    pub(crate) label: &'static str,
+}
 
 #[derive(Debug)]
 pub(crate) struct SettingDefinition {
     pub(crate) key: &'static str,
+    pub(crate) group: SettingGroup,
+    pub(crate) label: &'static str,
+    pub(crate) description: &'static str,
+    /// Whether a change takes effect live or on the next restart.
+    pub(crate) apply: ApplyMode,
     pub(crate) kind: Kind,
 }
 
@@ -88,10 +116,23 @@ pub(crate) struct EffectiveSetting {
     pub(crate) locked: bool,
 }
 
+/// One resolution: the typed config, the per-setting provenance it was
+/// built from, and the normalized file layer, so a later re-resolve (after a
+/// stored write) reuses the file as is. Published as one unit so a reader
+/// never pairs a config with another resolution's provenance.
 #[derive(Debug)]
 pub(crate) struct ResolvedSettings {
-    pub(crate) config: Config,
+    pub(crate) config: Arc<Config>,
     pub(crate) effective: Vec<EffectiveSetting>,
+    pub(crate) file: FileSettings,
+}
+
+impl ResolvedSettings {
+    pub(crate) fn effective(&self, key: &str) -> Option<&EffectiveSetting> {
+        self.effective
+            .iter()
+            .find(|setting| setting.definition.key == key)
+    }
 }
 
 /// Typed reads over resolved values. Values are normalized before they get
@@ -177,7 +218,7 @@ pub(crate) fn reset_stored(db: &mut agdb::DbAny) -> Result<Vec<String>> {
 pub(crate) fn resolve(
     boot: &BootConfig,
     library: Option<LibraryConfig>,
-    file: &FileSettings,
+    file: FileSettings,
     stored: &[StoredSetting],
 ) -> Result<ResolvedSettings> {
     let registry = registry();
@@ -226,7 +267,11 @@ pub(crate) fn resolve(
         },
         library,
     );
-    Ok(ResolvedSettings { config, effective })
+    Ok(ResolvedSettings {
+        config: Arc::new(config),
+        effective,
+        file,
+    })
 }
 
 #[cfg(test)]
@@ -286,7 +331,7 @@ mod tests {
 
     #[test]
     fn all_defaults_match_hand_built_config() -> anyhow::Result<()> {
-        let resolved = resolve(&boot(), None, &FileSettings::default(), &[])?;
+        let resolved = resolve(&boot(), None, FileSettings::default(), &[])?;
 
         let expected = Config {
             published_url: None,
@@ -320,7 +365,7 @@ mod tests {
                 max_concurrent_transcodes: 0,
             },
         };
-        assert_eq!(resolved.config, expected);
+        assert_eq!(*resolved.config, expected);
         assert_eq!(resolved.effective.len(), registry().definitions().len());
         assert!(
             resolved
@@ -328,6 +373,7 @@ mod tests {
                 .iter()
                 .all(|setting| setting.source == SettingSource::Default && !setting.locked)
         );
+        assert!(resolved.file.is_empty());
         Ok(())
     }
 
@@ -339,7 +385,7 @@ mod tests {
         ]);
         let file = file(&[("auth.session_ttl_seconds", json!(120))]);
 
-        let resolved = resolve(&boot(), None, &file, &stored)?;
+        let resolved = resolve(&boot(), None, file.clone(), &stored)?;
 
         assert_eq!(resolved.config.rate_limit.login_burst, 9);
         assert_eq!(resolved.config.auth.session_ttl_seconds, 120);
@@ -353,6 +399,7 @@ mod tests {
             effective(&resolved, "auth.enabled").source,
             SettingSource::Default
         );
+        assert_eq!(resolved.file, file);
         Ok(())
     }
 
@@ -360,7 +407,7 @@ mod tests {
     fn file_presence_locks_even_when_equal_to_default() -> anyhow::Result<()> {
         let file = file(&[("auth.enabled", json!(true))]);
 
-        let resolved = resolve(&boot(), None, &file, &[])?;
+        let resolved = resolve(&boot(), None, file, &[])?;
 
         let setting = effective(&resolved, "auth.enabled");
         assert!(setting.locked);
@@ -424,7 +471,7 @@ mod tests {
         let stored = stored(&[("published_url", json!("https://stored.example"))]);
         let file = normalize_file(&file(&[("published_url", json!(null))]), &boot())?;
 
-        let resolved = resolve(&boot(), None, &file, &stored)?;
+        let resolved = resolve(&boot(), None, file, &stored)?;
         assert!(resolved.config.published_url.is_none());
         let setting = effective(&resolved, "published_url");
         assert!(setting.locked);
@@ -442,7 +489,7 @@ mod tests {
     fn undeclared_stored_key_fails_with_recovery_hint() {
         let stored = stored(&[("legacy.key", json!(1))]);
 
-        let error = resolve(&boot(), None, &FileSettings::default(), &stored)
+        let error = resolve(&boot(), None, FileSettings::default(), &stored)
             .expect_err("undeclared stored key should fail");
 
         let message = error.to_string();
@@ -454,7 +501,7 @@ mod tests {
     fn invalid_stored_value_fails_with_recovery_hint() {
         let stored = stored(&[("rate_limit.login_burst", json!("many"))]);
 
-        let error = resolve(&boot(), None, &FileSettings::default(), &stored)
+        let error = resolve(&boot(), None, FileSettings::default(), &stored)
             .expect_err("invalid stored value should fail");
 
         let message = error.to_string();
@@ -469,12 +516,7 @@ mod tests {
             ..LibraryConfig::default()
         };
 
-        let resolved = resolve(
-            &boot(),
-            Some(library.clone()),
-            &FileSettings::default(),
-            &[],
-        )?;
+        let resolved = resolve(&boot(), Some(library.clone()), FileSettings::default(), &[])?;
 
         assert_eq!(resolved.config.library, Some(library));
         Ok(())
@@ -485,7 +527,7 @@ mod tests {
         let stored = stored(&[("published_url", json!(null))]);
         let file = file(&[("hls.temp_disk_budget_bytes", json!(null))]);
 
-        let resolved = resolve(&boot(), None, &file, &stored)?;
+        let resolved = resolve(&boot(), None, file, &stored)?;
 
         assert!(resolved.config.published_url.is_none());
         assert!(resolved.config.hls.temp_disk_budget_bytes.is_none());
@@ -520,7 +562,7 @@ mod tests {
 
         let stored = load_stored(&mut db)?;
         assert_eq!(stored.len(), 2);
-        let resolved = resolve(&boot(), None, &FileSettings::default(), &stored)?;
+        let resolved = resolve(&boot(), None, FileSettings::default(), &stored)?;
         assert!(!resolved.config.auth.enabled);
         assert_eq!(resolved.config.sync.interval_secs, 5);
 

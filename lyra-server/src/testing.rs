@@ -100,6 +100,32 @@ pub(crate) fn init_default_test_state() -> anyhow::Result<()> {
     initialize_state(config::ConfigFile::default())
 }
 
+/// STATE init over an in-memory DB with `settings` as the `config.json`
+/// layer, for tests that need file-locked server settings. Call while
+/// holding [`runtime_test_lock`].
+#[cfg(test)]
+pub(crate) fn init_test_state_with_file_settings(
+    settings: config::FileSettings,
+) -> anyhow::Result<()> {
+    initialize_state(config::ConfigFile {
+        settings,
+        ..config::ConfigFile::default()
+    })
+}
+
+/// Publishes `config` in place of the current one, keeping the current
+/// provenance and file layer. For tests that poke typed config fields;
+/// the settings API tests resolve real values instead.
+#[cfg(test)]
+pub(crate) fn publish_config(config: config::Config) {
+    let current = STATE.settings.get();
+    STATE.publish_settings(Arc::new(services::settings::server::ResolvedSettings {
+        config: Arc::new(config),
+        effective: current.effective.clone(),
+        file: current.file.clone(),
+    }));
+}
+
 /// Boot config backed by a uniquely named in-memory DB so tests never touch
 /// the data directory or any on-disk database.
 fn memory_boot_config() -> anyhow::Result<config::BootConfig> {
@@ -151,7 +177,7 @@ pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Resul
         db::server::ensure(&mut db)?;
     }
     harmony_http::set_default_user_agent(outbound_user_agent());
-    hls_init::initialize_for_config(&STATE.config.get()).await;
+    hls_init::initialize().await;
 
     Ok(())
 }
@@ -285,7 +311,7 @@ pub async fn exec_plugins(
     let isolated_plugins_dir = TempPluginsDir::new(&plugins_dir, enabled_plugin_id)?;
     let server_info = crate::plugins::server::load_server_info().await?;
     let auth_capabilities =
-        crate::plugins::auth::AuthCapabilities::from_config(&STATE.config.get().auth);
+        crate::plugins::auth::AuthCapabilities::from_config(&STATE.config().auth);
     let (runtime, errors) =
         crate::plugins::executor::PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
             isolated_plugins_dir.path.clone(),
@@ -293,6 +319,7 @@ pub async fn exec_plugins(
             auth_capabilities,
             STATE.db.get(),
             vec![http_module],
+            Some(STATE.settings.clone()),
         )?;
     if !errors.is_empty() {
         let details = errors
@@ -356,7 +383,7 @@ pub async fn run_luau_plugin_test_file(test_root: &Path, test_path: &Path) -> an
     };
     let server_info = crate::plugins::server::load_server_info().await?;
     let auth_capabilities =
-        crate::plugins::auth::AuthCapabilities::from_config(&STATE.config.get().auth);
+        crate::plugins::auth::AuthCapabilities::from_config(&STATE.config().auth);
     let runtime = crate::plugins::executor::PluginExecutor::with_filesystem_sources(
         Arc::from(vec![manifest]),
         server_info,

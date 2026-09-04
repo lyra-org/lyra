@@ -13,7 +13,6 @@ type SettingsConfig = plugins.SettingsConfig
 
 local module = {
 	SERVER_ID = "",
-	AUTH_ENABLED = false,
 	JELLYFIN_PLUGIN_ID = "jellyfin",
 	ITEM_ID_HEX_LENGTH = 32,
 	ITEM_ID_HEX_PATTERN = "^[0-9a-f]+$",
@@ -108,10 +107,6 @@ end
 
 function module.configure_server_id(server_id: string)
 	module.SERVER_ID = encoding.nanoid_to_hex(server_id) or server_id
-end
-
-function module.configure_auth_enabled(enabled: boolean)
-	module.AUTH_ENABLED = enabled
 end
 
 local function string_setting(config: SettingsConfig, key: string, default_value: string): string

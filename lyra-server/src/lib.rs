@@ -131,8 +131,7 @@ impl DbHandle {
 }
 
 pub(crate) type BootHandle = SwapHandle<Arc<BootConfig>>;
-pub(crate) type ConfigHandle = SwapHandle<Arc<Config>>;
-pub(crate) type SettingsHandle = SwapHandle<Arc<[EffectiveSetting]>>;
+pub(crate) type SettingsHandle = SwapHandle<Arc<ResolvedSettings>>;
 pub(crate) type PluginManifestHandle = SwapHandle<Arc<[PluginManifest]>>;
 pub(crate) type PluginRuntimeHandle = SwapHandle<Option<crate::plugins::bootstrap::PluginRuntime>>;
 
@@ -171,9 +170,18 @@ pub(crate) struct AppState {
     pub(crate) db: DbHandle,
     /// Canonical home for port, data dir, and db location.
     pub(crate) boot: BootHandle,
-    pub(crate) config: ConfigHandle,
-    /// Per-setting provenance for the values in `config`.
+    /// The current resolution: config, per-setting provenance, and the file
+    /// layer it was resolved against. Read the config through
+    /// [`AppState::config`].
     pub(crate) settings: SettingsHandle,
+    /// The policy used by restart-required consumers for this process.
+    pub(crate) startup_config: SwapHandle<Arc<Config>>,
+    /// The values this process started with; restart-required settings are
+    /// compared against them.
+    pub(crate) startup_settings: SwapHandle<Arc<[EffectiveSetting]>>,
+    /// Signalled by every [`AppState::publish_settings`] so long-lived loops
+    /// re-read the config.
+    pub(crate) settings_changed: tokio::sync::Notify,
     generation: SwapHandle<Arc<GenerationState>>,
 }
 
@@ -181,8 +189,10 @@ fn build_app_state(boot: BootConfig, created: db::Created, resolved: ResolvedSet
     AppState {
         db: DbHandle::new(created),
         boot: BootHandle::new(Arc::new(boot)),
-        config: ConfigHandle::new(Arc::new(resolved.config)),
-        settings: SettingsHandle::new(resolved.effective.into()),
+        startup_config: SwapHandle::new(Arc::clone(&resolved.config)),
+        startup_settings: SwapHandle::new(Arc::from(resolved.effective.clone())),
+        settings: SettingsHandle::new(Arc::new(resolved)),
+        settings_changed: tokio::sync::Notify::new(),
         generation: SwapHandle::default(),
     }
 }
@@ -200,9 +210,22 @@ impl AppState {
     fn reset(&self, boot: BootConfig, created: db::Created, resolved: ResolvedSettings) {
         self.db.reset(created);
         self.boot.replace(Arc::new(boot));
-        self.config.replace(Arc::new(resolved.config));
-        self.settings.replace(resolved.effective.into());
+        self.startup_config.replace(Arc::clone(&resolved.config));
+        self.startup_settings
+            .replace(Arc::from(resolved.effective.clone()));
+        self.publish_settings(Arc::new(resolved));
         self.generation.replace(Arc::default());
+    }
+
+    /// The runtime config of the current resolution.
+    pub(crate) fn config(&self) -> Arc<Config> {
+        Arc::clone(&self.settings.get().config)
+    }
+
+    /// Publishes a re-resolution and wakes anything waiting on a change.
+    pub(crate) fn publish_settings(&self, resolved: Arc<ResolvedSettings>) {
+        self.settings.replace(resolved);
+        self.settings_changed.notify_one();
     }
 }
 
@@ -293,7 +316,7 @@ pub(crate) fn resolve_settings(
         .ok_or_else(|| anyhow::anyhow!("database was shared before settings were resolved"))?
         .get_mut();
     let stored = server_settings::load_stored(db)?;
-    server_settings::resolve(boot, library, &file_settings, &stored)
+    server_settings::resolve(boot, library, file_settings, &stored)
 }
 
 #[cfg(feature = "docgen")]

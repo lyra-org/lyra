@@ -87,6 +87,20 @@ pub(crate) fn get_all_with<A: DbAccess>(db: &A) -> anyhow::Result<Vec<SettingEnt
     super::get_all_settings_with(db, parent_id(db)?)
 }
 
+pub(crate) fn upsert_with<A: DbAccess>(
+    db: &mut A,
+    key: String,
+    value: String,
+) -> anyhow::Result<DbId> {
+    let parent_id = parent_id(db)?;
+    super::upsert_setting_with(db, parent_id, key, value)
+}
+
+pub(crate) fn remove_with<A: DbAccess>(db: &mut A, key: &str) -> anyhow::Result<()> {
+    let parent_id = parent_id(db)?;
+    super::remove_setting_with(db, parent_id, key)
+}
+
 pub(crate) fn clear_with<A: DbAccess>(db: &mut A) -> anyhow::Result<()> {
     let entry_ids: Vec<DbId> = get_all_with(db)?
         .into_iter()
@@ -191,6 +205,8 @@ mod tests {
 
         assert!(get_all_with(&db).is_err());
         assert!(clear_with(&mut db).is_err());
+        assert!(upsert_with(&mut db, "name".into(), "\"Lyra\"".into()).is_err());
+        assert!(remove_with(&mut db, "name").is_err());
         Ok(())
     }
 

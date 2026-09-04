@@ -80,6 +80,18 @@ An optional `config.json` refines that. It is looked up in the working directory
 
 A stored setting that no longer validates (for example after a key was renamed or its accepted values changed) fails startup with the offending key rather than being ignored. Run `lyra settings reset` to clear every stored server setting; the file values and defaults then apply again on the next start.
 
+### Settings API
+
+Users with the `manage_server` permission can read and edit the stored runtime settings while the server runs:
+
+- `GET /api/server/settings` returns every setting grouped for display, with its effective value, default, source (`default`, `database`, or `file`), whether it is locked, and whether a change needs a restart. `pending_restart` lists restart-required settings whose value differs from the one the process started with; `boot` reports the port, data directory, and database in use.
+- `PATCH /api/server/settings` with `{"values": {"sync.interval_secs": 300, "published_url": null}}` stores the given values (`null` clears one back to its default) and returns the same body as `GET`. Undeclared keys and invalid values are rejected with `400`; a request that touches any key present in `config.json` is rejected with `409` listing the locked keys, and nothing is written.
+- `DELETE /api/server/settings` clears every stored value and returns the same body as `GET`.
+
+Both writes require a session credential; an API key can read settings but not change them.
+
+Most settings apply immediately. `rate_limit.*`, `cors.allowed_origins`, and `hls.cleanup_startup_purge` are read at startup and take effect on the next restart.
+
 ### Environment variables
 
 | Variable | Default | Purpose |

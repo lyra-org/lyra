@@ -52,10 +52,10 @@ pub(crate) async fn bind_configured_listener(port: u16) -> Result<TcpListener> {
 pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListener) -> Result<()> {
     let capture_mode = capture_path.is_some();
     let shutdown_token = services::shutdown::reset();
-    let config = STATE.config.get();
+    let config = STATE.config();
     log_setting_overrides();
     harmony_http::set_default_user_agent(crate::outbound_user_agent());
-    hls_init::initialize_for_config(&config).await;
+    hls_init::initialize().await;
 
     let db = STATE.db.get();
     let maintenance_shutdown = if capture_mode {
@@ -94,7 +94,6 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
         services::metadata::mapping_admin::reingest_request_gate,
     ));
 
-    let interval_secs = config.sync.interval_secs;
     let shutdown = Arc::new(Notify::new());
     let shutdown_bg = shutdown.clone();
     let config_for_bg = config.clone();
@@ -120,7 +119,7 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
             return;
         }
 
-        services::providers::run_provider_sync_loop(interval_secs, shutdown_bg).await;
+        services::providers::run_provider_sync_loop(shutdown_bg).await;
     });
 
     serve(app, config.as_ref(), listener, shutdown_token).await?;
@@ -145,6 +144,7 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
 fn log_setting_overrides() {
     let settings = STATE.settings.get();
     for setting in settings
+        .effective
         .iter()
         .filter(|setting| setting.source != SettingSource::Default)
     {

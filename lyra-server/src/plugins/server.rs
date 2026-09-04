@@ -70,7 +70,7 @@ pub(crate) async fn load_server_info() -> anyhow::Result<ServerInfo> {
     let setup_complete = db::roles::has_non_default_admin(&db)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
 
-    let config = STATE.config.get();
+    let config = STATE.config();
 
     Ok(ServerInfo {
         id: info.id,
@@ -85,14 +85,19 @@ pub(crate) async fn load_server_info() -> anyhow::Result<ServerInfo> {
 #[derive(Clone)]
 pub(crate) struct ServerInfoModuleStore {
     info: ServerInfo,
+    settings: Option<crate::SettingsHandle>,
 }
 impl ServerInfoModuleStore {
-    pub(crate) fn new(info: ServerInfo) -> Self {
-        Self { info }
+    pub(crate) fn new(info: ServerInfo, settings: Option<crate::SettingsHandle>) -> Self {
+        Self { info, settings }
     }
 }
 fn server_info_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let info = frame.vm.data().get::<ServerInfoModuleStore>()?.info.clone();
+    let store = frame.vm.data().get::<ServerInfoModuleStore>()?;
+    let mut info = store.info.clone();
+    if let Some(settings) = &store.settings {
+        info.published_url = settings.get().config.published_url.clone();
+    }
     frame
         .returns
         .write(luau::Value::TableData(server_info_table(&info)))

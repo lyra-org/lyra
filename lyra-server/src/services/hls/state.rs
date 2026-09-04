@@ -32,18 +32,15 @@ use std::{
     sync::{
         Arc,
         LazyLock,
+        Mutex as StdMutex,
     },
     time::Instant,
 };
 use tokio::sync::{
     Mutex,
     Notify,
-    OwnedSemaphorePermit,
     RwLock,
-    Semaphore,
 };
-
-use crate::config::Config;
 
 use super::HlsError;
 use super::codec::{
@@ -63,29 +60,51 @@ pub(crate) static HLS_JOBS: LazyLock<HlsJobs> =
     LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
 pub(crate) static HLS_JOB_CREATING: LazyLock<HlsJobWaiters> =
     LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
-static TRANSCODE_SEMAPHORE: LazyLock<RwLock<Option<Arc<Semaphore>>>> =
-    LazyLock::new(|| RwLock::new(None));
-
-pub(crate) async fn refresh_hls_transcode_semaphore(config: &Config) {
-    let mut guard = TRANSCODE_SEMAPHORE.write().await;
-    *guard = match config.hls.max_concurrent_transcodes {
-        0 => None,
-        limit => Some(Arc::new(Semaphore::new(limit as usize))),
-    };
+#[derive(Default)]
+struct TranscodeCapacity {
+    active: StdMutex<usize>,
+    changed: Notify,
 }
 
-pub(crate) async fn acquire_hls_transcode_permit() -> Result<Option<OwnedSemaphorePermit>, HlsError>
-{
-    let guard = TRANSCODE_SEMAPHORE.read().await;
-    if let Some(semaphore) = guard.as_ref() {
-        let permit = Arc::clone(semaphore)
-            .acquire_owned()
-            .await
-            .map_err(|_| HlsError::TranscodeCapacityUnavailable)?;
-        Ok(Some(permit))
-    } else {
-        Ok(None)
+static TRANSCODE_CAPACITY: LazyLock<Arc<TranscodeCapacity>> =
+    LazyLock::new(|| Arc::new(TranscodeCapacity::default()));
+
+struct TranscodePermit(Arc<TranscodeCapacity>);
+
+impl Drop for TranscodePermit {
+    fn drop(&mut self) {
+        *self.0.active.lock().expect("transcode capacity poisoned") -= 1;
+        self.0.changed.notify_waiters();
     }
+}
+
+impl TranscodeCapacity {
+    async fn acquire(self: &Arc<Self>, limit: impl Fn() -> u32) -> TranscodePermit {
+        loop {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            {
+                let mut active = self.active.lock().expect("transcode capacity poisoned");
+                let limit = limit();
+                if limit == 0 || *active < limit as usize {
+                    *active += 1;
+                    return TranscodePermit(Arc::clone(self));
+                }
+            }
+            changed.await;
+        }
+    }
+}
+
+pub(crate) fn notify_transcode_capacity_changed() {
+    TRANSCODE_CAPACITY.changed.notify_waiters();
+}
+
+async fn acquire_hls_transcode_permit() -> TranscodePermit {
+    TRANSCODE_CAPACITY
+        .acquire(|| crate::STATE.config().hls.max_concurrent_transcodes)
+        .await
 }
 
 #[derive(Clone)]
@@ -110,7 +129,7 @@ pub(crate) struct HlsJob {
     pub(crate) transcode_handle: Arc<Mutex<Option<FfmpegHandle>>>,
     pub(crate) session_ids: HashSet<String>,
     pub(crate) idle_since: Option<Instant>,
-    _transcode_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    _transcode_permit: Option<TranscodePermit>,
 }
 
 pub(crate) fn generate_hls_session_id() -> String {
@@ -219,7 +238,7 @@ pub(crate) async fn hls_registry_counts() -> (usize, usize) {
 }
 
 async fn create_hls_job(input_path: &str, job_key: &HlsJobKey) -> Result<HlsJob, HlsError> {
-    let transcode_permit = acquire_hls_transcode_permit().await?;
+    let transcode_permit = acquire_hls_transcode_permit().await;
 
     let job_id = generate_hls_session_id();
     let job_dir = std::env::temp_dir().join(format!(
@@ -259,7 +278,7 @@ async fn create_hls_job(input_path: &str, job_key: &HlsJobKey) -> Result<HlsJob,
         transcode_handle: Arc::new(Mutex::new(Some(transcode_handle))),
         session_ids: HashSet::new(),
         idle_since: Some(Instant::now()),
-        _transcode_permit: transcode_permit,
+        _transcode_permit: Some(transcode_permit),
     })
 }
 
@@ -420,6 +439,49 @@ mod tests {
     use super::test_helpers::*;
     use super::*;
     use lyra_ffmpeg::AudioCodec;
+
+    #[tokio::test]
+    async fn transcode_capacity_tracks_jobs_across_limit_changes() {
+        use std::sync::atomic::{
+            AtomicU32,
+            Ordering,
+        };
+
+        let capacity = Arc::new(TranscodeCapacity::default());
+        let limit = AtomicU32::new(0);
+        let first = capacity.acquire(|| limit.load(Ordering::Relaxed)).await;
+        let second = capacity.acquire(|| limit.load(Ordering::Relaxed)).await;
+        limit.store(1, Ordering::Relaxed);
+        let queued = capacity.acquire(|| limit.load(Ordering::Relaxed));
+        tokio::pin!(queued);
+        assert!(futures::poll!(queued.as_mut()).is_pending());
+        drop(first);
+        assert!(futures::poll!(queued.as_mut()).is_pending());
+        drop(second);
+        let third = queued.await;
+
+        {
+            let cancelled = capacity.acquire(|| limit.load(Ordering::Relaxed));
+            tokio::pin!(cancelled);
+            assert!(futures::poll!(cancelled.as_mut()).is_pending());
+        }
+        assert_eq!(*capacity.active.lock().unwrap(), 1);
+        let queued = capacity.acquire(|| limit.load(Ordering::Relaxed));
+        tokio::pin!(queued);
+        assert!(futures::poll!(queued.as_mut()).is_pending());
+        limit.store(2, Ordering::Relaxed);
+        capacity.changed.notify_waiters();
+        let fourth = queued.await;
+        let queued = capacity.acquire(|| limit.load(Ordering::Relaxed));
+        tokio::pin!(queued);
+        assert!(futures::poll!(queued.as_mut()).is_pending());
+        limit.store(0, Ordering::Relaxed);
+        capacity.changed.notify_waiters();
+        let fifth = queued.await;
+        assert_eq!(*capacity.active.lock().unwrap(), 3);
+        drop((third, fourth, fifth));
+        assert_eq!(*capacity.active.lock().unwrap(), 0);
+    }
 
     #[test]
     fn hls_job_key_tracks_profile_parameters() {

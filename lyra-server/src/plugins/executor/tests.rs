@@ -791,6 +791,38 @@ fn cancelling_awaited_similar_release_call_keeps_executor_usable() -> Result<()>
 }
 
 #[test]
+fn plugin_executor_reads_live_settings_through_injected_handle() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
+    let mut stores = stores::PluginModuleStores::empty();
+    stores.server_settings = Some(crate::STATE.settings.clone());
+    let runtime = PluginExecutor::with_loader(
+        Arc::from(vec![manifest("demo", &["lyra.server", "lyra.auth"])]),
+        default_server_info(),
+        default_auth_capabilities(),
+        stores,
+        MemorySourceLoader::new(),
+    )?;
+    let source = &b"return require('@lyra/server').info().published_url, require('@lyra/auth').capabilities().enabled"[..];
+    let before = runtime.eval_plugin_source("demo", "check.luau", source)?;
+    let mut config = (*crate::STATE.config()).clone();
+    config.published_url = Some("https://updated.example".to_string());
+    config.auth.enabled = !config.auth.enabled;
+    let enabled = config.auth.enabled;
+    crate::testing::publish_config(config);
+    let after = runtime.eval_plugin_source("demo", "check.luau", source)?;
+    assert_ne!(before, after);
+    assert_eq!(
+        after,
+        vec![
+            luau::Value::String(b"https://updated.example".to_vec()),
+            luau::Value::Boolean(enabled)
+        ]
+    );
+    Ok(())
+}
+
+#[test]
 fn plugin_executor_reads_server_info_from_vm_context() -> Result<()> {
     let runtime = PluginExecutor::with_runtime_state(
         Arc::from(vec![manifest("demo", &["lyra.server"])]),
@@ -1491,6 +1523,7 @@ fn plugin_executor_handle_discovers_and_executes_on_runtime_thread() -> Result<(
         default_auth_capabilities(),
         db,
         Vec::new(),
+        None,
     )?;
     assert!(errors.is_empty(), "{errors:?}");
     assert!(futures::executor::block_on(runtime.has_plugin("demo"))?);

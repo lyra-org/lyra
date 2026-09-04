@@ -204,6 +204,7 @@ define_permission_guard!(require_manage_metadata, Permission::ManageMetadata);
 define_permission_guard!(require_manage_plugins, Permission::ManagePlugins);
 define_permission_guard!(require_manage_providers, Permission::ManageProviders);
 define_permission_guard!(require_manage_roles, Permission::ManageRoles);
+define_permission_guard!(require_manage_server, Permission::ManageServer);
 define_permission_guard!(require_manage_users, Permission::ManageUsers);
 define_permission_guard!(require_sync_metadata, Permission::SyncMetadata);
 
@@ -391,7 +392,7 @@ pub(crate) async fn resolve_auth_from_bearer(
 ) -> AuthResult<Option<ResolvedAuth>> {
     let bearer = bearer.map(str::trim).filter(|bearer| !bearer.is_empty());
 
-    if !STATE.config.get().auth.enabled {
+    if !STATE.config().auth.enabled {
         let default_principal = resolve_default_principal().await?;
         let Some(bearer) = bearer else {
             return Ok(Some(ResolvedAuth {
@@ -493,8 +494,8 @@ pub(crate) async fn login_with_password(
         return Ok(None);
     }
 
-    if !STATE.config.get().auth.enabled {
-        if !STATE.config.get().auth.allow_default_login_when_disabled {
+    if !STATE.config().auth.enabled {
+        if !STATE.config().auth.allow_default_login_when_disabled {
             return Ok(None);
         }
 
@@ -555,7 +556,7 @@ pub(crate) async fn require_principal(headers: &HeaderMap) -> Result<Principal, 
 
 pub(crate) async fn require_auth(headers: &HeaderMap) -> Result<ResolvedAuth, AuthError> {
     let bearer = extract_bearer_credential(headers);
-    if STATE.config.get().auth.enabled && bearer.is_none() {
+    if STATE.config().auth.enabled && bearer.is_none() {
         return Err(AuthError::MissingBearerCredential);
     }
 
@@ -748,10 +749,10 @@ mod tests {
         let _guard = crate::testing::runtime_test_lock().await;
         initialize_auth_test_runtime().await?;
 
-        let mut config = STATE.config.get().as_ref().clone();
+        let mut config = STATE.config().as_ref().clone();
         config.auth.enabled = true;
         config.auth.session_ttl_seconds = 60;
-        STATE.config.replace(std::sync::Arc::new(config));
+        crate::testing::publish_config(config);
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
@@ -795,10 +796,10 @@ mod tests {
         let _guard = crate::testing::runtime_test_lock().await;
         initialize_auth_test_runtime().await?;
 
-        let mut config = STATE.config.get().as_ref().clone();
+        let mut config = STATE.config().as_ref().clone();
         config.auth.enabled = true;
         config.auth.session_ttl_seconds = 60;
-        STATE.config.replace(std::sync::Arc::new(config));
+        crate::testing::publish_config(config);
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
@@ -841,10 +842,10 @@ mod tests {
         let _guard = crate::testing::runtime_test_lock().await;
         initialize_auth_test_runtime().await?;
 
-        let mut config = STATE.config.get().as_ref().clone();
+        let mut config = STATE.config().as_ref().clone();
         config.auth.enabled = true;
         config.auth.session_ttl_seconds = 0;
-        STATE.config.replace(std::sync::Arc::new(config));
+        crate::testing::publish_config(config);
 
         let user_db_id = {
             let mut db = STATE.db.write().await;
@@ -852,9 +853,9 @@ mod tests {
         };
         let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
 
-        let mut config = STATE.config.get().as_ref().clone();
+        let mut config = STATE.config().as_ref().clone();
         config.auth.session_ttl_seconds = 1;
-        STATE.config.replace(std::sync::Arc::new(config));
+        crate::testing::publish_config(config);
 
         let auth = resolve_auth_from_bearer(Some(&session.token))
             .await?
@@ -925,10 +926,10 @@ mod tests {
         let _guard = crate::testing::runtime_test_lock().await;
         initialize_auth_test_runtime().await?;
 
-        let mut config = STATE.config.get().as_ref().clone();
+        let mut config = STATE.config().as_ref().clone();
         config.auth.enabled = false;
-        STATE.config.replace(std::sync::Arc::new(config));
-        ensure_default_user(&STATE.config.get()).await?;
+        crate::testing::publish_config(config);
+        ensure_default_user(&STATE.config()).await?;
 
         let bearer = "not-a-session";
         let auth = resolve_auth_from_bearer(Some(bearer))
@@ -942,9 +943,9 @@ mod tests {
             assert!(db::users::find_by_session_token_hash(&db, &token_hash)?.is_none());
         }
 
-        let mut config = STATE.config.get().as_ref().clone();
+        let mut config = STATE.config().as_ref().clone();
         config.auth.enabled = true;
-        STATE.config.replace(std::sync::Arc::new(config));
+        crate::testing::publish_config(config);
 
         assert!(resolve_auth_from_bearer(Some(bearer)).await?.is_none());
 
@@ -956,10 +957,10 @@ mod tests {
         let _guard = crate::testing::runtime_test_lock().await;
         initialize_auth_test_runtime().await?;
 
-        let mut config = STATE.config.get().as_ref().clone();
+        let mut config = STATE.config().as_ref().clone();
         config.auth.enabled = false;
-        STATE.config.replace(std::sync::Arc::new(config));
-        ensure_default_user(&STATE.config.get()).await?;
+        crate::testing::publish_config(config);
+        ensure_default_user(&STATE.config()).await?;
 
         let other_user_db_id = {
             let mut db = STATE.db.write().await;

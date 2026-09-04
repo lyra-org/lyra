@@ -74,15 +74,14 @@ pub(crate) struct InactiveHlsJobUsage {
 
 fn hls_temp_disk_budget_bytes() -> Option<u64> {
     STATE
-        .config
-        .get()
+        .config()
         .hls
         .temp_disk_budget_bytes
         .filter(|budget| *budget > 0)
 }
 
 fn hls_cleanup_startup_purge_enabled() -> bool {
-    STATE.config.get().hls.cleanup_startup_purge
+    STATE.config().hls.cleanup_startup_purge
 }
 
 fn is_hls_temp_job_dir_name(name: &str) -> bool {

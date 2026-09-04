@@ -21,7 +21,6 @@ local requests = require("./items/requests")
 local responses = require("./items/responses")
 
 local SERVER_ID = constants.SERVER_ID
-local AUTH_ENABLED = constants.AUTH_ENABLED
 local ACCEPT_LEGACY_AUTH_HEADERS = constants.ACCEPT_LEGACY_AUTH_HEADERS
 local module = {}
 
@@ -261,12 +260,13 @@ local function get_legacy_header_token(headers: { [string]: string }?): string?
 end
 
 function module.to_jellyfin_user(principal: UserIdentity): JsonValue
+	local auth_enabled = auth.capabilities().enabled
 	return {
 		Id = item_ids.encode_jellyfin_item_id(principal.user_id),
 		Name = principal.username,
 		ServerId = SERVER_ID,
-		HasPassword = AUTH_ENABLED,
-		HasConfiguredPassword = AUTH_ENABLED,
+		HasPassword = auth_enabled,
+		HasConfiguredPassword = auth_enabled,
 		HasConfiguredEasyPassword = false,
 		Configuration = build_jellyfin_user_configuration(),
 		Policy = build_jellyfin_user_policy(false, false),
@@ -274,13 +274,14 @@ function module.to_jellyfin_user(principal: UserIdentity): JsonValue
 end
 
 function module.to_jellyfin_principal_user(principal: Principal): JsonValue
+	local auth_enabled = auth.capabilities().enabled
 	local is_admin = module.is_admin(principal)
 	return {
 		Id = item_ids.encode_jellyfin_item_id(principal.user_id),
 		Name = principal.username,
 		ServerId = SERVER_ID,
-		HasPassword = AUTH_ENABLED,
-		HasConfiguredPassword = AUTH_ENABLED,
+		HasPassword = auth_enabled,
+		HasConfiguredPassword = auth_enabled,
 		HasConfiguredEasyPassword = false,
 		Configuration = build_jellyfin_user_configuration(),
 		Policy = build_jellyfin_user_policy(is_admin, true),

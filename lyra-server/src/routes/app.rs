@@ -217,6 +217,9 @@ fn is_public_rest_operation(method: &str, path: &str) -> bool {
 
 const CORE_ROUTE_RESERVATIONS: &[(&str, &str)] = &[
     ("GET", "/api/server/public"),
+    ("GET", "/api/server/settings"),
+    ("PATCH", "/api/server/settings"),
+    ("DELETE", "/api/server/settings"),
     ("GET", "/api/users/"),
     ("POST", "/api/users/"),
     ("DELETE", "/api/users/{user_id}"),

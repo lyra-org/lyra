@@ -148,7 +148,7 @@ pub(crate) struct RequestClientKey(pub(crate) Arc<str>);
 
 pub(crate) fn request_client_key(peer: Option<SocketAddr>, headers: &HeaderMap) -> String {
     let trusted_proxies: HashSet<IpAddr> = crate::STATE
-        .config
+        .startup_config
         .get()
         .rate_limit
         .trusted_proxies
@@ -189,7 +189,7 @@ static LOGIN_LIMITER: LazyLock<Mutex<LimiterState>> =
 /// the service layer so every credential-verifying caller is covered, not just
 /// path-matched REST routes.
 pub(crate) fn check_login_rate(client: Option<&str>) -> Result<(), Duration> {
-    let config = crate::STATE.config.get();
+    let config = crate::STATE.startup_config.get();
     if !config.rate_limit.enabled {
         return Ok(());
     }
@@ -606,6 +606,38 @@ mod tests {
             HeaderValue::from_str(forwarded_for).expect("forwarded-for should be a valid header"),
         );
         request
+    }
+
+    #[tokio::test]
+    async fn login_policy_and_proxy_trust_stay_at_startup_values() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
+        let mut startup = (*crate::STATE.config()).clone();
+        startup.rate_limit.enabled = true;
+        startup.rate_limit.login_per_minute = 1;
+        startup.rate_limit.login_burst = 1;
+        startup.rate_limit.trusted_proxies.clear();
+        crate::STATE
+            .startup_config
+            .replace(Arc::new(startup.clone()));
+        let client = "startup-policy-regression";
+        LOGIN_LIMITER.lock().unwrap().buckets.clear();
+        assert!(check_login_rate(Some(client)).is_ok());
+        startup.rate_limit.enabled = false;
+        startup
+            .rate_limit
+            .trusted_proxies
+            .push("127.0.0.1".parse()?);
+        crate::testing::publish_config(startup);
+        assert!(!crate::STATE.config().rate_limit.enabled);
+        assert!(check_login_rate(Some(client)).is_err());
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "203.0.113.7".parse()?);
+        assert_eq!(
+            request_client_key(Some("127.0.0.1:1234".parse()?), &headers),
+            "127.0.0.1"
+        );
+        Ok(())
     }
 
     #[test]
