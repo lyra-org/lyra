@@ -65,7 +65,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn config_with_origins(origins: &[&str]) -> Config {
-        let mut config = Config::default();
+        let mut config = Config::for_tests();
         config.cors.allowed_origins = origins.iter().map(|origin| origin.to_string()).collect();
         config
     }
@@ -81,7 +81,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_origin_list_leaves_cors_disabled() -> anyhow::Result<()> {
-        let response = test_router(&Config::default())
+        let response = test_router(&Config::for_tests())
             .oneshot(
                 axum::http::Request::builder()
                     .method(Method::GET)

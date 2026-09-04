@@ -801,7 +801,7 @@ async fn sync_local_release_cover_metadata(context: &ReleaseArtifactContext<'_>)
     let covers_root = configured_covers_root();
     let cover_paths = CoverPaths {
         library_root: Some(context.library_path),
-        covers_root: covers_root.as_deref(),
+        covers_root: &covers_root,
     };
     let resolved = {
         let db_read = context.db.read().await;
@@ -961,7 +961,7 @@ async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) -> bo
     let covers_root = configured_covers_root();
     let cover_paths = CoverPaths {
         library_root: Some(context.library_path),
-        covers_root: covers_root.as_deref(),
+        covers_root: &covers_root,
     };
 
     let release_bundle = {

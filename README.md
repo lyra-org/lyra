@@ -74,15 +74,15 @@ It is highly recommended that you also grab the plugins in `plugins`, especially
 
 Lyra starts without any configuration: the database is stored under the data directory (`./data` next to where you run the binary, `/lyra/data` in Docker) and the server listens on port 4746.
 
-An optional `config.json` refines that. It is looked up in the working directory, next to the binary, and in the source tree; set `LYRA_CONFIG_PATH` to load a specific file (the server fails to start if that file is missing). `LYRA_PORT` takes precedence over `port` from the file.
+An optional `config.json` refines that. It is looked up in the working directory, next to the binary, and in the source tree; set `LYRA_CONFIG_PATH` to load a specific file (the server fails to start if that file is missing). `LYRA_PORT` takes precedence over `port` from the file. Unknown keys in the file are rejected, so a misspelled or removed key fails startup instead of being ignored.
 
 ### Environment variables
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `LYRA_CONFIG_PATH` | searched | Explicit path to `config.json`; must exist when set |
-| `LYRA_DATA_DIR` | `./data` | Root for server-owned state; created at boot |
-| `LYRA_DB_DIR` | data dir | Directory for relative `db.path` values; created at boot |
+| `LYRA_DATA_DIR` | `./data` | Root for server-owned state; created when serving |
+| `LYRA_DB_DIR` | data dir | Directory for relative `db.path` values; created when serving |
 | `LYRA_PORT` | `4746` | Listening port; overrides `port` from the file |
 | `LYRA_PLUGINS_DIR` | `./plugins` | Directory plugins are loaded from |
 | `LYRA_STATIC_DIR` | searched | Directory for static web assets |

@@ -64,7 +64,6 @@ use super::{
     resolve::{
         configured_cover_dir_for_artist,
         configured_cover_dir_for_release,
-        cover_dirs_for_release,
         cover_path_from_db,
         resolve_cover_for_artist_id,
         resolve_cover_for_release,
@@ -191,17 +190,11 @@ pub(crate) async fn sync_release_cover_for_tracks(
         return Ok(false);
     };
 
-    let (existing_cover, candidate_dirs, provider_contexts) = {
+    let (existing_cover, provider_contexts) = {
         let db_read = db.read().await;
         let sorted_providers = enabled_provider_configs_by_priority(&db_read, None)?;
         let library = library_for_release(&db_read, release_id)?;
         let existing_cover = resolve_cover_for_release(&db_read, release_id, tracks, paths)?;
-        let configured_target_dir = configured_cover_dir_for_release(paths.covers_root, release_id);
-        let candidate_dirs = if let Some(ref configured_dir) = configured_target_dir {
-            vec![configured_dir.clone()]
-        } else {
-            cover_dirs_for_release(&db_read, tracks, paths.library_root)?
-        };
 
         let mut provider_contexts = Vec::new();
         for provider in sorted_providers {
@@ -212,7 +205,7 @@ pub(crate) async fn sync_release_cover_for_tracks(
             provider_contexts.push((provider.provider_id, release_context));
         }
 
-        (existing_cover, candidate_dirs, provider_contexts)
+        (existing_cover, provider_contexts)
     };
 
     if provider_contexts.is_empty() {
@@ -221,25 +214,8 @@ pub(crate) async fn sync_release_cover_for_tracks(
     if existing_cover.is_some() && !options.replace_existing {
         return Ok(false);
     }
-    if candidate_dirs.is_empty() {
-        return Ok(false);
-    }
 
-    let configured_target_dir = configured_cover_dir_for_release(paths.covers_root, release_id);
-    let target_dir = if let Some(configured_dir) = configured_target_dir {
-        configured_dir
-    } else if options.replace_existing {
-        existing_cover
-            .as_ref()
-            .and_then(|existing| existing.parent().map(Path::to_path_buf))
-            .or_else(|| candidate_dirs.first().cloned())
-            .ok_or_else(|| anyhow!("unable to determine cover directory"))?
-    } else {
-        candidate_dirs
-            .first()
-            .cloned()
-            .ok_or_else(|| anyhow!("unable to determine cover directory"))?
-    };
+    let target_dir = configured_cover_dir_for_release(paths.covers_root, release_id);
 
     for (provider_id, release_context) in provider_contexts {
         let cover_url = match resolve_provider_release_cover_url(
@@ -305,11 +281,7 @@ pub(crate) async fn sync_release_cover_for_tracks(
                 let _ = fs::remove_file(existing).await;
             }
 
-            let mut prune_dirs = candidate_dirs.clone();
-            if !prune_dirs.iter().any(|dir| dir == &target_dir) {
-                prune_dirs.push(target_dir.clone());
-            }
-            prune_other_covers(&prune_dirs, Some(&target)).await?;
+            prune_other_covers(std::slice::from_ref(&target_dir), Some(&target)).await?;
         }
 
         write_cover_image(&target, &bytes).await?;
@@ -336,20 +308,10 @@ pub(crate) async fn sync_artist_cover(
         return Ok(false);
     };
 
-    let (existing_cover, candidate_dirs, provider_contexts) = {
+    let (existing_cover, provider_contexts) = {
         let db_read = db.read().await;
         let sorted_providers = enabled_provider_configs_by_priority(&db_read, provider_filter)?;
         let existing_cover = resolve_cover_for_artist_id(&db_read, artist_id, paths)?;
-        let configured_target_dir = configured_cover_dir_for_artist(paths.covers_root, artist_id);
-        let candidate_dirs = if let Some(ref configured_dir) = configured_target_dir {
-            vec![configured_dir.clone()]
-        } else {
-            existing_cover
-                .as_ref()
-                .and_then(|existing| existing.parent().map(Path::to_path_buf))
-                .into_iter()
-                .collect()
-        };
 
         let mut provider_contexts = Vec::new();
         for provider in sorted_providers {
@@ -359,7 +321,7 @@ pub(crate) async fn sync_artist_cover(
             provider_contexts.push((provider.provider_id, artist_context));
         }
 
-        (existing_cover, candidate_dirs, provider_contexts)
+        (existing_cover, provider_contexts)
     };
 
     if provider_contexts.is_empty() {
@@ -368,20 +330,8 @@ pub(crate) async fn sync_artist_cover(
     if existing_cover.is_some() && !options.replace_existing {
         return Ok(false);
     }
-    if candidate_dirs.is_empty() {
-        return Ok(false);
-    }
 
-    let configured_target_dir = configured_cover_dir_for_artist(paths.covers_root, artist_id);
-    let target_dir = if let Some(configured_dir) = configured_target_dir {
-        configured_dir
-    } else {
-        existing_cover
-            .as_ref()
-            .and_then(|existing| existing.parent().map(Path::to_path_buf))
-            .or_else(|| candidate_dirs.first().cloned())
-            .ok_or_else(|| anyhow!("unable to determine artist cover directory"))?
-    };
+    let target_dir = configured_cover_dir_for_artist(paths.covers_root, artist_id);
 
     for (provider_id, artist_context) in provider_contexts {
         let cover_url = match resolve_provider_artist_cover_url(
@@ -447,11 +397,7 @@ pub(crate) async fn sync_artist_cover(
                 let _ = fs::remove_file(existing).await;
             }
 
-            let mut prune_dirs = candidate_dirs.clone();
-            if !prune_dirs.iter().any(|dir| dir == &target_dir) {
-                prune_dirs.push(target_dir.clone());
-            }
-            prune_other_covers(&prune_dirs, Some(&target)).await?;
+            prune_other_covers(std::slice::from_ref(&target_dir), Some(&target)).await?;
         }
 
         write_cover_image(&target, &bytes).await?;
@@ -470,8 +416,7 @@ pub(crate) async fn sync_artist_cover(
 struct CoverResolveContext {
     release_title: String,
     existing_cover: Option<PathBuf>,
-    candidate_dirs: Vec<PathBuf>,
-    configured_target_dir: Option<PathBuf>,
+    target_dir: PathBuf,
     provider_contexts: Vec<(String, serde_json::Value)>,
 }
 
@@ -480,7 +425,6 @@ struct CoverDownloadTask {
     provider_id: String,
     cover_url: String,
     target_dir: PathBuf,
-    candidate_dirs: Vec<PathBuf>,
     existing_cover: Option<PathBuf>,
     replace_existing: bool,
 }
@@ -521,11 +465,9 @@ async fn execute_cover_download(task: CoverDownloadTask) -> bool {
             let _ = fs::remove_file(existing).await;
         }
 
-        let mut prune_dirs = task.candidate_dirs.clone();
-        if !prune_dirs.iter().any(|dir| dir == &task.target_dir) {
-            prune_dirs.push(task.target_dir.clone());
-        }
-        if let Err(err) = prune_other_covers(&prune_dirs, Some(&target)).await {
+        if let Err(err) =
+            prune_other_covers(std::slice::from_ref(&task.target_dir), Some(&target)).await
+        {
             tracing::warn!(
                 release = %task.release_title,
                 error = %err,
@@ -647,13 +589,7 @@ pub(crate) async fn sync_release_covers_for_library(
             let artists = db::artists::get(&db_read, release_id)?;
             let library = library_for_release(&db_read, release_id)?;
             let existing_cover = resolve_cover_for_release(&db_read, release_id, &tracks, paths)?;
-            let configured_target_dir =
-                configured_cover_dir_for_release(paths.covers_root, release_id);
-            let candidate_dirs = if let Some(ref dir) = configured_target_dir {
-                vec![dir.clone()]
-            } else {
-                cover_dirs_for_release(&db_read, &tracks, paths.library_root)?
-            };
+            let target_dir = configured_cover_dir_for_release(paths.covers_root, release_id);
 
             let mut provider_contexts = Vec::new();
             for provider in &sorted_providers {
@@ -667,8 +603,7 @@ pub(crate) async fn sync_release_covers_for_library(
             contexts.push(CoverResolveContext {
                 release_title: release.release_title.clone(),
                 existing_cover,
-                candidate_dirs,
-                configured_target_dir,
+                target_dir,
                 provider_contexts,
             });
         }
@@ -685,24 +620,7 @@ pub(crate) async fn sync_release_covers_for_library(
         if ctx.existing_cover.is_some() && !options.replace_existing {
             continue;
         }
-        if ctx.candidate_dirs.is_empty() {
-            continue;
-        }
-
-        let target_dir = if let Some(dir) = ctx.configured_target_dir {
-            dir
-        } else if options.replace_existing {
-            ctx.existing_cover
-                .as_ref()
-                .and_then(|p| p.parent().map(Path::to_path_buf))
-                .or_else(|| ctx.candidate_dirs.first().cloned())
-                .ok_or_else(|| anyhow!("unable to determine cover directory"))?
-        } else {
-            ctx.candidate_dirs
-                .first()
-                .cloned()
-                .ok_or_else(|| anyhow!("unable to determine cover directory"))?
-        };
+        let target_dir = ctx.target_dir;
 
         for (provider_id, release_context) in &ctx.provider_contexts {
             let cover_url = match resolve_provider_release_cover_url(
@@ -738,7 +656,6 @@ pub(crate) async fn sync_release_covers_for_library(
                 provider_id: provider_id.clone(),
                 cover_url,
                 target_dir: target_dir.clone(),
-                candidate_dirs: ctx.candidate_dirs.clone(),
                 existing_cover: ctx.existing_cover.clone(),
                 replace_existing: options.replace_existing,
             });
@@ -1072,7 +989,7 @@ mod tests {
             &[],
             CoverPaths {
                 library_root: None,
-                covers_root: None,
+                covers_root: Path::new("covers"),
             },
             CoverSyncOptions::default(),
         )
