@@ -65,6 +65,7 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
     {
         let mut db_write = STATE.db.write().await;
         crate::db::server::ensure(&mut db_write)?;
+        crate::db::settings::server::ensure(&mut db_write)?;
     }
 
     let plugin_runtime = plugin_bootstrap::initialize_harmony().await?;
