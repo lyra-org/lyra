@@ -6,7 +6,6 @@
 pub(crate) mod descriptors;
 mod luau;
 mod registry;
-mod schema;
 
 #[cfg(test)]
 mod tests;
@@ -28,7 +27,7 @@ pub(crate) use self::registry::{
     teardown_plugin_settings,
     unfreeze_plugin_settings,
 };
-pub(crate) use self::schema::{
+pub(crate) use crate::services::settings::{
     ChoiceOption,
     FieldDefinition,
     FieldGroupDefinition,
