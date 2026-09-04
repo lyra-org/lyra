@@ -32,6 +32,7 @@ pub(crate) enum Permission {
     ManagePlugins,
     ManageProviders,
     ManageMetadata,
+    ManageServer,
     Download,
 }
 
@@ -46,6 +47,7 @@ impl Permission {
             Self::ManagePlugins => "manage_plugins",
             Self::ManageProviders => "manage_providers",
             Self::ManageMetadata => "manage_metadata",
+            Self::ManageServer => "manage_server",
             Self::Download => "download",
         }
     }
@@ -60,6 +62,7 @@ impl Permission {
             "manage_plugins" => Ok(Self::ManagePlugins),
             "manage_providers" => Ok(Self::ManageProviders),
             "manage_metadata" => Ok(Self::ManageMetadata),
+            "manage_server" => Ok(Self::ManageServer),
             "download" => Ok(Self::Download),
             _ => Err(DbError::serialization(
                 agdb::DbErrorType::TypeError,
@@ -385,6 +388,14 @@ mod tests {
             Permission::try_from(DbValue::from("manage_plugins"))?,
             Permission::ManagePlugins
         );
+        assert_eq!(
+            Permission::try_from(DbValue::from("manage_server"))?,
+            Permission::ManageServer
+        );
+        assert_eq!(
+            DbValue::from(Permission::ManageServer),
+            DbValue::from("manage_server")
+        );
         assert!(Permission::try_from(DbValue::from("editor")).is_err());
         assert_eq!(
             DbValue::from(vec![Permission::Admin, Permission::ManageUsers]),
@@ -407,7 +418,9 @@ mod tests {
 
         let admin = get_by_name(&db, "admin")?;
         assert!(admin.is_some());
-        assert_eq!(admin.unwrap().permissions, vec![Permission::Admin]);
+        let admin = admin.unwrap();
+        assert_eq!(admin.permissions, vec![Permission::Admin]);
+        assert!(has_permission(&admin.permissions, Permission::ManageServer));
 
         let user = get_by_name(&db, "user")?;
         assert!(user.is_some());
