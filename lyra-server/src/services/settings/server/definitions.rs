@@ -82,7 +82,7 @@ pub(super) static ALL: &[SettingDefinition] = &[
         CORS,
         "Allowed origins",
         "Origins allowed by CORS; use * to allow any origin.",
-        RestartRequired,
+        Live,
         Kind::OriginList { default: &[] },
     ),
     setting(

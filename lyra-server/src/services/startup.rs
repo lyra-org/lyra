@@ -190,7 +190,7 @@ async fn serve(
     tracing::info!("listening on {}", listener.local_addr()?);
     let app = services::rate_limit::apply(app, config);
     let app = app.layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT_BYTES));
-    let app = services::cors::apply(app, config);
+    let app = services::cors::apply(app);
     let app = app.layer(TraceLayer::new_for_http());
     let signal_token = shutdown_token.clone();
     let signal_handle = tokio::spawn(async move {

@@ -3,41 +3,35 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use axum::{
-    Router,
-    http::HeaderValue,
-};
+use axum::Router;
 use tower_http::cors::{
     AllowHeaders,
     AllowMethods,
-    Any,
+    AllowOrigin,
     CorsLayer,
 };
 
-use crate::config::Config;
+use crate::STATE;
 
-pub(crate) fn apply(router: Router, config: &Config) -> Router {
-    let origins = &config.cors.allowed_origins;
-    if origins.is_empty() {
-        return router;
-    }
-
+/// Applies CORS with the origin list read from the current config on every
+/// request, so `cors.allowed_origins` changes take effect without a restart.
+/// An empty list approves nothing; `*` approves any origin.
+///
+/// The layer is always installed. With an empty list the predicate approves
+/// nothing, so preflight requests are answered without an allow-origin header
+/// and every response still carries `Vary`.
+pub(crate) fn apply(router: Router) -> Router {
     let layer = CorsLayer::new()
         .allow_methods(AllowMethods::mirror_request())
-        .allow_headers(AllowHeaders::mirror_request());
-
-    let layer = if origins.iter().any(|origin| origin == "*") {
-        layer.allow_origin(Any)
-    } else {
-        let origins = origins
-            .iter()
-            .map(|origin| {
-                HeaderValue::from_str(origin)
-                    .expect("cors.allowed_origins is validated while loading config")
-            })
-            .collect::<Vec<_>>();
-        layer.allow_origin(origins)
-    };
+        .allow_headers(AllowHeaders::mirror_request())
+        .allow_origin(AllowOrigin::predicate(|origin, _| {
+            STATE
+                .config()
+                .cors
+                .allowed_origins
+                .iter()
+                .any(|allowed| allowed == "*" || allowed.as_bytes() == origin.as_bytes())
+        }));
 
     router.layer(layer)
 }
@@ -62,7 +56,24 @@ mod tests {
         },
         routing::get,
     };
+    use tokio::sync::MutexGuard;
     use tower::ServiceExt;
+
+    use crate::config::Config;
+    use crate::testing::{
+        init_default_test_state,
+        publish_config,
+        runtime_test_lock,
+    };
+
+    /// Publishes `origins` as the live CORS list; hold the guard for the
+    /// rest of the test.
+    async fn publish_origins(origins: &[&str]) -> anyhow::Result<MutexGuard<'static, ()>> {
+        let guard = runtime_test_lock().await;
+        init_default_test_state()?;
+        publish_config(config_with_origins(origins));
+        Ok(guard)
+    }
 
     fn config_with_origins(origins: &[&str]) -> Config {
         let mut config = Config::for_tests();
@@ -70,41 +81,46 @@ mod tests {
         config
     }
 
-    fn test_router(config: &Config) -> Router {
+    fn test_router() -> Router {
         apply(
             Router::new()
                 .route("/ok", get(|| async { "ok" }))
                 .route("/err", get(|| async { StatusCode::INTERNAL_SERVER_ERROR })),
-            config,
         )
     }
 
-    #[tokio::test]
-    async fn empty_origin_list_leaves_cors_disabled() -> anyhow::Result<()> {
-        let response = test_router(&Config::for_tests())
+    async fn allowed_origin_for(router: &Router, origin: &str) -> anyhow::Result<Option<String>> {
+        let response = router
+            .clone()
             .oneshot(
                 axum::http::Request::builder()
                     .method(Method::GET)
                     .uri("/ok")
-                    .header(ORIGIN, "http://localhost:8080")
+                    .header(ORIGIN, origin)
                     .body(axum::body::Body::empty())?,
             )
             .await?;
+        Ok(response
+            .headers()
+            .get(ACCESS_CONTROL_ALLOW_ORIGIN)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string))
+    }
 
-        assert_eq!(response.status(), StatusCode::OK);
-        assert!(
-            response
-                .headers()
-                .get(ACCESS_CONTROL_ALLOW_ORIGIN)
-                .is_none()
+    #[tokio::test]
+    async fn empty_origin_list_leaves_cors_disabled() -> anyhow::Result<()> {
+        let _guard = publish_origins(&[]).await?;
+        assert_eq!(
+            allowed_origin_for(&test_router(), "http://localhost:8080").await?,
+            None
         );
         Ok(())
     }
 
     #[tokio::test]
     async fn allowed_origin_is_approved_for_normal_responses() -> anyhow::Result<()> {
-        let config = config_with_origins(&["http://localhost:8080"]);
-        let response = test_router(&config)
+        let _guard = publish_origins(&["http://localhost:8080"]).await?;
+        let response = test_router()
             .oneshot(
                 axum::http::Request::builder()
                     .method(Method::GET)
@@ -136,54 +152,53 @@ mod tests {
 
     #[tokio::test]
     async fn disallowed_origin_is_not_approved() -> anyhow::Result<()> {
-        let config = config_with_origins(&["http://localhost:8080"]);
-        let response = test_router(&config)
-            .oneshot(
-                axum::http::Request::builder()
-                    .method(Method::GET)
-                    .uri("/ok")
-                    .header(ORIGIN, "http://evil.test")
-                    .body(axum::body::Body::empty())?,
-            )
-            .await?;
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert!(
-            response
-                .headers()
-                .get(ACCESS_CONTROL_ALLOW_ORIGIN)
-                .is_none()
+        let _guard = publish_origins(&["http://localhost:8080"]).await?;
+        assert_eq!(
+            allowed_origin_for(&test_router(), "http://evil.test").await?,
+            None
         );
         Ok(())
     }
 
     #[tokio::test]
-    async fn wildcard_origin_is_explicit_allow_any() -> anyhow::Result<()> {
-        let config = config_with_origins(&["*"]);
-        let response = test_router(&config)
-            .oneshot(
-                axum::http::Request::builder()
-                    .method(Method::GET)
-                    .uri("/ok")
-                    .header(ORIGIN, "http://localhost:8080")
-                    .body(axum::body::Body::empty())?,
-            )
-            .await?;
-
+    async fn wildcard_origin_allows_any_origin() -> anyhow::Result<()> {
+        let _guard = publish_origins(&["*"]).await?;
         assert_eq!(
-            response
-                .headers()
-                .get(ACCESS_CONTROL_ALLOW_ORIGIN)
-                .and_then(|value| value.to_str().ok()),
-            Some("*")
+            allowed_origin_for(&test_router(), "http://localhost:8080").await?,
+            Some("http://localhost:8080".to_string())
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn published_config_changes_apply_without_rebuilding_router() -> anyhow::Result<()> {
+        let _guard = publish_origins(&["http://localhost:8080"]).await?;
+        let router = test_router();
+        assert_eq!(
+            allowed_origin_for(&router, "http://localhost:8080").await?,
+            Some("http://localhost:8080".to_string())
+        );
+        assert_eq!(allowed_origin_for(&router, "http://app.test").await?, None);
+
+        publish_config(config_with_origins(&["http://app.test"]));
+        assert_eq!(
+            allowed_origin_for(&router, "http://localhost:8080").await?,
+            None
+        );
+        assert_eq!(
+            allowed_origin_for(&router, "http://app.test").await?,
+            Some("http://app.test".to_string())
+        );
+
+        publish_config(config_with_origins(&[]));
+        assert_eq!(allowed_origin_for(&router, "http://app.test").await?, None);
         Ok(())
     }
 
     #[tokio::test]
     async fn preflight_mirrors_requested_method_and_headers() -> anyhow::Result<()> {
-        let config = config_with_origins(&["http://localhost:8080"]);
-        let response = test_router(&config)
+        let _guard = publish_origins(&["http://localhost:8080"]).await?;
+        let response = test_router()
             .oneshot(
                 axum::http::Request::builder()
                     .method(Method::OPTIONS)
@@ -222,8 +237,8 @@ mod tests {
 
     #[tokio::test]
     async fn cors_headers_are_added_to_error_responses() -> anyhow::Result<()> {
-        let config = config_with_origins(&["http://localhost:8080"]);
-        let response = test_router(&config)
+        let _guard = publish_origins(&["http://localhost:8080"]).await?;
+        let response = test_router()
             .oneshot(
                 axum::http::Request::builder()
                     .method(Method::GET)
