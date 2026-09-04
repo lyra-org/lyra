@@ -374,7 +374,7 @@ fn check_settings_availability(
     plugin_id: &str,
     required_settings: &[String],
 ) -> (bool, Option<String>) {
-    let plugin_settings = match db::settings::find_plugin_settings_with(db, plugin_id) {
+    let plugin_settings = match db::settings::plugins::find_with(db, plugin_id) {
         Ok(Some(ps)) => ps,
         Ok(None) => {
             return (
