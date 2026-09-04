@@ -90,7 +90,7 @@ Users with the `manage_server` permission can read and edit the stored runtime s
 
 Both writes require a session credential; an API key can read settings but not change them.
 
-Most settings apply immediately. `rate_limit.*`, `cors.allowed_origins`, and `hls.cleanup_startup_purge` are read at startup and take effect on the next restart.
+Most settings apply immediately. `rate_limit.*` and `hls.cleanup_startup_purge` are read at startup and take effect on the next restart.
 
 ### Environment variables
 

@@ -854,10 +854,16 @@ mod tests {
         );
 
         let third = body(
-            update_server_settings(headers, request(&[("cors.allowed_origins", json!(["*"]))]))
-                .await,
+            update_server_settings(
+                headers,
+                request(&[("hls.cleanup_startup_purge", json!(false))]),
+            )
+            .await,
         );
-        assert_eq!(third["pending_restart"], json!(["cors.allowed_origins"]));
+        assert_eq!(
+            third["pending_restart"],
+            json!(["hls.cleanup_startup_purge"])
+        );
         Ok(())
     }
 
