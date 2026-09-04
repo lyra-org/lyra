@@ -57,7 +57,7 @@ use crate::{
             require_manage_plugins,
         },
         plugin_repositories as repositories_service,
-        plugin_settings as settings_service,
+        settings::plugins as settings_service,
     },
 };
 

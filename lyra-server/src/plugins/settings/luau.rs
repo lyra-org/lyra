@@ -35,7 +35,7 @@ use super::{
     },
 };
 use crate::plugins::db::DbAsync;
-use crate::services::plugin_settings as plugin_settings_service;
+use crate::services::settings::plugins as plugin_settings_service;
 
 #[harmony_macros::userdata(
     name = "SettingsBuilder",
