@@ -331,7 +331,7 @@ pub(crate) fn delete_user(db: &mut impl super::DbAccess, user_db_id: DbId) -> an
     }
     revoke_all_sessions_for_user(db, user_db_id)?;
     super::playbacks::delete_for_user(db, user_db_id)?;
-    super::settings::remove_all_user_plugin_settings_for_user(db, user_db_id)?;
+    super::settings::plugins::remove_all_for_user(db, user_db_id)?;
     super::favorites::remove_outbound_for_user(db, user_db_id)?;
     super::ratings::remove_outbound_for_user(db, user_db_id)?;
     super::tags::remove_outbound_for_user(db, user_db_id)?;

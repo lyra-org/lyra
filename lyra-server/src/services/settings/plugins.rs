@@ -153,7 +153,10 @@ pub(crate) fn validate_updates(
         .collect()
 }
 
-fn node_db_id(plugin_node: db::settings::PluginSettings, plugin_id: &str) -> anyhow::Result<DbId> {
+fn node_db_id(
+    plugin_node: db::settings::plugins::PluginSettings,
+    plugin_id: &str,
+) -> anyhow::Result<DbId> {
     plugin_node
         .db_id
         .ok_or_else(|| anyhow!("plugin settings node missing db_id: {plugin_id}"))
@@ -164,7 +167,7 @@ fn load_stored_values_with<A: db::DbAccess>(
     db: &A,
     plugin_id: &str,
 ) -> anyhow::Result<HashMap<String, serde_json::Value>> {
-    let Some(plugin_node) = db::settings::find_plugin_settings_with(db, plugin_id)? else {
+    let Some(plugin_node) = db::settings::plugins::find_with(db, plugin_id)? else {
         return Ok(HashMap::new());
     };
     let plugin_db_id = node_db_id(plugin_node, plugin_id)?;
@@ -206,7 +209,7 @@ pub(crate) fn load_validated_stored_values(
 }
 
 pub(crate) fn clear_stored_values(db: &mut DbAny, plugin_id: &str) -> anyhow::Result<()> {
-    db.transaction_mut(|t| db::settings::remove_plugin_settings_with(t, plugin_id))
+    db.transaction_mut(|t| db::settings::plugins::remove_with(t, plugin_id))
 }
 
 pub(crate) fn apply_updates(
@@ -221,7 +224,7 @@ pub(crate) fn apply_updates(
 
     db.transaction_mut(|t| -> anyhow::Result<()> {
         load_validated_stored_values_with(t, plugin_id, schema)?;
-        let mut plugin_db_id = db::settings::find_plugin_settings_with(t, plugin_id)?
+        let mut plugin_db_id = db::settings::plugins::find_with(t, plugin_id)?
             .map(|node| node_db_id(node, plugin_id))
             .transpose()?;
 
@@ -231,8 +234,7 @@ pub(crate) fn apply_updates(
                     let plugin_db_id = match plugin_db_id {
                         Some(plugin_db_id) => plugin_db_id,
                         None => {
-                            let node =
-                                db::settings::get_or_create_plugin_settings_with(t, plugin_id)?;
+                            let node = db::settings::plugins::get_or_create_with(t, plugin_id)?;
                             let created_plugin_db_id = node_db_id(node, plugin_id)?;
                             plugin_db_id = Some(created_plugin_db_id);
                             created_plugin_db_id
@@ -252,7 +254,7 @@ pub(crate) fn apply_updates(
         if let Some(plugin_db_id) = plugin_db_id
             && db::settings::get_all_settings_with(t, plugin_db_id)?.is_empty()
         {
-            db::settings::remove_plugin_settings_with(t, plugin_id)?;
+            db::settings::plugins::remove_with(t, plugin_id)?;
         }
 
         Ok(())
@@ -260,7 +262,7 @@ pub(crate) fn apply_updates(
 }
 
 fn user_node_db_id(
-    node: db::settings::UserPluginSettings,
+    node: db::settings::plugins::UserPluginSettings,
     user_db_id: DbId,
     plugin_id: &str,
 ) -> anyhow::Result<DbId> {
@@ -279,8 +281,7 @@ fn load_user_stored_values_with<A: db::DbAccess>(
     user_db_id: DbId,
     plugin_id: &str,
 ) -> anyhow::Result<HashMap<String, serde_json::Value>> {
-    let Some(node) = db::settings::find_user_plugin_settings_with(db, user_db_id, plugin_id)?
-    else {
+    let Some(node) = db::settings::plugins::find_user_with(db, user_db_id, plugin_id)? else {
         return Ok(HashMap::new());
     };
     let node_id = user_node_db_id(node, user_db_id, plugin_id)?;
@@ -322,10 +323,9 @@ pub(crate) fn apply_user_updates(
         let values = load_user_stored_values_with(t, user_db_id, plugin_id)?;
         validate_user_stored_values(plugin_id, schema, &values)?;
 
-        let mut settings_db_id =
-            db::settings::find_user_plugin_settings_with(t, user_db_id, plugin_id)?
-                .map(|node| user_node_db_id(node, user_db_id, plugin_id))
-                .transpose()?;
+        let mut settings_db_id = db::settings::plugins::find_user_with(t, user_db_id, plugin_id)?
+            .map(|node| user_node_db_id(node, user_db_id, plugin_id))
+            .transpose()?;
 
         for change in changes {
             match change {
@@ -333,7 +333,7 @@ pub(crate) fn apply_user_updates(
                     let parent_id = match settings_db_id {
                         Some(id) => id,
                         None => {
-                            let node = db::settings::get_or_create_user_plugin_settings_with(
+                            let node = db::settings::plugins::get_or_create_user_with(
                                 t, user_db_id, plugin_id,
                             )?;
                             let created_id = user_node_db_id(node, user_db_id, plugin_id)?;
@@ -355,7 +355,7 @@ pub(crate) fn apply_user_updates(
         if let Some(parent_id) = settings_db_id
             && db::settings::get_all_settings_with(t, parent_id)?.is_empty()
         {
-            db::settings::remove_user_plugin_settings_with(t, user_db_id, plugin_id)?;
+            db::settings::plugins::remove_user_with(t, user_db_id, plugin_id)?;
         }
 
         Ok(())
@@ -367,7 +367,7 @@ pub(crate) fn clear_user_stored_values(
     user_db_id: DbId,
     plugin_id: &str,
 ) -> anyhow::Result<()> {
-    db.transaction_mut(|t| db::settings::remove_user_plugin_settings_with(t, user_db_id, plugin_id))
+    db.transaction_mut(|t| db::settings::plugins::remove_user_with(t, user_db_id, plugin_id))
 }
 
 #[cfg(test)]
@@ -389,8 +389,8 @@ mod tests {
     fn create_plugin_settings(
         db: &mut DbAny,
         plugin_id: &str,
-    ) -> anyhow::Result<db::settings::PluginSettings> {
-        db.transaction_mut(|t| db::settings::get_or_create_plugin_settings_with(t, plugin_id))
+    ) -> anyhow::Result<db::settings::plugins::PluginSettings> {
+        db.transaction_mut(|t| db::settings::plugins::get_or_create_with(t, plugin_id))
     }
 
     fn upsert_setting(
@@ -441,10 +441,10 @@ mod tests {
     fn load_stored_values_is_read_only_for_missing_plugins() -> anyhow::Result<()> {
         let db = new_test_db()?;
 
-        assert!(db::settings::find_plugin_settings_with(&db, "demo")?.is_none());
+        assert!(db::settings::plugins::find_with(&db, "demo")?.is_none());
         let values = load_stored_values(&db, "demo")?;
         assert!(values.is_empty());
-        assert!(db::settings::find_plugin_settings_with(&db, "demo")?.is_none());
+        assert!(db::settings::plugins::find_with(&db, "demo")?.is_none());
 
         Ok(())
     }
@@ -600,7 +600,7 @@ mod tests {
 
         let values = load_stored_values(&db, "demo")?;
         assert!(!values.contains_key("token"));
-        assert!(db::settings::find_plugin_settings_with(&db, "demo")?.is_none());
+        assert!(db::settings::plugins::find_with(&db, "demo")?.is_none());
 
         Ok(())
     }
@@ -614,7 +614,7 @@ mod tests {
 
         clear_stored_values(&mut db, "demo")?;
 
-        assert!(db::settings::find_plugin_settings_with(&db, "demo")?.is_none());
+        assert!(db::settings::plugins::find_with(&db, "demo")?.is_none());
         Ok(())
     }
 
@@ -735,7 +735,7 @@ mod tests {
         apply_user_updates(&mut db, user_db_id, "demo", &schema, &changes)?;
 
         assert!(load_user_stored_values_with(&db, user_db_id, "demo")?.is_empty());
-        assert!(db::settings::find_user_plugin_settings_with(&db, user_db_id, "demo")?.is_none());
+        assert!(db::settings::plugins::find_user_with(&db, user_db_id, "demo")?.is_none());
 
         Ok(())
     }

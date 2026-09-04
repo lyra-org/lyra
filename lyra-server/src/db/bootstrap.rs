@@ -63,8 +63,8 @@ pub(crate) const ROOT_COLLECTION_ALIASES: &[&str] = &[
     "release_labels",
     "display_covers",
     "display_cover_repairs",
-    "settings",
-    "user_settings",
+    "plugin_settings",
+    "user_plugin_settings",
     "server",
     "roles",
     "sync_runs",
@@ -145,7 +145,25 @@ pub(crate) fn initialize_root_aliases(db: &mut DbAny, aliases: &[&str]) -> anyho
     })
 }
 
+const LEGACY_ROOT_ALIASES: &[&str] = &["settings", "user_settings"];
+
+fn reject_legacy_root_aliases(db: &DbAny) -> anyhow::Result<()> {
+    let aliases = db.exec(QueryBuilder::select().aliases().query())?;
+    for element in aliases.elements {
+        for value in element.values {
+            let alias = value.value.to_string();
+            if LEGACY_ROOT_ALIASES.contains(&alias.as_str()) {
+                anyhow::bail!(
+                    "database contains legacy root alias '{alias}' from a previous settings layout; delete the database and start again"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn initialize(db: &mut DbAny) -> anyhow::Result<()> {
+    reject_legacy_root_aliases(db)?;
     initialize_root_aliases(db, ROOT_COLLECTION_ALIASES)?;
     indexes::ensure_indexes(db, CORE_INDEXES)?;
     Ok(())
@@ -193,5 +211,29 @@ fn kind_label(kind: DbKind) -> &'static str {
         DbKind::Memory => "memory",
         DbKind::File => "file",
         DbKind::Mmap => "mmap",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_db::TestDb;
+
+    #[test]
+    fn initialize_rejects_legacy_settings_aliases() -> anyhow::Result<()> {
+        for legacy in LEGACY_ROOT_ALIASES {
+            let mut db = TestDb::with_root_aliases(&[legacy])?.into_inner();
+            let error = initialize(&mut db).expect_err("legacy alias should be rejected");
+            assert!(error.to_string().contains(legacy));
+            assert!(error.to_string().contains("delete the database"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn initialize_is_repeatable_on_current_layout() -> anyhow::Result<()> {
+        let mut db = TestDb::initialized()?.into_inner();
+        initialize(&mut db)?;
+        Ok(())
     }
 }
