@@ -77,7 +77,7 @@ pub(crate) async fn load_server_info() -> anyhow::Result<ServerInfo> {
         version: env!("CARGO_PKG_VERSION").to_string(),
         commit_hash: env!("LYRA_GIT_HASH").to_string(),
         hostname: HOSTNAME.clone(),
-        port: config.port,
+        port: STATE.boot.get().port,
         published_url: config.published_url.clone(),
         setup_complete,
     })

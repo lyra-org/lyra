@@ -574,7 +574,7 @@ mod tests {
     fn config_with_rate_limit(rate_limit: RateLimitConfig) -> Config {
         Config {
             rate_limit,
-            ..Config::default()
+            ..Config::for_tests()
         }
     }
 

@@ -97,39 +97,53 @@ pub async fn runtime_test_lock() -> MutexGuard<'static, ()> {
 /// [`runtime_test_lock`].
 #[cfg(test)]
 pub(crate) fn init_default_test_state() -> anyhow::Result<()> {
-    STATE.initialize(memory_db_config()?)
+    initialize_state(config::ConfigFile::default())
 }
 
-/// Default config backed by a uniquely named in-memory DB so tests never
-/// touch the data directory or any on-disk database.
-fn memory_db_config() -> anyhow::Result<Config> {
+/// Boot config backed by a uniquely named in-memory DB so tests never touch
+/// the data directory or any on-disk database.
+fn memory_boot_config() -> anyhow::Result<config::BootConfig> {
     let unique_db_name = format!(
         "lyra-harmony-test-{}-{}",
         std::process::id(),
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
     );
-    Ok(Config {
+    Ok(config::BootConfig {
+        port: 0,
         db: config::DbConfig {
             kind: config::DbKind::Memory,
             path: PathBuf::from(unique_db_name),
         },
-        ..Config::default()
+        ..config::BootConfig::default()
     })
 }
 
+/// Resolves `file` the way the server does, over a memory-backed boot config.
+/// Memory kind is required: `STATE.initialize` re-runs per test, and an
+/// on-disk DB would block on the live process lock.
+fn initialize_state(file: config::ConfigFile) -> anyhow::Result<()> {
+    let boot = memory_boot_config()?;
+    assert!(
+        matches!(boot.db.kind, config::DbKind::Memory),
+        "test state must use a memory database"
+    );
+    let config = Config::resolve(&file, &boot)?;
+    let created = db::create(&boot.db)?;
+    STATE.initialize(boot, created, config)
+}
+
 pub async fn initialize_runtime(library: &LibraryFixtureConfig) -> anyhow::Result<()> {
-    let config = Config {
-        port: 0,
-        library: Some(config::LibraryConfig {
+    let file = config::ConfigFile {
+        library: Some(config::LibraryFile {
             path: Some(library.directory.clone()),
             name: None,
             language: library.language.clone(),
             country: library.country.clone(),
         }),
-        ..memory_db_config()?
+        ..config::ConfigFile::default()
     };
 
-    STATE.initialize(config)?;
+    initialize_state(file)?;
     {
         let mut db = STATE.db.write().await;
         db::server::ensure(&mut db)?;

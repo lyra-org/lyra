@@ -51,7 +51,7 @@ async fn confine_file_response_path(path: &str) -> Result<PathBuf> {
         .await
         .with_context(|| format!("failed to resolve file response path '{path}'"))?;
     let mut roots = crate::services::libraries::library_roots().await?;
-    roots.extend(crate::services::covers::configured_covers_root());
+    roots.push(crate::services::covers::configured_covers_root());
     for root in roots {
         let Ok(root) = tokio::fs::canonicalize(&root).await else {
             continue;

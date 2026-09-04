@@ -39,8 +39,8 @@ mod services;
 pub mod testing;
 
 use config::{
+    BootConfig,
     Config,
-    load_config,
 };
 pub(crate) use db::Library;
 use db::{
@@ -107,17 +107,12 @@ impl DbHandle {
         self.db.get()
     }
 
-    fn reset_with<F>(&self, factory: F) -> Result<()>
-    where
-        F: FnOnce() -> Result<db::Created>,
-    {
+    fn reset(&self, created: db::Created) {
         let old_lock = self.lock.lock().expect("db lock poisoned").take();
         drop(old_lock);
 
-        let created = factory()?;
         self.db.replace(created.db);
         *self.lock.lock().expect("db lock poisoned") = created.lock;
-        Ok(())
     }
 
     pub(crate) async fn read(&self) -> OwnedRwLockReadGuard<DbAny> {
@@ -129,6 +124,7 @@ impl DbHandle {
     }
 }
 
+pub(crate) type BootHandle = SwapHandle<Arc<BootConfig>>;
 pub(crate) type ConfigHandle = SwapHandle<Arc<Config>>;
 pub(crate) type PluginManifestHandle = SwapHandle<Arc<[PluginManifest]>>;
 pub(crate) type PluginRuntimeHandle = SwapHandle<Option<crate::plugins::bootstrap::PluginRuntime>>;
@@ -166,17 +162,19 @@ pub(crate) struct GenerationState {
 
 pub(crate) struct AppState {
     pub(crate) db: DbHandle,
+    /// Canonical home for port, data dir, and db location.
+    pub(crate) boot: BootHandle,
     pub(crate) config: ConfigHandle,
     generation: SwapHandle<Arc<GenerationState>>,
 }
 
-pub(crate) fn build_app_state(config: Config) -> Result<AppState> {
-    let created = create(&config.db)?;
-    Ok(AppState {
+fn build_app_state(boot: BootConfig, created: db::Created, config: Config) -> AppState {
+    AppState {
         db: DbHandle::new(created),
+        boot: BootHandle::new(Arc::new(boot)),
         config: ConfigHandle::new(Arc::new(config)),
         generation: SwapHandle::default(),
-    })
+    }
 }
 
 impl AppState {
@@ -186,13 +184,14 @@ impl AppState {
         self.generation.get()
     }
 
-    pub(crate) fn reset(&self, config: Config) -> Result<()> {
-        // Keep `?` before the remaining replacements so a DB reset failure
-        // cannot leave Lua/config/plugin state pointed at the wrong database.
-        self.db.reset_with(|| create(&config.db))?;
+    /// `created` was opened while the live DB still held its process lock,
+    /// so it must not share a lockfile with the live one (memory DBs, or a
+    /// different path).
+    fn reset(&self, boot: BootConfig, created: db::Created, config: Config) {
+        self.db.reset(created);
+        self.boot.replace(Arc::new(boot));
         self.config.replace(Arc::new(config));
         self.generation.replace(Arc::default());
-        Ok(())
     }
 }
 
@@ -205,19 +204,27 @@ pub(crate) struct StateCell {
 }
 
 impl StateCell {
-    /// First call builds the state from `config`; later calls swap in a fresh
-    /// DB/config/generation via [`AppState::reset`] (test-harness reuse).
-    /// Both paths end on a clean generation. Serialize calls externally
-    /// (today `RUNTIME_TEST_LOCK`).
-    pub(crate) fn initialize(&self, config: Config) -> Result<()> {
+    /// Publishes an already-open database with its boot and runtime config.
+    /// First call builds the state; later calls swap in a fresh
+    /// DB/config/generation via [`AppState::reset`] (test-harness reuse), so
+    /// a later `created` must not share a lockfile with the live DB or
+    /// `create` would have blocked on it. Both paths end on a clean
+    /// generation. Serialize calls externally (today `RUNTIME_TEST_LOCK`).
+    pub(crate) fn initialize(
+        &self,
+        boot: BootConfig,
+        created: db::Created,
+        config: Config,
+    ) -> Result<()> {
         match self.inner.get() {
-            Some(state) => state.reset(config),
-            None => {
-                let state = build_app_state(config)?;
-                self.inner
-                    .set(state)
-                    .map_err(|_| anyhow::anyhow!("application state initialized concurrently"))
+            Some(state) => {
+                state.reset(boot, created, config);
+                Ok(())
             }
+            None => self
+                .inner
+                .set(build_app_state(boot, created, config))
+                .map_err(|_| anyhow::anyhow!("application state initialized concurrently")),
         }
     }
 }
@@ -248,11 +255,15 @@ pub fn outbound_user_agent() -> String {
 
 pub async fn run_server(capture_path: Option<String>) -> Result<()> {
     let _tracing_guard = services::startup::init_tracing();
-    let config = load_config()?;
+    let loaded = config::load()?;
+    // Validate the file before touching the port, directories, or database.
+    let config = Config::resolve(&loaded.file, &loaded.boot)?;
     // Bind first: a port collision with a running server must fail fast
     // instead of blocking on that server's DB process lock.
-    let listener = services::startup::bind_configured_listener(config.port).await?;
-    STATE.initialize(config)?;
+    let listener = services::startup::bind_configured_listener(loaded.boot.port).await?;
+    loaded.boot.ensure_directories()?;
+    let created = create(&loaded.boot.db)?;
+    STATE.initialize(loaded.boot, created, config)?;
     services::startup::run_server(capture_path, listener).await
 }
 
@@ -292,14 +303,14 @@ pub async fn run_plugins_add(url: &str, git_ref: Option<&str>) -> Result<()> {
 /// in `DbFile` regardless of `config.kind`, and skips schema init.
 pub async fn run_db_optimize() -> Result<()> {
     let _tracing_guard = services::startup::init_tracing();
-    let config = load_config()?;
-    if matches!(config.db.kind, config::DbKind::Memory) {
+    let boot = config::load()?.boot;
+    if matches!(boot.db.kind, config::DbKind::Memory) {
         anyhow::bail!(
             "nothing to optimize: db kind is memory; configure DbKind::File or DbKind::Mmap to use this command"
         );
     }
 
-    let db_path = config.db.path.clone();
+    let db_path = boot.db.path.clone();
     if !db_path.is_file() {
         anyhow::bail!(
             "nothing to optimize: no database file at {}",
@@ -308,8 +319,7 @@ pub async fn run_db_optimize() -> Result<()> {
     }
     tracing::info!(path = %db_path.display(), "optimizing db");
 
-    let _lock_guard =
-        db::process_lock::acquire(&config.db, db::process_lock::LockMode::NonBlocking)?;
+    let _lock_guard = db::process_lock::acquire(&boot.db, db::process_lock::LockMode::NonBlocking)?;
 
     // After the open: WAL recovery may have grown the file before optimize runs.
     let mut db = db::bootstrap::open(config::DbKind::File, db_path.to_string_lossy().as_ref())?;

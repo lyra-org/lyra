@@ -11,10 +11,10 @@ mod sync;
 
 use std::path::Path;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct CoverPaths<'a> {
     pub(crate) library_root: Option<&'a Path>,
-    pub(crate) covers_root: Option<&'a Path>,
+    pub(crate) covers_root: &'a Path,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -94,26 +94,3 @@ pub(crate) use sync::{
     upsert_artist_cover_metadata,
     upsert_release_cover_metadata,
 };
-
-#[cfg(test)]
-mod tests {
-    use super::resolve::*;
-    use std::path::{
-        Path,
-        PathBuf,
-    };
-
-    #[test]
-    fn resolve_cover_storage_root_returns_relative_path_as_global_root() {
-        let root = resolve_cover_storage_root(Some(Path::new(".lyra/covers")));
-
-        assert_eq!(root, Some(PathBuf::from(".lyra/covers")));
-    }
-
-    #[test]
-    fn resolve_cover_storage_root_keeps_absolute_config_path() {
-        let root = resolve_cover_storage_root(Some(Path::new("/var/lib/lyra/covers")));
-
-        assert_eq!(root, Some(PathBuf::from("/var/lib/lyra/covers")));
-    }
-}

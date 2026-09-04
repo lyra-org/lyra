@@ -30,27 +30,16 @@ use super::{
     image::COVER_EXTENSIONS,
 };
 
-pub(crate) fn resolve_cover_storage_root(configured_root: Option<&Path>) -> Option<PathBuf> {
-    configured_root.map(Path::to_path_buf)
+pub(crate) fn configured_covers_root() -> PathBuf {
+    STATE.config.get().covers_path.clone()
 }
 
-pub(crate) fn configured_covers_root() -> Option<PathBuf> {
-    let config = STATE.config.get();
-    resolve_cover_storage_root(config.covers_path.as_deref())
+pub(crate) fn configured_cover_dir_for_release(covers_root: &Path, release_id: DbId) -> PathBuf {
+    covers_root.join(release_id.0.to_string())
 }
 
-pub(crate) fn configured_cover_dir_for_release(
-    covers_root: Option<&Path>,
-    release_id: DbId,
-) -> Option<PathBuf> {
-    covers_root.map(|root| root.join(release_id.0.to_string()))
-}
-
-pub(crate) fn configured_cover_dir_for_artist(
-    covers_root: Option<&Path>,
-    artist_id: DbId,
-) -> Option<PathBuf> {
-    covers_root.map(|root| root.join("artists").join(artist_id.0.to_string()))
+pub(crate) fn configured_cover_dir_for_artist(covers_root: &Path, artist_id: DbId) -> PathBuf {
+    covers_root.join("artists").join(artist_id.0.to_string())
 }
 
 pub(super) fn cover_path_from_db(db: &DbAny, owner_db_id: DbId) -> Result<Option<PathBuf>> {
@@ -168,9 +157,8 @@ pub(crate) fn resolve_cover_for_release(
         return Ok(Some(path));
     }
 
-    if let Some(configured_dir) = configured_cover_dir_for_release(paths.covers_root, release_id)
-        && let Some(cover) = find_cover_in_directory(&configured_dir)
-    {
+    let configured_dir = configured_cover_dir_for_release(paths.covers_root, release_id);
+    if let Some(cover) = find_cover_in_directory(&configured_dir) {
         return Ok(Some(cover));
     }
 
@@ -209,9 +197,8 @@ pub(crate) fn resolve_cover_for_artist_id(
         return Ok(Some(path));
     }
 
-    if let Some(configured_dir) = configured_cover_dir_for_artist(paths.covers_root, artist_id)
-        && let Some(cover) = find_cover_in_directory(&configured_dir)
-    {
+    let configured_dir = configured_cover_dir_for_artist(paths.covers_root, artist_id);
+    if let Some(cover) = find_cover_in_directory(&configured_dir) {
         return Ok(Some(cover));
     }
 

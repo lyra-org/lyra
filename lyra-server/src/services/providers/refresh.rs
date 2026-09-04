@@ -8,7 +8,10 @@ use std::{
         HashMap,
         HashSet,
     },
-    path::PathBuf,
+    path::{
+        Path,
+        PathBuf,
+    },
     time::Duration,
 };
 
@@ -622,7 +625,7 @@ async fn refresh_library_metadata_inner_with_progress(
 
 async fn cover_path_buffers_for_library(
     library_db_id: Option<DbId>,
-) -> Result<(Option<PathBuf>, Option<PathBuf>), ProviderServiceError> {
+) -> Result<(Option<PathBuf>, PathBuf), ProviderServiceError> {
     let library_root = if let Some(library_db_id) = library_db_id {
         let db = STATE.db.read().await;
         db::libraries::get_by_id(&db, library_db_id)?.map(|library| library.path)
@@ -632,13 +635,10 @@ async fn cover_path_buffers_for_library(
     Ok((library_root, configured_covers_root()))
 }
 
-fn cover_paths<'a>(
-    library_root: &'a Option<PathBuf>,
-    covers_root: &'a Option<PathBuf>,
-) -> CoverPaths<'a> {
+fn cover_paths<'a>(library_root: &'a Option<PathBuf>, covers_root: &'a Path) -> CoverPaths<'a> {
     CoverPaths {
         library_root: library_root.as_deref(),
-        covers_root: covers_root.as_deref(),
+        covers_root,
     }
 }
 
