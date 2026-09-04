@@ -37,6 +37,7 @@ use crate::{
     routes,
     services,
     services::hls::init as hls_init,
+    services::settings::server::SettingSource,
 };
 
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -52,6 +53,7 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
     let capture_mode = capture_path.is_some();
     let shutdown_token = services::shutdown::reset();
     let config = STATE.config.get();
+    log_setting_overrides();
     harmony_http::set_default_user_agent(crate::outbound_user_agent());
     hls_init::initialize_for_config(&config).await;
 
@@ -65,7 +67,6 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
     {
         let mut db_write = STATE.db.write().await;
         crate::db::server::ensure(&mut db_write)?;
-        crate::db::settings::server::ensure(&mut db_write)?;
     }
 
     let plugin_runtime = plugin_bootstrap::initialize_harmony().await?;
@@ -137,6 +138,24 @@ pub(crate) async fn run_server(capture_path: Option<String>, listener: TcpListen
     services::wait_for_running_library_syncs().await;
 
     Ok(())
+}
+
+/// One line per setting that differs from its default, so an operator can
+/// see at startup which values came from the database or `config.json`.
+fn log_setting_overrides() {
+    let settings = STATE.settings.get();
+    for setting in settings
+        .iter()
+        .filter(|setting| setting.source != SettingSource::Default)
+    {
+        tracing::info!(
+            key = setting.definition.key,
+            value = %setting.value,
+            source = ?setting.source,
+            locked = setting.locked,
+            "server setting overrides default"
+        );
+    }
 }
 
 pub(crate) fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {

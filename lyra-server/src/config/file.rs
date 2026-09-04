@@ -3,19 +3,21 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-//! The on-disk `config.json`. Every field is optional so the layers above can
-//! tell "set in the file" apart from "left to the default".
+//! The on-disk `config.json`. Boot values and the dev-only library seed are
+//! typed here; every other leaf is handed to the server settings registry
+//! keyed by its dotted path, so the file never mirrors runtime settings.
 
 use anyhow::{
     Context,
     Result,
     anyhow,
+    bail,
 };
 use serde::Deserialize;
 use std::{
+    collections::BTreeMap,
     env,
     ffi::OsString,
-    net::IpAddr,
     path::{
         Path,
         PathBuf,
@@ -26,40 +28,18 @@ use super::DbKind;
 
 const LYRA_CONFIG_PATH_ENV: &str = "LYRA_CONFIG_PATH";
 
-#[derive(Clone, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+/// Runtime settings present in the file, keyed by dotted path
+/// (`rate_limit.login_burst`). Presence locks the setting to the file value.
+pub(crate) type FileSettings = BTreeMap<String, serde_json::Value>;
+
+#[derive(Clone, Default)]
 pub(crate) struct ConfigFile {
     pub(crate) port: Option<u16>,
-    pub(crate) published_url: Option<String>,
-    pub(crate) cors: Option<CorsFile>,
-    pub(crate) rate_limit: Option<RateLimitFile>,
+    pub(crate) db: Option<DbFile>,
     /// Dev-only bootstrap that seeds one library at startup; libraries are
     /// otherwise managed through the API.
     pub(crate) library: Option<LibraryFile>,
-    pub(crate) covers_path: Option<PathBuf>,
-    pub(crate) db: Option<DbFile>,
-    pub(crate) auth: Option<AuthFile>,
-    pub(crate) sync: Option<SyncFile>,
-    pub(crate) hls: Option<HlsFile>,
-}
-
-#[derive(Clone, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub(crate) struct CorsFile {
-    pub(crate) allowed_origins: Option<Vec<String>>,
-}
-
-#[derive(Clone, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub(crate) struct RateLimitFile {
-    pub(crate) enabled: Option<bool>,
-    pub(crate) trusted_proxies: Option<Vec<IpAddr>>,
-    pub(crate) global_per_minute: Option<u32>,
-    pub(crate) global_burst: Option<u32>,
-    pub(crate) authenticated_per_minute: Option<u32>,
-    pub(crate) authenticated_burst: Option<u32>,
-    pub(crate) login_per_minute: Option<u32>,
-    pub(crate) login_burst: Option<u32>,
+    pub(crate) settings: FileSettings,
 }
 
 #[derive(Clone, Default, Deserialize)]
@@ -78,31 +58,28 @@ pub(crate) struct DbFile {
     pub(crate) path: Option<PathBuf>,
 }
 
-#[derive(Clone, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub(crate) struct AuthFile {
-    pub(crate) enabled: Option<bool>,
-    pub(crate) allow_default_login_when_disabled: Option<bool>,
-    pub(crate) session_ttl_seconds: Option<u64>,
-}
-
-#[derive(Clone, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub(crate) struct SyncFile {
-    pub(crate) interval_secs: Option<u64>,
-}
-
-#[derive(Clone, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub(crate) struct HlsFile {
-    pub(crate) temp_disk_budget_bytes: Option<u64>,
-    pub(crate) cleanup_startup_purge: Option<bool>,
-    pub(crate) max_concurrent_transcodes: Option<u32>,
-}
-
 impl ConfigFile {
     pub(crate) fn parse(contents: &str) -> Result<Self> {
-        Ok(serde_json::from_str(contents)?)
+        let root: serde_json::Value = serde_json::from_str(contents)?;
+        let serde_json::Value::Object(mut root) = root else {
+            bail!("config must be a JSON object");
+        };
+
+        let port = take_typed(&mut root, "port")?;
+        let db = take_typed(&mut root, "db")?;
+        let library = take_typed(&mut root, "library")?;
+
+        let mut settings = FileSettings::new();
+        for (key, value) in root {
+            collect_leaves(&key, value, &mut settings)?;
+        }
+
+        Ok(Self {
+            port,
+            db,
+            library,
+            settings,
+        })
     }
 
     /// Loads the file named by `LYRA_CONFIG_PATH` or the first candidate on
@@ -120,6 +97,37 @@ impl ConfigFile {
         tracing::info!(path = %path.display(), "loaded config file");
         Ok(Some(file))
     }
+}
+
+fn take_typed<T: serde::de::DeserializeOwned>(
+    root: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<Option<T>> {
+    match root.remove(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => serde_json::from_value(value)
+            .map(Some)
+            .with_context(|| format!("invalid config {key}")),
+    }
+}
+
+/// Non-empty objects nest into dotted keys; anything else (arrays and empty
+/// objects included) is a leaf, so `{"rate_limit": {}}` surfaces as a key
+/// instead of vanishing.
+fn collect_leaves(prefix: &str, value: serde_json::Value, out: &mut FileSettings) -> Result<()> {
+    match value {
+        serde_json::Value::Object(map) if !map.is_empty() => {
+            for (key, value) in map {
+                collect_leaves(&format!("{prefix}.{key}"), value, out)?;
+            }
+        }
+        leaf => {
+            if out.insert(prefix.to_string(), leaf).is_some() {
+                bail!("config key '{prefix}' is set more than once");
+            }
+        }
+    }
+    Ok(())
 }
 
 fn config_candidate_paths() -> Vec<PathBuf> {
@@ -227,22 +235,64 @@ mod tests {
     }
 
     #[test]
-    fn file_preserves_field_presence() -> anyhow::Result<()> {
-        let file = ConfigFile::parse(r#"{"port": 5000, "auth": {"enabled": false}}"#)?;
+    fn typed_keys_and_settings_are_separated() -> anyhow::Result<()> {
+        let file = ConfigFile::parse(
+            r#"{
+                "port": 5000,
+                "db": {"kind": "memory"},
+                "library": {"path": "/music"},
+                "published_url": "http://localhost",
+                "auth": {"enabled": false},
+                "cors": {"allowed_origins": ["*"]},
+                "rate_limit": {"login": {"burst": 1}}
+            }"#,
+        )?;
 
         assert_eq!(file.port, Some(5000));
-        let auth = file.auth.expect("auth block should be present");
-        assert_eq!(auth.enabled, Some(false));
-        assert_eq!(auth.session_ttl_seconds, None);
-        assert!(file.db.is_none());
-        assert!(file.covers_path.is_none());
+        assert!(file.db.is_some());
+        assert_eq!(
+            file.library.and_then(|library| library.path).as_deref(),
+            Some(std::path::Path::new("/music"))
+        );
+        assert_eq!(
+            file.settings.keys().collect::<Vec<_>>(),
+            vec![
+                "auth.enabled",
+                "cors.allowed_origins",
+                "published_url",
+                "rate_limit.login.burst"
+            ]
+        );
+        assert_eq!(file.settings["auth.enabled"], serde_json::json!(false));
+        assert_eq!(
+            file.settings["cors.allowed_origins"],
+            serde_json::json!(["*"])
+        );
         Ok(())
     }
 
     #[test]
-    fn unknown_keys_are_rejected() {
-        assert!(ConfigFile::parse(r#"{"prot": 5000}"#).is_err());
-        assert!(ConfigFile::parse(r#"{"hls": {"signed_url_ttl_seconds": 1}}"#).is_err());
+    fn duplicate_dotted_keys_are_rejected() {
+        let error = ConfigFile::parse(r#"{"auth": {"enabled": false}, "auth.enabled": true}"#)
+            .err()
+            .expect("duplicate key should fail");
+        assert!(error.to_string().contains("'auth.enabled'"));
+    }
+
+    #[test]
+    fn empty_objects_are_leaves() -> anyhow::Result<()> {
+        let file = ConfigFile::parse(r#"{"rate_limit": {}, "cors": {"allowed_origins": {}}}"#)?;
+
+        assert_eq!(file.settings["rate_limit"], serde_json::json!({}));
+        assert_eq!(file.settings["cors.allowed_origins"], serde_json::json!({}));
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_typed_subkeys_are_rejected() {
+        assert!(ConfigFile::parse(r#"{"db": {"kinds": "memory"}}"#).is_err());
+        assert!(ConfigFile::parse(r#"{"library": {"paths": "/music"}}"#).is_err());
+        assert!(ConfigFile::parse(r#"[]"#).is_err());
     }
 
     #[test]
@@ -250,9 +300,9 @@ mod tests {
         let file = ConfigFile::parse("{}")?;
 
         assert!(file.port.is_none());
-        assert!(file.auth.is_none());
-        assert!(file.rate_limit.is_none());
+        assert!(file.db.is_none());
         assert!(file.library.is_none());
+        assert!(file.settings.is_empty());
         Ok(())
     }
 }

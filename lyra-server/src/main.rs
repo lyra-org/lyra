@@ -13,6 +13,12 @@ enum Command {
     Serve { capture_path: Option<String> },
     Db(DbCommand),
     Plugins(PluginsCommand),
+    Settings(SettingsCommand),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SettingsCommand {
+    Reset,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -34,6 +40,7 @@ async fn main() -> Result<()> {
     match parse_command_args(&args)? {
         Command::Serve { capture_path } => lyra_server::run_server(capture_path).await,
         Command::Db(DbCommand::Optimize) => lyra_server::run_db_optimize().await,
+        Command::Settings(SettingsCommand::Reset) => lyra_server::run_settings_reset().await,
         Command::Plugins(PluginsCommand::Add { url, git_ref }) => {
             lyra_server::run_plugins_add(&url, git_ref.as_deref()).await
         }
@@ -48,6 +55,9 @@ fn parse_command_args(args: &[String]) -> Result<Command> {
         }),
         [command, action] if command == "db" && action == "optimize" => {
             Ok(Command::Db(DbCommand::Optimize))
+        }
+        [command, action] if command == "settings" && action == "reset" => {
+            Ok(Command::Settings(SettingsCommand::Reset))
         }
         [command, action, url] if command == "plugins" && action == "add" => {
             Ok(Command::Plugins(PluginsCommand::Add {
@@ -68,7 +78,7 @@ fn parse_command_args(args: &[String]) -> Result<Command> {
 }
 
 fn usage() -> &'static str {
-    "usage:\n  lyra serve [--capture <output-path>]\n  lyra db optimize\n  lyra plugins add <url> [--ref <ref>]"
+    "usage:\n  lyra serve [--capture <output-path>]\n  lyra db optimize\n  lyra settings reset\n  lyra plugins add <url> [--ref <ref>]"
 }
 
 #[cfg(test)]
@@ -77,6 +87,7 @@ mod tests {
         Command,
         DbCommand,
         PluginsCommand,
+        SettingsCommand,
         parse_command_args,
     };
 
@@ -106,6 +117,14 @@ mod tests {
     fn parse_db_optimize_command() {
         let parsed = parse_command_args(&args(&["db", "optimize"])).expect("parse db optimize");
         assert_eq!(parsed, Command::Db(DbCommand::Optimize));
+    }
+
+    #[test]
+    fn parse_settings_reset_command() {
+        let parsed =
+            parse_command_args(&args(&["settings", "reset"])).expect("parse settings reset");
+        assert_eq!(parsed, Command::Settings(SettingsCommand::Reset));
+        assert!(parse_command_args(&args(&["settings"])).is_err());
     }
 
     #[test]

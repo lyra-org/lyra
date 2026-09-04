@@ -76,6 +76,10 @@ Lyra starts without any configuration: the database is stored under the data dir
 
 An optional `config.json` refines that. It is looked up in the working directory, next to the binary, and in the source tree; set `LYRA_CONFIG_PATH` to load a specific file (the server fails to start if that file is missing). `LYRA_PORT` takes precedence over `port` from the file. Unknown keys in the file are rejected, so a misspelled or removed key fails startup instead of being ignored.
 
+`port`, `db`, and `library` are boot values and only come from the file or environment. Every other key is a runtime setting that the server also stores in its database: a key present in `config.json` overrides the stored value and locks that setting to the file value for as long as it stays in the file. Without the file, the stored value applies, and without either, the default. A key set to `null` locks a nullable setting (`published_url`, `hls.temp_disk_budget_bytes`) to unset; `null` is rejected for every other key.
+
+A stored setting that no longer validates (for example after a key was renamed or its accepted values changed) fails startup with the offending key rather than being ignored. Run `lyra settings reset` to clear every stored server setting; the file values and defaults then apply again on the next start.
+
 ### Environment variables
 
 | Variable | Default | Purpose |
@@ -98,12 +102,23 @@ type Config = {
   cors?: {
     allowed_origins?: string[]; // default []
   };
+  rate_limit?: {
+    enabled?: boolean; // default true
+    trusted_proxies?: string[]; // IP addresses, default ["127.0.0.1", "::1"]
+    global_per_minute?: number; // u32, default 1200
+    global_burst?: number; // u32, default 300
+    authenticated_per_minute?: number; // u32, default 600
+    authenticated_burst?: number; // u32, default 120
+    login_per_minute?: number; // u32, default 10
+    login_burst?: number; // u32, default 3
+  };
   library?: {
     path?: string | null;
+    name?: string | null; // display name, default "Music"
     language?: string | null; // ISO 639-1, ISO 639-3, or language name
     country?: string | null; // country code or name
   } | null;
-  covers_path?: string | null; // default "<data dir>/covers"
+  covers_path?: string; // default "<data dir>/covers"; relative paths resolve under the data dir
 
   db?: {
     kind?: "memory" | "file" | "mmap"; // default "mmap"
@@ -121,9 +136,9 @@ type Config = {
   };
 
   hls?: {
-    temp_disk_budget_bytes?: number | null; // unset or <= 0 means no budget
-    cleanup_startup_purge?: boolean | null; // unset uses true
-    max_concurrent_transcodes?: number | null; // unset or 0 means unlimited
+    temp_disk_budget_bytes?: number | null; // u64, unset or 0 means no budget
+    cleanup_startup_purge?: boolean; // default true
+    max_concurrent_transcodes?: number; // u32, default 0 (unlimited)
   };
 };
 ```

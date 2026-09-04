@@ -33,7 +33,11 @@ pub(crate) struct DbProcessLock {
 #[derive(Clone, Copy)]
 pub(crate) enum LockMode {
     Blocking,
-    NonBlocking,
+    /// Fails instead of waiting; `command` names the CLI command in the
+    /// contention message.
+    NonBlocking {
+        command: &'static str,
+    },
 }
 
 pub(crate) fn acquire(config: &DbConfig, mode: LockMode) -> Result<Option<DbProcessLock>> {
@@ -54,11 +58,11 @@ pub(crate) fn acquire(config: &DbConfig, mode: LockMode) -> Result<Option<DbProc
         LockMode::Blocking => file
             .lock()
             .with_context(|| format!("failed to lock db lockfile at {}", path.display()))?,
-        LockMode::NonBlocking => match file.try_lock() {
+        LockMode::NonBlocking { command } => match file.try_lock() {
             Ok(()) => {}
             Err(TryLockError::WouldBlock) => {
                 return Err(anyhow!(
-                    "database is already in use; stop the server before running db optimize"
+                    "database is already in use; stop the server before running `lyra {command}`"
                 ));
             }
             Err(TryLockError::Error(err)) => {
@@ -92,7 +96,15 @@ mod tests {
             path: "ignored".into(),
         };
 
-        assert!(acquire(&config, LockMode::NonBlocking)?.is_none());
+        assert!(
+            acquire(
+                &config,
+                LockMode::NonBlocking {
+                    command: "db optimize"
+                }
+            )?
+            .is_none()
+        );
         Ok(())
     }
 
