@@ -38,7 +38,7 @@ Then start Lyra:
 docker compose up -d
 ```
 
-No `config.json` is required: the container stores its database and covers under `/lyra/data` (the `lyra-data` volume) and listens on port 4746. To configure a library or anything else from a file, mount one at `/lyra/config.json` using container paths:
+No `config.json` is required: the container stores its database and covers under `/lyra/data` (the `lyra-data` volume) and listens on port 4746. To set boot values from a file (or seed a development library, see [Configuration](#configuration)), mount one at `/lyra/config.json` using container paths:
 
 ```yaml
     volumes:
@@ -104,6 +104,8 @@ Most settings apply immediately. `rate_limit.*` and `hls.cleanup_startup_purge` 
 | `LYRA_STATIC_DIR` | searched | Directory for static web assets |
 
 Set `"kind"` in `"db"` to `"memory"` for a throwaway database that does not touch the disk.
+
+The `library` block is a developer bootstrap: when present, the server finds or creates the library at `path` on startup and syncs it. It is not the supported way to add a library; libraries are normally added through `POST /api/libraries`.
 
 ### Schema
 

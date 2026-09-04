@@ -65,6 +65,7 @@ use services::settings::server::{
     EffectiveSetting,
     ResolvedSettings,
 };
+pub use services::startup::CaptureArgs;
 
 #[derive(Clone)]
 pub(crate) struct SwapHandle<T: Clone> {
@@ -288,7 +289,7 @@ pub fn outbound_user_agent() -> String {
     }
 }
 
-pub async fn run_server(capture_path: Option<String>) -> Result<()> {
+pub async fn run_server(capture: Option<CaptureArgs>) -> Result<()> {
     let _tracing_guard = services::startup::init_tracing();
     let loaded = config::load()?;
     // Validate the file before touching the port, directories, or database.
@@ -301,7 +302,7 @@ pub async fn run_server(capture_path: Option<String>) -> Result<()> {
     let mut created = create(&loaded.boot.db)?;
     let resolved = resolve_settings(&mut created, &loaded.boot, library, file_settings)?;
     STATE.initialize(loaded.boot, created, resolved)?;
-    services::startup::run_server(capture_path, listener).await
+    services::startup::run_server(capture, listener).await
 }
 
 /// Reads stored server settings and resolves the runtime config against the

@@ -9,7 +9,10 @@ mod roots;
 pub(crate) mod scanning;
 mod sync;
 
-pub(crate) use configured::prepare_configured_library;
+pub(crate) use configured::{
+    prepare_capture_library,
+    prepare_configured_library,
+};
 pub(crate) use orchestrator::{
     LibraryRefreshRunOptions,
     LibrarySyncRegistries,
