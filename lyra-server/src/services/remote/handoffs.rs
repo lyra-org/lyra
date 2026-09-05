@@ -40,6 +40,8 @@ const HANDOFF_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 const MAX_PENDING_HANDOFFS: usize = 256;
 const MAX_PENDING_HANDOFFS_PER_TARGET: usize = 4;
 
+pub(super) type HandoffCompletion = oneshot::Receiver<Result<(), String>>;
+
 enum HandoffPhase {
     AwaitingProgress,
     Applying { failure: Option<String> },
@@ -88,7 +90,7 @@ impl PendingHandoffs {
         user_db_id: DbId,
         playback_id: String,
         queue_revision: u64,
-    ) -> Result<(String, oneshot::Receiver<Result<(), String>>, Arc<Notify>), String> {
+    ) -> Result<(String, HandoffCompletion, Arc<Notify>), String> {
         if self.entries.len() >= MAX_PENDING_HANDOFFS {
             return Err("too many pending handoffs".to_string());
         }
@@ -241,10 +243,10 @@ impl PendingHandoffs {
         let tokens = self
             .entries
             .iter()
-            .filter_map(|(token, pending)| {
-                (pending.source_id == Some(connection_id) || pending.target_id == connection_id)
-                    .then(|| token.clone())
+            .filter(|(_, pending)| {
+                pending.source_id == Some(connection_id) || pending.target_id == connection_id
             })
+            .map(|(token, _)| token.clone())
             .collect::<Vec<_>>();
         for token in &tokens {
             self.fail(token, "handoff connection disconnected");
@@ -260,10 +262,10 @@ impl PendingHandoffs {
         let tokens = self
             .entries
             .iter()
-            .filter_map(|(token, pending)| {
-                (pending.playback_id == playback_id && pending.queue_revision != current_revision)
-                    .then(|| token.clone())
+            .filter(|(_, pending)| {
+                pending.playback_id == playback_id && pending.queue_revision != current_revision
             })
+            .map(|(token, _)| token.clone())
             .collect::<Vec<_>>();
         for token in &tokens {
             self.fail(
@@ -278,9 +280,8 @@ impl PendingHandoffs {
         let tokens = self
             .entries
             .iter()
-            .filter_map(|(token, pending)| {
-                (pending.playback_id == playback_id).then(|| token.clone())
-            })
+            .filter(|(_, pending)| pending.playback_id == playback_id)
+            .map(|(token, _)| token.clone())
             .collect::<Vec<_>>();
         for token in &tokens {
             self.fail(token, "playback deleted during handoff");

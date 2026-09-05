@@ -268,10 +268,12 @@ where
             resolve_candidates(
                 &db,
                 candidates,
-                &seed.library_ids,
-                options.accessible_library_ids.as_ref(),
-                seed_db_id,
-                &snapshot.unique_release_id_pairs,
+                CandidateResolution {
+                    seed_library_ids: &seed.library_ids,
+                    accessible_library_ids: options.accessible_library_ids.as_ref(),
+                    seed_db_id,
+                    unique_id_pairs: &snapshot.unique_release_id_pairs,
+                },
                 &selected_ids,
                 limit - selected.len(),
             )?
@@ -446,16 +448,26 @@ fn validate_external_candidates(
         .collect()
 }
 
+struct CandidateResolution<'a> {
+    seed_library_ids: &'a HashSet<String>,
+    accessible_library_ids: Option<&'a HashSet<String>>,
+    seed_db_id: DbId,
+    unique_id_pairs: &'a HashSet<(String, String)>,
+}
+
 fn resolve_candidates(
     db: &DbAny,
     candidates: Vec<SimilarReleaseCandidate>,
-    seed_library_ids: &HashSet<String>,
-    accessible_library_ids: Option<&HashSet<String>>,
-    seed_db_id: DbId,
-    unique_id_pairs: &HashSet<(String, String)>,
+    context: CandidateResolution<'_>,
     already_selected_ids: &HashSet<DbId>,
     max_results: usize,
 ) -> Result<Vec<ReleaseIdentity>> {
+    let CandidateResolution {
+        seed_library_ids,
+        accessible_library_ids,
+        seed_db_id,
+        unique_id_pairs,
+    } = context;
     let mut resolved = Vec::with_capacity(candidates.len().min(max_results));
     let mut resolved_ids = HashSet::with_capacity(max_results);
     let mut seen_candidates = HashSet::new();
@@ -771,10 +783,12 @@ mod tests {
                 release_db_id: candidate.0,
                 release_id: "stale-release-id".to_string(),
             }],
-            &HashSet::new(),
-            None,
-            seed,
-            &HashSet::new(),
+            CandidateResolution {
+                seed_library_ids: &HashSet::new(),
+                accessible_library_ids: None,
+                seed_db_id: seed,
+                unique_id_pairs: &HashSet::new(),
+            },
             &selected,
             1,
         )?;

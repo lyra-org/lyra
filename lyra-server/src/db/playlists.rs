@@ -242,10 +242,10 @@ pub(crate) fn add_tracks(
     playlist_db_id: DbId,
     track_db_ids: &[DbId],
 ) -> anyhow::Result<Vec<PlaylistTrack>> {
-    let mut position = next_position(db, playlist_db_id)?;
+    let positions = next_position(db, playlist_db_id)?..;
     let mut results = Vec::with_capacity(track_db_ids.len());
 
-    for &track_db_id in track_db_ids {
+    for (position, &track_db_id) in positions.zip(track_db_ids) {
         let entry_id = nanoid!();
 
         let edge_id = db
@@ -273,7 +273,6 @@ pub(crate) fn add_tracks(
             entry_id,
             position,
         });
-        position += 1;
     }
 
     Ok(results)
