@@ -18,35 +18,43 @@ pub enum LocaleValidationError {
     UnrecognizedCountry { input: String },
 }
 
+pub fn resolve_language(input: &str) -> Option<Language> {
+    let input = input.trim();
+    if input.is_empty() {
+        return None;
+    }
+
+    Language::from_639_3(input)
+        .or_else(|| Language::from_639_1(input))
+        .or_else(|| Language::from_name(input))
+        .or_else(|| {
+            let lowercase = input.to_ascii_lowercase();
+            Language::from_639_3(&lowercase)
+                .or_else(|| Language::from_639_1(&lowercase))
+                .or_else(|| Language::from_name_lowercase(&lowercase))
+        })
+}
+
+pub fn resolve_country(input: &str) -> Option<Country> {
+    let input = input.trim();
+    if input.is_empty() {
+        return None;
+    }
+
+    input.parse::<Country>().ok()
+}
+
 pub fn validate_language(code: &str) -> Result<String, LocaleValidationError> {
     let code = code.trim();
     if code.is_empty() {
         return Err(LocaleValidationError::EmptyLanguage);
     }
 
-    if let Some(lang) = Language::from_639_3(code) {
-        return Ok(lang.to_639_3().to_string());
-    }
-
-    if let Some(lang) = Language::from_639_1(code) {
-        return Ok(lang.to_639_3().to_string());
-    }
-
-    if let Some(lang) = Language::from_name(code) {
-        return Ok(lang.to_639_3().to_string());
-    }
-
-    let lowercase = code.to_ascii_lowercase();
-    if let Some(lang) = Language::from_639_3(&lowercase) {
-        return Ok(lang.to_639_3().to_string());
-    }
-    if let Some(lang) = Language::from_639_1(&lowercase) {
-        return Ok(lang.to_639_3().to_string());
-    }
-
-    Err(LocaleValidationError::UnrecognizedLanguage {
-        input: code.to_string(),
-    })
+    resolve_language(code)
+        .map(|lang| lang.to_639_3().to_string())
+        .ok_or_else(|| LocaleValidationError::UnrecognizedLanguage {
+            input: code.to_string(),
+        })
 }
 
 pub fn validate_country(code: &str) -> Result<String, LocaleValidationError> {
@@ -55,13 +63,11 @@ pub fn validate_country(code: &str) -> Result<String, LocaleValidationError> {
         return Err(LocaleValidationError::EmptyCountry);
     }
 
-    let country =
-        code.parse::<Country>()
-            .map_err(|_| LocaleValidationError::UnrecognizedCountry {
-                input: code.to_string(),
-            })?;
-
-    Ok(country.alpha2.to_string())
+    resolve_country(code)
+        .map(|country| country.alpha2.to_string())
+        .ok_or_else(|| LocaleValidationError::UnrecognizedCountry {
+            input: code.to_string(),
+        })
 }
 
 #[cfg(test)]
@@ -77,6 +83,13 @@ mod tests {
         assert_eq!(validate_language("en").unwrap(), "eng");
         assert_eq!(validate_language("ENG").unwrap(), "eng");
         assert_eq!(validate_language("Japanese").unwrap(), "jpn");
+    }
+
+    #[test]
+    fn validate_language_matches_names_case_insensitively() {
+        assert_eq!(validate_language("japanese").unwrap(), "jpn");
+        assert_eq!(validate_language("JAPANESE").unwrap(), "jpn");
+        assert_eq!(validate_language(" japanese ").unwrap(), "jpn");
     }
 
     #[test]
