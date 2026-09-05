@@ -4,22 +4,18 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
-local datastore = require("@lyra/datastore")
 local genres = require("@lyra/genres")
 local http = require("@harmony/http")
-local serde = require("@harmony/serde")
-local json = serde.json
 local metadata = require("@lyra/metadata")
 local plugins = require("@lyra/plugins")
+
+local artists = require("@self/resolution/artists")
+local shared = require("@self/resolution/shared")
 
 local ET = metadata.EntityType
 local provider = metadata.Provider.new("wikidata")
 
-local WIKIDATA_API = "https://www.wikidata.org/w/api.php"
-local CACHE_STORE_NAME = "wikidata"
 local GENRE_CACHE_TTL = 30 * 24 * 60 * 60 -- 30 days for genre details
-local RELEASE_HIT_CACHE_TTL = 30 * 24 * 60 * 60 -- 30 days for successful matches
-local RELEASE_MISS_CACHE_TTL = 7 * 24 * 60 * 60 -- 7 days for misses (allows recovery)
 local MAX_GENRES_PER_RELEASE = 20
 
 local config = plugins.declare_settings(function(builder)
@@ -35,160 +31,26 @@ end)
 
 local HIERARCHY_DEPTH = (config.hierarchy_depth or 2) :: number
 
-type JsonValue = serde.JsonValue
-type JsonObject = { [string]: JsonValue }
-type JsonArray = { JsonValue }
-type HttpRequestOptions = http.HttpRequestOptions
-type DataStore = datastore.DataStore
+type JsonValue = shared.JsonValue
+type JsonObject = shared.JsonObject
 
-local cache_store: DataStore? = nil
-
--- Wikimedia allows ~1000 req/hr for unauthenticated clients with a compliant
--- User-Agent (set server-wide via outbound_user_agent). 0.2 req/s = 720 req/hr,
--- well within the hourly quota.
-http.set_rate_limit({
-	domain = "www.wikidata.org",
-	requests_per_second = 0.2,
-	retry_on = { 429, 503 },
-	max_retries = 3,
-	backoff_ms = 5000,
-})
+local as_json_object = shared.as_json_object
+local as_json_array = shared.as_json_array
+local json_string_field = shared.json_string_field
+local is_valid_qid = shared.is_valid_qid
+local cache_get = shared.cache_get
+local cache_set = shared.cache_set
+local wikidata_get = shared.wikidata_get
+local extract_claim_qid = shared.extract_claim_qid
 
 provider:id({
 	id_type = "qid",
 	entity = ET.Release,
 }, "https://www.wikidata.org/wiki/{id}")
-
-local function as_json_object(value: JsonValue): JsonObject?
-	if type(value) ~= "table" then
-		return nil
-	end
-	local encoded = json.encode(value)
-	if string.sub(encoded, 1, 1) ~= "{" then
-		return nil
-	end
-	return value :: JsonObject
-end
-
-local function as_json_array(value: JsonValue): JsonArray?
-	if type(value) ~= "table" then
-		return nil
-	end
-	local encoded = json.encode(value)
-	if string.sub(encoded, 1, 1) ~= "[" then
-		return nil
-	end
-	return value :: JsonArray
-end
-
-local function json_string_field(value: JsonObject?, key: string): string?
-	local field = if value then value[key] else nil
-	if type(field) == "string" and field ~= "" then
-		return field
-	end
-	return nil
-end
-
-local function is_valid_qid(value: string?): boolean
-	if not value then
-		return false
-	end
-	return string.match(value, "^Q%d+$") ~= nil
-end
-
-local function get_cache_store(): DataStore?
-	if cache_store ~= nil then
-		return cache_store
-	end
-	local ok, store = pcall(datastore.get_or_create, CACHE_STORE_NAME)
-	if not ok then
-		return nil
-	end
-	cache_store = store
-	return store
-end
-
-local function cache_get(key: string): JsonObject?
-	local store = get_cache_store()
-	if not store then
-		return nil
-	end
-	local ok, raw = pcall(store.get, store, key)
-	if not ok then
-		return nil
-	end
-	local entry = as_json_object(raw)
-	if not entry then
-		return nil
-	end
-	local expires_at = entry.expires_at
-	if type(expires_at) ~= "number" or expires_at <= os.time() then
-		return nil
-	end
-	return as_json_object(entry.data)
-end
-
-local function cache_set(key: string, data: JsonValue, ttl: number)
-	local store = get_cache_store()
-	if not store then
-		return
-	end
-	pcall(
-		store.set,
-		store,
-		key,
-		{
-			data = data,
-			expires_at = os.time() + ttl,
-		} :: JsonValue
-	)
-end
-
-local function wikidata_get(params: string): JsonObject?
-	local request: HttpRequestOptions = {
-		url = `{WIKIDATA_API}?{params}&format=json`,
-		method = http.HttpMethod.Get,
-	}
-
-	local ok, response = pcall(http.request, request)
-	if not ok or type(response) ~= "table" then
-		return nil
-	end
-	if not response.success or response.status_code ~= 200 then
-		return nil
-	end
-
-	local dec_ok, data = pcall(json.decode, response.body :: string)
-	if not dec_ok then
-		return nil
-	end
-
-	return as_json_object(data)
-end
-
-local function extract_claim_qid(claim: JsonValue): string?
-	local claim_obj = as_json_object(claim)
-	if not claim_obj then
-		return nil
-	end
-	local mainsnak = as_json_object(claim_obj.mainsnak)
-	if not mainsnak then
-		return nil
-	end
-	local datavalue = as_json_object(mainsnak.datavalue)
-	if not datavalue then
-		return nil
-	end
-	local value = as_json_object(datavalue.value)
-	if not value then
-		return nil
-	end
-	local qid = json_string_field(value, "id")
-	if not is_valid_qid(qid) then
-		return nil
-	end
-	return qid
-end
+provider:id({
+	id_type = "qid",
+	entity = ET.Artist,
+}, "https://www.wikidata.org/wiki/{id}")
 
 local function extract_genre_qids(claims: JsonObject): { string }
 	local genre_claims = as_json_array(claims.P136)
@@ -613,7 +475,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 
 	-- Cache key includes normalized title to avoid stale data if the DB ID is reused.
 	-- Normalize: trim whitespace, lowercase — resilient to cosmetic tag edits.
-	local normalized_title = string.lower((string.gsub(release_title, "^%s+", ""):gsub("%s+$", "")))
+	local normalized_title = string.lower(shared.trim(release_title))
 	local cache_key = `release:{release_db_id}:{normalized_title}`
 	local cached = cache_get(cache_key)
 	if cached then
@@ -623,7 +485,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 	-- Step 1
 	local result = search_release(release_title, artist_name)
 	if not result then
-		cache_set(cache_key, { miss = true :: JsonValue } :: JsonValue, RELEASE_MISS_CACHE_TTL)
+		cache_set(cache_key, { miss = true :: JsonValue } :: JsonValue, shared.MISS_CACHE_TTL)
 		return nil
 	end
 
@@ -638,7 +500,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 		cache_set(
 			cache_key,
 			{ qid = release_qid :: JsonValue, genres = 0 :: JsonValue } :: JsonValue,
-			RELEASE_HIT_CACHE_TTL
+			shared.HIT_CACHE_TTL
 		)
 		return nil
 	end
@@ -652,7 +514,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 		cache_set(
 			cache_key,
 			{ qid = release_qid :: JsonValue, genres = 0 :: JsonValue } :: JsonValue,
-			RELEASE_HIT_CACHE_TTL
+			shared.HIT_CACHE_TTL
 		)
 		return nil
 	end
@@ -795,7 +657,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 		cache_set(
 			cache_key,
 			{ qid = release_qid :: JsonValue, genres = genre_count } :: JsonValue,
-			RELEASE_HIT_CACHE_TTL
+			shared.HIT_CACHE_TTL
 		)
 	end
 
@@ -805,15 +667,15 @@ end, function(ctx: metadata.ReleaseRefreshContext): boolean
 	-- or pre-populated by MusicBrainz cooperation ("wikidata_qid").
 	-- Once a QID is in external_ids, this release is permanently skipped.
 	-- A wrong QID requires manual correction (no automatic recovery path).
-	if ctx.external_ids then
-		local wikidata_ids = ctx.external_ids.wikidata
-		if wikidata_ids and wikidata_ids.qid and wikidata_ids.qid ~= "" then
-			return false
-		end
-		local musicbrainz_ids = ctx.external_ids.musicbrainz
-		if musicbrainz_ids and musicbrainz_ids.wikidata_qid and musicbrainz_ids.wikidata_qid ~= "" then
-			return false
-		end
+	local wikidata_ids = metadata.ids.for_provider(ctx.external_ids, "wikidata")
+	if wikidata_ids and wikidata_ids.qid and wikidata_ids.qid ~= "" then
+		return false
+	end
+	local musicbrainz_ids = metadata.ids.for_provider(ctx.external_ids, "musicbrainz")
+	if musicbrainz_ids and musicbrainz_ids.wikidata_qid and musicbrainz_ids.wikidata_qid ~= "" then
+		return false
 	end
 	return true
 end)
+
+artists.register(provider)

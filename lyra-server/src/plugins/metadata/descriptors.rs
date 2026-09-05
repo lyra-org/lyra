@@ -326,6 +326,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("sort_name", opt(string())),
                 field("artist_type", opt(string())),
                 field("description", opt(string())),
+                field("locked", opt(boolean())),
                 field("external_ids", opt(ty("ExternalIdsByProvider"))),
                 field("custom_fields", opt(ty("CustomFieldsByProvider"))),
                 field("options", opt(map(string(), ty("OptionValue")))),
