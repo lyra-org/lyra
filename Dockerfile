@@ -26,7 +26,7 @@ RUN ./configure \
     && make -j"$(nproc)" \
     && make install
 
-FROM debian:trixie-slim AS builder
+FROM debian:trixie-slim AS build-env
 
 COPY --from=ffmpeg /usr/local/include/ /usr/local/include/
 COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
@@ -34,7 +34,7 @@ RUN ldconfig
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    gcc \
+    build-essential \
     pkg-config \
     clang \
     git \
@@ -44,7 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libvorbis-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 ARG LYRA_GIT_HASH=unknown
@@ -79,6 +79,13 @@ RUN for dir in harmony-core harmony-crypt harmony-globals harmony-http harmony-s
 
 # Fetch all dependencies (fails fast on resolution/network errors).
 RUN cargo fetch --locked
+
+FROM build-env AS clippy
+
+COPY . .
+RUN cargo clippy --locked --workspace --all-targets -- -D warnings
+
+FROM build-env AS builder
 
 # Pre-compile dependencies. Stubs cause final link to fail — that's expected.
 RUN cargo build --release -p lyra-server || true

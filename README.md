@@ -84,6 +84,16 @@ cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked -p lyra-server
 ```
 
+GitLab runs Clippy before publishing images, including on merge request pipelines.
+The check uses the Dockerfile's shared native dependencies and can also run locally:
+
+```bash
+docker build --target clippy .
+```
+
+GitLab's **Pipelines must succeed** merge check must remain enabled to enforce this
+gate. Forks must enable it separately; the CI file cannot configure this project setting.
+
 Rust formatting uses nightly separately from the pinned build toolchain:
 
 ```bash

@@ -6,11 +6,6 @@ target/
 # Documentation
 *.md
 
-# Test fixtures
-lyra-server/tests/
-lyra-harmony-test/src/
-lyra-harmony-test/tests/
-
 # Database files
 *.db
 
