@@ -24,15 +24,11 @@ pub fn resolve_language(input: &str) -> Option<Language> {
         return None;
     }
 
-    Language::from_639_3(input)
-        .or_else(|| Language::from_639_1(input))
+    let lowercase = input.to_ascii_lowercase();
+    Language::from_639_3(&lowercase)
+        .or_else(|| Language::from_639_1(&lowercase))
         .or_else(|| Language::from_name(input))
-        .or_else(|| {
-            let lowercase = input.to_ascii_lowercase();
-            Language::from_639_3(&lowercase)
-                .or_else(|| Language::from_639_1(&lowercase))
-                .or_else(|| Language::from_name_lowercase(&lowercase))
-        })
+        .or_else(|| Language::from_name_lowercase(&lowercase))
 }
 
 pub fn resolve_country(input: &str) -> Option<Country> {
