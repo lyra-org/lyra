@@ -70,6 +70,31 @@ lyra serve
 
 It is highly recommended that you also grab the plugins in `plugins`, especially the MusicBrainz plugin, and drop them into a `plugins` directory where you run the binary from.
 
+## Development
+
+Install [rustup](https://rustup.rs/) before working from a checkout. Cargo uses
+`rust-toolchain.toml` to select and install the pinned Rust release and Clippy.
+Local builds also require FFmpeg 8 development libraries, Clang, pkg-config, and
+C/C++ build tools; the Dockerfile records the Linux build dependencies.
+
+Run the same lint check used by CI before submitting changes:
+
+```bash
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked -p lyra-server
+```
+
+Rust formatting uses nightly separately from the pinned build toolchain:
+
+```bash
+rustup toolchain install nightly --component rustfmt
+cargo +nightly fmt
+```
+
+To upgrade Rust, change the exact release in `rust-toolchain.toml`, run the lint
+check and tests above, and resolve any new diagnostics in the same change. Keep
+the pin current so compiler fixes and new Clippy checks reach the project regularly.
+
 ## Configuration
 
 Lyra starts without any configuration: the database is stored under the data directory (`./data` next to where you run the binary, `/lyra/data` in Docker) and the server listens on port 4746.
