@@ -28,6 +28,7 @@ use crate::plugins::{
     labels,
     libraries,
     listens,
+    locale,
     lyrics,
     manifests,
     metadata,
@@ -100,6 +101,7 @@ pub(crate) fn module_specs() -> Vec<ModuleSpec> {
         labels::module_spec(),
         libraries::module_spec(),
         listens::module_spec(),
+        locale::module_spec(),
         harmony_serde::module_spec(),
         lyrics::module_spec(),
         metadata::module_spec(),
@@ -213,6 +215,11 @@ fn surfaces() -> &'static [Surface] {
             "lyra/listens",
             listens::get_module,
             listens::render_luau_definition
+        ),
+        surface!(
+            "lyra/locale",
+            locale::get_module,
+            locale::render_luau_definition
         ),
         surface!(
             "lyra/lyrics",

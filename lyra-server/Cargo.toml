@@ -71,7 +71,7 @@ lyra-chromaprint = { path = "../lyra-chromaprint" }
 lyra-ffmpeg = { path = "../lyra-ffmpeg" }
 lyra-metadata = { path = "../lyra-metadata" }
 celes = "2.8.2"
-isolang = "2.4.0"
+isolang = { version = "2.4.0", features = ["lowercase_names"] }
 unicode-normalization = "0.1"
 unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
 url = { workspace = true }

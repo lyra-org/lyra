@@ -1,0 +1,72 @@
+local locale = require("@lyra/locale")
+
+local english = locale.language("en")
+assert(english ~= nil)
+assert(english.iso3 == "eng")
+assert(english.iso2 == "en")
+assert(english.name == "English")
+
+local japanese = locale.language("Japanese")
+assert(japanese ~= nil)
+assert(japanese.iso3 == "jpn")
+assert(japanese.iso2 == "ja")
+assert(locale.language("japanese").iso3 == "jpn")
+assert(locale.language("JAPANESE").iso3 == "jpn")
+
+local ainu = locale.language("ain")
+assert(ainu ~= nil)
+assert(ainu.iso3 == "ain")
+assert(ainu.iso2 == nil)
+
+assert(locale.language(nil) == nil)
+assert(locale.language("   ") == nil)
+assert(locale.language("not-a-language") == nil)
+assert(locale.language("\255") == nil)
+
+local japan = locale.country("Japan")
+assert(japan ~= nil)
+assert(japan.alpha2 == "JP")
+assert(locale.country("jpn").alpha2 == "JP")
+assert(locale.country("Atlantis") == nil)
+assert(locale.country(nil) == nil)
+
+local parsed = locale.parse("ja_JP")
+assert(parsed.language ~= nil and parsed.language.iso3 == "jpn")
+assert(parsed.country ~= nil and parsed.country.alpha2 == "JP")
+
+local dashed = locale.parse("en-us")
+assert(dashed.language ~= nil and dashed.language.iso2 == "en")
+assert(dashed.country ~= nil and dashed.country.alpha2 == "US")
+
+local bare = locale.parse("en")
+assert(bare.language ~= nil and bare.language.iso3 == "eng")
+assert(bare.country == nil)
+
+local garbage = locale.parse("xx-Atlantis")
+assert(garbage.language == nil and garbage.country == nil)
+local empty = locale.parse(nil)
+assert(empty.language == nil and empty.country == nil)
+
+assert(locale.tag(parsed.language, parsed.country) == "ja-JP")
+assert(locale.tag("ja", "JP") == "ja-JP")
+assert(locale.tag("Japanese", "Japan") == "ja-JP")
+assert(locale.tag("en") == "en")
+assert(locale.tag(ainu, japan) == "ain-JP")
+assert(locale.tag("not-a-language", "JP") == nil)
+
+local round_trip = locale.parse(locale.tag(japanese, japan))
+assert(round_trip.language ~= nil and round_trip.language.iso3 == "jpn")
+assert(round_trip.country ~= nil and round_trip.country.alpha2 == "JP")
+
+assert(locale.languages_match("en", "eng") == true)
+assert(locale.languages_match("EN", "English") == true)
+assert(locale.languages_match(english, "en") == true)
+assert(locale.languages_match(english, japanese) == false)
+assert(locale.languages_match("und", "und") == true)
+assert(locale.languages_match("und", locale.UNDETERMINED) == true)
+assert(locale.languages_match("und", "en") == false)
+assert(locale.languages_match(nil, "en") == false)
+assert(locale.languages_match(nil, nil) == false)
+assert(locale.languages_match("nope", "nope") == false)
+
+assert(locale.UNDETERMINED == "und")

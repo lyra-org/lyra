@@ -1317,6 +1317,61 @@ fn plugin_executor_dispatches_registered_mix_handler() -> Result<()> {
 #[path = "tests/db_modules.rs"]
 mod db_modules;
 
+#[test]
+fn plugin_executor_exposes_lyra_locale_module() -> Result<()> {
+    let runtime = runtime_with_scopes(&["lyra.locale"])?;
+    let values = runtime.eval_plugin_source(
+        "demo",
+        "check.luau",
+        &br#"
+            local locale = require("@lyra/locale")
+
+            local english = locale.language(" EN ")
+            local ainu = locale.language("ain")
+            local parsed = locale.parse("ja_JP")
+
+            return english.iso3,
+                english.iso2,
+                english.name,
+                ainu.iso2 == nil,
+                locale.language("not-a-language") == nil,
+                locale.language("\255") == nil,
+                locale.country("Japan").alpha2,
+                parsed.language.iso3 .. "/" .. parsed.country.alpha2,
+                locale.tag(parsed.language, parsed.country),
+                locale.tag("ain", "jp"),
+                locale.tag("nope") == nil,
+                locale.languages_match("en", english),
+                locale.languages_match("und", locale.UNDETERMINED),
+                locale.languages_match("und", "en"),
+                locale.languages_match(nil, "en"),
+                locale.UNDETERMINED
+        "#[..],
+    )?;
+    assert_eq!(
+        values,
+        vec![
+            luau::Value::String(b"eng".to_vec()),
+            luau::Value::String(b"en".to_vec()),
+            luau::Value::String(b"English".to_vec()),
+            luau::Value::Boolean(true),
+            luau::Value::Boolean(true),
+            luau::Value::Boolean(true),
+            luau::Value::String(b"JP".to_vec()),
+            luau::Value::String(b"jpn/JP".to_vec()),
+            luau::Value::String(b"ja-JP".to_vec()),
+            luau::Value::String(b"ain-JP".to_vec()),
+            luau::Value::Boolean(true),
+            luau::Value::Boolean(true),
+            luau::Value::Boolean(true),
+            luau::Value::Boolean(false),
+            luau::Value::Boolean(false),
+            luau::Value::String(b"und".to_vec()),
+        ]
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn plugin_executor_drives_async_lyra_images_compose() -> Result<()> {
     let test_dir = std::env::temp_dir().join(format!(
