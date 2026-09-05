@@ -841,13 +841,15 @@ pub(crate) fn replace_queue(
         let playback = db::playbacks::replace_queue_in_transaction(
             t,
             playback_db_id,
-            expected_revision,
-            snapshot.track_ids.clone(),
-            snapshot.current_index,
-            snapshot.repeat_mode,
-            snapshot.shuffle_enabled,
-            now_ms,
-            clear_current_session,
+            db::playbacks::QueueReplacement {
+                expected_revision,
+                track_ids: snapshot.track_ids.clone(),
+                current_index: snapshot.current_index,
+                repeat_mode: snapshot.repeat_mode,
+                shuffle_enabled: snapshot.shuffle_enabled,
+                updated_at_ms: now_ms,
+                clear_current_session,
+            },
         )
         .map_err(|error| match error {
             db::playbacks::ReplaceQueueError::NotFound => PlaybackError::NotFound,

@@ -435,44 +435,39 @@ fn remove_current_session_edge(
     Ok(())
 }
 
+pub(crate) struct QueueReplacement {
+    pub(crate) expected_revision: u64,
+    pub(crate) track_ids: Vec<String>,
+    pub(crate) current_index: u64,
+    pub(crate) repeat_mode: RepeatMode,
+    pub(crate) shuffle_enabled: bool,
+    pub(crate) updated_at_ms: u64,
+    pub(crate) clear_current_session: bool,
+}
+
 #[cfg(test)]
 pub(crate) fn replace_queue(
     db: &mut DbAny,
     playback_db_id: DbId,
-    expected_revision: u64,
-    track_ids: Vec<String>,
-    current_index: u64,
-    repeat_mode: RepeatMode,
-    shuffle_enabled: bool,
-    updated_at_ms: u64,
-    clear_current_session: bool,
+    replacement: QueueReplacement,
 ) -> Result<Playback, ReplaceQueueError> {
-    db.transaction_mut(|t| {
-        replace_queue_in_transaction(
-            t,
-            playback_db_id,
-            expected_revision,
-            track_ids,
-            current_index,
-            repeat_mode,
-            shuffle_enabled,
-            updated_at_ms,
-            clear_current_session,
-        )
-    })
+    db.transaction_mut(|t| replace_queue_in_transaction(t, playback_db_id, replacement))
 }
 
 pub(crate) fn replace_queue_in_transaction(
     db: &mut impl DbAccess,
     playback_db_id: DbId,
-    expected_revision: u64,
-    track_ids: Vec<String>,
-    current_index: u64,
-    repeat_mode: RepeatMode,
-    shuffle_enabled: bool,
-    updated_at_ms: u64,
-    clear_current_session: bool,
+    replacement: QueueReplacement,
 ) -> Result<Playback, ReplaceQueueError> {
+    let QueueReplacement {
+        expected_revision,
+        track_ids,
+        current_index,
+        repeat_mode,
+        shuffle_enabled,
+        updated_at_ms,
+        clear_current_session,
+    } = replacement;
     let mut playback = get_by_id(db, playback_db_id)
         .map_err(ReplaceQueueError::Internal)?
         .ok_or(ReplaceQueueError::NotFound)?;
@@ -601,26 +596,30 @@ mod tests {
         let updated = replace_queue(
             &mut db,
             playback_id,
-            1,
-            vec!["updated".to_string()],
-            0,
-            RepeatMode::All,
-            true,
-            2,
-            false,
+            QueueReplacement {
+                expected_revision: 1,
+                track_ids: vec!["updated".to_string()],
+                current_index: 0,
+                repeat_mode: RepeatMode::All,
+                shuffle_enabled: true,
+                updated_at_ms: 2,
+                clear_current_session: false,
+            },
         )?;
         assert_eq!(updated.queue_revision, 2);
 
         let error = replace_queue(
             &mut db,
             playback_id,
-            1,
-            vec!["stale".to_string()],
-            0,
-            RepeatMode::None,
-            false,
-            3,
-            false,
+            QueueReplacement {
+                expected_revision: 1,
+                track_ids: vec!["stale".to_string()],
+                current_index: 0,
+                repeat_mode: RepeatMode::None,
+                shuffle_enabled: false,
+                updated_at_ms: 3,
+                clear_current_session: false,
+            },
         )
         .expect_err("stale revision must fail");
         assert!(matches!(
@@ -644,13 +643,15 @@ mod tests {
         replace_queue(
             &mut db,
             playback_id,
-            1,
-            vec!["track".to_string()],
-            0,
-            RepeatMode::None,
-            false,
-            2,
-            true,
+            QueueReplacement {
+                expected_revision: 1,
+                track_ids: vec!["track".to_string()],
+                current_index: 0,
+                repeat_mode: RepeatMode::None,
+                shuffle_enabled: false,
+                updated_at_ms: 2,
+                clear_current_session: true,
+            },
         )?;
         assert_eq!(get_current_session_id(&db, playback_id)?, None);
         assert!(crate::db::playback_sessions::get_by_id(&db, session_id)?.is_some());

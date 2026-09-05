@@ -17,7 +17,6 @@ use tokio::sync::{
     Notify,
     RwLock,
     mpsc,
-    oneshot,
 };
 
 use super::constants::{
@@ -264,7 +263,7 @@ pub(super) async fn insert_handoff(
     user_db_id: DbId,
     playback_id: String,
     queue_revision: u64,
-) -> Result<(String, oneshot::Receiver<Result<(), String>>, Arc<Notify>), String> {
+) -> Result<(String, super::handoffs::HandoffCompletion, Arc<Notify>), String> {
     let mut registry = REGISTRY.write().await;
     if source_id.is_some_and(|source_id| !registry.connections.contains_key(&source_id)) {
         return Err("source connection not found".to_string());

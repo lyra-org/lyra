@@ -260,9 +260,11 @@ fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<
             username: "lyrics-user".to_string(),
             permissions: Vec::new(),
             role_name: None,
-            accessible_library_ids: can_access
-                .then(|| std::collections::HashSet::from([library_public_id.clone()]))
-                .unwrap_or_default(),
+            accessible_library_ids: if can_access {
+                std::collections::HashSet::from([library_public_id.clone()])
+            } else {
+                Default::default()
+            },
         };
 
     let mut alice_context = CallContext {
