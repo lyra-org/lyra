@@ -185,12 +185,6 @@ fn language_value(vm: &luau::Vm, value: luau::Value) -> Option<isolang::Language
 }
 
 fn language_code_value(vm: &luau::Vm, value: luau::Value) -> Option<String> {
-    if let luau::Value::String(bytes) = &value
-        && let Ok(input) = std::str::from_utf8(bytes)
-        && input.trim().eq_ignore_ascii_case(UNDETERMINED)
-    {
-        return Some(UNDETERMINED.to_string());
-    }
     language_value(vm, value).map(|language| language.to_639_3().to_string())
 }
 
@@ -357,7 +351,10 @@ impl LuauTypeInfo for LocaleRecord {
 
 impl DescribeInterface for LocaleRecord {
     fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("Locale", None);
+        let mut descriptor = InterfaceDescriptor::new(
+            "Locale",
+            Some("The language and country halves of a parsed locale tag."),
+        );
         descriptor.fields.extend([
             FieldDescriptor {
                 name: "language",
