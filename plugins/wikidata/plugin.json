@@ -1,15 +1,17 @@
 {
   "schema_version": 1,
   "id": "wikidata",
-  "name": "WikiData Genre Provider",
+  "name": "WikiData Provider",
   "version": "0.0.1",
-  "description": "Enriches album genre data from WikiData",
+  "description": "Enriches album genres and artist descriptions from WikiData and Wikipedia",
   "entrypoint": "init.luau",
   "scopes": [
     "harmony.http",
     "harmony.serde",
     "lyra.datastore",
     "lyra.genres",
+    "lyra.libraries",
+    "lyra.locale",
     "lyra.metadata",
     "lyra.plugins"
   ]
