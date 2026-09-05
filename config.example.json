@@ -1,0 +1,38 @@
+{
+  "port": 4746,
+  "published_url": null,
+  "cors": {
+    "allowed_origins": []
+  },
+  "rate_limit": {
+    "enabled": true,
+    "trusted_proxies": [
+      "127.0.0.1",
+      "::1"
+    ],
+    "global_per_minute": 1200,
+    "global_burst": 300,
+    "authenticated_per_minute": 600,
+    "authenticated_burst": 120,
+    "login_per_minute": 10,
+    "login_burst": 3
+  },
+  "covers_path": "covers",
+  "db": {
+    "kind": "mmap",
+    "path": "lyra.db"
+  },
+  "auth": {
+    "enabled": true,
+    "allow_default_login_when_disabled": true,
+    "session_ttl_seconds": 2592000
+  },
+  "sync": {
+    "interval_secs": 0
+  },
+  "hls": {
+    "temp_disk_budget_bytes": null,
+    "cleanup_startup_purge": true,
+    "max_concurrent_transcodes": 0
+  }
+}
