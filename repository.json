@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "name": "Lyra Official Plugins",
+  "description": "Plugins maintained alongside the Lyra server",
+  "plugins": [
+    {
+      "path": "plugins/audiomuse"
+    },
+    {
+      "path": "plugins/jellyfin"
+    },
+    {
+      "path": "plugins/listenbrainz"
+    },
+    {
+      "path": "plugins/lrclib"
+    },
+    {
+      "path": "plugins/musicbrainz"
+    },
+    {
+      "path": "plugins/theaudiodb"
+    },
+    {
+      "path": "plugins/wikidata"
+    }
+  ]
+}

@@ -8,7 +8,7 @@ Lyra is a self-hosted music server with a focus on accurate music metadata. Plug
 
 ## Get started
 
-Follow the [installation guide](docs/installation.md) to run Lyra with Docker Compose and add your music. Plugins are included, and no configuration file is needed.
+Follow the [installation guide](docs/installation.md) to run Lyra with Docker Compose and add your music. Choose optional plugins from the included repository; no configuration file is needed.
 
 A web interface is not included yet. Setup currently uses the API, so trying Lyra requires some comfort with the command line.
 

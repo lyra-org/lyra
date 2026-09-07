@@ -9,6 +9,14 @@ use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=LYRA_GIT_HASH");
+    println!("cargo:rerun-if-env-changed=LYRA_RELEASE_TAG");
+    let release_tag = env::var("LYRA_RELEASE_TAG").unwrap_or_default();
+    let release_tag = release_tag.trim();
+    assert!(
+        !release_tag.contains(['\n', '\r']),
+        "invalid LYRA_RELEASE_TAG"
+    );
+    println!("cargo:rustc-env=LYRA_RELEASE_TAG={release_tag}");
     println!("cargo:rerun-if-changed=../.git/HEAD");
 
     let hash = env::var("LYRA_GIT_HASH")

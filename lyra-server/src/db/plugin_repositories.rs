@@ -25,6 +25,49 @@ pub(crate) struct PluginRepository {
     pub(crate) refreshed_at_ms: u64,
 }
 
+const DEFAULT_ORIGIN: &str = "https://git.lyra.pub/lyra/lyra?forge=gitlab";
+const DEFAULT_SEEDED_KEY: &str = "default_repository_seeded";
+
+pub(crate) fn seed_default(db: &mut DbAny) -> anyhow::Result<()> {
+    db.transaction_mut(|t| {
+        let root = t.exec(QueryBuilder::select().ids("plugin_repositories").query())?;
+        if root.elements[0]
+            .values
+            .iter()
+            .any(|kv| kv.key == DEFAULT_SEEDED_KEY.into())
+        {
+            return Ok(());
+        }
+        if get_by_origin(t, DEFAULT_ORIGIN)?.is_none() {
+            let manifest = harmony_repository::RepositoryManifest::parse(
+                include_str!("../../../repository.json"),
+                None,
+            )?;
+            let release_tag = env!("LYRA_RELEASE_TAG");
+            create(
+                t,
+                &PluginRepository {
+                    db_id: None,
+                    id: nanoid::nanoid!(),
+                    origin: DEFAULT_ORIGIN.to_string(),
+                    name: manifest.name,
+                    description: manifest.description,
+                    git_ref: (!release_tag.is_empty()).then(|| release_tag.to_string()),
+                    last_commit: None,
+                    refreshed_at_ms: 0,
+                },
+            )?;
+        }
+        t.exec_mut(
+            QueryBuilder::insert()
+                .values_uniform([(DEFAULT_SEEDED_KEY, true).into()])
+                .ids("plugin_repositories")
+                .query(),
+        )?;
+        Ok(())
+    })
+}
+
 pub(crate) fn create(
     db: &mut impl super::DbAccess,
     record: &PluginRepository,
@@ -135,6 +178,86 @@ pub(crate) fn remove(db: &mut impl super::DbAccess, db_id: DbId) -> anyhow::Resu
 mod tests {
     use super::*;
     use crate::db::test_db::new_test_db;
+
+    #[test]
+    fn default_repository_is_seeded_once_and_removal_survives_reopening() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("db.agdb");
+        let config = crate::config::DbConfig {
+            path,
+            ..Default::default()
+        };
+        let created = super::super::bootstrap::create(&config)?;
+        let id = {
+            let mut db = created.db.try_write()?;
+            seed_default(&mut db)?;
+            let repositories = list(&*db)?;
+            assert_eq!(repositories.len(), 1);
+            let record = &repositories[0];
+            assert_eq!(record.origin, DEFAULT_ORIGIN);
+            let tag = env!("LYRA_RELEASE_TAG");
+            assert_eq!(record.git_ref.as_deref(), (!tag.is_empty()).then_some(tag));
+            assert_eq!(record.last_commit, None);
+            assert_eq!(record.refreshed_at_ms, 0);
+            record.db_id.unwrap()
+        };
+        remove(&mut *created.db.try_write()?, id)?;
+        drop(created);
+        let reopened = super::super::bootstrap::create(&config)?;
+        assert!(list(&*reopened.db.try_read()?)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn seed_preserves_existing_subscription() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let mut existing = repository(DEFAULT_ORIGIN);
+        existing.git_ref = Some("custom-branch".into());
+        create(&mut db, &existing)?;
+        seed_default(&mut db)?;
+        let rows = list(&db)?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].git_ref.as_deref(), Some("custom-branch"));
+        Ok(())
+    }
+
+    #[test]
+    fn default_catalog_lists_all_shipped_plugin_manifests() -> anyhow::Result<()> {
+        use std::collections::BTreeSet;
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap();
+        let catalog = harmony_repository::RepositoryManifest::parse(
+            include_str!("../../../repository.json"),
+            None,
+        )?;
+        let listed = catalog
+            .entries
+            .into_iter()
+            .map(|entry| {
+                let harmony_repository::RepositoryEntry::Path { path } = entry else {
+                    panic!("official plugins should live in this repository");
+                };
+                assert!(root.join(&path).join("plugin.json").is_file());
+                path
+            })
+            .collect::<BTreeSet<_>>();
+        let shipped = std::fs::read_dir(root.join("plugins"))?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|path| path.join("plugin.json").is_file())
+            .map(|path| {
+                path.strip_prefix(root)
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(listed, shipped);
+        Ok(())
+    }
 
     fn repository(origin: &str) -> PluginRepository {
         PluginRepository {
