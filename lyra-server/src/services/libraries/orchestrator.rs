@@ -1260,10 +1260,6 @@ async fn reconcile_interrupted_runs(db: &DbAsync) -> anyhow::Result<()> {
         states.keys().cloned().collect::<Vec<_>>()
     };
     let mut db_write = db.write().await;
-    let removed = db::sync_runs::delete_records_missing_summary_fields(&mut db_write)?;
-    if removed > 0 {
-        tracing::info!(removed, "dropped legacy sync run records");
-    }
     let records = db::sync_runs::list(&db_write)?;
     for mut record in records {
         if live_run_ids.iter().any(|id| id == &record.id) {
