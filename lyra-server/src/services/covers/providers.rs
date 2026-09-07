@@ -328,6 +328,7 @@ pub(crate) async fn search_provider(
                     .dispatch_metadata_refresh(MetadataRefreshRequest {
                         handler_id,
                         context: serde_json::Value::String(query),
+                        deadline: std::time::Instant::now() + Duration::from_secs(300),
                     })
                     .await
                     .with_context(|| format!("provider search handler failed for '{provider_id}'"))
@@ -750,6 +751,7 @@ async fn search_provider_cover(
                         .dispatch_metadata_refresh(MetadataRefreshRequest {
                             handler_id,
                             context: handler_context,
+                            deadline: std::time::Instant::now() + timeout,
                         })
                         .await
                 })

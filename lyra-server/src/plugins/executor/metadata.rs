@@ -6,7 +6,10 @@
 use std::{
     future::poll_fn,
     rc::Rc,
-    time::Duration,
+    time::{
+        Duration,
+        Instant,
+    },
 };
 
 use anyhow::{
@@ -17,10 +20,6 @@ use anyhow::{
 use harmony_core::{
     LocalLuauTaskCompletion,
     LocalScheduler,
-    luau::{
-        ThreadDriveOptions,
-        drive_thread,
-    },
 };
 
 use super::{
@@ -36,88 +35,73 @@ use super::{
     },
 };
 
-const DEFAULT_DRIVE_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_SIMILAR_RELEASE_STRING_BYTES: usize = 4096;
 
 impl PluginExecutor {
-    pub(crate) fn dispatch_metadata_refresh(
+    pub(super) fn start_metadata_refresh(
         &self,
         request: MetadataRefreshRequest,
-    ) -> Result<MetadataRefreshResult> {
-        let values = self.dispatch_metadata_handler(
-            request.handler_id,
+        reply: tokio::sync::oneshot::Sender<Result<MetadataRefreshResult>>,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) {
+        let handler = self
+            .vm
+            .data()
+            .get::<crate::plugins::metadata::MetadataCallbackRegistry>()
+            .map_err(anyhow::Error::new)
+            .and_then(|handlers| {
+                handlers.get(request.handler_id).ok_or_else(|| {
+                    anyhow::anyhow!("metadata handler {} not found", request.handler_id)
+                })
+            });
+        self.start_metadata_task(
+            handler,
             request.context,
-            DEFAULT_DRIVE_TIMEOUT,
-            None,
-        )?;
-        let values = values
-            .iter()
-            .map(|value| {
-                harmony_serde::luau_to_json(&self.vm, value, 0).map_err(anyhow::Error::new)
-            })
-            .collect::<Result<Vec<_>>>()?;
-        Ok(MetadataRefreshResult { values })
+            request.deadline,
+            super::callbacks::CallbackReply::Refresh(reply),
+            permit,
+        );
     }
 
+    pub(super) fn start_similar_releases(
+        &self,
+        request: SimilarReleasesDispatchRequest,
+        reply: tokio::sync::oneshot::Sender<Result<SimilarReleasesDispatchResult>>,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) {
+        let handler = similar_releases_handler(&self.vm, request.handler_id, &request.provider_id);
+        self.start_metadata_task(
+            handler,
+            request.context,
+            Instant::now() + request.timeout,
+            super::callbacks::CallbackReply::Similar {
+                reply,
+                cancellation: request.cancellation,
+                max_candidates: request.max_candidates,
+            },
+            permit,
+        );
+    }
+
+    fn start_metadata_task(
+        &self,
+        handler: Result<crate::plugins::metadata::MetadataCallback>,
+        context: serde_json::Value,
+        deadline: Instant,
+        reply: super::callbacks::CallbackReply,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) {
+        self.start_callback(deadline, reply, permit, |timeout, completion| {
+            schedule_metadata_handler(&self.vm, handler?, context, timeout, completion)
+        });
+    }
+
+    #[cfg(test)]
     pub(crate) fn dispatch_similar_releases(
         &self,
         request: SimilarReleasesDispatchRequest,
     ) -> Result<SimilarReleasesDispatchResult> {
-        let handler = similar_releases_handler(&self.vm, request.handler_id, &request.provider_id)?;
-        let values = self.dispatch_handler(
-            handler,
-            request.context,
-            request.timeout,
-            Some(&request.cancellation),
-        )?;
-        let candidates =
-            decode_similar_releases_result(&self.vm, values.first(), request.max_candidates)?;
-        Ok(SimilarReleasesDispatchResult { candidates })
-    }
-
-    fn dispatch_metadata_handler(
-        &self,
-        handler_id: u64,
-        context: serde_json::Value,
-        timeout: Duration,
-        cancellation: Option<&super::MetadataRefreshCancellation>,
-    ) -> Result<Vec<harmony_luau::Value>> {
-        let handlers = self
-            .vm
-            .data()
-            .get::<crate::plugins::metadata::MetadataCallbackRegistry>()?;
-        let handler: crate::plugins::metadata::MetadataCallback = handlers
-            .get(handler_id)
-            .ok_or_else(|| anyhow::anyhow!("metadata handler {handler_id} not found"))?;
-        self.dispatch_handler(handler, context, timeout, cancellation)
-    }
-
-    fn dispatch_handler(
-        &self,
-        handler: crate::plugins::metadata::MetadataCallback,
-        context: serde_json::Value,
-        timeout: Duration,
-        cancellation: Option<&super::MetadataRefreshCancellation>,
-    ) -> Result<Vec<harmony_luau::Value>> {
-        if cancellation.is_some_and(|cancellation| cancellation.is_cancelled()) {
-            bail!("metadata handler dispatch was cancelled");
-        }
-        let (scheduler, thread) =
-            schedule_metadata_handler(&self.vm, handler, context, timeout, None)?;
-        let values = drive_thread(
-            &self.tokio_runtime,
-            &scheduler,
-            &thread,
-            ThreadDriveOptions {
-                timeout,
-                cancellation: cancellation.map(|cancellation| cancellation.flag()),
-                ..ThreadDriveOptions::default()
-            },
-        )?;
-        if cancellation.is_some_and(|cancellation| cancellation.is_cancelled()) {
-            bail!("metadata handler dispatch was cancelled");
-        }
-        Ok(values)
+        self.drive_callback(|reply, permit| self.start_similar_releases(request, reply, permit))
     }
 }
 
@@ -126,31 +110,21 @@ fn schedule_metadata_handler(
     handler: crate::plugins::metadata::MetadataCallback,
     request_context: serde_json::Value,
     timeout: Duration,
-    completion: Option<Rc<LocalLuauTaskCompletion>>,
+    completion: Rc<LocalLuauTaskCompletion>,
 ) -> Result<(Rc<LocalScheduler>, harmony_luau::Thread)> {
     let argument = harmony_serde::json_to_luau_owned(request_context, 0)?;
     let thread = vm.create_thread(&handler.function)?;
     let scheduler = vm.data().get::<LocalScheduler>()?;
     let mut context = handler.context.clone();
     context.caller.insert(MetadataDispatchContext);
-    if let Some(completion) = completion {
-        scheduler.schedule_luau_thread_with_budget_and_completion(
-            context,
-            vm.clone(),
-            thread.clone(),
-            vec![argument],
-            timeout,
-            completion,
-        );
-    } else {
-        scheduler.schedule_luau_thread_with_budget(
-            context,
-            vm.clone(),
-            thread.clone(),
-            vec![argument],
-            timeout,
-        );
-    }
+    scheduler.schedule_luau_thread_with_budget_and_completion(
+        context,
+        vm.clone(),
+        thread.clone(),
+        vec![argument],
+        timeout,
+        completion,
+    );
     Ok((scheduler, thread))
 }
 
@@ -168,7 +142,7 @@ pub(crate) async fn dispatch_similar_releases_in_vm(
         handler,
         request.context,
         request.timeout,
-        Some(completion.clone()),
+        completion.clone(),
     )?;
     let mut guard = ScheduledThreadGuard {
         scheduler,
@@ -224,7 +198,7 @@ impl Drop for ScheduledThreadGuard {
     }
 }
 
-fn decode_similar_releases_result(
+pub(super) fn decode_similar_releases_result(
     vm: &harmony_luau::Vm,
     value: Option<&harmony_luau::Value>,
     max_candidates: usize,

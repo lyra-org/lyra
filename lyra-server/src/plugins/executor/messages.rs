@@ -118,16 +118,13 @@ impl MetadataRefreshCancellation {
     pub(crate) fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
     }
-
-    pub(crate) fn flag(&self) -> Arc<AtomicBool> {
-        self.cancelled.clone()
-    }
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct MetadataRefreshRequest {
     pub(crate) handler_id: u64,
     pub(crate) context: serde_json::Value,
+    pub(crate) deadline: std::time::Instant,
 }
 
 #[derive(Clone, Debug)]

@@ -6,13 +6,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use harmony_core::{
-    LocalScheduler,
-    luau::{
-        ThreadDriveOptions,
-        drive_thread,
-    },
-};
+use harmony_core::LocalScheduler;
 use harmony_luau as luau;
 
 use super::{
@@ -26,36 +20,61 @@ use super::{
 };
 
 impl PluginExecutor {
-    pub(crate) fn dispatch_api_handler(
+    pub(super) fn start_api_handler(
         &self,
         request: ApiHandlerRequest,
-    ) -> Result<ApiHandlerResponse> {
-        let routes = self.vm.data().get::<crate::plugins::api::ApiRouteStore>()?;
-        let handler = routes
-            .get(request.handler_id)
-            .ok_or_else(|| anyhow::anyhow!("API handler {} not found", request.handler_id))?;
-        let ctx = api_context_value(&request)?;
-        let thread = self.vm.create_thread(&handler.handler)?;
-        let mut context = handler.context.clone();
+        reply: tokio::sync::oneshot::Sender<Result<ApiHandlerResponse>>,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) {
         let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
         if let Some(auth) = request.auth.as_ref() {
             dispatch_auth.record(auth.principal.clone());
         }
-        context.caller.insert(dispatch_auth.clone());
-        context.caller.insert(crate::plugins::auth::DispatchClient(
-            request.client_key.clone(),
-        ));
-        let scheduler = self.vm.data().get::<LocalScheduler>()?;
-        scheduler.spawn_luau_thread(context, self.vm.clone(), thread.clone(), vec![ctx]);
-        let values = drive_thread(
-            &self.tokio_runtime,
-            &scheduler,
-            &thread,
-            ThreadDriveOptions::default(),
-        )?;
-        let mut response = parse_api_response(&self.vm, &request, values)?;
-        response.principal = dispatch_auth.principal();
-        Ok(response)
+        let prepare = || {
+            let routes = self.vm.data().get::<crate::plugins::api::ApiRouteStore>()?;
+            let handler = routes
+                .get(request.handler_id)
+                .ok_or_else(|| anyhow::anyhow!("API handler {} not found", request.handler_id))?;
+            let ctx = api_context_value(&request)?;
+            let thread = self.vm.create_thread(&handler.handler)?;
+            let mut context = handler.context.clone();
+            context.caller.insert(dispatch_auth.clone());
+            context.caller.insert(crate::plugins::auth::DispatchClient(
+                request.client_key.clone(),
+            ));
+            Ok::<_, anyhow::Error>((thread, context, ctx))
+        };
+        let prepared = prepare();
+        self.start_callback(
+            std::time::Instant::now() + std::time::Duration::from_secs(300),
+            super::callbacks::CallbackReply::Api {
+                reply,
+                request: Box::new(request),
+                auth: dispatch_auth,
+            },
+            permit,
+            |timeout, completion| {
+                let (thread, context, argument) = prepared?;
+                let scheduler = self.vm.data().get::<LocalScheduler>()?;
+                scheduler.schedule_luau_thread_with_budget_and_completion(
+                    context,
+                    self.vm.clone(),
+                    thread.clone(),
+                    vec![argument],
+                    timeout,
+                    completion,
+                );
+                Ok((scheduler, thread))
+            },
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn dispatch_api_handler(
+        &self,
+        request: ApiHandlerRequest,
+    ) -> Result<ApiHandlerResponse> {
+        self.drive_callback(|reply, permit| self.start_api_handler(request, reply, permit))
     }
 }
 
@@ -142,7 +161,7 @@ fn is_json_content_type(headers: &[(String, String)]) -> bool {
     })
 }
 
-fn parse_api_response(
+pub(super) fn parse_api_response(
     vm: &luau::Vm,
     request: &ApiHandlerRequest,
     values: Vec<luau::Value>,
