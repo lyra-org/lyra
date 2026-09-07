@@ -64,10 +64,49 @@ pub(crate) fn ensure(db: &mut DbAny) -> anyhow::Result<ServerInfo> {
     })
 }
 
+pub(crate) fn plugin_selection_skipped(db: &impl DbAccess) -> anyhow::Result<bool> {
+    let result = db.exec(QueryBuilder::select().ids("server").query())?;
+    match result.elements.first().and_then(|element| {
+        element
+            .values
+            .iter()
+            .find(|value| value.key == "plugin_selection_skipped".into())
+    }) {
+        Some(value) => Ok(bool::try_from(value.value.clone())?),
+        None => Ok(false),
+    }
+}
+
+pub(crate) fn set_plugin_selection_skipped(
+    db: &mut impl DbAccess,
+    skipped: bool,
+) -> anyhow::Result<()> {
+    db.exec_mut(
+        QueryBuilder::insert()
+            .values_uniform([("plugin_selection_skipped", skipped).into()])
+            .ids("server")
+            .query(),
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::test_db::new_test_db;
+
+    #[test]
+    fn plugin_selection_skip_survives_reinitialization_and_can_be_cleared() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        assert!(!plugin_selection_skipped(&db)?);
+        set_plugin_selection_skipped(&mut db, true)?;
+        super::super::bootstrap::initialize(&mut db)?;
+        ensure(&mut db)?;
+        assert!(plugin_selection_skipped(&db)?);
+        set_plugin_selection_skipped(&mut db, false)?;
+        assert!(!plugin_selection_skipped(&db)?);
+        Ok(())
+    }
 
     #[test]
     fn ensure_creates_server_info() -> anyhow::Result<()> {

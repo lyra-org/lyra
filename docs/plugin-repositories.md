@@ -84,6 +84,12 @@ are never touched by repository installs, updates, or uninstalls.
 
 ## Server API and CLI
 
+`GET /api/server/public` reports `setup.account_required` and
+`setup.plugin_selection_required` instead of `setup_complete`. Plugin selection
+is needed only when no plugins are installed and it has not been skipped.
+`PATCH /api/server/setup` accepts `{"plugin_selection_skipped": true}` (or `false`
+to clear it), requires `manage_plugins`, and returns 204.
+
 Plugin management requires the manage-plugins permission:
 
 - `POST /api/plugins/resolve` — preview a repository's plugins,

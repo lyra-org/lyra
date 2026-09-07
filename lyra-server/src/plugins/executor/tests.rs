@@ -22,7 +22,10 @@ fn default_server_info() -> crate::plugins::server::ServerInfo {
         hostname: "localhost".to_string(),
         port: 0,
         published_url: None,
-        setup_complete: false,
+        setup: crate::services::setup::Status {
+            account_required: true,
+            plugin_selection_required: true,
+        },
     }
 }
 
@@ -835,7 +838,10 @@ fn plugin_executor_reads_server_info_from_vm_context() -> Result<()> {
             hostname: "test-host".to_string(),
             port: 3210,
             published_url: Some("https://lyra.example".to_string()),
-            setup_complete: true,
+            setup: crate::services::setup::Status {
+                account_required: false,
+                plugin_selection_required: true,
+            },
         },
     )?;
     runtime.run_plugin_source(
@@ -847,14 +853,15 @@ fn plugin_executor_reads_server_info_from_vm_context() -> Result<()> {
             executor_server_id = info.id
             executor_server_port = info.port
             executor_server_url = info.published_url
-            executor_server_setup = info.setup_complete
+            executor_server_account_required = info.setup.account_required
+            executor_server_plugin_selection_required = info.setup.plugin_selection_required
         "#[..],
     )?;
 
     let values = runtime.eval_plugin_source(
         "demo",
         "check.luau",
-        &b"return executor_server_id, executor_server_port, executor_server_url, executor_server_setup"[..],
+        &b"return executor_server_id, executor_server_port, executor_server_url, executor_server_account_required, executor_server_plugin_selection_required"[..],
     )?;
     assert_eq!(
         values,
@@ -862,6 +869,7 @@ fn plugin_executor_reads_server_info_from_vm_context() -> Result<()> {
             luau::Value::String(b"server-1".to_vec()),
             luau::Value::Integer(3210),
             luau::Value::String(b"https://lyra.example".to_vec()),
+            luau::Value::Boolean(false),
             luau::Value::Boolean(true),
         ]
     );

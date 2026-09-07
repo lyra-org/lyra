@@ -60,6 +60,7 @@ pub(crate) mod releases;
 pub(crate) mod remote;
 pub(crate) mod search;
 pub(crate) mod settings;
+pub(crate) mod setup;
 pub(crate) mod shutdown;
 pub(crate) mod startup;
 mod system;

@@ -43,7 +43,7 @@ pub(crate) struct ServerInfo {
     pub(crate) hostname: String,
     pub(crate) port: u16,
     pub(crate) published_url: Option<String>,
-    pub(crate) setup_complete: bool,
+    pub(crate) setup: crate::services::setup::Status,
 }
 
 struct ServerModule;
@@ -67,8 +67,8 @@ pub(crate) async fn load_server_info() -> anyhow::Result<ServerInfo> {
         .map_err(|error| anyhow::anyhow!(error.to_string()))?
         .ok_or_else(|| anyhow::anyhow!("server info not initialized"))?;
 
-    let setup_complete = db::roles::has_non_default_admin(&db)
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    drop(db);
+    let setup = crate::services::setup::status().await?;
 
     let config = STATE.config();
 
@@ -79,7 +79,7 @@ pub(crate) async fn load_server_info() -> anyhow::Result<ServerInfo> {
         hostname: HOSTNAME.clone(),
         port: STATE.boot.get().port,
         published_url: config.published_url.clone(),
-        setup_complete,
+        setup,
     })
 }
 #[derive(Clone)]
@@ -125,7 +125,16 @@ fn server_info_table(info: &ServerInfo) -> luau::OwnedTable {
             .map(|url| luau::Value::String(url.clone().into_bytes()))
             .unwrap_or(luau::Value::Nil),
     );
-    table.set_field("setup_complete", luau::Value::Boolean(info.setup_complete));
+    let mut setup = luau::OwnedTable::with_capacity(0, 2);
+    setup.set_field(
+        "account_required",
+        luau::Value::Boolean(info.setup.account_required),
+    );
+    setup.set_field(
+        "plugin_selection_required",
+        luau::Value::Boolean(info.setup.plugin_selection_required),
+    );
+    table.set_field("setup", luau::Value::TableData(setup));
     table
 }
 
@@ -170,8 +179,19 @@ impl DescribeInterface for ServerInfo {
                 description: None,
             },
             FieldDescriptor {
-                name: "setup_complete",
-                ty: bool::luau_type(),
+                name: "setup",
+                ty: LuauType::Object(vec![
+                    FieldDescriptor {
+                        name: "account_required",
+                        ty: bool::luau_type(),
+                        description: None,
+                    },
+                    FieldDescriptor {
+                        name: "plugin_selection_required",
+                        ty: bool::luau_type(),
+                        description: None,
+                    },
+                ]),
                 description: None,
             },
         ]);

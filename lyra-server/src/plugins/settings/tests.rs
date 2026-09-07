@@ -26,7 +26,10 @@ fn server_info() -> crate::plugins::server::ServerInfo {
         hostname: "localhost".to_string(),
         port: 0,
         published_url: None,
-        setup_complete: false,
+        setup: crate::services::setup::Status {
+            account_required: true,
+            plugin_selection_required: true,
+        },
     }
 }
 
