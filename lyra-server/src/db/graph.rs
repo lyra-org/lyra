@@ -210,15 +210,8 @@ pub(crate) fn fetch_typed_by_id<T: DbType<ValueType = T>>(
 ) -> anyhow::Result<Option<T>> {
     let result = match db.exec(QueryBuilder::select().ids(id).query()) {
         Ok(result) => result,
-        Err(err) => {
-            tracing::warn!(
-                error = %err,
-                id = ?id,
-                discriminator,
-                "fetch_typed_by_id: db.exec failed; treating as missing",
-            );
-            return Ok(None);
-        }
+        Err(err) if err.ty == agdb::DbErrorType::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
     };
     let Some(element) = result.elements.into_iter().next() else {
         return Ok(None);
@@ -251,4 +244,53 @@ pub(crate) fn bulk_fetch_typed<T: DbType<ValueType = T>>(
         map.insert(element.id, T::from_db_element(&element)?);
     }
     Ok(map)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FailingDb(agdb::DbErrorType);
+
+    impl DbAccess for FailingDb {
+        fn exec<T: agdb::Query>(&self, _query: T) -> Result<agdb::QueryResult, agdb::DbError> {
+            Err(agdb::DbError::db(self.0, "lookup failed"))
+        }
+
+        fn exec_mut<T: agdb::QueryMut>(
+            &mut self,
+            _query: T,
+        ) -> Result<agdb::QueryResult, agdb::DbError> {
+            unreachable!()
+        }
+    }
+
+    #[derive(agdb::DbType)]
+    struct TestNode {
+        name: String,
+    }
+
+    #[test]
+    fn typed_lookup_only_treats_not_found_as_missing() {
+        assert!(
+            fetch_typed_by_id::<TestNode>(
+                &FailingDb(agdb::DbErrorType::NotFound),
+                DbId(1),
+                "TestNode"
+            )
+            .unwrap()
+            .is_none()
+        );
+        let error = fetch_typed_by_id::<TestNode>(
+            &FailingDb(agdb::DbErrorType::TypeError),
+            DbId(1),
+            "TestNode",
+        )
+        .err()
+        .expect("non-missing error must propagate");
+        assert_eq!(
+            error.downcast_ref::<agdb::DbError>().unwrap().ty,
+            agdb::DbErrorType::TypeError
+        );
+    }
 }
