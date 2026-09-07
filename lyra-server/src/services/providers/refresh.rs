@@ -848,6 +848,7 @@ async fn dispatch_refresh_callback(
                 runtime.dispatch_metadata_refresh(MetadataRefreshRequest {
                     handler_id,
                     context,
+                    deadline: std::time::Instant::now() + DEFAULT_METADATA_REFRESH_TIMEOUT,
                 }),
             )
             .await
@@ -883,6 +884,7 @@ async fn dispatch_sync_filter_callback(
                 runtime.dispatch_metadata_refresh(MetadataRefreshRequest {
                     handler_id,
                     context,
+                    deadline: std::time::Instant::now() + DEFAULT_METADATA_REFRESH_TIMEOUT,
                 }),
             )
             .await

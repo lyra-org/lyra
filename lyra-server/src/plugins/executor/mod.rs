@@ -5,6 +5,7 @@
 
 mod actor;
 mod api;
+mod callbacks;
 mod messages;
 mod metadata;
 mod mix;
@@ -56,6 +57,7 @@ use harmony_luau as luau;
 pub(crate) struct PluginExecutor {
     runtime: Runtime,
     websocket_tasks: RefCell<HashMap<TaskIdKey, Arc<WebSocketState>>>,
+    callback_tasks: RefCell<Vec<callbacks::PendingCallbackTask>>,
 }
 
 impl std::ops::Deref for PluginExecutor {
@@ -68,6 +70,7 @@ impl std::ops::Deref for PluginExecutor {
 
 impl PluginExecutor {
     fn poll_background_tasks(&self) {
+        self.poll_callback_tasks();
         let Ok(scheduler) = self.vm.data().get::<LocalScheduler>() else {
             return;
         };
@@ -86,6 +89,7 @@ impl PluginExecutor {
                 }
             }
         }
+        self.poll_callback_tasks();
         scheduler.remove_finished();
         if !completed_websockets.is_empty() {
             let mut tasks = self.websocket_tasks.borrow_mut();

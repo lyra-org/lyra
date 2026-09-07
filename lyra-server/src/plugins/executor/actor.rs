@@ -41,6 +41,10 @@ use super::{
 
 const EXECUTOR_QUEUE_CAPACITY: usize = 256;
 
+#[cfg(test)]
+#[path = "actor/tests.rs"]
+mod dispatch_tests;
+
 #[derive(Clone)]
 struct PluginExecutorSender {
     tx: mpsc::SyncSender<QueuedPluginExecutorCommand>,
@@ -87,6 +91,7 @@ struct QueuedPluginExecutorCommand {
 }
 
 impl QueuedPluginExecutorCommand {
+    #[cfg(test)]
     fn into_command(self) -> PluginExecutorCommand {
         let Self { command, _permit } = self;
         drop(_permit);
@@ -264,14 +269,20 @@ fn run_plugin_executor_thread(
             .unwrap_or_else(|| Duration::from_millis(100))
             .min(Duration::from_millis(25));
         match rx.recv_timeout(wait) {
-            Ok(command) => handle_plugin_executor_command(&runtime, command.into_command()),
+            Ok(QueuedPluginExecutorCommand { command, _permit }) => {
+                handle_plugin_executor_command(&runtime, command, _permit)
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
 }
 
-fn handle_plugin_executor_command(runtime: &PluginExecutor, command: PluginExecutorCommand) {
+fn handle_plugin_executor_command(
+    runtime: &PluginExecutor,
+    command: PluginExecutorCommand,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) {
     match command {
         PluginExecutorCommand::PluginManifests(reply) => {
             reply_if_open(reply, || Ok(runtime.plugin_manifests()));
@@ -286,20 +297,20 @@ fn handle_plugin_executor_command(runtime: &PluginExecutor, command: PluginExecu
             reply_if_open(reply, || runtime.exec_all());
         }
         PluginExecutorCommand::MixHandler { request, reply } => {
-            reply_if_open(reply, || runtime.dispatch_mix_handler(request));
+            runtime.start_mix_handler(request, reply, permit);
         }
         PluginExecutorCommand::MetadataRefresh { request, reply } => {
-            reply_if_open(reply, || runtime.dispatch_metadata_refresh(request));
+            runtime.start_metadata_refresh(request, reply, permit);
         }
         PluginExecutorCommand::SimilarReleases { request, reply } => {
             if request.cancellation.is_cancelled() {
                 reply_cancelled_similar_releases(reply);
                 return;
             }
-            reply_if_open(reply, || runtime.dispatch_similar_releases(request));
+            runtime.start_similar_releases(request, reply, permit);
         }
         PluginExecutorCommand::ApiHandler { request, reply } => {
-            reply_if_open(reply, || runtime.dispatch_api_handler(request));
+            runtime.start_api_handler(request, reply, permit);
         }
         PluginExecutorCommand::StartWebSocket { request, reply } => {
             reply_if_open(reply, || runtime.start_websocket(request));

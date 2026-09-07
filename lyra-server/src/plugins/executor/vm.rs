@@ -171,6 +171,7 @@ impl PluginExecutor {
         Ok(Self {
             runtime,
             websocket_tasks: RefCell::new(HashMap::<TaskIdKey, Arc<WebSocketState>>::new()),
+            callback_tasks: RefCell::new(Vec::new()),
         })
     }
 

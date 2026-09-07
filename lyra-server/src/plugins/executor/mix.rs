@@ -4,13 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use anyhow::Result;
-use harmony_core::{
-    LocalScheduler,
-    luau::{
-        ThreadDriveOptions,
-        drive_thread,
-    },
-};
+use harmony_core::LocalScheduler;
 use harmony_luau as luau;
 
 use super::{
@@ -22,33 +16,54 @@ use super::{
 };
 
 impl PluginExecutor {
+    pub(super) fn start_mix_handler(
+        &self,
+        request: MixHandlerRequest,
+        reply: tokio::sync::oneshot::Sender<Result<MixHandlerResult>>,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) {
+        let prepared = (|| {
+            let handlers = self
+                .vm
+                .data()
+                .get::<crate::plugins::mix::MixCallbackRegistry>()?;
+            let handler = handlers
+                .get(request.handler_id)
+                .ok_or_else(|| anyhow::anyhow!("mix handler {} not found", request.handler_id))?;
+            let argument = mix_context_value(&request)?;
+            let thread = self.vm.create_thread(&handler.function)?;
+            Ok::<_, anyhow::Error>((handler, thread, argument))
+        })();
+        let mixer_id = prepared
+            .as_ref()
+            .map(|(handler, _, _)| handler.mixer_id.clone())
+            .unwrap_or_default();
+        self.start_callback(
+            std::time::Instant::now() + std::time::Duration::from_secs(300),
+            super::callbacks::CallbackReply::Mix { reply, mixer_id },
+            permit,
+            |timeout, completion| {
+                let (handler, thread, argument) = prepared?;
+                let scheduler = self.vm.data().get::<LocalScheduler>()?;
+                scheduler.schedule_luau_thread_with_budget_and_completion(
+                    handler.context.clone(),
+                    self.vm.clone(),
+                    thread.clone(),
+                    vec![argument],
+                    timeout,
+                    completion,
+                );
+                Ok((scheduler, thread))
+            },
+        );
+    }
+
+    #[cfg(test)]
     pub(crate) fn dispatch_mix_handler(
         &self,
         request: MixHandlerRequest,
     ) -> Result<MixHandlerResult> {
-        let handlers = self
-            .vm
-            .data()
-            .get::<crate::plugins::mix::MixCallbackRegistry>()?;
-        let handler = handlers
-            .get(request.handler_id)
-            .ok_or_else(|| anyhow::anyhow!("mix handler {} not found", request.handler_id))?;
-        let ctx = mix_context_value(&request)?;
-        let thread = self.vm.create_thread(&handler.function)?;
-        let scheduler = self.vm.data().get::<LocalScheduler>()?;
-        scheduler.spawn_luau_thread(
-            handler.context.clone(),
-            self.vm.clone(),
-            thread.clone(),
-            vec![ctx],
-        );
-        let values = drive_thread(
-            &self.tokio_runtime,
-            &scheduler,
-            &thread,
-            ThreadDriveOptions::default(),
-        )?;
-        parse_mix_result(&self.vm, &handler.mixer_id, values)
+        self.drive_callback(|reply, permit| self.start_mix_handler(request, reply, permit))
     }
 }
 
@@ -80,7 +95,7 @@ fn mix_context_value(request: &MixHandlerRequest) -> Result<luau::Value> {
     Ok(luau::Value::TableData(table))
 }
 
-fn parse_mix_result(
+pub(super) fn parse_mix_result(
     vm: &luau::Vm,
     mixer_id: &str,
     values: Vec<luau::Value>,

@@ -474,6 +474,7 @@ fn lyrics_callback(
                 .dispatch_metadata_refresh(MetadataRefreshRequest {
                     handler_id,
                     context,
+                    deadline: std::time::Instant::now() + timeout,
                 })
                 .await
                 .with_context(|| format!("provider lyrics handler failed for '{provider_id}'"))?;
