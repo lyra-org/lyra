@@ -224,7 +224,13 @@ impl RepoSpec {
 
     /// Canonical form used for persistence and self-reference comparison.
     pub fn canonical_url(&self) -> String {
-        format!("{}/{}/{}", self.base_url(), self.namespace, self.repo_name)
+        let origin = format!("{}/{}/{}", self.base_url(), self.namespace, self.repo_name);
+        let hostname = self.host.split(':').next().unwrap_or(&self.host);
+        if self.forge != detect_forge(hostname) {
+            format!("{origin}?forge={}", self.forge.as_str())
+        } else {
+            origin
+        }
     }
 
     pub fn human_id(&self) -> String {
@@ -669,6 +675,23 @@ mod tests {
         .unwrap();
         assert_eq!(spec.explicit_ref.as_deref(), Some("v1"));
         assert_eq!(spec.forge, Forge::GitLab);
+    }
+
+    #[test]
+    fn canonical_url_retains_non_default_forge_for_persisted_repositories() {
+        for url in [
+            "https://git.lyra.pub/lyra/lyra?forge=gitlab",
+            "http://127.0.0.1:3000/group/repo?forge=gitlab",
+            "https://gitlab.example.org/owner/repo?forge=gitea",
+        ] {
+            let original = RepoSpec::parse(url, Some("v1")).unwrap();
+            let restored =
+                RepoSpec::parse(&original.canonical_url(), original.explicit_ref.as_deref())
+                    .unwrap();
+            assert_eq!(restored.forge, original.forge);
+            assert_eq!(restored.canonical_url(), original.canonical_url());
+            assert_eq!(restored.explicit_ref, original.explicit_ref);
+        }
     }
 
     #[test]
