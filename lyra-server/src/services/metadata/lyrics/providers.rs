@@ -280,6 +280,14 @@ pub(crate) async fn unregister_handlers_for_plugin(plugin_id: &PluginId) {
 /// Run every matching handler in priority order. Not stop-on-first-hit —
 /// each gate-passing `Hit` writes a row; `selection.rs` picks the winner.
 pub(crate) async fn dispatch_for_track(track_db_id: DbId, force_refresh: bool) -> Result<()> {
+    dispatch_for_track_identity(track_db_id, None, force_refresh).await
+}
+
+async fn dispatch_for_track_identity(
+    track_db_id: DbId,
+    expected_public_id: Option<&str>,
+    force_refresh: bool,
+) -> Result<()> {
     let now = upload::now_ms().map_err(|err| anyhow::anyhow!("now_ms() failed: {err}"))?;
     let (mut context, preferred_languages, local, track_public_id) =
         match build_track_context(track_db_id, now).await? {
@@ -287,12 +295,16 @@ pub(crate) async fn dispatch_for_track(track_db_id: DbId, force_refresh: bool) -
             None => return Ok(()),
         };
     context.force_refresh = force_refresh;
+    if expected_public_id.is_some_and(|expected| expected != track_public_id) {
+        return Ok(());
+    }
 
     let registry_snapshot = {
         let registry = LYRICS_PROVIDER_REGISTRY.read().await;
         registry.list_sorted()
     };
 
+    let mut failures = Vec::new();
     for handler in registry_snapshot {
         if !require_matches(&context, &handler.require) {
             continue;
@@ -332,18 +344,16 @@ pub(crate) async fn dispatch_for_track(track_db_id: DbId, force_refresh: bool) -
             }
             res = dispatch_fut => {
                 if let Err(err) = res {
-                    tracing::warn!(
-                        provider = handler.provider_id.as_ref(),
-                        track_db_id = track_db_id.0,
-                        error = %err,
-                        "lyrics dispatch failed for provider"
-                    );
+                    failures.push(format!("{}: {err:#}", handler.provider_id));
                 }
             }
         }
         drop(guard);
     }
 
+    if !failures.is_empty() {
+        bail!("lyrics dispatch failed: {}", failures.join("; "));
+    }
     Ok(())
 }
 
@@ -364,31 +374,27 @@ async fn dispatch_one(
     };
     let context_owned = context.clone();
     let handler_fn = handler.handler.clone();
-    let call_result = with_provider_call(provider_id, ProviderCallStage::Lyrics, || async {
-        tokio::time::timeout(timeout, handler_fn(context_owned)).await
-    })
-    .await;
+    let call_result: Result<Option<LyricsHandlerResult>> =
+        with_provider_call(provider_id, ProviderCallStage::Lyrics, || async {
+            {
+                let db = STATE.db.read().await;
+                if db::tracks::get_by_id(&*db, track_db_id)?
+                    .is_none_or(|track| track.id != track_public_id)
+                {
+                    return Ok(None);
+                }
+            }
+            tokio::time::timeout(timeout, handler_fn(context_owned))
+                .await
+                .map_err(|_| {
+                    anyhow::anyhow!("lyrics handler timed out after {} ms", timeout.as_millis())
+                })?
+                .map(Some)
+        })
+        .await;
 
-    let outcome = match call_result {
-        Ok(Ok(outcome)) => outcome,
-        Ok(Err(err)) => {
-            tracing::warn!(
-                provider = provider_id,
-                track_db_id = track_db_id.0,
-                error = ?err,
-                "lyrics handler returned error"
-            );
-            return Ok(());
-        }
-        Err(_elapsed) => {
-            tracing::warn!(
-                provider = provider_id,
-                track_db_id = track_db_id.0,
-                timeout_ms = timeout.as_millis() as u64,
-                "lyrics handler timed out"
-            );
-            return Ok(());
-        }
+    let Some(outcome) = call_result? else {
+        return Ok(());
     };
 
     match outcome {
@@ -596,7 +602,7 @@ async fn build_track_context(
 
 /// `force_refresh = true` includes tracks that already have preferred lyrics.
 pub(crate) async fn rescan(force_refresh: bool, cancel: CancellationToken) -> Result<()> {
-    let track_ids: Vec<DbId> = {
+    let track_ids: Vec<(DbId, String)> = {
         let db = STATE.db.read().await;
         let tracks = db::tracks::get(&db, "tracks")?;
         let mut filtered = Vec::with_capacity(tracks.len());
@@ -610,7 +616,7 @@ pub(crate) async fn rescan(force_refresh: bool, cancel: CancellationToken) -> Re
             {
                 continue;
             }
-            filtered.push(track_db_id);
+            filtered.push((track_db_id, track.id));
         }
         filtered
     };
@@ -621,7 +627,7 @@ pub(crate) async fn rescan(force_refresh: bool, cancel: CancellationToken) -> Re
 
     let cancel_for_stream = cancel.clone();
     stream::iter(track_ids)
-        .for_each_concurrent(MAX_CONCURRENT_DISPATCHES, |track_db_id| {
+        .for_each_concurrent(MAX_CONCURRENT_DISPATCHES, |(track_db_id, track_public_id)| {
             let cancel = cancel_for_stream.clone();
             async move {
                 if cancel.is_cancelled() {
@@ -629,7 +635,7 @@ pub(crate) async fn rescan(force_refresh: bool, cancel: CancellationToken) -> Re
                 }
                 tokio::select! {
                     _ = cancel.cancelled() => {}
-                    res = dispatch_for_track(track_db_id, force_refresh) => {
+                    res = dispatch_for_track_identity(track_db_id, Some(&track_public_id), force_refresh) => {
                         if let Err(err) = res {
                             tracing::warn!(
                                 track_db_id = track_db_id.0,
@@ -745,6 +751,96 @@ mod tests {
     async fn install_handler_for_test(handler: RegisteredHandler) {
         let mut registry = LYRICS_PROVIDER_REGISTRY.write().await;
         registry.insert(handler);
+    }
+
+    #[tokio::test]
+    async fn failures_are_reported_without_skipping_other_providers() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        initialize_test_runtime().await?;
+        let track_id = install_track_in_state_db("Failure Track", "Artist", 180_000).await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        for (provider, callback) in [
+            (
+                "a_error",
+                Arc::new(|_| Box::pin(async { bail!("upstream 503") }) as HandlerFuture)
+                    as HandlerFn,
+            ),
+            (
+                "b_timeout",
+                Arc::new(|_| Box::pin(std::future::pending()) as HandlerFuture) as HandlerFn,
+            ),
+            (
+                "c_success",
+                Arc::new(move |_| {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    Box::pin(async { Ok(LyricsHandlerResult::Miss) }) as HandlerFuture
+                }) as HandlerFn,
+            ),
+        ] {
+            let mut handler = make_handler(
+                provider,
+                test_plugin_id(),
+                CancellationToken::new(),
+                callback,
+            );
+            handler.timeout = Duration::from_millis(5);
+            install_handler_for_test(handler).await;
+        }
+
+        let error = dispatch_for_track(track_id, false)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("a_error: upstream 503"), "{error}");
+        assert!(
+            error.contains("b_timeout: lyrics handler timed out"),
+            "{error}"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn snapshot_dispatch_skips_deleted_and_reused_track_ids() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        initialize_test_runtime().await?;
+        let track_id = install_track_in_state_db("Original", "Artist", 180_000).await;
+        let mut original = {
+            let mut db = STATE.db.write().await;
+            let track = db::tracks::get_by_id(&*db, track_id)?.unwrap();
+            db.exec_mut(agdb::QueryBuilder::remove().ids(track_id).query())?;
+            track
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        install_handler_for_test(make_handler(
+            "snapshot",
+            test_plugin_id(),
+            CancellationToken::new(),
+            Arc::new(move |_| {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Ok(LyricsHandlerResult::Miss) })
+            }),
+        ))
+        .await;
+
+        dispatch_for_track_identity(track_id, Some(&original.id), false).await?;
+        let original_public_id = original.id.clone();
+        original.db_id = None;
+        original.id = "replacement-public-id".into();
+        {
+            let mut db = STATE.db.write().await;
+            let replacement_id = db
+                .exec_mut(agdb::QueryBuilder::insert().element(&original).query())?
+                .ids()[0];
+            assert_eq!(replacement_id, track_id);
+        }
+        dispatch_for_track_identity(track_id, Some(&original_public_id), false).await?;
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        dispatch_for_track(track_id, false).await?;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        Ok(())
     }
 
     #[tokio::test]
