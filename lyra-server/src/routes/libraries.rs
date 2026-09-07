@@ -65,13 +65,11 @@ struct LibraryRequest {
         feature = "docgen",
         schemars(description = "Human-friendly library name.")
     )]
-    #[serde(alias = "_name")]
     name: String,
     #[cfg_attr(
         feature = "docgen",
         schemars(description = "Filesystem path to scan for media.")
     )]
-    #[serde(alias = "_directory")]
     directory: String,
     #[cfg_attr(
         feature = "docgen",
