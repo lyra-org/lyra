@@ -8,7 +8,6 @@ use agdb::{
     DbAnyTransactionMut,
     DbElement,
     DbId,
-    DbValue,
     QueryBuilder,
 };
 
@@ -158,34 +157,6 @@ pub(crate) fn active_for_library(
             "queued" | "planning" | "running" | "cancelling"
         )
     }))
-}
-
-pub(crate) fn delete_records_missing_summary_fields(
-    db: &mut impl super::DbAccess,
-) -> anyhow::Result<usize> {
-    let type_key = DbValue::from("db_element_id");
-    let type_value = DbValue::from("SyncRunRecord");
-    let started_at_key = DbValue::from("started_at_ms");
-    let result = db.exec(QueryBuilder::select().search().from("sync_runs").query())?;
-    let legacy_ids = result
-        .elements
-        .into_iter()
-        .filter(|element| element.id.0 > 0)
-        .filter(|element| {
-            element
-                .values
-                .iter()
-                .any(|kv| kv.key == type_key && kv.value == type_value)
-        })
-        .filter(|element| !element.values.iter().any(|kv| kv.key == started_at_key))
-        .map(|element| element.id)
-        .collect::<Vec<_>>();
-    if legacy_ids.is_empty() {
-        return Ok(0);
-    }
-    let removed = legacy_ids.len();
-    db.exec_mut(QueryBuilder::remove().ids(legacy_ids).query())?;
-    Ok(removed)
 }
 
 #[cfg(test)]
