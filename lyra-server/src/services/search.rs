@@ -3,16 +3,13 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+#[cfg(test)]
 use std::collections::HashSet;
 
-use agdb::{
-    DbAny,
-    DbId,
-};
+use agdb::DbAny;
 
 use crate::db::{
     self,
-    ListOptions,
     ratings::RatingFilter,
 };
 
@@ -61,124 +58,42 @@ pub(crate) fn search_accessible(
     principal: &crate::services::auth::Principal,
     options: &SearchOptions,
 ) -> anyhow::Result<SearchResults> {
-    let (mut tracks, mut artists, mut releases) =
-        if principal.permissions.contains(&db::Permission::Admin) {
-            (
-                db::tracks::get(db, "tracks")?,
-                db::artists::get(db, "artists")?,
-                db::releases::get_direct(db, "releases")?,
-            )
-        } else {
-            let mut library_db_ids = Vec::new();
-            for library_id in &principal.accessible_library_ids {
-                let Some(library_db_id) = db::lookup::find_node_id_by_id(db, library_id)? else {
-                    continue;
-                };
-                if db::libraries::get_by_id(db, library_db_id)?.is_some() {
-                    library_db_ids.push(library_db_id);
-                }
-            }
-
-            let mut tracks = Vec::new();
-            let mut artists = Vec::new();
-            let mut releases = Vec::new();
-            let mut seen_tracks = HashSet::<DbId>::new();
-            let mut seen_artists = HashSet::<DbId>::new();
-            let mut seen_releases = HashSet::<DbId>::new();
-
-            for library_db_id in library_db_ids {
-                for track in db::tracks::get_by_library(db, library_db_id)? {
-                    if track
-                        .db_id
-                        .clone()
-                        .map(DbId::from)
-                        .is_some_and(|id| seen_tracks.insert(id))
-                    {
-                        tracks.push(track);
-                    }
-                }
-                for artist in db::artists::get_by_library(db, library_db_id)? {
-                    if artist
-                        .db_id
-                        .clone()
-                        .map(DbId::from)
-                        .is_some_and(|id| seen_artists.insert(id))
-                    {
-                        artists.push(artist);
-                    }
-                }
-                for release in db::releases::get_direct(db, library_db_id)? {
-                    if release
-                        .db_id
-                        .clone()
-                        .map(DbId::from)
-                        .is_some_and(|id| seen_releases.insert(id))
-                    {
-                        releases.push(release);
-                    }
-                }
-            }
-
-            (tracks, artists, releases)
-        };
-
+    let library_ids = (!principal.permissions.contains(&db::Permission::Admin))
+        .then_some(&principal.accessible_library_ids);
+    let mut candidates = db::search::collect_candidates(db, library_ids)?;
     if !options.rating_filter.is_empty() {
-        let matching_target_ids =
+        let matching =
             db::ratings::target_ids_matching(db, principal.user_db_id, options.rating_filter)?;
-        tracks.retain(|track| {
-            track
-                .db_id
-                .clone()
-                .map(DbId::from)
-                .is_some_and(|id| matching_target_ids.contains(&id))
-        });
-        artists.retain(|artist| {
-            artist
-                .db_id
-                .clone()
-                .map(DbId::from)
-                .is_some_and(|id| matching_target_ids.contains(&id))
-        });
-        releases.retain(|release| {
-            release
-                .db_id
-                .clone()
-                .map(DbId::from)
-                .is_some_and(|id| matching_target_ids.contains(&id))
-        });
+        candidates
+            .tracks
+            .retain(|candidate| matching.contains(&candidate.db_id));
+        candidates
+            .artists
+            .retain(|candidate| matching.contains(&candidate.db_id));
+        candidates
+            .releases
+            .retain(|candidate| matching.contains(&candidate.db_id));
     }
-
-    let list_options = ListOptions {
-        sort: Vec::new(),
-        offset: None,
-        limit: Some(options.limit),
-        search_term: Some(options.query.clone()),
-    };
-
-    let tracks = db::tracks::query_items(tracks, &list_options)
-        .entries
+    let limit = options.limit as usize;
+    let tracks = db::search::rank(&candidates.tracks, &options.query, limit)
         .into_iter()
-        .map(|track| TitleHit {
-            id: track.id,
-            title: track.track_title,
+        .map(|candidate| TitleHit {
+            id: candidate.id,
+            title: candidate.text,
         })
         .collect();
-
-    let artists = db::artists::query_items(artists, &list_options)
-        .entries
+    let artists = db::search::rank(&candidates.artists, &options.query, limit)
         .into_iter()
-        .map(|artist| ArtistHit {
-            id: artist.id,
-            name: artist.artist_name,
+        .map(|candidate| ArtistHit {
+            id: candidate.id,
+            name: candidate.text,
         })
         .collect();
-
-    let releases = db::releases::query_items(releases, &list_options)
-        .entries
+    let releases = db::search::rank(&candidates.releases, &options.query, limit)
         .into_iter()
-        .map(|release| TitleHit {
-            id: release.id,
-            title: release.release_title,
+        .map(|candidate| TitleHit {
+            id: candidate.id,
+            title: candidate.text,
         })
         .collect();
 
@@ -213,6 +128,84 @@ mod tests {
             role_name: None,
             accessible_library_ids: HashSet::new(),
         })
+    }
+
+    #[test]
+    fn search_ranks_best_matches_before_applying_limit() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let principal = admin_principal(&mut db)?;
+        for title in ["Blue", "A b l u e", "Blue horizon", "B l u e"] {
+            insert_track(&mut db, title)?;
+            insert_artist(&mut db, title)?;
+            insert_release(&mut db, title)?;
+        }
+        let options = SearchOptions::new("blue".to_string(), Some(1), RatingFilter::default());
+        let results = search_accessible(&db, &principal, &options)?;
+        assert_eq!(results.tracks[0].title, "Blue");
+        assert_eq!(results.artists[0].name, "Blue");
+        assert_eq!(results.releases[0].title, "Blue");
+        Ok(())
+    }
+
+    #[test]
+    fn search_scopes_and_deduplicates_shared_entities() -> anyhow::Result<()> {
+        use crate::db::test_db::{
+            connect,
+            connect_artist,
+            insert_library,
+        };
+        let mut db = new_test_db()?;
+        let mut principal = admin_principal(&mut db)?;
+        principal.permissions.clear();
+        let first = insert_library(&mut db, "First", "/search-test/first")?;
+        let second = insert_library(&mut db, "Second", "/search-test/second")?;
+        let hidden = insert_library(&mut db, "Hidden", "/search-test/hidden")?;
+        for library in [first, second] {
+            principal
+                .accessible_library_ids
+                .insert(db::libraries::get_by_id(&db, library)?.unwrap().id);
+        }
+        principal
+            .accessible_library_ids
+            .insert("deleted-library".to_string());
+        let artist = insert_artist(&mut db, "Blue Artist")?;
+        let track = insert_track(&mut db, "Blue Track")?;
+        let release = insert_release(&mut db, "Blue Release")?;
+        for library in [first, second] {
+            connect(&mut db, library, release)?;
+        }
+        connect(&mut db, release, track)?;
+        connect_artist(&mut db, release, artist)?;
+        connect_artist(&mut db, release, artist)?;
+        let other_release = insert_release(&mut db, "Blue Other Release")?;
+        connect(&mut db, second, other_release)?;
+        connect(&mut db, other_release, track)?;
+        connect_artist(&mut db, other_release, artist)?;
+        let hidden_track = insert_track(&mut db, "Blue")?;
+        let hidden_artist = insert_artist(&mut db, "Blue")?;
+        let hidden_release = insert_release(&mut db, "Blue")?;
+        connect(&mut db, hidden, hidden_release)?;
+        connect(&mut db, hidden_release, hidden_track)?;
+        connect_artist(&mut db, hidden_release, hidden_artist)?;
+        let options = SearchOptions::new("blue".to_string(), Some(50), RatingFilter::default());
+        let results = search_accessible(&db, &principal, &options)?;
+        assert_eq!(results.tracks.len(), 1);
+        assert_eq!(results.tracks[0].title, "Blue Track");
+        assert_eq!(results.artists.len(), 1);
+        assert_eq!(results.artists[0].name, "Blue Artist");
+        assert_eq!(results.releases.len(), 2);
+        assert!(
+            results
+                .releases
+                .iter()
+                .all(|release| release.title != "Blue")
+        );
+        principal.accessible_library_ids.clear();
+        let results = search_accessible(&db, &principal, &options)?;
+        assert!(
+            results.tracks.is_empty() && results.artists.is_empty() && results.releases.is_empty()
+        );
+        Ok(())
     }
 
     #[test]
@@ -467,8 +460,53 @@ mod benches {
         });
     }
 
+    fn collect(b: &mut Bencher, size: usize, libraries: usize, admin: bool) {
+        let (db, principal) = fixture(size, libraries, admin);
+        let library_ids = (!admin).then_some(&principal.accessible_library_ids);
+        b.iter(|| black_box(db::search::collect_candidates(black_box(&db), library_ids).unwrap()));
+    }
+
+    fn ranking(b: &mut Bencher, query: &str) {
+        let (db, _) = fixture(100_000, 1, true);
+        let candidates = db::search::collect_candidates(&db, None).unwrap();
+        b.iter(|| {
+            black_box(db::search::rank(
+                black_box(&candidates.tracks),
+                black_box(query),
+                5,
+            ));
+            black_box(db::search::rank(
+                black_box(&candidates.artists),
+                black_box(query),
+                5,
+            ));
+            black_box(db::search::rank(
+                black_box(&candidates.releases),
+                black_box(query),
+                5,
+            ));
+        });
+    }
+
+    #[bench]
+    fn ranking_100k_broad(b: &mut Bencher) {
+        ranking(b, "a");
+    }
+    #[bench]
+    fn ranking_100k_selective(b: &mut Bencher) {
+        ranking(b, "vlthrz");
+    }
+    #[bench]
+    fn ranking_100k_no_match(b: &mut Bencher) {
+        ranking(b, "zzzzzz");
+    }
+
     macro_rules! queries {
         ($size:expr, $libraries:expr, $admin:expr) => {
+            #[bench]
+            fn collection(b: &mut Bencher) {
+                collect(b, $size, $libraries, $admin);
+            }
             #[bench]
             fn broad_limit_5(b: &mut Bencher) {
                 run(b, $size, $libraries, $admin, "a", 5);
