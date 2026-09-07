@@ -10,8 +10,14 @@ use aide::transform::TransformOperation;
 use axum::{
     Json,
     Router,
-    http::HeaderMap,
-    routing::get,
+    http::{
+        HeaderMap,
+        StatusCode,
+    },
+    routing::{
+        get,
+        patch,
+    },
 };
 use serde::{
     Deserialize,
@@ -27,6 +33,7 @@ use crate::{
     },
     services::{
         auth::{
+            require_manage_plugins,
             require_manage_server,
             require_permission,
         },
@@ -52,7 +59,7 @@ struct ServerInfoResponse {
     server_id: String,
     version: String,
     published_url: Option<String>,
-    setup_complete: bool,
+    setup: crate::services::setup::Status,
     auth_enabled: bool,
 }
 
@@ -302,15 +309,33 @@ async fn get_server_info() -> Result<Json<ServerInfoResponse>, AppError> {
         db::server::get(&db)?.ok_or_else(|| AppError::not_found("server info not initialized"))?;
 
     let config = STATE.config();
-    let setup_complete = db::roles::has_non_default_admin(&db)?;
+    drop(db);
+    let setup = crate::services::setup::status().await?;
 
     Ok(Json(ServerInfoResponse {
         server_id: info.id,
         version: env!("CARGO_PKG_VERSION").to_string(),
         published_url: config.published_url.clone(),
-        setup_complete,
+        setup,
         auth_enabled: config.auth.enabled,
     }))
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateSetupRequest {
+    plugin_selection_skipped: bool,
+}
+
+async fn update_setup(
+    headers: HeaderMap,
+    Json(request): Json<UpdateSetupRequest>,
+) -> Result<StatusCode, AppError> {
+    require_manage_plugins(&headers).await?;
+    let mut db = STATE.db.write().await;
+    db::server::set_plugin_selection_skipped(&mut *db, request.plugin_selection_skipped)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn get_server_settings(headers: HeaderMap) -> Result<Json<ServerSettingsResponse>, AppError> {
@@ -358,6 +383,15 @@ fn get_server_info_docs(op: TransformOperation) -> TransformOperation {
 }
 
 #[cfg(feature = "docgen")]
+fn update_setup_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Update server setup")
+        .description(
+            "Records or clears the plugin-selection skip. Requires manage_plugins permission.",
+        )
+        .response::<204, ()>()
+}
+
+#[cfg(feature = "docgen")]
 fn get_server_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get server settings").description(
         "Returns every server setting grouped for display with its effective value, default, source, lock state, and whether a change needs a restart, plus the restart-required settings changed since startup and the boot values in use.",
@@ -379,12 +413,15 @@ fn delete_server_settings_docs(op: TransformOperation) -> TransformOperation {
 }
 
 pub fn server_routes() -> Router {
-    Router::new().route("/public", get(get_server_info)).route(
-        "/settings",
-        get(get_server_settings)
-            .patch(update_server_settings)
-            .delete(delete_server_settings),
-    )
+    Router::new()
+        .route("/public", get(get_server_info))
+        .route("/setup", patch(update_setup))
+        .route(
+            "/settings",
+            get(get_server_settings)
+                .patch(update_server_settings)
+                .delete(delete_server_settings),
+        )
 }
 
 #[cfg(feature = "docgen")]
@@ -397,6 +434,7 @@ pub(crate) fn server_openapi_routes() -> aide::axum::ApiRouter {
 
     aide::axum::ApiRouter::new()
         .api_route("/public", get_with(get_server_info, get_server_info_docs))
+        .api_route("/setup", patch_with(update_setup, update_setup_docs))
         .api_route(
             "/settings",
             get_with(get_server_settings, get_server_settings_docs),
@@ -547,6 +585,93 @@ mod tests {
             .collect();
         keys.sort_unstable();
         Ok(keys)
+    }
+
+    #[tokio::test]
+    async fn public_setup_tracks_account_creation_and_explicit_skip() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        initialize_test_state(&[]).await.expect("request succeeds");
+        let Json(info) = get_server_info().await.expect("request succeeds");
+        let value = serde_json::to_value(info)?;
+        assert!(value.get("setup_complete").is_none());
+        assert_eq!(value["setup"]["account_required"], true);
+
+        let headers = headers_with(vec![Permission::Admin])
+            .await
+            .expect("request succeeds");
+        assert_eq!(
+            update_setup(
+                headers,
+                Json(UpdateSetupRequest {
+                    plugin_selection_skipped: true
+                })
+            )
+            .await
+            .expect("request succeeds"),
+            StatusCode::NO_CONTENT
+        );
+        let Json(info) = get_server_info().await.expect("request succeeds");
+        assert!(!info.setup.account_required);
+        assert!(!info.setup.plugin_selection_required);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn setup_changes_require_manage_plugins() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        initialize_test_state(&[]).await.expect("request succeeds");
+        let request = || {
+            Json(UpdateSetupRequest {
+                plugin_selection_skipped: true,
+            })
+        };
+        assert_eq!(
+            error(update_setup(HeaderMap::new(), request()).await)
+                .await
+                .0,
+            StatusCode::UNAUTHORIZED
+        );
+        let headers = headers_with(vec![Permission::ManageServer])
+            .await
+            .expect("request succeeds");
+        assert_eq!(
+            error(update_setup(headers, request()).await).await.0,
+            StatusCode::FORBIDDEN
+        );
+        assert!(!db::server::plugin_selection_skipped(
+            &*STATE.db.read().await
+        )?);
+        let headers = headers_with(vec![Permission::ManagePlugins])
+            .await
+            .expect("request succeeds");
+        update_setup(headers.clone(), request())
+            .await
+            .expect("request succeeds");
+        assert!(db::server::plugin_selection_skipped(
+            &*STATE.db.read().await
+        )?);
+        update_setup(
+            headers,
+            Json(UpdateSetupRequest {
+                plugin_selection_skipped: false,
+            }),
+        )
+        .await
+        .expect("request succeeds");
+        assert!(!db::server::plugin_selection_skipped(
+            &*STATE.db.read().await
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn setup_patch_rejects_unknown_or_missing_fields() {
+        for request in [
+            json!({}),
+            json!({"plugin_selection_skipped": true, "account_required": false}),
+        ] {
+            assert!(serde_json::from_value::<UpdateSetupRequest>(request).is_err());
+        }
     }
 
     #[tokio::test]
