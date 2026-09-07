@@ -13,10 +13,12 @@ services:
       - "4746:4746"
     volumes:
       - lyra-data:/lyra/data
+      - lyra-plugins:/lyra/plugins
       - /path/to/music:/music:ro
 
 volumes:
   lyra-data:
+  lyra-plugins:
 ```
 
 From that folder, run:
@@ -25,7 +27,7 @@ From that folder, run:
 docker compose up -d
 ```
 
-Your server is now running at `http://localhost:4746`. Its data is saved in the `lyra-data` Docker volume.
+Your server is now running at `http://localhost:4746`. Its data is saved in the `lyra-data` Docker volume, and installed plugins persist in `lyra-plugins`.
 
 ## 2. Add your music
 
@@ -52,6 +54,11 @@ curl --fail-with-body http://localhost:4746/api/users/login \
 ```
 
 The response contains a `token`. Use that value in place of `YOUR_SESSION_TOKEN` below.
+
+### Choose plugins
+
+Docker images start without plugins. [Install any plugins you want](plugin-repositories.md)
+before adding your library so metadata providers can participate in its first scan.
 
 ### Add your music
 

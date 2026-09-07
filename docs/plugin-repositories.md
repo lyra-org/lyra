@@ -4,6 +4,11 @@ Lyra installs plugins from Git repositories hosted on GitHub, GitLab, or
 Gitea/Forgejo (including self-hosted instances). A repository is either a
 single plugin or an index of plugins.
 
+Lyra includes its [own plugin catalog](https://git.lyra.pub/lyra/lyra?forge=gitlab)
+by default. Docker images start without installed plugins. Tagged CI builds pin
+the initial subscription to their release tag; existing subscriptions keep their
+ref across upgrades. Removing the subscription persists across restarts.
+
 ## Single-Plugin Repository
 
 A repository whose root contains a `plugin.json` is a single plugin. The

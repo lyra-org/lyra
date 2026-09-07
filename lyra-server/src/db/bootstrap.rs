@@ -180,6 +180,7 @@ pub(crate) fn create(config: &DbConfig) -> anyhow::Result<Created> {
     );
     let mut db = open(config.kind, db_path.as_ref())?;
     initialize(&mut db)?;
+    super::plugin_repositories::seed_default(&mut db)?;
     optimize_storage(&mut db, config);
     Ok(Created {
         db: Arc::new(RwLock::new(db)),

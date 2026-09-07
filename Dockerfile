@@ -49,6 +49,8 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 ARG LYRA_GIT_HASH=unknown
 ENV LYRA_GIT_HASH=${LYRA_GIT_HASH}
+ARG LYRA_RELEASE_TAG=
+ENV LYRA_RELEASE_TAG=${LYRA_RELEASE_TAG}
 
 WORKDIR /build
 
@@ -114,9 +116,8 @@ RUN useradd -r -s /bin/false lyra
 WORKDIR /lyra
 
 COPY --from=builder /build/target/release/lyra /usr/local/bin/lyra
-COPY --from=builder /build/plugins/ /lyra/plugins/
 
-RUN mkdir -p /lyra/data /lyra/static \
+RUN mkdir -p /lyra/data /lyra/static /lyra/plugins \
     && chown -R lyra:lyra /lyra
 
 USER lyra
