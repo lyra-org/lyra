@@ -115,7 +115,7 @@ pub(crate) fn get(db: &DbAny) -> anyhow::Result<Vec<Role>> {
                 .search()
                 .from("roles")
                 .where_()
-                .distance(CountComparison::Equal(1))
+                .distance(CountComparison::Equal(2))
                 .and()
                 .node()
                 .and()
@@ -408,6 +408,17 @@ mod tests {
             ]))?,
             vec![Permission::Admin, Permission::ManageUsers]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn list_roles_returns_builtin_roles() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        ensure_builtin_roles(&mut db)?;
+
+        let roles = get(&db)?;
+        let names: Vec<_> = roles.iter().map(|role| role.name.as_str()).collect();
+        assert_eq!(names, vec!["admin", "user"]);
         Ok(())
     }
 
