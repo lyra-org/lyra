@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use std::collections::{
+    BTreeMap,
     HashMap,
     HashSet,
 };
@@ -22,7 +23,7 @@ use nanoid::nanoid;
 
 use super::super::{
     TrackMetadata,
-    merging::merge_layers,
+    layers::LocalLayer,
 };
 use super::artists::{
     resolve_artist_ids,
@@ -72,22 +73,6 @@ fn select_release_id(db: &impl DbAccess, track_ids: &[DbId]) -> anyhow::Result<O
         .map(|(id, _)| id))
 }
 
-fn metadata_owned_fields_for_entity(
-    db: &impl DbAccess,
-    node_id: DbId,
-    providers: &[db::ProviderConfig],
-) -> anyhow::Result<HashSet<String>> {
-    let layers = db::metadata::layers::get_for_entity(db, node_id)?;
-    let merged = merge_layers(layers, providers);
-    let mut owned: HashSet<String> = merged.provenance.into_keys().collect();
-    owned.extend(
-        db::metadata::manual_overrides::field_names(db, node_id)?
-            .into_iter()
-            .map(|field| field.as_str().to_string()),
-    );
-    Ok(owned)
-}
-
 fn infer_release_artists(release_tracks: &[TrackIngest]) -> Vec<String> {
     if let Some(explicit) = release_tracks
         .iter()
@@ -133,56 +118,26 @@ fn parsed_relation_type_to_db(
     }
 }
 
-fn set_artist_type_if_missing(
-    db: &mut DbAnyTransactionMut<'_>,
-    artist_id: DbId,
-    artist_type: Option<lyra_metadata::ParsedArtistType>,
-    is_manual: bool,
-) -> anyhow::Result<()> {
-    let Some(artist_type) = artist_type else {
-        return Ok(());
-    };
-    if is_manual {
-        return Ok(());
-    }
-    let Some(mut artist) = db::artists::get_by_id(db, artist_id)? else {
-        return Ok(());
-    };
-    if artist.artist_type.is_none() {
-        artist.set_artist_type(parsed_artist_type_to_db(artist_type));
-        db::artists::update_in_transaction(db, &artist)?;
-    }
-    Ok(())
-}
-
-#[derive(Clone, Copy)]
-struct ArtistManualOwnership {
-    artist_type: bool,
-    relations: bool,
-}
-
-fn manual_ownership_for_artist(
+fn manual_relations_owned(
     db: &impl DbAccess,
-    ownership_by_artist: &mut HashMap<DbId, ArtistManualOwnership>,
+    owned_by_artist: &mut HashMap<DbId, bool>,
     artist_id: DbId,
-) -> anyhow::Result<ArtistManualOwnership> {
-    if let Some(ownership) = ownership_by_artist.get(&artist_id) {
-        return Ok(*ownership);
+) -> anyhow::Result<bool> {
+    if let Some(owned) = owned_by_artist.get(&artist_id) {
+        return Ok(*owned);
     }
-    let fields = db::metadata::manual_overrides::field_names(db, artist_id)?;
-    let ownership = ArtistManualOwnership {
-        artist_type: fields.contains(&ManualMetadataField::ArtistType),
-        relations: fields.contains(&ManualMetadataField::Relations),
-    };
-    ownership_by_artist.insert(artist_id, ownership);
-    Ok(ownership)
+    let owned =
+        db::metadata::manual_overrides::owns_field(db, artist_id, ManualMetadataField::Relations)?;
+    owned_by_artist.insert(artist_id, owned);
+    Ok(owned)
 }
 
 fn sync_scanned_artist_relations(
     db: &mut DbAnyTransactionMut<'_>,
     relations: &[lyra_metadata::ArtistRelationMetadata],
-    cache: &mut HashMap<String, DbId>,
-    manual_ownership_by_artist: &mut HashMap<DbId, ArtistManualOwnership>,
+    cache: &mut BTreeMap<String, DbId>,
+    relations_owned_by_artist: &mut HashMap<DbId, bool>,
+    scanned_artist_types: &mut HashMap<DbId, ArtistType>,
 ) -> anyhow::Result<()> {
     for relation in relations {
         let source_ids =
@@ -196,24 +151,16 @@ fn sync_scanned_artist_relations(
             continue;
         };
 
-        let source_manual =
-            manual_ownership_for_artist(db, manual_ownership_by_artist, source_artist_id)?;
-        let target_manual =
-            manual_ownership_for_artist(db, manual_ownership_by_artist, target_artist_id)?;
+        for (artist_id, artist_type) in [
+            (source_artist_id, relation.source_artist_type),
+            (target_artist_id, relation.target_artist_type),
+        ] {
+            if let Some(artist_type) = artist_type {
+                scanned_artist_types.insert(artist_id, parsed_artist_type_to_db(artist_type));
+            }
+        }
 
-        set_artist_type_if_missing(
-            db,
-            source_artist_id,
-            relation.source_artist_type,
-            source_manual.artist_type,
-        )?;
-        set_artist_type_if_missing(
-            db,
-            target_artist_id,
-            relation.target_artist_type,
-            target_manual.artist_type,
-        )?;
-        if source_manual.relations {
+        if manual_relations_owned(db, relations_owned_by_artist, source_artist_id)? {
             continue;
         }
         db::artists::relations::link(
@@ -226,6 +173,42 @@ fn sync_scanned_artist_relations(
     }
 
     Ok(())
+}
+
+/// Selects a catalog number only from a track whose normalized label matches
+/// the chosen release label.
+fn scanned_release_labels(release_tracks: &[TrackIngest]) -> Option<Vec<serde_json::Value>> {
+    let name = release_tracks.iter().find_map(|track| {
+        track
+            .meta
+            .label
+            .as_deref()
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_string)
+    })?;
+
+    let picked = db::labels::normalize_label_name(&name);
+    let catalog_number = release_tracks.iter().find_map(|track| {
+        let track_label = track.meta.label.as_deref()?;
+        if db::labels::normalize_label_name(track_label) != picked {
+            return None;
+        }
+        track
+            .meta
+            .catalog_number
+            .as_deref()
+            .map(str::trim)
+            .filter(|catalog_number| !catalog_number.is_empty())
+            .map(str::to_string)
+    });
+
+    let mut label = serde_json::Map::new();
+    label.insert("name".to_string(), name.into());
+    if let Some(catalog_number) = catalog_number {
+        label.insert("catalog_number".to_string(), catalog_number.into());
+    }
+    Some(vec![label.into()])
 }
 
 fn release_date_from_track(track: &TrackMetadata) -> Option<String> {
@@ -253,9 +236,9 @@ fn persist_release_inner(
 ) -> anyhow::Result<ReleaseIngestResult> {
     ensure_index(db, "scan_name")?;
 
-    let mut artist_cache: HashMap<String, DbId> = HashMap::new();
-    let mut manual_ownership_by_artist = HashMap::new();
-    let first_track = release_tracks[0].meta.clone();
+    let mut artist_cache: BTreeMap<String, DbId> = BTreeMap::new();
+    let mut relations_owned_by_artist = HashMap::new();
+    let mut scanned_artist_types: HashMap<DbId, ArtistType> = HashMap::new();
     let release_date = release_tracks
         .iter()
         .filter_map(|track| release_date_from_track(&track.meta))
@@ -265,7 +248,6 @@ fn persist_release_inner(
         .filter_map(|track| track.track_db_id)
         .collect();
     let existing_release_id = select_release_id(db, &track_ids_for_release)?;
-    let providers = db::providers::get(db)?;
 
     let now_secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -281,10 +263,7 @@ fn persist_release_inner(
         }
     }
 
-    let (release_db_id, release_provider_fields) = if let Some(release_db_id) = existing_release_id
-    {
-        let release_provider_fields =
-            metadata_owned_fields_for_entity(db, release_db_id, &providers)?;
+    let release_db_id = if let Some(release_db_id) = existing_release_id {
         let mut release = db::releases::get_by_id(db, release_db_id)?.unwrap_or(Release {
             db_id: Some(release_db_id.into()),
             id: nanoid!(),
@@ -296,23 +275,13 @@ fn persist_release_inner(
             created_at: now_secs,
             ctime: earliest_ctime,
         });
-        if !release_provider_fields.contains(ManualMetadataField::ReleaseTitle.as_str()) {
-            release.set_release_title(release_title.to_string());
-        }
-        if !release_provider_fields.contains(ManualMetadataField::ReleaseDate.as_str()) {
-            if let Some(release_date) = release_date {
-                release.set_release_date(release_date);
-            } else {
-                release.release_date = None;
-            }
-        }
         // Only overwrite when the scan actually resolved one; `None` here means
         // "not determined", never "cleared".
         if earliest_ctime.is_some() {
             release.ctime = earliest_ctime;
         }
         db::releases::update_in_transaction(db, &release)?;
-        (release_db_id, release_provider_fields)
+        release_db_id
     } else {
         let release = Release {
             db_id: None,
@@ -320,7 +289,7 @@ fn persist_release_inner(
             release_title: release_title.to_string(),
             sort_title: None,
             release_type: None,
-            release_date,
+            release_date: None,
             locked: None,
             created_at: now_secs,
             ctime: earliest_ctime,
@@ -334,62 +303,30 @@ fn persist_release_inner(
                 .to(release_db_id)
                 .query(),
         )?;
-        (release_db_id, HashSet::new())
+        release_db_id
     };
 
     ensure_owned_edge(db, library_db_id, release_db_id)?;
 
-    if !release_provider_fields.contains(ManualMetadataField::Genres.as_str())
-        && let Some(genres) = &first_track.genres
-        && !genres.is_empty()
-    {
-        db::genres::sync_release_genres(db, release_db_id, genres)?;
-    }
-
-    // Tag-sourced absence ≡ "no labels, drop any stale entries."
-    //
-    // Two-pass: pick the label from the first track that tags one, then scan
-    // for a catalog number only on tracks with the same (normalized) label
-    // name. Prevents Frankensteining a (label, cat#) pair that no single
-    // track actually carries — and cat# tagged on a later track with the
-    // same label is still recovered.
-    if !release_provider_fields.contains(ManualMetadataField::Labels.as_str()) {
-        let release_label_name = release_tracks.iter().find_map(|t| {
-            t.meta
-                .label
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-        });
-
-        let mut inputs: Vec<db::labels::LabelInput> = Vec::new();
-        if let Some(name) = release_label_name {
-            // Compare via `normalize_label_name` (NFC + lowercase) so non-ASCII
-            // case pairs ("Éditions Mego" vs "éditions mego") converge —
-            // `eq_ignore_ascii_case` would drop the cat# match here.
-            let picked = db::labels::normalize_label_name(&name);
-            let catalog_number = release_tracks.iter().find_map(|t| {
-                let track_label = t.meta.label.as_deref()?;
-                if db::labels::normalize_label_name(track_label) != picked {
-                    return None;
-                }
-                t.meta
-                    .catalog_number
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-            });
-
-            inputs.push(db::labels::LabelInput {
-                name,
-                catalog_number,
-                external_id: None,
-            });
-        }
-        db::labels::sync_release_labels_inside_tx(db, release_db_id, &inputs)?;
-    }
+    let mut release_layer = LocalLayer::default();
+    release_layer.supply(
+        ManualMetadataField::ReleaseTitle,
+        Some(release_title.to_string()),
+    );
+    release_layer.supply(ManualMetadataField::ReleaseDate, release_date);
+    release_layer.supply(
+        ManualMetadataField::Genres,
+        release_tracks[0]
+            .meta
+            .genres
+            .clone()
+            .filter(|genres| !genres.is_empty()),
+    );
+    release_layer.supply(
+        ManualMetadataField::Labels,
+        scanned_release_labels(&release_tracks),
+    );
+    release_layer.save(db, release_db_id)?;
 
     // Derive release artists: explicit tag > majority track artists > empty (compilation)
     let release_artists = infer_release_artists(&release_tracks);
@@ -405,13 +342,21 @@ fn persist_release_inner(
     } else {
         resolve_artist_ids(db, &release_artists, &mut artist_cache)?
     };
-    if !release_provider_fields.contains(ManualMetadataField::Credits.as_str()) {
+    if !db::metadata::manual_overrides::owns_field(db, release_db_id, ManualMetadataField::Credits)?
+    {
         sync_artist_edges(db, release_db_id, &release_artist_ids, CreditType::Artist)?;
     }
 
+    // Infer across the whole release, not just this batch: an incremental scan
+    // of one disc directory would otherwise shrink `disc_total` to that disc.
     let inferred_disc_total = release_tracks
         .iter()
         .filter_map(|track| track.meta.disc)
+        .chain(
+            db::tracks::get_direct(db, release_db_id)?
+                .into_iter()
+                .filter_map(|track| track.disc),
+        )
         .max();
 
     let mut persisted_track_ids = Vec::new();
@@ -421,11 +366,6 @@ fn persist_release_inner(
 
     for track in release_tracks {
         let is_existing_track = track.track_db_id.is_some();
-        let track_provider_fields = if let Some(track_db_id) = track.track_db_id {
-            metadata_owned_fields_for_entity(db, track_db_id, &providers)?
-        } else {
-            HashSet::new()
-        };
 
         let TrackMetadata {
             entry_db_id,
@@ -484,44 +424,6 @@ fn persist_release_inner(
                 created_at: now_secs,
                 ctime: entry_ctime,
             });
-            if !track_provider_fields.contains(ManualMetadataField::TrackTitle.as_str()) {
-                existing.set_track_title(title.unwrap_or_default());
-            }
-            if !track_provider_fields.contains(ManualMetadataField::Year.as_str()) {
-                if let Some(year) = year {
-                    existing.set_year(year);
-                } else {
-                    existing.year = None;
-                }
-            }
-            if !track_provider_fields.contains(ManualMetadataField::Disc.as_str()) {
-                if let Some(disc) = disc {
-                    existing.set_disc(disc);
-                } else {
-                    existing.disc = None;
-                }
-            }
-            if !track_provider_fields.contains(ManualMetadataField::DiscTotal.as_str()) {
-                if let Some(explicit_disc_total) = disc_total {
-                    existing.set_disc_total(explicit_disc_total);
-                } else if existing.disc_total.is_none() {
-                    existing.disc_total = inferred_disc_total;
-                }
-            }
-            if !track_provider_fields.contains(ManualMetadataField::Track.as_str()) {
-                if let Some(track_number) = track_number {
-                    existing.set_track(track_number);
-                } else {
-                    existing.track = None;
-                }
-            }
-            if !track_provider_fields.contains(ManualMetadataField::TrackTotal.as_str()) {
-                if let Some(track_total) = track_total {
-                    existing.set_track_total(track_total);
-                } else {
-                    existing.track_total = None;
-                }
-            }
             // Duration and audio properties are intrinsic to the file, not tags:
             // there is no "user removed it" case, so `None` only ever means the
             // probe could not determine the value. Keep what is stored.
@@ -541,13 +443,13 @@ fn persist_release_inner(
             let track_db = Track {
                 db_id: None,
                 id: nanoid!(),
-                track_title: title.unwrap_or_default(),
+                track_title: title.clone().unwrap_or_default(),
                 sort_title: None,
-                year,
-                disc,
-                disc_total: effective_disc_total,
-                track: track_number,
-                track_total,
+                year: None,
+                disc: None,
+                disc_total: None,
+                track: None,
+                track_total: None,
                 duration_ms,
                 sample_rate_hz,
                 channel_count,
@@ -568,6 +470,15 @@ fn persist_release_inner(
             )?;
             track_db_id
         };
+
+        let mut track_layer = LocalLayer::default();
+        track_layer.supply(ManualMetadataField::TrackTitle, title);
+        track_layer.supply(ManualMetadataField::Year, year);
+        track_layer.supply(ManualMetadataField::Disc, disc);
+        track_layer.supply(ManualMetadataField::DiscTotal, effective_disc_total);
+        track_layer.supply(ManualMetadataField::Track, track_number);
+        track_layer.supply(ManualMetadataField::TrackTotal, track_total);
+        track_layer.save(db, track_db_id)?;
 
         let source_kind = source_kind.unwrap_or_else(|| "embedded_tags".to_string());
         let source_key = source_key.unwrap_or_else(|| format!("entry:{}:embedded", entry_db_id.0));
@@ -639,14 +550,19 @@ fn persist_release_inner(
         } else {
             resolve_artist_ids(db, &track_artist_names, &mut artist_cache)?
         };
-        if !track_provider_fields.contains(ManualMetadataField::Credits.as_str()) {
+        if !db::metadata::manual_overrides::owns_field(
+            db,
+            track_db_id,
+            ManualMetadataField::Credits,
+        )? {
             sync_artist_edges(db, track_db_id, &track_artist_ids, CreditType::Artist)?;
         }
         sync_scanned_artist_relations(
             db,
             &artist_relations,
             &mut artist_cache,
-            &mut manual_ownership_by_artist,
+            &mut relations_owned_by_artist,
+            &mut scanned_artist_types,
         )?;
 
         let release_delta = db::releases::replace_track_release(db, release_db_id, track_db_id)?;
@@ -657,6 +573,18 @@ fn persist_release_inner(
         if !persisted_track_ids.contains(&track_db_id) {
             persisted_track_ids.push(track_db_id);
         }
+    }
+
+    for (scan_name, artist_db_id) in artist_cache {
+        let mut artist_layer = LocalLayer::default();
+        artist_layer.supply(ManualMetadataField::ArtistName, Some(scan_name));
+        artist_layer.supply(
+            ManualMetadataField::ArtistType,
+            scanned_artist_types
+                .get(&artist_db_id)
+                .map(ArtistType::to_string),
+        );
+        artist_layer.save(db, artist_db_id)?;
     }
 
     if target_gained_track {

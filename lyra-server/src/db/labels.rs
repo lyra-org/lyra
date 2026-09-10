@@ -206,31 +206,6 @@ pub(crate) fn resolve_inside_tx(
     Ok(label_id)
 }
 
-/// Resolve-and-link a label to a release atomically. Prefer this over
-/// [`resolve`] + [`upsert_release_label`] in separate transactions: a partial
-/// failure between them would leave a `Label` without its `ReleaseLabel`,
-/// and a retry would double-link.
-///
-/// Callers must check the release's lock state first and skip on locked
-/// releases — resolving without linking leaks a Label that refcount GC
-/// cannot reach.
-pub(crate) fn add_label_to_release(
-    db: &mut DbAny,
-    release_id: DbId,
-    request: &ResolveLabel,
-    catalog_number: Option<&str>,
-) -> anyhow::Result<DbId> {
-    db.transaction_mut(|t| -> anyhow::Result<DbId> {
-        let label_id = resolve_inside_tx(t, request)?;
-        let catalog_update = match catalog_number {
-            Some(catalog_number) => CatalogNumberUpdate::Replace(Some(catalog_number)),
-            None => CatalogNumberUpdate::Keep,
-        };
-        upsert_release_label(t, release_id, label_id, catalog_update)?;
-        Ok(label_id)
-    })
-}
-
 fn find_release_label(
     db: &impl DbAccess,
     release_id: DbId,
@@ -357,33 +332,22 @@ fn update_release_label_catalog(
     )
 }
 
-enum CatalogNumberUpdate<'a> {
-    Keep,
-    Replace(Option<&'a str>),
-}
-
 /// Upsert the `(release_id, label_id)` pairing's catalog number.
 /// Caller-priority wins; policy (a) enforces one `ReleaseLabel` per pair.
 ///
-/// Call through [`sync_release_labels`] or [`add_label_to_release`] — both
-/// wrap this with label resolution under a single transaction. Calling it
-/// directly outside one risks half-built state on partial failure.
+/// Call through [`sync_release_labels`], which wraps this with label resolution
+/// under a single transaction. Calling it directly outside one risks half-built
+/// state on partial failure.
 fn upsert_release_label(
     db: &mut DbAnyTransactionMut<'_>,
     release_id: DbId,
     label_id: DbId,
-    catalog_update: CatalogNumberUpdate<'_>,
+    catalog_number: Option<&str>,
 ) -> anyhow::Result<DbId> {
     if let Some((rl_id, _existing)) = find_release_label(db, release_id, label_id)? {
-        if let CatalogNumberUpdate::Replace(catalog_number) = catalog_update {
-            update_release_label_catalog(db, rl_id, catalog_number)?;
-        }
+        update_release_label_catalog(db, rl_id, catalog_number)?;
         Ok(rl_id)
     } else {
-        let catalog_number = match catalog_update {
-            CatalogNumberUpdate::Keep => None,
-            CatalogNumberUpdate::Replace(catalog_number) => catalog_number,
-        };
         insert_release_label(db, release_id, label_id, catalog_number)
     }
 }
@@ -449,12 +413,7 @@ pub(crate) fn migrate_release_labels_inside_tx(
         if winner_label_ids.contains(&entry.label_id) {
             continue;
         }
-        upsert_release_label(
-            db,
-            winner,
-            entry.label_id,
-            CatalogNumberUpdate::Replace(entry.catalog_number.as_deref()),
-        )?;
+        upsert_release_label(db, winner, entry.label_id, entry.catalog_number.as_deref())?;
     }
     Ok(())
 }
@@ -516,6 +475,7 @@ fn desired_diff_key(label_id: DbId, catalog_number: Option<&str>) -> (DbId, Opti
 /// diff, upsert, and orphan-GC sequence in a single `transaction_mut` so
 /// partial failures roll back cleanly. Policy (a): duplicate inputs collapse
 /// to one `ReleaseLabel` per `(release_id, label_id)` pair.
+#[cfg(test)]
 pub(crate) fn sync_release_labels(
     db: &mut DbAny,
     release_id: DbId,
@@ -590,12 +550,7 @@ pub(crate) fn sync_release_label_links_inside_tx(
     }
 
     for (label_id, catalog_number) in &desired_by_label {
-        upsert_release_label(
-            db,
-            release_id,
-            *label_id,
-            CatalogNumberUpdate::Replace(catalog_number.as_deref()),
-        )?;
+        upsert_release_label(db, release_id, *label_id, catalog_number.as_deref())?;
     }
 
     for entry in existing {
@@ -1071,12 +1026,7 @@ mod tests {
         let release_id = insert_release(&mut db, "Blue Train")?;
 
         db.transaction_mut(|t| -> anyhow::Result<()> {
-            upsert_release_label(
-                t,
-                release_id,
-                label_id,
-                CatalogNumberUpdate::Replace(Some("BN-1577")),
-            )?;
+            upsert_release_label(t, release_id, label_id, Some("BN-1577"))?;
             Ok(())
         })?;
 
@@ -1094,61 +1044,14 @@ mod tests {
         let release_id = insert_release(&mut db, "Blue Train")?;
 
         db.transaction_mut(|t| -> anyhow::Result<()> {
-            upsert_release_label(
-                t,
-                release_id,
-                label_id,
-                CatalogNumberUpdate::Replace(Some("123")),
-            )?;
-            upsert_release_label(
-                t,
-                release_id,
-                label_id,
-                CatalogNumberUpdate::Replace(Some("BN-1577")),
-            )?;
+            upsert_release_label(t, release_id, label_id, Some("123"))?;
+            upsert_release_label(t, release_id, label_id, Some("BN-1577"))?;
             Ok(())
         })?;
 
         let labels = get_for_release(&db, release_id)?;
         assert_eq!(labels.len(), 1, "duplicate edges must not accumulate");
         assert_eq!(labels[0].catalog_number.as_deref(), Some("BN-1577"));
-        Ok(())
-    }
-
-    #[test]
-    fn add_label_to_release_keeps_a_catalog_number_it_does_not_supply() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let release_id = insert_release(&mut db, "Blue Train")?;
-
-        add_label_to_release(
-            &mut db,
-            release_id,
-            &ResolveLabel {
-                name: "Blue Note",
-                external_id: None,
-            },
-            Some("BN-1577"),
-        )?;
-
-        // `lyra.labels.add(release_id, { name = "Blue Note" })` — a Luau table
-        // cannot say "present but nil", so an omitted catalog number is a patch.
-        add_label_to_release(
-            &mut db,
-            release_id,
-            &ResolveLabel {
-                name: "Blue Note",
-                external_id: None,
-            },
-            None,
-        )?;
-
-        let labels = get_for_release(&db, release_id)?;
-        assert_eq!(labels.len(), 1);
-        assert_eq!(
-            labels[0].catalog_number.as_deref(),
-            Some("BN-1577"),
-            "an omitted catalog number must not erase a stored one"
-        );
         Ok(())
     }
 

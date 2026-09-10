@@ -1698,7 +1698,7 @@ local function process_release(
 		for _, genre: ReleaseGenre in release_genres do
 			if genre.name then
 				table.insert(genre_names, genre.name)
-				genres.add(release_db_id, {
+				genres.resolve({
 					name = genre.name,
 					external_id = if genre.id
 						then {

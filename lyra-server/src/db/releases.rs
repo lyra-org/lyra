@@ -165,10 +165,6 @@ impl Release {
     pub(crate) fn set_sort_title(&mut self, sort_title: String) {
         self.sort_title = Some(sort_title);
     }
-
-    pub(crate) fn set_release_date(&mut self, release_date: String) {
-        self.release_date = normalize_release_date(&release_date);
-    }
 }
 
 impl_luau_record_userdata!(
@@ -188,7 +184,6 @@ impl_luau_record_userdata!(
     methods {
         set_release_title(release_title: String),
         set_sort_title(sort_title: String),
-        set_release_date(release_date: String),
     }
 );
 

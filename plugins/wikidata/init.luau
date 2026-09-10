@@ -519,9 +519,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 		return nil
 	end
 
-	-- Step 3: Register genres via genres.add() with pcall to avoid partial writes.
-	-- genres.add() is idempotent — re-adding an existing genre is a no-op via
-	-- the resolve() lookup (matches by external ID or name).
+	-- Step 3: Resolve genre identities before saving their names to the layer.
 	local genre_names: { JsonValue } = {}
 	local genre_db_ids: { [string]: number } = {} -- QID → db_id mapping
 	local all_genres_ok = true
@@ -549,7 +547,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 			end
 		end
 
-		local add_ok, genre_db_id = pcall(genres.add, release_db_id, {
+		local resolve_ok, genre_db_id = pcall(genres.resolve, {
 			name = genre.label,
 			external_id = {
 				provider_id = "wikidata",
@@ -559,7 +557,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 			aliases = alias_inputs,
 		})
 
-		if add_ok and genre_db_id then
+		if resolve_ok and genre_db_id then
 			table.insert(genre_names, layer_name :: JsonValue)
 			genre_db_ids[genre.qid] = genre_db_id
 		else
@@ -611,7 +609,7 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 				end
 			end
 
-			local parent_request: genres.GenreAddRequest = {
+			local parent_request: genres.GenreResolveRequest = {
 				name = parent.label,
 				external_id = {
 					provider_id = "wikidata",
