@@ -46,6 +46,40 @@ pub(crate) fn get_for_entity(
     Ok(layers)
 }
 
+pub(crate) fn entity_ids_for_source(
+    db: &impl DbAccess,
+    source_id: &str,
+) -> anyhow::Result<Vec<DbId>> {
+    let layer_ids = db
+        .exec(
+            QueryBuilder::search()
+                .index("source_id")
+                .value(source_id)
+                .query(),
+        )?
+        .ids();
+    let mut entity_ids = Vec::with_capacity(layer_ids.len());
+    for layer_id in layer_ids.into_iter().filter(|id| id.0 > 0) {
+        let result = db.exec(
+            QueryBuilder::search()
+                .to(layer_id)
+                .where_()
+                .edge()
+                .end_where()
+                .query(),
+        )?;
+        entity_ids.extend(
+            result
+                .elements
+                .into_iter()
+                .filter_map(|edge| (edge.to == layer_id && edge.from.0 > 0).then_some(edge.from)),
+        );
+    }
+    entity_ids.sort_unstable();
+    entity_ids.dedup();
+    Ok(entity_ids)
+}
+
 pub(crate) fn upsert(db: &mut DbAny, node_id: DbId, layer: &MetadataLayer) -> anyhow::Result<DbId> {
     db.transaction_mut(|t| upsert_inside_tx(t, node_id, layer))
 }
@@ -190,6 +224,39 @@ mod tests {
         assert_eq!(layers[0].fields, first.fields);
         assert_eq!(layers[0].updated_at, first.updated_at);
 
+        Ok(())
+    }
+
+    #[test]
+    fn entity_ids_for_source_returns_layer_owners() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        db.exec_mut(QueryBuilder::insert().index("source_id").query())?;
+        let first = insert_entity(&mut db)?;
+        let second = insert_entity(&mut db)?;
+        let other = insert_entity(&mut db)?;
+
+        for (node_id, source_id) in [
+            (first, "musicbrainz"),
+            (second, "musicbrainz"),
+            (other, "wikidata"),
+        ] {
+            upsert(
+                &mut db,
+                node_id,
+                &MetadataLayer {
+                    db_id: None,
+                    source_id: source_id.to_string(),
+                    fields: "{}".to_string(),
+                    updated_at: 1,
+                },
+            )?;
+        }
+
+        assert_eq!(
+            entity_ids_for_source(&db, "musicbrainz")?,
+            vec![first, second]
+        );
+        assert!(entity_ids_for_source(&db, "missing")?.is_empty());
         Ok(())
     }
 }

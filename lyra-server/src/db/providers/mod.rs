@@ -91,7 +91,7 @@ pub(crate) fn upsert(db: &mut DbAny, provider: &ProviderConfig) -> anyhow::Resul
 }
 
 pub(crate) fn update_priority(
-    db: &mut DbAny,
+    db: &mut impl super::DbAccess,
     provider_id: &str,
     priority: u32,
 ) -> anyhow::Result<()> {

@@ -54,12 +54,22 @@ pub(crate) async fn update_provider_priority(
     priority: u32,
 ) -> Result<ProviderConfig, ProviderAdminError> {
     let mut db = STATE.db.write().await;
-    db::providers::update_priority(&mut db, provider_id, priority)?;
-
-    db::providers::get(&db)?
+    let mut config = db::providers::get(&db)?
         .into_iter()
         .find(|provider| provider.provider_id == provider_id)
-        .ok_or_else(|| ProviderAdminError::ProviderNotFound(provider_id.to_string()))
+        .ok_or_else(|| ProviderAdminError::ProviderNotFound(provider_id.to_string()))?;
+    db.transaction_mut(|transaction| -> anyhow::Result<()> {
+        db::providers::update_priority(transaction, provider_id, priority)?;
+        for entity_id in db::metadata::layers::entity_ids_for_source(transaction, provider_id)? {
+            crate::services::metadata::merging::apply_merged_metadata_to_entity_inside_tx(
+                transaction,
+                entity_id,
+            )?;
+        }
+        Ok(())
+    })?;
+    config.priority = priority;
+    Ok(config)
 }
 
 pub(crate) async fn list_entity_external_ids(
@@ -126,6 +136,9 @@ pub(crate) async fn set_entity_locked(
     if !db::entities::set_locked(&mut db, entity_db_id, locked)? {
         return Err(ProviderAdminError::EntityNotFound(entity_id.to_string()));
     }
+    if !locked {
+        crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, entity_db_id)?;
+    }
     Ok(())
 }
 
@@ -148,4 +161,129 @@ pub(crate) async fn refresh_entity_by_id(
             ProviderServiceError::Internal(error) => ProviderAdminError::Internal(error),
             other => ProviderAdminError::Internal(anyhow::Error::new(other)),
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{
+        HashMap,
+        HashSet,
+    };
+
+    use super::*;
+    use crate::db::test_db::insert_track;
+
+    #[tokio::test]
+    async fn unlocking_applies_layers_recorded_while_locked() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
+
+        let track_id = {
+            let mut db = STATE.db.write().await;
+            let track_db_id = insert_track(&mut db, "Curated Title")?;
+            let mut track = db::tracks::get_by_id(&db, track_db_id)?
+                .ok_or_else(|| anyhow::anyhow!("track missing"))?;
+            track.locked = Some(true);
+            db::tracks::update(&mut db, &track)?;
+            db::providers::upsert(
+                &mut db,
+                &ProviderConfig {
+                    db_id: None,
+                    provider_id: "test".to_string(),
+                    display_name: "Test".to_string(),
+                    priority: 100,
+                    enabled: true,
+                },
+            )?;
+            crate::services::metadata::layers::save_provider_layer(
+                &mut db,
+                track_db_id,
+                "test",
+                &HashMap::from([(
+                    "track_title".to_string(),
+                    serde_json::json!("Provider Title"),
+                )]),
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashSet::new(),
+            )?;
+            assert_eq!(
+                db::tracks::get_by_id(&db, track_db_id)?
+                    .ok_or_else(|| anyhow::anyhow!("track missing"))?
+                    .track_title,
+                "Curated Title"
+            );
+            track.id
+        };
+
+        set_entity_locked(&track_id, false).await?;
+
+        let db = STATE.db.read().await;
+        let track_db_id = db::lookup::find_node_id_by_id(&db, &track_id)?
+            .ok_or_else(|| anyhow::anyhow!("track node missing"))?;
+        assert_eq!(
+            db::tracks::get_by_id(&db, track_db_id)?
+                .ok_or_else(|| anyhow::anyhow!("track missing"))?
+                .track_title,
+            "Provider Title"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn changing_priority_reapplies_affected_entities() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
+
+        let track_id = {
+            let mut db = STATE.db.write().await;
+            let track_db_id = insert_track(&mut db, "Local Title")?;
+            for (provider_id, priority, title) in
+                [("low", 10, "Low Title"), ("high", 100, "High Title")]
+            {
+                db::providers::upsert(
+                    &mut db,
+                    &ProviderConfig {
+                        db_id: None,
+                        provider_id: provider_id.to_string(),
+                        display_name: provider_id.to_string(),
+                        priority,
+                        enabled: true,
+                    },
+                )?;
+                crate::services::metadata::layers::save_provider_layer(
+                    &mut db,
+                    track_db_id,
+                    provider_id,
+                    &HashMap::from([("track_title".to_string(), serde_json::json!(title))]),
+                    &HashMap::new(),
+                    &HashMap::new(),
+                    &HashSet::new(),
+                )?;
+            }
+            assert_eq!(
+                db::tracks::get_by_id(&db, track_db_id)?
+                    .ok_or_else(|| anyhow::anyhow!("track missing"))?
+                    .track_title,
+                "High Title"
+            );
+            db::tracks::get_by_id(&db, track_db_id)?
+                .ok_or_else(|| anyhow::anyhow!("track missing"))?
+                .id
+        };
+
+        let config = update_provider_priority("low", 200).await?;
+        assert_eq!(config.priority, 200);
+
+        let db = STATE.db.read().await;
+        let track_db_id = db::lookup::find_node_id_by_id(&db, &track_id)?
+            .ok_or_else(|| anyhow::anyhow!("track node missing"))?;
+        assert_eq!(
+            db::tracks::get_by_id(&db, track_db_id)?
+                .ok_or_else(|| anyhow::anyhow!("track missing"))?
+                .track_title,
+            "Low Title"
+        );
+        Ok(())
+    }
 }

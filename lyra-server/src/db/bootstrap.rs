@@ -83,6 +83,7 @@ const CORE_INDEXES: &[&str] = &[
     "name_key",
     "path_key",
     "provider_id",
+    "source_id",
     "track_id",
     "state",
     "session_alias",
