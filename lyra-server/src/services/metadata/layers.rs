@@ -27,20 +27,6 @@ use crate::db::{
 /// Reserved source for file-derived metadata; plugin registration rejects it.
 pub(crate) const LOCAL_SOURCE_ID: &str = "local";
 
-fn is_entity_locked(db: &DbAny, node_id: DbId) -> anyhow::Result<bool> {
-    if let Some(release) = db::releases::get_by_id(db, node_id)? {
-        return Ok(release.locked.unwrap_or(false));
-    }
-    if let Some(track) = db::tracks::get_by_id(db, node_id)? {
-        return Ok(track.locked.unwrap_or(false));
-    }
-    if let Some(artist) = db::artists::get_by_id(db, node_id)? {
-        return Ok(artist.locked.unwrap_or(false));
-    }
-
-    Ok(false)
-}
-
 pub(crate) fn ensure_entity_exists(db: &DbAny, node_id: DbId) -> anyhow::Result<()> {
     let exists = db::releases::get_by_id(db, node_id)?.is_some()
         || db::tracks::get_by_id(db, node_id)?.is_some()
@@ -164,12 +150,12 @@ pub(crate) fn save_provider_layer(
 ) -> anyhow::Result<()> {
     ensure_entity_exists(db, node_id)?;
 
-    let is_locked = is_entity_locked(db, node_id)?;
     let artist = db::artists::get_by_id(db, node_id)?;
     let artist_type_conflict =
         artist_type_conflicts_with_layer(artist.as_ref(), fields, node_id, provider_id);
 
-    if !is_locked && !artist_type_conflict && !fields.is_empty() {
+    // Save layers while locked; only application is suppressed.
+    if !artist_type_conflict && !fields.is_empty() {
         let fields_json = serde_json::to_string(fields)?;
         let existing_layer = db::metadata::layers::get_for_entity(db, node_id)?
             .into_iter()

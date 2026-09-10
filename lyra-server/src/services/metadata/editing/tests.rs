@@ -1522,3 +1522,37 @@ fn label_access_loss_after_preview_is_rejected() -> anyhow::Result<()> {
     assert!(db::labels::get_for_release(&db, target_release_id)?.is_empty());
     Ok(())
 }
+
+#[test]
+fn inherit_clears_a_scalar_that_no_layer_supplies() -> anyhow::Result<()> {
+    let mut db = new_test_db()?;
+    let principal = principal("user-1");
+    let track_id = insert_track(&mut db, "Track")?;
+
+    let manual = preview_edit(
+        &db,
+        &principal,
+        track_id,
+        vec![set(MetadataField::SortTitle, json!("Manual Sort"))],
+    )?;
+    apply(&mut db, &principal, track_id, &manual)?;
+
+    let inherited = preview_edit(
+        &db,
+        &principal,
+        track_id,
+        vec![inherit(MetadataField::SortTitle)],
+    )?;
+    assert_eq!(inherited.expected[0].after.value, Value::Null);
+
+    apply(&mut db, &principal, track_id, &inherited)?;
+
+    assert_eq!(
+        db::tracks::get_by_id(&db, track_id)?
+            .expect("track exists")
+            .sort_title,
+        None
+    );
+    assert!(db::metadata::manual_overrides::get(&db, track_id)?.is_none());
+    Ok(())
+}

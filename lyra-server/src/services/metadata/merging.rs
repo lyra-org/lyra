@@ -37,6 +37,82 @@ pub(crate) struct MergedMetadata {
     manual_fields: HashSet<ManualMetadataField>,
 }
 
+/// A field update, explicit clear, or instruction to preserve the stored value.
+enum Resolution<T> {
+    Value(T),
+    Cleared,
+    Keep,
+}
+
+impl<T: Default> Resolution<T> {
+    fn value_to_write(self) -> Option<T> {
+        match self {
+            Self::Value(value) => Some(value),
+            Self::Cleared => Some(T::default()),
+            Self::Keep => None,
+        }
+    }
+}
+
+fn resolve_field<T>(
+    merged: &MergedMetadata,
+    key: &str,
+    parse: impl FnOnce(&serde_json::Value) -> Option<T>,
+) -> Resolution<T> {
+    let Some(value) = merged.fields.get(key) else {
+        return Resolution::Cleared;
+    };
+    if value.is_null() {
+        return Resolution::Cleared;
+    }
+
+    match parse(value) {
+        Some(parsed) => Resolution::Value(parsed),
+        None => {
+            tracing::warn!(
+                field = key,
+                %value,
+                "keeping stored value: merged metadata field has an unusable shape"
+            );
+            Resolution::Keep
+        }
+    }
+}
+
+/// Manual ownership preserves graph fields because the overlay removes their values.
+fn resolve_graph_field<T>(
+    merged: &MergedMetadata,
+    field: ManualMetadataField,
+    parse: impl FnOnce(&serde_json::Value) -> Option<T>,
+) -> Resolution<T> {
+    if merged.manual_fields.contains(&field) {
+        return Resolution::Keep;
+    }
+
+    resolve_field(merged, field.as_str(), parse)
+}
+
+fn value_as_string(value: &serde_json::Value) -> Option<String> {
+    value.as_str().map(str::to_string)
+}
+
+fn value_as_u32(value: &serde_json::Value) -> Option<u32> {
+    value.as_u64().and_then(|value| u32::try_from(value).ok())
+}
+
+fn assign<T: PartialEq>(target: &mut Option<T>, resolved: Resolution<T>) -> bool {
+    let next = match resolved {
+        Resolution::Value(value) => Some(value),
+        Resolution::Cleared => None,
+        Resolution::Keep => return false,
+    };
+    if *target == next {
+        return false;
+    }
+    *target = next;
+    true
+}
+
 fn overlay_manual_metadata(
     db: &impl DbAccess,
     node_id: DbId,
@@ -106,7 +182,8 @@ pub(crate) fn merge_layers(
         };
 
         for (key, value) in fields {
-            if !merged_fields.contains_key(&key) && !value.is_null() {
+            // The highest-priority layer mentioning a key wins, including explicit null.
+            if !merged_fields.contains_key(&key) {
                 merged_fields.insert(key.clone(), value);
                 provenance.insert(key, layer.source_id.clone());
             }
@@ -120,14 +197,13 @@ pub(crate) fn merge_layers(
     }
 }
 
-/// Apply merged metadata from all layers to an entity.
-/// Call this after saving a layer to update the entity with merged values.
 pub(crate) fn apply_merged_metadata_to_entity(db: &mut DbAny, node_id: DbId) -> anyhow::Result<()> {
     db.transaction_mut(|transaction| {
         apply_merged_metadata_to_entity_inside_tx(transaction, node_id)
     })
 }
 
+/// Applies the complete resolved snapshot; locks preserve stored values.
 pub(crate) fn apply_merged_metadata_to_entity_inside_tx(
     db: &mut DbAnyTransactionMut<'_>,
     node_id: DbId,
@@ -137,25 +213,27 @@ pub(crate) fn apply_merged_metadata_to_entity_inside_tx(
     let merged = overlay_manual_metadata(db, node_id, merge_layers(layers, &providers))?;
 
     if let Some(mut release) = db::releases::get_by_id(db, node_id)? {
-        let is_locked = release.locked.unwrap_or(false);
+        if release.locked.unwrap_or(false) {
+            return Ok(());
+        }
         if apply_to_release(&mut release, &merged) {
             db::releases::update_in_transaction(db, &release)?;
         }
-        if let Some(genre_names) = extract_genre_names(&merged) {
+        if let Some(genre_names) = resolve_genres(&merged).value_to_write() {
             db::genres::sync_release_genres(db, node_id, &genre_names)?;
         }
-        // Locked releases skip the sync: a merge triggered by e.g. the dedup
-        // path migrating a loser's layer onto a locked winner would wipe the
-        // curated labels — the lock exists to prevent exactly that. Mirrors
-        // the gate in `plugins/labels.rs::sync_for_release`.
-        if !is_locked && let Some(label_inputs) = extract_label_inputs(&merged) {
+        if let Some(label_inputs) = resolve_labels(&merged).value_to_write() {
             db::labels::sync_release_labels_inside_tx(db, node_id, &label_inputs)?;
         }
     } else if let Some(mut track) = db::tracks::get_by_id(db, node_id)? {
+        if track.locked.unwrap_or(false) {
+            return Ok(());
+        }
         if apply_to_track(&mut track, &merged) {
             db::tracks::update_in_transaction(db, &track)?;
         }
     } else if let Some(mut artist) = db::artists::get_by_id(db, node_id)?
+        && !artist.locked.unwrap_or(false)
         && apply_to_artist(&mut artist, &merged)
     {
         db::artists::update_in_transaction(db, &artist)?;
@@ -164,35 +242,27 @@ pub(crate) fn apply_merged_metadata_to_entity_inside_tx(
     Ok(())
 }
 
-fn extract_genre_names(merged: &MergedMetadata) -> Option<Vec<String>> {
-    merged
-        .fields
-        .get("genres")
-        .and_then(|v| v.as_array())
-        .map(|genres| {
-            genres
+fn resolve_genres(merged: &MergedMetadata) -> Resolution<Vec<String>> {
+    resolve_graph_field(merged, ManualMetadataField::Genres, |value| {
+        let names = value.as_array()?;
+        Some(
+            names
                 .iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
+                .filter_map(|name| name.as_str().map(String::from))
+                .collect(),
+        )
+    })
 }
 
-/// Parse the merged `labels` field into `LabelInput`s.
-///
 /// Schema: JSON array of objects with required `name: String` and optional
 /// `catalog_number: String` and `external_id: { provider_id, id_type,
 /// id_value }` (all three inner fields required when present).
 ///
-/// - `None` — field absent or any schema violation; callers skip the sync.
-/// - `Some([])` — provider authoritatively asserts no labels; sync drops stale.
-/// - `Some([..])` — authoritative replacement set.
-///
 /// Fail-closed on schema violation is deliberate: silently treating malformed
 /// input as "zero labels" would wipe every ReleaseLabel and cascade-delete
 /// orphan Labels on every ingestion.
-fn extract_label_inputs(merged: &MergedMetadata) -> Option<Vec<db::labels::LabelInput>> {
-    let raw = merged.fields.get("labels")?;
-    parse_label_inputs(raw)
+fn resolve_labels(merged: &MergedMetadata) -> Resolution<Vec<db::labels::LabelInput>> {
+    resolve_graph_field(merged, ManualMetadataField::Labels, parse_label_inputs)
 }
 
 pub(crate) fn materialize_provider_labels_if_manually_owned(
@@ -207,7 +277,11 @@ pub(crate) fn materialize_provider_labels_if_manually_owned(
     let layers = db::metadata::layers::get_for_entity(db, node_id)?;
     let providers = db::providers::get(db)?;
     let merged = merge_layers(layers, &providers);
-    if let Some(inputs) = extract_label_inputs(&merged) {
+    if let Resolution::Value(inputs) = resolve_field(
+        &merged,
+        ManualMetadataField::Labels.as_str(),
+        parse_label_inputs,
+    ) {
         db::labels::materialize_labels(db, &inputs)?;
     }
     Ok(())
@@ -315,57 +389,33 @@ pub(crate) fn parse_label_inputs(raw: &serde_json::Value) -> Option<Vec<db::labe
 fn apply_to_release(release: &mut Release, merged: &MergedMetadata) -> bool {
     let mut changed = false;
 
-    if let Some(title) = merged.fields.get("release_title").and_then(|v| v.as_str())
+    // Required titles keep their stored value when unresolved.
+    if let Resolution::Value(title) = resolve_field(merged, "release_title", value_as_string)
         && release.release_title != title
     {
-        release.set_release_title(title.to_string());
+        release.set_release_title(title);
         changed = true;
     }
-    if let Some(value) = merged.fields.get("sort_title") {
-        let next = if value.is_null() {
-            Some(None)
-        } else {
-            value.as_str().map(|value| Some(value.to_string()))
-        };
-        if let Some(next) = next
-            && release.sort_title != next
-        {
-            release.sort_title = next;
-            changed = true;
-        }
-    }
-    if let Some(value) = merged.fields.get("release_type") {
-        let next = if value.is_null() {
-            Some(None)
-        } else {
+    changed |= assign(
+        &mut release.sort_title,
+        resolve_field(merged, "sort_title", value_as_string),
+    );
+    changed |= assign(
+        &mut release.release_type,
+        resolve_field(merged, "release_type", |value| {
             value
                 .as_str()
                 .and_then(|value| db::releases::ReleaseType::from_db_str(value).ok())
-                .map(Some)
-        };
-        if let Some(next) = next
-            && release.release_type != next
-        {
-            release.release_type = next;
-            changed = true;
-        }
-    }
-    if let Some(value) = merged.fields.get("release_date") {
-        let next = if value.is_null() {
-            Some(None)
-        } else {
+        }),
+    );
+    changed |= assign(
+        &mut release.release_date,
+        resolve_field(merged, "release_date", |value| {
             value
                 .as_str()
                 .and_then(db::releases::normalize_release_date)
-                .map(Some)
-        };
-        if let Some(next) = next
-            && release.release_date != next
-        {
-            release.release_date = next;
-            changed = true;
-        }
-    }
+        }),
+    );
 
     changed
 }
@@ -373,29 +423,16 @@ fn apply_to_release(release: &mut Release, merged: &MergedMetadata) -> bool {
 fn apply_to_track(track: &mut Track, merged: &MergedMetadata) -> bool {
     let mut changed = false;
 
-    if let Some(title) = merged.fields.get("track_title").and_then(|v| v.as_str())
+    if let Resolution::Value(title) = resolve_field(merged, "track_title", value_as_string)
         && track.track_title != title
     {
-        track.set_track_title(title.to_string());
+        track.set_track_title(title);
         changed = true;
     }
-    if let Some(value) = merged.fields.get("sort_title") {
-        let next = if value.is_null() {
-            Some(None)
-        } else {
-            value.as_str().map(|value| Some(value.to_string()))
-        };
-        if let Some(next) = next
-            && track.sort_title != next
-        {
-            if let Some(sort_title) = next {
-                track.set_sort_title(sort_title);
-            } else {
-                track.sort_title = None;
-            }
-            changed = true;
-        }
-    }
+    changed |= assign(
+        &mut track.sort_title,
+        resolve_field(merged, "sort_title", value_as_string),
+    );
     for (field, target) in [
         ("year", &mut track.year),
         ("disc", &mut track.disc),
@@ -403,23 +440,7 @@ fn apply_to_track(track: &mut Track, merged: &MergedMetadata) -> bool {
         ("track", &mut track.track),
         ("track_total", &mut track.track_total),
     ] {
-        let Some(value) = merged.fields.get(field) else {
-            continue;
-        };
-        let next = if value.is_null() {
-            Some(None)
-        } else {
-            value
-                .as_u64()
-                .and_then(|value| u32::try_from(value).ok())
-                .map(Some)
-        };
-        if let Some(next) = next
-            && *target != next
-        {
-            *target = next;
-            changed = true;
-        }
+        changed |= assign(target, resolve_field(merged, field, value_as_u32));
     }
 
     changed
@@ -428,71 +449,28 @@ fn apply_to_track(track: &mut Track, merged: &MergedMetadata) -> bool {
 fn apply_to_artist(artist: &mut Artist, merged: &MergedMetadata) -> bool {
     let mut changed = false;
 
-    if let Some(name) = merged.fields.get("artist_name").and_then(|v| v.as_str())
+    if let Resolution::Value(name) = resolve_field(merged, "artist_name", value_as_string)
         && artist.artist_name != name
     {
-        artist.set_artist_name(name.to_string());
+        artist.set_artist_name(name);
         changed = true;
     }
-    if let Some(value) = merged.fields.get("artist_type") {
-        if value.is_null() {
-            if artist.artist_type.is_some() {
-                artist.artist_type = None;
-                changed = true;
-            }
-        } else if let Some(at_str) = value.as_str() {
-            match crate::db::ArtistType::from_db_str(at_str) {
-                Ok(at) => {
-                    let is_manual = merged
-                        .manual_fields
-                        .contains(&ManualMetadataField::ArtistType);
-                    if !is_manual && artist.artist_type.is_some_and(|existing| existing != at) {
-                        tracing::warn!(
-                            artist_id = artist.id,
-                            existing_artist_type = ?artist.artist_type,
-                            incoming_artist_type = %at,
-                            "ignoring merged artist_type that conflicts with existing artist type"
-                        );
-                    } else if artist.artist_type != Some(at) {
-                        artist.set_artist_type(at);
-                        changed = true;
-                    }
-                }
-                Err(_) => {
-                    tracing::warn!(
-                        artist_type = at_str,
-                        "ignoring unrecognized artist_type in merged metadata"
-                    );
-                }
-            }
-        }
-    }
-    if let Some(value) = merged.fields.get("sort_name") {
-        let next = if value.is_null() {
-            Some(None)
-        } else {
-            value.as_str().map(|value| Some(value.to_string()))
-        };
-        if let Some(next) = next
-            && artist.sort_name != next
-        {
-            artist.sort_name = next;
-            changed = true;
-        }
-    }
-    if let Some(value) = merged.fields.get("description") {
-        let next = if value.is_null() {
-            Some(None)
-        } else {
-            value.as_str().map(|value| Some(value.to_string()))
-        };
-        if let Some(next) = next
-            && artist.description != next
-        {
-            artist.description = next;
-            changed = true;
-        }
-    }
+
+    let artist_type = resolve_field(merged, "artist_type", |value| {
+        value
+            .as_str()
+            .and_then(|value| crate::db::ArtistType::from_db_str(value).ok())
+    });
+    changed |= assign(&mut artist.artist_type, artist_type);
+
+    changed |= assign(
+        &mut artist.sort_name,
+        resolve_field(merged, "sort_name", value_as_string),
+    );
+    changed |= assign(
+        &mut artist.description,
+        resolve_field(merged, "description", value_as_string),
+    );
 
     changed
 }
@@ -553,9 +531,38 @@ mod tests {
         }
     }
 
+    fn resolved_labels(labels: serde_json::Value) -> Resolution<Vec<db::labels::LabelInput>> {
+        resolve_labels(&merged_with_labels(labels))
+    }
+
+    #[track_caller]
+    fn expect_value<T>(resolution: Resolution<T>) -> T {
+        match resolution {
+            Resolution::Value(value) => value,
+            Resolution::Cleared => panic!("expected a resolved value, got Cleared"),
+            Resolution::Keep => panic!("expected a resolved value, got Keep"),
+        }
+    }
+
+    #[track_caller]
+    fn assert_keep<T>(resolution: Resolution<T>) {
+        assert!(
+            matches!(resolution, Resolution::Keep),
+            "expected the stored value to be kept"
+        );
+    }
+
+    #[track_caller]
+    fn assert_cleared<T>(resolution: Resolution<T>) {
+        assert!(
+            matches!(resolution, Resolution::Cleared),
+            "expected the field to be cleared"
+        );
+    }
+
     #[test]
-    fn extract_label_inputs_parses_full_shape() {
-        let merged = merged_with_labels(serde_json::json!([
+    fn resolve_labels_parses_full_shape() {
+        let inputs = expect_value(resolved_labels(serde_json::json!([
             {
                 "name": "Blue Note",
                 "catalog_number": "BN-1577",
@@ -568,9 +575,7 @@ mod tests {
             {
                 "name": "Impulse!"
             }
-        ]));
-
-        let inputs = extract_label_inputs(&merged).expect("valid shape parses");
+        ])));
         assert_eq!(inputs.len(), 2);
         assert_eq!(inputs[0].name, "Blue Note");
         assert_eq!(inputs[0].catalog_number.as_deref(), Some("BN-1577"));
@@ -581,111 +586,95 @@ mod tests {
     }
 
     #[test]
-    fn extract_label_inputs_absent_returns_none() {
+    fn resolve_labels_absent_clears() {
         let merged = MergedMetadata {
             fields: HashMap::new(),
             provenance: HashMap::new(),
             manual_fields: HashSet::new(),
         };
-        assert!(extract_label_inputs(&merged).is_none());
+        assert_cleared(resolve_labels(&merged));
     }
 
     #[test]
-    fn extract_label_inputs_empty_array_returns_some_empty() {
-        let merged = merged_with_labels(serde_json::json!([]));
-        let inputs = extract_label_inputs(&merged).expect("empty array is legitimate");
+    fn resolve_labels_null_clears() {
+        assert_cleared(resolved_labels(serde_json::Value::Null));
+    }
+
+    #[test]
+    fn resolve_labels_manual_ownership_keeps_stored_links() {
+        let mut merged = merged_with_labels(serde_json::json!([{"name": "Blue Note"}]));
+        merged.manual_fields.insert(ManualMetadataField::Labels);
+        assert_keep(resolve_labels(&merged));
+    }
+
+    #[test]
+    fn resolve_labels_empty_array_is_an_authoritative_empty_set() {
+        let inputs = expect_value(resolved_labels(serde_json::json!([])));
         assert!(inputs.is_empty());
     }
 
     #[test]
-    fn extract_label_inputs_wrong_top_level_shape_returns_none() {
-        // Fail-closed: provider emits a string/object instead of an array.
-        // Skipping the sync is the safe default — treating it as empty would
-        // wipe every existing ReleaseLabel on ingestion.
-        assert!(
-            extract_label_inputs(&merged_with_labels(serde_json::json!("Blue Note"))).is_none()
-        );
-        assert!(
-            extract_label_inputs(&merged_with_labels(
-                serde_json::json!({"name": "Blue Note"})
-            ))
-            .is_none()
-        );
-        assert!(extract_label_inputs(&merged_with_labels(serde_json::json!(42))).is_none());
+    fn resolve_labels_wrong_top_level_shape_keeps_stored_links() {
+        assert_keep(resolved_labels(serde_json::json!("Blue Note")));
+        assert_keep(resolved_labels(serde_json::json!({"name": "Blue Note"})));
+        assert_keep(resolved_labels(serde_json::json!(42)));
     }
 
     #[test]
-    fn extract_label_inputs_malformed_entry_returns_none() {
+    fn resolve_labels_malformed_entry_keeps_stored_links() {
         // Bare strings or entries missing `name` poison the whole batch.
-        assert!(
-            extract_label_inputs(&merged_with_labels(serde_json::json!(["Blue Note"]))).is_none()
-        );
-        assert!(
-            extract_label_inputs(&merged_with_labels(
-                serde_json::json!([{"catalog_number": "BN-1"}])
-            ))
-            .is_none()
-        );
-        assert!(
-            extract_label_inputs(&merged_with_labels(serde_json::json!([{"name": "   "}])))
-                .is_none()
-        );
+        assert_keep(resolved_labels(serde_json::json!(["Blue Note"])));
+        assert_keep(resolved_labels(
+            serde_json::json!([{"catalog_number": "BN-1"}]),
+        ));
+        assert_keep(resolved_labels(serde_json::json!([{"name": "   "}])));
     }
 
     #[test]
-    fn extract_label_inputs_partial_external_id_returns_none() {
-        let merged = merged_with_labels(serde_json::json!([{
+    fn resolve_labels_partial_external_id_keeps_stored_links() {
+        assert_keep(resolved_labels(serde_json::json!([{
             "name": "Blue Note",
             "external_id": { "provider_id": "mb", "id_type": "label_id" }
-        }]));
-        assert!(extract_label_inputs(&merged).is_none());
+        }])));
     }
 
     #[test]
-    fn extract_label_inputs_non_string_cat_number_returns_none() {
+    fn resolve_labels_non_string_cat_number_keeps_stored_links() {
         // Fail-closed on non-string scalars: silently coercing to None would
         // overwrite an existing cat# with null on sync.
-        assert!(
-            extract_label_inputs(&merged_with_labels(serde_json::json!([
-                {"name": "Blue Note", "catalog_number": 12345}
-            ])))
-            .is_none()
-        );
-        assert!(
-            extract_label_inputs(&merged_with_labels(serde_json::json!([
-                {"name": "Blue Note", "catalog_number": true}
-            ])))
-            .is_none()
-        );
+        assert_keep(resolved_labels(serde_json::json!([
+            {"name": "Blue Note", "catalog_number": 12345}
+        ])));
+        assert_keep(resolved_labels(serde_json::json!([
+            {"name": "Blue Note", "catalog_number": true}
+        ])));
     }
 
     #[test]
-    fn extract_label_inputs_blank_external_id_value_returns_none() {
+    fn resolve_labels_blank_external_id_value_keeps_stored_links() {
         // Whitespace-only id_value passes is_empty but is not a real claim.
         // Accepting it would create a garbage ExternalId that blocks later
         // real enrichment via the "zero ext_ids" guard.
-        let merged = merged_with_labels(serde_json::json!([{
+        assert_keep(resolved_labels(serde_json::json!([{
             "name": "Blue Note",
             "external_id": {
                 "provider_id": "mb",
                 "id_type": "label_id",
                 "id_value": "   "
             }
-        }]));
-        assert!(extract_label_inputs(&merged).is_none());
+        }])));
     }
 
     #[test]
-    fn extract_label_inputs_trims_external_id_components() {
-        let merged = merged_with_labels(serde_json::json!([{
+    fn resolve_labels_trims_external_id_components() {
+        let inputs = expect_value(resolved_labels(serde_json::json!([{
             "name": "Blue Note",
             "external_id": {
                 "provider_id": "  mb  ",
                 "id_type": " label_id ",
                 "id_value": " bn-001 "
             }
-        }]));
-        let inputs = extract_label_inputs(&merged).expect("trimmed non-empty values are valid");
+        }])));
         let ext = inputs[0].external_id.as_ref().expect("external_id present");
         assert_eq!(ext.provider_id, "mb");
         assert_eq!(ext.id_type, "label_id");
@@ -693,13 +682,119 @@ mod tests {
     }
 
     #[test]
-    fn extract_label_inputs_null_external_id_is_ok() {
-        let merged = merged_with_labels(serde_json::json!([
+    fn resolve_labels_null_external_id_is_ok() {
+        let inputs = expect_value(resolved_labels(serde_json::json!([
             {"name": "Blue Note", "external_id": null}
-        ]));
-        let inputs = extract_label_inputs(&merged).expect("null external_id is legitimate");
+        ])));
         assert_eq!(inputs.len(), 1);
         assert!(inputs[0].external_id.is_none());
+    }
+
+    #[test]
+    fn resolve_genres_covers_every_resolution_state() {
+        let merged = MergedMetadata {
+            fields: HashMap::new(),
+            provenance: HashMap::new(),
+            manual_fields: HashSet::new(),
+        };
+        assert_cleared(resolve_genres(&merged));
+
+        let mut merged = merged;
+        merged
+            .fields
+            .insert("genres".to_string(), serde_json::json!("Jazz"));
+        assert_keep(resolve_genres(&merged));
+
+        merged
+            .fields
+            .insert("genres".to_string(), serde_json::Value::Null);
+        assert_cleared(resolve_genres(&merged));
+
+        merged
+            .fields
+            .insert("genres".to_string(), serde_json::json!(["Jazz"]));
+        merged.manual_fields.insert(ManualMetadataField::Genres);
+        assert_keep(resolve_genres(&merged));
+    }
+
+    #[test]
+    fn merge_layers_null_clears_while_an_absent_key_falls_through() {
+        let layers = vec![
+            make_layer("high", r#"{"sort_title": null}"#, 1000),
+            make_layer(
+                "low",
+                r#"{"sort_title": "Low Sort", "release_date": "1999"}"#,
+                1000,
+            ),
+        ];
+        let providers = vec![
+            make_provider("high", 100, true),
+            make_provider("low", 10, true),
+        ];
+
+        let merged = merge_layers(layers, &providers);
+
+        assert_eq!(
+            merged.fields.get("sort_title"),
+            Some(&serde_json::Value::Null)
+        );
+        assert_eq!(
+            merged.provenance.get("sort_title").map(String::as_str),
+            Some("high")
+        );
+        assert_eq!(
+            merged.fields.get("release_date").and_then(|v| v.as_str()),
+            Some("1999")
+        );
+        assert_eq!(
+            merged.provenance.get("release_date").map(String::as_str),
+            Some("low")
+        );
+    }
+
+    #[test]
+    fn apply_to_release_clears_a_field_no_layer_supplies() {
+        let mut release = Release {
+            db_id: None,
+            id: "release".to_string(),
+            release_title: "Stored Title".to_string(),
+            sort_title: Some("Stored Sort".to_string()),
+            release_type: Some(db::releases::ReleaseType::Album),
+            release_date: Some("1999".to_string()),
+            locked: None,
+            created_at: None,
+            ctime: None,
+        };
+        let merged = merge_layers(
+            vec![make_layer("provider", r#"{"release_title": "Layer"}"#, 1)],
+            &[make_provider("provider", 10, true)],
+        );
+
+        assert!(apply_to_release(&mut release, &merged));
+
+        assert_eq!(release.release_title, "Layer");
+        assert!(release.sort_title.is_none());
+        assert!(release.release_type.is_none());
+        assert!(release.release_date.is_none());
+    }
+
+    #[test]
+    fn apply_to_release_keeps_the_title_when_no_layer_supplies_one() {
+        let mut release = Release {
+            db_id: None,
+            id: "release".to_string(),
+            release_title: "Stored Title".to_string(),
+            sort_title: None,
+            release_type: None,
+            release_date: None,
+            locked: None,
+            created_at: None,
+            ctime: None,
+        };
+        let merged = merge_layers(Vec::new(), &[]);
+
+        assert!(!apply_to_release(&mut release, &merged));
+        assert_eq!(release.release_title, "Stored Title");
     }
 
     #[test]
@@ -763,5 +858,283 @@ mod tests {
             merged.provenance.get("track_title").map(String::as_str),
             Some("active")
         );
+    }
+    mod snapshot {
+        use std::collections::BTreeMap;
+
+        use agdb::DbAny;
+
+        use super::*;
+        use crate::db::test_db::{
+            insert_artist,
+            insert_release,
+            insert_track,
+            new_test_db,
+            stored_keys,
+        };
+
+        fn enable_provider(db: &mut DbAny, provider_id: &str, priority: u32) -> anyhow::Result<()> {
+            db::providers::upsert(db, &make_provider(provider_id, priority, true))?;
+            Ok(())
+        }
+
+        fn save_layer(
+            db: &mut DbAny,
+            node_id: DbId,
+            source_id: &str,
+            fields: serde_json::Value,
+            updated_at: u64,
+        ) -> anyhow::Result<()> {
+            db::metadata::layers::upsert(
+                db,
+                node_id,
+                &make_layer(source_id, &fields.to_string(), updated_at),
+            )?;
+            Ok(())
+        }
+
+        #[test]
+        fn a_property_no_layer_supplies_is_removed_from_storage() -> anyhow::Result<()> {
+            let mut db = new_test_db()?;
+            let track_id = insert_track(&mut db, "Track")?;
+            let mut track =
+                db::tracks::get_by_id(&db, track_id)?.expect("track exists after insert");
+            track.year = Some(1999);
+            track.disc = Some(2);
+            db::tracks::update(&mut db, &track)?;
+            assert!(stored_keys(&db, track_id)?.contains("year"));
+
+            enable_provider(&mut db, "provider", 10)?;
+            save_layer(
+                &mut db,
+                track_id,
+                "provider",
+                serde_json::json!({"disc": 2}),
+                1,
+            )?;
+            apply_merged_metadata_to_entity(&mut db, track_id)?;
+
+            let stored = stored_keys(&db, track_id)?;
+            assert!(
+                !stored.contains("year"),
+                "year must be removed from storage, not merely left unchanged"
+            );
+            assert!(stored.contains("disc"));
+            let track = db::tracks::get_by_id(&db, track_id)?.expect("track still exists");
+            assert_eq!(track.year, None);
+            assert_eq!(track.disc, Some(2));
+            Ok(())
+        }
+
+        #[test]
+        fn a_higher_priority_null_clears_a_lower_priority_value() -> anyhow::Result<()> {
+            let mut db = new_test_db()?;
+            let artist_id = insert_artist(&mut db, "Artist")?;
+
+            enable_provider(&mut db, "low", 10)?;
+            enable_provider(&mut db, "high", 100)?;
+            save_layer(
+                &mut db,
+                artist_id,
+                "low",
+                serde_json::json!({"description": "Low description"}),
+                1,
+            )?;
+            apply_merged_metadata_to_entity(&mut db, artist_id)?;
+            assert_eq!(
+                db::artists::get_by_id(&db, artist_id)?
+                    .expect("artist exists")
+                    .description
+                    .as_deref(),
+                Some("Low description")
+            );
+
+            save_layer(
+                &mut db,
+                artist_id,
+                "high",
+                serde_json::json!({"description": null}),
+                2,
+            )?;
+            apply_merged_metadata_to_entity(&mut db, artist_id)?;
+
+            assert!(
+                db::artists::get_by_id(&db, artist_id)?
+                    .expect("artist exists")
+                    .description
+                    .is_none()
+            );
+            assert!(!stored_keys(&db, artist_id)?.contains("description"));
+            Ok(())
+        }
+
+        #[test]
+        fn disabling_a_provider_restores_the_local_artist_type() -> anyhow::Result<()> {
+            let mut db = new_test_db()?;
+            let artist_id = insert_artist(&mut db, "Artist")?;
+
+            save_layer(
+                &mut db,
+                artist_id,
+                LOCAL_SOURCE_ID,
+                serde_json::json!({"artist_type": "group"}),
+                1,
+            )?;
+            enable_provider(&mut db, "provider", 10)?;
+            save_layer(
+                &mut db,
+                artist_id,
+                "provider",
+                serde_json::json!({"artist_type": "person"}),
+                2,
+            )?;
+            apply_merged_metadata_to_entity(&mut db, artist_id)?;
+            assert_eq!(
+                db::artists::get_by_id(&db, artist_id)?
+                    .expect("artist exists")
+                    .artist_type,
+                Some(db::ArtistType::Person)
+            );
+
+            db::providers::upsert(&mut db, &make_provider("provider", 10, false))?;
+            apply_merged_metadata_to_entity(&mut db, artist_id)?;
+
+            assert_eq!(
+                db::artists::get_by_id(&db, artist_id)?
+                    .expect("artist exists")
+                    .artist_type,
+                Some(db::ArtistType::Group)
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn unsupplied_genres_and_labels_drop_their_relationships() -> anyhow::Result<()> {
+            let mut db = new_test_db()?;
+            let release_id = insert_release(&mut db, "Release")?;
+            db::genres::sync_release_genres(&mut db, release_id, &["Jazz".to_string()])?;
+            db::labels::sync_release_labels(
+                &mut db,
+                release_id,
+                &[db::labels::LabelInput {
+                    name: "Blue Note".to_string(),
+                    catalog_number: None,
+                    external_id: None,
+                }],
+            )?;
+
+            enable_provider(&mut db, "provider", 10)?;
+            save_layer(
+                &mut db,
+                release_id,
+                "provider",
+                serde_json::json!({"release_title": "Release"}),
+                1,
+            )?;
+            apply_merged_metadata_to_entity(&mut db, release_id)?;
+
+            assert!(db::genres::get_for_release(&db, release_id)?.is_empty());
+            assert!(db::labels::get_for_release(&db, release_id)?.is_empty());
+            Ok(())
+        }
+
+        #[test]
+        fn dropping_a_manual_override_falls_back_to_the_next_layer() -> anyhow::Result<()> {
+            let mut db = new_test_db()?;
+            let release_id = insert_release(&mut db, "Release")?;
+
+            enable_provider(&mut db, "provider", 10)?;
+            save_layer(
+                &mut db,
+                release_id,
+                "provider",
+                serde_json::json!({
+                    "sort_title": "Provider Sort",
+                    "genres": ["Provider Genre"],
+                }),
+                1,
+            )?;
+            db::metadata::manual_overrides::replace(
+                &mut db,
+                release_id,
+                &BTreeMap::from([
+                    (
+                        ManualMetadataField::SortTitle,
+                        serde_json::json!("Manual Sort"),
+                    ),
+                    (ManualMetadataField::Genres, serde_json::Value::Bool(true)),
+                ]),
+            )?;
+            db::genres::sync_release_genres(&mut db, release_id, &["Manual Genre".to_string()])?;
+            apply_merged_metadata_to_entity(&mut db, release_id)?;
+
+            assert_eq!(
+                db::releases::get_by_id(&db, release_id)?
+                    .expect("release exists")
+                    .sort_title
+                    .as_deref(),
+                Some("Manual Sort")
+            );
+            let genres = db::genres::get_for_release(&db, release_id)?;
+            assert_eq!(genres.len(), 1);
+            assert_eq!(genres[0].name, "Manual Genre");
+
+            db::metadata::manual_overrides::replace(&mut db, release_id, &BTreeMap::new())?;
+            apply_merged_metadata_to_entity(&mut db, release_id)?;
+
+            assert_eq!(
+                db::releases::get_by_id(&db, release_id)?
+                    .expect("release exists")
+                    .sort_title
+                    .as_deref(),
+                Some("Provider Sort")
+            );
+            let genres = db::genres::get_for_release(&db, release_id)?;
+            assert_eq!(genres.len(), 1);
+            assert_eq!(genres[0].name, "Provider Genre");
+            Ok(())
+        }
+
+        #[test]
+        fn a_locked_entity_records_its_layer_without_applying_it() -> anyhow::Result<()> {
+            let mut db = new_test_db()?;
+            let track_id = insert_track(&mut db, "Curated Title")?;
+            let mut track = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
+            track.year = Some(1999);
+            track.locked = Some(true);
+            db::tracks::update(&mut db, &track)?;
+
+            enable_provider(&mut db, "provider", 10)?;
+            crate::services::metadata::layers::save_provider_layer(
+                &mut db,
+                track_id,
+                "provider",
+                &HashMap::from([(
+                    "track_title".to_string(),
+                    serde_json::json!("Provider Title"),
+                )]),
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashSet::new(),
+            )?;
+
+            let layers = db::metadata::layers::get_for_entity(&db, track_id)?;
+            assert_eq!(layers.len(), 1, "a locked entity still records its layer");
+            assert_eq!(layers[0].source_id, "provider");
+
+            let track = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
+            assert_eq!(track.track_title, "Curated Title");
+            assert_eq!(track.year, Some(1999));
+
+            let mut track = track;
+            track.locked = None;
+            db::tracks::update(&mut db, &track)?;
+            apply_merged_metadata_to_entity(&mut db, track_id)?;
+
+            let track = db::tracks::get_by_id(&db, track_id)?.expect("track exists");
+            assert_eq!(track.track_title, "Provider Title");
+            assert_eq!(track.year, None);
+            Ok(())
+        }
     }
 }
