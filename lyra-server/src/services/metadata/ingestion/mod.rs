@@ -693,7 +693,7 @@ mod tests {
         // Add a metadata layer attached to the track
         let layer = MetadataLayer {
             db_id: None,
-            provider_id: "test-provider".to_string(),
+            source_id: "test-provider".to_string(),
             fields: "{}".to_string(),
             updated_at: 0,
         };
@@ -2369,7 +2369,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             track_db_id,
             &MetadataLayer {
                 db_id: None,
-                provider_id: "test".to_string(),
+                source_id: "test".to_string(),
                 fields: serde_json::json!({
                     "track_title": "Provider Track",
                     "year": 1999,
@@ -2385,7 +2385,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             release_db_id,
             &MetadataLayer {
                 db_id: None,
-                provider_id: "test".to_string(),
+                source_id: "test".to_string(),
                 fields: serde_json::json!({
                     "release_title": "Provider Release",
                     "release_date": "1988-08-08"
@@ -2676,7 +2676,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             release_db_id,
             &MetadataLayer {
                 db_id: None,
-                provider_id: "test".to_string(),
+                source_id: "test".to_string(),
                 fields: serde_json::json!({
                     "labels": [
                         {"name": "Provider Label", "catalog_number": "PRV-001"}
@@ -2814,7 +2814,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             release_db_id,
             &MetadataLayer {
                 db_id: None,
-                provider_id: "test".to_string(),
+                source_id: "test".to_string(),
                 fields: serde_json::json!({
                     "labels": [
                         {"name": "Provider Override", "catalog_number": "PRV-999"}

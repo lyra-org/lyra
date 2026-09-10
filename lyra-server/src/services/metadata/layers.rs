@@ -24,6 +24,9 @@ use crate::db::{
     ProviderCustomFields,
 };
 
+/// Reserved source for file-derived metadata; plugin registration rejects it.
+pub(crate) const LOCAL_SOURCE_ID: &str = "local";
+
 fn is_entity_locked(db: &DbAny, node_id: DbId) -> anyhow::Result<bool> {
     if let Some(release) = db::releases::get_by_id(db, node_id)? {
         return Ok(release.locked.unwrap_or(false));
@@ -170,7 +173,7 @@ pub(crate) fn save_provider_layer(
         let fields_json = serde_json::to_string(fields)?;
         let existing_layer = db::metadata::layers::get_for_entity(db, node_id)?
             .into_iter()
-            .find(|layer| layer.provider_id == provider_id);
+            .find(|layer| layer.source_id == provider_id);
         let layer_changed = existing_layer
             .as_ref()
             .is_none_or(|existing| existing.fields != fields_json);
@@ -178,7 +181,7 @@ pub(crate) fn save_provider_layer(
         if layer_changed {
             let layer = MetadataLayer {
                 db_id: None,
-                provider_id: provider_id.to_string(),
+                source_id: provider_id.to_string(),
                 fields: fields_json,
                 updated_at: now_secs(),
             };
