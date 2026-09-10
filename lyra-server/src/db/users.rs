@@ -259,6 +259,44 @@ pub(crate) fn update_session_last_seen(
     Ok(())
 }
 
+pub(crate) fn session_plugin_data(
+    db: &impl super::DbAccess,
+    session_id: DbId,
+    plugin_id: &str,
+) -> anyhow::Result<Option<String>> {
+    let key: agdb::DbValue = format!("plugin_session_data:{plugin_id}").into();
+    let result = db.exec(QueryBuilder::select().ids(session_id).query())?;
+    result
+        .elements
+        .first()
+        .and_then(|element| element.values.iter().find(|value| value.key == key))
+        .map(|value| value.value.string().cloned().map_err(Into::into))
+        .transpose()
+}
+
+pub(crate) fn set_session_plugin_data(
+    db: &mut impl super::DbAccess,
+    session_id: DbId,
+    plugin_id: &str,
+    value: Option<&str>,
+) -> anyhow::Result<()> {
+    let key = format!("plugin_session_data:{plugin_id}");
+    match value {
+        Some(value) => {
+            db.exec_mut(
+                QueryBuilder::insert()
+                    .values_uniform([(key, value).into()])
+                    .ids(session_id)
+                    .query(),
+            )?;
+        }
+        None => {
+            db.exec_mut(QueryBuilder::remove().values([key]).ids(session_id).query())?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn revoke_session_by_token_hash(
     db: &mut DbAny,
     token_hash: &str,

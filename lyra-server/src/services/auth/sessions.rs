@@ -252,9 +252,120 @@ pub(crate) async fn revoke_session_by_token(token: &str) -> SessionServiceResult
     Ok(removed)
 }
 
+const MAX_PLUGIN_SESSION_DATA_BYTES: usize = 16 * 1024;
+
+fn live_session_id(db: &impl db::DbAccess, token: &str) -> anyhow::Result<DbId> {
+    let (_, session, session_id) =
+        db::users::find_by_session_token_hash(db, &hash_secret(token.trim()))?
+            .ok_or_else(|| anyhow::anyhow!("invalid session token"))?;
+    if session.expires_at > 0 && db::users::now_secs() >= session.expires_at {
+        anyhow::bail!("session expired");
+    }
+    Ok(session_id)
+}
+
+pub(crate) async fn get_plugin_data(
+    token: &str,
+    plugin_id: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let db = STATE.db.read().await;
+    let session_id = live_session_id(&*db, token)?;
+    db::users::session_plugin_data(&*db, session_id, plugin_id)?
+        .map(|value| serde_json::from_str(&value).map_err(Into::into))
+        .transpose()
+        .map(|value| value.unwrap_or(serde_json::Value::Null))
+}
+
+pub(crate) async fn set_plugin_data(
+    token: &str,
+    plugin_id: &str,
+    value: serde_json::Value,
+) -> anyhow::Result<()> {
+    let value = if value.is_null() {
+        None
+    } else {
+        Some(serde_json::to_string(&value)?)
+    };
+    anyhow::ensure!(
+        value
+            .as_ref()
+            .is_none_or(|value| value.len() <= MAX_PLUGIN_SESSION_DATA_BYTES),
+        "session data exceeds 16 KiB"
+    );
+    let mut db = STATE.db.write().await;
+    let session_id = live_session_id(&*db, token)?;
+    db::users::set_session_plugin_data(&mut *db, session_id, plugin_id, value.as_deref())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn plugin_session_data_is_scoped_bounded_and_revoked_with_session() -> anyhow::Result<()>
+    {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
+        let user_id = {
+            let mut db = STATE.db.write().await;
+            db::users::create(&mut db, &db::test_db::test_user("session-data")?)?
+        };
+        let token = create_session_for_user(user_id, SessionMetadata::default())
+            .await?
+            .token;
+        let other_token = create_session_for_user(user_id, SessionMetadata::default())
+            .await?
+            .token;
+        let data = serde_json::json!({"device_id": "phone"});
+        assert_eq!(
+            get_plugin_data(&token, "external").await?,
+            serde_json::Value::Null
+        );
+        set_plugin_data(&token, "external", data.clone()).await?;
+        assert_eq!(get_plugin_data(&token, "external").await?, data);
+        assert!(get_plugin_data(&other_token, "external").await?.is_null());
+        set_plugin_data(&other_token, "external", data.clone()).await?;
+        {
+            let mut db = STATE.db.write().await;
+            let session_id = live_session_id(&*db, &other_token)?;
+            db.exec_mut(
+                agdb::QueryBuilder::insert()
+                    .values_uniform([("expires_at", db::users::now_secs() - 1).into()])
+                    .ids(session_id)
+                    .query(),
+            )?;
+        }
+        assert!(get_plugin_data(&other_token, "external").await.is_err());
+        assert!(
+            set_plugin_data(&other_token, "external", data.clone())
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            get_plugin_data(&token, "other").await?,
+            serde_json::Value::Null
+        );
+        set_plugin_data(&token, "other", serde_json::json!({"device_id": "tablet"})).await?;
+        set_plugin_data(&token, "external", serde_json::Value::Null).await?;
+        assert_eq!(
+            get_plugin_data(&token, "external").await?,
+            serde_json::Value::Null
+        );
+        assert!(!get_plugin_data(&token, "other").await?.is_null());
+        assert!(
+            set_plugin_data(
+                &token,
+                "external",
+                serde_json::json!("x".repeat(MAX_PLUGIN_SESSION_DATA_BYTES))
+            )
+            .await
+            .is_err()
+        );
+        assert!(revoke_session_by_token(&token).await?);
+        assert!(get_plugin_data(&token, "other").await.is_err());
+        assert!(set_plugin_data(&token, "other", data).await.is_err());
+        Ok(())
+    }
 
     #[test]
     fn normalize_client_name_strips_invisibles_and_trims() {
