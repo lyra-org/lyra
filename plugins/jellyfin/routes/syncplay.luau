@@ -29,7 +29,6 @@ export type SessionEntry = {
 	user_id: number,
 	is_admin: boolean,
 	device_id: string,
-	auth_session_id: number?,
 	info: JsonObject,
 	capabilities: JsonObject?,
 	full_capability_keys: { [string]: boolean },

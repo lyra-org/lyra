@@ -12,7 +12,6 @@ local tracks = require("@lyra/tracks")
 
 local constants = require("../../constants")
 
-local JELLYFIN_PLUGIN_ID = constants.JELLYFIN_PLUGIN_ID
 local PLAYBACK_COMPLETION_TOLERANCE_MS = constants.PLAYBACK_COMPLETION_TOLERANCE_MS
 local ROUTE_PREFIX = constants.ROUTE_PREFIX
 
@@ -238,38 +237,6 @@ local function ensure_playback_session_id(requested_play_session_id: string?): s
 	local new_id = tostring(next_generated_play_session_id)
 	next_generated_play_session_id += 1
 	return new_id
-end
-
-local function resolve_playback_session_key(
-	auth_context: AuthContext,
-	payload: PlaybackPayload?,
-	request_device_id: string?
-): string?
-	local principal_session_id = if auth_context then auth_context.credential.session_id else nil
-	if principal_session_id ~= nil and principal_session_id > 0 then
-		return string.format("auth:%d", principal_session_id)
-	end
-
-	local principal_user_id = if auth_context then auth_context.principal.user_id else nil
-	if principal_user_id ~= nil and principal_user_id > 0 and request_device_id then
-		return string.format("device:%d:%s", principal_user_id, request_device_id)
-	end
-
-	local session_id = module.trim(
-		if scalar_field(payload, "SessionId") ~= nil then tostring(scalar_field(payload, "SessionId")) else nil
-	)
-	if session_id then
-		return string.format("session:%s", session_id)
-	end
-
-	local play_session_id = module.trim(
-		if scalar_field(payload, "PlaySessionId") ~= nil then tostring(scalar_field(payload, "PlaySessionId")) else nil
-	)
-	if play_session_id then
-		return string.format("play:%s", play_session_id)
-	end
-
-	return nil
 end
 
 local function ms_to_ticks(duration_ms: number?): number?
@@ -760,17 +727,12 @@ function module.report_playback_event(
 	auth_context: AuthContext,
 	payload: PlaybackPayload?,
 	event_name: string,
-	request_device_id: string?
-): (boolean, ApiResponse?)
+	session_key: string
+): (boolean, string?)
 	local raw_item_id = scalar_field(payload, "ItemId")
 	local item_id = module.decode_jellyfin_item_id(if type(raw_item_id) == "string" then raw_item_id else nil)
 	if item_id == nil then
-		return false, module.bad_request("invalid or missing playback item id")
-	end
-
-	local session_key = resolve_playback_session_key(auth_context, payload, request_device_id)
-	if not session_key then
-		return false, module.bad_request("missing or invalid playback session key")
+		return false, "invalid or missing playback item id"
 	end
 
 	local position_ms = ticks_to_ms(scalar_field(payload, "PositionTicks"))
@@ -809,8 +771,7 @@ function module.report_playback_event(
 		and prior_session_state.track_id ~= item_id
 		and not is_terminal_playback_state(normalized_state)
 	then
-		playbacks.report_session({
-			plugin_id = JELLYFIN_PLUGIN_ID,
+		local _, stop_error = playbacks.report_session({
 			user_id = auth_context.principal.user_id,
 			session_key = session_key :: string,
 			track_id = prior_session_state.track_id,
@@ -819,10 +780,12 @@ function module.report_playback_event(
 			state = "stopped",
 			event = "progress",
 		})
+		if stop_error then
+			return false, stop_error
+		end
 	end
 
-	playbacks.report_session({
-		plugin_id = JELLYFIN_PLUGIN_ID,
+	local _, report_error = playbacks.report_session({
 		user_id = auth_context.principal.user_id,
 		session_key = session_key :: string,
 		track_id = item_id,
@@ -831,6 +794,9 @@ function module.report_playback_event(
 		state = normalized_state,
 		event = as_playback_event(normalized_event_name),
 	})
+	if report_error then
+		return false, report_error
+	end
 
 	if is_terminal_playback_state(normalized_state) then
 		local current_session_state = playback_session_state_by_key[session_key]

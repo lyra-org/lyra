@@ -135,9 +135,6 @@ type SessionEntry = {
 	user_id: number,
 	is_admin: boolean,
 	device_id: string,
-	-- Matches playback_sessions' own session_key formula so broadcast-time
-	-- joins can pair WS entries with playback connections.
-	auth_session_id: number?,
 	info: JsonObject,
 	capabilities: JsonObject?,
 	-- Keys set by the most recent /Capabilities/Full. Non-Full merges must
@@ -164,15 +161,6 @@ local JELLYFIN_WS_KEEPALIVE_SECONDS = 60
 -- DB. Start / Stopped go through unthrottled. Mirrors Jellyfin's own ~10s
 -- progress cadence.
 local JELLYFIN_WS_PROGRESS_MIN_INTERVAL_SECONDS = 10
-
--- Mirrors playback_sessions.resolve_playback_session_key so broadcast joins
--- pair WS entries with native playback connections by the same key.
-local function connection_join_key(entry: SessionEntry): string
-	if entry.auth_session_id then
-		return string.format("auth:%d", entry.auth_session_id)
-	end
-	return string.format("device:%d:%s", entry.user_id, entry.device_id)
-end
 
 -- Returns nil on miss, scope mismatch, or closed sender (evicting the
 -- closed entry). Mismatch is logged so a hash collision is distinguishable
@@ -202,9 +190,9 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 		return
 	end
 
-	local identity = session.resolve_client_identity(ctx)
+	local identity, identity_err = session.resolve_client_identity(ctx, resolved_auth, token)
 	if not identity then
-		warn(`socket rejected: missing Client/DeviceId`)
+		warn(`socket rejected: {identity_err or "missing Client/DeviceId"}`)
 		return
 	end
 
@@ -218,7 +206,6 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 		user_id = principal.user_id,
 		is_admin = session.is_admin(principal),
 		device_id = identity.device_id,
-		auth_session_id = resolved_auth.credential.session_id,
 		info = info,
 		capabilities = nil,
 		full_capability_keys = {},
@@ -318,14 +305,14 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 				entry.subscribed_sessions = true
 			elseif mt == "SessionsStop" then
 				entry.subscribed_sessions = false
-			-- Malformed branches bump the timer too so a garbage flood can't
-			-- amplify the log itself — one diagnostic per window.
 			elseif mt == "PlaybackStart" then
-				if session.handle_ws_playback_event(resolved_auth, envelope.Data, "started", identity.device_id) then
-					entry.last_playback_event_s = os.time()
-				else
-					warn(`discarded malformed PlaybackStart (user_id={principal.user_id})`)
-					entry.last_playback_event_s = os.time()
+				local ok, report_err =
+					session.handle_ws_playback_event(resolved_auth, envelope.Data, "started", identity)
+				entry.last_playback_event_s = os.time()
+				if not ok then
+					warn(
+						`rejected PlaybackStart (user_id={principal.user_id}): {report_err or "invalid playback report"}`
+					)
 				end
 			elseif mt == "PlaybackProgress" then
 				local now_s = os.time()
@@ -333,18 +320,23 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 				if last_s and now_s - last_s < JELLYFIN_WS_PROGRESS_MIN_INTERVAL_SECONDS then
 					continue
 				end
-				if session.handle_ws_playback_event(resolved_auth, envelope.Data, "progress", identity.device_id) then
-					entry.last_playback_event_s = now_s
-				else
-					warn(`discarded malformed PlaybackProgress (user_id={principal.user_id})`)
-					entry.last_playback_event_s = now_s
+				local ok, report_err =
+					session.handle_ws_playback_event(resolved_auth, envelope.Data, "progress", identity)
+				-- Rejected reports consume the interval too, limiting repeated diagnostics.
+				entry.last_playback_event_s = now_s
+				if not ok then
+					warn(
+						`rejected PlaybackProgress (user_id={principal.user_id}): {report_err or "invalid playback report"}`
+					)
 				end
 			elseif mt == "PlaybackStopped" then
-				if session.handle_ws_playback_event(resolved_auth, envelope.Data, "stopped", identity.device_id) then
-					entry.last_playback_event_s = os.time()
-				else
-					warn(`discarded malformed PlaybackStopped (user_id={principal.user_id})`)
-					entry.last_playback_event_s = os.time()
+				local ok, report_err =
+					session.handle_ws_playback_event(resolved_auth, envelope.Data, "stopped", identity)
+				entry.last_playback_event_s = os.time()
+				if not ok then
+					warn(
+						`rejected PlaybackStopped (user_id={principal.user_id}): {report_err or "invalid playback report"}`
+					)
 				end
 			end
 		end
@@ -460,6 +452,10 @@ api.post(P .. "/Users/AuthenticateByName", function(ctx: ApiContext)
 		return session.unauthorized()
 	end
 	login_result.token = token
+	local resolved_auth = auth.resolve_auth(token)
+	if resolved_auth then
+		session.remember_login_identity(ctx, resolved_auth, token)
+	end
 
 	return api.response.json(200, session.to_authentication_result(login_result))
 end, "public", true)
@@ -1657,7 +1653,8 @@ local function build_sessions_dto_list(
 		if entry.user_id ~= user_id or entry.sender:is_closed() then
 			continue
 		end
-		local join_key = connection_join_key(entry)
+		-- Native clients opt into pairing by sending this Jellyfin session ID as their opaque session_key.
+		local join_key = entry.session_id
 		seen_session_keys[join_key] = true
 		local dto: JsonObject = table.clone(entry.info)
 		dto.LastActivityDate = entry.last_activity
@@ -1820,7 +1817,7 @@ local function resolve_native_target(
 		if not session.can_control_user(principal, ws_entry.user_id) then
 			return nil, session.unauthorized()
 		end
-		return find_native_connection_for_user(ws_entry.user_id, session_id, connection_join_key(ws_entry)), nil
+		return find_native_connection_for_user(ws_entry.user_id, session_id, ws_entry.session_id), nil
 	end
 
 	for _, user in visible_user_identities(principal) do

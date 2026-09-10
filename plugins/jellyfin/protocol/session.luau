@@ -8,6 +8,7 @@ local api = require("@lyra/api")
 local auth = require("@lyra/auth")
 local playback_sessions = require("@lyra/playback_sessions")
 local playlists = require("@lyra/playlists")
+local server = require("@lyra/server")
 
 local crypt = require("@harmony/crypt")
 
@@ -127,41 +128,37 @@ local function parse_mediabrowser_params(header_value: string): { [string]: stri
 		if key and raw_value then
 			local normalized_key = string.lower(requests.trim(key) or "")
 			if normalized_key ~= "" then
-				values[normalized_key] = requests.unquote(raw_value)
+				local value = string.gsub(requests.unquote(raw_value) or "", "%+", " ")
+				values[normalized_key] = string.gsub(value, "%%(%x%x)", function(hex)
+					return string.char(tonumber(hex, 16) :: number)
+				end)
 			end
 		end
 	end
 	return values
 end
 
-local function parse_mediabrowser_authorization(header_value: string): (string?, string?, string?)
-	local values = parse_mediabrowser_params(header_value)
-	if not values then
-		return nil, nil, nil
+local function mediabrowser_header_values(headers: { [string]: string }?): { [string]: string? }
+	if headers then
+		for _, name in { "authorization", "x-emby-authorization" } do
+			local value = headers[name]
+			if value then
+				local parsed = parse_mediabrowser_params(value)
+				if parsed then
+					return parsed
+				end
+			end
+		end
 	end
-	return requests.trim(values.token), requests.trim(values.userid), requests.trim(values.deviceid)
+	return {}
 end
 
-local function extract_header_identity(header_value: string?): (string?, string?)
-	if type(header_value) ~= "string" then
-		return nil, nil
-	end
-
-	local token, user_id = parse_mediabrowser_authorization(header_value)
-	if token then
-		return token, user_id
-	end
-
-	return parse_bearer_authorization(header_value), nil
-end
-
-local function extract_header_device_id(header_value: string?): string?
-	if type(header_value) ~= "string" then
+local function header_token(value: string?): string?
+	if not value then
 		return nil
 	end
-
-	local _, _, device_id = parse_mediabrowser_authorization(header_value)
-	return requests.trim(device_id)
+	local params = parse_mediabrowser_params(value)
+	return if params then requests.trim(params.token) else parse_bearer_authorization(value)
 end
 
 local function get_query_token(query: ApiQueryParams?): string?
@@ -334,8 +331,10 @@ local function resolve_jellyfin_auth(ctx: ApiContext?): (ResolvedAuth?, string?)
 	local headers = if request then request.headers else nil
 	local query = if request then request.query else nil
 
-	local auth_header = if headers then (headers.authorization or headers.Authorization) else nil
-	local token, requested_user_id = extract_header_identity(auth_header)
+	local token = if headers
+		then header_token(headers.authorization) or header_token(headers["x-emby-authorization"])
+		else nil
+	local requested_user_id = requests.trim(mediabrowser_header_values(headers).userid)
 	token = token or get_legacy_header_token(headers) or get_query_token(query)
 
 	local resolved_auth = auth.resolve_auth(token)
@@ -354,21 +353,21 @@ local function resolve_jellyfin_auth(ctx: ApiContext?): (ResolvedAuth?, string?)
 	return resolved_auth, token
 end
 
--- Browser WebSocket API cannot set custom headers on upgrade, so clients ride
--- the `client` / `device` / `deviceId` / `version` query params instead.
-function module.resolve_client_identity(ctx: ApiContext?): ClientIdentity?
+-- Request identity overrides the login defaults without changing the saved binding.
+-- Browser WebSockets supply these via query parameters instead of custom headers.
+function module.resolve_client_identity(
+	ctx: ApiContext?,
+	resolved_auth: ResolvedAuth?,
+	token: string?
+): (ClientIdentity?, string?)
 	local request = if ctx then ctx.request else nil
 	if not request then
-		return nil
+		return nil, "missing request"
 	end
 
 	local headers = request.headers
 	local query = request.query
-	local header_values: { [string]: string? } = {}
-	local auth_header = if headers then (headers.authorization or headers.Authorization) else nil
-	if type(auth_header) == "string" then
-		header_values = parse_mediabrowser_params(auth_header) or header_values
-	end
+	local header_values = mediabrowser_header_values(headers)
 
 	local function take(header_key: string, query_keys: { string }): string?
 		local header_value = requests.trim(header_values[header_key])
@@ -378,21 +377,59 @@ function module.resolve_client_identity(ctx: ApiContext?): ClientIdentity?
 		return requests.parse_query_string(query, query_keys, nil)
 	end
 
-	local client = take("client", { "client", "Client" })
-	local device = take("device", { "device", "Device" })
-	local device_id = take("deviceid", { "deviceId", "DeviceId", "deviceid" })
-	local version = take("version", { "version", "Version" })
+	local client: string? = take("client", { "client", "Client" })
+	local device: string? = take("device", { "device", "Device" })
+	local device_id: string? = take("deviceid", { "deviceId", "DeviceId", "deviceid" })
+	local version: string? = take("version", { "version", "Version" })
 
+	if not resolved_auth or not token then
+		local request_auth, request_token = module.require_jellyfin_auth(ctx)
+		resolved_auth = resolved_auth or request_auth
+		token = token or request_token
+	end
+	local session_token = if resolved_auth and resolved_auth.credential.session_id then token else nil
+	local saved = if session_token then auth.get_session_data(session_token) else nil
+	if type(saved) == "table" then
+		local fields = saved :: { [string]: auth.JsonValue }
+		local saved_client = if type(fields.client) == "string" then fields.client else nil
+		local saved_device_id = if type(fields.device_id) == "string" then fields.device_id else nil
+		if saved_client and saved_device_id then
+			client = client or saved_client
+			device_id = device_id or saved_device_id
+			device = device or (if type(fields.device) == "string" then fields.device else nil)
+			version = version or (if type(fields.version) == "string" then fields.version else nil)
+		end
+	end
+	if resolved_auth and resolved_auth.credential.api_key_id then
+		client = resolved_auth.credential.api_key_name
+		device_id = device_id or SERVER_ID
+		device = device or "Lyra"
+		version = version or server.info().version
+	end
 	if not client or not device_id then
-		return nil
+		return nil,
+			"missing Client or DeviceId; send player identity in X-Emby-Authorization or client/deviceId query parameters"
 	end
 
-	return {
+	local identity: ClientIdentity = {
 		client = client,
 		device = device or client,
-		device_id = device_id,
+		device_id = device_id :: string,
 		version = version or "",
 	}
+	return identity, nil
+end
+
+function module.remember_login_identity(ctx: ApiContext, resolved_auth: ResolvedAuth, token: string)
+	local identity = module.resolve_client_identity(ctx, resolved_auth, token)
+	if identity then
+		auth.set_session_data(token, {
+			client = identity.client,
+			device_id = identity.device_id,
+			device = identity.device,
+			version = identity.version,
+		})
+	end
 end
 
 function module.require_jellyfin_auth(ctx: ApiContext?): (ResolvedAuth?, string?)
@@ -413,24 +450,31 @@ function module.require_jellyfin_principal(ctx: ApiContext?): Principal?
 	return resolved_auth.principal
 end
 
--- WS counterpart to handle_playback_report_route; auth and device_id come
+-- WS counterpart to handle_playback_report_route; auth and identity come
 -- from the socket handshake, not per-frame headers.
 function module.handle_ws_playback_event(
 	resolved_auth: ResolvedAuth,
 	data: JsonValue,
 	event_name: string,
-	device_id: string?
-): boolean
+	identity: ClientIdentity
+): (boolean, string?)
 	local payload = playback.as_playback_payload(data)
-	if not payload or not playback.ensure_payload_user_matches(resolved_auth, payload) then
-		return false
+	if not payload then
+		return false, "invalid playback report body"
 	end
-	local ok, _err = playback.report_playback_event(resolved_auth, payload, event_name, device_id)
-	return ok
+	if not playback.ensure_payload_user_matches(resolved_auth, payload) then
+		return false, "playback report user does not match authenticated user"
+	end
+	return playback.report_playback_event(
+		resolved_auth,
+		payload,
+		event_name,
+		module.build_session_id(resolved_auth.principal, identity)
+	)
 end
 
 function module.handle_playback_report_route(ctx: ApiContext?, event_name: string): ApiResponse
-	local resolved_auth, _token = module.require_jellyfin_auth(ctx)
+	local resolved_auth, token = module.require_jellyfin_auth(ctx)
 	if not resolved_auth then
 		return module.unauthorized()
 	end
@@ -443,14 +487,19 @@ function module.handle_playback_report_route(ctx: ApiContext?, event_name: strin
 		return module.unauthorized()
 	end
 
-	local request = if ctx then ctx.request else nil
-	local headers = if request then request.headers else nil
-	local auth_header = if headers then (headers.authorization or headers.Authorization) else nil
-	local request_device_id = extract_header_device_id(auth_header)
+	local identity, identity_err = module.resolve_client_identity(ctx, resolved_auth, token)
+	if not identity then
+		return responses.bad_request(identity_err or "missing Client or DeviceId")
+	end
 
-	local ok, report_err = playback.report_playback_event(resolved_auth, payload, event_name, request_device_id)
+	local ok, report_err = playback.report_playback_event(
+		resolved_auth,
+		payload,
+		event_name,
+		module.build_session_id(resolved_auth.principal, identity)
+	)
 	if not ok then
-		return report_err or responses.bad_request("failed to report playback event")
+		return responses.bad_request(report_err or "failed to report playback event")
 	end
 
 	return api.response.empty(204)
