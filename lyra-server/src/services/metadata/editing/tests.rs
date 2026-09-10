@@ -381,7 +381,7 @@ fn manual_clear_overrides_later_provider_values() -> anyhow::Result<()> {
         track_id,
         &db::MetadataLayer {
             db_id: None,
-            provider_id: "test-provider".to_string(),
+            source_id: "test-provider".to_string(),
             fields: json!({"sort_title": "Provider sort", "year": 2024}).to_string(),
             updated_at: 10,
         },
@@ -484,7 +484,7 @@ fn inherit_relinquishes_ownership_and_restores_resolved_value() -> anyhow::Resul
         track_id,
         &db::MetadataLayer {
             db_id: None,
-            provider_id: "provider".to_string(),
+            source_id: "provider".to_string(),
             fields: json!({"track_title": "Resolved"}).to_string(),
             updated_at: 10,
         },
@@ -540,7 +540,7 @@ fn inherit_graph_field_restores_provider_resolved_value() -> anyhow::Result<()> 
         release_id,
         &db::MetadataLayer {
             db_id: None,
-            provider_id: "provider".to_string(),
+            source_id: "provider".to_string(),
             fields: json!({"genres": ["Provider"]}).to_string(),
             updated_at: 10,
         },
@@ -590,7 +590,7 @@ fn inherit_conflicts_when_provider_resolution_changes_after_preview() -> anyhow:
     )?;
     let provider_layer = |genres: &[&str], updated_at| db::MetadataLayer {
         db_id: None,
-        provider_id: "provider".to_string(),
+        source_id: "provider".to_string(),
         fields: json!({"genres": genres}).to_string(),
         updated_at,
     };
@@ -779,7 +779,7 @@ fn inherit_labels_restores_resolvable_provider_labels() -> anyhow::Result<()> {
         release_id,
         &db::MetadataLayer {
             db_id: None,
-            provider_id: "provider".to_string(),
+            source_id: "provider".to_string(),
             fields: json!({
                 "labels": [{
                     "name": "Provider Label",
@@ -869,7 +869,7 @@ fn inherit_labels_does_not_fall_back_by_name_for_an_external_identity() -> anyho
         release_id,
         &db::MetadataLayer {
             db_id: None,
-            provider_id: "provider".to_string(),
+            source_id: "provider".to_string(),
             fields: json!({
                 "labels": [{
                     "name": "Shared Name",
@@ -1130,7 +1130,7 @@ fn inherited_label_disappearance_after_preview_is_rejected() -> anyhow::Result<(
         release_id,
         &db::MetadataLayer {
             db_id: None,
-            provider_id: "provider".to_string(),
+            source_id: "provider".to_string(),
             fields: json!({
                 "labels": [{
                     "name": "Provider Label",

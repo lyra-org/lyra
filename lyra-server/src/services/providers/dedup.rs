@@ -190,14 +190,14 @@ fn merge_release_into_inside_tx(
         )?;
     }
 
-    let mut winner_layers_by_provider = HashMap::new();
+    let mut winner_layers_by_source = HashMap::new();
     for layer in db::metadata::layers::get_for_entity(db, winner)? {
-        winner_layers_by_provider.insert(layer.provider_id.clone(), layer);
+        winner_layers_by_source.insert(layer.source_id.clone(), layer);
     }
     let mut wrote_layer = false;
     for layer in db::metadata::layers::get_for_entity(db, loser)? {
-        let should_upsert = winner_layers_by_provider
-            .get(&layer.provider_id)
+        let should_upsert = winner_layers_by_source
+            .get(&layer.source_id)
             .is_none_or(|existing| layer.updated_at > existing.updated_at);
         if !should_upsert {
             continue;
@@ -206,7 +206,7 @@ fn merge_release_into_inside_tx(
         let mut layer_to_upsert = layer.clone();
         layer_to_upsert.db_id = None;
         db::metadata::layers::upsert_inside_tx(db, winner, &layer_to_upsert)?;
-        winner_layers_by_provider.insert(layer.provider_id.clone(), layer);
+        winner_layers_by_source.insert(layer.source_id.clone(), layer);
         wrote_layer = true;
     }
     let winner_labels_are_manual =

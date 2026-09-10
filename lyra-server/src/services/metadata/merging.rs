@@ -28,6 +28,7 @@ use crate::db::{
     Track,
     metadata::manual_overrides::ManualMetadataField,
 };
+use crate::services::metadata::layers::LOCAL_SOURCE_ID;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct MergedMetadata {
@@ -65,23 +66,27 @@ pub(crate) fn merge_layers(
         priority_map.insert(&provider.provider_id, provider.priority);
     }
 
+    // None sorts local below even a priority-0 provider.
+    let layer_priority = |layer: &MetadataLayer| -> Option<u32> {
+        if layer.source_id == LOCAL_SOURCE_ID {
+            None
+        } else {
+            priority_map.get(layer.source_id.as_str()).copied()
+        }
+    };
+
     let mut sorted_layers: Vec<MetadataLayer> = layers
         .into_iter()
-        .filter(|layer| priority_map.contains_key(layer.provider_id.as_str()))
+        .filter(|layer| {
+            layer.source_id == LOCAL_SOURCE_ID
+                || priority_map.contains_key(layer.source_id.as_str())
+        })
         .collect();
     sorted_layers.sort_by(|a, b| {
-        let a_priority = priority_map
-            .get(a.provider_id.as_str())
-            .copied()
-            .unwrap_or(0);
-        let b_priority = priority_map
-            .get(b.provider_id.as_str())
-            .copied()
-            .unwrap_or(0);
-        b_priority
-            .cmp(&a_priority)
+        layer_priority(b)
+            .cmp(&layer_priority(a))
             .then_with(|| b.updated_at.cmp(&a.updated_at))
-            .then_with(|| a.provider_id.cmp(&b.provider_id))
+            .then_with(|| a.source_id.cmp(&b.source_id))
     });
 
     let mut merged_fields: HashMap<String, serde_json::Value> = HashMap::new();
@@ -92,7 +97,7 @@ pub(crate) fn merge_layers(
             Ok(f) => f,
             Err(err) => {
                 tracing::warn!(
-                    provider_id = %layer.provider_id,
+                    source_id = %layer.source_id,
                     error = %err,
                     "failed to parse metadata layer fields as JSON, skipping layer"
                 );
@@ -103,7 +108,7 @@ pub(crate) fn merge_layers(
         for (key, value) in fields {
             if !merged_fields.contains_key(&key) && !value.is_null() {
                 merged_fields.insert(key.clone(), value);
-                provenance.insert(key, layer.provider_id.clone());
+                provenance.insert(key, layer.source_id.clone());
             }
         }
     }
@@ -496,10 +501,10 @@ fn apply_to_artist(artist: &mut Artist, merged: &MergedMetadata) -> bool {
 mod tests {
     use super::*;
 
-    fn make_layer(provider_id: &str, fields_json: &str, updated_at: u64) -> MetadataLayer {
+    fn make_layer(source_id: &str, fields_json: &str, updated_at: u64) -> MetadataLayer {
         MetadataLayer {
             db_id: None,
-            provider_id: provider_id.to_string(),
+            source_id: source_id.to_string(),
             fields: fields_json.to_string(),
             updated_at,
         }
@@ -695,6 +700,46 @@ mod tests {
         let inputs = extract_label_inputs(&merged).expect("null external_id is legitimate");
         assert_eq!(inputs.len(), 1);
         assert!(inputs[0].external_id.is_none());
+    }
+
+    #[test]
+    fn merge_layers_keeps_local_source_without_a_provider() {
+        let layers = vec![make_layer(
+            LOCAL_SOURCE_ID,
+            r#"{"track_title": "Tagged Title"}"#,
+            1000,
+        )];
+
+        let merged = merge_layers(layers, &[]);
+
+        assert_eq!(
+            merged.fields.get("track_title").and_then(|v| v.as_str()),
+            Some("Tagged Title")
+        );
+        assert_eq!(
+            merged.provenance.get("track_title").map(String::as_str),
+            Some(LOCAL_SOURCE_ID)
+        );
+    }
+
+    #[test]
+    fn merge_layers_ranks_local_source_below_every_enabled_provider() {
+        let layers = vec![
+            make_layer(LOCAL_SOURCE_ID, r#"{"track_title": "Tagged Title"}"#, 2000),
+            make_layer("provider", r#"{"track_title": "Provider Title"}"#, 1000),
+        ];
+        let providers = vec![make_provider("provider", 0, true)];
+
+        let merged = merge_layers(layers, &providers);
+
+        assert_eq!(
+            merged.fields.get("track_title").and_then(|v| v.as_str()),
+            Some("Provider Title")
+        );
+        assert_eq!(
+            merged.provenance.get("track_title").map(String::as_str),
+            Some("provider")
+        );
     }
 
     #[test]

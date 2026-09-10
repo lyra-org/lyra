@@ -21,7 +21,7 @@ use super::super::{
 pub(crate) struct MetadataLayer {
     #[serde(skip)]
     pub(crate) db_id: Option<NodeId>,
-    pub(crate) provider_id: String,
+    pub(crate) source_id: String,
     pub(crate) fields: String,
     pub(crate) updated_at: u64,
 }
@@ -69,9 +69,8 @@ pub(crate) fn upsert_inside_tx(
         .try_into()?;
     let existing = layers
         .into_iter()
-        .find(|existing| existing.provider_id == layer.provider_id);
+        .find(|existing| existing.source_id == layer.source_id);
 
-    // Avoid no-op rewrites when provider fields are unchanged.
     if let Some(existing_layer) = &existing
         && existing_layer.fields == layer.fields
         && let Some(db_id) = existing_layer.db_id.clone()
@@ -92,9 +91,9 @@ pub(crate) fn upsert_inside_tx(
         .or_else(|| result.elements.first().map(|element| element.id))
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "upsert metadata layer returned no id (node_id={}, provider_id='{}')",
+                "upsert metadata layer returned no id (node_id={}, source_id='{}')",
                 node_id.0,
-                layer.provider_id
+                layer.source_id
             )
         })?;
 
@@ -138,13 +137,13 @@ mod tests {
 
         let first = MetadataLayer {
             db_id: None,
-            provider_id: "musicbrainz".to_string(),
+            source_id: "musicbrainz".to_string(),
             fields: r#"{"release_title":"first"}"#.to_string(),
             updated_at: 100,
         };
         let second = MetadataLayer {
             db_id: None,
-            provider_id: "musicbrainz".to_string(),
+            source_id: "musicbrainz".to_string(),
             fields: r#"{"release_title":"second"}"#.to_string(),
             updated_at: 200,
         };
@@ -156,7 +155,7 @@ mod tests {
 
         let layers = get_for_entity(&db, node_id)?;
         assert_eq!(layers.len(), 1);
-        assert_eq!(layers[0].provider_id, "musicbrainz");
+        assert_eq!(layers[0].source_id, "musicbrainz");
         assert_eq!(layers[0].fields, second.fields);
         assert_eq!(layers[0].updated_at, second.updated_at);
 
@@ -170,13 +169,13 @@ mod tests {
 
         let first = MetadataLayer {
             db_id: None,
-            provider_id: "musicbrainz".to_string(),
+            source_id: "musicbrainz".to_string(),
             fields: r#"{"release_title":"same"}"#.to_string(),
             updated_at: 100,
         };
         let second = MetadataLayer {
             db_id: None,
-            provider_id: "musicbrainz".to_string(),
+            source_id: "musicbrainz".to_string(),
             fields: first.fields.clone(),
             updated_at: 200,
         };

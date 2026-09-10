@@ -29,6 +29,7 @@ use crate::plugins::lifecycle::{
     ScopedRegistry,
 };
 use crate::services::EntityType;
+use crate::services::metadata::layers::LOCAL_SOURCE_ID;
 use crate::services::metadata::lyrics::providers::unregister_handlers_for_plugin as unregister_lyrics_handlers_for_plugin;
 
 pub(crate) const DEFAULT_SIMILAR_RELEASES_HANDLER_TIMEOUT: Duration = Duration::from_secs(10);
@@ -165,6 +166,11 @@ pub(crate) struct ProviderSimilarReleasesSpec {
 
 impl ProviderRegistry {
     pub(crate) fn register(&mut self, plugin_id: PluginId, id: String) -> Result<()> {
+        if id == LOCAL_SOURCE_ID {
+            bail!(
+                "provider id '{LOCAL_SOURCE_ID}' is reserved for file-derived metadata and cannot be registered by a plugin"
+            );
+        }
         if let Some(existing) = self.plugin_by_provider.get(&id) {
             bail!("provider '{id}' already registered by plugin '{existing}'");
         }
@@ -427,6 +433,18 @@ pub(crate) mod tests {
         match provider.id_generators.get(id_type)? {
             ProviderIdUrlGenerator::Template(template) => Some(template.clone()),
         }
+    }
+
+    #[test]
+    fn register_rejects_the_reserved_local_source_id() {
+        let mut registry = ProviderRegistry::default();
+        let plugin_id = PluginId::new("demo").expect("valid plugin id");
+
+        let err = registry
+            .register(plugin_id, LOCAL_SOURCE_ID.to_string())
+            .expect_err("reserved source id must be rejected");
+
+        assert!(err.to_string().contains(LOCAL_SOURCE_ID));
     }
 
     #[tokio::test]

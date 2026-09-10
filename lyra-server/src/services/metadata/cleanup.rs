@@ -488,13 +488,11 @@ fn migrate_metadata(
 ) -> anyhow::Result<()> {
     let loser_layers = db::metadata::layers::get_for_entity(db, loser)?;
     let winner_layers = db::metadata::layers::get_for_entity(db, winner)?;
-    let winner_provider_ids: HashSet<&str> = winner_layers
-        .iter()
-        .map(|l| l.provider_id.as_str())
-        .collect();
+    let winner_source_ids: HashSet<&str> =
+        winner_layers.iter().map(|l| l.source_id.as_str()).collect();
 
     for layer in &loser_layers {
-        if winner_provider_ids.contains(layer.provider_id.as_str()) {
+        if winner_source_ids.contains(layer.source_id.as_str()) {
             continue;
         }
         let mut migrated = layer.clone();
@@ -584,7 +582,7 @@ mod tests {
             artist_b,
             &db::MetadataLayer {
                 db_id: None,
-                provider_id: "local-scanner".to_string(),
+                source_id: "local-scanner".to_string(),
                 fields: r#"{"artist_name": "Radiohead", "description": "English rock band"}"#
                     .to_string(),
                 updated_at: 1000,
@@ -598,9 +596,7 @@ mod tests {
         assert!(a_exists, "artist A should win (more edges)");
 
         let winner_layers = db::metadata::layers::get_for_entity(&db, artist_a)?;
-        let has_local_scanner_layer = winner_layers
-            .iter()
-            .any(|l| l.provider_id == "local-scanner");
+        let has_local_scanner_layer = winner_layers.iter().any(|l| l.source_id == "local-scanner");
 
         assert!(
             has_local_scanner_layer,
