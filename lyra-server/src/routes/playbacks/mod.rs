@@ -132,7 +132,7 @@ struct ControllerResponse {
 struct PlaybackResponse {
     id: String,
     user_id: String,
-    queue_revision: u64,
+    queue_revision: Option<u64>,
     current: Option<CurrentPlaybackResponse>,
     created_at: String,
     updated_at: String,
@@ -278,7 +278,7 @@ fn playback_to_response(
     PlaybackResponse {
         id: playback.id.clone(),
         user_id: user_public_id.to_string(),
-        queue_revision: playback.queue_revision,
+        queue_revision: playback.queue.as_ref().map(|queue| queue.revision),
         current: current_session.map(|current| current_to_response(current, current_ms)),
         created_at: routes::unix_ms_to_rfc3339_u64(playback.created_at_ms),
         updated_at: routes::unix_ms_to_rfc3339_u64(playback.updated_at_ms),
@@ -302,6 +302,9 @@ fn map_playback_error(error: PlaybackError) -> AppError {
     match error {
         PlaybackError::InvalidQueue(message) => AppError::bad_request(message),
         PlaybackError::NotFound => AppError::not_found("playback not found"),
+        PlaybackError::QueueUnavailable => {
+            AppError::conflict("playback has no server-managed queue")
+        }
         PlaybackError::RevisionConflict {
             expected_revision,
             current_revision,
@@ -326,6 +329,14 @@ fn revision_conflict(expected_revision: u64, current_revision: u64) -> AppError 
     )
 }
 
+fn require_queue_revision(playback: &db::playbacks::Playback) -> Result<u64, AppError> {
+    playback
+        .queue
+        .as_ref()
+        .map(|queue| queue.revision)
+        .ok_or_else(|| map_playback_error(PlaybackError::QueueUnavailable))
+}
+
 fn require_revision(expected_revision: u64, current_revision: u64) -> Result<(), AppError> {
     if expected_revision == current_revision {
         Ok(())
@@ -338,10 +349,11 @@ fn resolve_visible_playback(
     db: &agdb::DbAny,
     principal: &Principal,
     id: &str,
+    current_ms: u64,
 ) -> Result<playbacks::PlaybackDetail, AppError> {
     let playback_db_id = db::lookup::find_node_id_by_id(db, id)?
         .ok_or_else(|| AppError::not_found(format!("playback not found: {id}")))?;
-    playbacks::get_visible_detail(db, playback_db_id, principal)
+    playbacks::get_visible_detail(db, playback_db_id, principal, current_ms)
         .map_err(map_playback_error)?
         .ok_or_else(|| AppError::not_found(format!("playback not found: {id}")))
 }
@@ -350,10 +362,11 @@ fn resolve_owned_playback_projection(
     db: &agdb::DbAny,
     principal: &Principal,
     id: &str,
+    current_ms: u64,
 ) -> Result<db::playbacks::PlaybackListProjection, AppError> {
     let playback_db_id = db::lookup::find_node_id_by_id(db, id)?
         .ok_or_else(|| AppError::not_found(format!("playback not found: {id}")))?;
-    playbacks::get_owned_projection(db, playback_db_id, principal.user_db_id)
+    playbacks::get_owned_projection(db, playback_db_id, principal.user_db_id, current_ms)
         .map_err(map_playback_error)?
         .ok_or_else(|| AppError::not_found(format!("playback not found: {id}")))
 }
@@ -382,8 +395,9 @@ async fn list_playbacks(
             let Some(playback_db_id) = db::lookup::find_node_id_by_id(&*db, &id)? else {
                 continue;
             };
-            if let Some(record) = playbacks::get_visible_detail(&db, playback_db_id, &principal)
-                .map_err(map_playback_error)?
+            if let Some(record) =
+                playbacks::get_visible_detail(&db, playback_db_id, &principal, current_ms)
+                    .map_err(map_playback_error)?
             {
                 records.push(record);
             }
@@ -411,8 +425,9 @@ async fn list_playbacks(
             let Some(playback_db_id) = db::lookup::find_node_id_by_id(&*db, id)? else {
                 continue;
             };
-            if let Some(record) = playbacks::get_visible_detail(&db, playback_db_id, &principal)
-                .map_err(map_playback_error)?
+            if let Some(record) =
+                playbacks::get_visible_detail(&db, playback_db_id, &principal, current_ms)
+                    .map_err(map_playback_error)?
             {
                 records.push(record);
             }
@@ -505,7 +520,7 @@ async fn get_playback(
         Vec::new()
     };
     let db = STATE.db.read().await;
-    let record = resolve_visible_playback(&db, &principal, &id)?;
+    let record = resolve_visible_playback(&db, &principal, &id, current_ms)?;
     Ok(Json(playback_to_response(
         &record.playback,
         record.current_session.as_ref(),
@@ -521,8 +536,9 @@ async fn delete_playback(
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     let principal = require_principal(&headers).await?;
+    let current_ms = now_ms()?;
     let mut db = STATE.db.write().await;
-    let record = resolve_owned_playback_projection(&db, &principal, &id)?;
+    let record = resolve_owned_playback_projection(&db, &principal, &id, current_ms)?;
     let current = match db::playbacks::get_current_session_id(&*db, record.db_id)? {
         Some(session_id) => db::playback_sessions::get_by_id(&*db, session_id)?
             .map(|session| (session_id, session.id)),
@@ -550,13 +566,13 @@ fn create_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List playbacks").description(
-        "Returns `{ items, next_cursor }` for the authenticated user's durable playbacks, ordered by most recently updated. `active=true` filters the initial snapshot to recent non-terminal current sessions; `inc=controller` includes current WebSocket controller details. Drive pagination from `next_cursor`.",
+        "Returns `{ items, next_cursor }` for the authenticated user's playback contexts, including plugin-reported playback, ordered by most recently updated. `active=true` filters the initial snapshot to recent non-terminal current sessions. Reported contexts expire after five minutes without a current playback observation; explicitly created playbacks are retained. A null `queue_revision` means there is no server-managed queue. `inc=controller` includes current native WebSocket controller details. Drive pagination from `next_cursor`.",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn detail_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Get playback")
+    op.summary("Get playback").description("Returns a playback context using the same representation as the collection. A stopped current session may remain visible until the context expires or is deleted.")
 }
 
 #[cfg(feature = "docgen")]

@@ -74,6 +74,9 @@ async fn sweep_stale_playback_sessions(db: &DbAsync, now_ms: u64) {
     // themselves are non-blocking.
     let evicted = {
         let mut db_write = db.write().await;
+        if let Err(err) = db_write.transaction_mut(|t| db::playbacks::expire_reported(t, now_ms)) {
+            tracing::warn!(error = %err, "reported playback sweep failed");
+        }
         match playback_sessions::cleanup_evicted_playbacks(&mut db_write, now_ms) {
             Ok(evicted) => evicted,
             Err(err) => {

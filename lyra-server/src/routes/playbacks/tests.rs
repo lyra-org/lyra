@@ -40,6 +40,54 @@ struct RouteFixture {
     second_track_id: String,
 }
 
+#[tokio::test]
+async fn reported_reads_share_the_supplied_expiry_cutoff() -> anyhow::Result<()> {
+    let _guard = crate::testing::runtime_test_lock().await;
+    let fixture = setup_admin_with_tracks().await?;
+    let principal = require_principal(&fixture.headers)
+        .await
+        .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    let mut db = STATE.db.write().await;
+    let track_db_id = db::lookup::find_node_id_by_id(&*db, &fixture.first_track_id)?.unwrap();
+    let observed_at = 1_000;
+    sessions::report_playback_session_with_cleanup(
+        &mut db,
+        sessions::SessionPlaybackReportRequest {
+            plugin_id: "external",
+            user_db_id: fixture.user_db_id,
+            session_key: "player",
+            track_db_id,
+            client_name: None,
+            mutation: PlaybackMutation {
+                state: Some(PlaybackState::Playing),
+                ..Default::default()
+            },
+            now_ms: observed_at,
+            active_event: sessions::ActiveEvent::Started,
+        },
+    )?;
+    let playback =
+        db::playbacks::get_reported(&*db, fixture.user_db_id, "external", "player", observed_at)?
+            .unwrap();
+    let id = playback.db_id.unwrap();
+    let cutoff = observed_at + db::playbacks::REPORTED_PLAYBACK_TTL_MS;
+    for (current_ms, visible) in [(cutoff, true), (cutoff + 1, false)] {
+        assert_eq!(
+            !playbacks::list_visible_projections(&db, &principal, false, current_ms)?.is_empty(),
+            visible,
+        );
+        assert_eq!(
+            playbacks::get_visible_detail(&db, id, &principal, current_ms)?.is_some(),
+            visible,
+        );
+        assert_eq!(
+            playbacks::get_owned_projection(&db, id, fixture.user_db_id, current_ms)?.is_some(),
+            visible,
+        );
+    }
+    Ok(())
+}
+
 async fn setup_admin_with_tracks() -> anyhow::Result<RouteFixture> {
     crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
         directory: std::path::PathBuf::from("."),
@@ -106,11 +154,14 @@ fn active_filter_requires_recent_non_terminal_current_session() {
     let playback = db::playbacks::Playback {
         db_id: Some(DbId(1)),
         id: "playback".to_string(),
-        queue_revision: 1,
-        track_ids: vec!["track".to_string()],
-        current_index: 0,
-        repeat_mode: playbacks::RepeatMode::None,
-        shuffle_enabled: false,
+        queue: Some(db::playbacks::Queue {
+            revision: 1,
+            track_ids: vec!["track".to_string()],
+            current_index: 0,
+            repeat_mode: playbacks::RepeatMode::None,
+            shuffle_enabled: false,
+        }),
+        reported: None,
         created_at_ms: 1,
         updated_at_ms: 1,
     };
@@ -267,7 +318,7 @@ async fn create_replace_queue_and_advance_current_track() -> anyhow::Result<()> 
     .await
     .map_err(|error| anyhow::anyhow!("{error:?}"))?;
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(created.queue_revision, 1);
+    assert_eq!(created.queue_revision, Some(1));
     assert_eq!(created.current.as_ref().unwrap().track_id, first_track_id);
     assert_eq!(
         created.updated_at,
@@ -319,7 +370,7 @@ async fn create_replace_queue_and_advance_current_track() -> anyhow::Result<()> 
     )
     .await
     .map_err(|error| anyhow::anyhow!("{error:?}"))?;
-    assert_eq!(progressed.queue_revision, 2);
+    assert_eq!(progressed.queue_revision, Some(2));
     assert_eq!(
         progressed.current.as_ref().unwrap().track_id,
         second_track_id
@@ -669,5 +720,189 @@ async fn stale_revision_is_rejected_before_handoff_is_queued() -> anyhow::Result
         Err(tokio::sync::mpsc::error::TryRecvError::Empty)
     ));
     remote_registry::unregister(target_id).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn reported_playback_shares_collection_and_rejects_queue_operations() -> anyhow::Result<()> {
+    let _guard = crate::testing::runtime_test_lock().await;
+    let fixture = setup_admin_with_tracks().await?;
+    let (_, Json(native)) = create_playback(
+        fixture.headers.clone(),
+        Json(PlaybackCreateRequest {
+            queue: QueueSnapshot::single(fixture.first_track_id.clone()),
+            position_ms: Some(0),
+            duration_ms: Some(100_000),
+            state: Some(PlaybackState::Playing),
+            connection_session_key: None,
+        }),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    let track_db_id = {
+        let db = STATE.db.read().await;
+        db::lookup::find_node_id_by_id(&*db, &fixture.second_track_id)?.unwrap()
+    };
+    {
+        let mut db = STATE.db.write().await;
+        sessions::report_playback_session_with_cleanup(
+            &mut db,
+            sessions::SessionPlaybackReportRequest {
+                plugin_id: "external",
+                user_db_id: fixture.user_db_id,
+                session_key: "reported-player",
+                track_db_id,
+                client_name: Some("External player".into()),
+                mutation: PlaybackMutation {
+                    position_ms: Some(1_200),
+                    duration_ms: Some(100_000),
+                    state: Some(PlaybackState::Playing),
+                },
+                now_ms: sessions::now_ms()?,
+                active_event: sessions::ActiveEvent::Started,
+            },
+        )?;
+    }
+    let Json(page) = list_playbacks(
+        fixture.headers.clone(),
+        Query(PlaybackQuery {
+            active: Some(true),
+            ..Default::default()
+        }),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    assert_eq!(page.items.len(), 2);
+    let reported = page.items.iter().find(|item| item.id != native.id).unwrap();
+    assert_eq!(reported.queue_revision, None);
+    assert_eq!(
+        reported.current.as_ref().unwrap().track_id,
+        fixture.second_track_id
+    );
+    assert_eq!(reported.current.as_ref().unwrap().position_ms, 1_200);
+    let id = reported.id.clone();
+    let Json(detail) = get_playback(
+        fixture.headers.clone(),
+        Path(id.clone()),
+        Query(PlaybackDetailQuery::default()),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    assert_eq!(detail.id, id);
+    assert!(serde_json::to_value(&detail)?["queue_revision"].is_null());
+
+    let queue_status = match queue::get_queue(
+        fixture.headers.clone(),
+        Path(id.clone()),
+        Query(queue::QueueGetQuery { revision: None }),
+    )
+    .await
+    {
+        Ok(_) => panic!("reported playback must not have a fabricated queue"),
+        Err(error) => error.into_response().status(),
+    };
+    assert_eq!(queue_status, StatusCode::CONFLICT);
+    let replace_status = match replace_queue(
+        fixture.headers.clone(),
+        Path(id.clone()),
+        Json(QueueReplaceRequest {
+            expected_revision: 0,
+            snapshot: QueueSnapshot::single(fixture.second_track_id.clone()),
+        }),
+    )
+    .await
+    {
+        Ok(_) => panic!("queue replacement must not convert reported playback"),
+        Err(error) => error.into_response().status(),
+    };
+    assert_eq!(replace_status, StatusCode::CONFLICT);
+    let progress_status = match report_progress(
+        fixture.headers.clone(),
+        Path(id.clone()),
+        Json(PlaybackProgressRequest {
+            queue_revision: 0,
+            track_id: Some(fixture.second_track_id.clone()),
+            position_ms: Some(2_000),
+            duration_ms: None,
+            state: Some(PlaybackState::Playing),
+            connection_session_key: None,
+            handoff_token: None,
+        }),
+    )
+    .await
+    {
+        Ok(_) => panic!("native progress must require a server-managed queue"),
+        Err(error) => error.into_response().status(),
+    };
+    assert_eq!(progress_status, StatusCode::CONFLICT);
+
+    let other_user_id = {
+        let mut db = STATE.db.write().await;
+        let user = db::test_db::test_user(&format!("other-playback-user-{}", nanoid!()))?;
+        let user_id = db::users::create(&mut db, &user)?;
+        db::roles::ensure_user_has_role(&mut db, user_id, db::roles::BUILTIN_ADMIN_ROLE)?;
+        user_id
+    };
+    let other_session =
+        crate::services::auth::sessions::create_session_for_user(other_user_id, Default::default())
+            .await?;
+    let mut other_headers = HeaderMap::new();
+    other_headers.insert(
+        AUTHORIZATION,
+        format!("Bearer {}", other_session.token).parse()?,
+    );
+    let foreign_status = match get_playback(
+        other_headers.clone(),
+        Path(id.clone()),
+        Query(PlaybackDetailQuery::default()),
+    )
+    .await
+    {
+        Ok(_) => panic!("reported playback must be scoped to its owner"),
+        Err(error) => error.into_response().status(),
+    };
+    assert_eq!(foreign_status, StatusCode::NOT_FOUND);
+    let Json(other_page) = list_playbacks(other_headers, Query(PlaybackQuery::default()))
+        .await
+        .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    assert!(other_page.items.is_empty());
+    {
+        let mut db = STATE.db.write().await;
+        sessions::report_playback_session_with_cleanup(
+            &mut db,
+            sessions::SessionPlaybackReportRequest {
+                plugin_id: "external",
+                user_db_id: fixture.user_db_id,
+                session_key: "reported-player",
+                track_db_id,
+                client_name: None,
+                mutation: PlaybackMutation {
+                    state: Some(PlaybackState::Stopped),
+                    ..Default::default()
+                },
+                now_ms: sessions::now_ms()?,
+                active_event: sessions::ActiveEvent::Progress,
+            },
+        )?;
+    }
+    let Json(active) = list_playbacks(
+        fixture.headers.clone(),
+        Query(PlaybackQuery {
+            active: Some(true),
+            ..Default::default()
+        }),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    assert_eq!(active.items.len(), 1);
+    assert_eq!(active.items[0].id, native.id);
+    let Json(stopped) = get_playback(
+        fixture.headers,
+        Path(id),
+        Query(PlaybackDetailQuery::default()),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    assert_eq!(stopped.current.unwrap().state, PlaybackState::Stopped);
     Ok(())
 }

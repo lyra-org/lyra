@@ -600,7 +600,7 @@ mod tests {
                 .db_id
                 .expect("persisted playback must have a database ID"),
             playback_public_id: update.playback.id,
-            queue_revision: update.playback.queue_revision,
+            queue_revision: update.playback.queue.as_ref().unwrap().revision,
             expected_session: update.session.playback,
         })
     }

@@ -61,11 +61,15 @@ impl QueueSnapshot {
 pub(crate) fn queue_from_playback(
     playback: &db::playbacks::Playback,
 ) -> Result<QueueSnapshot, PlaybackError> {
+    let stored = playback
+        .queue
+        .as_ref()
+        .ok_or(PlaybackError::QueueUnavailable)?;
     let queue = QueueSnapshot {
-        track_ids: playback.track_ids.clone(),
-        current_index: playback.current_index,
-        repeat_mode: playback.repeat_mode,
-        shuffle_enabled: playback.shuffle_enabled,
+        track_ids: stored.track_ids.clone(),
+        current_index: stored.current_index,
+        repeat_mode: stored.repeat_mode,
+        shuffle_enabled: stored.shuffle_enabled,
     };
     let current_index = usize::try_from(queue.current_index).ok();
     if queue.track_ids.is_empty()
@@ -118,6 +122,8 @@ pub(crate) enum PlaybackError {
     InvalidQueue(String),
     #[error("playback not found")]
     NotFound,
+    #[error("playback has no server-managed queue")]
+    QueueUnavailable,
     #[error("queue revision conflict: expected {expected_revision}, current {current_revision}")]
     RevisionConflict {
         expected_revision: u64,
@@ -205,16 +211,20 @@ pub(crate) fn create_playback(
     let playback = db::playbacks::Playback {
         db_id: None,
         id,
-        queue_revision: 1,
-        track_ids: snapshot.track_ids,
-        current_index: snapshot.current_index,
-        repeat_mode: snapshot.repeat_mode,
-        shuffle_enabled: snapshot.shuffle_enabled,
+        queue: Some(db::playbacks::Queue {
+            revision: 1,
+            track_ids: snapshot.track_ids,
+            current_index: snapshot.current_index,
+            repeat_mode: snapshot.repeat_mode,
+            shuffle_enabled: snapshot.shuffle_enabled,
+        }),
+        reported: None,
         created_at_ms: now_ms,
         updated_at_ms: now_ms,
     };
 
     let (playback, session) = db.transaction_mut(|t| {
+        db::playbacks::expire_reported_for_user(t, user_db_id, now_ms)?;
         if db::playbacks::count_for_user_up_to_limit(t, user_db_id)?
             >= db::playbacks::MAX_PLAYBACKS_PER_USER
         {
@@ -272,10 +282,15 @@ pub(crate) fn report_progress(
         }
         let mut playback =
             db::playbacks::get_by_id(t, playback_db_id)?.ok_or(PlaybackError::NotFound)?;
-        if playback.queue_revision != queue_revision {
+        let current_revision = playback
+            .queue
+            .as_ref()
+            .ok_or(PlaybackError::QueueUnavailable)?
+            .revision;
+        if current_revision != queue_revision {
             return Err(PlaybackError::RevisionConflict {
                 expected_revision: queue_revision,
-                current_revision: playback.queue_revision,
+                current_revision,
             });
         }
         let queue = queue_from_playback(&playback)?;
@@ -450,7 +465,7 @@ pub(crate) fn current_handoff_playback(
         return Ok(None);
     };
     if playback.id != playback_public_id
-        || playback.queue_revision != queue_revision
+        || playback.queue.as_ref().map(|queue| queue.revision) != Some(queue_revision)
         || db::playbacks::get_current_session_id(db, playback_db_id)? != Some(playback_session_id)
     {
         return Ok(None);
@@ -468,6 +483,8 @@ pub(crate) enum HandoffValidationError {
     NotFound,
     #[error("playback is owned by another user")]
     WrongOwner,
+    #[error("playback has no server-managed queue")]
+    QueueUnavailable,
     #[error("queue revision conflict: expected {expected_revision}, current {current_revision}")]
     RevisionConflict {
         expected_revision: u64,
@@ -523,10 +540,24 @@ fn detail_from_playback(
     })
 }
 
+pub(crate) fn reported_id(
+    db: &DbAny,
+    user_db_id: DbId,
+    plugin_id: &str,
+    session_key: &str,
+    now_ms: u64,
+) -> Result<Option<String>, PlaybackError> {
+    Ok(
+        db::playbacks::get_reported(db, user_db_id, plugin_id, session_key, now_ms)?
+            .map(|playback| playback.id),
+    )
+}
+
 pub(crate) fn get_owned_detail(
     db: &DbAny,
     playback_db_id: DbId,
     user_db_id: DbId,
+    now_ms: u64,
 ) -> Result<Option<PlaybackDetail>, PlaybackError> {
     if db::playbacks::get_owner_id(db, playback_db_id)? != Some(user_db_id) {
         return Ok(None);
@@ -534,6 +565,11 @@ pub(crate) fn get_owned_detail(
     let Some(playback) = db::playbacks::get_by_id(db, playback_db_id)? else {
         return Ok(None);
     };
+    if playback.reported.is_some()
+        && playback.updated_at_ms < now_ms.saturating_sub(db::playbacks::REPORTED_PLAYBACK_TTL_MS)
+    {
+        return Ok(None);
+    }
     detail_from_playback(db, playback).map(Some)
 }
 
@@ -541,8 +577,9 @@ pub(crate) fn get_visible_detail(
     db: &DbAny,
     playback_db_id: DbId,
     principal: &Principal,
+    now_ms: u64,
 ) -> Result<Option<PlaybackDetail>, PlaybackError> {
-    let Some(detail) = get_owned_detail(db, playback_db_id, principal.user_db_id)? else {
+    let Some(detail) = get_owned_detail(db, playback_db_id, principal.user_db_id, now_ms)? else {
         return Ok(None);
     };
     let is_admin = db::roles::has_admin_role(db, principal.user_db_id)?;
@@ -559,11 +596,14 @@ pub(crate) fn get_owned_projection(
     db: &DbAny,
     playback_db_id: DbId,
     user_db_id: DbId,
+    now_ms: u64,
 ) -> Result<Option<db::playbacks::PlaybackListProjection>, PlaybackError> {
     if db::playbacks::get_owner_id(db, playback_db_id)? != Some(user_db_id) {
         return Ok(None);
     }
-    Ok(db::playbacks::get_projection_by_id(db, playback_db_id)?)
+    let cutoff = now_ms.saturating_sub(db::playbacks::REPORTED_PLAYBACK_TTL_MS);
+    Ok(db::playbacks::get_projection_by_id(db, playback_db_id)?
+        .filter(|p| !p.reported || p.updated_at_ms >= cutoff))
 }
 
 pub(crate) fn list_visible_projections(
@@ -596,6 +636,12 @@ pub(crate) fn list_visible_projections(
     let active_cutoff = now_ms.saturating_sub(playback_sessions::ACTIVE_SESSION_TTL_MS);
     let mut visible = Vec::with_capacity(projections.len());
     for projection in projections {
+        if projection.reported
+            && projection.updated_at_ms
+                < now_ms.saturating_sub(db::playbacks::REPORTED_PLAYBACK_TTL_MS)
+        {
+            continue;
+        }
         let current = current_ids.get(&projection.db_id).and_then(|session_id| {
             sessions
                 .get(session_id)
@@ -757,10 +803,15 @@ pub(crate) fn validate_handoff_queue(
     if db::playbacks::get_owner_id(db, playback_db_id)? != Some(user_db_id) {
         return Err(HandoffValidationError::WrongOwner);
     }
-    if playback.queue_revision != expected_revision {
+    let current_revision = playback
+        .queue
+        .as_ref()
+        .ok_or(HandoffValidationError::QueueUnavailable)?
+        .revision;
+    if current_revision != expected_revision {
         return Err(HandoffValidationError::RevisionConflict {
             expected_revision,
-            current_revision: playback.queue_revision,
+            current_revision,
         });
     }
     let queue = queue_from_playback(&playback)
@@ -853,6 +904,7 @@ pub(crate) fn replace_queue(
         )
         .map_err(|error| match error {
             db::playbacks::ReplaceQueueError::NotFound => PlaybackError::NotFound,
+            db::playbacks::ReplaceQueueError::QueueUnavailable => PlaybackError::QueueUnavailable,
             db::playbacks::ReplaceQueueError::RevisionConflict {
                 expected_revision,
                 current_revision,
