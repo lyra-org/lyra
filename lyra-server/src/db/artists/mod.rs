@@ -136,6 +136,7 @@ impl Artist {
         self.sort_name = Some(sort_name);
     }
 
+    #[cfg(test)]
     pub(crate) fn set_artist_type(&mut self, artist_type: ArtistType) {
         self.artist_type = Some(artist_type);
     }

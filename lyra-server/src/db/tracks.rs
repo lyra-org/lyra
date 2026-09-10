@@ -63,22 +63,17 @@ impl Track {
         self.sort_title = Some(sort_title);
     }
 
+    #[cfg(test)]
     pub(crate) fn set_year(&mut self, year: u32) {
         self.year = Some(year);
     }
 
-    pub(crate) fn set_disc(&mut self, disc: u32) {
-        self.disc = Some(disc);
-    }
-
-    pub(crate) fn set_disc_total(&mut self, disc_total: u32) {
-        self.disc_total = Some(disc_total);
-    }
-
+    #[cfg(test)]
     pub(crate) fn set_track(&mut self, track: u32) {
         self.track = Some(track);
     }
 
+    #[cfg(test)]
     pub(crate) fn set_track_total(&mut self, track_total: u32) {
         self.track_total = Some(track_total);
     }
@@ -114,8 +109,6 @@ impl_luau_record_userdata!(
         set_track_title(track_title: String),
         set_sort_title(sort_title: String),
         set_year(year: u32),
-        set_disc(disc: u32),
-        set_disc_total(disc_total: u32),
         set_track(track: u32),
         set_track_total(track_total: u32),
         set_duration_ms(duration_ms: u64),

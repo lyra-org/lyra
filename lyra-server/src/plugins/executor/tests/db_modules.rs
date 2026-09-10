@@ -1248,6 +1248,11 @@ fn plugin_executor_exposes_db_backed_lyra_libraries_module() -> Result<()> {
 fn plugin_executor_exposes_db_backed_lyra_genres_module() -> Result<()> {
     let mut db = crate::plugins::db::test_db::new_test_db()?;
     let release_db_id = crate::plugins::db::test_db::insert_release(&mut db, "Raw Genre Release")?;
+    crate::plugins::db::genres::sync_release_genres(
+        &mut db,
+        release_db_id,
+        &["Synthpop".to_string()],
+    )?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
 
     let runtime = PluginExecutor::with_database(
@@ -1267,7 +1272,7 @@ fn plugin_executor_exposes_db_backed_lyra_genres_module() -> Result<()> {
                     name = "Electronic",
                     aliases = {{ {{ name = "Electronica", locale = "en" }} }},
                 }})
-                local child_id = genres.add(release_db_id, {{
+                local child_id = genres.resolve({{
                     name = "Synthpop",
                     aliases = {{ {{ name = "Synth Pop" }} }},
                     external_id = {{

@@ -14,6 +14,7 @@ use std::time::{
 
 use agdb::{
     DbAny,
+    DbAnyTransactionMut,
     DbId,
 };
 
@@ -22,10 +23,44 @@ use crate::db::{
     IdSource,
     MetadataLayer,
     ProviderCustomFields,
+    metadata::manual_overrides::ManualMetadataField,
 };
 
 /// Reserved source for file-derived metadata; plugin registration rejects it.
 pub(crate) const LOCAL_SOURCE_ID: &str = "local";
+
+/// File-derived metadata; omitted fields express no opinion, while null clears.
+#[derive(Default)]
+pub(crate) struct LocalLayer {
+    fields: serde_json::Map<String, serde_json::Value>,
+}
+
+impl LocalLayer {
+    pub(crate) fn supply<T: Into<serde_json::Value>>(
+        &mut self,
+        field: ManualMetadataField,
+        value: Option<T>,
+    ) {
+        if let Some(value) = value {
+            self.fields.insert(field.as_str().to_string(), value.into());
+        }
+    }
+
+    pub(crate) fn save(
+        self,
+        db: &mut DbAnyTransactionMut<'_>,
+        node_id: DbId,
+    ) -> anyhow::Result<()> {
+        let layer = MetadataLayer {
+            db_id: None,
+            source_id: LOCAL_SOURCE_ID.to_string(),
+            fields: serde_json::to_string(&self.fields)?,
+            updated_at: now_secs(),
+        };
+        db::metadata::layers::upsert_inside_tx(db, node_id, &layer)?;
+        super::merging::apply_merged_metadata_to_entity_inside_tx(db, node_id)
+    }
+}
 
 pub(crate) fn ensure_entity_exists(db: &DbAny, node_id: DbId) -> anyhow::Result<()> {
     let exists = db::releases::get_by_id(db, node_id)?.is_some()

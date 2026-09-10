@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use std::collections::{
+    BTreeMap,
     HashMap,
     HashSet,
 };
@@ -140,7 +141,7 @@ pub(crate) fn sync_artist_edges(
 pub(crate) fn resolve_artist_ids(
     db: &mut impl DbAccess,
     names: &[String],
-    cache: &mut HashMap<String, DbId>,
+    cache: &mut BTreeMap<String, DbId>,
 ) -> anyhow::Result<Vec<DbId>> {
     let mut ids = Vec::new();
     let mut seen = HashSet::new();
@@ -243,7 +244,7 @@ mod tests {
     fn sync_artist_edges_preserves_desired_order() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_db_id = insert_release(&mut db, "Ordered Release")?;
-        let mut artist_cache = HashMap::new();
+        let mut artist_cache = BTreeMap::new();
         let artist_ids = resolve_artist_ids(
             &mut db,
             &["Second Artist".to_string(), "First Artist".to_string()],

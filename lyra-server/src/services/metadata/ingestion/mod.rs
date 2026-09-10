@@ -236,6 +236,9 @@ mod tests {
 
     use crate::db::external_ids::ExternalId;
     use crate::db::metadata::layers::MetadataLayer;
+    use crate::db::metadata::manual_overrides::ManualMetadataField;
+    use crate::services::metadata::layers::LOCAL_SOURCE_ID;
+    use std::collections::BTreeMap;
 
     fn new_test_db() -> anyhow::Result<DbAny> {
         Ok(TestDb::with_root_aliases(&[
@@ -1931,8 +1934,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
     }
 
     #[test]
-    fn apply_metadata_disc_total_fallback_does_not_overwrite_existing_explicit_value()
-    -> anyhow::Result<()> {
+    fn apply_metadata_reinfers_disc_total_when_the_explicit_tag_is_removed() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
         let library = test_db::insert_test_library_node(
@@ -2095,7 +2097,7 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
 
         let tracks = db::tracks::get(&db, release_db_id)?;
         assert_eq!(tracks.len(), 2);
-        assert!(tracks.iter().all(|track| track.disc_total == Some(5)));
+        assert!(tracks.iter().all(|track| track.disc_total == Some(2)));
 
         Ok(())
     }
@@ -2732,6 +2734,295 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
         assert_eq!(after_rescan.len(), 1);
         assert_eq!(after_rescan[0].label.name, "Provider Label");
         assert_eq!(after_rescan[0].catalog_number.as_deref(), Some("PRV-001"));
+        Ok(())
+    }
+
+    fn single_file_library(db: &mut DbAny, path: &str) -> anyhow::Result<(DbId, DbId)> {
+        let library =
+            test_db::insert_test_library_node(db, "Test Library", PathBuf::from("/music"))?;
+        let library_db_id = library
+            .db_id
+            .ok_or_else(|| anyhow!("library missing db_id"))?;
+        let entry_db_id = insert_entry(db, path)?;
+        connect(db, library_db_id, entry_db_id)?;
+        Ok((library_db_id, entry_db_id))
+    }
+
+    fn tagged_track(entry_db_id: DbId) -> TrackMetadata {
+        let mut meta = track_metadata(entry_db_id.0, "Album", "Artist", Some(1999), Some(1), 7);
+        meta.date = Some("1999-05-04".to_string());
+        meta.track_total = Some(12);
+        meta.genres = Some(vec!["Jazz".to_string()]);
+        meta.label = Some("Blue Note".to_string());
+        meta.catalog_number = Some("BN-1".to_string());
+        meta
+    }
+
+    fn only_release(db: &DbAny) -> anyhow::Result<DbId> {
+        Ok(select_releases(db)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("release missing"))?
+            .db_id
+            .ok_or_else(|| anyhow!("release missing db_id"))?
+            .into())
+    }
+
+    fn only_track(db: &DbAny, release_db_id: DbId) -> anyhow::Result<DbId> {
+        Ok(db::tracks::get(db, release_db_id)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("track missing"))?
+            .db_id
+            .ok_or_else(|| anyhow!("track missing db_id"))?
+            .into())
+    }
+
+    fn local_layer(db: &DbAny, node_id: DbId) -> anyhow::Result<MetadataLayer> {
+        db::metadata::layers::get_for_entity(db, node_id)?
+            .into_iter()
+            .find(|layer| layer.source_id == LOCAL_SOURCE_ID)
+            .ok_or_else(|| anyhow!("local layer missing"))
+    }
+
+    fn upsert_provider(db: &mut DbAny, provider_id: &str, enabled: bool) -> anyhow::Result<()> {
+        db::providers::upsert(
+            db,
+            &ProviderConfig {
+                db_id: None,
+                provider_id: provider_id.to_string(),
+                display_name: provider_id.to_string(),
+                priority: 100,
+                enabled,
+            },
+        )
+        .map(|_| ())
+    }
+
+    #[test]
+    fn import_without_providers_resolves_entities_from_the_local_layer() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (library_db_id, entry_db_id) = single_file_library(&mut db, "/music/Album/01.flac")?;
+
+        apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
+
+        let release_db_id = only_release(&db)?;
+        let release = db::releases::get_by_id(&db, release_db_id)?
+            .ok_or_else(|| anyhow!("release missing"))?;
+        assert_eq!(release.release_title, "Album");
+        assert_eq!(release.release_date.as_deref(), Some("1999-05-04"));
+
+        let genres = db::genres::get_for_release(&db, release_db_id)?;
+        assert_eq!(genres.len(), 1);
+        assert_eq!(genres[0].name, "Jazz");
+        let labels = db::labels::get_for_release(&db, release_db_id)?;
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].label.name, "Blue Note");
+        assert_eq!(labels[0].catalog_number.as_deref(), Some("BN-1"));
+
+        let track_db_id = only_track(&db, release_db_id)?;
+        let track = db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("track"))?;
+        assert_eq!(track.track_title, "Track 7");
+        assert_eq!(track.year, Some(1999));
+        assert_eq!(track.disc, Some(1));
+        assert_eq!(track.disc_total, Some(1));
+        assert_eq!(track.track, Some(7));
+        assert_eq!(track.track_total, Some(12));
+
+        let artists = db::artists::get(&db, release_db_id)?;
+        assert_eq!(artists.len(), 1);
+        assert_eq!(artists[0].artist_name, "Artist");
+
+        let layer_fields: serde_json::Value =
+            serde_json::from_str(&local_layer(&db, track_db_id)?.fields)?;
+        assert_eq!(layer_fields["year"], serde_json::json!(1999));
+        assert!(
+            layer_fields.get("sort_title").is_none(),
+            "an untagged field must stay absent instead of null"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn disabling_a_provider_restores_the_local_value() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (library_db_id, entry_db_id) = single_file_library(&mut db, "/music/Album/01.flac")?;
+        apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
+
+        let release_db_id = only_release(&db)?;
+        let track_db_id = only_track(&db, release_db_id)?;
+        upsert_provider(&mut db, "test", true)?;
+        db::metadata::layers::upsert(
+            &mut db,
+            track_db_id,
+            &MetadataLayer {
+                db_id: None,
+                source_id: "test".to_string(),
+                fields: serde_json::json!({"track_title": "Provider Track", "year": 2020})
+                    .to_string(),
+                updated_at: 1,
+            },
+        )?;
+        crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_db_id)?;
+        let track = db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("track"))?;
+        assert_eq!(track.track_title, "Provider Track");
+        assert_eq!(track.year, Some(2020));
+
+        upsert_provider(&mut db, "test", false)?;
+        crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_db_id)?;
+
+        let track = db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("track"))?;
+        assert_eq!(track.track_title, "Track 7");
+        assert_eq!(track.year, Some(1999));
+        Ok(())
+    }
+
+    #[test]
+    fn rescanning_an_unchanged_file_rewrites_nothing() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (library_db_id, entry_db_id) = single_file_library(&mut db, "/music/Album/01.flac")?;
+        apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
+
+        let release_db_id = only_release(&db)?;
+        let track_db_id = only_track(&db, release_db_id)?;
+        let release_layer = local_layer(&db, release_db_id)?;
+        let track_layer = local_layer(&db, track_db_id)?;
+        let track_before = db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("t"))?;
+
+        apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
+
+        let release_layer_after = local_layer(&db, release_db_id)?;
+        let track_layer_after = local_layer(&db, track_db_id)?;
+        assert_eq!(release_layer_after.fields, release_layer.fields);
+        assert_eq!(release_layer_after.updated_at, release_layer.updated_at);
+        assert_eq!(track_layer_after.fields, track_layer.fields);
+        assert_eq!(track_layer_after.updated_at, track_layer.updated_at);
+        assert_eq!(only_release(&db)?, release_db_id);
+        assert_eq!(only_track(&db, release_db_id)?, track_db_id);
+        let track_after = db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("t"))?;
+        assert_eq!(track_after.track_title, track_before.track_title);
+        assert_eq!(track_after.year, track_before.year);
+        assert_eq!(track_after.track, track_before.track);
+        Ok(())
+    }
+
+    #[test]
+    fn a_manual_override_survives_a_rescan() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (library_db_id, entry_db_id) = single_file_library(&mut db, "/music/Album/01.flac")?;
+        apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
+
+        let release_db_id = only_release(&db)?;
+        let track_db_id = only_track(&db, release_db_id)?;
+        db::metadata::manual_overrides::replace(
+            &mut db,
+            track_db_id,
+            &BTreeMap::from([(
+                ManualMetadataField::TrackTitle,
+                serde_json::json!("Manual Title"),
+            )]),
+        )?;
+        crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_db_id)?;
+
+        apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
+
+        let track = db::tracks::get_by_id(&db, track_db_id)?.ok_or_else(|| anyhow!("track"))?;
+        assert_eq!(track.track_title, "Manual Title");
+        Ok(())
+    }
+
+    #[test]
+    fn dropping_a_manual_override_falls_back_to_the_local_layer() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (library_db_id, entry_db_id) = single_file_library(&mut db, "/music/Album/01.flac")?;
+        apply_metadata(&mut db, library_db_id, vec![tagged_track(entry_db_id)])?;
+
+        let release_db_id = only_release(&db)?;
+        let track_db_id = only_track(&db, release_db_id)?;
+        db::metadata::manual_overrides::replace(
+            &mut db,
+            track_db_id,
+            &BTreeMap::from([(ManualMetadataField::Year, serde_json::json!(2020))]),
+        )?;
+        db::metadata::manual_overrides::replace(
+            &mut db,
+            release_db_id,
+            &BTreeMap::from([(ManualMetadataField::Genres, serde_json::Value::Bool(true))]),
+        )?;
+        db::genres::sync_release_genres(&mut db, release_db_id, &["Manual Genre".to_string()])?;
+        crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_db_id)?;
+        crate::services::metadata::merging::apply_merged_metadata_to_entity(
+            &mut db,
+            release_db_id,
+        )?;
+        assert_eq!(
+            db::tracks::get_by_id(&db, track_db_id)?
+                .ok_or_else(|| anyhow!("track"))?
+                .year,
+            Some(2020)
+        );
+
+        db::metadata::manual_overrides::replace(&mut db, track_db_id, &BTreeMap::new())?;
+        db::metadata::manual_overrides::replace(&mut db, release_db_id, &BTreeMap::new())?;
+        crate::services::metadata::merging::apply_merged_metadata_to_entity(&mut db, track_db_id)?;
+        crate::services::metadata::merging::apply_merged_metadata_to_entity(
+            &mut db,
+            release_db_id,
+        )?;
+
+        assert_eq!(
+            db::tracks::get_by_id(&db, track_db_id)?
+                .ok_or_else(|| anyhow!("track"))?
+                .year,
+            Some(1999)
+        );
+        let genres = db::genres::get_for_release(&db, release_db_id)?;
+        assert_eq!(genres.len(), 1);
+        assert_eq!(genres[0].name, "Jazz");
+        Ok(())
+    }
+
+    #[test]
+    fn rescanning_one_disc_keeps_the_release_wide_disc_total() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let (library_db_id, disc_one_entry) =
+            single_file_library(&mut db, "/music/Album/disc1/01.flac")?;
+        let disc_two_entry = insert_entry(&mut db, "/music/Album/disc2/01.flac")?;
+        connect(&mut db, library_db_id, disc_two_entry)?;
+
+        apply_metadata(
+            &mut db,
+            library_db_id,
+            vec![
+                track_metadata(disc_one_entry.0, "Album", "Artist", Some(1999), Some(1), 1),
+                track_metadata(disc_two_entry.0, "Album", "Artist", Some(1999), Some(2), 1),
+            ],
+        )?;
+        let release_db_id = only_release(&db)?;
+        assert!(
+            db::tracks::get(&db, release_db_id)?
+                .iter()
+                .all(|track| track.disc_total == Some(2))
+        );
+
+        apply_metadata(
+            &mut db,
+            library_db_id,
+            vec![track_metadata(
+                disc_one_entry.0,
+                "Album",
+                "Artist",
+                Some(1999),
+                Some(1),
+                1,
+            )],
+        )?;
+
+        assert!(
+            db::tracks::get(&db, release_db_id)?
+                .iter()
+                .all(|track| track.disc_total == Some(2))
+        );
         Ok(())
     }
 

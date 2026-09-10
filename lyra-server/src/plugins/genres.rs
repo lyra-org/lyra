@@ -66,7 +66,6 @@ struct GenresModule;
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/genres")
         .capability("lyra.genres")
-        .function(add_spec())
         .function(resolve_spec())
         .function(add_parent_spec())
         .function(get_by_id_spec())
@@ -78,14 +77,6 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(get_for_release_spec())
         .function(get_for_releases_many_spec())
         .install(|_| Ok(ModuleExport::new(GenresModule)))
-}
-
-fn add_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("add")
-        .named_arg::<i64>("release_id")
-        .named_arg::<luau::Table>("request")
-        .returns::<i64>()
-        .call(add_callback)
 }
 
 fn resolve_spec() -> FunctionSpec {
@@ -166,35 +157,6 @@ fn get_for_releases_many_spec() -> FunctionSpec {
         .args::<Vec<u64>>()
         .returns::<luau::Table>()
         .call(get_for_releases_many_callback)
-}
-
-fn add_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let release_id: i64 = frame.args.read_named("release_id")?;
-    let request_table: luau::Table = frame.args.read_named("request")?;
-    let request = genre_request_from_table(frame.vm, request_table)?;
-    let store = frame.vm.data().get::<GenresModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
-
-    let genre_id = futures::executor::block_on(async {
-        let mut db = db.write().await;
-        let release_id = DbId(release_id);
-        let is_locked = db::releases::get_by_id(&db, release_id)
-            .map_err(crate::plugins::runtime_error)?
-            .is_some_and(|release| release.locked.unwrap_or(false));
-        let is_manual =
-            db::manual_metadata_owns_field(&db, release_id, db::ManualMetadataField::Genres)
-                .map_err(crate::plugins::runtime_error)?;
-        if is_locked || is_manual {
-            return Ok(DbId(0));
-        }
-        let genre_id =
-            resolve_genre_from_request(&mut db, &request).map_err(crate::plugins::runtime_error)?;
-        db::genres::link_to_release(&mut db, genre_id, release_id)
-            .map_err(crate::plugins::runtime_error)?;
-        Ok::<_, luau::Error>(genre_id)
-    })?;
-
-    frame.returns.write(luau::Value::Integer(genre_id.0))
 }
 
 fn resolve_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
@@ -413,7 +375,7 @@ struct GenreAliasInput {
 }
 
 #[derive(Debug, Deserialize)]
-struct GenreAddRequest {
+struct GenreResolveRequest {
     name: String,
     external_id: Option<GenreExternalId>,
     aliases: Option<Vec<GenreAliasInput>>,
@@ -422,14 +384,14 @@ struct GenreAddRequest {
 fn genre_request_from_table(
     vm: &luau::Vm,
     table: luau::Table,
-) -> luau::runtime::Result<GenreAddRequest> {
+) -> luau::runtime::Result<GenreResolveRequest> {
     let value = harmony_serde::luau_to_json(vm, &luau::Value::Table(table), 0)?;
     serde_json::from_value(value).map_err(crate::plugins::runtime_error)
 }
 
 fn resolve_genre_from_request(
     db: &mut agdb::DbAny,
-    request: &GenreAddRequest,
+    request: &GenreResolveRequest,
 ) -> anyhow::Result<DbId> {
     let aliases_owned = request
         .aliases
@@ -640,15 +602,15 @@ impl DescribeInterface for GenreAliasInput {
     }
 }
 
-impl LuauTypeInfo for GenreAddRequest {
+impl LuauTypeInfo for GenreResolveRequest {
     fn luau_type() -> LuauType {
-        LuauType::named("GenreAddRequest")
+        LuauType::named("GenreResolveRequest")
     }
 }
 
-impl DescribeInterface for GenreAddRequest {
+impl DescribeInterface for GenreResolveRequest {
     fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("GenreAddRequest", None);
+        let mut descriptor = InterfaceDescriptor::new("GenreResolveRequest", None);
         descriptor.fields.extend([
             FieldDescriptor {
                 name: "name",
@@ -689,19 +651,9 @@ fn module_descriptor() -> ModuleDescriptor {
         fields: Vec::new(),
         functions: vec![
             ModuleFunctionDescriptor {
-                path: vec!["add"],
-                description: None,
-                params: vec![
-                    param("release_id", i64::luau_type()),
-                    param("request", GenreAddRequest::luau_type()),
-                ],
-                returns: vec![i64::luau_type()],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
                 path: vec!["resolve"],
                 description: None,
-                params: vec![param("request", GenreAddRequest::luau_type())],
+                params: vec![param("request", GenreResolveRequest::luau_type())],
                 returns: vec![i64::luau_type()],
                 yields: false,
             },
@@ -787,7 +739,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
             GenreRecord::interface_descriptor(),
             GenreExternalId::interface_descriptor(),
             GenreAliasInput::interface_descriptor(),
-            GenreAddRequest::interface_descriptor(),
+            GenreResolveRequest::interface_descriptor(),
         ],
         &[],
     )

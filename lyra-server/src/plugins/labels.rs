@@ -31,8 +31,6 @@ use crate::{
         self,
         Permission,
         labels::{
-            LabelExternalIdInput,
-            LabelInput,
             ResolveExternalId,
             ResolveLabel,
         },
@@ -41,8 +39,6 @@ use crate::{
 };
 
 struct LabelsModule;
-#[cfg(feature = "docgen")]
-struct LabelAddRequest;
 #[cfg(feature = "docgen")]
 struct LabelResolveRequest;
 #[cfg(feature = "docgen")]
@@ -54,9 +50,7 @@ struct LabelForReleaseInfo;
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/labels")
         .capability("lyra.labels")
-        .function(add_spec())
         .function(resolve_spec())
-        .function(sync_for_release_spec())
         .function(get_by_id_spec())
         .function(get_for_release_spec())
         .function(get_for_releases_many_spec())
@@ -65,31 +59,12 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .install(|_| Ok(ModuleExport::new(LabelsModule)))
 }
 
-fn add_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("add")
-        .arg_name("release_id")
-        .args::<i64>()
-        .arg_name("request")
-        .args::<luau::Table>()
-        .returns::<i64>()
-        .call(add_callback)
-}
-
 fn resolve_spec() -> FunctionSpec {
     FunctionSpec::sync_fn("resolve")
         .arg_name("request")
         .args::<luau::Table>()
         .returns::<i64>()
         .call(resolve_callback)
-}
-
-fn sync_for_release_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("sync_for_release")
-        .arg_name("release_id")
-        .args::<i64>()
-        .arg_name("requests")
-        .args::<luau::Table>()
-        .call(sync_for_release_callback)
 }
 
 fn get_by_id_spec() -> FunctionSpec {
@@ -132,46 +107,6 @@ fn get_releases_many_spec() -> FunctionSpec {
         .call(get_releases_many_callback)
 }
 
-fn add_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let release_id = DbId(require_positive_id(
-        frame.args.read_named("release_id")?,
-        "release_id",
-    )?);
-    let request: luau::Table = frame.args.read_named("request")?;
-    let request = parse_label_add_request(frame.vm, &request)?;
-    let principal = caller_principal(&frame.context);
-
-    let label_id = futures::executor::block_on(async {
-        let mut db = STATE.db.write().await;
-        if !can_mutate_release(&db, principal.as_ref(), release_id)? {
-            return Ok(DbId(0));
-        }
-        if db::manual_metadata_owns_field(&db, release_id, db::ManualMetadataField::Labels)
-            .map_err(crate::plugins::runtime_error)?
-        {
-            return Ok(DbId(0));
-        }
-        if db::releases::get_by_id(&db, release_id)
-            .map_err(crate::plugins::runtime_error)?
-            .is_some_and(|release| release.locked.unwrap_or(false))
-        {
-            return Ok(DbId(0));
-        }
-        db::labels::add_label_to_release(
-            &mut db,
-            release_id,
-            &ResolveLabel {
-                name: &request.name,
-                external_id: request.external_id_ref(),
-            },
-            request.catalog_number.as_deref(),
-        )
-        .map_err(crate::plugins::runtime_error)
-    })?;
-
-    frame.returns.write(label_id.0)
-}
-
 fn resolve_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
     let request: luau::Table = frame.args.read_named("request")?;
     let request = parse_label_resolve_request(frame.vm, &request)?;
@@ -194,42 +129,6 @@ fn resolve_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()>
     })?;
 
     frame.returns.write(label_id.0)
-}
-
-fn sync_for_release_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let release_id = DbId(require_positive_id(
-        frame.args.read_named("release_id")?,
-        "release_id",
-    )?);
-    let requests: luau::Table = frame.args.read_named("requests")?;
-    let requests = parse_label_add_requests(frame.vm, &requests)?;
-    let principal = caller_principal(&frame.context);
-
-    futures::executor::block_on(async {
-        let mut db = STATE.db.write().await;
-        if !can_mutate_release(&db, principal.as_ref(), release_id)? {
-            return Ok(());
-        }
-        if db::manual_metadata_owns_field(&db, release_id, db::ManualMetadataField::Labels)
-            .map_err(crate::plugins::runtime_error)?
-        {
-            return Ok(());
-        }
-        if db::releases::get_by_id(&db, release_id)
-            .map_err(crate::plugins::runtime_error)?
-            .is_some_and(|release| release.locked.unwrap_or(false))
-        {
-            return Err(crate::plugins::runtime_error(
-                "cannot sync labels for a locked release",
-            ));
-        }
-        let inputs = requests
-            .iter()
-            .map(LabelAddRequestData::to_label_input)
-            .collect::<Vec<_>>();
-        db::labels::sync_release_labels(&mut db, release_id, &inputs)
-            .map_err(crate::plugins::runtime_error)
-    })
 }
 
 fn get_by_id_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
@@ -326,37 +225,9 @@ struct LabelExternalIdData {
     id_value: String,
 }
 
-#[derive(Clone)]
-struct LabelAddRequestData {
-    name: String,
-    catalog_number: Option<String>,
-    external_id: Option<LabelExternalIdData>,
-}
-
 struct LabelResolveRequestData {
     name: String,
     external_id: Option<LabelExternalIdData>,
-}
-
-impl LabelAddRequestData {
-    fn external_id_ref(&self) -> Option<ResolveExternalId<'_>> {
-        self.external_id.as_ref().map(LabelExternalIdData::as_ref)
-    }
-
-    fn to_label_input(&self) -> LabelInput {
-        LabelInput {
-            name: self.name.clone(),
-            catalog_number: self.catalog_number.clone(),
-            external_id: self
-                .external_id
-                .as_ref()
-                .map(|external_id| LabelExternalIdInput {
-                    provider_id: external_id.provider_id.clone(),
-                    id_type: external_id.id_type.clone(),
-                    id_value: external_id.id_value.clone(),
-                }),
-        }
-    }
 }
 
 impl LabelResolveRequestData {
@@ -375,17 +246,6 @@ impl LabelExternalIdData {
     }
 }
 
-fn parse_label_add_request(
-    vm: &luau::Vm,
-    table: &luau::Table,
-) -> luau::runtime::Result<LabelAddRequestData> {
-    Ok(LabelAddRequestData {
-        name: required_string(vm, table, "name")?,
-        catalog_number: optional_string(vm, table, "catalog_number")?,
-        external_id: optional_external_id(vm, table)?,
-    })
-}
-
 fn parse_label_resolve_request(
     vm: &luau::Vm,
     table: &luau::Table,
@@ -394,22 +254,6 @@ fn parse_label_resolve_request(
         name: required_string(vm, table, "name")?,
         external_id: optional_external_id(vm, table)?,
     })
-}
-
-fn parse_label_add_requests(
-    vm: &luau::Vm,
-    table: &luau::Table,
-) -> luau::runtime::Result<Vec<LabelAddRequestData>> {
-    let mut parsed = Vec::new();
-    for (_, value) in ordered_array_values(vm, table)? {
-        let luau::Value::Table(request) = value else {
-            return Err(crate::plugins::runtime_error(
-                "label requests must be tables",
-            ));
-        };
-        parsed.push(parse_label_add_request(vm, &request)?);
-    }
-    Ok(parsed)
 }
 
 fn optional_external_id(
@@ -532,19 +376,6 @@ fn can_read_entity(
     }
 }
 
-fn can_mutate_release(
-    db: &impl db::DbAccess,
-    principal: Option<&Principal>,
-    release_db_id: DbId,
-) -> luau::runtime::Result<bool> {
-    match principal {
-        Some(principal) => Ok(can_mutate_global(Some(principal))
-            && crate::services::auth::access::entity_accessible(db, principal, release_db_id)
-                .map_err(crate::plugins::runtime_error)?),
-        None => Ok(true),
-    }
-}
-
 fn can_mutate_global(principal: Option<&Principal>) -> bool {
     principal.is_none_or(|principal| {
         db::roles::has_permission(&principal.permissions, Permission::ManageLibraries)
@@ -611,13 +442,6 @@ impl LuauTypeInfo for LabelExternalId {
 }
 
 #[cfg(feature = "docgen")]
-impl LuauTypeInfo for LabelAddRequest {
-    fn luau_type() -> LuauType {
-        LuauType::literal("LabelAddRequest")
-    }
-}
-
-#[cfg(feature = "docgen")]
 impl LuauTypeInfo for LabelResolveRequest {
     fn luau_type() -> LuauType {
         LuauType::literal("LabelResolveRequest")
@@ -669,19 +493,6 @@ impl DescribeInterface for LabelExternalId {
 }
 
 #[cfg(feature = "docgen")]
-impl DescribeInterface for LabelAddRequest {
-    fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("LabelAddRequest", None);
-        descriptor.fields.extend([
-            field("name", String::luau_type()),
-            field("catalog_number", Option::<String>::luau_type()),
-            field("external_id", Option::<LabelExternalId>::luau_type()),
-        ]);
-        descriptor
-    }
-}
-
-#[cfg(feature = "docgen")]
 impl DescribeInterface for LabelResolveRequest {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("LabelResolveRequest", None);
@@ -726,30 +537,10 @@ fn module_descriptor() -> ModuleDescriptor {
         fields: Vec::new(),
         functions: vec![
             ModuleFunctionDescriptor {
-                path: vec!["add"],
-                description: None,
-                params: vec![
-                    param("release_id", i64::luau_type()),
-                    param("request", LabelAddRequest::luau_type()),
-                ],
-                returns: vec![i64::luau_type()],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
                 path: vec!["resolve"],
                 description: None,
                 params: vec![param("request", LabelResolveRequest::luau_type())],
                 returns: vec![i64::luau_type()],
-                yields: false,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["sync_for_release"],
-                description: None,
-                params: vec![
-                    param("release_id", i64::luau_type()),
-                    param("requests", Vec::<LabelAddRequest>::luau_type()),
-                ],
-                returns: Vec::new(),
                 yields: false,
             },
             ModuleFunctionDescriptor {
@@ -801,7 +592,6 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &[],
         &[
             LabelExternalId::interface_descriptor(),
-            LabelAddRequest::interface_descriptor(),
             LabelResolveRequest::interface_descriptor(),
             LabelInfo::interface_descriptor(),
             LabelForReleaseInfo::interface_descriptor(),
