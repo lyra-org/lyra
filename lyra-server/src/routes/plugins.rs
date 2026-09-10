@@ -67,6 +67,7 @@ fn map_repository_error(error: repositories_service::PluginRepoError) -> AppErro
         PluginRepoError::BadRequest(message) => AppError::bad_request(message),
         PluginRepoError::NotFound(message) => AppError::not_found(message),
         PluginRepoError::Conflict(message) => AppError::conflict(message),
+        PluginRepoError::BadGateway(message) => AppError::bad_gateway(message),
         PluginRepoError::Internal(error) => error.into(),
     }
 }

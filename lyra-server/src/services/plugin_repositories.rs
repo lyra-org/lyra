@@ -53,16 +53,45 @@ pub(crate) enum PluginRepoError {
     NotFound(String),
     #[error("{0}")]
     Conflict(String),
+    #[error("{0}")]
+    BadGateway(String),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
 
 fn map_resolve_error(error: ResolveError) -> PluginRepoError {
     match &error {
-        ResolveError::Fetch(FetchError::InvalidUrl { .. }) => {
-            PluginRepoError::BadRequest(error.to_string())
+        ResolveError::Fetch(FetchError::Network { .. } | FetchError::Status { .. }) => {
+            tracing::warn!(error = %error, "plugin repository download failed");
+            PluginRepoError::BadGateway(
+                "The plugin repository could not be downloaded. Try again shortly.".into(),
+            )
         }
-        _ => PluginRepoError::Conflict(error.to_string()),
+        ResolveError::Io(_) | ResolveError::Fetch(FetchError::Io(_)) => {
+            PluginRepoError::Internal(anyhow::Error::new(error))
+        }
+        ResolveError::Fetch(
+            FetchError::InvalidArchive { .. } | FetchError::UnsafeArchiveEntry { .. },
+        ) => {
+            tracing::warn!(error = %error, "invalid plugin repository archive");
+            PluginRepoError::BadRequest(
+                "The plugin repository contains an invalid or unsupported archive.".into(),
+            )
+        }
+        ResolveError::Fetch(FetchError::ArchiveTooLarge { .. }) => PluginRepoError::BadRequest(
+            "The plugin repository archive exceeds the download size limit.".into(),
+        ),
+        ResolveError::Fetch(FetchError::RefNotFound { .. }) => PluginRepoError::BadRequest(
+            "The plugin repository or requested branch could not be found.".into(),
+        ),
+        ResolveError::Fetch(FetchError::InvalidUrl { .. })
+        | ResolveError::Manifest(_)
+        | ResolveError::AmbiguousRoot { .. }
+        | ResolveError::NotAPluginRepository { .. }
+        | ResolveError::PathEntryMissing { .. }
+        | ResolveError::NestedRepository { .. }
+        | ResolveError::Plugin { .. }
+        | ResolveError::DuplicatePluginId { .. } => PluginRepoError::BadRequest(error.to_string()),
     }
 }
 
