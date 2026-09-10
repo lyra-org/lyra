@@ -10,6 +10,9 @@ use harmony_core::{
 };
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
+use harmony_luau::DescribeTypeAlias;
+use harmony_luau::JsonValue;
+#[cfg(feature = "docgen")]
 use harmony_luau::render_definition_file_with_support;
 use harmony_luau::{
     DescribeInterface,
@@ -174,6 +177,8 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(resolve_auth_spec())
         .function(login_spec())
         .function(logout_session_spec())
+        .function(get_session_data_spec())
+        .function(set_session_data_spec())
         .install(|_| Ok(ModuleExport::new(AuthModule)))
 }
 
@@ -342,6 +347,45 @@ fn logout_session_callback(
             .map_err(crate::plugins::runtime_error)?;
         Ok(luau::Value::Boolean(revoked))
     }))
+}
+
+fn get_session_data_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get_session_data")
+        .named_arg::<String>("token")
+        .returns::<JsonValue>()
+        .call_async(Arc::new(|mut frame| {
+            let token: String = frame.args.read_named("token")?;
+            let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
+                crate::plugins::runtime_error("session data requires plugin origin")
+            })?;
+            Ok(luau::ScheduledFuture::new(async move {
+                let value = crate::services::auth::sessions::get_plugin_data(&token, &plugin_id)
+                    .await
+                    .map_err(crate::plugins::runtime_error)?;
+                harmony_luau::serializable_to_luau_owned(value)
+            }))
+        }))
+}
+
+fn set_session_data_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("set_session_data")
+        .named_arg::<String>("token")
+        .named_arg::<JsonValue>("data")
+        .returns::<()>()
+        .call_async(Arc::new(|mut frame| {
+            let token: String = frame.args.read_named("token")?;
+            let value: luau::Value = frame.args.read_named("data")?;
+            let value = harmony_serde::luau_to_json(frame.vm, &value, 0)?;
+            let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
+                crate::plugins::runtime_error("session data requires plugin origin")
+            })?;
+            Ok(luau::ScheduledFuture::new(async move {
+                crate::services::auth::sessions::set_plugin_data(&token, &plugin_id, value)
+                    .await
+                    .map_err(crate::plugins::runtime_error)?;
+                Ok(luau::Value::Nil)
+            }))
+        }))
 }
 
 fn auth_capabilities_spec() -> FunctionSpec {
@@ -578,6 +622,27 @@ fn module_descriptor() -> ModuleDescriptor {
         fields: Vec::new(),
         functions: vec![
             ModuleFunctionDescriptor {
+                path: vec!["get_session_data"],
+                description: Some(
+                    "Reads this plugin's JSON data on a live authenticated session. Invalid, revoked, or expired tokens fail.",
+                ),
+                params: vec![param("token", String::luau_type())],
+                returns: vec![JsonValue::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["set_session_data"],
+                description: Some(
+                    "Stores up to 16 KiB of JSON for this plugin on a live session. Nil clears it; revoking the session removes the data.",
+                ),
+                params: vec![
+                    param("token", String::luau_type()),
+                    param("data", JsonValue::luau_type()),
+                ],
+                returns: vec![],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
                 path: vec!["resolve_auth"],
                 description: Some(
                     "Resolves a bearer credential to the authenticated principal and credential metadata.",
@@ -623,7 +688,7 @@ fn module_descriptor() -> ModuleDescriptor {
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
     render_definition_file_with_support(
         &module_descriptor(),
-        &[],
+        &[JsonValue::type_alias_descriptor()],
         &[
             AuthCapabilities::interface_descriptor(),
             Principal::interface_descriptor(),
