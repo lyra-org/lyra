@@ -94,6 +94,10 @@ impl AppError {
         }
     }
 
+    pub fn bad_gateway(message: impl Into<String>) -> Self {
+        Self::with_status(StatusCode::BAD_GATEWAY, message.into())
+    }
+
     pub fn service_unavailable(message: impl Into<String>) -> Self {
         Self::with_status(StatusCode::SERVICE_UNAVAILABLE, message.into())
     }
