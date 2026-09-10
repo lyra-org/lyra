@@ -52,6 +52,18 @@ fn provider_value(
     Ok(merged.fields.get(internal_field.as_str()).cloned())
 }
 
+fn cleared_value(state: &EntityState, field: MetadataField) -> Result<Value, MetadataEditingError> {
+    match field {
+        MetadataField::Genres
+        | MetadataField::Labels
+        | MetadataField::Credits
+        | MetadataField::Relations => Ok(Value::Array(Vec::new())),
+        // Required titles and names keep their stored values when unresolved.
+        MetadataField::Title | MetadataField::Name => Ok(state.field_state(field)?.value.clone()),
+        _ => Ok(Value::Null),
+    }
+}
+
 fn inherited_value(
     db: &impl DbAccess,
     principal: &Principal,
@@ -59,17 +71,8 @@ fn inherited_value(
     field: MetadataField,
     provider_value: Option<&Value>,
 ) -> Result<Value, MetadataEditingError> {
-    let Some(value) = provider_value else {
-        if matches!(
-            field,
-            MetadataField::Genres
-                | MetadataField::Labels
-                | MetadataField::Credits
-                | MetadataField::Relations
-        ) {
-            return Ok(Value::Array(Vec::new()));
-        }
-        return Ok(state.field_state(field)?.value.clone());
+    let Some(value) = provider_value.filter(|value| !value.is_null()) else {
+        return cleared_value(state, field);
     };
     if field == MetadataField::Labels {
         normalize_provider_labels(db, value)
