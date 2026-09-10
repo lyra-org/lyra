@@ -113,20 +113,20 @@ RUN ldconfig
 
 RUN useradd -r -s /bin/false lyra
 
-WORKDIR /lyra
+WORKDIR /
 
 COPY --from=builder /build/target/release/lyra /usr/local/bin/lyra
 
-RUN mkdir -p /lyra/data /lyra/static /lyra/plugins \
-    && chown -R lyra:lyra /lyra
+RUN mkdir -p /data /static /plugins \
+    && chown lyra:lyra /data /static /plugins
 
 USER lyra
 
-ENV LYRA_DATA_DIR=/lyra/data \
-    LYRA_PLUGINS_DIR=/lyra/plugins \
-    LYRA_STATIC_DIR=/lyra/static
+ENV LYRA_DATA_DIR=/data \
+    LYRA_PLUGINS_DIR=/plugins \
+    LYRA_STATIC_DIR=/static
 
-VOLUME ["/lyra/data", "/lyra/plugins", "/lyra/static"]
+VOLUME ["/data", "/plugins", "/static"]
 
 EXPOSE 4746
 
