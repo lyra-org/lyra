@@ -283,6 +283,7 @@ mod tests {
         plugin_json,
         single_plugin_routes,
         targz,
+        targz_entries,
     };
 
     async fn resolve(server: &TestServer, path: &str) -> Result<ResolvedRepository, ResolveError> {
@@ -308,6 +309,54 @@ mod tests {
         assert_eq!(candidate.source.subpath, None);
         assert_eq!(candidate.source.via_repository, None);
         assert!(candidate.source_dir().join("init.luau").is_file());
+    }
+
+    #[tokio::test]
+    async fn resolves_catalog_with_documentation_symlink_but_requires_real_entrypoint() {
+        for linked_entrypoint in [false, true] {
+            let mut archive = targz_entries();
+            archive.file("repo/AGENTS.md", "Repository documentation");
+            archive.symlink("repo/CLAUDE.md", "AGENTS.md");
+            archive.file(
+                "repo/repository.json",
+                r#"{
+                "schema_version": 1,
+                "name": "Plugins",
+                "plugins": [{ "path": "plugins/foo" }]
+            }"#,
+            );
+            archive.file("repo/plugins/foo/plugin.json", &plugin_json("foo"));
+            if linked_entrypoint {
+                archive.file("repo/shared.luau", "return {}");
+                archive.symlink("repo/plugins/foo/init.luau", "../../shared.luau");
+            } else {
+                archive.file("repo/plugins/foo/init.luau", "return {}");
+            }
+            let server = TestServer::start(HashMap::from([(
+                "/owner/repo/archive/main.tar.gz".to_string(),
+                CannedResponse::targz(archive.finish()),
+            )]))
+            .await;
+
+            let result = resolve(&server, "/owner/repo").await;
+            if linked_entrypoint {
+                assert!(
+                    matches!(
+                        result,
+                        Err(ResolveError::Plugin {
+                            source: PluginLoadError::EntrypointNotFound { .. },
+                            ..
+                        })
+                    ),
+                    "{result:?}"
+                );
+            } else {
+                let resolved = result.unwrap();
+                assert_eq!(resolved.index.as_ref().unwrap().name, "Plugins");
+                assert_eq!(resolved.candidates.len(), 1);
+                assert_eq!(resolved.candidates[0].id(), "foo");
+            }
+        }
     }
 
     #[tokio::test]

@@ -556,7 +556,7 @@ fn extract_archive(bytes: &[u8], dest: &Path) -> Result<(), FetchError> {
             .unwrap_or_else(|_| "<undecodable path>".to_string());
 
         match entry.header().entry_type() {
-            EntryType::Regular | EntryType::Directory => {}
+            EntryType::Regular | EntryType::Directory | EntryType::Symlink => {}
             EntryType::XGlobalHeader
             | EntryType::XHeader
             | EntryType::GNULongName
@@ -572,6 +572,10 @@ fn extract_archive(bytes: &[u8], dest: &Path) -> Result<(), FetchError> {
         entry_count += 1;
         if entry_count > MAX_ARCHIVE_ENTRIES {
             return Err(invalid(format!("more than {MAX_ARCHIVE_ENTRIES} entries")));
+        }
+
+        if entry.header().entry_type() == EntryType::Symlink {
+            continue;
         }
 
         unpacked_bytes = unpacked_bytes.saturating_add(entry.size());
@@ -829,13 +833,35 @@ mod tests {
     }
 
     #[test]
-    fn rejects_symlink_entries() {
+    fn skipped_symlinks_cannot_redirect_extraction() {
+        let outside = TempDir::new().unwrap();
+        let sentinel = outside.path().join("sentinel");
+        std::fs::write(&sentinel, "original").unwrap();
         let mut entries = targz_entries();
-        entries.symlink("repo/link", "/etc/passwd");
-        let err = extract_archive(&entries.finish(), TempDir::new().unwrap().path()).unwrap_err();
+        entries.symlink("repo/link", outside.path().to_str().unwrap());
+        entries.file("repo/link/sentinel", "replacement");
+        entries.symlink("repo/file", sentinel.to_str().unwrap());
+        entries.file("repo/file", "replacement");
+        let dest = TempDir::new().unwrap();
+
+        extract_archive(&entries.finish(), dest.path()).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "original");
+        assert_eq!(
+            std::fs::read_to_string(dest.path().join("repo/link/sentinel")).unwrap(),
+            "replacement"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dest.path().join("repo/file")).unwrap(),
+            "replacement"
+        );
         assert!(
-            matches!(err, FetchError::UnsafeArchiveEntry { .. }),
-            "{err}"
+            !dest
+                .path()
+                .join("repo/link")
+                .symlink_metadata()
+                .unwrap()
+                .is_symlink()
         );
     }
 
