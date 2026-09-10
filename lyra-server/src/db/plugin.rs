@@ -44,7 +44,6 @@ pub(crate) use crate::db::{
     lookup,
     lyrics,
     mixers,
-    playback_sessions,
     providers,
     releases,
     roles,

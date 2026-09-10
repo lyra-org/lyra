@@ -23,11 +23,9 @@ use super::sessions::{
     PlaybackSessionScope,
     clear_playback_session_scope,
     clear_session_bindings_for_playbacks,
-    get_playback_session,
     get_playback_sessions_for_user_session,
     resolve_current_playback,
     resolve_previous_playback,
-    upsert_playback_session,
 };
 use super::{
     ACTIVE_SESSION_TTL_MS,
@@ -40,7 +38,6 @@ use super::{
     PlaybackMutation,
     PlaybackRecord,
     PlaybackServiceError,
-    PlaybackUpdateResult,
     RESTART_POSITION_MS,
     ReportPlaybackRequest,
     ServiceResult,
@@ -159,17 +156,6 @@ fn require_playback_record(
     )
 }
 
-fn should_create_unbound_session_playback(
-    active_event: ActiveEvent,
-    state: PlaybackState,
-    has_current_playback_for_other_track: bool,
-) -> bool {
-    has_current_playback_for_other_track
-        || active_event == ActiveEvent::Started
-        || state == PlaybackState::Playing
-        || state == PlaybackState::Buffering
-}
-
 fn should_reopen_terminal_same_track_session(active_event: ActiveEvent) -> bool {
     active_event == ActiveEvent::Started
 }
@@ -186,11 +172,6 @@ struct SessionBindingState {
     previous_playback_session_public_id: Option<String>,
     previous_demoted_at_ms: Option<u64>,
     previous_expires_at_ms: Option<u64>,
-}
-
-fn clear_current_session_playback(state: &mut SessionBindingState) {
-    state.current_playback_session_id = None;
-    state.current_playback_session_public_id = None;
 }
 
 fn clear_previous_session_playback(state: &mut SessionBindingState) {
@@ -227,14 +208,12 @@ fn previous_session_playback_is_expired(state: &SessionBindingState, now_ms: u64
         .is_some_and(|expires_at_ms| expires_at_ms < now_ms)
 }
 
-fn persist_playback_session_state(
-    scope: &PlaybackScopeKey<'_>,
+fn updated_playback_session_state(
     session: &PlaybackSessionScope,
     state: &SessionBindingState,
-) {
+) -> Option<PlaybackSessionScope> {
     if state.current_playback_session_id.is_none() && state.previous_playback_session_id.is_none() {
-        clear_playback_session_scope(scope);
-        return;
+        return None;
     }
 
     let mut updated = session.clone();
@@ -246,11 +225,11 @@ fn persist_playback_session_state(
     updated.previous_expires_at_ms = state.previous_expires_at_ms;
     updated.command_dispatched_at_ms = None;
     updated.current_binding_epoch = updated.current_binding_epoch.wrapping_add(1);
-    sessions::update_playback_session(scope, &updated);
+    Some(updated)
 }
 
 fn update_session_bound_playback(
-    db: &mut DbAny,
+    db: &mut impl db::DbAccess,
     user_db_id: DbId,
     mut bound: sessions::BoundPlayback,
     mutation: PlaybackMutation,
@@ -595,22 +574,6 @@ pub(crate) fn apply_playback_mutation(
     Ok(())
 }
 
-fn finalize_playback_update(
-    db: &mut DbAny,
-    playback: PlaybackRecord,
-    active_event: ActiveEvent,
-    now_ms: u64,
-) -> ServiceResult<PlaybackUpdateResult> {
-    let event = event_for_state(playback.playback.state, active_event);
-    let evicted_playbacks = cleanup_evicted_playbacks(db, now_ms)?;
-
-    Ok(PlaybackUpdateResult {
-        playback,
-        event,
-        evicted_playbacks,
-    })
-}
-
 fn finalize_optional_playback_update(
     db: &mut DbAny,
     mut playback: Option<PlaybackRecord>,
@@ -630,26 +593,6 @@ fn finalize_optional_playback_update(
         event,
         evicted_playbacks,
     })
-}
-
-pub(crate) fn start_playback_with_cleanup(
-    db: &mut DbAny,
-    request: StartPlaybackRequest,
-) -> ServiceResult<PlaybackUpdateResult> {
-    let active_event = request.active_event;
-    let now_ms = request.now_ms;
-    let playback = start_playback(db, request)?;
-    finalize_playback_update(db, playback, active_event, now_ms)
-}
-
-pub(crate) fn report_playback_with_cleanup(
-    db: &mut DbAny,
-    request: ReportPlaybackRequest,
-) -> ServiceResult<PlaybackUpdateResult> {
-    let active_event = request.active_event;
-    let now_ms = request.now_ms;
-    let playback = report_playback(db, request)?;
-    finalize_playback_update(db, playback, active_event, now_ms)
 }
 
 pub(crate) fn report_playback_session_with_cleanup(
@@ -734,14 +677,6 @@ pub(crate) fn pause_playing_scopes_on_disconnect(
     Ok((playbacks, evicted_playbacks))
 }
 
-pub(crate) fn start_playback(
-    db: &mut DbAny,
-    request: StartPlaybackRequest,
-) -> ServiceResult<PlaybackRecord> {
-    let update = db.transaction_mut(|t| start_playback_in_transaction(t, request))?;
-    Ok(update.playback)
-}
-
 pub(crate) fn start_playback_in_transaction(
     db: &mut impl db::DbAccess,
     request: StartPlaybackRequest,
@@ -817,6 +752,7 @@ fn new_playback_session(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn report_playback(
     db: &mut DbAny,
     request: ReportPlaybackRequest,
@@ -931,6 +867,26 @@ pub(crate) fn report_playback_session(
     db: &mut DbAny,
     request: SessionPlaybackReportRequest<'_>,
 ) -> ServiceResult<Option<PlaybackRecord>> {
+    let scope = PlaybackScopeKey {
+        plugin_id: request.plugin_id,
+        user_db_id: request.user_db_id,
+        session_key: request.session_key,
+    };
+    sessions::cleanup_stale_scopes(request.now_ms, ACTIVE_SESSION_TTL_MS);
+    let (playback, session, current_observed) =
+        db.transaction_mut(|db| report_playback_session_in_transaction(db, request))?;
+    if let Some(session) = session {
+        sessions::apply_reported_scope(&scope, session, current_observed);
+    } else {
+        clear_playback_session_scope(&scope);
+    }
+    Ok(playback)
+}
+
+fn report_playback_session_in_transaction(
+    db: &mut impl db::DbAccess,
+    request: SessionPlaybackReportRequest<'_>,
+) -> ServiceResult<(Option<PlaybackRecord>, Option<PlaybackSessionScope>, bool)> {
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum SessionTrackTarget {
         Current,
@@ -946,10 +902,11 @@ pub(crate) fn report_playback_session(
         mutation,
         now_ms,
         active_event,
-        stale_ttl_ms,
     } = request;
 
-    sessions::cleanup_stale_scopes(now_ms, stale_ttl_ms);
+    map_internal(db::playbacks::expire_reported_for_user(
+        db, user_db_id, now_ms,
+    ))?;
     if map_internal(db::users::get_by_id(db, user_db_id))?.is_none() {
         return Err(PlaybackServiceError::not_found(format!(
             "user not found: {}",
@@ -957,17 +914,50 @@ pub(crate) fn report_playback_session(
         )));
     }
 
-    let scope = PlaybackScopeKey {
-        plugin_id,
+    let mut root = map_internal(db::playbacks::get_reported(
+        db,
         user_db_id,
+        plugin_id,
         session_key,
+        now_ms,
+    ))?;
+    let mut session = if let Some(root) = root.as_ref() {
+        let root_id = root.db_id.expect("persisted playback id");
+        let current_id = db::playbacks::get_current_session_id(db, root_id)?;
+        let current_public_id = current_id
+            .map(|id| db::playback_sessions::get_by_id(db, id))
+            .transpose()
+            .map_err(PlaybackServiceError::internal)?
+            .flatten()
+            .map(|session| session.id);
+        let previous = root
+            .reported
+            .as_ref()
+            .and_then(|source| source.previous.as_ref());
+        let previous_id = previous
+            .map(|previous| db::lookup::find_node_id_by_id(db, &previous.session_public_id))
+            .transpose()
+            .map_err(PlaybackServiceError::internal)?
+            .flatten();
+        Some(PlaybackSessionScope {
+            current_playback_session_id: current_id,
+            current_playback_session_public_id: current_public_id,
+            previous_playback_session_id: previous_id,
+            previous_playback_session_public_id: previous
+                .map(|previous| previous.session_public_id.clone()),
+            previous_demoted_at_ms: previous.map(|previous| previous.demoted_at_ms),
+            previous_expires_at_ms: previous.map(|previous| previous.expires_at_ms),
+            updated_at_ms: root.updated_at_ms,
+            command_dispatched_at_ms: None,
+            current_binding_epoch: 0,
+        })
+    } else {
+        None
     };
 
-    let mut session = get_playback_session(&scope);
-    if let Some(session) = session.as_mut() {
-        session.updated_at_ms = now_ms;
-    }
-
+    let original_current_id = session
+        .as_ref()
+        .and_then(|session| session.current_playback_session_id);
     let mut current_bound_playback = if let Some(session) = session.as_ref() {
         map_internal(resolve_current_playback(db, session))?
     } else {
@@ -1024,7 +1014,7 @@ pub(crate) fn report_playback_session(
         None
     };
 
-    let state = if let Some(state) = mutation.state {
+    let mut state = if let Some(state) = mutation.state {
         state
     } else if target == Some(SessionTrackTarget::Current) {
         current_bound_playback
@@ -1052,11 +1042,29 @@ pub(crate) fn report_playback_session(
 
         if let Some(bound_state) = bound_state {
             if bound_state.is_terminal() {
-                if !should_reopen_terminal_same_track_session(active_event) {
-                    if let Some(session) = session.as_ref() {
-                        persist_playback_session_state(&scope, session, &session_state);
+                let current_resumed = target_slot == SessionTrackTarget::Current
+                    && mutation.state.is_some_and(|state| !state.is_terminal());
+                if !current_resumed && !should_reopen_terminal_same_track_session(active_event) {
+                    if session_state.previous_playback_session_public_id.is_none()
+                        && let Some(root) = root.as_ref()
+                        && root
+                            .reported
+                            .as_ref()
+                            .is_some_and(|source| source.previous.is_some())
+                    {
+                        map_internal(db::playbacks::update_reported_previous(
+                            db,
+                            root.db_id.expect("persisted playback id"),
+                            None,
+                        ))?;
                     }
-                    return Ok(None);
+                    let session = session.as_ref().and_then(|session| {
+                        updated_playback_session_state(session, &session_state)
+                    });
+                    return Ok((None, session, false));
+                }
+                if active_event == ActiveEvent::Started && mutation.state.is_none() {
+                    state = PlaybackState::Playing;
                 }
                 target = None;
             } else if active_event == ActiveEvent::Started {
@@ -1075,6 +1083,7 @@ pub(crate) fn report_playback_session(
     }
 
     let mut playback = None;
+    let mut current_observed = false;
     match target {
         Some(SessionTrackTarget::Current) => {
             let Some(bound) = current_bound_playback.take() else {
@@ -1101,9 +1110,7 @@ pub(crate) fn report_playback_session(
                 updated.playback_session_id,
                 updated.playback_session_public_id.clone(),
             );
-            if updated.playback.state.is_terminal() {
-                clear_current_session_playback(&mut session_state);
-            }
+            current_observed = true;
             playback = Some(updated);
         }
         Some(SessionTrackTarget::Previous) => {
@@ -1114,9 +1121,6 @@ pub(crate) fn report_playback_session(
                     .map(|bound| (bound.playback_session_id, bound.playback.id.clone()));
 
                 if active_event == ActiveEvent::Started && !state.is_terminal() {
-                    if session.is_none() {
-                        session = Some(upsert_playback_session(&scope, now_ms));
-                    }
                     if current_bound_playback.is_some() {
                         move_current_to_previous_session_playback(&mut session_state, now_ms);
                     } else {
@@ -1162,9 +1166,7 @@ pub(crate) fn report_playback_session(
                         updated.playback_session_id,
                         updated.playback_session_public_id.clone(),
                     );
-                    if updated.playback.state.is_terminal() {
-                        clear_current_session_playback(&mut session_state);
-                    }
+                    current_observed = true;
                 } else if updated.playback.state.is_terminal() {
                     clear_previous_session_playback(&mut session_state);
                 }
@@ -1173,15 +1175,8 @@ pub(crate) fn report_playback_session(
             }
         }
         None => {
-            let has_current_playback_for_other_track = current_bound_playback.is_some();
-            if !state.is_terminal()
-                && should_create_unbound_session_playback(
-                    active_event,
-                    state,
-                    has_current_playback_for_other_track,
-                )
-            {
-                let created = start_playback(
+            if !state.is_terminal() {
+                let created = start_playback_in_transaction(
                     db,
                     StartPlaybackRequest {
                         track_db_id,
@@ -1195,12 +1190,10 @@ pub(crate) fn report_playback_session(
                         now_ms,
                         active_event,
                     },
-                )?;
+                )?
+                .playback;
 
-                if session.is_none() {
-                    session = Some(upsert_playback_session(&scope, now_ms));
-                }
-                session.as_mut().unwrap().updated_at_ms = now_ms;
+                current_observed = true;
                 if current_bound_playback.is_some() {
                     move_current_to_previous_session_playback(&mut session_state, now_ms);
                 }
@@ -1215,9 +1208,81 @@ pub(crate) fn report_playback_session(
         }
     }
 
-    if let Some(session) = session.as_ref() {
-        persist_playback_session_state(&scope, session, &session_state);
+    if current_observed {
+        let current_id = session_state
+            .current_playback_session_id
+            .expect("current observation binding");
+        if let Some(root) = root.as_ref() {
+            let root_id = root.db_id.expect("persisted playback id");
+            if original_current_id == Some(current_id) {
+                map_internal(db::playbacks::touch(db, root_id, now_ms))?;
+            } else {
+                map_internal(db::playbacks::link_current_session(
+                    db, root_id, current_id, now_ms,
+                ))?;
+            }
+        } else {
+            root = Some(
+                db::playbacks::insert_reported(
+                    db,
+                    user_db_id,
+                    plugin_id,
+                    session_key,
+                    current_id,
+                    now_ms,
+                )
+                .map_err(|error| {
+                    if error.is::<db::playbacks::ReportedPlaybackLimitReached>() {
+                        PlaybackServiceError::bad_request(error.to_string())
+                    } else {
+                        PlaybackServiceError::internal(error)
+                    }
+                })?,
+            );
+        }
     }
-
-    Ok(playback)
+    if let Some(root) = root.as_ref() {
+        let previous = session_state
+            .previous_playback_session_public_id
+            .as_ref()
+            .map(|id| db::playbacks::ReportedPrevious {
+                session_public_id: id.clone(),
+                demoted_at_ms: session_state
+                    .previous_demoted_at_ms
+                    .expect("previous demotion"),
+                expires_at_ms: session_state
+                    .previous_expires_at_ms
+                    .expect("previous expiry"),
+            });
+        if root
+            .reported
+            .as_ref()
+            .and_then(|source| source.previous.as_ref())
+            != previous.as_ref()
+        {
+            map_internal(db::playbacks::update_reported_previous(
+                db,
+                root.db_id.expect("persisted playback id"),
+                previous,
+            ))?;
+        }
+        let scope = session.get_or_insert(PlaybackSessionScope {
+            current_playback_session_id: None,
+            current_playback_session_public_id: None,
+            previous_playback_session_id: None,
+            previous_playback_session_public_id: None,
+            previous_demoted_at_ms: None,
+            previous_expires_at_ms: None,
+            updated_at_ms: now_ms,
+            command_dispatched_at_ms: None,
+            current_binding_epoch: 0,
+        });
+        if current_observed {
+            scope.updated_at_ms = now_ms;
+        }
+    }
+    let session = session
+        .as_ref()
+        .and_then(|session| updated_playback_session_state(session, &session_state));
+    Ok((playback, session, current_observed))
 }

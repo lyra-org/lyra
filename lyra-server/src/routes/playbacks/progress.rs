@@ -47,8 +47,11 @@ pub(super) async fn report_progress(
         ));
     }
     let mut db = STATE.db.write().await;
-    let record = resolve_visible_playback(&db, principal, &id)?;
-    require_revision(request.queue_revision, record.playback.queue_revision)?;
+    let record = resolve_visible_playback(&db, principal, &id, current_ms)?;
+    require_revision(
+        request.queue_revision,
+        require_queue_revision(&record.playback)?,
+    )?;
     if request.handoff_token.is_some()
         && request
             .state

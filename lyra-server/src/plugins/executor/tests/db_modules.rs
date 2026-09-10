@@ -1472,3 +1472,109 @@ fn plugin_executor_exposes_db_backed_lyra_datastore_module() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn plugin_executor_reports_playback_acceptance_rejection_and_internal_failure() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
+    let mut db = crate::plugins::db::test_db::new_test_db()?;
+    let user = crate::plugins::db::test_db::test_user("report-user")?;
+    let user_db_id = crate::plugins::db::users::create(&mut db, &user)?;
+    let track_db_id = crate::plugins::db::test_db::insert_track(&mut db, "Reported Track")?;
+    let db = Arc::new(tokio::sync::RwLock::new(db));
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("reporter", &["lyra.playback_sessions"])]),
+        default_server_info(),
+        db.clone(),
+    )?;
+    let mut context = CallContext {
+        origin: plugin_origin("reporter", "init.luau"),
+        ..CallContext::default()
+    };
+    seed_caller_principal(
+        &mut context,
+        crate::services::auth::Principal {
+            user_db_id,
+            user_public_id: user.id,
+            username: user.username,
+            permissions: vec![crate::plugins::db::Permission::Admin],
+            role_name: Some("admin".into()),
+            accessible_library_ids: Default::default(),
+        },
+    );
+    runtime.run_plugin_source_with_call_context(
+        format!(
+            r#"
+        local sessions = require("@lyra/playback_sessions")
+        function report(key, state)
+            return sessions.report_session({{
+                user_id = {}, track_id = {}, session_key = key, state = state,
+            }})
+        end
+        accepted_id, accepted_error = report("player", "playing")
+        ignored_id, ignored_error = report("unknown", "stopped")
+    "#,
+            user_db_id.0, track_db_id.0
+        )
+        .into_bytes(),
+        context.clone(),
+    )?;
+    let (root, quota_message) = futures::executor::block_on(async {
+        let mut db = db.write().await;
+        let now = crate::services::playback_sessions::now_ms()?;
+        let root = crate::plugins::db::playbacks::get_reported(
+            &*db, user_db_id, "reporter", "player", now,
+        )?
+        .context("accepted report creates durable root")?;
+        let session_id =
+            crate::plugins::db::playbacks::get_current_session_id(&*db, root.db_id.unwrap())?
+                .context("accepted root has accounting session")?;
+        for index in 0..crate::plugins::db::playbacks::MAX_PLAYBACKS_PER_USER {
+            let result = db.transaction_mut(|db| {
+                crate::plugins::db::playbacks::insert_reported(
+                    db,
+                    user_db_id,
+                    "reporter",
+                    &format!("seed-{index}"),
+                    session_id,
+                    now,
+                )
+            });
+            if let Err(error) = result {
+                assert!(error.is::<crate::plugins::db::playbacks::ReportedPlaybackLimitReached>());
+                return Ok::<_, anyhow::Error>((root, error.to_string()));
+            }
+        }
+        anyhow::bail!("reported context admission did not reach its bound")
+    })?;
+    runtime.run_plugin_source_with_call_context(
+        b"rejected_id, rejected_error = report('extra', 'playing'); continued = true".to_vec(),
+        context.clone(),
+    )?;
+    let values = runtime.eval_plugin_source("reporter", "check.luau", b"return accepted_id, accepted_error, ignored_id, ignored_error, rejected_id, rejected_error, continued".to_vec())?;
+    assert_eq!(
+        values,
+        vec![
+            luau::Value::String(root.id.into_bytes()),
+            luau::Value::Nil,
+            luau::Value::Nil,
+            luau::Value::Nil,
+            luau::Value::Nil,
+            luau::Value::String(quota_message.into_bytes()),
+            luau::Value::Boolean(true),
+        ]
+    );
+    futures::executor::block_on(async {
+        db.write().await.exec_mut(
+            agdb::QueryBuilder::remove()
+                .values([agdb::DbValue::from("updated_at_ms")])
+                .ids(root.db_id.unwrap())
+                .query(),
+        )
+    })?;
+    let error = runtime
+        .run_plugin_source_with_call_context(b"report('player', 'playing')".to_vec(), context)
+        .expect_err("malformed storage must raise, not become an admission rejection");
+    assert!(format!("{error:#}").contains("updated_at_ms"));
+    Ok(())
+}

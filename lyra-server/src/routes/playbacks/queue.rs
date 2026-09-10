@@ -12,7 +12,7 @@ pub(super) struct QueueGetQuery {
         feature = "docgen",
         schemars(description = "Require this exact queue revision, or receive 409.")
     )]
-    revision: Option<u64>,
+    pub(super) revision: Option<u64>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -37,16 +37,17 @@ pub(super) async fn get_queue(
     Query(query): Query<QueueGetQuery>,
 ) -> Result<Json<QueueResponse>, AppError> {
     let principal = require_principal(&headers).await?;
+    let current_ms = now_ms()?;
     let db = STATE.db.read().await;
-    let record = resolve_visible_playback(&db, &principal, &id)?;
+    let record = resolve_visible_playback(&db, &principal, &id, current_ms)?;
     let queue = playbacks::queue_visible_to_principal(&db, &principal, &record.playback)
         .map_err(map_playback_error)?
         .ok_or_else(|| AppError::not_found(format!("playback not found: {id}")))?;
     if let Some(revision) = query.revision {
-        require_revision(revision, record.playback.queue_revision)?;
+        require_revision(revision, require_queue_revision(&record.playback)?)?;
     }
     Ok(Json(QueueResponse {
-        revision: record.playback.queue_revision,
+        revision: require_queue_revision(&record.playback)?,
         snapshot: queue,
     }))
 }
@@ -59,8 +60,13 @@ pub(super) async fn replace_queue(
     let principal = require_principal(&headers).await?;
     let current_ms = now_ms()?;
     let mut db = STATE.db.write().await;
-    let record = resolve_owned_playback_projection(&db, &principal, &id)?;
-    require_revision(request.expected_revision, record.queue_revision)?;
+    let record = resolve_owned_playback_projection(&db, &principal, &id, current_ms)?;
+    require_revision(
+        request.expected_revision,
+        record
+            .queue_revision
+            .ok_or_else(|| map_playback_error(PlaybackError::QueueUnavailable))?,
+    )?;
     let queue = playbacks::validate_queue(&*db, &principal, request.snapshot)
         .map_err(map_playback_error)?;
     let updated = playbacks::replace_queue(
@@ -72,7 +78,8 @@ pub(super) async fn replace_queue(
         current_ms,
     )
     .map_err(map_playback_error)?;
-    remote_handoffs::fail_for_playback_revision(&id, updated.playback.queue_revision).await;
+    remote_handoffs::fail_for_playback_revision(&id, require_queue_revision(&updated.playback)?)
+        .await;
     if let Some(detached) = updated.detached_session.as_ref() {
         sessions::clear_session_bindings_for_playback(
             detached.playback_session_id,
@@ -84,7 +91,7 @@ pub(super) async fn replace_queue(
         .as_ref()
         .and_then(|detached| detached.update.clone());
     let response = QueueResponse {
-        revision: updated.playback.queue_revision,
+        revision: require_queue_revision(&updated.playback)?,
         snapshot: updated.queue,
     };
     drop(db);

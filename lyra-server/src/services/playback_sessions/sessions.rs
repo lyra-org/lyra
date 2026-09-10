@@ -11,10 +11,7 @@ use std::{
     },
 };
 
-use agdb::{
-    DbAny,
-    DbId,
-};
+use agdb::DbId;
 
 use crate::db::{
     self,
@@ -31,8 +28,8 @@ pub(crate) struct PlaybackSessionScope {
     pub(crate) previous_demoted_at_ms: Option<u64>,
     pub(crate) previous_expires_at_ms: Option<u64>,
     pub(crate) updated_at_ms: u64,
-    /// Set on command dispatch, cleared on any scope upsert (including
-    /// non-state-changing reports). Scope is degraded if this exceeds the timeout.
+    /// Cleared when the current player reports an observation or its binding changes.
+    /// Scope is degraded if a dispatched command exceeds the timeout.
     pub(crate) command_dispatched_at_ms: Option<u64>,
     pub(crate) current_binding_epoch: u64,
 }
@@ -110,33 +107,27 @@ pub(crate) fn get_playback_sessions_for_user_session(
         .collect()
 }
 
-pub(crate) fn upsert_playback_session(
+pub(crate) fn apply_reported_scope(
     scope: &PlaybackScopeKey<'_>,
-    now_ms: u64,
-) -> PlaybackSessionScope {
+    mut session: PlaybackSessionScope,
+    current_observed: bool,
+) {
     let key = scope.owned();
     let scopes_handle = playback_scopes();
     let mut scopes = scopes_handle
         .write()
         .expect("playback session scopes RwLock poisoned");
-    let entry = scopes
-        .entry(key)
-        .and_modify(|s| {
-            s.updated_at_ms = now_ms;
-            s.command_dispatched_at_ms = None;
-        })
-        .or_insert_with(|| PlaybackSessionScope {
-            current_playback_session_id: None,
-            current_playback_session_public_id: None,
-            previous_playback_session_id: None,
-            previous_playback_session_public_id: None,
-            previous_demoted_at_ms: None,
-            previous_expires_at_ms: None,
-            updated_at_ms: now_ms,
-            command_dispatched_at_ms: None,
-            current_binding_epoch: 0,
-        });
-    entry.clone()
+    if let Some(previous) = scopes.get(&key) {
+        if current_observed {
+            session.current_binding_epoch = previous.current_binding_epoch.wrapping_add(1);
+        } else if previous.current_playback_session_public_id
+            == session.current_playback_session_public_id
+        {
+            session.current_binding_epoch = previous.current_binding_epoch;
+            session.command_dispatched_at_ms = previous.command_dispatched_at_ms;
+        }
+    }
+    scopes.insert(key, session);
 }
 
 pub(crate) fn bind_current_playback_session_scope(
@@ -181,20 +172,6 @@ pub(crate) fn bind_current_playback_session_scope(
     entry.current_playback_session_public_id = Some(playback_session_public_id);
 }
 
-pub(crate) fn update_playback_session(
-    scope: &PlaybackScopeKey<'_>,
-    session: &PlaybackSessionScope,
-) {
-    let key = scope.owned();
-    let scopes_handle = playback_scopes();
-    let mut scopes = scopes_handle
-        .write()
-        .expect("playback session scopes RwLock poisoned");
-    if let Some(existing) = scopes.get_mut(&key) {
-        *existing = session.clone();
-    }
-}
-
 pub(crate) struct BoundPlayback {
     pub(crate) playback_session_id: DbId,
     pub(crate) track_db_id: DbId,
@@ -202,7 +179,7 @@ pub(crate) struct BoundPlayback {
 }
 
 fn resolve_playback_by_id_and_public_id(
-    db: &DbAny,
+    db: &impl db::DbAccess,
     playback_session_id: DbId,
     public_id: Option<&str>,
 ) -> anyhow::Result<Option<BoundPlayback>> {
@@ -226,7 +203,7 @@ fn resolve_playback_by_id_and_public_id(
 }
 
 pub(crate) fn resolve_current_playback(
-    db: &DbAny,
+    db: &impl db::DbAccess,
     session: &PlaybackSessionScope,
 ) -> anyhow::Result<Option<BoundPlayback>> {
     let Some(playback_session_id) = session.current_playback_session_id else {
@@ -240,7 +217,7 @@ pub(crate) fn resolve_current_playback(
 }
 
 pub(crate) fn resolve_previous_playback(
-    db: &DbAny,
+    db: &impl db::DbAccess,
     session: &PlaybackSessionScope,
 ) -> anyhow::Result<Option<BoundPlayback>> {
     let Some(playback_session_id) = session.previous_playback_session_id else {

@@ -26,12 +26,13 @@ mod updates;
 mod workflow;
 
 pub(crate) use self::sessions::PlaybackScopes;
+#[cfg(test)]
+pub(crate) use self::sessions::clear_playback_session_scope;
 pub(crate) use self::sessions::{
     CurrentBindingSnapshot,
     PlaybackScopeKey,
     bind_current_playback_session_scope,
     clear_current_binding_if_unchanged,
-    clear_playback_session_scope,
     clear_session_bindings_for_playback,
     get_playback_session,
     is_remote_control_degraded,
@@ -47,10 +48,8 @@ pub(crate) use self::workflow::{
     playback_activity_ms,
     report_playback_in_transaction,
     report_playback_session_with_cleanup,
-    report_playback_with_cleanup,
     resolve_merged_track_ids_for_play_count,
     start_playback_in_transaction,
-    start_playback_with_cleanup,
 };
 pub(crate) use crate::db::PlaybackSession;
 use crate::db::PlaybackState;
@@ -160,7 +159,6 @@ pub(crate) struct SessionPlaybackReportRequest<'a> {
     pub(crate) mutation: PlaybackMutation,
     pub(crate) now_ms: u64,
     pub(crate) active_event: ActiveEvent,
-    pub(crate) stale_ttl_ms: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -191,13 +189,6 @@ pub(crate) struct EvictedPlaybackRecord {
     pub(crate) user_public_id: String,
     pub(crate) library_public_id: Option<String>,
     pub(crate) playback: PlaybackSession,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct PlaybackUpdateResult {
-    pub(crate) playback: PlaybackRecord,
-    pub(crate) event: String,
-    pub(crate) evicted_playbacks: Vec<EvictedPlaybackRecord>,
 }
 
 #[derive(Clone, Debug)]
@@ -400,7 +391,7 @@ mod tests {
         Ok(report_playback_session(
             db,
             SessionPlaybackReportRequest {
-                plugin_id: "jellyfin",
+                plugin_id: "external",
                 user_db_id,
                 session_key: "auth:1",
                 track_db_id,
@@ -408,7 +399,6 @@ mod tests {
                 mutation,
                 now_ms,
                 active_event,
-                stale_ttl_ms: ACTIVE_SESSION_TTL_MS,
             },
         )?)
     }
@@ -424,7 +414,7 @@ mod tests {
         Ok(report_playback_session_with_cleanup(
             db,
             SessionPlaybackReportRequest {
-                plugin_id: "jellyfin",
+                plugin_id: "external",
                 user_db_id,
                 session_key: "auth:1",
                 track_db_id,
@@ -432,9 +422,403 @@ mod tests {
                 mutation,
                 now_ms,
                 active_event,
-                stale_ttl_ms: ACTIVE_SESSION_TTL_MS,
             },
         )?)
+    }
+
+    #[tokio::test]
+    async fn first_paused_report_establishes_playback_but_terminal_report_does_not()
+    -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user = insert_user(&mut db, "alice")?;
+        let track = insert_track(&mut db, "A", 200_000)?;
+        assert!(
+            report_test_playback_session(
+                &mut db,
+                user,
+                track,
+                ActiveEvent::Progress,
+                PlaybackMutation {
+                    state: Some(PlaybackState::Stopped),
+                    ..Default::default()
+                },
+                1_000
+            )?
+            .is_none()
+        );
+        assert!(db::playbacks::get_reported(&db, user, "external", "auth:1", 1_000)?.is_none());
+        let paused = report_test_playback_session(
+            &mut db,
+            user,
+            track,
+            ActiveEvent::Progress,
+            PlaybackMutation {
+                state: Some(PlaybackState::Paused),
+                position_ms: Some(10_000),
+                ..Default::default()
+            },
+            2_000,
+        )?
+        .unwrap();
+        let root = db::playbacks::get_reported(&db, user, "external", "auth:1", 2_000)?.unwrap();
+        assert_eq!(
+            db::playbacks::get_current_session_id(&db, root.db_id.unwrap())?,
+            Some(paused.playback_session_id)
+        );
+        assert_eq!(paused.playback.state, PlaybackState::Paused);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reported_playback_survives_switch_stop_and_runtime_restart() -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user = insert_user(&mut db, "alice")?;
+        let track_a = insert_track(&mut db, "A", 200_000)?;
+        let track_b = insert_track(&mut db, "B", 200_000)?;
+        let scope = PlaybackScopeKey {
+            plugin_id: "external",
+            user_db_id: user,
+            session_key: "auth:1",
+        };
+        let playing = || PlaybackMutation {
+            state: Some(PlaybackState::Playing),
+            duration_ms: Some(200_000),
+            position_ms: Some(0),
+        };
+        let a = report_test_playback_session(
+            &mut db,
+            user,
+            track_a,
+            ActiveEvent::Progress,
+            playing(),
+            1_000,
+        )?
+        .unwrap();
+        let root = db::playbacks::get_reported(&db, user, "external", "auth:1", 1_000)?.unwrap();
+        assert!(root.queue.is_none());
+        let root_id = root.db_id.unwrap();
+        sessions::clear_playback_session_scope(&scope);
+        let resumed = report_test_playback_session(
+            &mut db,
+            user,
+            track_a,
+            ActiveEvent::Progress,
+            playing(),
+            1_500,
+        )?
+        .unwrap();
+        assert_eq!(resumed.playback_session_id, a.playback_session_id);
+        let b = report_test_playback_session(
+            &mut db,
+            user,
+            track_b,
+            ActiveEvent::Started,
+            playing(),
+            2_000,
+        )?
+        .unwrap();
+        assert_eq!(
+            db::playbacks::get_current_session_id(&db, root_id)?,
+            Some(b.playback_session_id)
+        );
+        sessions::clear_playback_session_scope(&scope);
+        let late = report_test_playback_session(
+            &mut db,
+            user,
+            track_a,
+            ActiveEvent::Progress,
+            PlaybackMutation {
+                state: Some(PlaybackState::Stopped),
+                ..Default::default()
+            },
+            3_000,
+        )?
+        .unwrap();
+        assert_eq!(late.playback_session_id, a.playback_session_id);
+        let unchanged =
+            db::playbacks::get_reported(&db, user, "external", "auth:1", 3_000)?.unwrap();
+        assert_eq!(unchanged.id, root.id);
+        assert_eq!(unchanged.updated_at_ms, 2_000);
+        assert_eq!(
+            db::playbacks::get_current_session_id(&db, root_id)?,
+            Some(b.playback_session_id)
+        );
+        report_test_playback_session(
+            &mut db,
+            user,
+            track_b,
+            ActiveEvent::Progress,
+            PlaybackMutation {
+                state: Some(PlaybackState::Stopped),
+                ..Default::default()
+            },
+            4_000,
+        )?
+        .unwrap();
+        assert_eq!(
+            db::playbacks::get_current_session_id(&db, root_id)?,
+            Some(b.playback_session_id)
+        );
+        sessions::clear_playback_session_scope(&scope);
+        assert!(
+            report_test_playback_session(
+                &mut db,
+                user,
+                track_b,
+                ActiveEvent::Progress,
+                PlaybackMutation::default(),
+                5_000
+            )?
+            .is_none()
+        );
+        let stopped = db::playbacks::get_reported(&db, user, "external", "auth:1", 5_000)?.unwrap();
+        assert_eq!(stopped.updated_at_ms, 4_000);
+        let restarted = report_test_playback_session(
+            &mut db,
+            user,
+            track_b,
+            ActiveEvent::Progress,
+            playing(),
+            6_000,
+        )?
+        .unwrap();
+        assert_ne!(
+            restarted.playback_session_public_id,
+            b.playback_session_public_id
+        );
+        assert_eq!(
+            db::playbacks::get_reported(&db, user, "external", "auth:1", 6_000)?
+                .unwrap()
+                .id,
+            root.id
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn terminal_current_resumes_without_promoting_previous_progress() -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user = insert_user(&mut db, "alice")?;
+        let track = insert_track(&mut db, "A", 200_000)?;
+        let other = insert_track(&mut db, "B", 200_000)?;
+        let mut now = 1_000;
+        let mut prior = report_test_playback_session(
+            &mut db,
+            user,
+            track,
+            ActiveEvent::Started,
+            PlaybackMutation {
+                state: Some(PlaybackState::Playing),
+                ..Default::default()
+            },
+            now,
+        )?
+        .unwrap();
+        let root_id = db::playbacks::get_reported(&db, user, "external", "auth:1", now)?
+            .unwrap()
+            .id;
+        for state in [
+            PlaybackState::Playing,
+            PlaybackState::Paused,
+            PlaybackState::Buffering,
+        ] {
+            now += 1_000;
+            report_test_playback_session(
+                &mut db,
+                user,
+                track,
+                ActiveEvent::Progress,
+                PlaybackMutation {
+                    state: Some(PlaybackState::Stopped),
+                    ..Default::default()
+                },
+                now,
+            )?
+            .unwrap();
+            now += 1_000;
+            assert!(
+                report_test_playback_session(
+                    &mut db,
+                    user,
+                    track,
+                    ActiveEvent::Progress,
+                    PlaybackMutation {
+                        state: Some(PlaybackState::Stopped),
+                        ..Default::default()
+                    },
+                    now
+                )?
+                .is_none()
+            );
+            assert!(
+                report_test_playback_session(
+                    &mut db,
+                    user,
+                    track,
+                    ActiveEvent::Progress,
+                    PlaybackMutation::default(),
+                    now
+                )?
+                .is_none()
+            );
+            let resumed = report_test_playback_session(
+                &mut db,
+                user,
+                track,
+                ActiveEvent::Progress,
+                PlaybackMutation {
+                    state: Some(state),
+                    ..Default::default()
+                },
+                now,
+            )?
+            .unwrap();
+            assert_ne!(
+                resumed.playback_session_public_id,
+                prior.playback_session_public_id
+            );
+            assert_eq!(resumed.playback.state, state);
+            assert_eq!(
+                db::playbacks::get_reported(&db, user, "external", "auth:1", now)?
+                    .unwrap()
+                    .id,
+                root_id
+            );
+            prior = resumed;
+        }
+        now += 1_000;
+        report_test_playback_session(
+            &mut db,
+            user,
+            track,
+            ActiveEvent::Progress,
+            PlaybackMutation {
+                state: Some(PlaybackState::Stopped),
+                ..Default::default()
+            },
+            now,
+        )?;
+        now += 1_000;
+        let current = report_test_playback_session(
+            &mut db,
+            user,
+            other,
+            ActiveEvent::Started,
+            PlaybackMutation {
+                state: Some(PlaybackState::Playing),
+                ..Default::default()
+            },
+            now,
+        )?
+        .unwrap();
+        now += 1_000;
+        assert!(
+            report_test_playback_session(
+                &mut db,
+                user,
+                track,
+                ActiveEvent::Progress,
+                PlaybackMutation {
+                    state: Some(PlaybackState::Playing),
+                    ..Default::default()
+                },
+                now
+            )?
+            .is_none()
+        );
+        let root = db::playbacks::get_reported(&db, user, "external", "auth:1", now)?.unwrap();
+        assert_eq!(root.updated_at_ms, now - 1_000);
+        assert_eq!(
+            db::playbacks::get_current_session_id(&db, root.db_id.unwrap())?,
+            Some(current.playback_session_id)
+        );
+        now += 1_000;
+        report_test_playback_session(
+            &mut db,
+            user,
+            other,
+            ActiveEvent::Progress,
+            PlaybackMutation {
+                state: Some(PlaybackState::Stopped),
+                ..Default::default()
+            },
+            now,
+        )?;
+        now += 1_000;
+        let restarted = report_test_playback_session(
+            &mut db,
+            user,
+            other,
+            ActiveEvent::Started,
+            PlaybackMutation::default(),
+            now,
+        )?
+        .unwrap();
+        assert_eq!(restarted.playback.state, PlaybackState::Playing);
+        assert_ne!(
+            restarted.playback_session_public_id,
+            current.playback_session_public_id
+        );
+        assert_eq!(
+            db::playbacks::get_reported(&db, user, "external", "auth:1", now)?
+                .unwrap()
+                .id,
+            root_id
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reported_playback_expires_without_losing_credited_listen() -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user = insert_user(&mut db, "alice")?;
+        let track = insert_track(&mut db, "A", 200_000)?;
+        report_test_playback_session_with_cleanup(
+            &mut db,
+            user,
+            track,
+            ActiveEvent::Started,
+            PlaybackMutation {
+                position_ms: Some(0),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            1_000,
+        )?;
+        let credited = report_test_playback_session_with_cleanup(
+            &mut db,
+            user,
+            track,
+            ActiveEvent::Progress,
+            PlaybackMutation {
+                position_ms: Some(110_000),
+                state: Some(PlaybackState::Playing),
+                ..Default::default()
+            },
+            111_000,
+        )?
+        .playback
+        .unwrap();
+        assert!(credited.playback.listen_recorded.unwrap_or(false));
+        let root = db::playbacks::get_reported(&db, user, "external", "auth:1", 111_000)?.unwrap();
+        workflow::cleanup_evicted_playbacks(&mut db, 411_001)?;
+        assert!(db::playbacks::get_reported(&db, user, "external", "auth:1", 411_001)?.is_none());
+        assert!(db::playback_sessions::get_by_id(&db, credited.playback_session_id)?.is_some());
+        report_test_playback_session(
+            &mut db,
+            user,
+            track,
+            ActiveEvent::Progress,
+            PlaybackMutation {
+                position_ms: Some(0),
+                duration_ms: Some(200_000),
+                state: Some(PlaybackState::Playing),
+            },
+            412_000,
+        )?;
+        let fresh = db::playbacks::get_reported(&db, user, "external", "auth:1", 412_000)?.unwrap();
+        assert_ne!(fresh.id, root.id);
+        Ok(())
     }
 
     #[tokio::test]
@@ -458,7 +842,6 @@ mod tests {
                 },
                 now_ms: 1_000,
                 active_event: ActiveEvent::Started,
-                stale_ttl_ms: ACTIVE_SESSION_TTL_MS,
             },
         )?
         .expect("playback should start");
@@ -787,7 +1170,7 @@ mod tests {
         .expect("track B should start");
 
         let scope = PlaybackScopeKey {
-            plugin_id: "jellyfin",
+            plugin_id: "external",
             user_db_id,
             session_key: "auth:1",
         };
@@ -1018,6 +1401,132 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ignored_terminal_report_persists_previous_cleanup_without_refreshing_root()
+    -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        for missing in [false, true] {
+            let user = insert_user(&mut db, if missing { "missing" } else { "expired" })?;
+            let a = insert_track(&mut db, "A", 200_000)?;
+            let b = insert_track(&mut db, "B", 200_000)?;
+            let previous = report_test_playback_session(
+                &mut db,
+                user,
+                a,
+                ActiveEvent::Started,
+                PlaybackMutation::default(),
+                1_000,
+            )?
+            .unwrap();
+            report_test_playback_session(
+                &mut db,
+                user,
+                b,
+                ActiveEvent::Started,
+                PlaybackMutation::default(),
+                2_000,
+            )?;
+            report_test_playback_session(
+                &mut db,
+                user,
+                b,
+                ActiveEvent::Progress,
+                PlaybackMutation {
+                    state: Some(PlaybackState::Stopped),
+                    ..Default::default()
+                },
+                3_000,
+            )?;
+            let before =
+                db::playbacks::get_reported(&db, user, "external", "auth:1", 3_000)?.unwrap();
+            assert!(before.reported.unwrap().previous.is_some());
+            let now = if missing {
+                db.exec_mut(
+                    QueryBuilder::remove()
+                        .ids(previous.playback_session_id)
+                        .query(),
+                )?;
+                4_000
+            } else {
+                2_001 + PREVIOUS_PLAYBACK_GRACE_MS
+            };
+            assert!(
+                report_test_playback_session(
+                    &mut db,
+                    user,
+                    b,
+                    ActiveEvent::Progress,
+                    PlaybackMutation {
+                        state: Some(PlaybackState::Stopped),
+                        ..Default::default()
+                    },
+                    now,
+                )?
+                .is_none()
+            );
+            let after = db::playbacks::get_reported(&db, user, "external", "auth:1", now)?.unwrap();
+            assert!(after.reported.unwrap().previous.is_none());
+            assert_eq!(after.updated_at_ms, 3_000);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn previous_report_preserves_current_command_and_binding_epoch() -> anyhow::Result<()> {
+        let (mut db, _guard) = new_scoped_test_db().await?;
+        let user = insert_user(&mut db, "alice")?;
+        let a = insert_track(&mut db, "A", 200_000)?;
+        let b = insert_track(&mut db, "B", 200_000)?;
+        for (track, now) in [(a, 1_000), (b, 2_000)] {
+            report_test_playback_session(
+                &mut db,
+                user,
+                track,
+                ActiveEvent::Started,
+                PlaybackMutation::default(),
+                now,
+            )?;
+        }
+        let scope = PlaybackScopeKey {
+            plugin_id: "external",
+            user_db_id: user,
+            session_key: "auth:1",
+        };
+        mark_command_dispatched(&scope, 3_000);
+        let before = sessions::get_playback_session(&scope).unwrap();
+        report_test_playback_session(
+            &mut db,
+            user,
+            a,
+            ActiveEvent::Progress,
+            PlaybackMutation {
+                state: Some(PlaybackState::Paused),
+                ..Default::default()
+            },
+            4_000,
+        )?;
+        let after = sessions::get_playback_session(&scope).unwrap();
+        assert_eq!(after.current_binding_epoch, before.current_binding_epoch);
+        assert_eq!(after.command_dispatched_at_ms, Some(3_000));
+        assert_eq!(after.updated_at_ms, before.updated_at_ms);
+        report_test_playback_session(
+            &mut db,
+            user,
+            b,
+            ActiveEvent::Progress,
+            PlaybackMutation::default(),
+            5_000,
+        )?;
+        let observed = sessions::get_playback_session(&scope).unwrap();
+        assert_eq!(
+            observed.current_binding_epoch,
+            before.current_binding_epoch.wrapping_add(1)
+        );
+        assert_eq!(observed.command_dispatched_at_ms, None);
+        assert_eq!(observed.updated_at_ms, 5_000);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn circuit_breaker_not_degraded_without_dispatch() -> anyhow::Result<()> {
         let (mut db, _guard) = new_scoped_test_db().await?;
         let user_db_id = insert_user(&mut db, "alice")?;
@@ -1037,7 +1546,7 @@ mod tests {
         )?;
 
         let scope = PlaybackScopeKey {
-            plugin_id: "jellyfin",
+            plugin_id: "external",
             user_db_id,
             session_key: "auth:1",
         };
@@ -1065,7 +1574,7 @@ mod tests {
         )?;
 
         let scope = PlaybackScopeKey {
-            plugin_id: "jellyfin",
+            plugin_id: "external",
             user_db_id,
             session_key: "auth:1",
         };
@@ -1096,7 +1605,7 @@ mod tests {
         )?;
 
         let scope = PlaybackScopeKey {
-            plugin_id: "jellyfin",
+            plugin_id: "external",
             user_db_id,
             session_key: "auth:1",
         };
@@ -1143,7 +1652,6 @@ mod tests {
                 },
                 now_ms: 1_000,
                 active_event: ActiveEvent::Started,
-                stale_ttl_ms: ACTIVE_SESSION_TTL_MS,
             },
         )?
         .expect("started playback");
@@ -1162,7 +1670,6 @@ mod tests {
                 },
                 now_ms: 2_000,
                 active_event: ActiveEvent::Started,
-                stale_ttl_ms: ACTIVE_SESSION_TTL_MS,
             },
         )?
         .expect("started native playback");
@@ -1240,7 +1747,6 @@ mod tests {
                 },
                 now_ms: 1_000,
                 active_event: ActiveEvent::Started,
-                stale_ttl_ms: ACTIVE_SESSION_TTL_MS,
             },
         )?
         .expect("track A should start");
@@ -1259,7 +1765,6 @@ mod tests {
                 },
                 now_ms: 2_000,
                 active_event: ActiveEvent::Started,
-                stale_ttl_ms: ACTIVE_SESSION_TTL_MS,
             },
         )?
         .expect("track B should start");

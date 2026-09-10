@@ -119,25 +119,7 @@ struct PlaybackSessionsModule;
 struct PlaybackUpdateHandler;
 
 #[derive(Clone, Debug, Deserialize)]
-struct PlaybackStartRequest {
-    track_id: i64,
-    user_id: i64,
-    position_ms: Option<u64>,
-    duration_ms: Option<u64>,
-    state: Option<db::PlaybackState>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct PlaybackReportRequest {
-    playback_session_id: i64,
-    position_ms: Option<u64>,
-    duration_ms: Option<u64>,
-    state: Option<db::PlaybackState>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
 struct PlaybackSessionReportRequest {
-    plugin_id: String,
     user_id: i64,
     session_key: String,
     track_id: i64,
@@ -145,13 +127,6 @@ struct PlaybackSessionReportRequest {
     position_ms: Option<u64>,
     duration_ms: Option<u64>,
     state: Option<db::PlaybackState>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct PlaybackSessionClearRequest {
-    plugin_id: String,
-    user_id: i64,
-    session_key: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -215,10 +190,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/playback_sessions")
         .capability("lyra.playback_sessions")
         .function(on_update_spec())
-        .function(report_spec())
-        .function(start_spec())
         .function(report_session_spec())
-        .function(clear_session_spec())
         .function(list_connections_spec())
         .function(send_command_spec())
         .install(|_| Ok(ModuleExport::new(PlaybackSessionsModule)))
@@ -231,38 +203,14 @@ fn on_update_spec() -> FunctionSpec {
         .call(on_update_callback)
 }
 
-fn report_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("report")
-        .context::<crate::plugins::auth::DispatchAuth>()
-        .arg_name("request")
-        .args::<PlaybackReportRequest>()
-        .call_async(Arc::new(report_callback))
-}
-
-fn start_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("start")
-        .context::<crate::plugins::auth::DispatchAuth>()
-        .arg_name("request")
-        .args::<PlaybackStartRequest>()
-        .returns::<i64>()
-        .call_async(Arc::new(start_callback))
-}
-
 fn report_session_spec() -> FunctionSpec {
     FunctionSpec::async_fn("report_session")
         .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("request")
         .args::<PlaybackSessionReportRequest>()
-        .returns::<Option<i64>>()
+        .returns::<Option<String>>()
+        .returns::<Option<String>>()
         .call_async(Arc::new(report_session_callback))
-}
-
-fn clear_session_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("clear_session")
-        .context::<crate::plugins::auth::DispatchAuth>()
-        .arg_name("request")
-        .args::<PlaybackSessionClearRequest>()
-        .call_async(Arc::new(clear_session_callback))
 }
 
 fn list_connections_spec() -> FunctionSpec {
@@ -310,127 +258,6 @@ fn on_update_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<(
     Ok(())
 }
 
-fn report_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let request_value: luau::Value = frame.args.read_named("request")?;
-    let request: PlaybackReportRequest = from_luau_json(frame.vm, &request_value)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<PlaybackSessionsModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-    let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
-        luau::Error::Runtime("playback_sessions.report must be called from plugin Luau code".into())
-    })?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let playback_session_id =
-            require_positive_id(request.playback_session_id, "playback_session_id")?;
-        let mutation = playback_mutation(request.position_ms, request.duration_ms, request.state);
-        let current_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
-
-        let mut db = db.write().await;
-        let track_db_id = db::playback_sessions::get_track_id(&db, playback_session_id)
-            .map_err(crate::plugins::runtime_error)?
-            .ok_or_else(|| crate::plugins::runtime_error("playback session not found"))?;
-        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
-            .map_err(crate::plugins::runtime_error)?
-        {
-            return Err(crate::plugins::runtime_error("playback session not found"));
-        }
-        let update = playbacks::report_playback_with_cleanup(
-            &mut db,
-            playbacks::ReportPlaybackRequest {
-                playback_session_id,
-                user_db_id: Some(principal.user_db_id),
-                mutation,
-                now_ms: current_ms,
-                activity_policy: playbacks::ActivityPolicy::PlayingOnly,
-                active_event: playbacks::ActiveEvent::Progress,
-            },
-        )
-        .map_err(crate::plugins::runtime_error)?;
-        let dispatch_caller = format!("plugin:{plugin_id}");
-        playbacks::dispatch_evicted_updates_for_caller(
-            dispatch_caller.clone(),
-            update.evicted_playbacks,
-        );
-
-        drop(db);
-        playbacks::dispatch_playback_update_for_caller(
-            dispatch_caller,
-            &update.playback,
-            update.event,
-        );
-        Ok(())
-    }))
-}
-
-fn start_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let request_value: luau::Value = frame.args.read_named("request")?;
-    let request: PlaybackStartRequest = from_luau_json(frame.vm, &request_value)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<PlaybackSessionsModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-    let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
-        luau::Error::Runtime("playback_sessions.start must be called from plugin Luau code".into())
-    })?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let track_db_id = require_positive_id(request.track_id, "track_id")?;
-        let user_db_id = require_positive_id(request.user_id, "user_id")?;
-        if user_db_id != principal.user_db_id {
-            return Err(crate::plugins::runtime_error("user not found"));
-        }
-        let mutation = playback_mutation(request.position_ms, request.duration_ms, request.state);
-        let current_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
-
-        let mut db = db.write().await;
-        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
-            .map_err(crate::plugins::runtime_error)?
-        {
-            return Err(crate::plugins::runtime_error("track not found"));
-        }
-        let update = playbacks::start_playback_with_cleanup(
-            &mut db,
-            playbacks::StartPlaybackRequest {
-                track_db_id,
-                user_db_id,
-                client_name: None,
-                mutation,
-                now_ms: current_ms,
-                active_event: playbacks::ActiveEvent::Started,
-            },
-        )
-        .map_err(crate::plugins::runtime_error)?;
-        let dispatch_caller = format!("plugin:{plugin_id}");
-        playbacks::dispatch_evicted_updates_for_caller(
-            dispatch_caller.clone(),
-            update.evicted_playbacks,
-        );
-
-        let playback_session_id = update.playback.playback_session_id.0;
-        drop(db);
-        playbacks::dispatch_playback_update_for_caller(
-            dispatch_caller,
-            &update.playback,
-            update.event,
-        );
-        Ok(luau::Value::Integer(playback_session_id))
-    }))
-}
-
 fn report_session_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
@@ -451,7 +278,6 @@ fn report_session_callback(
     })?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let _ = require_non_empty_string(request.plugin_id, "plugin_id")?;
         let user_db_id = require_positive_id(request.user_id, "user_id")?;
         if user_db_id != principal.user_db_id {
             return Err(crate::plugins::runtime_error("user not found"));
@@ -470,7 +296,7 @@ fn report_session_callback(
             return Err(crate::plugins::runtime_error("track not found"));
         }
 
-        let update = playbacks::report_playback_session_with_cleanup(
+        let update = match playbacks::report_playback_session_with_cleanup(
             &mut db,
             playbacks::SessionPlaybackReportRequest {
                 plugin_id: &plugin_id,
@@ -481,10 +307,14 @@ fn report_session_callback(
                 mutation,
                 now_ms: current_ms,
                 active_event,
-                stale_ttl_ms: playbacks::ACTIVE_SESSION_TTL_MS,
             },
-        )
-        .map_err(crate::plugins::runtime_error)?;
+        ) {
+            Ok(update) => update,
+            Err(playbacks::PlaybackServiceError::BadRequest(message)) => {
+                return Ok((None, Some(message)));
+            }
+            Err(error) => return Err(crate::plugins::runtime_error(error)),
+        };
         let dispatch_caller = format!("plugin:{plugin_id}");
         playbacks::dispatch_evicted_updates_for_caller(
             dispatch_caller.clone(),
@@ -495,45 +325,24 @@ fn report_session_callback(
             playback, event, ..
         } = update;
         let Some(playback) = playback else {
-            return Ok(luau::Value::Nil);
+            return Ok((None, None));
         };
 
-        let playback_session_id = playback.playback_session_id.0;
+        let playback_id = crate::services::playbacks::reported_id(
+            &db,
+            user_db_id,
+            &plugin_id,
+            &session_key,
+            current_ms,
+        )
+        .map_err(crate::plugins::runtime_error)?
+        .ok_or_else(|| crate::plugins::runtime_error("reported playback context not found"))?;
         let event_label = event
             .map(|value| value.to_string())
             .unwrap_or_else(|| active_event.to_string());
         drop(db);
         playbacks::dispatch_playback_update_for_caller(dispatch_caller, &playback, event_label);
-        Ok(luau::Value::Integer(playback_session_id))
-    }))
-}
-
-fn clear_session_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let request_value: luau::Value = frame.args.read_named("request")?;
-    let request: PlaybackSessionClearRequest = from_luau_json(frame.vm, &request_value)?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
-    let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
-        luau::Error::Runtime(
-            "playback_sessions.clear_session must be called from plugin Luau code".into(),
-        )
-    })?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let _ = require_non_empty_string(request.plugin_id, "plugin_id")?;
-        let user_db_id = require_positive_id(request.user_id, "user_id")?;
-        if user_db_id != principal.user_db_id {
-            return Ok(());
-        }
-        let session_key = require_non_empty_string(request.session_key, "session_key")?;
-        let scope = PlaybackScopeKey {
-            plugin_id: &plugin_id,
-            user_db_id,
-            session_key: &session_key,
-        };
-        playbacks::clear_playback_session_scope(&scope);
-        Ok(())
+        Ok((Some(playback_id), None))
     }))
 }
 
@@ -844,39 +653,20 @@ fn module_descriptor() -> ModuleDescriptor {
         functions: vec![
             ModuleFunctionDescriptor {
                 path: vec!["on_update"],
-                description: Some("Registers a callback for playback updates."),
+                description: Some(
+                    "Registers a callback for per-track playback accounting updates.",
+                ),
                 params: vec![param("handler", PlaybackUpdateHandler::luau_type())],
                 returns: vec![],
                 yields: false,
             },
             ModuleFunctionDescriptor {
-                path: vec!["report"],
-                description: Some("Reports progress for an existing playback session."),
-                params: vec![param("request", PlaybackReportRequest::luau_type())],
-                returns: vec![],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["start"],
-                description: Some("Starts a playback session and returns its id."),
-                params: vec![param("request", PlaybackStartRequest::luau_type())],
-                returns: vec![i64::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
                 path: vec!["report_session"],
                 description: Some(
-                    "Reports plugin-scoped playback session progress and returns the session id when the playback remains active.",
+                    "Reports an observation for a plugin's player context. Returns (public /api/playbacks ID, nil) when accepted, (nil, nil) when ignored, or (nil, rejection reason) when admission is refused. Internal failures raise an error. Track changes retain the context ID; stopped contexts expire after five minutes without an accepted current observation.",
                 ),
                 params: vec![param("request", PlaybackSessionReportRequest::luau_type())],
-                returns: vec![Option::<i64>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["clear_session"],
-                description: Some("Clears a plugin-scoped playback session."),
-                params: vec![param("request", PlaybackSessionClearRequest::luau_type())],
-                returns: vec![],
+                returns: vec![Option::<String>::luau_type(), Option::<String>::luau_type()],
                 yields: true,
             },
             ModuleFunctionDescriptor {
@@ -909,61 +699,13 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         ],
         &[
             PlaybackUpdatePayload::interface_descriptor(),
-            PlaybackStartRequest::interface_descriptor(),
-            PlaybackReportRequest::interface_descriptor(),
             PlaybackSessionReportRequest::interface_descriptor(),
-            PlaybackSessionClearRequest::interface_descriptor(),
             SendCommandRequest::interface_descriptor(),
             ConnectionInfo::interface_descriptor(),
             PlaybackInfo::interface_descriptor(),
         ],
         &[],
     )
-}
-
-impl LuauTypeInfo for PlaybackStartRequest {
-    fn luau_type() -> LuauType {
-        LuauType::literal("PlaybackStartRequest")
-    }
-}
-
-impl DescribeInterface for PlaybackStartRequest {
-    fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("PlaybackStartRequest", None);
-        descriptor.fields.extend(playback_request_fields([
-            FieldDescriptor {
-                name: "track_id",
-                ty: i64::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "user_id",
-                ty: i64::luau_type(),
-                description: None,
-            },
-        ]));
-        descriptor
-    }
-}
-
-impl LuauTypeInfo for PlaybackReportRequest {
-    fn luau_type() -> LuauType {
-        LuauType::literal("PlaybackReportRequest")
-    }
-}
-
-impl DescribeInterface for PlaybackReportRequest {
-    fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("PlaybackReportRequest", None);
-        descriptor
-            .fields
-            .extend(playback_request_fields([FieldDescriptor {
-                name: "playback_session_id",
-                ty: i64::luau_type(),
-                description: None,
-            }]));
-        descriptor
-    }
 }
 
 impl LuauTypeInfo for PlaybackSessionReportRequest {
@@ -974,13 +716,13 @@ impl LuauTypeInfo for PlaybackSessionReportRequest {
 
 impl DescribeInterface for PlaybackSessionReportRequest {
     fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("PlaybackSessionReportRequest", None);
+        let mut descriptor = InterfaceDescriptor::new(
+            "PlaybackSessionReportRequest",
+            Some(
+                "An observation keyed by the authenticated user, calling plugin, and external player session.",
+            ),
+        );
         descriptor.fields.extend(playback_request_fields([
-            FieldDescriptor {
-                name: "plugin_id",
-                ty: String::luau_type(),
-                description: None,
-            },
             FieldDescriptor {
                 name: "user_id",
                 ty: i64::luau_type(),
@@ -989,7 +731,7 @@ impl DescribeInterface for PlaybackSessionReportRequest {
             FieldDescriptor {
                 name: "session_key",
                 ty: String::luau_type(),
-                description: None,
+                description: Some("Stable external player identity, retained across track changes and authentication-token refresh."),
             },
             FieldDescriptor {
                 name: "track_id",
@@ -1002,36 +744,6 @@ impl DescribeInterface for PlaybackSessionReportRequest {
                 description: None,
             },
         ]));
-        descriptor
-    }
-}
-
-impl LuauTypeInfo for PlaybackSessionClearRequest {
-    fn luau_type() -> LuauType {
-        LuauType::literal("PlaybackSessionClearRequest")
-    }
-}
-
-impl DescribeInterface for PlaybackSessionClearRequest {
-    fn interface_descriptor() -> InterfaceDescriptor {
-        let mut descriptor = InterfaceDescriptor::new("PlaybackSessionClearRequest", None);
-        descriptor.fields.extend([
-            FieldDescriptor {
-                name: "plugin_id",
-                ty: String::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "user_id",
-                ty: i64::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
-                name: "session_key",
-                ty: String::luau_type(),
-                description: None,
-            },
-        ]);
         descriptor
     }
 }
