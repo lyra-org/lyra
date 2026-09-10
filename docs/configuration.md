@@ -17,7 +17,7 @@ Create `config.json` beside `compose.yaml`. For example, to scan for new music e
 Add this line under `volumes` in the `lyra` service:
 
 ```yaml
-      - ./config.json:/lyra/config.json:ro
+      - ./config.json:/config.json:ro
 ```
 
 Run `docker compose up -d` to apply it. After editing the file later, run `docker compose restart`.
@@ -57,7 +57,7 @@ The details below are for custom deployments and API clients.
 | `LYRA_PLUGINS_DIR` | `./plugins` | Directory plugins are loaded from |
 | `LYRA_STATIC_DIR` | searched | Directory for static web assets |
 
-Docker defaults to `/lyra/data`, `/lyra/plugins`, and `/lyra/static` for data, plugins, and web files. If you change one of these paths, update its volume mount too. `LYRA_PORT` overrides the file’s `port` value.
+Docker defaults to `/data`, `/plugins`, and `/static` for data, plugins, and web files. If you change one of these paths, update its volume mount too. `LYRA_PORT` overrides the file’s `port` value.
 
 ### Settings API
 

@@ -12,8 +12,8 @@ services:
     ports:
       - "4746:4746"
     volumes:
-      - lyra-data:/lyra/data
-      - lyra-plugins:/lyra/plugins
+      - lyra-data:/data
+      - lyra-plugins:/plugins
       - /path/to/music:/music:ro
 
 volumes:
@@ -28,6 +28,8 @@ docker compose up -d
 ```
 
 Your server is now running at `http://localhost:4746`. Its data is saved in the `lyra-data` Docker volume, and installed plugins persist in `lyra-plugins`.
+
+To use NAS or host folders, replace the volume names with their absolute paths, keeping each container destination mounted separately.
 
 ## 2. Add your music
 
@@ -78,7 +80,7 @@ Lyra now scans your music. You can keep the default settings, or [change them](c
 If you have a web interface built for Lyra, put its files (including `index.html`) in a `static` folder beside `compose.yaml`. Add this line under `volumes` in the `lyra` service:
 
 ```yaml
-      - ./static:/lyra/static:ro
+      - ./static:/static:ro
 ```
 
 Run `docker compose up -d` again, then open `http://localhost:4746` in your browser.
