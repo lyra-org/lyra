@@ -867,7 +867,7 @@ fn plugin_executor_reads_server_info_from_vm_context() -> Result<()> {
         values,
         vec![
             luau::Value::String(b"server-1".to_vec()),
-            luau::Value::Integer(3210),
+            luau::Value::Number(3210.0),
             luau::Value::String(b"https://lyra.example".to_vec()),
             luau::Value::Boolean(false),
             luau::Value::Boolean(true),

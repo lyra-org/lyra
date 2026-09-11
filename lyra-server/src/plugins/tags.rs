@@ -182,7 +182,7 @@ fn has_many_callback(
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, target_ids.len());
         for id in target_ids {
             table.set_key(
-                luau::Value::Number(id.0 as f64),
+                luau::Value::from(id.0),
                 luau::Value::Boolean(result.get(&id).copied().unwrap_or(false)),
             );
         }
@@ -214,7 +214,7 @@ fn get_for_targets_many_callback(
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, target_ids.len());
         for id in target_ids {
             table.set_key(
-                luau::Value::Number(id.0 as f64),
+                luau::Value::from(id.0),
                 luau::Value::TableData(tag_info_array(result.remove(&id).unwrap_or_default())),
             );
         }
@@ -351,20 +351,20 @@ fn tag_info_table(tag: TagInfo) -> luau::OwnedTable {
         tag.db_id
             .map(|id| {
                 let id: DbId = id.into();
-                luau::Value::Integer(id.0)
+                luau::Value::from(id.0)
             })
             .unwrap_or(luau::Value::Nil),
     );
     table.set_field("id", luau::Value::String(tag.id.into_bytes()));
     table.set_field("tag", luau::Value::String(tag.tag.into_bytes()));
     table.set_field("color", luau::Value::String(tag.color.into_bytes()));
-    table.set_field("created_at_ms", luau::Value::Integer(tag.created_at_ms));
+    table.set_field("created_at_ms", luau::Value::from(tag.created_at_ms));
     table
 }
 fn db_id_array(ids: Vec<DbId>) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(ids.len(), 0);
     for id in ids {
-        table.push_array(luau::Value::Integer(id.0));
+        table.push_array(luau::Value::from(id.0));
     }
     table
 }

@@ -57,8 +57,8 @@ fn plugin_executor_exposes_db_backed_lyra_ids_module() -> Result<()> {
             luau::Value::String(track_public_id.as_bytes().to_vec()),
             luau::Value::String(track_public_id.as_bytes().to_vec()),
             luau::Value::Boolean(true),
-            luau::Value::Integer(track_db_id.0),
-            luau::Value::Integer(track_db_id.0),
+            luau::Value::Number(track_db_id.0 as f64),
+            luau::Value::Number(track_db_id.0 as f64),
             luau::Value::Boolean(true),
         ]
     );
@@ -183,13 +183,13 @@ fn plugin_executor_exposes_db_backed_lyra_entries_module() -> Result<()> {
     assert_eq!(
         values,
         vec![
-            luau::Value::Integer(entry_db_id.0),
+            luau::Value::Number(entry_db_id.0 as f64),
             luau::Value::String(entry_public_id.into_bytes()),
             luau::Value::String(b"file".to_vec()),
             luau::Value::String(b"raw-entry.flac".to_vec()),
             luau::Value::String(b"raw-entry-hash".to_vec()),
-            luau::Value::Integer(123),
-            luau::Value::Integer(456),
+            luau::Value::Number(123.0),
+            luau::Value::Number(456.0),
             luau::Value::Boolean(true),
         ]
     );
@@ -401,10 +401,10 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
     assert_eq!(
         values,
         vec![
-            luau::Value::Integer(2),
-            luau::Value::Integer(2),
-            luau::Value::Integer(2),
-            luau::Value::Integer(2500),
+            luau::Value::Number(2.0),
+            luau::Value::Number(2.0),
+            luau::Value::Number(2.0),
+            luau::Value::Number(2500.0),
         ]
     );
     Ok(())
@@ -490,7 +490,7 @@ fn plugin_executor_exposes_db_backed_lyra_favorites_module() -> Result<()> {
             luau::Value::Boolean(true),
             luau::Value::Boolean(true),
             luau::Value::Boolean(false),
-            luau::Value::Integer(track_db_id.0),
+            luau::Value::Number(track_db_id.0 as f64),
             luau::Value::Boolean(true),
             luau::Value::Boolean(false),
         ]
@@ -608,8 +608,8 @@ fn plugin_executor_exposes_db_backed_lyra_artists_module() -> Result<()> {
             luau::Value::String(b"Raw Character".to_vec()),
             luau::Value::String(b"Raw Artist Module".to_vec()),
             luau::Value::String(b"Raw Artist Module".to_vec()),
-            luau::Value::Integer(1),
-            luau::Value::Integer(1),
+            luau::Value::Number(1.0),
+            luau::Value::Number(1.0),
         ]
     );
     Ok(())
@@ -679,8 +679,8 @@ fn plugin_executor_exposes_db_backed_lyra_tracks_module() -> Result<()> {
             luau::Value::String(track_public_id.as_bytes().to_vec()),
             luau::Value::String(b"Raw Track Module Song".to_vec()),
             luau::Value::String(b"Raw Track Module Song".to_vec()),
-            luau::Value::Integer(1),
-            luau::Value::Integer(0),
+            luau::Value::Number(1.0),
+            luau::Value::Number(0.0),
         ]
     );
     Ok(())
@@ -875,13 +875,13 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
     assert_eq!(
         values,
         vec![
-            luau::Value::Integer(track_db_id.0),
-            luau::Value::Integer(source_id.0),
+            luau::Value::Number(track_db_id.0 as f64),
+            luau::Value::Number(source_id.0 as f64),
             luau::Value::String(b"embedded_tags".to_vec()),
             luau::Value::String(source_key.into_bytes()),
             luau::Value::Boolean(true),
-            luau::Value::Integer(100),
-            luau::Value::Integer(200),
+            luau::Value::Number(100.0),
+            luau::Value::Number(200.0),
             luau::Value::Boolean(true),
             luau::Value::String(b"raw-playback-source.flac".to_vec()),
             luau::Value::String(b"raw-playback-hash".to_vec()),
@@ -987,12 +987,12 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
             luau::Value::Boolean(true),
             luau::Value::String(b"Raw Playlist".to_vec()),
             luau::Value::Boolean(true),
-            luau::Value::Integer(user_db_id.0),
+            luau::Value::Number(user_db_id.0 as f64),
             luau::Value::String(b"Raw Playlist".to_vec()),
             luau::Value::Boolean(true),
-            luau::Value::Integer(track_db_id.0),
+            luau::Value::Number(track_db_id.0 as f64),
             luau::Value::Boolean(true),
-            luau::Value::Integer(track_db_id.0),
+            luau::Value::Number(track_db_id.0 as f64),
             luau::Value::String(b"Raw Updated Playlist".to_vec()),
             luau::Value::Boolean(true),
             luau::Value::Boolean(true),
@@ -1100,10 +1100,10 @@ fn plugin_executor_exposes_db_backed_lyra_covers_module() -> Result<()> {
             luau::Value::String(b"image/jpeg".to_vec()),
             luau::Value::String(b"raw-cover-hash".to_vec()),
             luau::Value::String(b"raw-blurhash".to_vec()),
-            luau::Value::Integer(release_db_id.0),
-            luau::Value::Integer(release_db_id.0),
+            luau::Value::Number(release_db_id.0 as f64),
+            luau::Value::Number(release_db_id.0 as f64),
             luau::Value::String(b"raw-cover-hash".to_vec()),
-            luau::Value::Integer(release_db_id.0),
+            luau::Value::Number(release_db_id.0 as f64),
             luau::Value::Boolean(true),
         ]
     );
@@ -1178,8 +1178,8 @@ fn plugin_executor_exposes_db_backed_lyra_releases_module() -> Result<()> {
             luau::Value::String(b"Raw Release Module".to_vec()),
             luau::Value::String(b"Raw Release Module".to_vec()),
             luau::Value::String(b"Raw Release Module".to_vec()),
-            luau::Value::Integer(1),
-            luau::Value::Integer(0),
+            luau::Value::Number(1.0),
+            luau::Value::Number(0.0),
         ]
     );
     Ok(())
@@ -1235,7 +1235,7 @@ fn plugin_executor_exposes_db_backed_lyra_libraries_module() -> Result<()> {
         vec![
             luau::Value::String(b"Raw Library".to_vec()),
             luau::Value::String(b"/tmp/raw-lib".to_vec()),
-            luau::Value::Integer(library_db_id.0),
+            luau::Value::Number(library_db_id.0 as f64),
             luau::Value::String(b"Raw Library".to_vec()),
             luau::Value::String(b"Raw Library".to_vec()),
             luau::Value::String(b"Raw Library".to_vec()),
@@ -1314,8 +1314,8 @@ fn plugin_executor_exposes_db_backed_lyra_genres_module() -> Result<()> {
             luau::Value::String(b"Synthpop".to_vec()),
             luau::Value::String(b"Electronic".to_vec()),
             luau::Value::String(b"Synthpop".to_vec()),
-            luau::Value::Integer(release_db_id.0),
-            luau::Value::Integer(release_db_id.0),
+            luau::Value::Number(release_db_id.0 as f64),
+            luau::Value::Number(release_db_id.0 as f64),
             luau::Value::String(b"Synthpop".to_vec()),
             luau::Value::String(b"Synthpop".to_vec()),
             luau::Value::Number(0.0),
@@ -1417,7 +1417,7 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
             luau::Value::String(b"#335577".to_vec()),
             luau::Value::String(b"Workout".to_vec()),
             luau::Value::Boolean(true),
-            luau::Value::Integer(track_db_id.0),
+            luau::Value::Number(track_db_id.0 as f64),
             luau::Value::Boolean(false),
         ]
     );
@@ -1472,7 +1472,7 @@ fn plugin_executor_exposes_db_backed_lyra_datastore_module() -> Result<()> {
             luau::Value::Boolean(true),
             luau::Value::String(b"two".to_vec()),
             luau::Value::Boolean(true),
-            luau::Value::Integer(2),
+            luau::Value::Number(2.0),
         ]
     );
     Ok(())

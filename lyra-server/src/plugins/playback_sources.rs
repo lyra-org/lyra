@@ -197,8 +197,7 @@ fn get_many_callback(
                 } else {
                     luau::Value::Nil
                 };
-            rows.set_key(luau::Value::Integer(track_id.0), value.clone());
-            rows.set_key(luau::Value::Number(track_id.0 as f64), value);
+            rows.set_key(luau::Value::from(track_id.0), value);
         }
 
         Ok(luau::Value::TableData(rows))
@@ -223,8 +222,8 @@ fn source_to_table(
     } = source;
 
     let mut table = luau::OwnedTable::with_capacity(0, 9);
-    table.set_field("track_id", luau::Value::Integer(track_db_id.0));
-    table.set_field("source_id", luau::Value::Integer(source_id.0));
+    table.set_field("track_id", luau::Value::from(track_db_id.0));
+    table.set_field("source_id", luau::Value::from(source_id.0));
     table.set_field("source_kind", luau::Value::String(source_kind.into_bytes()));
     table.set_field("source_key", luau::Value::String(source_key.into_bytes()));
     table.set_field("is_primary", luau::Value::Boolean(is_primary));
@@ -251,7 +250,7 @@ fn entry_to_table(entry: db::Entry, include_full_path: bool) -> luau::OwnedTable
         "db_id",
         entry
             .db_id
-            .map(|id| luau::Value::Integer(id.0))
+            .map(|id| luau::Value::from(id.0))
             .unwrap_or(luau::Value::Nil),
     );
     table.set_field("id", luau::Value::String(entry.id.into_bytes()));
@@ -275,15 +274,13 @@ fn entry_to_table(entry: db::Entry, include_full_path: bool) -> luau::OwnedTable
             .map(|hash| luau::Value::String(hash.into_bytes()))
             .unwrap_or(luau::Value::Nil),
     );
-    table.set_field("size", luau::Value::Integer(saturating_i64(entry.size)));
-    table.set_field("mtime", luau::Value::Integer(saturating_i64(entry.mtime)));
+    table.set_field("size", luau::Value::from(entry.size));
+    table.set_field("mtime", luau::Value::from(entry.mtime));
     table
 }
 
 fn optional_u64(value: Option<u64>) -> luau::Value {
-    value
-        .map(|value| luau::Value::Integer(saturating_i64(value)))
-        .unwrap_or(luau::Value::Nil)
+    value.map(luau::Value::from).unwrap_or(luau::Value::Nil)
 }
 
 fn parse_resolve_id(value: luau::Value) -> luau::runtime::Result<ResolveId> {
@@ -352,10 +349,6 @@ fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
             other.type_name()
         ))),
     }
-}
-
-fn saturating_i64(value: u64) -> i64 {
-    value.min(i64::MAX as u64) as i64
 }
 
 #[cfg(feature = "docgen")]

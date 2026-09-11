@@ -101,7 +101,7 @@ fn get_ids_callback(
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, ids.len());
         for id in ids {
             table.set_key(
-                luau::Value::Number(id.0 as f64),
+                luau::Value::from(id.0),
                 resolved
                     .get(&id)
                     .map(|value| luau::Value::String(value.clone().into_bytes()))
@@ -146,7 +146,7 @@ fn get_db_ids_callback(
                 id.as_str(),
                 resolved
                     .get(&id)
-                    .map(|db_id| luau::Value::Integer(db_id.0))
+                    .map(|db_id| luau::Value::from(db_id.0))
                     .unwrap_or(luau::Value::Nil),
             );
         }

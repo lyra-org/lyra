@@ -58,18 +58,6 @@ pub(crate) use surfaces::{
     module_specs,
 };
 
-pub(crate) fn set_owned_db_id_key(
-    table: &mut harmony_luau::OwnedTable,
-    key: agdb::DbId,
-    value: harmony_luau::Value,
-) {
-    table.set_key(harmony_luau::Value::Integer(key.0), value.clone());
-    table.set_key(harmony_luau::Value::Number(key.0 as f64), value.clone());
-    if i32::try_from(key.0).is_err() {
-        table.set_field(key.0.to_string(), value);
-    }
-}
-
 pub(crate) fn runtime_error(error: impl std::fmt::Display) -> harmony_luau::Error {
     harmony_luau::Error::Runtime(error.to_string())
 }

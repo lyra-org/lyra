@@ -143,7 +143,7 @@ fn get_count_callback(
         let track_db_id = DbId(track_id);
         let stats = resolve_stats(db, &[track_db_id], &principal, user_db_id, merge).await?;
         let count = stats.counts.get(&track_db_id).copied().unwrap_or(0);
-        Ok(luau::Value::Integer(saturating_i64(count)))
+        Ok(luau::Value::from(count))
     }))
 }
 
@@ -358,15 +358,10 @@ fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
 fn dbid_map_to_table(map: &HashMap<DbId, u64>) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_entry_capacity(0, 0, map.len());
     for (id, value) in map {
-        let value = luau::Value::Integer(saturating_i64(*value));
-        table.set_key(luau::Value::Integer(id.0), value.clone());
-        table.set_key(luau::Value::Number(id.0 as f64), value);
+        let value = luau::Value::from(*value);
+        table.set_key(luau::Value::from(id.0), value);
     }
     table
-}
-
-fn saturating_i64(value: u64) -> i64 {
-    value.min(i64::MAX as u64) as i64
 }
 
 #[cfg(feature = "docgen")]

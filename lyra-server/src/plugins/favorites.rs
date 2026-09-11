@@ -256,8 +256,7 @@ fn has_many_callback(
                 .and_then(|public_id| result.get(&public_id).copied())
                 .unwrap_or(false);
             let value = luau::Value::Boolean(favored);
-            table.set_key(luau::Value::Integer(id.0), value.clone());
-            table.set_key(luau::Value::Number(id.0 as f64), value);
+            table.set_key(luau::Value::from(id.0), value);
         }
         Ok(luau::Value::TableData(table))
     }))
@@ -353,7 +352,7 @@ fn db_id_value(value: luau::Value) -> luau::runtime::Result<Option<DbId>> {
 fn db_id_array(ids: Vec<DbId>) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_capacity(ids.len(), 0);
     for id in ids {
-        table.push_array(luau::Value::Integer(id.0));
+        table.push_array(luau::Value::from(id.0));
     }
     table
 }

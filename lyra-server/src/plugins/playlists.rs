@@ -386,7 +386,7 @@ fn get_owner_callback(
         }
         let owner_id = playlist_service::get_owner(&db, QueryId::Id(playlist_db_id))
             .map_err(crate::plugins::runtime_error)?
-            .map(|id| luau::Value::Integer(id.0))
+            .map(|id| luau::Value::from(id.0))
             .unwrap_or(luau::Value::Nil);
         Ok(owner_id)
     }))
@@ -453,8 +453,7 @@ fn get_tracks_many_callback(
                 Vec::new()
             };
             let value = harmony_luau::serializable_to_luau_owned(links)?;
-            table.set_key(luau::Value::Integer(id.0), value.clone());
-            table.set_key(luau::Value::Number(id.0 as f64), value);
+            table.set_key(luau::Value::from(id.0), value);
         }
         Ok(luau::Value::TableData(table))
     }))
@@ -482,7 +481,7 @@ fn create_callback(
         let mut db = db.write().await;
         let playlist_id =
             playlist_service::create(&mut db, &request).map_err(crate::plugins::runtime_error)?;
-        Ok(luau::Value::Number(playlist_id.0 as f64))
+        Ok(luau::Value::from(playlist_id.0))
     }))
 }
 
@@ -570,7 +569,7 @@ fn add_track_callback(
             QueryId::Id(track_db_id),
         )
         .map_err(crate::plugins::runtime_error)?;
-        Ok(luau::Value::Number(link.edge_id.0 as f64))
+        Ok(luau::Value::from(link.edge_id.0))
     }))
 }
 

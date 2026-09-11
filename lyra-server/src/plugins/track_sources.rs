@@ -159,7 +159,7 @@ fn get_primary_containers_callback(
             let value = container
                 .map(|value| luau::Value::String(value.into_bytes()))
                 .unwrap_or(luau::Value::Nil);
-            crate::plugins::set_owned_db_id_key(&mut table, *id, value);
+            table.set_key(luau::Value::from(id.0), value);
         }
         Ok(luau::Value::TableData(table))
     }))

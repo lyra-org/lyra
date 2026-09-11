@@ -202,7 +202,7 @@ fn get_by_ids_callback(
                 .map(harmony_luau::serializable_to_luau_owned)
                 .transpose()?
                 .unwrap_or(luau::Value::Nil);
-            crate::plugins::set_owned_db_id_key(&mut table, id, value);
+            table.set_key(luau::Value::from(id.0), value);
         }
         table.into_luau_return()
     }))
@@ -239,9 +239,8 @@ fn list_many_callback(
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, ids.len());
         for id in ids {
             let tracks = related.get(&id).cloned().unwrap_or_default();
-            crate::plugins::set_owned_db_id_key(
-                &mut table,
-                id,
+            table.set_key(
+                luau::Value::from(id.0),
                 harmony_luau::serializable_to_luau_owned(tracks)?,
             );
         }
@@ -447,8 +446,8 @@ fn query_result_table(
         "entities",
         harmony_luau::serializable_to_luau_owned(entries)?,
     );
-    table.set_field("total_count", luau::Value::Integer(total_count as i64));
-    table.set_field("offset", luau::Value::Integer(offset as i64));
+    table.set_field("total_count", luau::Value::from(total_count as i64));
+    table.set_field("offset", luau::Value::from(offset as i64));
     Ok(table)
 }
 
