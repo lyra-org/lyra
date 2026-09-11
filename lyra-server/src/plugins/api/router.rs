@@ -400,11 +400,7 @@ pub(super) fn apply_catchall_and_static(router: Router, static_dir: Option<PathB
         .route("/api/{*path}", any(api_not_found));
 
     if let Some(static_dir) = static_dir {
-        let static_fallback = ServeFile::new(static_dir.join("index.html"));
-        let static_service = ServeDir::new(&static_dir)
-            .append_index_html_on_directories(false)
-            .not_found_service(static_fallback);
-        router.fallback_service(static_service)
+        router.fallback_service(ServeDir::new(static_dir))
     } else {
         router
     }
@@ -808,8 +804,67 @@ async fn dispatch_registered_route(request: RegisteredRouteRequest) -> Response 
 }
 
 #[cfg(test)]
-mod limiter_matcher_tests {
+mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn static_files_serve_indexes_without_masking_missing_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("index.html"), "frontend").unwrap();
+        std::fs::write(dir.path().join("app.js"), "export {};").unwrap();
+        let router = apply_catchall_and_static(Router::new(), Some(dir.path().to_path_buf()));
+
+        for (path, status, body) in [
+            ("/", StatusCode::OK, "frontend"),
+            ("/index.html", StatusCode::OK, "frontend"),
+            ("/app.js", StatusCode::OK, "export {};"),
+            ("/missing.js", StatusCode::NOT_FOUND, ""),
+            ("/missing", StatusCode::NOT_FOUND, ""),
+            ("/api", StatusCode::NOT_FOUND, "Error: not found"),
+            ("/api/missing", StatusCode::NOT_FOUND, "Error: not found"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{path}");
+            let actual = axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap();
+            assert_eq!(actual.as_ref(), body.as_bytes(), "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn registered_routes_take_precedence_over_static_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("index.html"), "frontend").unwrap();
+        std::fs::write(dir.path().join("plugin"), "static file").unwrap();
+        let routes = Router::new()
+            .route("/", get(|| async { "plugin root" }))
+            .route(
+                "/plugin",
+                get(|| async { (StatusCode::NOT_FOUND, "plugin missing") }),
+            );
+        let router = apply_catchall_and_static(routes, Some(dir.path().to_path_buf()));
+
+        for (path, status, body) in [
+            ("/", StatusCode::OK, "plugin root"),
+            ("/plugin", StatusCode::NOT_FOUND, "plugin missing"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{path}");
+            let actual = axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap();
+            assert_eq!(actual.as_ref(), body.as_bytes(), "{path}");
+        }
+    }
 
     #[test]
     fn matches_registered_paths_with_case_insensitive_lowering() {

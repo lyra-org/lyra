@@ -159,10 +159,7 @@ use harmony_luau::{
     TypeAliasDescriptor,
 };
 use tower::ServiceExt;
-use tower_http::services::{
-    ServeDir,
-    ServeFile,
-};
+use tower_http::services::ServeDir;
 
 #[cfg(feature = "docgen")]
 use crate::plugins::auth::{
