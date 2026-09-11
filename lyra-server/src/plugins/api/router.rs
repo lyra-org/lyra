@@ -400,7 +400,27 @@ pub(super) fn apply_catchall_and_static(router: Router, static_dir: Option<PathB
         .route("/api/{*path}", any(api_not_found));
 
     if let Some(static_dir) = static_dir {
-        router.fallback_service(ServeDir::new(static_dir))
+        let static_router = Router::new()
+            .fallback_service(ServeDir::new(static_dir))
+            .layer(axum::middleware::map_response(
+                |mut response: Response| async move {
+                    if response.headers().get(CONTENT_TYPE).is_some_and(|value| {
+                        value.to_str().is_ok_and(|value| {
+                            value
+                                .split(';')
+                                .next()
+                                .is_some_and(|mime| mime.trim() == "text/html")
+                        })
+                    }) {
+                        response.headers_mut().insert(
+                            axum::http::header::CACHE_CONTROL,
+                            HeaderValue::from_static("no-cache"),
+                        );
+                    }
+                    response
+                },
+            ));
+        router.fallback_service(static_router)
     } else {
         router
     }
@@ -806,6 +826,59 @@ async fn dispatch_registered_route(request: RegisteredRouteRequest) -> Response 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn only_static_html_requires_cache_revalidation() {
+        use axum::http::header::CACHE_CONTROL;
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("index.html"), "frontend").unwrap();
+        std::fs::create_dir(dir.path().join("nested")).unwrap();
+        std::fs::write(dir.path().join("nested/index.html"), "nested").unwrap();
+        std::fs::write(dir.path().join("app.js"), "export {};").unwrap();
+        let routes = Router::new().route(
+            "/plugin",
+            get(|| async {
+                (
+                    [(CACHE_CONTROL, "private, max-age=60")],
+                    axum::response::Html("plugin"),
+                )
+            }),
+        );
+        let router = apply_catchall_and_static(routes, Some(dir.path().to_path_buf()));
+
+        for (path, policy) in [
+            ("/", Some("no-cache")),
+            ("/index.html?version=1", Some("no-cache")),
+            ("/nested/", Some("no-cache")),
+            ("/app.js", None),
+            ("/missing.html", None),
+            ("/api/missing", None),
+            ("/plugin", Some("private, max-age=60")),
+        ] {
+            for method in [Method::GET, Method::HEAD] {
+                let response = router
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(path)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response
+                        .headers()
+                        .get(CACHE_CONTROL)
+                        .map(|value| value.to_str().unwrap()),
+                    policy,
+                    "{path}"
+                );
+            }
+        }
+    }
 
     #[tokio::test]
     async fn static_files_serve_indexes_without_masking_missing_paths() {
