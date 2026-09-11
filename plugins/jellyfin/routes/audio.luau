@@ -427,7 +427,8 @@ function module.register()
 		local keys: { string } = {}
 		if query then
 			for key in query do
-				if key ~= "audioCodec" and key ~= "AudioCodec" and key ~= "codec" then
+				local normalized_key = string.lower(key)
+				if normalized_key ~= "audiocodec" and normalized_key ~= "codec" then
 					table.insert(keys, key)
 				end
 			end
