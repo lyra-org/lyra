@@ -101,19 +101,30 @@ struct LuauValueSerializer {
     depth: usize,
 }
 
+/// Largest magnitude a Luau number can hold without losing integer precision.
+const MAX_EXACT_INTEGER: i64 = 1 << 53;
+
+fn exact_number(value: i64) -> SerializeResult<f64> {
+    if (-MAX_EXACT_INTEGER..=MAX_EXACT_INTEGER).contains(&value) {
+        Ok(value as f64)
+    } else {
+        Err(out_of_range())
+    }
+}
+
+fn out_of_range() -> LuauSerializeError {
+    LuauSerializeError::custom("integer exceeds the exact range of a Luau number")
+}
+
 impl LuauValueSerializer {
     fn serialize_i64_value(value: i64) -> SerializeResult<Value> {
-        Ok(Value::Integer(value))
+        exact_number(value).map(Value::Number)
     }
 
     fn serialize_u64_value(value: u64) -> SerializeResult<Value> {
-        if value <= i64::MAX as u64 {
-            Ok(Value::Integer(value as i64))
-        } else {
-            Err(LuauSerializeError::custom(
-                "unsigned integer is out of Luau integer range",
-            ))
-        }
+        i64::try_from(value)
+            .map_err(|_| out_of_range())
+            .and_then(Self::serialize_i64_value)
     }
 
     fn serialize_f64_value(value: f64) -> SerializeResult<Value> {
@@ -162,8 +173,8 @@ impl Serializer for LuauValueSerializer {
 
     fn serialize_i128(self, value: i128) -> SerializeResult<Value> {
         i64::try_from(value)
-            .map(Value::Integer)
-            .map_err(|_| LuauSerializeError::custom("integer is out of Luau integer range"))
+            .map_err(|_| out_of_range())
+            .and_then(Self::serialize_i64_value)
     }
 
     fn serialize_u8(self, value: u8) -> SerializeResult<Value> {
@@ -184,7 +195,7 @@ impl Serializer for LuauValueSerializer {
 
     fn serialize_u128(self, value: u128) -> SerializeResult<Value> {
         u64::try_from(value)
-            .map_err(|_| LuauSerializeError::custom("integer is out of Luau integer range"))
+            .map_err(|_| out_of_range())
             .and_then(Self::serialize_u64_value)
     }
 
@@ -590,14 +601,13 @@ impl Serializer for LuauKeySerializer {
     }
 
     fn serialize_i64(self, value: i64) -> SerializeResult<LuauMapKey> {
-        Ok(LuauMapKey::Value(Value::Integer(value)))
+        LuauValueSerializer::serialize_i64_value(value).map(LuauMapKey::Value)
     }
 
     fn serialize_i128(self, value: i128) -> SerializeResult<LuauMapKey> {
         i64::try_from(value)
-            .map(Value::Integer)
-            .map(LuauMapKey::Value)
-            .map_err(|_| LuauSerializeError::custom("integer key is out of Luau integer range"))
+            .map_err(|_| out_of_range())
+            .and_then(|value| self.serialize_i64(value))
     }
 
     fn serialize_u8(self, value: u8) -> SerializeResult<LuauMapKey> {
@@ -613,18 +623,12 @@ impl Serializer for LuauKeySerializer {
     }
 
     fn serialize_u64(self, value: u64) -> SerializeResult<LuauMapKey> {
-        if value <= i64::MAX as u64 {
-            Ok(LuauMapKey::Value(Value::Integer(value as i64)))
-        } else {
-            Err(LuauSerializeError::custom(
-                "unsigned integer key is out of Luau integer range",
-            ))
-        }
+        LuauValueSerializer::serialize_u64_value(value).map(LuauMapKey::Value)
     }
 
     fn serialize_u128(self, value: u128) -> SerializeResult<LuauMapKey> {
         u64::try_from(value)
-            .map_err(|_| LuauSerializeError::custom("integer key is out of Luau integer range"))
+            .map_err(|_| out_of_range())
             .and_then(|value| self.serialize_u64(value))
     }
 
@@ -764,7 +768,10 @@ mod tests {
         Serializer,
     };
 
-    use super::serializable_to_luau_owned;
+    use super::{
+        MAX_EXACT_INTEGER,
+        serializable_to_luau_owned,
+    };
     use crate::{
         Error,
         Value,
@@ -805,7 +812,7 @@ mod tests {
         assert_eq!(
             table.fields(),
             &[
-                ("id".to_string(), Value::Integer(42)),
+                ("id".to_string(), Value::Number(42.0)),
                 ("name".to_string(), Value::String(b"Lyra".to_vec())),
                 (
                     "tags".to_string(),
@@ -833,7 +840,7 @@ mod tests {
         assert!(table.fields().is_empty());
         assert_eq!(
             table.entries(),
-            &[(Value::Integer(7), Value::String(b"seven".to_vec()))]
+            &[(Value::Number(7.0), Value::String(b"seven".to_vec()))]
         );
         Ok(())
     }
@@ -851,8 +858,16 @@ mod tests {
     fn rejects_values_luau_cannot_represent_safely() {
         assert!(matches!(
             serializable_to_luau_owned(u64::MAX),
-            Err(Error::Serialize(message)) if message.contains("out of Luau integer range")
+            Err(Error::Serialize(message)) if message.contains("exact range")
         ));
+        assert!(matches!(
+            serializable_to_luau_owned(MAX_EXACT_INTEGER + 1),
+            Err(Error::Serialize(message)) if message.contains("exact range")
+        ));
+        assert_eq!(
+            serializable_to_luau_owned(MAX_EXACT_INTEGER).unwrap(),
+            Value::Number(MAX_EXACT_INTEGER as f64)
+        );
         assert!(matches!(
             serializable_to_luau_owned(f64::NAN),
             Err(Error::Serialize(message)) if message.contains("finite")
