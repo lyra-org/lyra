@@ -1177,8 +1177,9 @@ api.post(P .. "/Playlists", function(ctx: ApiContext)
 
 	local resolved_playlist_id: number = playlist_id :: number
 	for _, track_id in request_payload.ids do
-		if playback.resolve_track_for_playback(track_id) then
-			pcall(playlists.add_track, resolved_playlist_id, track_id)
+		local added, entry_id = pcall(playlists.add_track, resolved_playlist_id, track_id)
+		if not added or entry_id == nil then
+			return responses.bad_request("failed to add track to playlist")
 		end
 	end
 
@@ -1189,6 +1190,32 @@ api.post(P .. "/Playlists", function(ctx: ApiContext)
 	return api.response.json(200, {
 		Id = jellyfin_playlist_id,
 	})
+end, nil, true)
+api.delete(P .. "/Items/{id}", function(ctx: ApiContext): ApiResponse
+	local principal = session.require_jellyfin_principal(ctx)
+	if not principal then
+		return session.unauthorized()
+	end
+	if not session.require_matching_user_scope(ctx, principal) then
+		return session.unauthorized()
+	end
+
+	local playlist = playlist_access.find(item_ids.decode_jellyfin_item_id(ctx.params.id))
+	if not playlist or playlist.db_id == nil then
+		return responses.not_found("playlist not found")
+	end
+	local can_edit, edit_err = session.ensure_playlist_editable(playlist, principal)
+	if not can_edit then
+		return edit_err or responses.forbidden("playlist is read-only")
+	end
+	local ok, deleted = pcall(playlists.delete, playlist.db_id)
+	if not ok then
+		return responses.bad_request("failed to delete playlist")
+	end
+	if not deleted then
+		return responses.not_found("playlist not found")
+	end
+	return api.response.empty(204)
 end, nil, true)
 api.post(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 	local principal = session.require_jellyfin_principal(ctx)
@@ -1216,12 +1243,14 @@ api.post(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 		return responses.bad_request("missing ids query parameter")
 	end
 
+	local playlist_db_id = playlist.db_id
+	if playlist_db_id == nil then
+		return responses.not_found("playlist not found")
+	end
 	for _, track_id in track_ids do
-		if playback.resolve_track_for_playback(track_id) then
-			local playlist_db_id = playlist.db_id
-			if playlist_db_id ~= nil then
-				pcall(playlists.add_track, playlist_db_id, track_id)
-			end
+		local added, entry_id = pcall(playlists.add_track, playlist_db_id, track_id)
+		if not added or entry_id == nil then
+			return responses.bad_request("failed to add track to playlist")
 		end
 	end
 
@@ -1244,15 +1273,52 @@ api.delete(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
-	local entry_ids = session.parse_playlist_query_entry_ids(query)
-	if #entry_ids == 0 then
-		return responses.bad_request("missing entryIds query parameter")
+	local entry_ids = session.parse_playlist_query_entry_ids(query, playlist)
+	if not entry_ids or #entry_ids == 0 then
+		return responses.bad_request("invalid or missing playlist entryIds")
 	end
 
 	for _, entry_id in entry_ids do
-		pcall(playlists.remove_track, entry_id)
+		local ok, removed = pcall(playlists.remove_track, entry_id)
+		if not ok or not removed then
+			return responses.bad_request("failed to remove playlist entry")
+		end
 	end
 
+	return api.response.empty(204)
+end, nil, true)
+api.post(P .. "/Playlists/{playlistId}/Items/{itemId}/Move/{newIdx}", function(ctx: ApiContext): ApiResponse
+	local principal = session.require_jellyfin_principal(ctx)
+	if not principal then
+		return session.unauthorized()
+	end
+	if not session.require_matching_user_scope(ctx, principal) then
+		return session.unauthorized()
+	end
+	local playlist, playlist_err = session.resolve_playlist_for_route(ctx)
+	if not playlist or playlist.db_id == nil then
+		return playlist_err or responses.not_found("playlist not found")
+	end
+	local can_edit, edit_err = session.ensure_playlist_editable(playlist, principal)
+	if not can_edit then
+		return edit_err or responses.forbidden("playlist is read-only")
+	end
+	local raw_position = ctx.params.newIdx
+	local position = tonumber(raw_position)
+	if not string.match(raw_position, "^%d+$") or not position or position > 9007199254740991 then
+		return responses.bad_request("newIdx must be a non-negative integer within the exact numeric range")
+	end
+	local entry_ids = playlist_access.resolve_entry_ids(playlist, { ctx.params.itemId })
+	if not entry_ids or #entry_ids ~= 1 then
+		return responses.not_found("playlist entry not found")
+	end
+	local ok, moved = pcall(playlists.move_track, playlist.db_id, entry_ids[1], position)
+	if not ok then
+		return responses.bad_request("failed to move playlist entry")
+	end
+	if not moved then
+		return responses.not_found("playlist entry not found")
+	end
 	return api.response.empty(204)
 end, nil, true)
 api.post(P .. "/Playlists/{playlistId}", function(ctx: ApiContext)
@@ -1289,8 +1355,8 @@ api.post(P .. "/Playlists/{playlistId}", function(ctx: ApiContext)
 		is_public = request_payload.is_public,
 		updated_at = session.current_unix_seconds(),
 	}
-	local ok = pcall(playlists.update, update_request)
-	if not ok then
+	local ok, updated = pcall(playlists.update, update_request)
+	if not ok or updated == nil then
 		return responses.bad_request("failed to update playlist")
 	end
 

@@ -4,6 +4,8 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
+local constants = require("../constants")
+local item_ids = require("./items/identifiers")
 local playlists = require("@lyra/playlists")
 
 type PlaylistInfo = playlists.PlaylistInfo
@@ -12,11 +14,12 @@ type PlaylistTrackLink = playlists.PlaylistTrackLink
 local module = {}
 
 function module.find(playlist_id: number?): PlaylistInfo?
-	if not playlist_id or playlist_id <= 0 then
+	local numeric_id = if playlist_id then tonumber(playlist_id) else nil
+	if not numeric_id or numeric_id <= 0 then
 		return nil
 	end
 
-	local ok, result = pcall(playlists.get_by_id, playlist_id)
+	local ok, result = pcall(playlists.get_by_id, numeric_id)
 	if not ok then
 		return nil
 	end
@@ -44,7 +47,7 @@ end
 
 function module.can_edit(playlist: PlaylistInfo?, user_id: number?): boolean
 	local owner_id = module.owner_id(playlist)
-	return owner_id ~= nil and user_id ~= nil and owner_id == user_id
+	return owner_id ~= nil and user_id ~= nil and owner_id == tonumber(user_id)
 end
 
 function module.can_view(playlist: PlaylistInfo?, user_id: number?): boolean
@@ -90,6 +93,30 @@ function module.track_ids(playlist: PlaylistInfo): { number }
 		end
 	end
 	return track_ids
+end
+
+function module.resolve_entry_ids(playlist: PlaylistInfo, raw_ids: { string }): { number }?
+	local by_hex: { [string]: number } = {}
+	for _, entry in module.track_refs(playlist) do
+		local hex_id = item_ids.encode_jellyfin_item_id(entry.entry_public_id)
+		if hex_id then
+			by_hex[hex_id] = entry.entry_id
+		end
+	end
+	local resolved: { number } = {}
+	local seen: { [string]: boolean } = {}
+	for _, raw_id in raw_ids do
+		local hex_id = constants.normalize_item_id(raw_id)
+		local entry_id = if hex_id then by_hex[hex_id] else nil
+		if not hex_id or entry_id == nil then
+			return nil
+		end
+		if not seen[hex_id] then
+			seen[hex_id] = true
+			table.insert(resolved, entry_id)
+		end
+	end
+	return resolved
 end
 
 return module
