@@ -57,7 +57,9 @@ The details below are for custom deployments and API clients.
 | `LYRA_PLUGINS_DIR` | `./plugins` | Directory plugins are loaded from |
 | `LYRA_STATIC_DIR` | searched | Directory for static web assets |
 
-Docker defaults to `/data`, `/plugins`, and `/static` for data, plugins, and web files. If you change one of these paths, update its volume mount too. `LYRA_PORT` overrides the file’s `port` value.
+Docker stores data in `/data` and plugins in `/plugins`. If you change either path, update its volume mount too.
+
+Bundled web files live at `/usr/share/lyra/web` and update with the image. To serve your own files, see [custom web interface](installation.md#optional-use-a-custom-web-interface).
 
 ### Settings API
 
@@ -87,7 +89,7 @@ Keep only the settings you want to control from the file; omitted settings use t
 - Durations are in seconds. `sync.interval_secs: 0` disables periodic scans.
 - HLS disk budgets are in bytes; `null` or `0` means no budget. `max_concurrent_transcodes: 0` means no limit.
 
-For development only, you can add a `library` block to create and scan a library at startup. Normally, [add music through the API](installation.md#2-add-your-music).
+For development only, you can add a `library` block to create and scan a library at startup. Normally, [add a library](installation.md#2-add-your-music).
 
 ```json
 {

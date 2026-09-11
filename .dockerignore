@@ -3,6 +3,10 @@ target/
 .lyra/
 .serena/
 
+# CI frontend revision artifacts
+web-ref
+web.env
+
 # Documentation
 *.md
 

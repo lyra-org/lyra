@@ -1,3 +1,23 @@
+FROM node:24-bookworm-slim AS web
+
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /web
+
+ARG LYRA_WEB_GIT_HASH
+RUN printf '%s\n' "$LYRA_WEB_GIT_HASH" | grep -Eq '^[0-9a-f]{40}$' \
+    && git init . \
+    && git remote add origin https://github.com/lyra-org/lyra-web.git \
+    && git fetch --depth 1 origin "$LYRA_WEB_GIT_HASH" \
+    && git checkout --detach FETCH_HEAD \
+    && test "$(git rev-parse HEAD)" = "$LYRA_WEB_GIT_HASH"
+
+RUN npm install --global "$(node -p 'require("./package.json").packageManager')" \
+    && pnpm install --frozen-lockfile \
+    && pnpm run check \
+    && pnpm run build
+
 FROM debian:trixie-slim AS ffmpeg
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -116,17 +136,23 @@ RUN useradd -r -s /bin/false lyra
 WORKDIR /
 
 COPY --from=builder /build/target/release/lyra /usr/local/bin/lyra
+COPY --from=web /web/dist/ /usr/share/lyra/web/
 
-RUN mkdir -p /data /static /plugins \
-    && chown lyra:lyra /data /static /plugins
+ARG LYRA_GIT_HASH=unknown
+ARG LYRA_WEB_GIT_HASH
+LABEL org.opencontainers.image.revision=${LYRA_GIT_HASH} \
+    pub.lyra.web.revision=${LYRA_WEB_GIT_HASH}
+
+RUN mkdir -p /data /plugins \
+    && chown lyra:lyra /data /plugins
 
 USER lyra
 
 ENV LYRA_DATA_DIR=/data \
     LYRA_PLUGINS_DIR=/plugins \
-    LYRA_STATIC_DIR=/static
+    LYRA_STATIC_DIR=/usr/share/lyra/web
 
-VOLUME ["/data", "/plugins", "/static"]
+VOLUME ["/data", "/plugins"]
 
 EXPOSE 4746
 

@@ -37,7 +37,6 @@ See [commit conventions](commits.md) when preparing changes.
 
 ## Cargo installation
 
-
 For local development, install the build prerequisites above, then install the server:
 
 ```sh
@@ -45,6 +44,18 @@ cargo install --locked --git https://git.lyra.pub/lyra/lyra lyra-server
 lyra serve
 ```
 
-The server listens on port 4746 and stores state in `./data` under the working directory. Follow [library setup](installation.md#2-add-your-music), using the music folder's local path when creating a library.
+The server listens on port 4746 and stores state in `./data` under the working directory. This install does not include a web interface, so [set up your library through the API](installation.md#optional-set-up-through-the-api). Use the music folder's local path when creating the library.
 
 Copy the bundled plugins from this repository's [`plugins`](../plugins) directory into a `plugins` directory where you run the binary, especially the MusicBrainz plugin. See [plugin repositories](plugin-repositories.md) for installing and updating additional plugins.
+
+## Docker builds
+
+The image includes the lyra-web frontend, so the build needs a commit SHA from that repository as `LYRA_WEB_GIT_HASH`. CI uses the current `main` commit. To do the same locally:
+
+```sh
+LYRA_WEB_GIT_HASH=$(git ls-remote https://github.com/lyra-org/lyra-web.git refs/heads/main | cut -f1)
+docker build \
+  --build-arg LYRA_GIT_HASH="$(git rev-parse HEAD)" \
+  --build-arg LYRA_WEB_GIT_HASH="$LYRA_WEB_GIT_HASH" \
+  -t lyra:local .
+```
