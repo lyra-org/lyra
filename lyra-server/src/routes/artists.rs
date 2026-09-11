@@ -721,7 +721,7 @@ pub(crate) async fn list_artist_responses(
         .field(max_rating_context.as_deref())
         .finish();
     let mut sort = parse_artist_sort_specs(sort_by, sort_order)?;
-    if sort.is_empty() {
+    if sort.is_empty() && search_term.is_none() {
         sort = default_artist_sort();
     }
     let library_scope = crate::services::auth::access::resolve_optional_library_filter(
@@ -897,7 +897,7 @@ async fn search_artist_covers(
 #[cfg(feature = "docgen")]
 fn list_artists_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List artists").description(
-        "Returns artists as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `min_rating`, `max_rating`, `limit`, `cursor`. `min_rating` and `max_rating` filter artists by the authenticated user's inclusive personal rating range; either bound excludes unrated artists. `library_id` scopes results to artists credited by releases or tracks belonging to that public library ID. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against artist names. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, artist cover metadata includes a public image URL. When `inc=relations`, add `relation_covers` to include public image metadata for related artists. When `inc=releases`, use `release_artists`, `release_covers`, and/or `artist_covers` to hydrate those nested release fields. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
+        "Returns artists as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `sort_by`, `sort_order`, `min_rating`, `max_rating`, `limit`, `cursor`. `min_rating` and `max_rating` filter artists by the authenticated user's inclusive personal rating range; either bound excludes unrated artists. `library_id` scopes results to artists credited by releases or tracks belonging to that public library ID. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `release_count`, `track_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against artist names and defaults ordering to relevance. Use `inc` to include releases, tracks, relations, and/or covers. When `inc=covers`, artist cover metadata includes a public image URL. When `inc=relations`, add `relation_covers` to include public image metadata for related artists. When `inc=releases`, use `release_artists`, `release_covers`, and/or `artist_covers` to hydrate those nested release fields. The `credit` field is not present on artist-level responses; it only appears when artists are included via track or release endpoints.",
     )
 }
 
@@ -1418,6 +1418,39 @@ mod tests {
             relations.is_empty(),
             "hidden relation peers must not be included in artist responses",
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_artist_responses_orders_query_matches_by_relevance() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let _test_dir = initialize_test_runtime().await?;
+
+        {
+            let mut db = STATE.db.write().await;
+            for name in ["A b l u e", "Blue"] {
+                insert_artist(&mut db, name)?;
+            }
+        }
+        let principal = admin_principal(HashSet::new());
+
+        let page = list_artist_responses(
+            &principal,
+            ArtistListOptions {
+                inc: None,
+                query: Some("blue".to_string()),
+                library_id: None,
+                sort_by: None,
+                sort_order: None,
+                rating_filter: db::ratings::RatingFilter::default(),
+                page_request: super::super::SnapshotPageRequest::first_page(100),
+            },
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        let names: Vec<String> = page.items.into_iter().map(|artist| artist.name).collect();
+        assert_eq!(names, vec!["Blue", "A b l u e"]);
         Ok(())
     }
 
