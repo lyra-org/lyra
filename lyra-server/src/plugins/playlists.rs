@@ -251,7 +251,7 @@ fn add_track_spec() -> FunctionSpec {
         .args::<ResolveId>()
         .arg_name("track_id")
         .args::<ResolveId>()
-        .returns::<i64>()
+        .returns::<Option<i64>>()
         .call_async(Arc::new(add_track_callback))
 }
 
@@ -260,7 +260,7 @@ fn remove_track_spec() -> FunctionSpec {
         .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("entry_id")
         .args::<ResolveId>()
-        .returns::<()>()
+        .returns::<bool>()
         .call_async(Arc::new(remove_track_callback))
 }
 
@@ -501,12 +501,11 @@ fn update_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
-        let playlist_id = request
+        let Some(QueryId::Id(playlist_db_id)) = request
             .playlist_id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
-            .ok_or_else(|| crate::plugins::runtime_error("could not resolve playlist id"))?;
-        let QueryId::Id(playlist_db_id) = playlist_id else {
+        else {
             return Ok(luau::Value::Nil);
         };
         if !playlist_owned_by_principal(&db, &principal, playlist_db_id)? {
@@ -539,29 +538,28 @@ fn add_track_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
-        let playlist_id = playlist_id
+        let Some(QueryId::Id(playlist_db_id)) = playlist_id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
-            .ok_or_else(|| crate::plugins::runtime_error("could not resolve playlist id"))?;
-        let QueryId::Id(playlist_db_id) = playlist_id else {
-            return Err(crate::plugins::runtime_error(
-                "could not resolve playlist id",
-            ));
+        else {
+            return Ok(luau::Value::Nil);
         };
         if !playlist_owned_by_principal(&db, &principal, playlist_db_id)? {
-            return Err(crate::plugins::runtime_error("playlist not found"));
+            return Ok(luau::Value::Nil);
         }
-        let track_id = track_id
+        let Some(QueryId::Id(track_db_id)) = track_id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
-            .ok_or_else(|| crate::plugins::runtime_error("could not resolve track id"))?;
-        let QueryId::Id(track_db_id) = track_id else {
-            return Err(crate::plugins::runtime_error("could not resolve track id"));
+        else {
+            return Ok(luau::Value::Nil);
         };
-        if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
+        if db::tracks::get_by_id(&db, track_db_id)
             .map_err(crate::plugins::runtime_error)?
+            .is_none()
+            || !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
+                .map_err(crate::plugins::runtime_error)?
         {
-            return Err(crate::plugins::runtime_error("track not found"));
+            return Ok(luau::Value::Nil);
         }
         let link = playlist_service::add_track(
             &mut db,
@@ -588,25 +586,52 @@ fn remove_track_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
-        let entry_id = entry_id
+        let Some(QueryId::Id(entry_db_id)) = entry_id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
-            .ok_or_else(|| crate::plugins::runtime_error("could not resolve entry id"))?;
-        let QueryId::Id(entry_db_id) = entry_id else {
-            return Err(crate::plugins::runtime_error("could not resolve entry id"));
-        };
-        let Some(playlist_db_id) = playlist_service::get_playlist_for_entry(&db, entry_db_id)
-            .map_err(crate::plugins::runtime_error)?
         else {
-            return Ok(());
+            return Ok(luau::Value::Boolean(false));
+        };
+        let Some(playlist_db_id) = playlist_for_track_entry(&db, entry_db_id)? else {
+            return Ok(luau::Value::Boolean(false));
         };
         if !playlist_owned_by_principal(&db, &principal, playlist_db_id)? {
-            return Ok(());
+            return Ok(luau::Value::Boolean(false));
         }
         playlist_service::remove_track(&mut db, QueryId::Id(entry_db_id))
             .map_err(crate::plugins::runtime_error)?;
-        Ok(())
+        Ok(luau::Value::Boolean(true))
     }))
+}
+
+fn playlist_for_track_entry(db: &DbAny, entry_id: DbId) -> luau::runtime::Result<Option<DbId>> {
+    if entry_id.0 >= 0 {
+        return Ok(None);
+    }
+    let playlist_id = match playlist_service::get_playlist_for_entry(db, entry_id) {
+        Ok(Some(id)) => id,
+        Ok(None) => return Ok(None),
+        Err(error)
+            if error
+                .downcast_ref::<agdb::DbError>()
+                .is_some_and(|error| error.ty == agdb::DbErrorType::NotFound) =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(crate::plugins::runtime_error(error)),
+    };
+    if playlist_service::get(db, QueryId::Id(playlist_id))
+        .map_err(crate::plugins::runtime_error)?
+        .is_none()
+    {
+        return Ok(None);
+    }
+    let tracks = playlist_service::get_tracks(db, QueryId::Id(playlist_id))
+        .map_err(crate::plugins::runtime_error)?;
+    Ok(tracks
+        .iter()
+        .any(|track| track.entry_db_id == entry_id)
+        .then_some(playlist_id))
 }
 
 fn visible_track_links(
@@ -632,6 +657,12 @@ fn playlist_owned_by_principal(
     principal: &Principal,
     playlist_db_id: DbId,
 ) -> luau::runtime::Result<bool> {
+    if playlist_service::get(db, QueryId::Id(playlist_db_id))
+        .map_err(crate::plugins::runtime_error)?
+        .is_none()
+    {
+        return Ok(false);
+    }
     Ok(playlist_service::get_owner(db, QueryId::Id(playlist_db_id))
         .map_err(crate::plugins::runtime_error)?
         == Some(principal.user_db_id))
@@ -1005,26 +1036,32 @@ fn module_descriptor() -> ModuleDescriptor {
             },
             ModuleFunctionDescriptor {
                 path: vec!["update"],
-                description: None,
+                description: Some(
+                    "Returns the updated playlist, or nil if it is missing or not owned by the caller.",
+                ),
                 params: vec![param("request", PlaylistUpdateRequest::luau_type())],
                 returns: vec![Option::<PlaylistInfo>::luau_type()],
                 yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["add_track"],
-                description: None,
+                description: Some(
+                    "Returns the entry ID, or nil if the playlist or track is missing or inaccessible.",
+                ),
                 params: vec![
                     param("playlist_id", resolve_id_type()),
                     param("track_id", resolve_id_type()),
                 ],
-                returns: vec![i64::luau_type()],
+                returns: vec![Option::<i64>::luau_type()],
                 yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["remove_track"],
-                description: None,
+                description: Some(
+                    "Returns true when removed, or false if the entry is missing or not owned by the caller.",
+                ),
                 params: vec![param("entry_id", resolve_id_type())],
-                returns: Vec::new(),
+                returns: vec![bool::luau_type()],
                 yields: true,
             },
         ],
