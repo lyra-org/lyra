@@ -1629,3 +1629,10 @@ fn playlist_binding_mutation_results() -> Result<()> {
         "../../../../lyra-harmony-test/tests/fixtures/playlists/mutations.luau"
     ))
 }
+
+#[test]
+fn playlist_binding_delete() -> Result<()> {
+    run_playlist_binding_test(include_str!(
+        "../../../../lyra-harmony-test/tests/fixtures/playlists/delete.luau"
+    ))
+}

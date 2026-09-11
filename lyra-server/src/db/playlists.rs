@@ -374,7 +374,9 @@ pub(crate) fn move_track(
 
     // Remove from current position and insert at new position
     let track = tracks.remove(current_idx);
-    let insert_at = (new_position as usize).min(tracks.len());
+    let insert_at = usize::try_from(new_position)
+        .unwrap_or(usize::MAX)
+        .min(tracks.len());
     tracks.insert(insert_at, track);
 
     // Renumber all positions sequentially
