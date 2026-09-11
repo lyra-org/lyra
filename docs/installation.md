@@ -33,7 +33,13 @@ To use NAS or host folders, replace the volume names with their absolute paths, 
 
 ## 2. Add your music
 
-Lyra does not include a web interface yet. Use the commands below to set up your library. If Lyra runs on another computer, replace `localhost` with its address.
+Open [http://localhost:4746](http://localhost:4746) and create an account. The first account is the administrator.
+
+Install any plugins you want, then add a library. Use `/music` as the path: that is where Docker makes your music folder available to Lyra.
+
+If Lyra runs on another computer, replace `localhost` with its address.
+
+## Optional: set up through the API
 
 ### Create an account
 
@@ -75,9 +81,16 @@ curl --fail-with-body http://localhost:4746/api/libraries \
 
 Lyra now scans your music. You can keep the default settings, or [change them](configuration.md) later.
 
-## Optional: serve a web interface
+## Optional: use a custom web interface
 
-If you have a web interface built for Lyra, put its files (including `index.html`) in a `static` folder beside `compose.yaml`. Add this line under `volumes` in the `lyra` service:
+To use your own web interface instead of the bundled one, put its built files (including `index.html`) in a `static` folder beside `compose.yaml`. Add this block to the `lyra` service:
+
+```yaml
+    environment:
+      LYRA_STATIC_DIR: /static
+```
+
+Add this line under `volumes`, leaving the existing data, plugins, and music mounts in place:
 
 ```yaml
       - ./static:/static:ro
