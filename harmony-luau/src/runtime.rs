@@ -1672,6 +1672,18 @@ pub enum Value {
     UserData(UserData),
 }
 
+impl From<i64> for Value {
+    fn from(value: i64) -> Self {
+        Self::Number(value as f64)
+    }
+}
+
+impl From<u64> for Value {
+    fn from(value: u64) -> Self {
+        Self::Number(value as f64)
+    }
+}
+
 #[derive(Clone)]
 pub struct NativeFunctionValue {
     options: NativeFunctionOptions,
@@ -2413,14 +2425,14 @@ impl<'vm> FromLuau<'vm> for i64 {
 
 impl ToLuau for i64 {
     fn write(self, writer: &mut ReturnWriter<'_>) -> Result<()> {
-        writer.push(Value::Integer(self));
+        writer.push(Value::from(self));
         Ok(())
     }
 }
 
 impl IntoLuauReturn for i64 {
     fn into_luau_return(self) -> Result<ReturnValues> {
-        Ok(ReturnValues::one(Value::Integer(self)))
+        Ok(ReturnValues::one(Value::from(self)))
     }
 }
 
@@ -3625,7 +3637,7 @@ mod tests {
 
         assert_eq!(
             function.call(&vm, &[Value::UserData(userdata)])?,
-            vec![Value::Integer(42)]
+            vec![Value::Number(42.0)]
         );
         assert_eq!(stack_top(&vm), 0);
         Ok(())
@@ -3930,7 +3942,7 @@ mod tests {
                     Value::Buffer(vec![1, 2, 3, 4])
                 ],
             )?,
-            vec![Value::Integer(5), Value::Integer(4)]
+            vec![Value::Number(5.0), Value::Number(4.0)]
         );
         assert_eq!(stack_top(&vm), 0);
         Ok(())

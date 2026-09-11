@@ -1433,7 +1433,7 @@ mod tests {
                 Arc::<[u8]>::from(&b"return async_result"[..]),
                 luau::ChunkOrigin::default(),
             )?,
-            vec![luau::Value::Integer(42)]
+            vec![luau::Value::Number(42.0)]
         );
         Ok(())
     }
@@ -1499,7 +1499,7 @@ mod tests {
                 Arc::<[u8]>::from(&b"return async_result"[..]),
                 luau::ChunkOrigin::default(),
             )?,
-            vec![luau::Value::Integer(42)]
+            vec![luau::Value::Number(42.0)]
         );
         Ok(())
     }
@@ -1585,7 +1585,7 @@ mod tests {
                 Arc::<[u8]>::from(&b"return module.answer()"[..]),
                 luau::ChunkOrigin::default(),
             )?,
-            vec![luau::Value::Integer(42)]
+            vec![luau::Value::Number(42.0)]
         );
 
         let denied_origin = ChunkOrigin {
@@ -1763,7 +1763,7 @@ mod tests {
 
         assert_eq!(
             values,
-            vec![luau::Value::Integer(42), luau::Value::Number(7.0)]
+            vec![luau::Value::Number(42.0), luau::Value::Number(7.0)]
         );
         Ok(())
     }

@@ -1601,7 +1601,7 @@ mod tests {
             },
         )?;
 
-        assert_eq!(values, vec![luau::Value::Integer(42)]);
+        assert_eq!(values, vec![luau::Value::Number(42.0)]);
         Ok(())
     }
 
