@@ -237,12 +237,7 @@ local function get_legacy_header_token(headers: { [string]: string }?): string?
 		return nil
 	end
 
-	local raw = headers["x-emby-token"] or headers["x-mediabrowser-token"]
-	if type(raw) ~= "string" then
-		return nil
-	end
-
-	return requests.trim(raw)
+	return requests.trim(headers["x-emby-token"]) or requests.trim(headers["x-mediabrowser-token"])
 end
 
 function module.to_jellyfin_user(principal: UserIdentity): JsonValue
