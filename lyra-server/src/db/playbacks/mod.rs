@@ -306,11 +306,6 @@ pub(crate) fn get_by_id(
         ),
         None => None,
     };
-    anyhow::ensure!(
-        queue.is_some() || record.reported.is_some(),
-        "playback {} has neither a queue nor a reporting source; reset incompatible storage",
-        record.id
-    );
     Ok(Some(Playback {
         db_id: record.db_id,
         id: record.id,
@@ -355,11 +350,6 @@ pub(crate) fn list_projections_for_user(
     let revisions = queue_revisions(db, &ids)?;
     for projection in &mut projections {
         projection.queue_revision = revisions.get(&projection.db_id).copied();
-        anyhow::ensure!(
-            projection.queue_revision.is_some() || projection.reported,
-            "playback {} has neither a queue nor a reporting source; reset incompatible storage",
-            projection.id
-        );
     }
     Ok(projections)
 }
@@ -475,11 +465,6 @@ pub(crate) fn get_projection_by_id(
             }
             None => None,
         };
-        anyhow::ensure!(
-            projection.queue_revision.is_some() || projection.reported,
-            "playback {} has neither a queue nor a reporting source; reset incompatible storage",
-            projection.id
-        );
     }
     Ok(projection)
 }
@@ -967,22 +952,11 @@ mod tests {
     }
 
     #[test]
-    fn malformed_native_storage_fails_instead_of_becoming_queue_less() -> anyhow::Result<()> {
+    fn delete_for_user_removes_queues_and_preserves_sessions() -> anyhow::Result<()> {
         let (mut db, user_id, session_id) = setup()?;
-        let id = create(&mut db, &playback(), user_id, session_id)?;
-        let (_, queue_id) = tagged_edge(&db, id, QUEUE_EDGE_KEY)?.unwrap();
-        db.exec_mut(QueryBuilder::remove().ids(queue_id).query())?;
-        assert!(
-            get_by_id(&db, id)
-                .unwrap_err()
-                .to_string()
-                .contains("reset incompatible storage")
-        );
-        assert!(get_projection_by_id(&db, id).is_err());
-        assert!(list_projections_for_user(&db, user_id).is_err());
         let valid_id = create(&mut db, &playback(), user_id, session_id)?;
         let (_, valid_queue_id) = tagged_edge(&db, valid_id, QUEUE_EDGE_KEY)?.unwrap();
-        assert_eq!(delete_for_user(&mut db, user_id)?, 2);
+        assert_eq!(delete_for_user(&mut db, user_id)?, 1);
         assert!(list_projections_for_user(&db, user_id)?.is_empty());
         assert!(
             super::super::graph::fetch_typed_by_id::<QueueRecord>(
