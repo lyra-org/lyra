@@ -162,19 +162,8 @@ local function header_token(value: string?): string?
 end
 
 local function get_query_token(query: ApiQueryParams?): string?
-	if type(query) ~= "table" then
-		return nil
-	end
-
-	local function first(key: string): string?
-		local values = query[key]
-		if values ~= nil and #values > 0 then
-			return values[1]
-		end
-		return nil
-	end
-
-	return requests.trim(first("ApiKey")) or requests.trim(first("api_key"))
+	return requests.parse_query_string(query, { "ApiKey" }, nil)
+		or requests.parse_query_string(query, { "api_key" }, nil)
 end
 
 local function build_jellyfin_user_configuration(): JsonObject
