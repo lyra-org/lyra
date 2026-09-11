@@ -581,7 +581,7 @@ async fn get_releases(
         .field(max_rating_context.as_deref())
         .finish();
     let mut sort = parse_sort_specs(sort_by, sort_order)?;
-    if sort.is_empty() {
+    if sort.is_empty() && search_term.is_none() {
         sort = default_release_sort();
     }
     let library_scope = crate::services::auth::access::resolve_optional_library_filter(
@@ -777,7 +777,7 @@ async fn search_release_covers(
 #[cfg(feature = "docgen")]
 fn list_releases_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List releases").description(
-        "Returns releases as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `year`, `library_id`, `genre_id`, `sort_by`, `sort_order`, `min_rating`, `max_rating`, `limit`, `cursor`. `min_rating` and `max_rating` filter releases by the authenticated user's inclusive personal rating range; either bound excludes unrated releases. `library_id` scopes results to releases belonging to that public library ID. `genre_id` filters by one or more public genre IDs. `sort_by` supports `sort_name`, `name`, `date_created`, `release_date`, `last_played_at`, `listen_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `inc` values: `artists`, `tracks`, `track_artists`, `entries`, `covers`, `artist_covers`, `genres`. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits (for example, artist and producer). Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
+        "Returns releases as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `year`, `library_id`, `genre_id`, `sort_by`, `sort_order`, `min_rating`, `max_rating`, `limit`, `cursor`. `min_rating` and `max_rating` filter releases by the authenticated user's inclusive personal rating range; either bound excludes unrated releases. `library_id` scopes results to releases belonging to that public library ID. `genre_id` filters by one or more public genre IDs. `query` is a fuzzy text match against release titles and defaults ordering to relevance. `sort_by` supports `sort_name`, `name`, `date_created`, `release_date`, `last_played_at`, `listen_count`, `total_duration`, and `id`; `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. Supported `inc` values: `artists`, `tracks`, `track_artists`, `entries`, `covers`, `artist_covers`, `genres`. When `inc=covers`, cover metadata includes a public image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits (for example, artist and producer). Track artists without direct credits inherit from the release (`source: release`). When `inc=entries`, `full_path` is included only for authenticated users with ManageLibraries permission.",
     )
 }
 
@@ -1092,6 +1092,47 @@ mod tests {
             .map(|release| release.release_title)
             .collect();
         assert_eq!(titles, vec!["Long Release", "Short Release"]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_releases_orders_query_matches_by_relevance() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        {
+            let mut db = STATE.db.write().await;
+            let library = insert_library(&mut db, "Relevance", "/tmp/lyra-relevance")?;
+            for title in ["A b l u e", "Blue"] {
+                let release = insert_test_release(&mut db, title)?;
+                connect(&mut db, library, release)?;
+            }
+        }
+        let headers = create_admin_headers("release-relevance-admin").await?;
+
+        let Json(page) = get_releases(
+            headers,
+            Query(ReleaseListQuery {
+                inc: None,
+                query: Some("blue".to_string()),
+                year: None,
+                library_id: None,
+                genre_id: None,
+                sort_by: None,
+                sort_order: None,
+                rating: RatingFilterQuery::default(),
+                page: super::super::PageQuery::default(),
+            }),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        let titles: Vec<String> = page
+            .items
+            .into_iter()
+            .map(|release| release.title)
+            .collect();
+        assert_eq!(titles, vec!["Blue", "A b l u e"]);
         Ok(())
     }
 

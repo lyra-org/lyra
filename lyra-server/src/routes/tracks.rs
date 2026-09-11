@@ -504,7 +504,7 @@ pub(crate) async fn list_track_responses(
     )?;
     let release_scope = resolve_optional_release_filter(db, principal, release_id.as_deref())?;
     let mut sort = parse_track_sort_specs(sort_by, sort_order, release_scope.is_some())?;
-    if sort.is_empty() {
+    if sort.is_empty() && search_term.is_none() {
         sort = default_track_sort(release_scope.is_some());
     }
     let (tracks, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
@@ -823,7 +823,7 @@ async fn get_track(
 #[cfg(feature = "docgen")]
 fn list_tracks_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List tracks").description(
-        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `min_rating`, `max_rating`, `limit`, `cursor`. `min_rating` and `max_rating` filter tracks by the authenticated user's inclusive personal rating range; either bound excludes unrated tracks. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `duration`, and `id`; when `release_id` is present it also supports `disc` and `track`. `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
+        "Returns tracks as `{ items, next_cursor }`. Supported query parameters: `inc`, `query`, `library_id`, `release_id`, `sort_by`, `sort_order`, `min_rating`, `max_rating`, `limit`, `cursor`. `min_rating` and `max_rating` filter tracks by the authenticated user's inclusive personal rating range; either bound excludes unrated tracks. `library_id` scopes results to tracks belonging to that public library ID. `release_id` scopes results to one public release ID and defaults ordering to album order: disc, track, sort name, id. `sort_by` supports `sort_name`, `name`, `date_created`, `last_played_at`, `listen_count`, `duration`, and `id`; when `release_id` is present it also supports `disc` and `track`. `sort_order` supports `ascending` and `descending`. `limit` defaults to 100 and is capped at 500. Drive pagination from `next_cursor`; it is `null` on the last page. `query` is a fuzzy text match against track titles and defaults ordering to relevance. Use `inc` to include releases and/or artists. When `inc=releases,release_covers`, nested release metadata includes a public cover image URL. When `inc=artists`, each artist carries a `credit` object with `type`, `detail`, and `source`; add `artist_covers` to include public artist image metadata. An artist may appear multiple times with different credits. Artists without direct track credits inherit from the release (`source: release`).",
     )
 }
 
@@ -1184,6 +1184,40 @@ mod tests {
             specs[1].key,
             TrackRouteSortKey::Field(SortKey::TrackNumber)
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_track_responses_orders_query_matches_by_relevance() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        {
+            let mut db = STATE.db.write().await;
+            for title in ["A b l u e", "Blue"] {
+                insert_track(&mut db, title)?;
+            }
+        }
+        let principal = admin_principal(HashSet::new());
+
+        let page = list_track_responses(
+            &principal,
+            TrackListOptions {
+                inc: None,
+                query: Some("blue".to_string()),
+                library_id: None,
+                release_id: None,
+                sort_by: None,
+                sort_order: None,
+                rating_filter: db::ratings::RatingFilter::default(),
+                page_request: super::super::SnapshotPageRequest::first_page(100),
+            },
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+
+        let titles: Vec<String> = page.items.into_iter().map(|track| track.title).collect();
+        assert_eq!(titles, vec!["Blue", "A b l u e"]);
         Ok(())
     }
 

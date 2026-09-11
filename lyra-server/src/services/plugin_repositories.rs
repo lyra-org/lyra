@@ -102,7 +102,7 @@ fn map_install_error(error: InstallError) -> PluginRepoError {
         InstallError::NotManaged { .. }
         | InstallError::OriginMismatch { .. }
         | InstallError::CaseCollision { .. } => PluginRepoError::Conflict(error.to_string()),
-        InstallError::Io(_) => PluginRepoError::Internal(anyhow::Error::new(error)),
+        InstallError::Io { .. } => PluginRepoError::Internal(anyhow::Error::new(error)),
     }
 }
 

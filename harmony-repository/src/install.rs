@@ -3,9 +3,13 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use std::fs::File;
 use std::path::Path;
 
-use crate::manifest::SourceRecord;
+use crate::manifest::{
+    SOURCE_RECORD_FILENAME,
+    SourceRecord,
+};
 use crate::resolve::PluginCandidate;
 
 /// Hidden staging area inside `plugins_dir`; plugin discovery skips
@@ -33,8 +37,12 @@ pub enum InstallError {
         "plugin id '{id}' collides with installed directory '{existing}' on case-insensitive filesystems"
     )]
     CaseCollision { id: String, existing: String },
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
+    #[error("{context}: {source}")]
+    Io {
+        context: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Copies a resolved candidate into `plugins_dir/<id>`, replacing a
@@ -50,10 +58,28 @@ pub fn install_candidate(
 ) -> Result<SourceRecord, InstallError> {
     let id = candidate.id();
     ensure_valid_id(id)?;
-    std::fs::create_dir_all(plugins_dir)?;
+    std::fs::create_dir_all(plugins_dir).map_err(|source| InstallError::Io {
+        context: format!(
+            "Could not create plugin directory `{}`",
+            plugins_dir.display()
+        ),
+        source,
+    })?;
 
-    for entry in std::fs::read_dir(plugins_dir)? {
-        let name = entry?.file_name();
+    let entries = std::fs::read_dir(plugins_dir).map_err(|source| InstallError::Io {
+        context: format!(
+            "Could not read plugin directory `{}`",
+            plugins_dir.display()
+        ),
+        source,
+    })?;
+    for entry in entries {
+        let name = entry
+            .map_err(|source| InstallError::Io {
+                context: format!("Could not read an entry in `{}`", plugins_dir.display()),
+                source,
+            })?
+            .file_name();
         let name = name.to_string_lossy();
         if name.eq_ignore_ascii_case(id) && name != id {
             return Err(InstallError::CaseCollision {
@@ -64,8 +90,14 @@ pub fn install_candidate(
     }
 
     let target = plugins_dir.join(id);
-    if target.exists() {
-        match SourceRecord::load(&target)? {
+    if path_exists(&target)? {
+        match SourceRecord::load(&target).map_err(|source| InstallError::Io {
+            context: format!(
+                "Could not read source record `{}`",
+                target.join(SOURCE_RECORD_FILENAME).display()
+            ),
+            source,
+        })? {
             None => {
                 return Err(InstallError::NotManaged { id: id.to_string() });
             }
@@ -86,32 +118,65 @@ pub fn install_candidate(
     let staging_root = plugins_dir.join(STAGING_DIRNAME);
     let staged = staging_root.join(id);
     let displaced = staging_root.join(format!("{id}.previous"));
-    if staged.exists() {
-        std::fs::remove_dir_all(&staged)?;
+    if path_exists(&staged)? {
+        std::fs::remove_dir_all(&staged).map_err(|source| InstallError::Io {
+            context: format!("Could not remove directory `{}`", staged.display()),
+            source,
+        })?;
     }
-    if displaced.exists() {
-        std::fs::remove_dir_all(&displaced)?;
+    if path_exists(&displaced)? {
+        std::fs::remove_dir_all(&displaced).map_err(|source| InstallError::Io {
+            context: format!("Could not remove directory `{}`", displaced.display()),
+            source,
+        })?;
     }
 
     copy_dir(candidate.source_dir(), &staged)?;
-    record.store(&staged)?;
+    record.store(&staged).map_err(|source| InstallError::Io {
+        context: format!(
+            "Could not write source record `{}`",
+            staged.join(SOURCE_RECORD_FILENAME).display()
+        ),
+        source,
+    })?;
 
-    let had_previous = target.exists();
+    let had_previous = path_exists(&target)?;
     if had_previous {
-        std::fs::rename(&target, &displaced)?;
+        std::fs::rename(&target, &displaced).map_err(|source| InstallError::Io {
+            context: format!(
+                "Could not rename `{}` to `{}`",
+                target.display(),
+                displaced.display()
+            ),
+            source,
+        })?;
     }
     if let Err(promote) = std::fs::rename(&staged, &target) {
         if had_previous {
             // Best-effort restore; the promotion error is the one worth
             // surfacing.
-            let _ = std::fs::rename(&displaced, &target);
+            if let Err(error) = std::fs::rename(&displaced, &target) {
+                tracing::warn!(from = %displaced.display(), to = %target.display(), %error, "could not restore previous plugin installation");
+            }
         }
-        return Err(promote.into());
+        return Err(InstallError::Io {
+            context: format!(
+                "Could not rename `{}` to `{}`",
+                staged.display(),
+                target.display()
+            ),
+            source: promote,
+        });
     }
     if had_previous {
-        std::fs::remove_dir_all(&displaced)?;
+        std::fs::remove_dir_all(&displaced).map_err(|source| InstallError::Io {
+            context: format!("Could not remove directory `{}`", displaced.display()),
+            source,
+        })?;
     }
-    let _ = std::fs::remove_dir(&staging_root);
+    if let Err(error) = std::fs::remove_dir(&staging_root) {
+        tracing::debug!(path = %staging_root.display(), %error, "could not remove staging directory");
+    }
 
     Ok(record)
 }
@@ -122,14 +187,34 @@ pub fn uninstall_plugin(plugins_dir: &Path, id: &str) -> Result<SourceRecord, In
     ensure_valid_id(id)?;
 
     let target = plugins_dir.join(id);
-    if !target.is_dir() {
-        return Err(InstallError::NotInstalled { id: id.to_string() });
+    match std::fs::metadata(&target) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => return Err(InstallError::NotInstalled { id: id.to_string() }),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            return Err(InstallError::NotInstalled { id: id.to_string() });
+        }
+        Err(source) => {
+            return Err(InstallError::Io {
+                context: format!("Could not inspect plugin directory `{}`", target.display()),
+                source,
+            });
+        }
     }
 
-    let record = SourceRecord::load(&target)?
+    let record = SourceRecord::load(&target)
+        .map_err(|source| InstallError::Io {
+            context: format!(
+                "Could not read source record `{}`",
+                target.join(SOURCE_RECORD_FILENAME).display()
+            ),
+            source,
+        })?
         .ok_or_else(|| InstallError::NotManaged { id: id.to_string() })?;
 
-    std::fs::remove_dir_all(&target)?;
+    std::fs::remove_dir_all(&target).map_err(|source| InstallError::Io {
+        context: format!("Could not remove directory `{}`", target.display()),
+        source,
+    })?;
     Ok(record)
 }
 
@@ -147,21 +232,61 @@ fn ensure_valid_id(id: &str) -> Result<(), InstallError> {
     Ok(())
 }
 
-fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(to)?;
-    for entry in std::fs::read_dir(from)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
+fn path_exists(path: &Path) -> Result<bool, InstallError> {
+    path.try_exists().map_err(|source| InstallError::Io {
+        context: format!("Could not inspect `{}`", path.display()),
+        source,
+    })
+}
+
+fn copy_dir(from: &Path, to: &Path) -> Result<(), InstallError> {
+    std::fs::create_dir_all(to).map_err(|source| InstallError::Io {
+        context: format!("Could not create directory `{}`", to.display()),
+        source,
+    })?;
+    let entries = std::fs::read_dir(from).map_err(|source| InstallError::Io {
+        context: format!("Could not read directory `{}`", from.display()),
+        source,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|source| InstallError::Io {
+            context: format!("Could not read an entry in `{}`", from.display()),
+            source,
+        })?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(|source| InstallError::Io {
+            context: format!("Could not inspect `{}`", path.display()),
+            source,
+        })?;
         let dest = to.join(entry.file_name());
         if file_type.is_dir() {
-            copy_dir(&entry.path(), &dest)?;
+            copy_dir(&path, &dest)?;
         } else if file_type.is_file() {
-            std::fs::copy(entry.path(), &dest)?;
+            let mut input = File::open(&path).map_err(|source| InstallError::Io {
+                context: format!("Could not open `{}` for reading", path.display()),
+                source,
+            })?;
+            let mut output = File::create(&dest).map_err(|source| InstallError::Io {
+                context: format!("Could not create file `{}`", dest.display()),
+                source,
+            })?;
+            std::io::copy(&mut input, &mut output).map_err(|source| InstallError::Io {
+                context: format!(
+                    "Could not copy `{}` to `{}`",
+                    path.display(),
+                    dest.display()
+                ),
+                source,
+            })?;
         } else {
-            return Err(std::io::Error::other(format!(
-                "refusing to copy non-regular file {}",
-                entry.path().display()
-            )));
+            return Err(InstallError::Io {
+                context: format!(
+                    "Could not copy `{}` to `{}`",
+                    path.display(),
+                    dest.display()
+                ),
+                source: std::io::Error::other("refusing to copy non-regular file"),
+            });
         }
     }
     Ok(())
