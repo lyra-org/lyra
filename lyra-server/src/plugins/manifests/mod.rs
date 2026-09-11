@@ -139,7 +139,7 @@ fn manifest_table(manifest: &harmony_core::plugin::PluginManifest) -> luau::Owne
     let mut table = luau::OwnedTable::with_capacity(0, 6);
     table.set_field(
         "schema_version",
-        luau::Value::Integer(i64::from(manifest.schema_version)),
+        luau::Value::from(i64::from(manifest.schema_version)),
     );
     table.set_field("id", luau::Value::String(manifest.id.clone().into_bytes()));
     table.set_field(

@@ -343,7 +343,7 @@ fn response_json_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Resu
     let body = frame.args.read_named("body")?;
     let headers = optional_value(frame.args.read_optional_named("headers")?);
     let mut response = kind_table("json");
-    response.set_field("status", luau::Value::Integer(i64::from(status)));
+    response.set_field("status", luau::Value::from(i64::from(status)));
     response.set_field(
         "headers",
         merge_headers(frame.vm, &[("content-type", "application/json")], headers)?,
@@ -360,7 +360,7 @@ fn response_empty_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Res
     validate_status(status)?;
     let headers = optional_value(frame.args.read_optional_named("headers")?);
     let mut response = kind_table("empty");
-    response.set_field("status", luau::Value::Integer(status));
+    response.set_field("status", luau::Value::from(status));
     if !is_nil(&headers) {
         response.set_field("headers", headers_to_value(frame.vm, headers)?);
     }
@@ -372,7 +372,7 @@ fn response_text_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Resu
     let body: String = frame.args.read_named("body")?;
     let headers = optional_value(frame.args.read_optional_named("headers")?);
     let mut response = kind_table("text");
-    response.set_field("status", luau::Value::Integer(i64::from(status)));
+    response.set_field("status", luau::Value::from(i64::from(status)));
     response.set_field("body", luau::Value::String(body.into_bytes()));
     response.set_field(
         "headers",
@@ -395,7 +395,7 @@ fn response_bytes_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Res
     }
     let headers = optional_value(frame.args.read_optional_named("headers")?);
     let mut response = kind_table("bytes");
-    response.set_field("status", luau::Value::Integer(i64::from(status)));
+    response.set_field("status", luau::Value::from(i64::from(status)));
     response.set_field("body", body);
     response.set_field(
         "headers",
@@ -424,7 +424,7 @@ fn response_redirect_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::
     }
     let headers = optional_value(frame.args.read_optional_named("headers")?);
     let mut response = kind_table("redirect");
-    response.set_field("status", luau::Value::Integer(i64::from(status)));
+    response.set_field("status", luau::Value::from(i64::from(status)));
     let mut headers = collect_headers(frame.vm, headers)?;
     headers.set_field(
         "location",
@@ -448,7 +448,7 @@ fn response_file_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Resu
     let headers = optional_value(frame.args.read_optional_named("headers")?);
     let transform = optional_value(frame.args.read_optional_named("transform")?);
     let mut response = kind_table("file");
-    response.set_field("status", luau::Value::Integer(status));
+    response.set_field("status", luau::Value::from(status));
     response.set_field("path", luau::Value::String(path.as_bytes().to_vec()));
     if !is_nil(&headers) {
         response.set_field("headers", headers_to_value(frame.vm, headers)?);
@@ -483,7 +483,7 @@ fn track_response_callback(
     }
     let options = optional_value(frame.args.read_optional_named("options")?);
     let mut response = kind_table(kind);
-    response.set_field("track_id", luau::Value::Integer(track_id));
+    response.set_field("track_id", luau::Value::from(track_id));
     if !is_nil(&options) {
         response.set_field("options", options);
     }

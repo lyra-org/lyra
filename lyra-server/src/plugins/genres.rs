@@ -170,7 +170,7 @@ fn resolve_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()>
         resolve_genre_from_request(&mut db, &request).map_err(crate::plugins::runtime_error)
     })?;
 
-    frame.returns.write(luau::Value::Integer(genre_id.0))
+    frame.returns.write(luau::Value::from(genre_id.0))
 }
 
 fn add_parent_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
@@ -505,16 +505,7 @@ fn set_db_id_key(
     key: DbId,
     value: luau::Value,
 ) -> luau::runtime::Result<()> {
-    match i32::try_from(key.0) {
-        Ok(integer_key) => {
-            table.set_integer_raw(vm, integer_key, value.clone())?;
-            table.set_key_raw(vm, luau::Value::Integer(key.0), value)
-        }
-        Err(_) => {
-            table.set_key_raw(vm, luau::Value::Integer(key.0), value.clone())?;
-            table.set_raw(vm, &key.0.to_string(), value)
-        }
-    }
+    table.set_key_raw(vm, luau::Value::from(key.0), value)
 }
 
 impl LuauTypeInfo for GenreRecord {

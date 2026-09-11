@@ -572,7 +572,7 @@ fn has_many_callback(
                     }
                 };
             table.set_key(
-                luau::Value::Integer(track_id.0),
+                luau::Value::from(track_id.0),
                 luau::Value::Boolean(has_lyrics),
             );
         }

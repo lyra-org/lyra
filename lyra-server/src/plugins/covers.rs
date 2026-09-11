@@ -176,8 +176,7 @@ fn get_many_callback(
                 .cloned()
                 .map(|(owner_id, cover)| luau::Value::TableData(cover_to_table(owner_id, cover)))
                 .unwrap_or(luau::Value::Nil);
-            table.set_key(luau::Value::Integer(item_id.0), value.clone());
-            table.set_key(luau::Value::Number(item_id.0 as f64), value);
+            table.set_key(luau::Value::from(item_id.0), value);
         }
 
         Ok(luau::Value::TableData(table))
@@ -322,7 +321,7 @@ fn cover_to_table(owner_db_id: DbId, cover: Cover) -> luau::OwnedTable {
             .map(|value| luau::Value::String(value.into_bytes()))
             .unwrap_or(luau::Value::Nil),
     );
-    table.set_field("release_id", luau::Value::Integer(owner_db_id.0));
+    table.set_field("release_id", luau::Value::from(owner_db_id.0));
     table
 }
 

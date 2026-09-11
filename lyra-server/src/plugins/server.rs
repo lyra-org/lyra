@@ -117,7 +117,7 @@ fn server_info_table(info: &ServerInfo) -> luau::OwnedTable {
         "hostname",
         luau::Value::String(info.hostname.clone().into_bytes()),
     );
-    table.set_field("port", luau::Value::Integer(i64::from(info.port)));
+    table.set_field("port", luau::Value::from(i64::from(info.port)));
     table.set_field(
         "published_url",
         info.published_url

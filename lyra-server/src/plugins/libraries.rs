@@ -257,7 +257,7 @@ fn get_for_entities_callback(
                 .map(harmony_luau::serializable_to_luau_owned)
                 .transpose()?
                 .unwrap_or(luau::Value::Nil);
-            crate::plugins::set_owned_db_id_key(&mut table, id, value);
+            table.set_key(luau::Value::from(id.0), value);
         }
         table.into_luau_return()
     }))

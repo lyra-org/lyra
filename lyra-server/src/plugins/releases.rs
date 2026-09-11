@@ -251,9 +251,8 @@ fn list_many_callback(
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, ids.len());
         for id in ids {
             let releases = related.get(&id).cloned().unwrap_or_default();
-            crate::plugins::set_owned_db_id_key(
-                &mut table,
-                id,
+            table.set_key(
+                luau::Value::from(id.0),
                 harmony_luau::serializable_to_luau_owned(releases)?,
             );
         }
@@ -561,8 +560,8 @@ fn query_result_table(
         "entities",
         harmony_luau::serializable_to_luau_owned(entries)?,
     );
-    table.set_field("total_count", luau::Value::Integer(total_count as i64));
-    table.set_field("offset", luau::Value::Integer(offset as i64));
+    table.set_field("total_count", luau::Value::from(total_count as i64));
+    table.set_field("offset", luau::Value::from(offset as i64));
     Ok(table)
 }
 
@@ -788,7 +787,7 @@ mod tests {
         assert_eq!(defaults.user_id, None);
 
         let opts = vm.create_table()?;
-        opts.set_raw(&vm, "limit", luau::Value::Integer(7))?;
+        opts.set_raw(&vm, "limit", luau::Value::from(7_i64))?;
         opts.set_raw(&vm, "user_id", luau::Value::Number(42.0))?;
         let parsed = parse_similar_options(&vm, Some(opts))?;
         assert_eq!(parsed.limit, 7);
@@ -800,7 +799,7 @@ mod tests {
     fn similar_options_reject_invalid_integer_fields() -> luau::runtime::Result<()> {
         let vm = luau::Vm::new()?;
         let opts = vm.create_table()?;
-        opts.set_raw(&vm, "limit", luau::Value::Integer(0))?;
+        opts.set_raw(&vm, "limit", luau::Value::from(0_i64))?;
         assert!(parse_similar_options(&vm, Some(opts)).is_err());
 
         let opts = vm.create_table()?;

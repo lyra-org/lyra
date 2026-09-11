@@ -180,7 +180,7 @@ fn get_for_releases_many_callback(mut frame: luau::CallFrame<'_>) -> luau::runti
     let mut table = luau::OwnedTable::with_capacity(0, labels.len());
     for (release_id, labels) in labels {
         table.set_key(
-            luau::Value::Integer(release_id.0),
+            luau::Value::from(release_id.0),
             luau::Value::TableData(label_release_array(labels)),
         );
     }
@@ -211,7 +211,7 @@ fn get_releases_many_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::
     let mut table = luau::OwnedTable::with_capacity(0, release_ids.len());
     for (label_id, ids) in release_ids {
         table.set_key(
-            luau::Value::Integer(label_id.0),
+            luau::Value::from(label_id.0),
             luau::Value::TableData(id_array(ids)),
         );
     }
@@ -388,7 +388,7 @@ fn label_info_table(label: db::labels::Label) -> luau::OwnedTable {
     table.set_field(
         "db_id",
         db_id
-            .map(|id| luau::Value::Integer(id.0))
+            .map(|id| luau::Value::from(id.0))
             .unwrap_or(luau::Value::Nil),
     );
     table.set_field("id", luau::Value::String(label.id.into_bytes()));
@@ -416,7 +416,7 @@ fn label_release_array(labels: Vec<db::labels::LabelForRelease>) -> luau::OwnedT
     let mut table = luau::OwnedTable::with_entry_capacity(0, 0, labels.len());
     for (index, label) in labels.into_iter().enumerate() {
         table.set_key(
-            luau::Value::Integer(index as i64 + 1),
+            luau::Value::from(index as i64 + 1),
             luau::Value::TableData(label_for_release_table(label)),
         );
     }
@@ -426,10 +426,7 @@ fn label_release_array(labels: Vec<db::labels::LabelForRelease>) -> luau::OwnedT
 fn id_array(ids: Vec<DbId>) -> luau::OwnedTable {
     let mut table = luau::OwnedTable::with_entry_capacity(0, 0, ids.len());
     for (index, id) in ids.into_iter().enumerate() {
-        table.set_key(
-            luau::Value::Integer(index as i64 + 1),
-            luau::Value::Integer(id.0),
-        );
+        table.set_key(luau::Value::from(index as i64 + 1), luau::Value::from(id.0));
     }
     table
 }
