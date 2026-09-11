@@ -559,9 +559,20 @@ function module.parse_playlist_query_track_ids(query: ApiQueryParams?): { number
 	return item_ids.parse_jellyfin_ids_csv(raw_ids)
 end
 
-function module.parse_playlist_query_entry_ids(query: ApiQueryParams?): { number }
-	local raw_entry_ids = requests.parse_query_string(query, { "entryIds", "EntryIds", "entryids" }, nil)
-	return item_ids.parse_jellyfin_ids_csv(raw_entry_ids)
+function module.parse_playlist_query_entry_ids(query: ApiQueryParams?, playlist: PlaylistInfo): { number }?
+	local raw = requests.parse_query_string(query, { "entryIds", "EntryIds", "entryids" }, nil)
+	if not raw then
+		return nil
+	end
+	local raw_ids: { string } = {}
+	for _, value in string.split(raw, ",") do
+		local trimmed = requests.trim(value)
+		if not trimmed then
+			return nil
+		end
+		table.insert(raw_ids, trimmed)
+	end
+	return playlist_access.resolve_entry_ids(playlist, raw_ids)
 end
 
 function module.ensure_user_scope_matches_principal(requested_user_id: string?, principal: Principal): boolean
