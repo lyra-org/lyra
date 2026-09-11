@@ -421,6 +421,58 @@ mod tests {
     /// `Some(None)` is an explicit clear and must reach storage; `None` leaves
     /// the stored description alone.
     #[test]
+    fn delete_cleans_up_entries_favorites_and_cover_profile() -> anyhow::Result<()> {
+        use db::covers::display::{
+            self,
+            DisplayCoverScope,
+            DisplayCoverTargetKind,
+        };
+        let mut db = new_test_db()?;
+        let user = db::users::create(&mut db, &test_user("playlist-delete")?)?;
+        let track = insert_track(&mut db, "Retained track")?;
+        let playlist_id = create_playlist(&mut db, user, "Deleted")?;
+        let playlist = get(&db, QueryId::Id(playlist_id))?.expect("playlist");
+        let entry = add_track(&mut db, QueryId::Id(playlist_id), QueryId::Id(track))?;
+        db::favorites::add(
+            &mut db,
+            user,
+            playlist_id,
+            db::favorites::FavoriteKind::Playlist,
+            1,
+        )?;
+        display::sync_playlist_cover(&mut db, playlist_id)?;
+        assert!(
+            display::get_profile(
+                &db,
+                DisplayCoverScope::Instance,
+                DisplayCoverTargetKind::Playlist,
+                None,
+                &playlist.id
+            )?
+            .is_some()
+        );
+        assert!(delete(&mut db, QueryId::Id(playlist_id))?.is_some());
+        assert!(get(&db, QueryId::Id(playlist_id))?.is_none());
+        assert!(
+            db.exec(agdb::QueryBuilder::select().ids(entry.edge_id).query())
+                .is_err()
+        );
+        assert!(!db::favorites::has(&db, user, playlist_id)?);
+        assert!(
+            display::get_profile(
+                &db,
+                DisplayCoverScope::Instance,
+                DisplayCoverTargetKind::Playlist,
+                None,
+                &playlist.id
+            )?
+            .is_none()
+        );
+        assert!(db::tracks::get_by_id(&db, track)?.is_some());
+        Ok(())
+    }
+
+    #[test]
     fn update_distinguishes_absent_description_from_explicit_clear() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user_db_id = db::users::create(&mut db, &test_user("describer")?)?;
