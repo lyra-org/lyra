@@ -152,7 +152,7 @@ impl Mixer {
         context: &luau::CallContext,
         vm: &luau::Vm,
         handler: luau::Function,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         self.register_handler(context, vm, MixSeedType::Track, handler)
     }
 
@@ -165,7 +165,7 @@ impl Mixer {
         context: &luau::CallContext,
         vm: &luau::Vm,
         handler: luau::Function,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         self.register_handler(context, vm, MixSeedType::Release, handler)
     }
 
@@ -178,7 +178,7 @@ impl Mixer {
         context: &luau::CallContext,
         vm: &luau::Vm,
         handler: luau::Function,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         self.register_handler(context, vm, MixSeedType::Artist, handler)
     }
 
@@ -191,7 +191,7 @@ impl Mixer {
         context: &luau::CallContext,
         vm: &luau::Vm,
         handler: luau::Function,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         self.register_handler(context, vm, MixSeedType::RecentListens, handler)
     }
 
@@ -204,7 +204,7 @@ impl Mixer {
         context: &luau::CallContext,
         vm: &luau::Vm,
         handler: luau::Function,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         self.register_handler(context, vm, MixSeedType::Genre, handler)
     }
 
@@ -217,7 +217,7 @@ impl Mixer {
         context: &luau::CallContext,
         vm: &luau::Vm,
         handler: luau::Function,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         self.register_handler(context, vm, MixSeedType::Playlist, handler)
     }
 
@@ -230,17 +230,23 @@ impl Mixer {
         context: &luau::CallContext,
         vm: &luau::Vm,
         config: luau::Table,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         let plugin_id = self.current_plugin_id(context)?;
-        ensure_registration_open(&plugin_id)?;
         let option = parse_option_declaration(vm, &config)?;
-        futures::executor::block_on(async {
+        let id = self.id.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            let generation = STATE.generation();
+            let _registration = generation
+                .plugin_registries
+                .ensure_registrations_open(&plugin_id)
+                .await
+                .map_err(crate::plugins::runtime_error)?;
             mix_service::mix_registry()
                 .write_owned()
                 .await
-                .declare_option(&self.id, option)
-        })
-        .map_err(crate::plugins::runtime_error)
+                .declare_option(&id, option)
+                .map_err(crate::plugins::runtime_error)
+        }))
     }
 
     #[harmony(skip)]
@@ -250,23 +256,24 @@ impl Mixer {
         vm: &luau::Vm,
         seed_type: MixSeedType,
         function: luau::Function,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         let plugin_id = self.current_plugin_id(context)?;
-        ensure_registration_open(&plugin_id)?;
-        let handlers = vm.data().get::<MixCallbackRegistry>()?;
-        let handler_id = handlers.register(
-            self.id.clone(),
-            seed_type,
-            function,
-            core_call_context(context),
-        );
-        futures::executor::block_on(async {
-            mix_service::mix_registry()
-                .write_owned()
+        let id = self.id.clone();
+        let context = core_call_context(context);
+        let vm = vm.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            let generation = STATE.generation();
+            let _registration = generation
+                .plugin_registries
+                .ensure_registrations_open(&plugin_id)
                 .await
-                .set_seed_callback(&self.id, seed_type, handler_id);
-        });
-        Ok(())
+                .map_err(crate::plugins::runtime_error)?;
+            let mut registry = mix_service::mix_registry().write_owned().await;
+            let handlers = vm.data().get::<MixCallbackRegistry>()?;
+            let handler_id = handlers.register(id.clone(), seed_type, function, context);
+            registry.set_seed_callback(&id, seed_type, handler_id);
+            Ok(())
+        }))
     }
 
     #[harmony(skip)]
@@ -286,11 +293,11 @@ pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/mix")
         .capability("lyra.mix")
         .function(
-            FunctionSpec::sync_fn("Mixer.new")
+            FunctionSpec::async_fn("Mixer.new")
                 .arg_name("id")
                 .args::<String>()
                 .returns::<Mixer>()
-                .call(mixer_new_callback),
+                .call_async(Arc::new(mixer_new_callback)),
         )
         .function(consumer_spec("from_track", from_track_callback))
         .function(consumer_spec("from_release", from_release_callback))
@@ -318,7 +325,9 @@ fn consumer_spec(
         .call_async(Arc::new(callback))
 }
 
-fn mixer_new_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+fn mixer_new_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id: String = frame.args.read_named("id")?;
     let Some(plugin_id) = frame.context.origin.plugin.clone() else {
         return Err(crate::plugins::runtime_error(
@@ -327,7 +336,9 @@ fn mixer_new_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<(
     };
     let plugin_id = crate::plugins::lifecycle::PluginId::new(plugin_id.to_string())
         .map_err(crate::plugins::runtime_error)?;
-    futures::executor::block_on(async {
+    let vm = frame.vm.clone();
+    let origin = frame.context.origin.clone();
+    Ok(luau::ScheduledFuture::new(async move {
         let generation = STATE.generation();
         let _registration = generation
             .plugin_registries
@@ -355,29 +366,9 @@ fn mixer_new_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<(
             db::mixers::upsert(&mut db, &mixer_config).map_err(crate::plugins::runtime_error)?;
         }
 
-        Ok::<(), luau::Error>(())
-    })?;
-
-    let mixer = Mixer { id };
-    frame.returns.write(Mixer::_harmony_userdata_class().create(
-        frame.vm,
-        &frame.context.origin,
-        mixer,
-    )?)
-}
-
-fn ensure_registration_open(
-    plugin_id: &crate::plugins::lifecycle::PluginId,
-) -> luau::runtime::Result<()> {
-    futures::executor::block_on(async {
-        let generation = STATE.generation();
-        let _registration = generation
-            .plugin_registries
-            .ensure_registrations_open(plugin_id)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
-        Ok(())
-    })
+        drop(db);
+        Mixer::_harmony_userdata_class().create(&vm, &origin, Mixer { id })
+    }))
 }
 
 fn consumer_callback(
@@ -674,7 +665,7 @@ impl DescribeModule for MixModule {
                 description: Some("Creates a mixer registration object."),
                 params: vec![param("id", String::luau_type())],
                 returns: vec![LuauType::literal("Mixer")],
-                yields: false,
+                yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["from_track"],

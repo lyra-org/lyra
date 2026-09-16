@@ -55,24 +55,32 @@ impl DataStoreHandle {
         args(key: String),
         returns(Option<JsonValue>)
     )]
-    fn get(&self, vm: &luau::Vm, key: String) -> luau::runtime::Result<luau::Value> {
-        self.store.get(vm, self.datastore_id, key)
+    async fn get(&self, key: String) -> luau::runtime::Result<luau::Value> {
+        self.store.get(self.datastore_id, key).await
     }
 
     #[harmony(
         description = "Sets a JSON value in this store by key.",
         args(key: String, value: JsonValue)
     )]
-    fn set(&self, vm: &luau::Vm, key: String, value: luau::Value) -> luau::runtime::Result<()> {
+    fn set(
+        &self,
+        vm: &luau::Vm,
+        key: String,
+        value: luau::Value,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         let json = harmony_serde::luau_to_json(vm, &value, 0)?;
-        self.store.set(self.datastore_id, key, json)
+        let handle = self.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            handle.store.set(handle.datastore_id, key, json).await
+        }))
     }
 
     #[harmony(
         description = "Removes an entry from this store by key. Returns whether a value was removed."
     )]
-    fn remove(&self, key: String) -> luau::runtime::Result<bool> {
-        self.store.remove(self.datastore_id, key)
+    async fn remove(&self, key: String) -> luau::runtime::Result<bool> {
+        self.store.remove(self.datastore_id, key).await
     }
 
     #[harmony(
@@ -84,24 +92,35 @@ impl DataStoreHandle {
         &self,
         vm: &luau::Vm,
         keys: luau::Table,
-    ) -> luau::runtime::Result<luau::OwnedTable> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         let keys = read_string_array(vm, &keys)?;
-        self.store.get_many(vm, self.datastore_id, keys)
+        let handle = self.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            handle.store.get_many(handle.datastore_id, keys).await
+        }))
     }
 
     #[harmony(
         description = "Writes multiple JSON values to this store under one write lock.",
         args(entries: std::collections::BTreeMap<String, JsonValue>)
     )]
-    fn set_many(&self, vm: &luau::Vm, entries: luau::Table) -> luau::runtime::Result<()> {
+    fn set_many(
+        &self,
+        vm: &luau::Vm,
+        entries: luau::Table,
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         let entries = read_json_entries(vm, &entries)?;
-        self.store.set_many(self.datastore_id, entries)
+        let handle = self.clone();
+        Ok(luau::ScheduledFuture::new(async move {
+            handle.store.set_many(handle.datastore_id, entries).await
+        }))
     }
 
     #[harmony(description = "Removes every entry from this store. Returns the number removed.")]
-    fn clear(&self) -> luau::runtime::Result<i64> {
+    async fn clear(&self) -> luau::runtime::Result<i64> {
         self.store
             .clear(self.datastore_id)
+            .await
             .map(|removed| removed as i64)
     }
 }
@@ -115,14 +134,16 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn get_or_create_spec() -> FunctionSpec {
-    let spec = FunctionSpec::sync_fn("get_or_create")
+    let spec = FunctionSpec::async_fn("get_or_create")
         .context::<PluginCaller>()
         .named_arg::<String>("name")
         .returns::<DataStoreHandle>();
-    spec.call(get_or_create_callback)
+    spec.call_async(std::sync::Arc::new(get_or_create_callback))
 }
 
-fn get_or_create_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+fn get_or_create_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let name: String = frame.args.read_named("name")?;
     let store = frame
         .vm
@@ -130,17 +151,20 @@ fn get_or_create_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Resu
         .get::<DataStoreModuleStore>()?
         .as_ref()
         .clone();
-    let datastore_id = store.get_or_create(name)?;
-    let userdata = DataStoreHandle::_harmony_userdata_class().create(
-        frame.vm,
-        &frame.context.origin,
-        DataStoreHandle {
-            store,
-            datastore_id,
-        },
-    )?;
-    frame.returns.write(userdata)?;
-    Ok(())
+    let vm = frame.vm.clone();
+    let origin = frame.context.origin.clone();
+    Ok(luau::ScheduledFuture::new(async move {
+        let datastore_id = store.get_or_create(name).await?;
+        let userdata = DataStoreHandle::_harmony_userdata_class().create(
+            &vm,
+            &origin,
+            DataStoreHandle {
+                store,
+                datastore_id,
+            },
+        )?;
+        Ok(userdata)
+    }))
 }
 
 #[derive(Clone, Default)]
@@ -156,10 +180,10 @@ impl DataStoreModuleStore {
         Self { db: Some(db) }
     }
 
-    fn get_or_create(&self, name: String) -> luau::runtime::Result<agdb::DbId> {
+    async fn get_or_create(&self, name: String) -> luau::runtime::Result<agdb::DbId> {
         let db = self.db()?;
         {
-            let db = futures::executor::block_on(db.read());
+            let db = db.read().await;
             if let Some(existing) =
                 db::datastore::find_by_name(&db, &name).map_err(crate::plugins::runtime_error)?
             {
@@ -167,21 +191,20 @@ impl DataStoreModuleStore {
             }
         }
 
-        let mut db = futures::executor::block_on(db.write());
+        let mut db = db.write().await;
         let datastore =
             db::datastore::get_or_create(&mut db, name).map_err(crate::plugins::runtime_error)?;
         datastore_db_id(datastore)
     }
 
-    fn get(
+    async fn get(
         &self,
-        vm: &luau::Vm,
         datastore_id: agdb::DbId,
         key: String,
     ) -> luau::runtime::Result<luau::Value> {
         let stored_value = {
             let db = self.db()?;
-            let db = futures::executor::block_on(db.read());
+            let db = db.read().await;
             db::datastore::get_entry(&db, datastore_id, &key)
                 .map_err(crate::plugins::runtime_error)?
                 .map(|entry| entry.value)
@@ -191,10 +214,10 @@ impl DataStoreModuleStore {
         };
         let json: serde_json::Value =
             serde_json::from_str(&stored_value).map_err(crate::plugins::runtime_error)?;
-        harmony_serde::json_to_luau(vm, json, 0)
+        harmony_serde::json_to_luau_owned(json, 0)
     }
 
-    fn set(
+    async fn set(
         &self,
         datastore_id: agdb::DbId,
         key: String,
@@ -202,28 +225,27 @@ impl DataStoreModuleStore {
     ) -> luau::runtime::Result<()> {
         let json = serde_json::to_string(&json).map_err(crate::plugins::runtime_error)?;
         let db = self.db()?;
-        let mut db = futures::executor::block_on(db.write());
+        let mut db = db.write().await;
         db::datastore::upsert_entry(&mut db, datastore_id, key, json)
             .map(|_| ())
             .map_err(crate::plugins::runtime_error)
     }
 
-    fn remove(&self, datastore_id: agdb::DbId, key: String) -> luau::runtime::Result<bool> {
+    async fn remove(&self, datastore_id: agdb::DbId, key: String) -> luau::runtime::Result<bool> {
         let db = self.db()?;
-        let mut db = futures::executor::block_on(db.write());
+        let mut db = db.write().await;
         db::datastore::remove_entry(&mut db, datastore_id, &key)
             .map_err(crate::plugins::runtime_error)
     }
 
-    fn get_many(
+    async fn get_many(
         &self,
-        vm: &luau::Vm,
         datastore_id: agdb::DbId,
         keys: Vec<String>,
     ) -> luau::runtime::Result<luau::OwnedTable> {
         let stored_values = {
             let db = self.db()?;
-            let db = futures::executor::block_on(db.read());
+            let db = db.read().await;
             let mut out = Vec::with_capacity(keys.len());
             for key in &keys {
                 out.push(
@@ -241,7 +263,7 @@ impl DataStoreModuleStore {
                 Some(stored_value) => {
                     let json: serde_json::Value = serde_json::from_str(&stored_value)
                         .map_err(crate::plugins::runtime_error)?;
-                    harmony_serde::json_to_luau(vm, json, 0)?
+                    harmony_serde::json_to_luau_owned(json, 0)?
                 }
                 None => luau::Value::Nil,
             };
@@ -250,7 +272,7 @@ impl DataStoreModuleStore {
         Ok(table)
     }
 
-    fn set_many(
+    async fn set_many(
         &self,
         datastore_id: agdb::DbId,
         entries: Vec<(String, serde_json::Value)>,
@@ -264,7 +286,7 @@ impl DataStoreModuleStore {
         }
 
         let db = self.db()?;
-        let mut db = futures::executor::block_on(db.write());
+        let mut db = db.write().await;
         for (key, value) in prepared {
             db::datastore::upsert_entry(&mut db, datastore_id, key, value)
                 .map_err(crate::plugins::runtime_error)?;
@@ -272,9 +294,9 @@ impl DataStoreModuleStore {
         Ok(())
     }
 
-    fn clear(&self, datastore_id: agdb::DbId) -> luau::runtime::Result<u64> {
+    async fn clear(&self, datastore_id: agdb::DbId) -> luau::runtime::Result<u64> {
         let db = self.db()?;
-        let mut db = futures::executor::block_on(db.write());
+        let mut db = db.write().await;
         db::datastore::clear_entries(&mut db, datastore_id)
             .map(|removed| removed as u64)
             .map_err(crate::plugins::runtime_error)
@@ -336,7 +358,7 @@ fn module_descriptor() -> ModuleDescriptor {
             description: Some("Returns a named data store, creating it if needed."),
             params: vec![param("name", String::luau_type())],
             returns: vec![DataStoreHandle::luau_type()],
-            yields: false,
+            yields: true,
         }],
     }
 }

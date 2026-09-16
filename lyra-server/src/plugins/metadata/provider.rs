@@ -65,11 +65,11 @@ use super::{
 };
 
 pub(super) fn provider_new_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("Provider.new")
+    FunctionSpec::async_fn("Provider.new")
         .arg_name("id")
         .args::<String>()
         .returns::<MetadataProvider>()
-        .call(provider_new_callback)
+        .call_async(Arc::new(provider_new_callback))
 }
 
 pub(super) fn ids_for_provider_spec() -> FunctionSpec {
@@ -82,7 +82,9 @@ pub(super) fn ids_for_provider_spec() -> FunctionSpec {
         .call(ids_for_provider_callback)
 }
 
-fn provider_new_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+fn provider_new_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let provider_id: String = frame.args.read_named("id")?;
     let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
         crate::plugins::runtime_error("metadata.Provider.new must be called from plugin Lua code")
@@ -95,7 +97,9 @@ fn provider_new_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Resul
         .as_ref()
         .clone();
 
-    futures::executor::block_on(async {
+    let vm = frame.vm.clone();
+    let origin = frame.context.origin.clone();
+    Ok(luau::ScheduledFuture::new(async move {
         let generation = STATE.generation();
         let _registration = generation
             .plugin_registries
@@ -126,31 +130,14 @@ fn provider_new_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Resul
             }
         }
 
-        Ok::<(), luau::Error>(())
-    })?;
-
-    let provider = MetadataProvider {
-        plugin_id,
-        provider_id,
-    };
-    let provider = MetadataProvider::_harmony_userdata_class().create_value(
-        frame.vm,
-        &frame.context.origin,
-        provider,
-    )?;
-    frame.returns.write(provider)
-}
-
-fn ensure_registration_open(plugin_id: &PluginId) -> luau::runtime::Result<()> {
-    futures::executor::block_on(async {
-        let generation = STATE.generation();
-        let _registration = generation
-            .plugin_registries
-            .ensure_registrations_open(plugin_id)
-            .await
-            .map_err(crate::plugins::runtime_error)?;
-        Ok(())
-    })
+        let provider = MetadataProvider {
+            plugin_id,
+            provider_id,
+        };
+        let provider =
+            MetadataProvider::_harmony_userdata_class().create_value(&vm, &origin, provider)?;
+        Ok(provider)
+    }))
 }
 
 fn ids_for_provider_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
@@ -182,7 +169,7 @@ impl MetadataProvider {
         context: &luau::CallContext,
         spec: luau::Table,
         generator: Option<luau::Value>,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         provider_id_callback(self, vm, context, spec, generator)
     }
 
@@ -192,7 +179,7 @@ impl MetadataProvider {
         context: &luau::CallContext,
         entity: EntityType,
         handler: luau::Function,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         search_callback(self, vm, context, entity, handler)
     }
 
@@ -203,7 +190,7 @@ impl MetadataProvider {
         entity: EntityType,
         config: luau::Table,
         handler: luau::Function,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         cover_callback(self, vm, context, entity, config, handler)
     }
 
@@ -213,7 +200,7 @@ impl MetadataProvider {
         context: &luau::CallContext,
         config: luau::Table,
         handler: luau::Function,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         lyrics_callback(self, vm, context, config, handler)
     }
 
@@ -223,7 +210,7 @@ impl MetadataProvider {
         context: &luau::CallContext,
         config: luau::Table,
         handler: luau::Function,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         similar_releases_callback(self, vm, context, config, handler)
     }
 
@@ -234,7 +221,7 @@ impl MetadataProvider {
         entity: EntityType,
         handler: luau::Function,
         filter: Option<luau::Function>,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         refresh_callback(self, vm, context, entity, handler, filter)
     }
 
@@ -243,16 +230,17 @@ impl MetadataProvider {
         vm: &luau::Vm,
         context: &luau::CallContext,
         config: luau::Table,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         declare_option_callback(self, vm, context, config)
     }
 
+    #[harmony(returns(i64))]
     fn ensure_artist(
         &self,
         vm: &luau::Vm,
         context: &luau::CallContext,
         request: luau::Table,
-    ) -> luau::runtime::Result<i64> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         ensure_artist_callback(self, vm, context, request)
     }
 
@@ -262,7 +250,7 @@ impl MetadataProvider {
         context: &luau::CallContext,
         node_id: i64,
         id_types: luau::Table,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         mark_unmatched_callback(self, vm, context, node_id, id_types)
     }
 
@@ -274,7 +262,7 @@ impl MetadataProvider {
         artist_id: i64,
         credit_type: Option<server_db::CreditType>,
         detail: Option<String>,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         link_credit_callback(self, vm, context, owner_id, artist_id, credit_type, detail)
     }
 
@@ -286,7 +274,7 @@ impl MetadataProvider {
         to_artist_id: i64,
         relation_type: server_db::ArtistRelationType,
         attributes: Option<String>,
-    ) -> luau::runtime::Result<()> {
+    ) -> luau::runtime::Result<luau::ScheduledFuture> {
         link_artist_relation_callback(
             self,
             vm,
@@ -316,9 +304,8 @@ fn provider_id_callback(
     context: &luau::CallContext,
     spec: luau::Table,
     generator: Option<luau::Value>,
-) -> luau::runtime::Result<()> {
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
-    ensure_registration_open(&provider.plugin_id)?;
 
     let id_spec = parse_id_spec(vm, &spec)?;
     let generator = match generator {
@@ -335,11 +322,18 @@ fn provider_id_callback(
         }
     };
 
-    futures::executor::block_on(async {
+    let provider = provider.clone();
+    Ok(luau::ScheduledFuture::new(async move {
+        let generation = STATE.generation();
+        let _registration = generation
+            .plugin_registries
+            .ensure_registrations_open(&provider.plugin_id)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
         let mut registry = provider_registry().write_owned().await;
         registry.set_id_registration(&provider.provider_id, id_spec, generator);
-    });
-    Ok(())
+        Ok(())
+    }))
 }
 
 fn declare_option_callback(
@@ -347,18 +341,24 @@ fn declare_option_callback(
     vm: &luau::Vm,
     context: &luau::CallContext,
     config: luau::Table,
-) -> luau::runtime::Result<()> {
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
-    ensure_registration_open(&provider.plugin_id)?;
     let option = parse_option_declaration(vm, &config)?;
 
-    futures::executor::block_on(async {
+    let provider = provider.clone();
+    Ok(luau::ScheduledFuture::new(async move {
+        let generation = STATE.generation();
+        let _registration = generation
+            .plugin_registries
+            .ensure_registrations_open(&provider.plugin_id)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
         let mut registry = provider_registry().write_owned().await;
         registry
             .declare_option(&provider.provider_id, option)
-            .map_err(crate::plugins::runtime_error)
-    })?;
-    Ok(())
+            .map_err(crate::plugins::runtime_error)?;
+        Ok(())
+    }))
 }
 
 fn search_callback(
@@ -367,22 +367,29 @@ fn search_callback(
     context: &luau::CallContext,
     entity_type: EntityType,
     handler: luau::Function,
-) -> luau::runtime::Result<()> {
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
-    ensure_registration_open(&provider.plugin_id)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = core_call_context(context);
-    let handler_id = handlers.register(provider.provider_id.clone(), entity_type, handler, context);
-
-    futures::executor::block_on(async {
+    let provider = provider.clone();
+    Ok(luau::ScheduledFuture::new(async move {
+        let generation = STATE.generation();
+        let _registration = generation
+            .plugin_registries
+            .ensure_registrations_open(&provider.plugin_id)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
         let mut registry = provider_registry().write_owned().await;
+        let handler_id =
+            handlers.register(provider.provider_id.clone(), entity_type, handler, context);
+
         registry.set_search_callback(
             &provider.provider_id,
             entity_type,
             ProviderCallbackHandle { handler_id },
         );
-    });
-    Ok(())
+        Ok(())
+    }))
 }
 
 fn cover_callback(
@@ -392,30 +399,35 @@ fn cover_callback(
     entity_type: EntityType,
     config: luau::Table,
     handler: luau::Function,
-) -> luau::runtime::Result<()> {
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
-    ensure_registration_open(&provider.plugin_id)?;
     if !matches!(entity_type, EntityType::Release | EntityType::Artist) {
         return Err(crate::plugins::runtime_error(
             "provider:cover entity_type must be EntityType.Release or EntityType.Artist",
         ));
     }
-    if !futures::executor::block_on(harmony_http::has_rate_limit_for_plugin(
-        provider.plugin_id.as_ref(),
-    )) {
-        return Err(crate::plugins::runtime_error(format!(
-            "provider:cover requires http.set_rate_limit to be configured for at least one domain before registration; call set_rate_limit in plugin init for plugin '{}'",
-            provider.plugin_id
-        )));
-    }
 
     let (priority, timeout, require) = parse_cover_spec(vm, &config)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = core_call_context(context);
-    let handler_id = handlers.register(provider.provider_id.clone(), entity_type, handler, context);
-
-    futures::executor::block_on(async {
+    let provider = provider.clone();
+    Ok(luau::ScheduledFuture::new(async move {
+        let generation = STATE.generation();
+        let _registration = generation
+            .plugin_registries
+            .ensure_registrations_open(&provider.plugin_id)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        if !harmony_http::has_rate_limit_for_plugin(provider.plugin_id.as_ref()).await {
+            return Err(crate::plugins::runtime_error(format!(
+                "provider:cover requires http.set_rate_limit to be configured for at least one domain before registration; call set_rate_limit in plugin init for plugin '{}'",
+                provider.plugin_id
+            )));
+        }
         let mut registry = provider_registry().write_owned().await;
+        let handler_id =
+            handlers.register(provider.provider_id.clone(), entity_type, handler, context);
+
         registry.set_cover_handler(
             &provider.provider_id,
             entity_type,
@@ -426,8 +438,8 @@ fn cover_callback(
                 handler: ProviderCallbackHandle { handler_id },
             },
         );
-    });
-    Ok(())
+        Ok(())
+    }))
 }
 
 fn lyrics_callback(
@@ -436,58 +448,63 @@ fn lyrics_callback(
     context: &luau::CallContext,
     config: luau::Table,
     handler: luau::Function,
-) -> luau::runtime::Result<()> {
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
-    ensure_registration_open(&provider.plugin_id)?;
     validate_lyrics_provider_id(&provider.provider_id)?;
-    if !futures::executor::block_on(harmony_http::has_rate_limit_for_plugin(
-        provider.plugin_id.as_ref(),
-    )) {
-        return Err(crate::plugins::runtime_error(format!(
-            "provider:lyrics requires http.set_rate_limit to be configured for at least one domain before registration; call set_rate_limit in plugin init for plugin '{}'",
-            provider.plugin_id
-        )));
-    }
 
     let (priority, timeout, require) = parse_lyrics_spec(vm, &config)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = core_call_context(context);
-    let handler_id = handlers.register(
-        provider.provider_id.clone(),
-        EntityType::Track,
-        handler,
-        context,
-    );
-    let provider_id = provider.provider_id.clone();
-    let provider_id_for_handler = provider_id.clone();
-    let plugin_id = provider.plugin_id.clone();
-    let handler_fn: lyrics_dispatcher::HandlerFn = Arc::new(move |context| {
-        let provider_id = provider_id_for_handler.clone();
-        Box::pin(async move {
-            let runtime = STATE
-                .generation()
-                .plugin_runtime
-                .get()
-                .context("plugin runtime is not initialized")?;
-            let context = lyrics_dispatcher::track_context_to_json(&context);
-            let result = runtime
-                .dispatch_metadata_refresh(MetadataRefreshRequest {
-                    handler_id,
-                    context,
-                    deadline: std::time::Instant::now() + timeout,
-                })
-                .await
-                .with_context(|| format!("provider lyrics handler failed for '{provider_id}'"))?;
-            let value = result
-                .values
-                .into_iter()
-                .next()
-                .ok_or_else(|| anyhow::anyhow!("provider lyrics handler returned no value"))?;
-            lyrics_dispatcher::parse_handler_result(value)
-        })
-    });
+    let provider = provider.clone();
+    Ok(luau::ScheduledFuture::new(async move {
+        let generation = STATE.generation();
+        let _registration = generation
+            .plugin_registries
+            .ensure_registrations_open(&provider.plugin_id)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
+        if !harmony_http::has_rate_limit_for_plugin(provider.plugin_id.as_ref()).await {
+            return Err(crate::plugins::runtime_error(format!(
+                "provider:lyrics requires http.set_rate_limit to be configured for at least one domain before registration; call set_rate_limit in plugin init for plugin '{}'",
+                provider.plugin_id
+            )));
+        }
+        let handler_id = handlers.register(
+            provider.provider_id.clone(),
+            EntityType::Track,
+            handler,
+            context,
+        );
+        let provider_id = provider.provider_id.clone();
+        let provider_id_for_handler = provider_id.clone();
+        let plugin_id = provider.plugin_id.clone();
+        let handler_fn: lyrics_dispatcher::HandlerFn = Arc::new(move |context| {
+            let provider_id = provider_id_for_handler.clone();
+            Box::pin(async move {
+                let runtime = STATE
+                    .generation()
+                    .plugin_runtime
+                    .get()
+                    .context("plugin runtime is not initialized")?;
+                let context = lyrics_dispatcher::track_context_to_json(&context);
+                let result = runtime
+                    .dispatch_metadata_refresh(MetadataRefreshRequest {
+                        handler_id,
+                        context,
+                        deadline: std::time::Instant::now() + timeout,
+                    })
+                    .await
+                    .with_context(|| {
+                        format!("provider lyrics handler failed for '{provider_id}'")
+                    })?;
+                let value =
+                    result.values.into_iter().next().ok_or_else(|| {
+                        anyhow::anyhow!("provider lyrics handler returned no value")
+                    })?;
+                lyrics_dispatcher::parse_handler_result(value)
+            })
+        });
 
-    futures::executor::block_on(async {
         let cancel = lyrics_dispatcher::make_plugin_cancellation_child(&plugin_id).await;
         lyrics_dispatcher::register_handler(RegisteredHandler {
             provider_id: Arc::from(provider_id.as_str()),
@@ -499,8 +516,8 @@ fn lyrics_callback(
             cancel,
         })
         .await;
-    });
-    Ok(())
+        Ok(())
+    }))
 }
 
 fn similar_releases_callback(
@@ -509,21 +526,27 @@ fn similar_releases_callback(
     context: &luau::CallContext,
     config: luau::Table,
     handler: luau::Function,
-) -> luau::runtime::Result<()> {
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
-    ensure_registration_open(&provider.plugin_id)?;
     let (timeout, require) = parse_similar_releases_spec(vm, &config)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = core_call_context(context);
-    let handler_id = handlers.register(
-        provider.provider_id.clone(),
-        EntityType::Release,
-        handler,
-        context,
-    );
-
-    futures::executor::block_on(async {
+    let provider = provider.clone();
+    Ok(luau::ScheduledFuture::new(async move {
+        let generation = STATE.generation();
+        let _registration = generation
+            .plugin_registries
+            .ensure_registrations_open(&provider.plugin_id)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
         let mut registry = provider_registry().write_owned().await;
+        let handler_id = handlers.register(
+            provider.provider_id.clone(),
+            EntityType::Release,
+            handler,
+            context,
+        );
+
         registry.set_similar_releases_handler(
             &provider.provider_id,
             ProviderSimilarReleasesSpec {
@@ -532,8 +555,8 @@ fn similar_releases_callback(
                 handler: ProviderCallbackHandle { handler_id },
             },
         );
-    });
-    Ok(())
+        Ok(())
+    }))
 }
 
 fn validate_lyrics_provider_id(provider_id: &str) -> luau::runtime::Result<()> {
@@ -547,23 +570,29 @@ fn refresh_callback(
     entity_type: EntityType,
     handler: luau::Function,
     filter: Option<luau::Function>,
-) -> luau::runtime::Result<()> {
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
-    ensure_registration_open(&provider.plugin_id)?;
     let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
     let context = core_call_context(context);
-    let handler_id = handlers.register(
-        provider.provider_id.clone(),
-        entity_type,
-        handler,
-        context.clone(),
-    );
-    let filter_id = filter.map(|filter| {
-        handlers.register(provider.provider_id.clone(), entity_type, filter, context)
-    });
-
-    futures::executor::block_on(async {
+    let provider = provider.clone();
+    Ok(luau::ScheduledFuture::new(async move {
+        let generation = STATE.generation();
+        let _registration = generation
+            .plugin_registries
+            .ensure_registrations_open(&provider.plugin_id)
+            .await
+            .map_err(crate::plugins::runtime_error)?;
         let mut registry = provider_registry().write_owned().await;
+        let handler_id = handlers.register(
+            provider.provider_id.clone(),
+            entity_type,
+            handler,
+            context.clone(),
+        );
+        let filter_id = filter.map(|filter| {
+            handlers.register(provider.provider_id.clone(), entity_type, filter, context)
+        });
+
         registry.set_refresh_callback(
             &provider.provider_id,
             entity_type,
@@ -576,8 +605,8 @@ fn refresh_callback(
                 ProviderCallbackHandle { handler_id },
             );
         }
-    });
-    Ok(())
+        Ok(())
+    }))
 }
 
 fn ensure_artist_callback(
@@ -585,7 +614,7 @@ fn ensure_artist_callback(
     vm: &luau::Vm,
     context: &luau::CallContext,
     request: luau::Table,
-) -> luau::runtime::Result<i64> {
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
     let id_type = required_table_string(vm, &request, "id_type", "provider:ensure_artist")?;
     let id_value = required_table_string(vm, &request, "id_value", "provider:ensure_artist")?;
@@ -594,7 +623,8 @@ fn ensure_artist_callback(
     let artist_type = optional_artist_type(vm, &request, "artist_type")?;
     let description = optional_table_string(vm, &request, "description", "provider:ensure_artist")?;
     let provider_id = provider.provider_id.clone();
-    futures::executor::block_on(async {
+    let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
+    Ok(luau::ScheduledFuture::new(async move {
         let is_registered_artist_id = {
             let registry = provider_registry().read_owned().await;
             registry.id_spec_matches_entity(&provider_id, &id_type, EntityType::Artist)
@@ -605,7 +635,6 @@ fn ensure_artist_callback(
             )));
         }
 
-        let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
         let Some(db) = store.db else {
             return Err(crate::plugins::runtime_error(
                 "provider:ensure_artist requires a database-backed plugin executor",
@@ -756,7 +785,7 @@ fn ensure_artist_callback(
         .map_err(crate::plugins::runtime_error)?;
 
         Ok(artist_db_id.0)
-    })
+    }))
 }
 
 fn mark_unmatched_callback(
@@ -765,7 +794,7 @@ fn mark_unmatched_callback(
     context: &luau::CallContext,
     node_id: i64,
     id_types_table: luau::Table,
-) -> luau::runtime::Result<()> {
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
     let node_id = require_positive_id(node_id, "node_id")?;
     let id_types = string_array_from_table(vm, &id_types_table)?;
@@ -790,8 +819,8 @@ fn mark_unmatched_callback(
         }
     }
 
-    futures::executor::block_on(async {
-        let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
+    let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
+    Ok(luau::ScheduledFuture::new(async move {
         let Some(db) = store.db else {
             return Err(crate::plugins::runtime_error(
                 "provider:mark_unmatched requires a database-backed plugin executor",
@@ -832,7 +861,7 @@ fn mark_unmatched_callback(
             &HashSet::new(),
         )
         .map_err(crate::plugins::runtime_error)
-    })
+    }))
 }
 
 fn link_credit_callback(
@@ -843,7 +872,7 @@ fn link_credit_callback(
     artist_id: i64,
     credit_type: Option<server_db::CreditType>,
     detail: Option<String>,
-) -> luau::runtime::Result<()> {
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
     let owner_id = require_positive_id(owner_id, "owner_id")?;
     let artist_id = require_positive_id(artist_id, "artist_id")?;
@@ -857,8 +886,8 @@ fn link_credit_callback(
         }
     });
 
-    futures::executor::block_on(async {
-        let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
+    let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
+    Ok(luau::ScheduledFuture::new(async move {
         let Some(db) = store.db else {
             return Err(crate::plugins::runtime_error(
                 "provider:link_credit requires a database-backed plugin executor",
@@ -958,7 +987,7 @@ fn link_credit_callback(
                 Ok(())
             })
             .map_err(crate::plugins::runtime_error)
-    })
+    }))
 }
 
 fn link_artist_relation_callback(
@@ -969,7 +998,7 @@ fn link_artist_relation_callback(
     to_artist_id: i64,
     relation_type: server_db::ArtistRelationType,
     attributes: Option<String>,
-) -> luau::runtime::Result<()> {
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
     let from_artist_id = require_positive_id(from_artist_id, "from_artist_id")?;
     let to_artist_id = require_positive_id(to_artist_id, "to_artist_id")?;
@@ -982,8 +1011,8 @@ fn link_artist_relation_callback(
         }
     });
 
-    futures::executor::block_on(async {
-        let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
+    let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
+    Ok(luau::ScheduledFuture::new(async move {
         let Some(db) = store.db else {
             return Err(crate::plugins::runtime_error(
                 "provider:link_artist_relation requires a database-backed plugin executor",
@@ -1026,7 +1055,7 @@ fn link_artist_relation_callback(
         )
         .map(|_| ())
         .map_err(crate::plugins::runtime_error)
-    })
+    }))
 }
 
 fn layer_callback(

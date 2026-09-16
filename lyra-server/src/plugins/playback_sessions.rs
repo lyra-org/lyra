@@ -197,10 +197,10 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn on_update_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("on_update")
+    FunctionSpec::async_fn("on_update")
         .arg_name("handler")
         .args::<PlaybackUpdateHandler>()
-        .call(on_update_callback)
+        .call_async(Arc::new(on_update_callback))
 }
 
 fn report_session_spec() -> FunctionSpec {
@@ -230,7 +230,9 @@ fn send_command_spec() -> FunctionSpec {
         .call_async(Arc::new(send_command_callback))
 }
 
-fn on_update_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+fn on_update_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let function: luau::Function = frame.args.read_named("handler")?;
     let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
         luau::Error::Runtime(
@@ -239,23 +241,23 @@ fn on_update_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<(
     })?;
     let validated_plugin_id =
         PluginId::new(plugin_id.to_string()).map_err(crate::plugins::runtime_error)?;
-    futures::executor::block_on(async {
+    let vm = frame.vm.clone();
+    let context = call_context_to_core(&frame.context);
+    Ok(luau::ScheduledFuture::new(async move {
         let generation = crate::STATE.generation();
         let _registration = generation
             .plugin_registries
             .ensure_registrations_open(&validated_plugin_id)
             .await
             .map_err(crate::plugins::runtime_error)?;
-        Ok::<(), luau::Error>(())
-    })?;
-
-    let callbacks = frame.vm.data().get::<PlaybackUpdateCallbackStore>()?;
-    callbacks.add(RegisteredPlaybackUpdateCallback {
-        plugin_id,
-        context: call_context_to_core(&frame.context),
-        function,
-    });
-    Ok(())
+        let callbacks = vm.data().get::<PlaybackUpdateCallbackStore>()?;
+        callbacks.add(RegisteredPlaybackUpdateCallback {
+            plugin_id,
+            context,
+            function,
+        });
+        Ok(())
+    }))
 }
 
 fn report_session_callback(
@@ -658,7 +660,7 @@ fn module_descriptor() -> ModuleDescriptor {
                 ),
                 params: vec![param("handler", PlaybackUpdateHandler::luau_type())],
                 returns: vec![],
-                yields: false,
+                yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["report_session"],
