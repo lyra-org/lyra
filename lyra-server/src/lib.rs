@@ -299,6 +299,10 @@ pub async fn run_server(capture: Option<CaptureArgs>) -> Result<()> {
     // instead of blocking on that server's DB process lock.
     let listener = services::startup::bind_configured_listener(loaded.boot.port).await?;
     loaded.boot.ensure_directories()?;
+    config::storage::ensure_writable_directory(
+        &plugins::bootstrap::plugins_dir(),
+        "plugins directory (LYRA_PLUGINS_DIR)",
+    )?;
     let mut created = create(&loaded.boot.db)?;
     let resolved = resolve_settings(&mut created, &loaded.boot, library, file_settings)?;
     STATE.initialize(loaded.boot, created, resolved)?;

@@ -52,7 +52,7 @@ pub(crate) fn acquire(config: &DbConfig, mode: LockMode) -> Result<Option<DbProc
         .create(true)
         .truncate(false)
         .open(&path)
-        .with_context(|| format!("failed to open db lockfile at {}", path.display()))?;
+        .map_err(|error| crate::config::storage::write_error("open db lockfile", &path, error))?;
 
     match mode {
         LockMode::Blocking => file

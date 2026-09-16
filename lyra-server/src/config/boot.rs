@@ -126,26 +126,24 @@ impl BootConfig {
         Ok(boot)
     }
 
-    /// Creates the data directory and the database directory. Only the
-    /// serving path calls this; fail fast when either cannot be a directory.
+    /// Creates and checks writable storage before opening the database.
     pub(crate) fn ensure_directories(&self) -> Result<()> {
-        std::fs::create_dir_all(&self.data_dir).with_context(|| {
-            format!(
-                "{LYRA_DATA_DIR_ENV} points to '{}' but it could not be created as a directory",
-                self.data_dir.display()
-            )
-        })?;
-
-        if matches!(self.db.kind, DbKind::Memory) {
-            return Ok(());
-        }
-        if let Some(db_dir) = self.db.path.parent() {
-            std::fs::create_dir_all(db_dir).with_context(|| {
-                format!(
-                    "database directory '{}' ({LYRA_DB_DIR_ENV} or db.path) could not be created as a directory",
-                    db_dir.display()
-                )
-            })?;
+        super::storage::ensure_writable_directory(
+            &self.data_dir,
+            "data directory (LYRA_DATA_DIR)",
+        )?;
+        if !matches!(self.db.kind, DbKind::Memory)
+            && let Some(db_dir) = self
+                .db
+                .path
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+            && db_dir != self.data_dir
+        {
+            super::storage::ensure_writable_directory(
+                db_dir,
+                "database directory (LYRA_DB_DIR or db.path)",
+            )?;
         }
         Ok(())
     }
