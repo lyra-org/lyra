@@ -12,15 +12,13 @@ cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked -p lyra-server
 ```
 
-GitLab runs Clippy before publishing images, including on merge request pipelines.
-The check uses the Dockerfile's shared native dependencies and can also run locally:
+To run Clippy with the image’s build dependencies:
 
 ```bash
 docker build --target clippy .
 ```
 
-GitLab's **Pipelines must succeed** merge check must remain enabled to enforce this
-gate. Forks must enable it separately; the CI file cannot configure this project setting.
+Keep GitLab’s **Pipelines must succeed** merge check enabled, including on forks.
 
 Rust formatting uses nightly separately from the pinned build toolchain:
 
@@ -29,9 +27,7 @@ rustup toolchain install nightly --component rustfmt
 cargo +nightly fmt
 ```
 
-To upgrade Rust, change the exact release in `rust-toolchain.toml`, run the lint
-check and tests above, and resolve any new diagnostics in the same change. Keep
-the pin current so compiler fixes and new Clippy checks reach the project regularly.
+When updating `rust-toolchain.toml`, resolve new lint and test failures in the same change.
 
 See [commit conventions](commits.md) when preparing changes.
 
@@ -44,13 +40,13 @@ cargo install --locked --git https://git.lyra.pub/lyra/lyra lyra-server
 lyra serve
 ```
 
-The server listens on port 4746 and stores state in `./data` under the working directory. For a frontend, build [lyra-web](https://github.com/lyra-org/lyra-web) and set `LYRA_STATIC_DIR` to its output. Use the music folder's local path when creating the library.
+For a frontend, build [lyra-web](https://github.com/lyra-org/lyra-web) and set `LYRA_STATIC_DIR` to its output.
 
-Copy the bundled plugins from this repository's [`plugins`](../plugins) directory into a `plugins` directory where you run the binary, especially the MusicBrainz plugin. See [plugin repositories](plugin-repositories.md) for installing and updating additional plugins.
+See [plugin repositories](plugin-repositories.md) to install plugins.
 
 ## Docker builds
 
-The image includes the lyra-web frontend, so the build needs a commit SHA from that repository as `LYRA_WEB_GIT_HASH`. CI uses the current `main` commit. To do the same locally:
+Docker builds require a lyra-web commit SHA in `LYRA_WEB_GIT_HASH`. To build with its current `main`, as CI does:
 
 ```sh
 LYRA_WEB_GIT_HASH=$(git ls-remote https://github.com/lyra-org/lyra-web.git refs/heads/main | cut -f1)
