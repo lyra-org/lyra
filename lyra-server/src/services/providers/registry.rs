@@ -361,9 +361,13 @@ impl ProviderRegistry {
         id_type: &str,
         entity: EntityType,
     ) -> bool {
+        self.id_spec_entity(provider_id, id_type) == Some(entity)
+    }
+
+    pub(crate) fn id_spec_entity(&self, provider_id: &str, id_type: &str) -> Option<EntityType> {
         self.state(provider_id)
             .and_then(|state| state.id_specs.get(id_type))
-            .is_some_and(|spec| spec.entity == entity)
+            .map(|spec| spec.entity)
     }
 
     pub(crate) fn declare_option(

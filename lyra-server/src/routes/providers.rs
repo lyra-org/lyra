@@ -323,14 +323,26 @@ async fn list_providers(headers: HeaderMap) -> Result<Json<Vec<ProviderResponse>
     let _principal = require_manage_metadata(&headers).await?;
 
     let providers = list_provider_configs().await?;
-    let registry = provider_registry().read_owned().await;
+    Ok(Json(build_provider_responses(providers).await))
+}
+
+async fn build_provider_responses(providers: Vec<db::ProviderConfig>) -> Vec<ProviderResponse> {
+    let providers = {
+        let registry = provider_registry().read_owned().await;
+        providers
+            .into_iter()
+            .map(|config| {
+                let options = registry.get_options(&config.provider_id).to_vec();
+                (config, options)
+            })
+            .collect::<Vec<_>>()
+    };
     let db = STATE.db.read().await;
 
-    let response: Vec<ProviderResponse> = providers
+    providers
         .into_iter()
-        .map(|config| {
-            let options = registry
-                .get_options(&config.provider_id)
+        .map(|(config, options)| {
+            let options = options
                 .iter()
                 .map(|opt| {
                     let (available, unavailable_reason) = if opt.requires_settings.is_empty() {
@@ -364,8 +376,7 @@ async fn list_providers(headers: HeaderMap) -> Result<Json<Vec<ProviderResponse>
                 options,
             }
         })
-        .collect();
-    Ok(Json(response))
+        .collect()
 }
 
 /// Checks whether all required settings for an option have non-empty values.
@@ -800,6 +811,76 @@ mod tests {
         insert_release,
         new_test_db,
     };
+
+    #[tokio::test]
+    async fn provider_response_database_wait_releases_registry_for_queued_writer()
+    -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
+        let plugin_id = crate::plugins::lifecycle::PluginId::new("provider-lock-test")?;
+        let provider_id = "provider-lock-test".to_string();
+        let registry = provider_registry();
+        {
+            let mut registry = registry.write().await;
+            registry.register(plugin_id.clone(), provider_id.clone())?;
+            registry
+                .declare_option(
+                    &provider_id,
+                    crate::services::options::OptionDeclaration {
+                        name: "cached".into(),
+                        label: "Use cache".into(),
+                        option_type: OptionType::Boolean,
+                        default: serde_json::json!(true),
+                        requires_settings: Vec::new(),
+                    },
+                )
+                .map_err(anyhow::Error::msg)?;
+        }
+
+        let db_write = STATE.db.write().await;
+        let registry_read = registry.read().await;
+        let response = build_provider_responses(vec![db::ProviderConfig {
+            db_id: None,
+            provider_id: provider_id.clone(),
+            display_name: "Test provider".into(),
+            priority: 50,
+            enabled: true,
+        }]);
+        tokio::pin!(response);
+        assert!(futures::poll!(&mut response).is_pending());
+
+        let registry_writer = registry.write();
+        tokio::pin!(registry_writer);
+        assert!(futures::poll!(&mut registry_writer).is_pending());
+        drop(registry_read);
+        let mut registry_write =
+            tokio::time::timeout(std::time::Duration::from_secs(1), &mut registry_writer)
+                .await
+                .expect("provider response retained the registry while waiting for the database");
+        registry_write
+            .declare_option(
+                &provider_id,
+                crate::services::options::OptionDeclaration {
+                    name: "new-option".into(),
+                    label: "Added after snapshot".into(),
+                    option_type: OptionType::Boolean,
+                    default: serde_json::json!(false),
+                    requires_settings: Vec::new(),
+                },
+            )
+            .map_err(anyhow::Error::msg)?;
+        drop(registry_write);
+        drop(db_write);
+
+        let response = tokio::time::timeout(std::time::Duration::from_secs(1), response).await?;
+        assert_eq!(response.len(), 1);
+        assert_eq!(response[0].provider_id, provider_id);
+        assert_eq!(response[0].options.len(), 1);
+        assert_eq!(response[0].options[0].name, "cached");
+        assert!(response[0].options[0].available);
+        crate::services::providers::teardown_plugin_providers(&plugin_id).await;
+        Ok(())
+    }
 
     fn insert_track(
         db: &mut DbAny,

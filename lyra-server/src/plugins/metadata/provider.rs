@@ -826,6 +826,13 @@ fn mark_unmatched_callback(
                 "provider:mark_unmatched requires a database-backed plugin executor",
             ));
         };
+        let registered_entities = {
+            let registry = provider_registry().read_owned().await;
+            normalized_id_types
+                .iter()
+                .map(|id_type| registry.id_spec_entity(&provider_id, id_type))
+                .collect::<Vec<_>>()
+        };
         let mut db_write = db.write().await;
         let entity_type = entity_type_for_node(&db_write, node_id)
             .map_err(crate::plugins::runtime_error)?
@@ -837,9 +844,9 @@ fn mark_unmatched_callback(
             })?;
 
         {
-            let registry = provider_registry().read_owned().await;
-            for id_type in &normalized_id_types {
-                if !registry.id_spec_matches_entity(&provider_id, id_type, entity_type) {
+            for (id_type, registered_entity) in normalized_id_types.iter().zip(registered_entities)
+            {
+                if registered_entity != Some(entity_type) {
                     return Err(crate::plugins::runtime_error(format!(
                         "provider:mark_unmatched: id_type '{id_type}' is not registered for {entity_type} on provider '{provider_id}'"
                     )));
