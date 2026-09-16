@@ -23,6 +23,7 @@ use crate::{
 
 mod boot;
 mod file;
+pub(crate) mod storage;
 
 pub(crate) use boot::{
     BootConfig,

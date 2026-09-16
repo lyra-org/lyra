@@ -1518,6 +1518,7 @@ dependencies = [
  "harmony-task",
  "image",
  "isolang",
+ "libc",
  "lofty",
  "lyra-chromaprint",
  "lyra-ffmpeg",

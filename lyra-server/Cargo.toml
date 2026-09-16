@@ -75,6 +75,7 @@ isolang = { version = "2.4.0", features = ["lowercase_names"] }
 unicode-normalization = "0.1"
 unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
 url = { workspace = true }
-
-[dev-dependencies]
 tempfile = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
