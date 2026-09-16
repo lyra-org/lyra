@@ -57,48 +57,6 @@ Install any plugins you want, then add a library. Use `/music` as the path: that
 
 If Lyra runs on another computer, replace `localhost` with its address.
 
-## Optional: set up through the API
-
-### Create an account
-
-The first account is the administrator. Replace `replace-with-your-password` in both commands with your own password of at least eight ASCII characters.
-
-```sh
-curl --fail-with-body http://localhost:4746/api/users \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"replace-with-your-password"}'
-```
-
-### Sign in
-
-Sign in with the same credentials:
-
-```sh
-curl --fail-with-body http://localhost:4746/api/users/login \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"replace-with-your-password"}'
-```
-
-The response contains a `token`. Use that value in place of `YOUR_SESSION_TOKEN` below.
-
-### Choose plugins
-
-Docker images start without plugins. [Install any plugins you want](plugin-repositories.md)
-before adding your library so metadata providers can participate in its first scan.
-
-### Add your music
-
-Use `/music` below: that is where Docker makes your music folder available to Lyra.
-
-```sh
-curl --fail-with-body http://localhost:4746/api/libraries \
-  -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer YOUR_SESSION_TOKEN' \
-  -d '{"name":"Music","directory":"/music"}'
-```
-
-Lyra now scans your music. You can keep the default settings, or [change them](configuration.md) later.
-
 ## Optional: use a custom web interface
 
 To use your own web interface instead of the bundled one, put its built files (including `index.html`) in a `static` folder beside `compose.yaml`. Add this block to the `lyra` service:

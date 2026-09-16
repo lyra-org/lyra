@@ -44,7 +44,7 @@ cargo install --locked --git https://git.lyra.pub/lyra/lyra lyra-server
 lyra serve
 ```
 
-The server listens on port 4746 and stores state in `./data` under the working directory. This install does not include a web interface, so [set up your library through the API](installation.md#optional-set-up-through-the-api). Use the music folder's local path when creating the library.
+The server listens on port 4746 and stores state in `./data` under the working directory. For a frontend, build [lyra-web](https://github.com/lyra-org/lyra-web) and set `LYRA_STATIC_DIR` to its output. Use the music folder's local path when creating the library.
 
 Copy the bundled plugins from this repository's [`plugins`](../plugins) directory into a `plugins` directory where you run the binary, especially the MusicBrainz plugin. See [plugin repositories](plugin-repositories.md) for installing and updating additional plugins.
 
