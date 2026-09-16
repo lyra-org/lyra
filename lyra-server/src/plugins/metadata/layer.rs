@@ -80,7 +80,7 @@ impl MetadataLayer {
         Ok(())
     }
 
-    fn save(&self) -> luau::runtime::Result<()> {
+    fn save(&self) -> luau::runtime::Result<luau::ScheduledFuture> {
         let Some(db) = self.store.db.clone() else {
             return Err(crate::plugins::runtime_error(
                 "metadata layer save requires a database-backed plugin executor",
@@ -91,7 +91,7 @@ impl MetadataLayer {
             .lock()
             .expect("metadata layer mutex poisoned")
             .clone();
-        futures::executor::block_on(async {
+        Ok(luau::ScheduledFuture::new(async move {
             let mut db = db.write().await;
             crate::services::metadata::layers::save_provider_layer(
                 &mut db,
@@ -103,7 +103,7 @@ impl MetadataLayer {
                 &layer.remove_custom_field_versions,
             )
             .map_err(crate::plugins::runtime_error)
-        })
+        }))
     }
 
     #[harmony(args(version: String, name: String, value: luau::JsonValue))]

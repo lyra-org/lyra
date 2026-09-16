@@ -258,7 +258,7 @@ pub(crate) fn declare_settings_descriptor() -> ModuleFunctionDescriptor {
         description: None,
         params: vec![param("callback", SettingsCallback::luau_type())],
         returns: vec![SettingsConfig::luau_type()],
-        yields: false,
+        yields: true,
     }
 }
 
@@ -269,7 +269,7 @@ pub(crate) fn declare_user_settings_descriptor() -> ModuleFunctionDescriptor {
         description: None,
         params: vec![param("callback", SettingsCallback::luau_type())],
         returns: vec![UserSettingsAccessor::luau_type()],
-        yields: false,
+        yields: true,
     }
 }
 

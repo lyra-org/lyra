@@ -41,7 +41,7 @@ fn metadata_module_descriptor() -> ModuleDescriptor {
             description: Some("Creates a metadata provider registration object."),
             params: vec![param("id", string())],
             returns: vec![ty("Provider")],
-            yields: false,
+            yields: true,
         },
         ModuleFunctionDescriptor {
             path: vec!["ids", "for_provider"],
@@ -730,7 +730,20 @@ fn method(
         description: None,
         params,
         returns,
-        yields: false,
+        yields: matches!(
+            name,
+            "id" | "search"
+                | "cover"
+                | "lyrics"
+                | "similar_releases"
+                | "refresh"
+                | "declare_option"
+                | "ensure_artist"
+                | "mark_unmatched"
+                | "link_credit"
+                | "link_artist_relation"
+                | "save"
+        ),
         kind: MethodKind::Instance,
     }
 }

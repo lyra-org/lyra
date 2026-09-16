@@ -1314,6 +1314,8 @@ fn plugin_executor_dispatches_registered_mix_handler() -> Result<()> {
     Ok(())
 }
 
+#[path = "tests/db_contention.rs"]
+mod db_contention;
 #[path = "tests/db_modules.rs"]
 mod db_modules;
 

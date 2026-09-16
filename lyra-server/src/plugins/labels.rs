@@ -60,162 +60,181 @@ pub(crate) fn module_spec() -> ModuleSpec {
 }
 
 fn resolve_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("resolve")
+    FunctionSpec::async_fn("resolve")
         .arg_name("request")
         .args::<luau::Table>()
         .returns::<i64>()
-        .call(resolve_callback)
+        .call_async(std::sync::Arc::new(resolve_callback))
 }
 
 fn get_by_id_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("get_by_id")
+    FunctionSpec::async_fn("get_by_id")
         .arg_name("label_id")
         .args::<i64>()
         .returns::<Option<LabelInfo>>()
-        .call(get_by_id_callback)
+        .call_async(std::sync::Arc::new(get_by_id_callback))
 }
 
 fn get_for_release_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("get_for_release")
+    FunctionSpec::async_fn("get_for_release")
         .arg_name("release_id")
         .args::<i64>()
         .returns::<luau::Table>()
-        .call(get_for_release_callback)
+        .call_async(std::sync::Arc::new(get_for_release_callback))
 }
 
 fn get_for_releases_many_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("get_for_releases_many")
+    FunctionSpec::async_fn("get_for_releases_many")
         .arg_name("release_ids")
         .args::<luau::Table>()
         .returns::<luau::Table>()
-        .call(get_for_releases_many_callback)
+        .call_async(std::sync::Arc::new(get_for_releases_many_callback))
 }
 
 fn get_releases_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("get_releases")
+    FunctionSpec::async_fn("get_releases")
         .arg_name("label_id")
         .args::<i64>()
         .returns::<luau::Table>()
-        .call(get_releases_callback)
+        .call_async(std::sync::Arc::new(get_releases_callback))
 }
 
 fn get_releases_many_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("get_releases_many")
+    FunctionSpec::async_fn("get_releases_many")
         .arg_name("label_ids")
         .args::<luau::Table>()
         .returns::<luau::Table>()
-        .call(get_releases_many_callback)
+        .call_async(std::sync::Arc::new(get_releases_many_callback))
 }
 
-fn resolve_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+fn resolve_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request: luau::Table = frame.args.read_named("request")?;
     let request = parse_label_resolve_request(frame.vm, &request)?;
     let principal = caller_principal(&frame.context);
     if !can_mutate_global(principal.as_ref()) {
-        frame.returns.write(0_i64)?;
-        return Ok(());
+        return Ok(luau::ScheduledFuture::new(async { Ok(0_i64) }));
     }
 
-    let label_id = futures::executor::block_on(async {
-        let mut db = STATE.db.write().await;
-        db::labels::resolve(
-            &mut db,
-            &ResolveLabel {
-                name: &request.name,
-                external_id: request.external_id_ref(),
-            },
-        )
-        .map_err(crate::plugins::runtime_error)
-    })?;
+    Ok(luau::ScheduledFuture::new(async move {
+        let label_id = {
+            let mut db = STATE.db.write().await;
+            db::labels::resolve(
+                &mut db,
+                &ResolveLabel {
+                    name: &request.name,
+                    external_id: request.external_id_ref(),
+                },
+            )
+            .map_err(crate::plugins::runtime_error)
+        }?;
 
-    frame.returns.write(label_id.0)
+        Ok(label_id.0)
+    }))
 }
 
-fn get_by_id_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+fn get_by_id_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let label_id = DbId(require_positive_id(
         frame.args.read_named("label_id")?,
         "label_id",
     )?);
-    let label = futures::executor::block_on(async {
-        let db = STATE.db.read().await;
-        db::labels::get_by_id(&db, label_id).map_err(crate::plugins::runtime_error)
-    })?;
-    frame.returns.write(
-        label
+    Ok(luau::ScheduledFuture::new(async move {
+        let label = {
+            let db = STATE.db.read().await;
+            db::labels::get_by_id(&db, label_id).map_err(crate::plugins::runtime_error)
+        }?;
+        Ok(label
             .map(|label| luau::Value::TableData(label_info_table(label)))
-            .unwrap_or(luau::Value::Nil),
-    )
+            .unwrap_or(luau::Value::Nil))
+    }))
 }
 
-fn get_for_release_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+fn get_for_release_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let release_id = DbId(require_positive_id(
         frame.args.read_named("release_id")?,
         "release_id",
     )?);
     let principal = caller_principal(&frame.context);
-    let labels = futures::executor::block_on(async {
-        let db = STATE.db.read().await;
-        if !can_read_entity(&db, principal.as_ref(), release_id)? {
-            return Ok(Vec::new());
-        }
-        db::labels::get_for_release(&db, release_id).map_err(crate::plugins::runtime_error)
-    })?;
-    frame
-        .returns
-        .write(luau::Value::TableData(label_release_array(labels)))
+    Ok(luau::ScheduledFuture::new(async move {
+        let labels = {
+            let db = STATE.db.read().await;
+            if can_read_entity(&db, principal.as_ref(), release_id)? {
+                db::labels::get_for_release(&db, release_id)
+                    .map_err(crate::plugins::runtime_error)?
+            } else {
+                Vec::new()
+            }
+        };
+        Ok(luau::Value::TableData(label_release_array(labels)))
+    }))
 }
 
-fn get_for_releases_many_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+fn get_for_releases_many_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("release_ids")?;
     let ids = parse_db_ids(frame.vm, &ids_table)?;
     let principal = caller_principal(&frame.context);
-    let labels = futures::executor::block_on(async {
-        let db = STATE.db.read().await;
-        let readable = ids
-            .into_iter()
-            .filter(|id| can_read_entity(&db, principal.as_ref(), *id).unwrap_or(false))
-            .collect::<Vec<_>>();
-        db::labels::get_for_releases_many(&db, &readable).map_err(crate::plugins::runtime_error)
-    })?;
-    let mut table = luau::OwnedTable::with_capacity(0, labels.len());
-    for (release_id, labels) in labels {
-        table.set_key(
-            luau::Value::from(release_id.0),
-            luau::Value::TableData(label_release_array(labels)),
-        );
-    }
-    frame.returns.write(luau::Value::TableData(table))
+    Ok(luau::ScheduledFuture::new(async move {
+        let labels = {
+            let db = STATE.db.read().await;
+            let readable = ids
+                .into_iter()
+                .filter(|id| can_read_entity(&db, principal.as_ref(), *id).unwrap_or(false))
+                .collect::<Vec<_>>();
+            db::labels::get_for_releases_many(&db, &readable).map_err(crate::plugins::runtime_error)
+        }?;
+        let mut table = luau::OwnedTable::with_capacity(0, labels.len());
+        for (release_id, labels) in labels {
+            table.set_key(
+                luau::Value::from(release_id.0),
+                luau::Value::TableData(label_release_array(labels)),
+            );
+        }
+        Ok(luau::Value::TableData(table))
+    }))
 }
 
-fn get_releases_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+fn get_releases_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let label_id = DbId(require_positive_id(
         frame.args.read_named("label_id")?,
         "label_id",
     )?);
-    let release_ids = futures::executor::block_on(async {
-        let db = STATE.db.read().await;
-        db::labels::get_releases(&db, label_id).map_err(crate::plugins::runtime_error)
-    })?;
-    frame
-        .returns
-        .write(luau::Value::TableData(id_array(release_ids)))
+    Ok(luau::ScheduledFuture::new(async move {
+        let release_ids = {
+            let db = STATE.db.read().await;
+            db::labels::get_releases(&db, label_id).map_err(crate::plugins::runtime_error)
+        }?;
+        Ok(luau::Value::TableData(id_array(release_ids)))
+    }))
 }
 
-fn get_releases_many_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
+fn get_releases_many_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("label_ids")?;
     let ids = parse_db_ids(frame.vm, &ids_table)?;
-    let release_ids = futures::executor::block_on(async {
-        let db = STATE.db.read().await;
-        db::labels::get_releases_many(&db, &ids).map_err(crate::plugins::runtime_error)
-    })?;
-    let mut table = luau::OwnedTable::with_capacity(0, release_ids.len());
-    for (label_id, ids) in release_ids {
-        table.set_key(
-            luau::Value::from(label_id.0),
-            luau::Value::TableData(id_array(ids)),
-        );
-    }
-    frame.returns.write(luau::Value::TableData(table))
+    Ok(luau::ScheduledFuture::new(async move {
+        let release_ids = {
+            let db = STATE.db.read().await;
+            db::labels::get_releases_many(&db, &ids).map_err(crate::plugins::runtime_error)
+        }?;
+        let mut table = luau::OwnedTable::with_capacity(0, release_ids.len());
+        for (label_id, ids) in release_ids {
+            table.set_key(
+                luau::Value::from(label_id.0),
+                luau::Value::TableData(id_array(ids)),
+            );
+        }
+        Ok(luau::Value::TableData(table))
+    }))
 }
 
 #[derive(Clone)]
@@ -538,21 +557,21 @@ fn module_descriptor() -> ModuleDescriptor {
                 description: None,
                 params: vec![param("request", LabelResolveRequest::luau_type())],
                 returns: vec![i64::luau_type()],
-                yields: false,
+                yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["get_by_id"],
                 description: None,
                 params: vec![param("label_id", i64::luau_type())],
                 returns: vec![Option::<LabelInfo>::luau_type()],
-                yields: false,
+                yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["get_for_release"],
                 description: None,
                 params: vec![param("release_id", i64::luau_type())],
                 returns: vec![Vec::<LabelForReleaseInfo>::luau_type()],
-                yields: false,
+                yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["get_for_releases_many"],
@@ -562,21 +581,21 @@ fn module_descriptor() -> ModuleDescriptor {
                     i64::luau_type(),
                     Vec::<LabelForReleaseInfo>::luau_type(),
                 )],
-                yields: false,
+                yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["get_releases"],
                 description: None,
                 params: vec![param("label_id", i64::luau_type())],
                 returns: vec![Vec::<i64>::luau_type()],
-                yields: false,
+                yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["get_releases_many"],
                 description: None,
                 params: vec![param("label_ids", Vec::<i64>::luau_type())],
                 returns: vec![LuauType::map(i64::luau_type(), Vec::<i64>::luau_type())],
-                yields: false,
+                yields: true,
             },
         ],
     }
