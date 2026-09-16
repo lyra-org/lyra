@@ -249,12 +249,12 @@ fn get_parents_callback(
             db::genres::get_parents(&db, DbId(genre_id)).map_err(crate::plugins::runtime_error)
         }?;
 
-        Ok(harmony_luau::serializable_to_luau_owned(
+        harmony_luau::serializable_to_luau_owned(
             genres
                 .into_iter()
                 .map(GenreRecord::from)
                 .collect::<Vec<_>>(),
-        )?)
+        )
     }))
 }
 
@@ -271,12 +271,12 @@ fn get_children_callback(
             db::genres::get_children(&db, DbId(genre_id)).map_err(crate::plugins::runtime_error)
         }?;
 
-        Ok(harmony_luau::serializable_to_luau_owned(
+        harmony_luau::serializable_to_luau_owned(
             genres
                 .into_iter()
                 .map(GenreRecord::from)
                 .collect::<Vec<_>>(),
-        )?)
+        )
     }))
 }
 
@@ -293,9 +293,9 @@ fn get_releases_callback(
             db::genres::get_releases(&db, DbId(genre_id)).map_err(crate::plugins::runtime_error)
         }?;
 
-        Ok(harmony_luau::serializable_to_luau_owned(
+        harmony_luau::serializable_to_luau_owned(
             release_ids.into_iter().map(|id| id.0).collect::<Vec<_>>(),
-        )?)
+        )
     }))
 }
 
@@ -345,12 +345,12 @@ fn get_for_release_callback(
                 .map_err(crate::plugins::runtime_error)
         }?;
 
-        Ok(harmony_luau::serializable_to_luau_owned(
+        harmony_luau::serializable_to_luau_owned(
             genres
                 .into_iter()
                 .map(GenreRecord::from)
                 .collect::<Vec<_>>(),
-        )?)
+        )
     }))
 }
 
