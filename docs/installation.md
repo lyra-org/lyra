@@ -9,6 +9,7 @@ services:
   lyra:
     image: registry.lyra.pub/lyra/lyra:latest
     restart: unless-stopped
+    # user: "1000:1000" # Bind mounts: see permissions below.
     ports:
       - "4746:4746"
     volumes:
@@ -29,7 +30,24 @@ docker compose up -d
 
 Your server is now running at `http://localhost:4746`. Its data is saved in the `lyra-data` Docker volume, and installed plugins persist in `lyra-plugins`.
 
-To use NAS or host folders, replace the volume names with their absolute paths, keeping each container destination mounted separately.
+Fresh named volumes need no permission setup. Music is mounted read-only.
+
+### Storage permissions
+
+Lyra runs as `1000:1000`. To use bind mounts, create host folders and replace the volume names with their absolute paths.
+
+- **Without user namespaces:** set `user:` to the host owner’s UID:GID.
+- **Rootless Docker:** use `user: "0:0"` for folders owned by the daemon’s host user, or grant access to the mapped UID:GID.
+
+To restore default storage ownership:
+
+```sh
+docker compose stop
+docker compose run --rm --no-deps --user 0:0 --entrypoint chown lyra -R 1000:1000 /data /plugins
+docker compose up -d
+```
+
+On bind mounts, this changes host ownership to the mapped IDs.
 
 ## 2. Add your music
 
