@@ -131,7 +131,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=ffmpeg /usr/local/lib/lib*.so* /usr/local/lib/
 RUN ldconfig
 
-RUN useradd -r -s /bin/false lyra
+RUN groupadd -g 1000 lyra \
+    && useradd -u 1000 -g 1000 -M -s /usr/sbin/nologin lyra
 
 WORKDIR /
 
