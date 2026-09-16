@@ -2,7 +2,7 @@
 
 ## 1. Start Lyra
 
-You’ll need Docker Compose installed. Create a folder for Lyra and save this as `compose.yaml`, replacing `/path/to/music` with your music folder’s full path:
+Install Docker Compose and save this as `compose.yaml`. Replace `/path/to/music` with your music folder’s absolute path:
 
 ```yaml
 services:
@@ -22,13 +22,9 @@ volumes:
   lyra-plugins:
 ```
 
-From that folder, run:
-
 ```sh
 docker compose up -d
 ```
-
-Your server is now running at `http://localhost:4746`. Its data is saved in the `lyra-data` Docker volume, and installed plugins persist in `lyra-plugins`.
 
 Fresh named volumes need no permission setup. Music is mounted read-only.
 
@@ -53,23 +49,19 @@ On bind mounts, this changes host ownership to the mapped IDs.
 
 Open [http://localhost:4746](http://localhost:4746) and create an account. The first account is the administrator.
 
-Install any plugins you want, then add a library. Use `/music` as the path: that is where Docker makes your music folder available to Lyra.
+[Install plugins](plugin-repositories.md), then add a library with `/music` as its path.
 
 If Lyra runs on another computer, replace `localhost` with its address.
 
 ## Optional: use a custom web interface
 
-To use your own web interface instead of the bundled one, put its built files (including `index.html`) in a `static` folder beside `compose.yaml`. Add this block to the `lyra` service:
+Put the built frontend in `./static`. Set `LYRA_STATIC_DIR` and append the mount to the `lyra` service:
 
 ```yaml
     environment:
       LYRA_STATIC_DIR: /static
-```
-
-Add this line under `volumes`, leaving the existing data, plugins, and music mounts in place:
-
-```yaml
+    volumes:
       - ./static:/static:ro
 ```
 
-Run `docker compose up -d` again, then open `http://localhost:4746` in your browser.
+Apply with `docker compose up -d`.

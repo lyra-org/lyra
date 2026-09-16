@@ -1,6 +1,6 @@
 # Configuration
 
-Lyra works with its default settings. You can skip this page unless you want to change them.
+Configuration is optional.
 
 ## Use a configuration file
 
@@ -36,8 +36,6 @@ This clears all saved server settings. It does not remove values from `config.js
 
 ## Advanced reference
 
-The details below are for custom deployments and API clients.
-
 ### File loading and defaults
 
 - Outside Docker, Lyra searches for `config.json` in the working directory, beside the binary, and in the source tree. `LYRA_CONFIG_PATH` selects an exact file; it must exist.
@@ -57,9 +55,7 @@ The details below are for custom deployments and API clients.
 | `LYRA_PLUGINS_DIR` | `./plugins` | Directory plugins are loaded from |
 | `LYRA_STATIC_DIR` | searched | Directory for static web assets |
 
-Docker stores data in `/data` and plugins in `/plugins`. If you change either path, update its volume mount too.
-
-Bundled web files live at `/usr/share/lyra/web` and update with the image. To serve your own files, see [custom web interface](installation.md#optional-use-a-custom-web-interface).
+Docker uses `/data` and `/plugins`; update their mounts if you change these paths. For a frontend override, see [custom web interface](installation.md#optional-use-a-custom-web-interface).
 
 ### Settings API
 
@@ -75,13 +71,7 @@ All three return the settings view. It includes `boot` for active startup paths 
 
 ### Full configuration example
 
-Copy [`config.example.json`](../config.example.json) to `config.json`:
-
-```sh
-cp config.example.json config.json
-```
-
-Keep only the settings you want to control from the file; omitted settings use their saved values or defaults.
+Copy [`config.example.json`](../config.example.json) to `config.json`, keeping only your overrides.
 
 - `published_url` accepts a public HTTP or HTTPS origin, such as `https://music.example.com`.
 - `covers_path` is relative to the data directory. `db.path` is relative to `LYRA_DB_DIR`, or the data directory when unset.
