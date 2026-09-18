@@ -694,6 +694,48 @@ mod tests {
     }
 
     #[test]
+    fn sync_entry_group_preserves_disc_directories_for_metadata_grouping() -> anyhow::Result<()> {
+        let root = temp_path("disc-group");
+        let album = root.join("album");
+        let discs = [album.join("Disc 1"), album.join("Disc 2")];
+        for disc in &discs {
+            fs::create_dir_all(disc)?;
+            fs::write(disc.join("01.mp3"), b"track-one")?;
+            fs::write(disc.join("02.mp3"), b"track-two")?;
+        }
+
+        let mut db = new_db()?;
+        let library = new_library(&mut db, &root)?;
+        let plan = prepare_entry_scan_plan(&library, Vec::new())?;
+        assert_eq!(plan.groups.len(), 1);
+        let mut altered = Vec::new();
+        for group in plan.groups {
+            altered.extend(sync_entry_group(&mut db, &library, group.entries)?.altered);
+        }
+
+        let entries = load_existing(&db, library.db_id.unwrap())?;
+        for disc in &discs {
+            assert!(entries.iter().any(|entry| &entry.full_path == disc));
+        }
+        let groups = crate::services::metadata::ingestion::group_entries(
+            &db,
+            library.db_id.unwrap(),
+            altered,
+        )?;
+        assert_eq!(groups.len(), 1, "disc tracks must share one metadata group");
+        assert_eq!(
+            groups[0]
+                .iter()
+                .filter(|entry| entry.kind == EntryKind::File)
+                .count(),
+            4,
+        );
+
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
     fn sync_entry_group_defers_missing_entry_prune() -> anyhow::Result<()> {
         let root = temp_path("group-prune");
         let album_a = root.join("album-a");
