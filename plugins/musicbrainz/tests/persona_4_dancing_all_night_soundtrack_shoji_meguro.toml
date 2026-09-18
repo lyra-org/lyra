@@ -2,8 +2,8 @@ plugin = "musicbrainz"
 
 [library]
 directory = "."
-language = "jp"
-country = "jpn"
+language = "jpn"
+country = "JP"
 
 [[raw_tags]]
 file_path = "Persona 4 Dancing All Night/disc 1/24 Dance Hymn of the Soul (Disco in Velvet Room).flac"
