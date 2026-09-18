@@ -198,20 +198,23 @@ fn group_entries_by_source_dir(library_root: &Path, entries: Vec<Entry>) -> Vec<
     files_by_source_dir
         .into_iter()
         .map(|(source_dir, mut files)| {
-            let mut entries = Vec::new();
-            let mut ancestors = Vec::new();
-            let mut current = Some(source_dir.as_path());
-            while let Some(path) = current {
-                if let Some(dir) = dirs_by_path.get(path) {
-                    ancestors.push(dir.clone());
+            let mut ancestors = BTreeMap::new();
+            for file in &files {
+                let mut current = file.full_path.parent();
+                while let Some(path) = current {
+                    if ancestors.contains_key(path) {
+                        break;
+                    }
+                    if let Some(dir) = dirs_by_path.get(path) {
+                        ancestors.insert(path.to_path_buf(), dir.clone());
+                    }
+                    if path == library_root {
+                        break;
+                    }
+                    current = path.parent();
                 }
-                if path == library_root {
-                    break;
-                }
-                current = path.parent();
             }
-            ancestors.reverse();
-            entries.extend(ancestors);
+            let mut entries = ancestors.into_values().collect::<Vec<_>>();
             entries.append(&mut files);
             ScannedEntryGroup {
                 source_dir,
