@@ -19,6 +19,7 @@ use crate::plugins::{
     chromaprint,
     covers,
     datastore,
+    editions,
     entities,
     entries,
     favorites,
@@ -91,6 +92,7 @@ pub(crate) fn module_specs() -> Vec<ModuleSpec> {
         covers::module_spec(),
         harmony_crypt::module_spec(),
         datastore::module_spec(),
+        editions::module_spec(),
         entities::module_spec(),
         entries::module_spec(),
         favorites::module_spec(),
@@ -204,6 +206,11 @@ fn surfaces() -> &'static [Surface] {
             "lyra/datastore",
             datastore::get_module,
             datastore::render_luau_definition
+        ),
+        surface!(
+            "lyra/editions",
+            editions::get_module,
+            editions::render_luau_definition
         ),
         surface!(
             "lyra/metadata",

@@ -21,6 +21,7 @@ pub(crate) mod datastore;
 pub(crate) mod db;
 #[cfg(feature = "docgen")]
 pub(crate) mod docs;
+pub(crate) mod editions;
 pub(crate) mod entities;
 pub(crate) mod entries;
 pub(crate) mod executor;
