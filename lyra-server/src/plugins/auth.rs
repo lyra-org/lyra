@@ -239,11 +239,10 @@ fn resolve_auth_callback(
     let bearer: Option<String> = frame.args.read_named("bearer")?;
     let dispatch_auth = frame.context.caller.get::<DispatchAuth>().ok();
     Ok(luau::ScheduledFuture::new(async move {
-        let resolved = resolve_auth_from_bearer(bearer.as_deref())
-            .await
-            .map_err(crate::plugins::runtime_error)?;
-        let Some(resolved) = resolved else {
-            return Ok(luau::Value::Nil);
+        let resolved = match resolve_auth_from_bearer(bearer.as_deref()).await {
+            Ok(Some(resolved)) => resolved,
+            Ok(None) | Err(AuthError::SessionExpired) => return Ok(luau::Value::Nil),
+            Err(err) => return Err(crate::plugins::runtime_error(err)),
         };
         {
             let db = crate::STATE.db.read().await;

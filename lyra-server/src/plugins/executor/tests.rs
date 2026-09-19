@@ -1109,6 +1109,94 @@ fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Result<()
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn plugin_executor_treats_expired_session_as_unauthenticated() -> Result<()> {
+    let _guard = crate::testing::runtime_test_lock().await;
+    crate::testing::init_default_test_state()?;
+    let mut config = crate::STATE.config().as_ref().clone();
+    config.auth.enabled = true;
+    crate::testing::publish_config(config);
+
+    let (token, session_id) = {
+        let user_id = {
+            let mut db = crate::STATE.db.write().await;
+            crate::db::users::create(
+                &mut db,
+                &crate::plugins::db::test_db::test_user("expired-plugin-session")?,
+            )?
+        };
+        let session =
+            crate::services::auth::sessions::create_session_for_user(user_id, Default::default())
+                .await?;
+        let db = crate::STATE.db.read().await;
+        let (_, _, session_id) = crate::db::users::find_by_session_token_hash(
+            &db,
+            &crate::services::auth::hash_secret(&session.token),
+        )?
+        .context("created session")?;
+        (session.token, session_id)
+    };
+
+    let _ =
+        crate::plugins::api::install(axum::Router::new(), std::collections::HashSet::new()).await?;
+    let runtime = runtime_with_scopes(&["lyra.api", "lyra.auth"])?;
+    runtime.run_plugin_source(
+        "demo",
+        "init.luau",
+        &br#"
+            local api = require("@lyra/api")
+            local auth = require("@lyra/auth")
+
+            api.get("/protected", function(ctx)
+                local resolved = auth.resolve_auth(ctx.request.query.api_key[1])
+                if resolved == nil then
+                    return api.response.empty(401)
+                end
+                return api.response.empty(204)
+            end, "public")
+        "#[..],
+    )?;
+    let handler_id = crate::plugins::api::tests::registered_handler("GET", "/protected")
+        .await
+        .context("registered protected handler")?;
+    let request = || ApiHandlerRequest {
+        handler_id,
+        plugin_id: "demo".to_string(),
+        method: "GET".to_string(),
+        path: "/protected".to_string(),
+        headers: Vec::new(),
+        query: HashMap::from([("api_key".to_string(), vec![token.clone()])]),
+        params: HashMap::new(),
+        body: Vec::new(),
+        auth: None,
+        client_key: None,
+    };
+    let response = runtime.dispatch_api_handler(request())?;
+    assert_eq!(response.status, 204);
+    assert!(response.principal.is_some());
+
+    crate::STATE.db.write().await.exec_mut(
+        agdb::QueryBuilder::insert()
+            .values_uniform([("expires_at", crate::db::users::now_secs() - 1).into()])
+            .ids(session_id)
+            .query(),
+    )?;
+    let response = runtime.dispatch_api_handler(request())?;
+    assert_eq!(response.status, 401);
+    assert!(response.principal.is_none());
+    {
+        let db = crate::STATE.db.read().await;
+        assert!(
+            crate::db::users::find_by_session_token_hash(
+                &db,
+                &crate::services::auth::hash_secret(&token),
+            )?
+            .is_none()
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn plugin_executor_dispatches_registered_websocket_handler() -> Result<()> {
     // api::install resets the shared API route registry; serialize with the

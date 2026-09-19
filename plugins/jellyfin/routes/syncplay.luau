@@ -689,7 +689,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 			end
 		end
 		return api.response.json(200, result)
-	end, nil, true)
+	end, "public", true)
 
 	api.get(P .. "/SyncPlay/{id}", function(ctx: ApiContext)
 		local principal = session.require_jellyfin_principal(ctx)
@@ -707,7 +707,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 			return responses.not_found("syncplay group not found")
 		end
 		return api.response.json(200, syncplay_group_info(group))
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/New", function(ctx: ApiContext)
 		local principal = session.require_jellyfin_principal(ctx)
@@ -724,7 +724,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		local group_name = if type(body.GroupName) == "string" then requests.trim(body.GroupName :: string) else nil
 		local group = syncplay_new_group(entry :: SessionEntry, group_name)
 		return api.response.json(200, syncplay_group_info(group))
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/Join", function(ctx: ApiContext)
 		local principal = session.require_jellyfin_principal(ctx)
@@ -789,7 +789,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 			end
 		end
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/Leave", function(ctx: ApiContext)
 		local principal = session.require_jellyfin_principal(ctx)
@@ -803,7 +803,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		end
 		syncplay_leave_entry(entry :: SessionEntry, true)
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/SetNewQueue", function(ctx: ApiContext)
 		local principal, entry, group, group_err = syncplay_require_group(ctx)
@@ -829,7 +829,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		syncplay_broadcast_queue_update(group_value, entry :: SessionEntry, "NewPlaylist")
 		syncplay_broadcast_state(group_value, entry :: SessionEntry, "Play")
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/SetPlaylistItem", function(ctx: ApiContext)
 		local _principal, entry, group, group_err = syncplay_require_group(ctx)
@@ -855,7 +855,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 			syncplay_broadcast_state(group_value, entry :: SessionEntry, "SetPlaylistItem")
 		end
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/RemoveFromPlaylist", function(ctx: ApiContext)
 		local _principal, entry, group, group_err = syncplay_require_group(ctx)
@@ -926,7 +926,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 			syncplay_broadcast_state(group_value, entry :: SessionEntry, "Stop")
 		end
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/MovePlaylistItem", function(ctx: ApiContext)
 		local _principal, entry, group, group_err = syncplay_require_group(ctx)
@@ -957,7 +957,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		end
 		syncplay_broadcast_queue_update(group_value, entry :: SessionEntry, "MoveItem")
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/Queue", function(ctx: ApiContext)
 		local principal, entry, group, group_err = syncplay_require_group(ctx)
@@ -989,7 +989,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 			if mode == "QueueNext" then "QueueNext" else "Queue"
 		)
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/Unpause", function(ctx: ApiContext)
 		local _principal, entry, group, group_err = syncplay_require_group(ctx)
@@ -1010,7 +1010,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		)
 		syncplay_broadcast_state(group_value, entry :: SessionEntry, "Unpause")
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/Pause", function(ctx: ApiContext)
 		local _principal, entry, group, group_err = syncplay_require_group(ctx)
@@ -1024,7 +1024,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		syncplay_broadcast_command(group_value, entry :: SessionEntry, "all", "Pause", group_value.position_ticks, nil)
 		syncplay_broadcast_state(group_value, entry :: SessionEntry, "Pause")
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/Stop", function(ctx: ApiContext)
 		local _principal, entry, group, group_err = syncplay_require_group(ctx)
@@ -1039,7 +1039,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		syncplay_broadcast_command(group_value, entry :: SessionEntry, "all", "Stop", group_value.position_ticks, nil)
 		syncplay_broadcast_state(group_value, entry :: SessionEntry, "Stop")
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/Seek", function(ctx: ApiContext)
 		local _principal, entry, group, group_err = syncplay_require_group(ctx)
@@ -1058,7 +1058,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		syncplay_broadcast_command(group_value, entry :: SessionEntry, "all", "Seek", group_value.position_ticks, nil)
 		syncplay_broadcast_state(group_value, entry :: SessionEntry, "Seek")
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/Buffering", function(ctx: ApiContext)
 		local _principal, entry, group, group_err = syncplay_require_group(ctx)
@@ -1093,7 +1093,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		group_value.state = "Waiting"
 		syncplay_broadcast_state(group_value, entry :: SessionEntry, "Buffer")
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/Ready", function(ctx: ApiContext)
 		local _principal, entry, group, group_err = syncplay_require_group(ctx)
@@ -1133,7 +1133,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		end
 		syncplay_transition_if_ready(group_value, entry :: SessionEntry, is_playing, when)
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/SetIgnoreWait", function(ctx: ApiContext)
 		local _principal, entry, group, group_err = syncplay_require_group(ctx)
@@ -1151,7 +1151,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 			syncplay_transition_if_ready(group_value, entry :: SessionEntry, nil, nil)
 		end
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/NextItem", function(ctx: ApiContext)
 		local _principal, entry, group, group_err = syncplay_require_group(ctx)
@@ -1185,7 +1185,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		syncplay_broadcast_queue_update(group_value, entry :: SessionEntry, "NextItem")
 		syncplay_broadcast_state(group_value, entry :: SessionEntry, "NextItem")
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/PreviousItem", function(ctx: ApiContext)
 		local _principal, entry, group, group_err = syncplay_require_group(ctx)
@@ -1219,7 +1219,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		syncplay_broadcast_queue_update(group_value, entry :: SessionEntry, "PreviousItem")
 		syncplay_broadcast_state(group_value, entry :: SessionEntry, "PreviousItem")
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/SetRepeatMode", function(ctx: ApiContext)
 		local _principal, entry, group, group_err = syncplay_require_group(ctx)
@@ -1232,7 +1232,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		group_value.repeat_mode = syncplay_enum(body.Mode, SYNCPLAY_REPEAT_MODES, group_value.repeat_mode)
 		syncplay_broadcast_queue_update(group_value, entry :: SessionEntry, "RepeatMode")
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/SetShuffleMode", function(ctx: ApiContext)
 		local _principal, entry, group, group_err = syncplay_require_group(ctx)
@@ -1245,7 +1245,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 		group_value.shuffle_mode = syncplay_enum(body.Mode, SYNCPLAY_SHUFFLE_MODES, group_value.shuffle_mode)
 		syncplay_broadcast_queue_update(group_value, entry :: SessionEntry, "ShuffleMode")
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 
 	api.post(P .. "/SyncPlay/Ping", function(ctx: ApiContext)
 		local _principal, entry, group, group_err = syncplay_require_group(ctx)
@@ -1259,7 +1259,7 @@ function module.register(session_entries: { [string]: SessionEntry }, owned_sess
 			participant.ping = syncplay_number(body.Ping, participant.ping) or participant.ping
 		end
 		return api.response.empty(204)
-	end, nil, true)
+	end, "public", true)
 end
 
 return module
