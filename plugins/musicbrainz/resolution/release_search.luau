@@ -80,6 +80,8 @@ export type ReleaseContext = {
 	tracks: { LocalTrack },
 	library: LookupHintLibrary?,
 	library_id: number?,
+	media_formats: { string }?,
+	barcode: string?,
 	ids: ReleaseIds?,
 	external_ids: metadata.ExternalIdsByProvider?,
 	[string]: JsonValue,
@@ -124,7 +126,8 @@ export type SearchDeps = {
 		string?,
 		ArtistIdSet?,
 		{ LocalTrack }?,
-		number?
+		number?,
+		track_helpers.EditionHints?
 	) -> Release?,
 	release_matches_artist_ids: (Release, ArtistIdSet?) -> boolean,
 	process_release_via_group: (
@@ -300,6 +303,7 @@ local function normalize_release_medium_list(raw_media: { JsonValue }?): { Relea
 			end
 			table.insert(media, {
 				position = json_number_field(medium, "position"),
+				format = json_string_field(medium, "format"),
 				["track-count"] = json_number_field(medium, "track-count"),
 				tracks = tracks,
 			})

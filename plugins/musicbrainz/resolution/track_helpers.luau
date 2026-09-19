@@ -84,8 +84,14 @@ export type ReleaseMediumTrack = {
 	["artist-credit"]: { ReleaseArtistCredit }?,
 }
 
+export type EditionHints = {
+	media_formats: { string }?,
+	barcode: string?,
+}
+
 export type ReleaseMedium = {
 	position: number?,
+	format: string?,
 	["track-count"]: number?,
 	tracks: { ReleaseMediumTrack }?,
 }

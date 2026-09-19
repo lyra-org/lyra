@@ -1,0 +1,412 @@
+plugin = "musicbrainz"
+
+[library]
+language = "jpn"
+country = "JP"
+
+directory = "."
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/1.01. 夏の肖像.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "夏の肖像"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 1
+disc_total = 2
+track = 1
+track_total = 25
+duration_ms = 325787
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/1.02. 都落ち.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "都落ち"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 1
+disc_total = 2
+track = 2
+track_total = 25
+duration_ms = 250168
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/1.03. ブレーメン.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "ブレーメン"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 1
+disc_total = 2
+track = 3
+track_total = 25
+duration_ms = 272744
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/1.04. チノカテ.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "チノカテ"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 1
+disc_total = 2
+track = 4
+track_total = 25
+duration_ms = 247667
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/1.05. 雪国.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "雪国"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 1
+disc_total = 2
+track = 5
+track_total = 25
+duration_ms = 287646
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/1.06. 月に吠える.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "月に吠える"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 1
+disc_total = 2
+track = 6
+track_total = 25
+duration_ms = 266151
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/1.07. 451.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "451"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 1
+disc_total = 2
+track = 7
+track_total = 25
+duration_ms = 209564
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/1.08. パドドゥ.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "パドドゥ"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 1
+disc_total = 2
+track = 8
+track_total = 25
+duration_ms = 262188
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/1.09. 又三郎.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "又三郎"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 1
+disc_total = 2
+track = 9
+track_total = 25
+duration_ms = 229360
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/1.10. 靴の花火.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "靴の花火"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 1
+disc_total = 2
+track = 10
+track_total = 25
+duration_ms = 305674
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/1.11. 老人と海.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "老人と海"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 1
+disc_total = 2
+track = 11
+track_total = 25
+duration_ms = 255312
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/1.12. さよならモルテン.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "さよならモルテン"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 1
+disc_total = 2
+track = 12
+track_total = 25
+duration_ms = 295377
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/1.13. いさな.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "いさな"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 1
+disc_total = 2
+track = 13
+track_total = 25
+duration_ms = 264204
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/1.14. 左右盲.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "左右盲"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 1
+disc_total = 2
+track = 14
+track_total = 25
+duration_ms = 267359
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/1.15. アルジャーノン.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "アルジャーノン"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 1
+disc_total = 2
+track = 15
+track_total = 25
+duration_ms = 253539
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/2.01. 第一夜.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "第一夜"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 2
+disc_total = 2
+track = 1
+track_total = 25
+duration_ms = 260906
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/2.02. 第二夜.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "第二夜"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 2
+disc_total = 2
+track = 2
+track_total = 25
+duration_ms = 253567
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/2.03. 第三夜.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "第三夜"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 2
+disc_total = 2
+track = 3
+track_total = 25
+duration_ms = 231812
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/2.04. 第四夜.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "第四夜"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 2
+disc_total = 2
+track = 4
+track_total = 25
+duration_ms = 202296
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/2.05. 第五夜.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "第五夜"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 2
+disc_total = 2
+track = 5
+track_total = 25
+duration_ms = 220779
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/2.06. 第六夜.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "第六夜"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 2
+disc_total = 2
+track = 6
+track_total = 25
+duration_ms = 146588
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/2.07. 第七夜.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "第七夜"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 2
+disc_total = 2
+track = 7
+track_total = 25
+duration_ms = 193877
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/2.08. 第八夜.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "第八夜"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 2
+disc_total = 2
+track = 8
+track_total = 25
+duration_ms = 181989
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/2.09. 第九夜.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "第九夜"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 2
+disc_total = 2
+track = 9
+track_total = 25
+duration_ms = 143230
+
+[[raw_tags]]
+file_path = "ヨルシカ - 幻燈 (2023-04-05) [WEB FLAC]/2.10. 第十夜.flac"
+album = "幻燈"
+album_artists = ["ヨルシカ"]
+artists = ["ヨルシカ"]
+title = "第十夜"
+date = "2023-04-05"
+label = "UNIVERSAL MUSIC LLC"
+media = "WEB"
+barcode = "199957588430"
+disc = 2
+disc_total = 2
+track = 10
+track_total = 25
+duration_ms = 228705
+[expect.release]
+ids = { release_group_id = "88ee1a12-f362-4737-b7f4-b2f0b079e218", release_id = "2e6921c0-cabb-4d16-aba8-0fa9bb8794e9" }
+fields = { release_title = "幻燈", release_date = "2026-07-01" }
+
+[expect.artists."dfc6a151-3792-4695-8fda-f64723eaa788"]
+fields = { artist_name = "ヨルシカ", sort_name = "Yorushika" }
