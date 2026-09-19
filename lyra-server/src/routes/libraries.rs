@@ -368,6 +368,43 @@ async fn update_library(
     Ok(Json(LibraryResponse::from_library(stored, true)))
 }
 
+async fn delete_library(
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let principal = require_manage_libraries_on(&headers, &id).await?;
+    let _guard = crate::services::libraries::library_mutation_guard().await;
+    if crate::services::libraries::library_has_active_run(&id).await? {
+        return Err(AppError::conflict(
+            "Wait for the library sync or refresh to finish before deleting it.",
+        ));
+    }
+    let track_ids = {
+        let mut db = STATE.db.write().await;
+        let library_db_id =
+            db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
+        let library =
+            db::libraries::get_by_id(&*db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
+        db.transaction_mut(|t| -> Result<_, AppError> {
+            if !principal.permissions.contains(&Permission::Admin)
+                && !db::libraries::user_has_access_in_txn(t, principal.user_db_id, library_db_id)?
+            {
+                return Err(library_not_found(&id));
+            }
+            Ok(db::libraries::delete(t, &library)?)
+        })?
+    };
+    crate::services::hls::state::teardown_hls_jobs_for_tracks(&track_ids).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(feature = "docgen")]
+fn delete_library_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Delete library").description(
+        "Deletes the library and its exclusive indexed media, preserving files on disk and media shared with other libraries. Requires ManageLibraries and library access. Returns 409 during an active sync or refresh."
+    ).response::<204, ()>()
+}
+
 #[cfg(feature = "docgen")]
 fn create_library_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Create library")
@@ -595,7 +632,7 @@ pub fn library_routes() -> Router {
 
     Router::new()
         .route("/", get(list_libraries).post(create_library))
-        .route("/{id}", patch(update_library))
+        .route("/{id}", patch(update_library).delete(delete_library))
         .route("/{id}/refresh", post(refresh_library))
         .route(
             "/{id}/sync",
@@ -623,7 +660,11 @@ pub(crate) fn library_openapi_routes() -> aide::axum::ApiRouter {
             get_with(list_libraries, list_libraries_docs)
                 .post_with(create_library, create_library_docs),
         )
-        .api_route("/{id}", patch_with(update_library, update_library_docs))
+        .api_route(
+            "/{id}",
+            patch_with(update_library, update_library_docs)
+                .delete_with(delete_library, delete_library_docs),
+        )
         .api_route(
             "/{id}/refresh",
             post_with(refresh_library, refresh_library_docs),
@@ -717,6 +758,140 @@ mod tests {
             country: None,
         })
         .await
+    }
+
+    #[tokio::test]
+    async fn delete_library_requires_permission_access_and_an_idle_library() -> anyhow::Result<()> {
+        use axum::response::IntoResponse;
+        let _guard = crate::testing::runtime_test_lock().await;
+        setup_route_test().await?;
+        let (manager, listener, library, run_id) = {
+            let mut db = STATE.db.write().await;
+            let manager = create_user_with_permissions(
+                &mut db,
+                "deleter",
+                vec![Permission::ManageLibraries],
+            )?;
+            let listener = create_user_with_permissions(&mut db, "listener", vec![])?;
+            let library = db.transaction_mut(|t| -> anyhow::Result<_> {
+                Ok(db::libraries::create_with_creator(
+                    t,
+                    library_insert("Delete me", "delete-route"),
+                    manager,
+                )?)
+            })?;
+            let record = db::sync_runs::SyncRunRecord {
+                db_id: None,
+                id: nanoid!(),
+                library_id: library.id.clone(),
+                kind: "library_sync".into(),
+                status: "running".into(),
+                started_at_ms: 1,
+                updated_at_ms: 1,
+                finished_at_ms: None,
+                error: None,
+                cancellation_requested: false,
+                sequence: 1,
+                progress_mode: "indeterminate".into(),
+                total_state: "discovering".into(),
+                completed_units: 0,
+                failed_units: 0,
+                skipped_units: 0,
+                total_units: 0,
+                current_stage: None,
+                current_subject: None,
+                active_units: 0,
+                failure_count: 0,
+            };
+            let run_id = db::sync_runs::create(&mut db, &record)?;
+            (manager, listener, library, run_id)
+        };
+        let manager_session =
+            sessions::create_session_for_user(manager, Default::default()).await?;
+        let listener_session =
+            sessions::create_session_for_user(listener, Default::default()).await?;
+        assert_eq!(
+            delete_library(HeaderMap::new(), Path(library.id.clone()))
+                .await
+                .unwrap_err()
+                .into_response()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            delete_library(
+                bearer_headers(&listener_session.token),
+                Path(library.id.clone())
+            )
+            .await
+            .unwrap_err()
+            .into_response()
+            .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            delete_library(
+                bearer_headers(&manager_session.token),
+                Path(library.id.clone())
+            )
+            .await
+            .unwrap_err()
+            .into_response()
+            .status(),
+            StatusCode::CONFLICT
+        );
+        {
+            let mut db = STATE.db.write().await;
+            db.exec_mut(agdb::QueryBuilder::remove().ids(run_id).query())?;
+            db.transaction_mut(|t| {
+                db::libraries::revoke_access(t, manager, library.db_id.unwrap())
+            })?;
+        }
+        assert_eq!(
+            delete_library(
+                bearer_headers(&manager_session.token),
+                Path(library.id.clone())
+            )
+            .await
+            .unwrap_err()
+            .into_response()
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+        {
+            let mut db = STATE.db.write().await;
+            db.transaction_mut(|t| {
+                db::libraries::grant_access(
+                    t,
+                    manager,
+                    library.db_id.unwrap(),
+                    db::libraries::AccessKind::ReadWrite,
+                )
+            })?;
+        }
+        assert_eq!(
+            delete_library(
+                bearer_headers(&manager_session.token),
+                Path(library.id.clone())
+            )
+            .await
+            .map_err(|e| anyhow!("{e:?}"))?,
+            StatusCode::NO_CONTENT
+        );
+        assert!(
+            start_library_sync(STATE.db.get(), library.clone())
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            delete_library(bearer_headers(&manager_session.token), Path(library.id))
+                .await
+                .unwrap_err()
+                .into_response()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        Ok(())
     }
 
     #[tokio::test]

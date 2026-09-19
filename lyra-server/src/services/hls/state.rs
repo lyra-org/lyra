@@ -209,6 +209,27 @@ pub(crate) async fn teardown_hls_job(job: HlsJob) {
     cleanup_hls_dir(&job.dir_path).await;
 }
 
+pub(crate) async fn teardown_hls_jobs_for_tracks(track_ids: &HashSet<String>) {
+    let removed = {
+        let mut jobs = HLS_JOBS.write().await;
+        let keys: Vec<_> = jobs
+            .keys()
+            .filter(|key| track_ids.contains(key.track_public_id()))
+            .cloned()
+            .collect();
+        keys.into_iter()
+            .filter_map(|key| jobs.remove(&key))
+            .collect::<Vec<_>>()
+    };
+    HLS_SESSIONS
+        .write()
+        .await
+        .retain(|_, session| !track_ids.contains(session.job_key.track_public_id()));
+    for job in removed {
+        teardown_hls_job(job).await;
+    }
+}
+
 pub(crate) async fn teardown_all_hls_jobs() {
     let jobs = {
         let mut jobs = HLS_JOBS.write().await;
@@ -320,6 +341,16 @@ pub(crate) async fn get_or_create_hls_job(
         let create_result = create_hls_job(input_path, job_key).await;
         let replaced_job = match create_result {
             Ok(job) => {
+                let db = crate::STATE.db.read().await;
+                let exists = crate::db::lookup::find_node_id_by_id(&*db, job_key.track_public_id());
+                let source_exists =
+                    crate::db::lookup::find_node_id_by_id(&*db, &job_key.source_public_id);
+                if !matches!(exists, Ok(Some(_))) || !matches!(source_exists, Ok(Some(_))) {
+                    drop(db);
+                    teardown_hls_job(job).await;
+                    finish_hls_job_creation(job_key).await;
+                    return Err(HlsError::JobNotFound);
+                }
                 let mut jobs = HLS_JOBS.write().await;
                 jobs.insert(job_key.clone(), job)
             }
