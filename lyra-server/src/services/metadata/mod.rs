@@ -75,7 +75,7 @@ fn classify_entry_file_kind(entry: &Entry) -> Option<String> {
 pub(crate) fn read_audio_tags(
     path: std::path::PathBuf,
 ) -> anyhow::Result<(Tag, lofty::file::TaggedFile)> {
-    let (tagged_file, vorbis_upc) = read_tagged_file(&path)
+    let (tagged_file, fallbacks) = read_tagged_file(&path)
         .with_context(|| format!("failed to read file: {}", path.display()))?;
 
     let mut tag = tagged_file
@@ -84,17 +84,50 @@ pub(crate) fn read_audio_tags(
         .cloned()
         .ok_or_else(|| anyhow!("no tags found in {}", path.display()))?;
 
-    if let Some(upc) = vorbis_upc
-        && tag.get_string(ItemKey::Barcode).is_none()
-    {
-        tag.insert_text(ItemKey::Barcode, upc);
+    for (key, value) in [
+        (ItemKey::Barcode, fallbacks.barcode),
+        (ItemKey::OriginalMediaType, fallbacks.media),
+    ] {
+        if let Some(value) = value
+            && tag.get_string(key).is_none()
+        {
+            tag.insert_text(key, value);
+        }
     }
 
     Ok((tag, tagged_file))
 }
 
-/// Read `UPC` before conversion to generic `Tag`, which discards it.
-fn read_tagged_file(path: &std::path::Path) -> anyhow::Result<(TaggedFile, Option<String>)> {
+/// Vorbis comments lofty has no `ItemKey` for, so its generic `Tag` discards them.
+#[derive(Default)]
+struct VorbisFallbacks {
+    /// `UPC`, where lofty only maps `BARCODE`.
+    barcode: Option<String>,
+    /// `MEDIATYPE` (Mp3tag, One Tagger) or `SOURCEMEDIA`, where lofty only maps `MEDIA`.
+    media: Option<String>,
+}
+
+impl VorbisFallbacks {
+    fn read(comments: Option<&VorbisComments>) -> Self {
+        let Some(comments) = comments else {
+            return Self::default();
+        };
+        let first = |keys: &[&str]| {
+            keys.iter()
+                .filter_map(|key| comments.get(key))
+                .map(str::trim)
+                .find(|value| !value.is_empty())
+                .map(str::to_string)
+        };
+        Self {
+            barcode: first(&["UPC"]),
+            media: first(&["MEDIATYPE", "SOURCEMEDIA"]),
+        }
+    }
+}
+
+/// Reads Vorbis comment files through their concrete types to keep [`VorbisFallbacks`].
+fn read_tagged_file(path: &std::path::Path) -> anyhow::Result<(TaggedFile, VorbisFallbacks)> {
     let mut probe = Probe::open(path).with_context(|| format!("bad path: {}", path.display()))?;
     if probe.file_type().is_none() {
         probe = probe.guess_file_type()?;
@@ -104,29 +137,21 @@ fn read_tagged_file(path: &std::path::Path) -> anyhow::Result<(TaggedFile, Optio
     match probe.file_type() {
         Some(FileType::Flac) => {
             let file = FlacFile::read_from(&mut probe.into_inner(), options)?;
-            let upc = vorbis_upc(file.vorbis_comments());
-            Ok((file.into(), upc))
+            let fallbacks = VorbisFallbacks::read(file.vorbis_comments());
+            Ok((file.into(), fallbacks))
         }
         Some(FileType::Opus) => {
             let file = OpusFile::read_from(&mut probe.into_inner(), options)?;
-            let upc = vorbis_upc(Some(file.vorbis_comments()));
-            Ok((file.into(), upc))
+            let fallbacks = VorbisFallbacks::read(Some(file.vorbis_comments()));
+            Ok((file.into(), fallbacks))
         }
         Some(FileType::Vorbis) => {
             let file = VorbisFile::read_from(&mut probe.into_inner(), options)?;
-            let upc = vorbis_upc(Some(file.vorbis_comments()));
-            Ok((file.into(), upc))
+            let fallbacks = VorbisFallbacks::read(Some(file.vorbis_comments()));
+            Ok((file.into(), fallbacks))
         }
-        _ => Ok((probe.read()?, None)),
+        _ => Ok((probe.read()?, VorbisFallbacks::default())),
     }
-}
-
-fn vorbis_upc(comments: Option<&VorbisComments>) -> Option<String> {
-    comments?
-        .get("UPC")
-        .map(str::trim)
-        .filter(|upc| !upc.is_empty())
-        .map(str::to_string)
 }
 
 /// Disc/track number+total and duration bypass the mapping — their
@@ -442,4 +467,69 @@ pub(crate) async fn parse_metadata(
     metadata.extend(cue_metadata);
     sort_track_metadata(&mut metadata);
     Ok(ParseMetadataOutput { metadata, skipped })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use lofty::{
+        config::WriteOptions,
+        tag::TagExt,
+    };
+
+    use super::*;
+
+    fn fixture_with_comments(name: &str, comments: &[(&str, &str)]) -> anyhow::Result<PathBuf> {
+        let path = std::env::temp_dir().join(format!("lyra-{name}-{}.flac", std::process::id()));
+        std::fs::copy(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/assets/metadata/integration_track.flac"),
+            &path,
+        )?;
+        let flac = FlacFile::read_from(&mut std::fs::File::open(&path)?, ParseOptions::new())?;
+        let mut vorbis = flac.vorbis_comments().cloned().unwrap_or_default();
+        for (key, value) in comments {
+            vorbis.push((*key).to_string(), (*value).to_string());
+        }
+        vorbis.save_to_path(&path, WriteOptions::default())?;
+        Ok(path)
+    }
+
+    #[test]
+    fn read_audio_tags_falls_back_to_unmapped_vorbis_comments() -> anyhow::Result<()> {
+        let path = fixture_with_comments(
+            "vorbis-fallbacks",
+            &[
+                ("SOURCEMEDIA", "CD"),
+                ("MEDIATYPE", "File"),
+                ("UPC", "0199957588430"),
+            ],
+        )?;
+        let (tag, _) = read_audio_tags(path.clone())?;
+        std::fs::remove_file(&path)?;
+
+        assert_eq!(tag.get_string(ItemKey::OriginalMediaType), Some("File"));
+        assert_eq!(tag.get_string(ItemKey::Barcode), Some("0199957588430"));
+        Ok(())
+    }
+
+    #[test]
+    fn read_audio_tags_prefers_mapped_vorbis_comments() -> anyhow::Result<()> {
+        let path = fixture_with_comments(
+            "vorbis-mapped",
+            &[
+                ("MEDIA", "CD"),
+                ("MEDIATYPE", "File"),
+                ("BARCODE", "4988031554531"),
+                ("UPC", "0199957588430"),
+            ],
+        )?;
+        let (tag, _) = read_audio_tags(path.clone())?;
+        std::fs::remove_file(&path)?;
+
+        assert_eq!(tag.get_string(ItemKey::OriginalMediaType), Some("CD"));
+        assert_eq!(tag.get_string(ItemKey::Barcode), Some("4988031554531"));
+        Ok(())
+    }
 }
