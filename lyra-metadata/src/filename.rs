@@ -214,6 +214,8 @@ mod tests {
             genres: None,
             label: None,
             catalog_number: None,
+            media_formats: Vec::new(),
+            barcode: None,
             sample_rate_hz: None,
             channel_count: None,
             bit_depth: None,

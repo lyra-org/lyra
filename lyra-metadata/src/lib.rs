@@ -6,6 +6,7 @@
 mod artists;
 mod coalesce;
 mod context;
+mod edition;
 mod filename;
 mod path;
 mod year;
@@ -26,6 +27,16 @@ pub use coalesce::coalesce_release_groups;
 pub use context::{
     build_release_context_from_tags,
     build_release_context_from_tags_with_library_root,
+};
+pub use edition::{
+    MediaFormat,
+    barcodes_match,
+    collect_media_formats,
+    media_formats_match,
+    normalize_barcode,
+    parse_media_formats,
+    release_barcode,
+    release_media_formats,
 };
 pub use filename::fill_from_filename;
 pub use path::{
@@ -69,6 +80,10 @@ pub struct RawTrackTags {
     pub genre: Option<String>,
     pub label: Option<String>,
     pub catalog_number: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub barcode: Option<String>,
     pub disc: Option<u32>,
     pub disc_total: Option<u32>,
     pub track: Option<u32>,
@@ -106,6 +121,10 @@ pub struct TrackMetadata {
     pub genres: Option<Vec<String>>,
     pub label: Option<String>,
     pub catalog_number: Option<String>,
+    #[serde(default)]
+    pub media_formats: Vec<MediaFormat>,
+    #[serde(default)]
+    pub barcode: Option<String>,
     pub sample_rate_hz: Option<u32>,
     pub channel_count: Option<u32>,
     pub bit_depth: Option<u32>,
@@ -235,6 +254,12 @@ pub fn process_raw_tags(raw_tags: Vec<RawTrackTags>) -> Vec<TrackMetadata> {
                     Some(t.to_string())
                 }
             }),
+            media_formats: raw
+                .media
+                .as_deref()
+                .map(parse_media_formats)
+                .unwrap_or_default(),
+            barcode: raw.barcode.as_deref().and_then(normalize_barcode),
             sample_rate_hz: raw.sample_rate_hz,
             channel_count: raw.channel_count,
             bit_depth: raw.bit_depth,
@@ -394,6 +419,8 @@ mod tests {
             genre: None,
             label: None,
             catalog_number: None,
+            media: None,
+            barcode: None,
             disc: Some(1),
             disc_total: Some(1),
             track: Some(1),
@@ -432,6 +459,8 @@ mod tests {
             genre: None,
             label: None,
             catalog_number: None,
+            media: None,
+            barcode: None,
             disc: Some(1),
             disc_total: Some(1),
             track: Some(1),
@@ -466,6 +495,8 @@ mod tests {
             genre: None,
             label: None,
             catalog_number: None,
+            media: None,
+            barcode: None,
             disc: Some(1),
             disc_total: Some(1),
             track: Some(1),
@@ -514,6 +545,8 @@ mod tests {
             genre: None,
             label: None,
             catalog_number: None,
+            media: None,
+            barcode: None,
             disc: Some(1),
             disc_total: Some(1),
             track: Some(1),
@@ -576,6 +609,8 @@ mod tests {
             genre: None,
             label: None,
             catalog_number: None,
+            media: None,
+            barcode: None,
             disc: Some(1),
             disc_total: Some(1),
             track: Some(1),
@@ -631,6 +666,8 @@ mod tests {
             genre: None,
             label: None,
             catalog_number: None,
+            media: None,
+            barcode: None,
             disc: Some(1),
             disc_total: Some(1),
             track: Some(2),
@@ -671,6 +708,8 @@ mod tests {
             genre: None,
             label: None,
             catalog_number: None,
+            media: None,
+            barcode: None,
             disc: Some(1),
             disc_total: Some(1),
             track: Some(1),
@@ -700,6 +739,8 @@ mod tests {
             genre: None,
             label: None,
             catalog_number: None,
+            media: None,
+            barcode: None,
             disc: Some(1),
             disc_total: Some(1),
             track: Some(1),
@@ -730,6 +771,8 @@ mod tests {
             genre: None,
             label: None,
             catalog_number: None,
+            media: None,
+            barcode: None,
             disc: Some(1),
             disc_total: Some(1),
             track: Some(1),
@@ -909,6 +952,8 @@ mod tests {
             genres: None,
             label: None,
             catalog_number: None,
+            media_formats: Vec::new(),
+            barcode: None,
             sample_rate_hz: None,
             channel_count: None,
             bit_depth: None,
@@ -1197,6 +1242,8 @@ mod tests {
                 genre: None,
                 label: None,
                 catalog_number: None,
+                media: None,
+                barcode: None,
                 disc: Some(1),
                 disc_total: Some(1),
                 track: Some(1),
@@ -1218,6 +1265,8 @@ mod tests {
                 genre: None,
                 label: None,
                 catalog_number: None,
+                media: None,
+                barcode: None,
                 disc: Some(1),
                 disc_total: Some(1),
                 track: Some(2),

@@ -11,6 +11,8 @@ use crate::{
     artists::normalize_unicode_nfc,
     extract_lookup_hints_from_file_path_with_library_root,
     infer_lookup_hints_from_tracks,
+    release_barcode,
+    release_media_formats,
     year::normalize_release_date,
 };
 
@@ -199,6 +201,15 @@ pub fn build_release_context_from_tags_with_library_root(
 
     if let Some(release_date) = tracks.iter().filter_map(release_date_from_track).max() {
         context["release_date"] = serde_json::json!(release_date);
+    }
+
+    let media_formats =
+        release_media_formats(tracks.iter().map(|track| track.media_formats.as_slice()));
+    if !media_formats.is_empty() {
+        context["media_formats"] = serde_json::json!(media_formats);
+    }
+    if let Some(barcode) = release_barcode(tracks.iter().map(|track| track.barcode.as_deref())) {
+        context["barcode"] = serde_json::json!(barcode);
     }
 
     context

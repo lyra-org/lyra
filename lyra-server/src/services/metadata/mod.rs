@@ -27,9 +27,24 @@ use anyhow::{
     anyhow,
 };
 use lofty::{
-    file::TaggedFileExt,
+    config::ParseOptions,
+    file::{
+        AudioFile,
+        FileType,
+        TaggedFile,
+        TaggedFileExt,
+    },
+    flac::FlacFile,
+    ogg::{
+        OpusFile,
+        VorbisComments,
+        VorbisFile,
+    },
     probe::Probe,
-    tag::Tag,
+    tag::{
+        ItemKey,
+        Tag,
+    },
 };
 use lyra_metadata::normalize_unicode_nfc;
 
@@ -60,18 +75,58 @@ fn classify_entry_file_kind(entry: &Entry) -> Option<String> {
 pub(crate) fn read_audio_tags(
     path: std::path::PathBuf,
 ) -> anyhow::Result<(Tag, lofty::file::TaggedFile)> {
-    let tagged_file = Probe::open(&path)
-        .with_context(|| format!("bad path: {}", path.display()))?
-        .read()
+    let (tagged_file, vorbis_upc) = read_tagged_file(&path)
         .with_context(|| format!("failed to read file: {}", path.display()))?;
 
-    let tag = tagged_file
+    let mut tag = tagged_file
         .primary_tag()
         .or_else(|| tagged_file.first_tag())
         .cloned()
         .ok_or_else(|| anyhow!("no tags found in {}", path.display()))?;
 
+    if let Some(upc) = vorbis_upc
+        && tag.get_string(ItemKey::Barcode).is_none()
+    {
+        tag.insert_text(ItemKey::Barcode, upc);
+    }
+
     Ok((tag, tagged_file))
+}
+
+/// Read `UPC` before conversion to generic `Tag`, which discards it.
+fn read_tagged_file(path: &std::path::Path) -> anyhow::Result<(TaggedFile, Option<String>)> {
+    let mut probe = Probe::open(path).with_context(|| format!("bad path: {}", path.display()))?;
+    if probe.file_type().is_none() {
+        probe = probe.guess_file_type()?;
+    }
+
+    let options = ParseOptions::new();
+    match probe.file_type() {
+        Some(FileType::Flac) => {
+            let file = FlacFile::read_from(&mut probe.into_inner(), options)?;
+            let upc = vorbis_upc(file.vorbis_comments());
+            Ok((file.into(), upc))
+        }
+        Some(FileType::Opus) => {
+            let file = OpusFile::read_from(&mut probe.into_inner(), options)?;
+            let upc = vorbis_upc(Some(file.vorbis_comments()));
+            Ok((file.into(), upc))
+        }
+        Some(FileType::Vorbis) => {
+            let file = VorbisFile::read_from(&mut probe.into_inner(), options)?;
+            let upc = vorbis_upc(Some(file.vorbis_comments()));
+            Ok((file.into(), upc))
+        }
+        _ => Ok((probe.read()?, None)),
+    }
+}
+
+fn vorbis_upc(comments: Option<&VorbisComments>) -> Option<String> {
+    comments?
+        .get("UPC")
+        .map(str::trim)
+        .filter(|upc| !upc.is_empty())
+        .map(str::to_string)
 }
 
 /// Disc/track number+total and duration bypass the mapping — their
@@ -339,6 +394,8 @@ pub(crate) async fn parse_metadata(
             catalog_number: track
                 .catalog_number
                 .map(|value| normalize_unicode_nfc(&value)),
+            media_formats: track.media_formats,
+            barcode: track.barcode,
             source_kind: Some(SOURCE_KIND_EMBEDDED_TAGS.to_string()),
             source_key: Some(build_embedded_source_key(entry_db_id)),
             segment_start_ms: None,

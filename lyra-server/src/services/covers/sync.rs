@@ -977,6 +977,8 @@ mod tests {
             sort_title: None,
             release_type: None,
             release_date: None,
+            media_formats: None,
+            barcode: None,
             locked: None,
             created_at: None,
             ctime: None,

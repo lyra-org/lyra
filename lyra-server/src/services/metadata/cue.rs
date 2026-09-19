@@ -551,6 +551,8 @@ pub(super) async fn parse_cue_metadata_for_entry(
             genres: None,
             label: None,
             catalog_number: None,
+            media_formats: Vec::new(),
+            barcode: None,
             source_kind: Some(SOURCE_KIND_CUE.to_string()),
             source_key: Some(build_cue_source_key(cue_entry_id, track.track_no)),
             segment_start_ms: Some(start_ms),
@@ -670,6 +672,10 @@ pub(super) fn merge_embedded_into_cue_metadata(
     merge_opt(&mut cue.channel_count, &embedded.channel_count);
     merge_opt(&mut cue.bit_depth, &embedded.bit_depth);
     merge_opt(&mut cue.bitrate_bps, &embedded.bitrate_bps);
+    merge_opt(&mut cue.barcode, &embedded.barcode);
+    if !embedded.media_formats.is_empty() {
+        cue.media_formats = embedded.media_formats.clone();
+    }
     for relation in &embedded.artist_relations {
         if !cue
             .artist_relations
@@ -737,6 +743,8 @@ mod tests {
             genres: None,
             label: None,
             catalog_number: None,
+            media_formats: Vec::new(),
+            barcode: None,
             source_kind: None,
             source_key: None,
             segment_start_ms: None,
