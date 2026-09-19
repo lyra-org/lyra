@@ -15,8 +15,8 @@ use serde::{
 };
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TestCase {
-    pub plugin: String,
     #[serde(default)]
     pub run: RunMode,
     pub library: LibraryConfig,

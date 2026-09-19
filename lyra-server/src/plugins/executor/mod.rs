@@ -35,7 +35,6 @@ pub(crate) use self::messages::{
     WebSocketState,
 };
 pub(crate) use self::metadata::dispatch_similar_releases_in_vm;
-pub(crate) use self::modules::plugin_scope_ids_for_test;
 
 use std::{
     cell::RefCell,

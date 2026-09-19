@@ -1,6 +1,4 @@
 # This test is meant to test if the MusicBrainz plugin is capable of prioritizing artists in the same country as the library
-plugin = "musicbrainz"
-
 [library]
 language = "jpn"
 country = "JP"

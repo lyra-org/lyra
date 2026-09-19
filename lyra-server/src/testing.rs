@@ -301,20 +301,60 @@ pub async fn prepare_fixture(
     })
 }
 
-pub async fn exec_plugins(
-    root_path: &Path,
-    plugins_dir: PathBuf,
-    http_module: ModuleSpec,
-    enabled_plugin_id: &str,
-) -> anyhow::Result<()> {
-    let _ = root_path;
-    let isolated_plugins_dir = TempPluginsDir::new(&plugins_dir, enabled_plugin_id)?;
+/// The plugin a test runs against: the nearest directory at or above the test
+/// path that contains a plugin manifest.
+pub struct PluginUnderTest {
+    manifest: harmony_core::plugin::PluginManifest,
+    directory: PathBuf,
+}
+
+impl PluginUnderTest {
+    pub fn locate(test_path: &Path) -> anyhow::Result<Self> {
+        let test_path = test_path
+            .canonicalize()
+            .with_context(|| format!("canonicalize {}", test_path.display()))?;
+        let directory = test_path
+            .ancestors()
+            .find(|dir| {
+                dir.join(harmony_core::plugin::PLUGIN_CONFIG_FILENAME)
+                    .is_file()
+            })
+            .with_context(|| {
+                format!(
+                    "no {} found at or above {}",
+                    harmony_core::plugin::PLUGIN_CONFIG_FILENAME,
+                    test_path.display()
+                )
+            })?;
+        let loaded = harmony_core::plugin::PluginManager::load_plugin_dir(
+            directory,
+            &crate::plugins::module_scope_ids(),
+        )
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+        Ok(Self {
+            manifest: loaded.manifest,
+            directory: loaded.directory,
+        })
+    }
+
+    pub fn id(&self) -> &str {
+        &self.manifest.id
+    }
+
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+}
+
+pub async fn exec_plugins(plugin: &PluginUnderTest, http_module: ModuleSpec) -> anyhow::Result<()> {
+    let isolated = TempPluginsDir::new(plugin)?;
     let server_info = crate::plugins::server::load_server_info().await?;
     let auth_capabilities =
         crate::plugins::auth::AuthCapabilities::from_config(&STATE.config().auth);
     let (runtime, errors) =
         crate::plugins::executor::PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
-            isolated_plugins_dir.path.clone(),
+            isolated.plugins_dir(),
             server_info,
             auth_capabilities,
             STATE.db.get(),
@@ -339,17 +379,21 @@ pub async fn exec_plugins(
 
     let mut db = STATE.db.write().await;
     for mut provider in db::providers::get(&db)? {
-        provider.enabled = provider.provider_id == enabled_plugin_id;
+        provider.enabled = provider.provider_id == plugin.id();
         db::providers::upsert(&mut db, &provider)?;
     }
 
     Ok(())
 }
 
-pub async fn run_luau_plugin_test_file(test_root: &Path, test_path: &Path) -> anyhow::Result<()> {
+/// Runs one `.luau` file as `plugin`, without executing the plugin's entrypoint.
+pub async fn run_luau_plugin_test_file(
+    plugin: &PluginUnderTest,
+    test_path: &Path,
+) -> anyhow::Result<()> {
     let _guard = runtime_test_lock().await;
     initialize_runtime(&LibraryFixtureConfig {
-        directory: test_root.to_path_buf(),
+        directory: plugin.directory.clone(),
         language: None,
         country: None,
     })
@@ -358,44 +402,30 @@ pub async fn run_luau_plugin_test_file(test_root: &Path, test_path: &Path) -> an
     let test_path = test_path
         .canonicalize()
         .with_context(|| format!("canonicalize Luau test {}", test_path.display()))?;
-    let test_root = test_root
-        .canonicalize()
-        .with_context(|| format!("canonicalize Luau test root {}", test_root.display()))?;
-    let relative_path = test_path.strip_prefix(&test_root).with_context(|| {
+    let relative_path = test_path.strip_prefix(&plugin.directory).with_context(|| {
         format!(
             "Luau test {} is not under {}",
             test_path.display(),
-            test_root.display()
+            plugin.directory.display()
         )
     })?;
     let relative_path_text = relative_path.to_string_lossy().replace('\\', "/");
 
-    let fixture = TempLuauPluginTestDir::new(&test_root)?;
-    let manifest = harmony_core::plugin::PluginManifest {
-        schema_version: 1,
-        id: "test".to_string(),
-        name: "Luau Test".to_string(),
-        version: "1.0.0".to_string(),
-        description: "One-off Luau integration test".to_string(),
-        entrypoint: Some(relative_path_text.clone()),
-        scopes: crate::plugins::executor::plugin_scope_ids_for_test(),
-        dependencies: Vec::new(),
-    };
+    let isolated = TempPluginsDir::new(plugin)?;
     let server_info = crate::plugins::server::load_server_info().await?;
     let auth_capabilities =
         crate::plugins::auth::AuthCapabilities::from_config(&STATE.config().auth);
     let runtime = crate::plugins::executor::PluginExecutor::with_filesystem_sources(
-        Arc::from(vec![manifest]),
+        Arc::from(vec![plugin.manifest.clone()]),
         server_info,
         auth_capabilities,
-        fixture.source_root(),
-        fixture.plugins_dir(),
+        isolated.source_root(),
+        isolated.plugins_dir(),
     )?;
-    let source_path = fixture.plugin_dir().join(relative_path);
-    let source = std::fs::read(&source_path)
-        .with_context(|| format!("read Luau test {}", source_path.display()))?;
+    let source = std::fs::read(&test_path)
+        .with_context(|| format!("read Luau test {}", test_path.display()))?;
     runtime
-        .run_plugin_source("test", relative_path_text, source)
+        .run_plugin_source(plugin.id().to_string(), relative_path_text, source)
         .with_context(|| format!("run Luau test {}", test_path.display()))
 }
 
@@ -658,57 +688,25 @@ fn merged_provider_fields(
     Ok(merged.fields.into_iter().collect())
 }
 
+/// A throwaway plugins directory holding only the plugin under test, linked
+/// under its manifest id so runtime identity does not depend on where the
+/// plugin is checked out.
 struct TempPluginsDir {
     path: PathBuf,
 }
 
 impl TempPluginsDir {
-    fn new(source_plugins_dir: &Path, plugin_id: &str) -> anyhow::Result<Self> {
+    fn new(plugin: &PluginUnderTest) -> anyhow::Result<Self> {
         let path = std::env::temp_dir().join(format!(
             "lyra-harmony-plugins-{}-{}",
             std::process::id(),
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
         ));
-        std::fs::create_dir_all(&path)?;
-
-        let source_plugin_dir = source_plugins_dir.join(plugin_id);
-        if !source_plugin_dir.is_dir() {
-            anyhow::bail!(
-                "plugin '{}' not found in {}",
-                plugin_id,
-                source_plugins_dir.display()
-            );
-        }
-
-        let target_plugin_dir = path.join(plugin_id);
-        link_or_copy_dir(&source_plugin_dir, &target_plugin_dir)?;
-
-        Ok(Self { path })
-    }
-}
-
-impl Drop for TempPluginsDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
-}
-
-struct TempLuauPluginTestDir {
-    path: PathBuf,
-}
-
-impl TempLuauPluginTestDir {
-    fn new(test_root: &Path) -> anyhow::Result<Self> {
-        let path = std::env::temp_dir().join(format!(
-            "lyra-luau-test-{}-{}",
-            std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-        ));
-        let plugin_dir = path.join("plugins").join("test");
-        std::fs::create_dir_all(plugin_dir.parent().expect("plugin dir has parent"))?;
-        link_or_copy_dir(test_root, &plugin_dir)?;
-        std::fs::create_dir_all(path.join("source"))?;
-        Ok(Self { path })
+        let isolated = Self { path };
+        std::fs::create_dir_all(isolated.plugins_dir())?;
+        std::fs::create_dir_all(isolated.source_root())?;
+        link_or_copy_dir(&plugin.directory, &isolated.plugins_dir().join(plugin.id()))?;
+        Ok(isolated)
     }
 
     fn source_root(&self) -> PathBuf {
@@ -718,13 +716,9 @@ impl TempLuauPluginTestDir {
     fn plugins_dir(&self) -> PathBuf {
         self.path.join("plugins")
     }
-
-    fn plugin_dir(&self) -> PathBuf {
-        self.plugins_dir().join("test")
-    }
 }
 
-impl Drop for TempLuauPluginTestDir {
+impl Drop for TempPluginsDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.path);
     }

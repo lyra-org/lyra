@@ -16,6 +16,7 @@ pub async fn run(root: &Path, filter: Option<&str>) -> anyhow::Result<LuauRunSum
     let root = root
         .canonicalize()
         .map_err(|error| anyhow::anyhow!("canonicalize {}: {error}", root.display()))?;
+    let plugin = lyra_server::testing::PluginUnderTest::locate(&root)?;
     let tests = discover_luau_tests(&root, filter)?;
     if tests.is_empty() {
         anyhow::bail!("no Luau test files found under {}", root.display());
@@ -25,7 +26,7 @@ pub async fn run(root: &Path, filter: Option<&str>) -> anyhow::Result<LuauRunSum
     let mut failed = 0usize;
     for test_path in tests {
         let name = test_name(&root, &test_path);
-        match lyra_server::testing::run_luau_plugin_test_file(&root, &test_path).await {
+        match lyra_server::testing::run_luau_plugin_test_file(&plugin, &test_path).await {
             Ok(()) => {
                 println!("PASS {name}");
                 passed += 1;
