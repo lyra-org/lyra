@@ -490,6 +490,8 @@ fn raw_track_to_service_metadata(
         genres: track.genres,
         label: track.label,
         catalog_number: track.catalog_number,
+        media_formats: track.media_formats,
+        barcode: track.barcode,
         source_kind: Some("embedded_tags".to_string()),
         source_key: Some(format!("entry:{}:embedded", entry_db_id.0)),
         segment_start_ms: None,

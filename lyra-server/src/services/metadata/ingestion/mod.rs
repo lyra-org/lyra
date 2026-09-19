@@ -327,6 +327,8 @@ mod tests {
             sort_title: None,
             release_type: None,
             release_date: None,
+            media_formats: None,
+            barcode: None,
             locked: Some(false),
             created_at: None,
             ctime: None,
@@ -490,6 +492,8 @@ mod tests {
             genres: None,
             label: None,
             catalog_number: None,
+            media_formats: Vec::new(),
+            barcode: None,
             source_kind: Some("embedded_tags".to_string()),
             source_key: Some(format!("entry:{}:embedded", entry_db_id.0)),
             segment_start_ms: None,
@@ -861,6 +865,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn add_metadata_stores_scanned_edition_signals_on_release() -> anyhow::Result<()> {
+        use lofty::{
+            config::WriteOptions,
+            file::AudioFile,
+            flac::FlacFile,
+            ogg::VorbisComments,
+            tag::TagExt,
+        };
+
+        let mut db = new_test_db()?;
+
+        let dir_path = std::env::temp_dir().join(format!(
+            "lyra-edition-signals-{}-{}",
+            std::process::id(),
+            nanoid!()
+        ));
+        std::fs::create_dir_all(&dir_path)?;
+        let file_paths = vec![
+            dir_path.join("multi_track_1.flac"),
+            dir_path.join("multi_track_2.flac"),
+        ];
+        for path in &file_paths {
+            std::fs::copy(multi_fixture_dir().join(path.file_name().unwrap()), path)?;
+            let flac = FlacFile::read_from(
+                &mut std::fs::File::open(path)?,
+                lofty::config::ParseOptions::new(),
+            )?;
+            let mut comments = flac
+                .vorbis_comments()
+                .cloned()
+                .unwrap_or_else(VorbisComments::default);
+            comments.push("MEDIA".to_string(), "WEB".to_string());
+            comments.push("UPC".to_string(), "0199957588430".to_string());
+            comments.save_to_path(path, WriteOptions::default())?;
+        }
+
+        let library = test_db::insert_test_library_node(&mut db, "Test Library", dir_path.clone())?;
+        let dir_id =
+            insert_entry_with_kind(&mut db, &dir_path, crate::db::entries::EntryKind::Dir)?;
+        connect(&mut db, library.db_id.unwrap(), dir_id)?;
+        let mut entry_ids = vec![dir_id];
+        for path in &file_paths {
+            let file_id =
+                insert_entry_with_kind(&mut db, path, crate::db::entries::EntryKind::File)?;
+            connect(&mut db, dir_id, file_id)?;
+            entry_ids.push(file_id);
+        }
+
+        add_metadata(&mut db, &library, entry_ids).await?;
+        std::fs::remove_dir_all(&dir_path)?;
+
+        let releases = select_releases(&db)?;
+        assert_eq!(releases.len(), 1);
+        assert_eq!(
+            releases[0].media_formats.as_deref(),
+            Some(&["digital".to_string()][..])
+        );
+        assert_eq!(releases[0].barcode.as_deref(), Some("00199957588430"));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn add_metadata_ingests_multi_track_release_artist() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
@@ -967,6 +1033,8 @@ mod tests {
                 genres: Some(vec!["Jpop".to_string()]),
                 label: None,
                 catalog_number: None,
+                media_formats: Vec::new(),
+                barcode: None,
                 source_kind: Some("embedded_tags".to_string()),
                 source_key: Some(format!("entry:{}:embedded", entry_db_id.0)),
                 segment_start_ms: None,
@@ -1043,6 +1111,8 @@ mod tests {
                 genres: None,
                 label: None,
                 catalog_number: None,
+                media_formats: Vec::new(),
+                barcode: None,
                 source_kind: Some("embedded_tags".to_string()),
                 source_key: Some(format!("entry:{}:embedded", entry_db_id.0)),
                 segment_start_ms: None,
@@ -1133,6 +1203,8 @@ mod tests {
             genres: None,
             label: None,
             catalog_number: None,
+            media_formats: Vec::new(),
+            barcode: None,
             source_kind: Some("embedded_tags".to_string()),
             source_key: Some(format!("entry:{}:embedded", entry_db_id.0)),
             segment_start_ms: None,
@@ -1320,6 +1392,8 @@ mod tests {
                 genres: None,
                 label: label.map(str::to_string),
                 catalog_number: cat.map(str::to_string),
+                media_formats: Vec::new(),
+                barcode: None,
                 source_kind: Some("embedded_tags".to_string()),
                 source_key: Some(format!("entry:{}:embedded", entry_id.0)),
                 segment_start_ms: None,
@@ -1398,6 +1472,8 @@ mod tests {
             genres: None,
             label: Some("Blue Note".to_string()),
             catalog_number: cat.map(str::to_string),
+            media_formats: Vec::new(),
+            barcode: None,
             source_kind: Some("embedded_tags".to_string()),
             source_key: Some(format!("entry:{}:embedded", entry_id.0)),
             segment_start_ms: None,
@@ -1475,6 +1551,8 @@ mod tests {
                 genres: None,
                 label: Some(label.to_string()),
                 catalog_number: cat.map(str::to_string),
+                media_formats: Vec::new(),
+                barcode: None,
                 source_kind: Some("embedded_tags".to_string()),
                 source_key: Some(format!("entry:{}:embedded", entry_id.0)),
                 segment_start_ms: None,
@@ -1766,6 +1844,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 genres: None,
                 label: None,
                 catalog_number: None,
+                media_formats: Vec::new(),
+                barcode: None,
                 source_kind: Some("embedded_tags".to_string()),
                 source_key: Some(format!("entry:{}:embedded", entry_one.0)),
                 segment_start_ms: None,
@@ -1798,6 +1878,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 genres: None,
                 label: None,
                 catalog_number: None,
+                media_formats: Vec::new(),
+                barcode: None,
                 source_kind: Some("embedded_tags".to_string()),
                 source_key: Some(format!("entry:{}:embedded", entry_two.0)),
                 segment_start_ms: None,
@@ -1867,6 +1949,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 genres: None,
                 label: None,
                 catalog_number: None,
+                media_formats: Vec::new(),
+                barcode: None,
                 source_kind: Some("embedded_tags".to_string()),
                 source_key: Some(format!("entry:{}:embedded", entry_one.0)),
                 segment_start_ms: None,
@@ -1899,6 +1983,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 genres: None,
                 label: None,
                 catalog_number: None,
+                media_formats: Vec::new(),
+                barcode: None,
                 source_kind: Some("embedded_tags".to_string()),
                 source_key: Some(format!("entry:{}:embedded", entry_two.0)),
                 segment_start_ms: None,
@@ -1969,6 +2055,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 genres: None,
                 label: None,
                 catalog_number: None,
+                media_formats: Vec::new(),
+                barcode: None,
                 source_kind: Some("embedded_tags".to_string()),
                 source_key: Some(format!("entry:{}:embedded", entry_one.0)),
                 segment_start_ms: None,
@@ -2001,6 +2089,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 genres: None,
                 label: None,
                 catalog_number: None,
+                media_formats: Vec::new(),
+                barcode: None,
                 source_kind: Some("embedded_tags".to_string()),
                 source_key: Some(format!("entry:{}:embedded", entry_two.0)),
                 segment_start_ms: None,
@@ -2037,6 +2127,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 genres: None,
                 label: None,
                 catalog_number: None,
+                media_formats: Vec::new(),
+                barcode: None,
                 source_kind: Some("embedded_tags".to_string()),
                 source_key: Some(format!("entry:{}:embedded", entry_one.0)),
                 segment_start_ms: None,
@@ -2069,6 +2161,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 genres: None,
                 label: None,
                 catalog_number: None,
+                media_formats: Vec::new(),
+                barcode: None,
                 source_kind: Some("embedded_tags".to_string()),
                 source_key: Some(format!("entry:{}:embedded", entry_two.0)),
                 segment_start_ms: None,
@@ -2321,6 +2415,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             genres: None,
             label: None,
             catalog_number: None,
+            media_formats: Vec::new(),
+            barcode: None,
             source_kind: Some("embedded_tags".to_string()),
             source_key: Some(format!("entry:{}:embedded", entry_db_id.0)),
             segment_start_ms: None,
@@ -2433,6 +2529,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             genres: None,
             label: None,
             catalog_number: None,
+            media_formats: Vec::new(),
+            barcode: None,
             source_kind: Some("embedded_tags".to_string()),
             source_key: Some(format!("entry:{}:embedded", entry_db_id.0)),
             segment_start_ms: None,
@@ -2500,6 +2598,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             genres: None,
             label: None,
             catalog_number: None,
+            media_formats: Vec::new(),
+            barcode: None,
             source_kind: Some("embedded_tags".to_string()),
             source_key: Some(format!("entry:{}:embedded", entry_db_id.0)),
             segment_start_ms: None,
@@ -2559,6 +2659,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             genres: None,
             label: None,
             catalog_number: None,
+            media_formats: Vec::new(),
+            barcode: None,
             source_kind: Some("embedded_tags".to_string()),
             source_key: Some(format!("entry:{}:embedded", entry_db_id.0)),
             segment_start_ms: None,
@@ -2633,6 +2735,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             genres: None,
             label: Some("Tag Label".to_string()),
             catalog_number: Some("TAG-001".to_string()),
+            media_formats: Vec::new(),
+            barcode: None,
             source_kind: Some("embedded_tags".to_string()),
             source_key: Some(format!("entry:{}:embedded", entry_db_id.0)),
             segment_start_ms: None,
@@ -2713,6 +2817,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             genres: None,
             label: Some("Different Tag Label".to_string()),
             catalog_number: Some("TAG-999".to_string()),
+            media_formats: Vec::new(),
+            barcode: None,
             source_kind: Some("embedded_tags".to_string()),
             source_key: Some(format!("entry:{}:embedded", entry_db_id.0)),
             segment_start_ms: None,
@@ -3059,6 +3165,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             genres: None,
             label: Some("Curated Label".to_string()),
             catalog_number: Some("CUR-001".to_string()),
+            media_formats: Vec::new(),
+            barcode: None,
             source_kind: Some("embedded_tags".to_string()),
             source_key: Some(format!("entry:{}:embedded", entry_db_id.0)),
             segment_start_ms: None,

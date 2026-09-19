@@ -1016,6 +1016,8 @@ mod tests {
             sort_title: None,
             release_type: None,
             release_date: Some("2024-02-29".to_string()),
+            media_formats: None,
+            barcode: None,
             locked: None,
             created_at: None,
             ctime: None,

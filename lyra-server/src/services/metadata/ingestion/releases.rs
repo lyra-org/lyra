@@ -73,6 +73,20 @@ fn select_release_id(db: &impl DbAccess, track_ids: &[DbId]) -> anyhow::Result<O
         .map(|(id, _)| id))
 }
 
+fn scanned_media_formats(release_tracks: &[TrackIngest]) -> Option<Vec<String>> {
+    let formats = lyra_metadata::release_media_formats(
+        release_tracks
+            .iter()
+            .map(|track| track.meta.media_formats.as_slice()),
+    );
+    (!formats.is_empty()).then(|| {
+        formats
+            .into_iter()
+            .map(|format| format.as_str().to_string())
+            .collect()
+    })
+}
+
 fn infer_release_artists(release_tracks: &[TrackIngest]) -> Vec<String> {
     if let Some(explicit) = release_tracks
         .iter()
@@ -243,6 +257,9 @@ fn persist_release_inner(
         .iter()
         .filter_map(|track| release_date_from_track(&track.meta))
         .max();
+    let media_formats = scanned_media_formats(&release_tracks);
+    let barcode =
+        lyra_metadata::release_barcode(release_tracks.iter().map(|t| t.meta.barcode.as_deref()));
     let track_ids_for_release: Vec<DbId> = release_tracks
         .iter()
         .filter_map(|track| track.track_db_id)
@@ -271,10 +288,14 @@ fn persist_release_inner(
             sort_title: None,
             release_type: None,
             release_date: None,
+            media_formats: None,
+            barcode: None,
             locked: None,
             created_at: now_secs,
             ctime: earliest_ctime,
         });
+        release.media_formats = media_formats;
+        release.barcode = barcode;
         // Only overwrite when the scan actually resolved one; `None` here means
         // "not determined", never "cleared".
         if earliest_ctime.is_some() {
@@ -290,6 +311,8 @@ fn persist_release_inner(
             sort_title: None,
             release_type: None,
             release_date: None,
+            media_formats,
+            barcode,
             locked: None,
             created_at: now_secs,
             ctime: earliest_ctime,
@@ -384,6 +407,8 @@ fn persist_release_inner(
             genres: _,
             label: _,
             catalog_number: _,
+            media_formats: _,
+            barcode: _,
             source_kind,
             source_key,
             segment_start_ms,

@@ -100,9 +100,8 @@ pub(crate) fn resolve_item_key(name: &str) -> Option<ItemKey> {
     Some(key)
 }
 
-/// Disc/track number+total and duration bypass the mapping — their
-/// extraction does format-specific parsing (n/N strings, packed MP4
-/// atoms) not expressible as a rule.
+/// Disc/track numbers, totals, and duration require format-specific parsing.
+/// Media and barcode identify editions and have no [`FieldName`] destination.
 pub(crate) fn apply_mapping(
     tag: &Tag,
     tagged_file: &lofty::file::TaggedFile,
@@ -148,6 +147,8 @@ pub(crate) fn apply_mapping(
         genre,
         label,
         catalog_number,
+        media: non_empty_string(tag, ItemKey::OriginalMediaType),
+        barcode: non_empty_string(tag, ItemKey::Barcode),
         disc: tag.disk(),
         disc_total: tag.disk_total(),
         track: tag.track(),
@@ -197,6 +198,12 @@ pub(crate) fn check_required_fields(
     } else {
         Err(missing)
     }
+}
+
+fn non_empty_string(tag: &Tag, key: ItemKey) -> Option<String> {
+    tag.get_string(key)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn fill_scalar(slot: &mut Option<String>, tag: &Tag, key: ItemKey) {

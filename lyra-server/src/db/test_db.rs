@@ -116,6 +116,8 @@ pub(crate) fn insert_release(db: &mut DbAny, title: &str) -> anyhow::Result<DbId
         sort_title: None,
         release_type: None,
         release_date: None,
+        media_formats: None,
+        barcode: None,
         locked: None,
         created_at: None,
         ctime: None,
