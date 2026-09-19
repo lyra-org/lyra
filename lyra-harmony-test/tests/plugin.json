@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "test",
+  "name": "Harness Module Tests",
+  "version": "1.0.0",
+  "description": "Luau tests for server-provided plugin modules",
+  "scopes": [
+    "harmony.crypt",
+    "harmony.serde",
+    "harmony.task",
+    "lyra.api",
+    "lyra.auth",
+    "lyra.editions",
+    "lyra.ids",
+    "lyra.locale",
+    "lyra.lyrics",
+    "lyra.playlists",
+    "lyra.plugins"
+  ]
+}

@@ -63,7 +63,7 @@ impl RunResult {
 pub(crate) struct RunTestOptions<'a> {
     pub(crate) test_name: &'a str,
     pub(crate) test_case: &'a TestCase,
-    pub(crate) test_dir: &'a Path,
+    pub(crate) plugin: &'a lyra_server::testing::PluginUnderTest,
     pub(crate) base_cache_dir: &'a Path,
     pub(crate) overlay_cache_dir: Option<&'a Path>,
     pub(crate) live_policy: crate::cached_http::LivePolicy,
@@ -75,7 +75,7 @@ pub async fn run_test(options: RunTestOptions<'_>) -> anyhow::Result<RunResult> 
     let RunTestOptions {
         test_name,
         test_case,
-        test_dir,
+        plugin,
         base_cache_dir,
         overlay_cache_dir,
         live_policy,
@@ -107,8 +107,6 @@ pub async fn run_test(options: RunTestOptions<'_>) -> anyhow::Result<RunResult> 
         lyra_server::testing::prepare_fixture(&library, test_case.raw_tags.clone()).await?;
     log_timing(debug_timing, test_name, "prepare_fixture", started);
 
-    let plugins_dir = find_plugins_dir(test_dir)?;
-    let parent = plugins_dir.parent().unwrap_or(Path::new("/")).to_path_buf();
     let http_module = crate::cached_http::module_spec(CachedHttpState {
         base_cache_dir: base_cache_dir.to_path_buf(),
         overlay_cache_dir: overlay_cache_dir.map(Path::to_path_buf),
@@ -118,12 +116,11 @@ pub async fn run_test(options: RunTestOptions<'_>) -> anyhow::Result<RunResult> 
         cache_misses: cache_misses.clone(),
         request_trace: request_trace.clone(),
         live_policy,
-        plugin_id: test_case.plugin.clone(),
+        plugin_id: plugin.id().to_string(),
     });
-    harmony_http::test_clear_rate_limits_for_plugin(&test_case.plugin).await;
+    harmony_http::test_clear_rate_limits_for_plugin(plugin.id()).await;
     let started = Instant::now();
-    lyra_server::testing::exec_plugins(&parent, plugins_dir, http_module, &test_case.plugin)
-        .await?;
+    let _plugin_sources = lyra_server::testing::exec_plugins(plugin, http_module).await?;
     fail_on_cache_misses(live_policy, &cache_misses).await?;
     log_timing(debug_timing, test_name, "exec_plugins", started);
 
@@ -136,7 +133,7 @@ pub async fn run_test(options: RunTestOptions<'_>) -> anyhow::Result<RunResult> 
             lyra_server::testing::refresh_release(prepared.release_id).await?;
         }
         RunMode::Sync => {
-            lyra_server::testing::sync_provider(&test_case.plugin).await?;
+            lyra_server::testing::sync_provider(plugin.id()).await?;
         }
     }
     fail_on_cache_misses(live_policy, &cache_misses).await?;
@@ -417,22 +414,6 @@ fn captured_entity_to_expected(entity: &CapturedEntity) -> ExpectedEntity {
         ids,
         fields,
         credits: BTreeMap::new(),
-    }
-}
-
-pub fn find_plugins_dir(test_dir: &Path) -> anyhow::Result<PathBuf> {
-    let mut current = test_dir.canonicalize()?;
-    loop {
-        let candidate = current.join("plugins");
-        if candidate.is_dir() {
-            return Ok(candidate);
-        }
-        if !current.pop() {
-            anyhow::bail!(
-                "failed to locate plugins directory while searching upward from {}",
-                test_dir.display()
-            );
-        }
     }
 }
 

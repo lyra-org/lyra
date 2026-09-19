@@ -25,12 +25,3 @@ pub(super) fn generic_module_specs(module_overrides: Vec<ModuleSpec>) -> Vec<Mod
 pub(super) fn plugin_scope_ids() -> HashSet<Arc<str>> {
     crate::plugins::module_scope_ids()
 }
-
-pub(crate) fn plugin_scope_ids_for_test() -> Vec<String> {
-    let mut scopes = plugin_scope_ids()
-        .into_iter()
-        .map(|scope| scope.to_string())
-        .collect::<Vec<_>>();
-    scopes.sort();
-    scopes
-}
