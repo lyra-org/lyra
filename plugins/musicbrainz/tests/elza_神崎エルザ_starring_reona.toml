@@ -1,6 +1,4 @@
 # Tests prioritizing releases with a cover image
-plugin = "musicbrainz"
-
 [library]
 language = "jpn"
 country = "JP"

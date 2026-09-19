@@ -1,4 +1,3 @@
-plugin = "musicbrainz"
 run = "sync"
 
 [library]

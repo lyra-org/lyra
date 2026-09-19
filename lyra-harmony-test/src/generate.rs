@@ -977,17 +977,15 @@ fn generate_toml(
 ) -> anyhow::Result<String> {
     let mut out = String::new();
 
-    // Plugin
     let plugin = release
         .results
         .keys()
         .next()
         .cloned()
         .unwrap_or_else(|| "unknown".to_string());
-    out.push_str(&format!("plugin = \"{plugin}\"\n"));
 
     // Library
-    out.push_str("\n[library]\n");
+    out.push_str("[library]\n");
     out.push_str(&format!("directory = \"{FIXTURE_LIBRARY_DIRECTORY}\"\n"));
     if let Some(ref lang) = library.language {
         out.push_str(&format!("language = \"{lang}\"\n"));

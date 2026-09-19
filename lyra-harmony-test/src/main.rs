@@ -15,6 +15,7 @@ use std::path::{
     PathBuf,
 };
 
+use lyra_server::testing::PluginUnderTest;
 use test_case::TestCase;
 
 #[derive(Default)]
@@ -168,7 +169,7 @@ struct FixtureExecution<'a> {
 
 async fn replay_scenario(
     test: &LoadedTest,
-    test_base_dir: &Path,
+    plugin: &PluginUnderTest,
     scenario: &cached_http::StoredScenario,
     max_release_requests: Option<usize>,
 ) -> ScenarioExecution {
@@ -176,7 +177,7 @@ async fn replay_scenario(
     let outcome = runner::run_test(runner::RunTestOptions {
         test_name: &test.name,
         test_case: &test.test_case,
-        test_dir: test_base_dir,
+        plugin,
         base_cache_dir: &scenario.cache_dir,
         overlay_cache_dir: None,
         live_policy: cached_http::LivePolicy::CacheOnly,
@@ -193,7 +194,7 @@ async fn replay_scenario(
 
 async fn discover_seeded_scenario(
     test: &LoadedTest,
-    test_base_dir: &Path,
+    plugin: &PluginUnderTest,
     cache_dir: &Path,
     scenario: &cached_http::StoredScenario,
     max_release_requests: Option<usize>,
@@ -206,7 +207,7 @@ async fn discover_seeded_scenario(
     let outcome = runner::run_test(runner::RunTestOptions {
         test_name: &test.name,
         test_case: &test.test_case,
-        test_dir: test_base_dir,
+        plugin,
         base_cache_dir: &scenario.cache_dir,
         overlay_cache_dir: Some(&staging_cache_dir),
         live_policy: cached_http::LivePolicy::AllowLive,
@@ -238,7 +239,7 @@ async fn discover_seeded_scenario(
 
 async fn discover_scenario(
     test: &LoadedTest,
-    test_base_dir: &Path,
+    plugin: &PluginUnderTest,
     cache_dir: &Path,
     max_release_requests: Option<usize>,
 ) -> ScenarioExecution {
@@ -250,7 +251,7 @@ async fn discover_scenario(
     let outcome = runner::run_test(runner::RunTestOptions {
         test_name: &test.name,
         test_case: &test.test_case,
-        test_dir: test_base_dir,
+        plugin,
         base_cache_dir: &staging_cache_dir,
         overlay_cache_dir: None,
         live_policy: cached_http::LivePolicy::AllowLive,
@@ -282,7 +283,7 @@ async fn discover_scenario(
 
 async fn run_fixture<'a>(
     test: &'a LoadedTest,
-    test_base_dir: &Path,
+    plugin: &PluginUnderTest,
     cache_dir: &Path,
     discover: bool,
     max_release_requests: Option<usize>,
@@ -291,7 +292,7 @@ async fn run_fixture<'a>(
     let scenarios = cached_http::load_fixture_scenarios(cache_dir, &test.name)?;
     let (scenario_runs, discovered_scenario_ids, discovery_complete) = if scenarios.is_empty() {
         if discover {
-            let run = discover_scenario(test, test_base_dir, cache_dir, max_release_requests).await;
+            let run = discover_scenario(test, plugin, cache_dir, max_release_requests).await;
             let mut discovered_ids = HashSet::new();
             let discovery_complete = if let Ok(result) = &run.outcome {
                 discovered_ids.insert(result.scenario_id.clone());
@@ -319,7 +320,7 @@ async fn run_fixture<'a>(
             let run = if discover {
                 let run = discover_seeded_scenario(
                     test,
-                    test_base_dir,
+                    plugin,
                     cache_dir,
                     scenario,
                     max_release_requests,
@@ -349,7 +350,7 @@ async fn run_fixture<'a>(
                 }
                 run
             } else {
-                replay_scenario(test, test_base_dir, scenario, max_release_requests).await
+                replay_scenario(test, plugin, scenario, max_release_requests).await
             };
             if discover {
                 if let Ok(result) = &run.outcome {
@@ -431,6 +432,7 @@ async fn main() -> anyhow::Result<()> {
         })
         .collect::<anyhow::Result<_>>()?;
 
+    let plugin = PluginUnderTest::locate(&test_base_dir)?;
     let cache_dir = test_base_dir.join("cache");
     let mut passed = 0usize;
     let mut failed = 0usize;
@@ -441,7 +443,7 @@ async fn main() -> anyhow::Result<()> {
     for test in &loaded_tests {
         let execution = run_fixture(
             test,
-            &test_base_dir,
+            &plugin,
             &cache_dir,
             args.discover,
             args.max_release_requests,
