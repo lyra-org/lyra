@@ -664,8 +664,8 @@ mod tests {
         assert_eq!(reg.count_user_connections("alice"), 1);
     }
 
-    #[test]
-    fn evict_duplicate_notifies_cancel() {
+    #[tokio::test]
+    async fn evict_duplicate_notifies_cancel() {
         let mut reg = test_registry();
         let cancel = test_cancel();
         let cancel_clone = cancel.clone();
@@ -681,18 +681,12 @@ mod tests {
 
         reg.evict_duplicate("user-1", "key");
 
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .unwrap();
-        rt.block_on(async {
-            tokio::time::timeout(
-                std::time::Duration::from_millis(10),
-                cancel_clone.notified(),
-            )
-            .await
-            .expect("cancel should have been notified");
-        });
+        tokio::time::timeout(
+            std::time::Duration::from_millis(10),
+            cancel_clone.notified(),
+        )
+        .await
+        .expect("cancel should have been notified");
     }
 
     #[test]
