@@ -574,15 +574,14 @@ pub(crate) fn delete(
         match kind {
             Some("Track" | "Release" | "Artist") => {
                 entities.push(element.id);
-                if kind == Some("Track") {
-                    if let Some(id) = element
+                if kind == Some("Track")
+                    && let Some(id) = element
                         .values
                         .iter()
                         .find(|kv| kv.key == DbValue::from("id"))
                         .and_then(|kv| kv.value.string().ok())
-                    {
-                        track_ids.insert(id.clone());
-                    }
+                {
+                    track_ids.insert(id.clone());
                 }
             }
             Some("TrackSource" | "CueSheet" | "CueTrack" | "Cover") => children.push(element.id),
