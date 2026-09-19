@@ -1334,6 +1334,27 @@ fn plugin_executor_exposes_lyra_locale_module() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn plugin_executor_exposes_lyra_editions_module() -> Result<()> {
+    let runtime = runtime_with_scopes(&["lyra.editions"])?;
+    let values = runtime.eval_plugin_source(
+        "demo",
+        "check.luau",
+        &br#"
+            local editions = require("@lyra/editions")
+            return editions.media_formats("WEB")[1], editions.barcode("0199957588430")
+        "#[..],
+    )?;
+    assert_eq!(
+        values,
+        vec![
+            luau::Value::String(b"digital".to_vec()),
+            luau::Value::String(b"00199957588430".to_vec()),
+        ]
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn plugin_executor_drives_async_lyra_images_compose() -> Result<()> {
     let test_dir = std::env::temp_dir().join(format!(
