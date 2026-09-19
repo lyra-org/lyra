@@ -13,7 +13,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::runner::json_to_toml;
+use crate::expect::json_to_toml;
 
 const FIXTURE_LIBRARY_DIRECTORY: &str = ".";
 
