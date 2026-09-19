@@ -150,14 +150,14 @@ fn module_descriptor() -> ModuleDescriptor {
         name: "Editions",
         local_name: "editions",
         description: Some(
-            "Normalization for the signals that tell editions of a release apart: medium format and barcode. Release contexts carry `media_formats` and `barcode` already normalized; use this module to bring provider data onto the same terms.",
+            "Normalizes edition formats and barcodes. Release contexts are already normalized; providers must map formats outside file-tag vocabularies to canonical names.",
         ),
         fields: Vec::new(),
         functions: vec![
             ModuleFunctionDescriptor {
                 path: vec!["media_formats"],
                 description: Some(
-                    "Parses a format string, or an array of them, into distinct canonical formats: \"cd\", \"vinyl\", \"digital\", \"cassette\", \"sacd\", \"dvd\", \"bluray\", \"minidisc\", \"other\". Understands MusicBrainz format names, ID3v2 media type codes, and tracker media names such as \"WEB\". Unrecognized values are dropped.",
+                    "Parses tag values or canonical names (a string or array) into distinct formats: \"cd\", \"vinyl\", \"digital\", \"cassette\", \"sacd\", \"dvd\", \"bluray\", \"minidisc\", \"other\". Drops unrecognized values.",
                 ),
                 params: vec![param("input", media_formats_input_type())],
                 returns: vec![Vec::<String>::luau_type()],
@@ -166,7 +166,7 @@ fn module_descriptor() -> ModuleDescriptor {
             ModuleFunctionDescriptor {
                 path: vec!["media_formats_match"],
                 description: Some(
-                    "Returns true when both sides share at least one canonical format. Each side may be raw or canonical, a string or an array. A side with no recognized format never matches.",
+                    "Returns true when both inputs share a format parsed by `media_formats`. Unrecognized formats never match.",
                 ),
                 params: vec![
                     param("a", media_formats_input_type()),
