@@ -8,16 +8,16 @@ use std::path::{
     PathBuf,
 };
 
-pub struct LuauRunSummary {
+pub struct Summary {
     pub failed: usize,
 }
 
-pub async fn run(root: &Path, filter: Option<&str>) -> anyhow::Result<LuauRunSummary> {
+pub async fn run(root: &Path, filter: Option<&str>) -> anyhow::Result<Summary> {
     let root = root
         .canonicalize()
         .map_err(|error| anyhow::anyhow!("canonicalize {}: {error}", root.display()))?;
     let plugin = lyra_server::testing::PluginUnderTest::locate(&root)?;
-    let tests = discover_luau_tests(&root, filter)?;
+    let tests = discover(&root, filter)?;
     if tests.is_empty() {
         anyhow::bail!("no Luau test files found under {}", root.display());
     }
@@ -43,17 +43,17 @@ pub async fn run(root: &Path, filter: Option<&str>) -> anyhow::Result<LuauRunSum
         "{} Luau tests: {passed} passed, {failed} failed",
         passed + failed
     );
-    Ok(LuauRunSummary { failed })
+    Ok(Summary { failed })
 }
 
-fn discover_luau_tests(root: &Path, filter: Option<&str>) -> anyhow::Result<Vec<PathBuf>> {
+fn discover(root: &Path, filter: Option<&str>) -> anyhow::Result<Vec<PathBuf>> {
     let mut tests = Vec::new();
-    discover_luau_tests_recursive(root, root, filter, &mut tests)?;
+    discover_recursive(root, root, filter, &mut tests)?;
     tests.sort();
     Ok(tests)
 }
 
-fn discover_luau_tests_recursive(
+fn discover_recursive(
     root: &Path,
     dir: &Path,
     filter: Option<&str>,
@@ -68,7 +68,7 @@ fn discover_luau_tests_recursive(
             continue;
         }
         if path.is_dir() {
-            discover_luau_tests_recursive(root, &path, filter, tests)?;
+            discover_recursive(root, &path, filter, tests)?;
             continue;
         }
         if path.extension().is_none_or(|extension| extension != "luau") {

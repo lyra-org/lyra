@@ -4,10 +4,11 @@
 // www.meshiplaw.com/lyra.
 
 mod cached_http;
+mod expect;
+mod fixture;
 mod generate;
-mod luau_test_runner;
-mod runner;
-mod test_case;
+mod luau;
+mod scenario;
 
 use std::collections::HashSet;
 use std::path::{
@@ -15,8 +16,8 @@ use std::path::{
     PathBuf,
 };
 
+use fixture::Fixture;
 use lyra_server::testing::PluginUnderTest;
-use test_case::TestCase;
 
 #[derive(Default)]
 struct Args {
@@ -152,12 +153,12 @@ fn discover_tests(dir: &Path, filter: Option<&str>) -> anyhow::Result<Vec<(Strin
 struct LoadedTest {
     name: String,
     path: PathBuf,
-    test_case: TestCase,
+    fixture: Fixture,
 }
 
 struct ScenarioExecution {
     scenario_id: String,
-    outcome: anyhow::Result<runner::RunResult>,
+    outcome: anyhow::Result<scenario::RunResult>,
 }
 
 struct FixtureExecution<'a> {
@@ -174,9 +175,9 @@ async fn replay_scenario(
     max_release_requests: Option<usize>,
 ) -> ScenarioExecution {
     let accessed_keys = cached_http::new_accessed_keys();
-    let outcome = runner::run_test(runner::RunTestOptions {
+    let outcome = scenario::run(scenario::RunOptions {
         test_name: &test.name,
-        test_case: &test.test_case,
+        fixture: &test.fixture,
         plugin,
         base_cache_dir: &scenario.cache_dir,
         overlay_cache_dir: None,
@@ -204,9 +205,9 @@ async fn discover_seeded_scenario(
     let staging_cache_dir =
         cached_http::scenario_cache_dir(cache_dir, &test.name, &staging_scenario_id);
     let _ = std::fs::remove_dir_all(&staging_cache_dir);
-    let outcome = runner::run_test(runner::RunTestOptions {
+    let outcome = scenario::run(scenario::RunOptions {
         test_name: &test.name,
-        test_case: &test.test_case,
+        fixture: &test.fixture,
         plugin,
         base_cache_dir: &scenario.cache_dir,
         overlay_cache_dir: Some(&staging_cache_dir),
@@ -248,9 +249,9 @@ async fn discover_scenario(
     let staging_cache_dir =
         cached_http::scenario_cache_dir(cache_dir, &test.name, staging_scenario_id);
     let _ = std::fs::remove_dir_all(&staging_cache_dir);
-    let outcome = runner::run_test(runner::RunTestOptions {
+    let outcome = scenario::run(scenario::RunOptions {
         test_name: &test.name,
-        test_case: &test.test_case,
+        fixture: &test.fixture,
         plugin,
         base_cache_dir: &staging_cache_dir,
         overlay_cache_dir: None,
@@ -389,7 +390,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if args.luau {
-        let summary = luau_test_runner::run(&args.test_dir, args.filter.as_deref()).await?;
+        let summary = luau::run(&args.test_dir, args.filter.as_deref()).await?;
         if summary.failed > 0 {
             std::process::exit(1);
         }
@@ -422,12 +423,12 @@ async fn main() -> anyhow::Result<()> {
         .into_iter()
         .map(|(name, path)| {
             let content = std::fs::read_to_string(&path)?;
-            let test_case: TestCase = toml::from_str(&content)
+            let fixture: Fixture = toml::from_str(&content)
                 .map_err(|e| anyhow::anyhow!("Failed to parse {}: {}", path.display(), e))?;
             Ok(LoadedTest {
                 name,
                 path,
-                test_case,
+                fixture,
             })
         })
         .collect::<anyhow::Result<_>>()?;
@@ -484,22 +485,20 @@ async fn main() -> anyhow::Result<()> {
         println!("Pruned {pruned_responses} unreferenced response entries");
     }
 
-    // --record: update [expect] sections
-    // Only record for passing tests or tests with no existing expectations (seeded tests).
-    // Never overwrite correct expectations with wrong plugin output.
+    // Preserve existing expectations when a test fails.
     if args.record {
-        for (path, test_case, result) in &results {
+        for (path, fixture, result) in &results {
             if result.captured.is_empty() {
                 continue;
             }
-            if !result.passed() && !test_case.expect.is_empty() {
+            if !result.passed() && !fixture.expect.is_empty() {
                 println!(
                     "  skipped recording for {} (test failed, keeping existing expects)",
                     result.test_name
                 );
                 continue;
             }
-            let merged = merge_recorded_ids(&test_case.expect, &result.captured);
+            let merged = merge_recorded_ids(&fixture.expect, &result.captured);
             write_expect_section(path, &merged)?;
             println!("  recorded expectations for {}", result.test_name);
         }
@@ -519,7 +518,7 @@ fn record_fixture_result<'a>(
     execution: FixtureExecution<'a>,
     passed: &mut usize,
     failed: &mut usize,
-    results: &mut Vec<(&'a PathBuf, &'a TestCase, runner::RunResult)>,
+    results: &mut Vec<(&'a PathBuf, &'a Fixture, scenario::RunResult)>,
 ) {
     let multiple_scenarios = execution.scenario_runs.len() > 1;
     let mut fixture_failed = false;
@@ -569,7 +568,7 @@ fn record_fixture_result<'a>(
         println!("PASS {}", execution.test.name);
         *passed += 1;
         if let Some(result) = recordable_result {
-            results.push((&execution.test.path, &execution.test.test_case, result));
+            results.push((&execution.test.path, &execution.test.fixture, result));
         }
     }
 }
@@ -578,13 +577,11 @@ fn short_scenario_id(scenario_id: &str) -> &str {
     scenario_id.get(..8).unwrap_or(scenario_id)
 }
 
-/// Merge recorded (single-value) IDs with existing multi-value IDs from the test file.
-/// If the existing test accepts multiple values and the recorded value is one of them,
-/// preserve the full list. Otherwise use the recorded value.
+/// Keep accepted ID alternatives when they include the recorded value.
 fn merge_recorded_ids(
-    existing: &test_case::ExpectedExpectations,
-    captured: &test_case::ExpectedExpectations,
-) -> test_case::ExpectedExpectations {
+    existing: &expect::Expectations,
+    captured: &expect::Expectations,
+) -> expect::Expectations {
     let mut merged = captured.clone();
 
     if let (Some(existing_release), Some(captured_release)) =
@@ -608,18 +605,13 @@ fn merge_recorded_ids(
     merged
 }
 
-/// Rewrite the [expect] section of a TOML test file with captured results.
-fn write_expect_section(
-    path: &Path,
-    expect: &test_case::ExpectedExpectations,
-) -> anyhow::Result<()> {
+fn write_expect_section(path: &Path, expect: &expect::Expectations) -> anyhow::Result<()> {
     let content = std::fs::read_to_string(path)?;
 
-    // Find where [expect] section starts (or append)
     let expect_start = content
         .find("\n[expect.")
         .or_else(|| content.find("\n[expect]"))
-        .map(|pos| pos + 1); // +1 to skip the leading newline
+        .map(|pos| pos + 1);
 
     let prefix = match expect_start {
         Some(pos) => &content[..pos],
@@ -664,7 +656,7 @@ fn write_expect_section(
 
 fn write_expected_entity(
     output: &mut String,
-    entity: &test_case::ExpectedEntity,
+    entity: &expect::ExpectedEntity,
     skip_id: Option<(&str, &str)>,
 ) {
     let ids_pairs: Vec<String> = entity
@@ -674,13 +666,13 @@ fn write_expected_entity(
             if let Some((skip_key, skip_value)) = skip_id
                 && k.as_str() == skip_key
             {
-                return !matches!(v, test_case::AcceptedValues::Single(value) if value == skip_value);
+                return !matches!(v, expect::AcceptedValues::Single(value) if value == skip_value);
             }
             true
         })
         .map(|(k, v)| match v {
-            test_case::AcceptedValues::Single(s) => format!("{k} = \"{s}\""),
-            test_case::AcceptedValues::Multiple(vals) => {
+            expect::AcceptedValues::Single(s) => format!("{k} = \"{s}\""),
+            expect::AcceptedValues::Multiple(vals) => {
                 let quoted: Vec<String> = vals.iter().map(|s| format!("\"{s}\"")).collect();
                 format!("{k} = [{}]", quoted.join(", "))
             }
@@ -713,21 +705,18 @@ fn write_expected_entity(
     output.push('\n');
 }
 
-fn merge_entity_ids(
-    captured: &mut test_case::ExpectedEntity,
-    existing: &test_case::ExpectedEntity,
-) {
+fn merge_entity_ids(captured: &mut expect::ExpectedEntity, existing: &expect::ExpectedEntity) {
     for (id_type, captured_val) in captured.ids.iter_mut() {
         let Some(existing_val) = existing.ids.get(id_type) else {
             continue;
         };
         if let (
-            test_case::AcceptedValues::Single(recorded),
-            test_case::AcceptedValues::Multiple(existing_vals),
+            expect::AcceptedValues::Single(recorded),
+            expect::AcceptedValues::Multiple(existing_vals),
         ) = (&*captured_val, existing_val)
             && existing_vals.iter().any(|v| v == recorded)
         {
-            *captured_val = test_case::AcceptedValues::Multiple(existing_vals.clone());
+            *captured_val = expect::AcceptedValues::Multiple(existing_vals.clone());
         }
     }
 }
