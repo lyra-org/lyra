@@ -934,6 +934,16 @@ pub(crate) async fn cancel_sync_run(run_id: &str) -> anyhow::Result<Option<SyncR
     Ok(Some(summary))
 }
 
+pub(crate) async fn library_mutation_guard() -> tokio::sync::OwnedMutexGuard<()> {
+    SYNC_START_LOCK.clone().lock_owned().await
+}
+
+pub(crate) async fn library_has_active_run(library_id: &str) -> anyhow::Result<bool> {
+    Ok(active_run_for_library(&crate::STATE.db.get(), library_id)
+        .await?
+        .is_some())
+}
+
 pub(crate) async fn start_library_sync(
     db: DbAsync,
     library: Library,
@@ -956,6 +966,18 @@ async fn start_library_run(
     refresh_options: Option<LibraryRefreshRunOptions>,
 ) -> anyhow::Result<SyncRunStartResponse> {
     let _start_guard = SYNC_START_LOCK.lock().await;
+    {
+        let db_read = db.read().await;
+        let current = library
+            .db_id
+            .map(|id| db::libraries::get_by_id(&*db_read, id))
+            .transpose()?
+            .flatten();
+        anyhow::ensure!(
+            current.is_some_and(|current| current.id == library.id),
+            "library no longer exists"
+        );
+    }
     reconcile_interrupted_runs(&db).await?;
     let library_id = library.id.clone();
     if let Some(existing) = active_run_for_library(&db, &library_id).await? {
@@ -1290,6 +1312,9 @@ async fn persist_record(db: &DbAsync, mut record: db::sync_runs::SyncRunRecord) 
     let run_id = record.id.clone();
     let result = async {
         let mut db_write = db.write().await;
+        if db::lookup::find_node_id_by_id(&*db_write, &record.library_id)?.is_none() {
+            return Ok(());
+        }
         let existing = db::sync_runs::get_by_id(&db_write, &run_id)?;
         record.db_id = existing.as_ref().and_then(|run| run.db_id);
         if existing.is_some() {

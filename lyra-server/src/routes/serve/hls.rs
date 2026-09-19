@@ -482,7 +482,15 @@ pub(crate) async fn serve_hls_playlist_for_track(
 
     let reused_job = get_or_create_hls_job(&job_key, &source.input_path).await?;
     let playlist_segment_count = hls_segment_count(duration_ms);
-    attach_session_to_job(&session_id, playlist_segment_count, job_key).await?;
+    {
+        let db = STATE.db.read().await;
+        if db::lookup::find_node_id_by_id(&*db, &source.track_public_id)?.is_none()
+            || db::lookup::find_node_id_by_id(&*db, &source.source_public_id)?.is_none()
+        {
+            return Err(AppError::not_found("track source no longer exists"));
+        }
+        attach_session_to_job(&session_id, playlist_segment_count, job_key).await?;
+    }
     let playlist = build_hls_media_playlist(&session_id, duration_ms, profile);
 
     let response = Response::builder()

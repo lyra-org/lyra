@@ -504,6 +504,188 @@ pub(crate) fn update(
     Ok(stored)
 }
 
+fn library_entry_ids(db: &impl super::DbAccess, library_id: DbId) -> anyhow::Result<HashSet<DbId>> {
+    let mut entries = HashSet::new();
+    let mut pending = vec![library_id];
+    while let Some(parent) = pending.pop() {
+        let children: Vec<super::Entry> = db
+            .exec(
+                QueryBuilder::select()
+                    .elements::<super::Entry>()
+                    .search()
+                    .from(parent)
+                    .where_()
+                    .neighbor()
+                    .end_where()
+                    .query(),
+            )?
+            .try_into()?;
+        for id in children.into_iter().filter_map(|entry| entry.db_id) {
+            if entries.insert(id) {
+                pending.push(id);
+            }
+        }
+    }
+    Ok(entries)
+}
+
+/// Remove the library's exclusive media graph in the caller's transaction.
+/// Media reachable from another library remains available there.
+pub(crate) fn delete(
+    db: &mut DbAnyTransactionMut<'_>,
+    library: &Library,
+) -> anyhow::Result<HashSet<String>> {
+    let library_id = library
+        .db_id
+        .ok_or_else(|| anyhow!("library missing db_id"))?;
+    let descendants = db.exec(
+        QueryBuilder::select()
+            .search()
+            .from(library_id)
+            .where_()
+            .node()
+            .query(),
+    )?;
+    let mut removed_entries = library_entry_ids(db, library_id)?;
+    let mut retained = HashSet::new();
+    for other in get(db)? {
+        if let Some(id) = other.db_id.filter(|id| *id != library_id) {
+            let other_entries = library_entry_ids(db, id)?;
+            removed_entries.retain(|entry| !other_entries.contains(entry));
+            retained.extend(
+                db.exec(QueryBuilder::search().from(id).where_().node().query())?
+                    .ids(),
+            );
+        }
+    }
+    let mut entities = Vec::new();
+    let mut children: Vec<_> = removed_entries.iter().copied().collect();
+    let mut track_ids = HashSet::new();
+    for element in descendants.elements {
+        if retained.contains(&element.id) {
+            continue;
+        }
+        let kind = element
+            .values
+            .iter()
+            .find(|kv| kv.key == DbValue::from("db_element_id"))
+            .and_then(|kv| kv.value.string().ok())
+            .map(String::as_str);
+        match kind {
+            Some("Track" | "Release" | "Artist") => {
+                entities.push(element.id);
+                if kind == Some("Track") {
+                    if let Some(id) = element
+                        .values
+                        .iter()
+                        .find(|kv| kv.key == DbValue::from("id"))
+                        .and_then(|kv| kv.value.string().ok())
+                    {
+                        track_ids.insert(id.clone());
+                    }
+                }
+            }
+            Some("TrackSource" | "CueSheet" | "CueTrack" | "Cover") => children.push(element.id),
+            _ => {}
+        }
+    }
+    for &entry_id in &removed_entries {
+        let sources: Vec<super::TrackSource> = db
+            .exec(
+                QueryBuilder::select()
+                    .elements::<super::TrackSource>()
+                    .search()
+                    .to(entry_id)
+                    .where_()
+                    .neighbor()
+                    .end_where()
+                    .query(),
+            )?
+            .try_into()?;
+        for source_id in sources.into_iter().filter_map(|source| source.db_id) {
+            let tracks: Vec<super::Track> = db
+                .exec(
+                    QueryBuilder::select()
+                        .elements::<super::Track>()
+                        .search()
+                        .to(source_id)
+                        .where_()
+                        .neighbor()
+                        .end_where()
+                        .query(),
+                )?
+                .try_into()?;
+            track_ids.extend(tracks.into_iter().map(|track| track.id));
+            children.push(source_id);
+        }
+    }
+    // Cue sheets point to their file entry, so the forward media walk cannot find them.
+    let mut cue_children = HashSet::new();
+    for &id in &removed_entries {
+        let sheets: Vec<super::CueSheet> = db
+            .exec(
+                QueryBuilder::select()
+                    .elements::<super::CueSheet>()
+                    .search()
+                    .to(id)
+                    .where_()
+                    .neighbor()
+                    .end_where()
+                    .query(),
+            )?
+            .try_into()?;
+        for sheet in sheets {
+            let Some(sheet_id) = sheet.db_id else {
+                continue;
+            };
+            cue_children.insert(sheet_id);
+            let tracks: Vec<super::CueTrack> = db
+                .exec(
+                    QueryBuilder::select()
+                        .elements::<super::CueTrack>()
+                        .search()
+                        .from(sheet_id)
+                        .where_()
+                        .neighbor()
+                        .end_where()
+                        .query(),
+                )?
+                .try_into()?;
+            cue_children.extend(
+                tracks
+                    .into_iter()
+                    .filter_map(|track| track.db_id)
+                    .filter(|id| !retained.contains(id)),
+            );
+        }
+    }
+    for &entry_id in &removed_entries {
+        let tracks: Vec<super::CueTrack> = db
+            .exec(
+                QueryBuilder::select()
+                    .elements::<super::CueTrack>()
+                    .search()
+                    .to(entry_id)
+                    .where_()
+                    .neighbor()
+                    .end_where()
+                    .query(),
+            )?
+            .try_into()?;
+        cue_children.extend(tracks.into_iter().filter_map(|track| track.db_id));
+    }
+    children.extend(cue_children);
+    super::metadata::cascade_remove_entities_in_txn(db, &entities)?;
+    children.push(library_id);
+    for run in super::sync_runs::list_for_library(db, &library.id)? {
+        if let Some(id) = run.db_id {
+            children.push(id);
+        }
+    }
+    db.exec_mut(QueryBuilder::remove().ids(children).query())?;
+    Ok(track_ids)
+}
+
 const ACCESS_KIND_KEY: &str = "library_access_kind";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -799,6 +981,155 @@ mod tests {
             language: None,
             country: None,
         }
+    }
+
+    #[test]
+    fn delete_removes_exclusive_media_and_preserves_shared_media() -> anyhow::Result<()> {
+        use crate::db::{
+            self,
+            test_db,
+        };
+        let mut db = new_test_db()?;
+        let user = create_test_user(&mut db, "owner")?;
+        let deleted = db.transaction_mut(|t| -> anyhow::Result<_> {
+            Ok(create_with_creator(
+                t,
+                insert_request("Deleted", "deleted"),
+                user,
+            )?)
+        })?;
+        let kept = db.transaction_mut(|t| -> anyhow::Result<_> {
+            Ok(create_system(t, insert_request("Kept", "kept"))?)
+        })?;
+        let deleted_id = deleted.db_id.unwrap();
+        let kept_id = kept.db_id.unwrap();
+        let release = test_db::insert_release(&mut db, "Deleted album")?;
+        let track = test_db::insert_track(&mut db, "Deleted track")?;
+        let shared = test_db::insert_track(&mut db, "Shared track")?;
+        let artist = test_db::insert_artist(&mut db, "Shared artist")?;
+        test_db::connect(&mut db, deleted_id, release)?;
+        test_db::connect(&mut db, release, track)?;
+        test_db::connect(&mut db, deleted_id, shared)?;
+        test_db::connect(&mut db, kept_id, shared)?;
+        test_db::connect(&mut db, track, artist)?;
+        test_db::connect(&mut db, shared, artist)?;
+        db::metadata::layers::upsert(
+            &mut db,
+            track,
+            &db::MetadataLayer {
+                db_id: None,
+                source_id: "local-scanner".into(),
+                fields: "{}".into(),
+                updated_at: 0,
+            },
+        )?;
+        let layer_ids = db::metadata::collect_layer_ids(&db, track)?;
+        let track_public_id = db::tracks::get_by_id(&db, track)?.unwrap().id;
+        let removed = db.transaction_mut(|t| delete(t, &deleted))?;
+        assert_eq!(removed, HashSet::from([track_public_id]));
+        assert!(get_by_id(&db, deleted_id)?.is_none());
+        assert!(get_by_id(&db, kept_id)?.is_some());
+        assert!(db::tracks::get_by_id(&db, track)?.is_none());
+        assert!(db::releases::get_by_id(&db, release)?.is_none());
+        assert!(db::tracks::get_by_id(&db, shared)?.is_some());
+        assert!(db::artists::get_by_id(&db, artist)?.is_some());
+        assert!(accessible_library_ids(&db, user)?.is_empty());
+        for id in layer_ids {
+            assert!(db.exec(QueryBuilder::select().ids(id).query()).is_err());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn delete_removes_owned_sources_and_cue_records_but_preserves_shared_track_and_files()
+    -> anyhow::Result<()> {
+        use crate::db::{
+            self,
+            test_db,
+        };
+        let mut db = new_test_db()?;
+        let deleted = db.transaction_mut(|t| -> anyhow::Result<_> {
+            Ok(create_system(
+                t,
+                insert_request("Deleted", "sources-deleted"),
+            )?)
+        })?;
+        let kept = db.transaction_mut(|t| -> anyhow::Result<_> {
+            Ok(create_system(t, insert_request("Kept", "sources-kept"))?)
+        })?;
+        let file_path = std::env::temp_dir().join(format!("lyra-delete-test-{}", nanoid!()));
+        std::fs::write(&file_path, b"preserve music")?;
+        let entry = db::Entry {
+            db_id: None,
+            id: nanoid!(),
+            full_path: file_path.clone(),
+            kind: db::entries::EntryKind::File,
+            file_kind: None,
+            name: "music.flac".into(),
+            hash: None,
+            size: 14,
+            mtime: 0,
+            ctime: 0,
+        };
+        let entry_id = db
+            .exec_mut(QueryBuilder::insert().element(&entry).query())?
+            .ids()[0];
+        test_db::connect(&mut db, deleted.db_id.unwrap(), entry_id)?;
+        let track = test_db::insert_track(&mut db, "Shared")?;
+        test_db::connect(&mut db, deleted.db_id.unwrap(), track)?;
+        test_db::connect(&mut db, kept.db_id.unwrap(), track)?;
+        let (sheet, selected, unselected, source) =
+            db.transaction_mut(|t| -> anyhow::Result<_> {
+                let sheet = db::cue::sheets::upsert(t, entry_id, "hash")?;
+                let selected = db::cue::tracks::upsert(t, sheet, entry_id, 1, entry_id, None, 0)?;
+                let unselected =
+                    db::cue::tracks::upsert(t, sheet, entry_id, 2, entry_id, None, 75)?;
+                let source = db::track_sources::upsert(
+                    t,
+                    track,
+                    entry_id,
+                    db::track_sources::TrackSourceUpsert {
+                        source_kind: "cue".into(),
+                        source_key: "deleted-source".into(),
+                        is_primary: true,
+                        start_ms: Some(0),
+                        end_ms: Some(1000),
+                    },
+                    Some(selected),
+                )?;
+                Ok((sheet, selected, unselected, source))
+            })?;
+        let affected = db.transaction_mut(|t| delete(t, &deleted))?;
+        assert!(affected.contains(&db::tracks::get_by_id(&db, track)?.unwrap().id));
+        for id in [entry_id, sheet, selected, unselected, source] {
+            assert!(
+                db.exec(QueryBuilder::select().ids(id).query()).is_err(),
+                "node {} survived",
+                id.0
+            );
+        }
+        assert_eq!(std::fs::read(&file_path)?, b"preserve music");
+        std::fs::remove_file(file_path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn delete_rolls_back_the_whole_graph_on_transaction_failure() -> anyhow::Result<()> {
+        use crate::db::test_db;
+        let mut db = new_test_db()?;
+        let library = db.transaction_mut(|t| -> anyhow::Result<_> {
+            Ok(create_system(t, insert_request("Rollback", "rollback"))?)
+        })?;
+        let track = test_db::insert_track(&mut db, "Retained")?;
+        test_db::connect(&mut db, library.db_id.unwrap(), track)?;
+        let result = db.transaction_mut(|t| -> anyhow::Result<()> {
+            delete(t, &library)?;
+            anyhow::bail!("abort")
+        });
+        assert!(result.is_err());
+        assert!(get_by_id(&db, library.db_id.unwrap())?.is_some());
+        assert!(crate::db::tracks::get_by_id(&db, track)?.is_some());
+        Ok(())
     }
 
     #[test]
