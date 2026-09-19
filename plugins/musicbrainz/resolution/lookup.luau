@@ -4,6 +4,7 @@
 -- You can obtain one here:
 -- www.meshiplaw.com/lyra.
 
+local editions = require("@lyra/editions")
 local genres = require("@lyra/genres")
 local http = require("@harmony/http")
 local serde = require("@harmony/serde")
@@ -28,6 +29,7 @@ type LookupTrack = text_helpers.LookupHintTrack
 type LookupLibrary = text_helpers.LookupHintLibrary
 type LookupContext = text_helpers.LookupHintReleaseContext
 type LocalArtist = track_helpers.LocalArtist
+type EditionHints = track_helpers.EditionHints
 type LocalTrack = track_helpers.LocalTrack
 type ReleaseArtist = track_helpers.ReleaseArtist
 type ReleaseArtistCredit = track_helpers.ReleaseArtistCredit
@@ -257,6 +259,7 @@ local function normalize_release_mediums(raw_media: { JsonValue }?): { ReleaseMe
 			end
 			table.insert(media, {
 				position = json_number_field(medium, "position"),
+				format = json_string_field(medium, "format"),
 				["track-count"] = json_number_field(medium, "track-count"),
 				tracks = tracks,
 			})
@@ -802,8 +805,42 @@ local function release_matches_artist_ids(release: Release?, artist_ids: ArtistI
 	return false
 end
 
--- Release scoring:
--- artist MBID > title > track-count fit > status/cover/language/country.
+local function edition_hints_from_context(release_context: ReleaseContext?): EditionHints?
+	if not release_context then
+		return nil
+	end
+	local media_formats = release_context.media_formats
+	local barcode = release_context.barcode
+	if (media_formats == nil or #media_formats == 0) and barcode == nil then
+		return nil
+	end
+	return { media_formats = media_formats, barcode = barcode }
+end
+
+local function edition_hint_score(release: Release, hints: EditionHints?): number
+	if not hints then
+		return 0
+	end
+	local score = 0
+	if hints.barcode and editions.barcodes_match(hints.barcode, release.barcode) then
+		score += 12
+	end
+	local local_formats = hints.media_formats
+	if local_formats and #local_formats > 0 and release.media then
+		local raw_formats: { string } = {}
+		for _, medium: ReleaseMedium in release.media do
+			if medium.format then
+				table.insert(raw_formats, medium.format)
+			end
+		end
+		local release_formats = editions.media_formats(raw_formats)
+		if #release_formats > 0 then
+			score += if editions.media_formats_match(local_formats, release_formats) then 3 else -3
+		end
+	end
+	return score
+end
+
 local function select_best_release(
 	releases: { Release },
 	track_count: number?,
@@ -812,7 +849,8 @@ local function select_best_release(
 	expected_title: string?,
 	artist_ids: ArtistIdSet?,
 	local_tracks: { LocalTrack }?,
-	artist_mbid_weight: number?
+	artist_mbid_weight: number?,
+	edition_hints: EditionHints?
 ): Release?
 	local best: Release? = nil
 	local best_score = -1
@@ -926,6 +964,7 @@ local function select_best_release(
 		if artist_ids and release_matches_artist_ids(release, artist_ids) then
 			score += mbid_weight
 		end
+		score += edition_hint_score(release, edition_hints)
 		local release_title_matched = false
 		if norm_expected then
 			local title_matched = false
@@ -2469,7 +2508,8 @@ local function select_release_group_candidate(
 	artist_ids: ArtistIdSet?,
 	local_tracks: { LocalTrack }?,
 	selected_release: Release?,
-	keep_selected: boolean
+	keep_selected: boolean,
+	edition_hints: EditionHints?
 ): Release?
 	if not candidates or #candidates == 0 then
 		return nil
@@ -2494,7 +2534,8 @@ local function select_release_group_candidate(
 		search_title,
 		artist_ids,
 		local_tracks,
-		1
+		1,
+		edition_hints
 	)
 	if not best_edition and track_count ~= nil and track_count > 1 then
 		local medium_candidates: { Release } = {}
@@ -2512,7 +2553,8 @@ local function select_release_group_candidate(
 				search_title,
 				artist_ids,
 				local_tracks,
-				1
+				1,
+				edition_hints
 			)
 			if not best_edition and #medium_candidates == 1 then
 				best_edition = medium_candidates[1]
@@ -2578,7 +2620,8 @@ local function process_release_via_group(
 		artist_ids,
 		release_context.tracks,
 		selected_release,
-		keep_selected
+		keep_selected,
+		edition_hints_from_context(release_context)
 	)
 	if not best_edition then
 		return nil
@@ -2705,7 +2748,8 @@ function module.resolve_cover_release_id(release_context: ReleaseContext): strin
 		artist_ids,
 		local_tracks,
 		nil,
-		false
+		false,
+		edition_hints_from_context(release_context)
 	)
 	return if best_cover_release then best_cover_release.id else nil
 end
