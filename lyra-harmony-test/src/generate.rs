@@ -935,6 +935,14 @@ fn write_raw_tags_sections(
             let escaped = escape_toml_string(catalog_number);
             out.push_str(&format!("catalog_number = \"{escaped}\"\n"));
         }
+        if let Some(ref media) = raw.media {
+            let escaped = escape_toml_string(media);
+            out.push_str(&format!("media = \"{escaped}\"\n"));
+        }
+        if let Some(ref barcode) = raw.barcode {
+            let escaped = escape_toml_string(barcode);
+            out.push_str(&format!("barcode = \"{escaped}\"\n"));
+        }
         if let Some(disc) = raw.disc {
             out.push_str(&format!("disc = {disc}\n"));
         }
@@ -1351,6 +1359,42 @@ mod tests {
         prev_visible_index,
         strip_fixture_library_root,
     };
+
+    #[test]
+    fn generated_raw_tags_keep_edition_signals() -> anyhow::Result<()> {
+        let raw: lyra_metadata::RawTrackTags = serde_json::from_value(json!({
+            "file_path": "/music/Album/01.flac",
+            "album": "Album",
+            "title": "Track",
+            "date": null,
+            "copyright": null,
+            "genre": null,
+            "label": null,
+            "catalog_number": null,
+            "media": "WEB",
+            "barcode": "0199957588430",
+            "disc": null,
+            "disc_total": null,
+            "track": null,
+            "track_total": null,
+            "duration_ms": 1000
+        }))?;
+
+        let mut out = String::new();
+        super::write_raw_tags_sections(&mut out, &[raw], "/music")?;
+
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            raw_tags: Vec<lyra_metadata::RawTrackTags>,
+        }
+        let fixture: Fixture = toml::from_str(&out)?;
+        assert_eq!(fixture.raw_tags[0].media.as_deref(), Some("WEB"));
+        assert_eq!(
+            fixture.raw_tags[0].barcode.as_deref(),
+            Some("0199957588430")
+        );
+        Ok(())
+    }
 
     #[test]
     fn strips_unix_library_root_from_generated_fixture_paths() {
