@@ -992,13 +992,9 @@ fn plugin_executor_dispatches_registered_api_handler() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Result<()> {
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
-        .enable_all()
-        .build()?;
-    let _guard = rt.block_on(crate::testing::runtime_test_lock());
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Result<()> {
+    let _guard = crate::testing::runtime_test_lock().await;
     let test_dir = std::env::temp_dir().join(format!(
         "lyra-dispatch-auth-test-{}-{}",
         std::process::id(),
@@ -1007,15 +1003,14 @@ fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Result<()
             .as_nanos()
     ));
     std::fs::create_dir_all(&test_dir)?;
-    rt.block_on(crate::testing::initialize_runtime(
-        &crate::testing::LibraryFixtureConfig {
-            directory: test_dir.clone(),
-            language: None,
-            country: None,
-        },
-    ))?;
+    crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
+        directory: test_dir.clone(),
+        language: None,
+        country: None,
+    })
+    .await?;
 
-    let (user_db_id, token) = rt.block_on(async {
+    let (user_db_id, token) = {
         let user_db_id = {
             let mut db = crate::STATE.db.write().await;
             crate::plugins::db::users::create(
@@ -1028,13 +1023,11 @@ fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Result<()
             Default::default(),
         )
         .await?;
-        Ok::<_, anyhow::Error>((user_db_id, session.token))
-    })?;
+        (user_db_id, session.token)
+    };
 
-    let _ = rt.block_on(crate::plugins::api::install(
-        axum::Router::new(),
-        std::collections::HashSet::new(),
-    ))?;
+    let _ =
+        crate::plugins::api::install(axum::Router::new(), std::collections::HashSet::new()).await?;
     let runtime = runtime_with_scopes(&["lyra.api", "lyra.auth"])?;
     runtime.run_plugin_source(
         "demo",
@@ -1070,10 +1063,8 @@ fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Result<()
         client_key: None,
     };
 
-    let whoami_handler = rt
-        .block_on(crate::plugins::api::tests::registered_handler(
-            "GET", "/whoami",
-        ))
+    let whoami_handler = crate::plugins::api::tests::registered_handler("GET", "/whoami")
+        .await
         .context("registered /whoami handler")?;
     let response = runtime.dispatch_api_handler(request(whoami_handler, "/whoami"))?;
     let principal = response
@@ -1081,10 +1072,8 @@ fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Result<()
         .context("resolve_auth during dispatch should bind the principal to the response")?;
     assert_eq!(principal.user_db_id, user_db_id);
 
-    let anon_handler = rt
-        .block_on(crate::plugins::api::tests::registered_handler(
-            "GET", "/anon",
-        ))
+    let anon_handler = crate::plugins::api::tests::registered_handler("GET", "/anon")
+        .await
         .context("registered /anon handler")?;
     let response = runtime.dispatch_api_handler(request(anon_handler, "/anon"))?;
     assert!(
@@ -1092,10 +1081,8 @@ fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Result<()
         "dispatches that never resolve auth must not carry a principal"
     );
 
-    let boundary_auth = rt
-        .block_on(crate::services::auth::resolve_auth_from_bearer(Some(
-            &token,
-        )))?
+    let boundary_auth = crate::services::auth::resolve_auth_from_bearer(Some(&token))
+        .await?
         .context("bearer token should resolve at the boundary")?;
     let mut seeded = request(anon_handler, "/anon");
     seeded.auth = Some(boundary_auth);
