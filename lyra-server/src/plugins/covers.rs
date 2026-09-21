@@ -84,7 +84,6 @@ pub(crate) fn module_spec() -> ModuleSpec {
 
 fn get_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get")
-        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("id")
         .args::<ResolveId>()
         .returns::<Option<luau::Table>>()
@@ -93,7 +92,6 @@ fn get_spec() -> FunctionSpec {
 
 fn get_many_spec() -> FunctionSpec {
     FunctionSpec::async_fn("get_many")
-        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("ids")
         .args::<luau::Table>()
         .returns::<luau::Table>()
@@ -104,9 +102,7 @@ fn get_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let id = parse_resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
-    let store = frame.vm.data().get::<CoversModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
+    let db = frame.vm.data().get::<CoversModuleStore>()?.db()?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let (resolved_cover, stale_owners) = {
@@ -117,11 +113,6 @@ fn get_callback(
             else {
                 return Ok(luau::Value::Nil);
             };
-            if !crate::services::auth::access::entity_accessible(&*db_read, &principal, item_id)
-                .map_err(crate::plugins::runtime_error)?
-            {
-                return Ok(luau::Value::Nil);
-            }
             let mut stale_owners = Vec::new();
             let result = resolve_persisted_cover(&db_read, item_id, &mut stale_owners)
                 .map_err(crate::plugins::runtime_error)?;
@@ -144,23 +135,13 @@ fn get_many_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids: luau::Table = frame.args.read_named("ids")?;
     let item_ids = parse_db_ids(frame.vm, &ids)?;
-    let store = frame.vm.data().get::<CoversModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
-    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
+    let db = frame.vm.data().get::<CoversModuleStore>()?.db()?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let (resolved, stale_owners) = {
             let db_read = db.read().await;
             let mut stale_owners = Vec::new();
-            let mut accessible_ids = Vec::new();
-            for item_id in &item_ids {
-                if crate::services::auth::access::entity_accessible(&*db_read, &principal, *item_id)
-                    .map_err(crate::plugins::runtime_error)?
-                {
-                    accessible_ids.push(*item_id);
-                }
-            }
-            let result = resolve_persisted_covers(&db_read, &accessible_ids, &mut stale_owners)
+            let result = resolve_persisted_covers(&db_read, &item_ids, &mut stale_owners)
                 .map_err(crate::plugins::runtime_error)?;
             (result, stale_owners)
         };
