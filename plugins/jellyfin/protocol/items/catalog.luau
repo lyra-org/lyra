@@ -5976,6 +5976,50 @@ function helpers.paginate_name_lookup(
 	return nil
 end
 
+-- Artwork routes are served without credentials, so these lookups skip user scoping.
+function helpers.paginate_artist_db_id_lookup(name: string, query: (number) -> ArtistQueryResult): number?
+	local lowered_name = string.lower(name)
+	local offset = 0
+	for _ = 1, NAME_LOOKUP_MAX_PAGES do
+		local ok, result = pcall(query, offset)
+		if not ok or type(result) ~= "table" then
+			return nil
+		end
+		for _, artist in result.entities do
+			if string.lower(artist.artist_name) == lowered_name then
+				return artist.db_id
+			end
+		end
+		offset += #result.entities
+		if #result.entities == 0 or offset >= result.total_count then
+			return nil
+		end
+	end
+	return nil
+end
+
+function module.find_artist_db_id_by_name(name: string): number?
+	return helpers.paginate_artist_db_id_lookup(name, function(offset: number): ArtistQueryResult
+		return artists_module.query({
+			search_term = name,
+			offset = offset,
+			limit = NAME_LOOKUP_PAGE_SIZE,
+		})
+	end)
+end
+
+function module.find_person_db_id_by_name(name: string): number?
+	return helpers.paginate_artist_db_id_lookup(name, function(offset: number): ArtistQueryResult
+		return artists_module.query_credited({
+			search_term = name,
+			offset = offset,
+			limit = NAME_LOOKUP_PAGE_SIZE,
+			artist_type = artists_module.ArtistType.Person,
+			exclude_credit_types = { artists_module.CreditType.Artist },
+		})
+	end)
+end
+
 function module.find_artist_by_name(name: string, user_id: number): ItemInfo?
 	return helpers.paginate_name_lookup(name, user_id, module.list_artist_items)
 end
