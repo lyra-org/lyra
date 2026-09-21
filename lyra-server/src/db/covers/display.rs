@@ -917,17 +917,21 @@ pub(crate) fn sync_release_random_candidates(
 }
 
 /// Releases reachable from a playlist's entries that currently have a cover,
-/// paired with their public ids for deterministic scoring.
-fn playlist_cover_candidates(
+/// paired with their deterministic score and ordered by it, so the first
+/// entry is the display winner and the leading entries are the collage sources.
+pub(crate) fn playlist_cover_sources(
     db: &impl DbAccess,
     playlist_db_id: DbId,
-) -> anyhow::Result<Vec<(DbId, String)>> {
+) -> anyhow::Result<Vec<(u64, DbId)>> {
+    let Some(playlist) = playlists::get_by_id(db, playlist_db_id)? else {
+        return Ok(Vec::new());
+    };
     let entries = playlists::get_tracks(db, playlist_db_id)?;
     let edge_ids = entries
         .iter()
         .map(|entry| entry.edge_id)
         .collect::<Vec<_>>();
-    let mut candidates = Vec::new();
+    let mut sources = Vec::new();
     let mut seen = HashSet::new();
     for track_db_id in playlists::resolve_edge_targets(db, &edge_ids)? {
         for release in releases::get_by_track(db, track_db_id)? {
@@ -940,10 +944,19 @@ fn playlist_cover_candidates(
             if super::get(db, release_db_id)?.is_none() {
                 continue;
             }
-            candidates.push((release_db_id, release.id));
+            let random_score = deterministic_random_score(
+                DisplayCoverTargetKind::Playlist,
+                &playlist.id,
+                &release.id,
+            );
+            sources.push((random_score, release.id, release_db_id));
         }
     }
-    Ok(candidates)
+    sources.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    Ok(sources
+        .into_iter()
+        .map(|(random_score, _, release_db_id)| (random_score, release_db_id))
+        .collect())
 }
 
 /// Recompute a playlist's display cover from its current membership.
@@ -970,20 +983,12 @@ pub(crate) fn sync_playlist_cover(
     let (profile_db_id, mut profile) =
         ensure_profile(db, DisplayCoverScope::Instance, &target, None, now_ms)?;
 
-    let winner = playlist_cover_candidates(db, playlist_db_id)?
+    let winner = playlist_cover_sources(db, playlist_db_id)?
         .into_iter()
-        .map(|(release_db_id, release_public_id)| {
-            let random_score = deterministic_random_score(
-                DisplayCoverTargetKind::Playlist,
-                &playlist.id,
-                &release_public_id,
-            );
-            (random_score, release_public_id, release_db_id)
-        })
-        .min_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+        .next();
 
     match winner {
-        Some((random_score, _, release_db_id)) => replace_winner(
+        Some((random_score, release_db_id)) => replace_winner(
             db,
             &winner_update(
                 profile_db_id,
@@ -1854,6 +1859,18 @@ mod tests {
         let winner = get_winner(&db, &profile, DisplayCoverWinnerKind::Random)?
             .expect("playlist winner should still exist");
         assert_eq!(winner.release_db_id, expected);
+
+        // The collage sources share the winner's ordering.
+        let runner_up = if expected == release_a {
+            release_b
+        } else {
+            release_a
+        };
+        let sources = playlist_cover_sources(&db, playlist_db_id)?
+            .into_iter()
+            .map(|(_, release_db_id)| release_db_id)
+            .collect::<Vec<_>>();
+        assert_eq!(sources, vec![expected, runner_up]);
 
         Ok(())
     }
