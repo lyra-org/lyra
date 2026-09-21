@@ -225,7 +225,7 @@ type ItemContext = {
 	cover_prefetch_artist_ids: { [number]: boolean }?,
 	library_hex_id: string?,
 	library_hex_id_by_entity_id: { [number]: string }?,
-	playlist_track_ids_by_playlist_id: { [number]: { number } }?,
+	playlist_cover_sources_by_playlist_id: { [number]: { covers.CoverInfo } }?,
 }
 type RealizationSeedInfo = {
 	track_ids: { number },
@@ -324,6 +324,17 @@ function helpers.deterministic_image_tag(picked_ids: { number }, seed: string): 
 	return string.format("%08x", hash)
 end
 
+function helpers.cover_sources_image_tag(sources: { covers.CoverInfo }): string?
+	if #sources == 0 then
+		return nil
+	end
+	local hashes: { string } = {}
+	for _, source in sources do
+		table.insert(hashes, source.hash)
+	end
+	return string.format("%08x", helpers.fnv1a_hash(table.concat(hashes, ":")))
+end
+
 function helpers.compose_cover_from_ids(item_ids: { number }, seed: string): artwork.ResolvedCoverInfo?
 	if #item_ids == 0 then
 		return nil
@@ -333,10 +344,21 @@ function helpers.compose_cover_from_ids(item_ids: { number }, seed: string): art
 	local picked = helpers.deterministic_pick(item_ids, seed, 4)
 	local cover_map = covers.get_many(picked)
 
-	local source_paths: { string } = {}
-	local first_cover: artwork.ResolvedCoverInfo? = nil
+	local cover_infos: { covers.CoverInfo } = {}
 	for _, id in picked do
 		local raw_cover = cover_map[id]
+		if raw_cover then
+			table.insert(cover_infos, raw_cover)
+		end
+	end
+	return helpers.compose_covers(cover_infos)
+end
+
+-- Collage the given covers in order, falling back to the first one alone.
+function helpers.compose_covers(cover_infos: { covers.CoverInfo }): artwork.ResolvedCoverInfo?
+	local source_paths: { string } = {}
+	local first_cover: artwork.ResolvedCoverInfo? = nil
+	for _, raw_cover in cover_infos do
 		local resolved = artwork.normalize_cover_info(raw_cover)
 		if resolved then
 			if not first_cover then
@@ -1909,11 +1931,6 @@ function module.to_music_view_items(): { ItemInfo }
 	return items
 end
 
-function helpers.resolve_playlist_cover(playlist: PlaylistInfo): artwork.ResolvedCoverInfo?
-	local track_ids = playlist_access.track_ids(playlist)
-	return helpers.compose_cover_from_ids(track_ids, playlist.id or "")
-end
-
 function helpers.to_playlist_item(
 	playlist: PlaylistInfo?,
 	user_id: number?,
@@ -1928,25 +1945,13 @@ function helpers.to_playlist_item(
 	local playlist_name = module.trim(playlist.name) or "Untitled Playlist"
 	local playlist_item_id = module.encode_jellyfin_item_id(playlist.id)
 
-	-- Use pre-fetched track IDs from context if available, otherwise fetch.
-	local track_ids: { number }
-	local prefetched = if context
-			and context.playlist_track_ids_by_playlist_id
-			and playlist.db_id
-		then context.playlist_track_ids_by_playlist_id[playlist.db_id]
-		else nil
-	if prefetched then
-		track_ids = prefetched
-	else
-		track_ids = playlist_access.track_ids(playlist)
-	end
-	local count = if child_count ~= nil then child_count else #track_ids
-
 	local image_tag: string? = nil
-	if include_images and #track_ids > 0 then
-		table.sort(track_ids)
-		local picked = helpers.deterministic_pick(track_ids, playlist.id or "", 4)
-		image_tag = helpers.deterministic_image_tag(picked, playlist.id or "")
+	if include_images then
+		local prefetched = if context and context.playlist_cover_sources_by_playlist_id
+			then context.playlist_cover_sources_by_playlist_id[playlist.db_id]
+			else nil
+		local sources = prefetched or covers.get_playlist_sources(playlist.db_id)
+		image_tag = helpers.cover_sources_image_tag(sources)
 	end
 
 	local item: ItemInfo = {
@@ -1954,7 +1959,7 @@ function helpers.to_playlist_item(
 		Name = playlist_name,
 		Type = "Playlist",
 		SortName = playlist_name,
-		ChildCount = count,
+		ChildCount = child_count,
 		DateCreated = helpers.unix_to_iso8601(playlist.created_at),
 		ImageTags = if image_tag then { Primary = image_tag } else nil,
 		ImageBlurHashes = nil,
@@ -3591,27 +3596,12 @@ function helpers.prefetch_track_lyrics(context: ItemContext, seed: RealizationSe
 	context.has_lyrics_prefetch = true
 end
 
-function helpers.prefetch_playlist_track_ids(context: ItemContext, seed: RealizationSeedInfo): ()
-	if #seed.playlist_db_ids == 0 then
+function helpers.prefetch_playlist_cover_sources(context: ItemContext, seed: RealizationSeedInfo): ()
+	if #seed.playlist_db_ids == 0 or not helpers.should_include_images(context) then
 		return
 	end
 
-	local tracks_map = playlists.get_tracks_many(seed.playlist_db_ids)
-	if type(tracks_map) == "table" then
-		local track_ids_map: { [number]: { number } } = {}
-		for pl_id, track_links in tracks_map do
-			local ids: { number } = {}
-			if type(track_links) == "table" then
-				for _, link in track_links do
-					if type(link) == "table" and link.track_id and link.track_id > 0 then
-						table.insert(ids, link.track_id)
-					end
-				end
-			end
-			track_ids_map[pl_id] = ids
-		end
-		context.playlist_track_ids_by_playlist_id = track_ids_map
-	end
+	context.playlist_cover_sources_by_playlist_id = covers.get_playlist_sources_many(seed.playlist_db_ids)
 end
 
 function helpers.collect_tag_target_ids(seed: RealizationSeedInfo): { number }
@@ -3667,7 +3657,7 @@ function helpers.build_realization_context(stubs: { ItemInfo }, options: ItemsQu
 	helpers.prefetch_artist_people_relations(context, seed)
 	helpers.prefetch_track_stats_and_media(context, seed, options)
 	helpers.prefetch_track_lyrics(context, seed)
-	helpers.prefetch_playlist_track_ids(context, seed)
+	helpers.prefetch_playlist_cover_sources(context, seed)
 	helpers.prefetch_item_tags(context, seed, options)
 
 	return context
@@ -5933,15 +5923,9 @@ function module.resolve_genre_cover_by_name(name: string): artwork.ResolvedCover
 	return module.resolve_genre_cover(genre_info.db_id)
 end
 
--- Resolve a composed cover image for a playlist by its db_id.
--- Used by the image endpoint to serve playlist covers on demand.
+-- Composed from the playlist's ranked cover sources.
 function module.resolve_playlist_cover(playlist_db_id: number): artwork.ResolvedCoverInfo?
-	local playlist_info = playlist_access.find(playlist_db_id)
-	if not playlist_info then
-		return nil
-	end
-
-	return helpers.resolve_playlist_cover(playlist_info)
+	return helpers.compose_covers(covers.get_playlist_sources(playlist_db_id))
 end
 
 local ANCESTORS_MAX_DEPTH = 8
