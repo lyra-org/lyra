@@ -679,17 +679,6 @@ function module.to_playlist_user_permission(playlist: PlaylistInfo, user_id: num
 	}
 end
 
-local function resolve_primary_image_cover_info(item_db_id: number?): artwork.ResolvedCoverInfo?
-	local cover_info = artwork.get_cover_info(item_db_id)
-	if not cover_info and item_db_id then
-		cover_info = catalog.resolve_genre_cover(item_db_id)
-	end
-	if not cover_info and item_db_id then
-		cover_info = catalog.resolve_playlist_cover(item_db_id)
-	end
-	return cover_info
-end
-
 local function respond_with_primary_image(ctx: ApiContext?, cover_info: artwork.ResolvedCoverInfo): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local format_query = requests.parse_query_string(query, { "format" }, nil)
@@ -732,73 +721,37 @@ local function respond_with_primary_image(ctx: ApiContext?, cover_info: artwork.
 	})
 end
 
-local function serve_primary_image_for_item(ctx: ApiContext?, item_db_id: number?): ApiResponse
-	local cover_info = resolve_primary_image_cover_info(item_db_id)
-	if not cover_info then
-		return responses.not_found("image not found")
-	end
-	return respond_with_primary_image(ctx, cover_info)
-end
-
+-- Artwork is served without credentials, matching Jellyfin. Only playlist
+-- covers need a principal, since playlist lookup is access-checked.
 function module.handle_primary_image_request(ctx: ApiContext?): ApiResponse
-	local principal = module.require_jellyfin_principal(ctx)
-	if not principal then
-		return module.unauthorized()
-	end
-
 	local params = if ctx then ctx.params else nil
 	local image_id = if params then params.imageId else nil
 	if not image_id then
 		return responses.bad_request("missing image id")
 	end
 
-	return serve_primary_image_for_item(ctx, item_ids.decode_jellyfin_item_id(image_id))
+	local item_db_id = item_ids.decode_jellyfin_item_id(image_id)
+	if not item_db_id then
+		return responses.not_found("image not found")
+	end
+	local cover_info = artwork.get_cover_info(item_db_id) or catalog.resolve_genre_cover(item_db_id)
+	if not cover_info then
+		if not module.require_jellyfin_principal(ctx) then
+			return module.unauthorized()
+		end
+		cover_info = catalog.resolve_playlist_cover(item_db_id)
+	end
+	if not cover_info then
+		return responses.not_found("image not found")
+	end
+	return respond_with_primary_image(ctx, cover_info)
 end
 
-function module.handle_artist_image_request(ctx: ApiContext?): ApiResponse
-	local principal = module.require_jellyfin_principal(ctx)
-	if not principal then
-		return module.unauthorized()
-	end
-
+local function serve_public_image_by_name(ctx: ApiContext?, find_db_id: (string) -> number?): ApiResponse
 	local params = if ctx then ctx.params else nil
 	local name = if params then params.name else nil
 	if not name or name == "" then
-		return responses.bad_request("missing artist name")
-	end
-
-	local image_type = if params then params.imageType else nil
-	if type(image_type) ~= "string" or string.lower(image_type) ~= "primary" then
-		return responses.not_found("image not found")
-	end
-
-	local raw_image_index = if params then params.imageIndex else nil
-	local image_index = if type(raw_image_index) == "string" then tonumber(raw_image_index) else nil
-	if image_index == nil or image_index ~= math.floor(image_index) or image_index < 0 then
-		return responses.bad_request("invalid image index")
-	end
-	if image_index ~= 0 then
-		return responses.not_found("image not found")
-	end
-
-	local artist = catalog.find_artist_by_name(name, principal.user_id)
-	if not artist or not artist.Id then
-		return responses.not_found("artist not found")
-	end
-
-	return serve_primary_image_for_item(ctx, item_ids.decode_jellyfin_item_id(artist.Id))
-end
-
-function module.handle_person_image_request(ctx: ApiContext?): ApiResponse
-	local principal = module.require_jellyfin_principal(ctx)
-	if not principal then
-		return module.unauthorized()
-	end
-
-	local params = if ctx then ctx.params else nil
-	local name = if params then params.name else nil
-	if not name or name == "" then
-		return responses.bad_request("missing person name")
+		return responses.bad_request("missing name")
 	end
 
 	local image_type = if params then params.imageType else nil
@@ -815,12 +768,19 @@ function module.handle_person_image_request(ctx: ApiContext?): ApiResponse
 		return responses.not_found("image not found")
 	end
 
-	local person = catalog.find_person_by_name(name, principal.user_id)
-	if not person or not person.Id then
-		return responses.not_found("person not found")
+	local cover_info = artwork.get_cover_info(find_db_id(name))
+	if not cover_info then
+		return responses.not_found("image not found")
 	end
+	return respond_with_primary_image(ctx, cover_info)
+end
 
-	return serve_primary_image_for_item(ctx, item_ids.decode_jellyfin_item_id(person.Id))
+function module.handle_artist_image_request(ctx: ApiContext?): ApiResponse
+	return serve_public_image_by_name(ctx, catalog.find_artist_db_id_by_name)
+end
+
+function module.handle_person_image_request(ctx: ApiContext?): ApiResponse
+	return serve_public_image_by_name(ctx, catalog.find_person_db_id_by_name)
 end
 
 local MAX_SESSION_KEY_DISPLAY_LENGTH = 64
