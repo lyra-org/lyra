@@ -747,7 +747,10 @@ function module.handle_primary_image_request(ctx: ApiContext?): ApiResponse
 	return respond_with_primary_image(ctx, cover_info)
 end
 
-local function serve_public_image_by_name(ctx: ApiContext?, find_db_id: (string) -> number?): ApiResponse
+local function serve_public_image_by_name(
+	ctx: ApiContext?,
+	find_cover: (string) -> artwork.ResolvedCoverInfo?
+): ApiResponse
 	local params = if ctx then ctx.params else nil
 	local name = if params then params.name else nil
 	if not name or name == "" then
@@ -768,7 +771,7 @@ local function serve_public_image_by_name(ctx: ApiContext?, find_db_id: (string)
 		return responses.not_found("image not found")
 	end
 
-	local cover_info = artwork.get_cover_info(find_db_id(name))
+	local cover_info = find_cover(name)
 	if not cover_info then
 		return responses.not_found("image not found")
 	end
@@ -776,11 +779,19 @@ local function serve_public_image_by_name(ctx: ApiContext?, find_db_id: (string)
 end
 
 function module.handle_artist_image_request(ctx: ApiContext?): ApiResponse
-	return serve_public_image_by_name(ctx, catalog.find_artist_db_id_by_name)
+	return serve_public_image_by_name(ctx, function(name)
+		return artwork.get_cover_info(catalog.find_artist_db_id_by_name(name))
+	end)
 end
 
 function module.handle_person_image_request(ctx: ApiContext?): ApiResponse
-	return serve_public_image_by_name(ctx, catalog.find_person_db_id_by_name)
+	return serve_public_image_by_name(ctx, function(name)
+		return artwork.get_cover_info(catalog.find_person_db_id_by_name(name))
+	end)
+end
+
+function module.handle_genre_image_request(ctx: ApiContext?): ApiResponse
+	return serve_public_image_by_name(ctx, catalog.resolve_genre_cover_by_name)
 end
 
 local MAX_SESSION_KEY_DISPLAY_LENGTH = 64

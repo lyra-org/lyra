@@ -5925,6 +5925,14 @@ function module.resolve_genre_cover(genre_db_id: number): artwork.ResolvedCoverI
 	return helpers.compose_cover_from_ids(release_ids, genre_nanoid)
 end
 
+function module.resolve_genre_cover_by_name(name: string): artwork.ResolvedCoverInfo?
+	local genre_info = genres.find_by_name(name)
+	if not genre_info or not genre_info.db_id then
+		return nil
+	end
+	return module.resolve_genre_cover(genre_info.db_id)
+end
+
 -- Resolve a composed cover image for a playlist by its db_id.
 -- Used by the image endpoint to serve playlist covers on demand.
 function module.resolve_playlist_cover(playlist_db_id: number): artwork.ResolvedCoverInfo?
