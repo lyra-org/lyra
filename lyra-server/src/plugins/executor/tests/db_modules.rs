@@ -1094,6 +1094,128 @@ fn plugin_executor_exposes_db_backed_lyra_covers_module() -> Result<()> {
 }
 
 #[test]
+fn plugin_executor_exposes_playlist_sources_from_lyra_covers_module() -> Result<()> {
+    let mut db = crate::plugins::db::test_db::new_test_db()?;
+    let user_db_id = crate::plugins::db::users::create(
+        &mut db,
+        &crate::plugins::db::test_db::test_user("playlist-sources-user")?,
+    )?;
+    let mut cover_paths = Vec::new();
+    let mut release_db_ids = Vec::new();
+    for name in ["A", "B", "C", "D", "E"] {
+        let release_db_id = crate::plugins::db::test_db::insert_release(&mut db, name)?;
+        let track_db_id = crate::plugins::db::test_db::insert_track(&mut db, name)?;
+        crate::plugins::db::test_db::connect(&mut db, release_db_id, track_db_id)?;
+        let cover_path =
+            std::env::temp_dir().join(format!("lyra-playlist-source-{}.jpg", nanoid::nanoid!()));
+        std::fs::write(&cover_path, b"playlist source cover")?;
+        db.transaction_mut(|t| {
+            crate::plugins::db::covers::upsert(
+                t,
+                release_db_id,
+                crate::plugins::db::Cover {
+                    db_id: None,
+                    id: nanoid::nanoid!(),
+                    path: cover_path.to_string_lossy().into_owned(),
+                    mime_type: "image/jpeg".to_string(),
+                    hash: format!("hash-{name}"),
+                    blurhash: None,
+                },
+            )
+        })?;
+        cover_paths.push(cover_path);
+        release_db_ids.push((release_db_id, track_db_id));
+    }
+    let uncovered_track_db_id = crate::plugins::db::test_db::insert_track(&mut db, "Uncovered")?;
+    let playlist = crate::db::playlists::Playlist {
+        db_id: None,
+        id: nanoid::nanoid!(),
+        name: "Sources".to_string(),
+        description: None,
+        is_public: None,
+        created_at: None,
+        updated_at: None,
+    };
+    let playlist_db_id = crate::db::playlists::create(&mut db, &playlist, user_db_id)?;
+    for (_, track_db_id) in &release_db_ids {
+        db.transaction_mut(|t| crate::db::playlists::add_track(t, playlist_db_id, *track_db_id))?;
+    }
+    db.transaction_mut(|t| {
+        crate::db::playlists::add_track(t, playlist_db_id, uncovered_track_db_id)
+    })?;
+
+    let mut expected = Vec::new();
+    for (release_db_id, _) in &release_db_ids {
+        let release_public_id = crate::plugins::db::releases::get_by_id(&db, *release_db_id)?
+            .expect("release should exist")
+            .id;
+        let score = crate::db::covers::display::deterministic_random_score(
+            crate::db::covers::display::DisplayCoverTargetKind::Playlist,
+            &playlist.id,
+            &release_public_id,
+        );
+        expected.push((score, release_public_id, *release_db_id));
+    }
+    expected.sort();
+    let (first_release_db_id, last_release_db_id) = (expected[0].2, expected[3].2);
+    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("demo", &["lyra.covers"])]),
+        default_server_info(),
+        db,
+    )?;
+    let values = runtime.eval_plugin_source(
+        "demo",
+        "init.luau",
+        format!(
+            r#"
+                local covers = require("@lyra/covers")
+                local playlist_db_id = {playlist_db_id}
+                local track_db_id = {track_db_id}
+
+                local sources = covers.get_playlist_sources(playlist_db_id)
+                local by_public_id = covers.get_playlist_sources("{playlist_public_id}")
+                local many = covers.get_playlist_sources_many({{ playlist_db_id, track_db_id }})
+
+                return #sources,
+                    sources[1].release_id,
+                    sources[4].release_id,
+                    #by_public_id,
+                    by_public_id[4].release_id,
+                    #many[playlist_db_id],
+                    many[playlist_db_id][4].release_id,
+                    #many[track_db_id],
+                    #covers.get_playlist_sources(track_db_id)
+            "#,
+            playlist_db_id = playlist_db_id.0,
+            playlist_public_id = playlist.id,
+            track_db_id = uncovered_track_db_id.0,
+        )
+        .into_bytes(),
+    )?;
+    for cover_path in cover_paths {
+        let _ = std::fs::remove_file(cover_path);
+    }
+
+    assert_eq!(
+        values,
+        vec![
+            luau::Value::Number(4.0),
+            luau::Value::Number(first_release_db_id.0 as f64),
+            luau::Value::Number(last_release_db_id.0 as f64),
+            luau::Value::Number(4.0),
+            luau::Value::Number(last_release_db_id.0 as f64),
+            luau::Value::Number(4.0),
+            luau::Value::Number(last_release_db_id.0 as f64),
+            luau::Value::Number(0.0),
+            luau::Value::Number(0.0),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
 fn plugin_executor_exposes_db_backed_lyra_releases_module() -> Result<()> {
     let mut db = crate::plugins::db::test_db::new_test_db()?;
     let release_db_id = crate::plugins::db::test_db::insert_release(&mut db, "Raw Release Module")?;

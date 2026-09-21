@@ -79,6 +79,8 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .capability("lyra.covers")
         .function(get_spec())
         .function(get_many_spec())
+        .function(get_playlist_sources_spec())
+        .function(get_playlist_sources_many_spec())
         .install(|_| Ok(ModuleExport::new(CoversModule)))
 }
 
@@ -96,6 +98,22 @@ fn get_many_spec() -> FunctionSpec {
         .args::<luau::Table>()
         .returns::<luau::Table>()
         .call_async(Arc::new(get_many_callback))
+}
+
+fn get_playlist_sources_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get_playlist_sources")
+        .arg_name("id")
+        .args::<ResolveId>()
+        .returns::<luau::Table>()
+        .call_async(Arc::new(get_playlist_sources_callback))
+}
+
+fn get_playlist_sources_many_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get_playlist_sources_many")
+        .arg_name("ids")
+        .args::<luau::Table>()
+        .returns::<luau::Table>()
+        .call_async(Arc::new(get_playlist_sources_many_callback))
 }
 
 fn get_callback(
@@ -162,6 +180,101 @@ fn get_many_callback(
 
         Ok(luau::Value::TableData(table))
     }))
+}
+
+fn get_playlist_sources_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let id = parse_resolve_id(frame.args.read_named::<luau::Value>("id")?)?;
+    let db = frame.vm.data().get::<CoversModuleStore>()?.db()?;
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let (sources, stale_owners) = {
+            let db_read = db.read().await;
+            let Some(QueryId::Id(playlist_id)) = id
+                .to_query_id(&db_read)
+                .map_err(crate::plugins::runtime_error)?
+            else {
+                return Ok(luau::Value::TableData(luau::OwnedTable::with_capacity(
+                    0, 0,
+                )));
+            };
+            let mut stale_owners = Vec::new();
+            let result = resolve_playlist_sources(&db_read, playlist_id, &mut stale_owners)
+                .map_err(crate::plugins::runtime_error)?;
+            (result, stale_owners)
+        };
+
+        if !stale_owners.is_empty() {
+            remove_still_stale_covers(db.clone(), stale_owners).await?;
+        }
+
+        Ok(luau::Value::TableData(sources_to_table(sources)))
+    }))
+}
+
+fn get_playlist_sources_many_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let ids: luau::Table = frame.args.read_named("ids")?;
+    let playlist_ids = parse_db_ids(frame.vm, &ids)?;
+    let db = frame.vm.data().get::<CoversModuleStore>()?.db()?;
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let (resolved, stale_owners) = {
+            let db_read = db.read().await;
+            let mut stale_owners = Vec::new();
+            let mut resolved = Vec::with_capacity(playlist_ids.len());
+            for playlist_id in &playlist_ids {
+                let sources = resolve_playlist_sources(&db_read, *playlist_id, &mut stale_owners)
+                    .map_err(crate::plugins::runtime_error)?;
+                resolved.push((*playlist_id, sources));
+            }
+            (resolved, stale_owners)
+        };
+
+        if !stale_owners.is_empty() {
+            remove_still_stale_covers(db.clone(), stale_owners).await?;
+        }
+
+        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, resolved.len());
+        for (playlist_id, sources) in resolved {
+            table.set_key(
+                luau::Value::from(playlist_id.0),
+                luau::Value::TableData(sources_to_table(sources)),
+            );
+        }
+
+        Ok(luau::Value::TableData(table))
+    }))
+}
+
+const PLAYLIST_SOURCE_LIMIT: usize = 4;
+
+/// The first valid covers of a playlist's collage sources, in display order.
+fn resolve_playlist_sources(
+    db: &DbAny,
+    playlist_id: DbId,
+    stale_owners: &mut Vec<DbId>,
+) -> anyhow::Result<Vec<(DbId, Cover)>> {
+    let mut sources = Vec::new();
+    for (_, release_id) in db::covers::display::playlist_cover_sources(db, playlist_id)? {
+        if let Some(source) = resolve_persisted_cover(db, release_id, stale_owners)? {
+            sources.push(source);
+            if sources.len() == PLAYLIST_SOURCE_LIMIT {
+                break;
+            }
+        }
+    }
+    Ok(sources)
+}
+
+fn sources_to_table(sources: Vec<(DbId, Cover)>) -> luau::OwnedTable {
+    let mut table = luau::OwnedTable::with_capacity(sources.len(), 0);
+    for (owner_id, cover) in sources {
+        table.push_array(luau::Value::TableData(cover_to_table(owner_id, cover)));
+    }
+    table
 }
 
 fn check_cover_validity(cover: Cover) -> CoverValidity {
@@ -453,6 +566,27 @@ fn module_descriptor() -> ModuleDescriptor {
                 returns: vec![LuauType::map(
                     u64::luau_type(),
                     Option::<CoverInfo>::luau_type(),
+                )],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get_playlist_sources"],
+                description: Some(
+                    "Returns up to four release covers that make up a playlist's collage, in display order. Unknown or non-playlist ids yield an empty array.",
+                ),
+                params: vec![param("id", resolve_id_type())],
+                returns: vec![Vec::<CoverInfo>::luau_type()],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["get_playlist_sources_many"],
+                description: Some(
+                    "Returns the collage covers of several playlists keyed by playlist db id.",
+                ),
+                params: vec![param("ids", Vec::<u64>::luau_type())],
+                returns: vec![LuauType::map(
+                    u64::luau_type(),
+                    Vec::<CoverInfo>::luau_type(),
                 )],
                 yields: true,
             },
