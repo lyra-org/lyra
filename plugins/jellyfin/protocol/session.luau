@@ -721,8 +721,8 @@ local function respond_with_primary_image(ctx: ApiContext?, cover_info: artwork.
 	})
 end
 
--- Artwork is served without credentials, matching Jellyfin. Only playlist
--- covers need a principal, since playlist lookup is access-checked.
+-- Artwork is served without credentials, matching Jellyfin, which exposes an
+-- item's image anonymously while keeping its contents access-checked.
 function module.handle_primary_image_request(ctx: ApiContext?): ApiResponse
 	local params = if ctx then ctx.params else nil
 	local image_id = if params then params.imageId else nil
@@ -734,13 +734,9 @@ function module.handle_primary_image_request(ctx: ApiContext?): ApiResponse
 	if not item_db_id then
 		return responses.not_found("image not found")
 	end
-	local cover_info = artwork.get_cover_info(item_db_id) or catalog.resolve_genre_cover(item_db_id)
-	if not cover_info then
-		if not module.require_jellyfin_principal(ctx) then
-			return module.unauthorized()
-		end
-		cover_info = catalog.resolve_playlist_cover(item_db_id)
-	end
+	local cover_info = artwork.get_cover_info(item_db_id)
+		or catalog.resolve_genre_cover(item_db_id)
+		or catalog.resolve_playlist_cover(item_db_id)
 	if not cover_info then
 		return responses.not_found("image not found")
 	end
