@@ -1107,7 +1107,7 @@ async fn plugin_executor_treats_expired_session_as_unauthenticated() -> Result<(
     let (token, session_id) = {
         let user_id = {
             let mut db = crate::STATE.db.write().await;
-            crate::db::users::create(
+            crate::plugins::db::users::create(
                 &mut db,
                 &crate::plugins::db::test_db::test_user("expired-plugin-session")?,
             )?
@@ -1116,7 +1116,7 @@ async fn plugin_executor_treats_expired_session_as_unauthenticated() -> Result<(
             crate::services::auth::sessions::create_session_for_user(user_id, Default::default())
                 .await?;
         let db = crate::STATE.db.read().await;
-        let (_, _, session_id) = crate::db::users::find_by_session_token_hash(
+        let (_, _, session_id) = crate::plugins::db::users::find_by_session_token_hash(
             &db,
             &crate::services::auth::hash_secret(&session.token),
         )?
@@ -1164,7 +1164,7 @@ async fn plugin_executor_treats_expired_session_as_unauthenticated() -> Result<(
 
     crate::STATE.db.write().await.exec_mut(
         agdb::QueryBuilder::insert()
-            .values_uniform([("expires_at", crate::db::users::now_secs() - 1).into()])
+            .values_uniform([("expires_at", crate::plugins::db::users::now_secs() - 1).into()])
             .ids(session_id)
             .query(),
     )?;
@@ -1174,7 +1174,7 @@ async fn plugin_executor_treats_expired_session_as_unauthenticated() -> Result<(
     {
         let db = crate::STATE.db.read().await;
         assert!(
-            crate::db::users::find_by_session_token_hash(
+            crate::plugins::db::users::find_by_session_token_hash(
                 &db,
                 &crate::services::auth::hash_secret(&token),
             )?
