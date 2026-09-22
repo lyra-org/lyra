@@ -65,9 +65,9 @@ impl RealFft {
         imag: &mut [Float; WORK_LEN],
         bands: &mut [Float; BANDS_LEN],
     ) {
-        for i in 0..WORK_LEN {
+        for (i, &j) in self.bit_reversal.iter().enumerate() {
             let even = i * 2;
-            let j = self.bit_reversal[i] as usize;
+            let j = j as usize;
             real[j] = (samples[even] as Float / 32768.0) * hamming[even];
             imag[j] = (samples[even + 1] as Float / 32768.0) * hamming[even + 1];
         }
@@ -264,9 +264,9 @@ pub(crate) mod tests {
         imag: &mut [Float; WORK_LEN],
         powers: &mut [Float; FFT_FRAME_SIZE],
     ) {
-        for i in 0..WORK_LEN {
+        for (i, &j) in fft.bit_reversal.iter().enumerate() {
             let even = i * 2;
-            let j = fft.bit_reversal[i] as usize;
+            let j = j as usize;
             real[j] = (samples[even] as Float / 32768.0) * hamming[even];
             imag[j] = (samples[even + 1] as Float / 32768.0) * hamming[even + 1];
         }
