@@ -717,6 +717,14 @@ impl LuauSourceCache {
     pub fn invalidate(&mut self, cache_key: &ModuleCacheKey) -> bool {
         self.cache.remove(cache_key).is_some()
     }
+
+    /// Drops every cached source under `plugin:<plugin_id>/`.
+    pub fn invalidate_plugin(&mut self, plugin_id: &str) -> usize {
+        let prefix = format!("plugin:{plugin_id}/");
+        let before = self.cache.len();
+        self.cache.retain(|key, _| !key.0.starts_with(&prefix));
+        before - self.cache.len()
+    }
 }
 
 impl ModuleRegistry {
@@ -837,11 +845,23 @@ impl ModuleRegistry {
         self.luau_cache.retain(|key, _| key.module_id != *module_id);
         self.luau_cache.len() != before || removed
     }
+
+    /// Drops the Luau module tables installed for `plugin_id`'s origin; the
+    /// shared native exports in `cache` are not plugin-owned and stay.
+    pub fn invalidate_plugin(&mut self, plugin_id: &str) -> usize {
+        let before = self.luau_cache.len();
+        self.luau_cache
+            .retain(|key, _| key.plugin.as_deref() != Some(plugin_id));
+        before - self.luau_cache.len()
+    }
 }
 
 pub struct LuauRequireRuntime {
     registry: std::cell::RefCell<ModuleRegistry>,
     source_cache: std::cell::RefCell<LuauSourceCache>,
+    /// Bumped per plugin by `invalidate_plugin`; a source whose plugin was
+    /// invalidated while it evaluated must not land in `source_cache`.
+    plugin_generations: std::cell::RefCell<HashMap<Arc<str>, u64>>,
     active_origins: std::cell::RefCell<HashMap<usize, Vec<ChunkOrigin>>>,
     source_origins: std::cell::RefCell<HashMap<Arc<str>, ChunkOrigin>>,
     in_flight_sources: std::cell::RefCell<HashSet<Arc<str>>>,
@@ -858,6 +878,7 @@ impl LuauRequireRuntime {
         Self {
             registry: std::cell::RefCell::new(ModuleRegistry::new()),
             source_cache: std::cell::RefCell::new(LuauSourceCache::new()),
+            plugin_generations: std::cell::RefCell::new(HashMap::new()),
             active_origins: std::cell::RefCell::new(HashMap::new()),
             source_origins: std::cell::RefCell::new(HashMap::new()),
             in_flight_sources: std::cell::RefCell::new(HashSet::new()),
@@ -868,6 +889,24 @@ impl LuauRequireRuntime {
 
     pub fn register(&self, spec: ModuleSpec) -> std::result::Result<(), ModuleLoadError> {
         self.registry.borrow_mut().register(spec)
+    }
+
+    /// Forgets every evaluated source and installed module table owned by
+    /// `plugin_id`, so its next load resolves through the loader again.
+    pub fn invalidate_plugin(&self, plugin_id: &str) {
+        self.source_cache.borrow_mut().invalidate_plugin(plugin_id);
+        self.registry.borrow_mut().invalidate_plugin(plugin_id);
+        *self
+            .plugin_generations
+            .borrow_mut()
+            .entry(Arc::from(plugin_id))
+            .or_default() += 1;
+    }
+
+    fn plugin_generation(&self, plugin: Option<&str>) -> u64 {
+        plugin
+            .and_then(|plugin| self.plugin_generations.borrow().get(plugin).copied())
+            .unwrap_or_default()
     }
 }
 
@@ -989,15 +1028,18 @@ impl LuauRequireRuntime {
             .borrow_mut()
             .insert(source.cache_key.0.clone(), source.origin.clone());
         let _active_origin = self.push_active_origin(vm.state_id(), source.origin.clone());
+        let generation = self.plugin_generation(source.origin.plugin.as_deref());
         let result = eval(&source);
         self.in_flight_sources
             .borrow_mut()
             .remove(&source.cache_key.0);
         let values = result.map_err(ModuleLoadError::SourceLoadFailed)?;
         let values = Arc::<[luau::Value]>::from(values.into_boxed_slice());
-        self.source_cache
-            .borrow_mut()
-            .insert(source.cache_key, values.clone());
+        if generation == self.plugin_generation(source.origin.plugin.as_deref()) {
+            self.source_cache
+                .borrow_mut()
+                .insert(source.cache_key, values.clone());
+        }
         Ok(values)
     }
 
@@ -1764,6 +1806,38 @@ mod tests {
         assert_eq!(
             values,
             vec![luau::Value::Number(42.0), luau::Value::Number(7.0)]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn invalidation_during_evaluation_keeps_stale_source_out_of_cache() -> anyhow::Result<()> {
+        let vm = luau::Vm::new()?;
+        let mut loader = MemorySourceLoader::new();
+        loader.insert("plugin:demo/lib", b"return 1".as_slice());
+        loader.insert("plugin:other/lib", b"return 1".as_slice());
+        let runtime = LuauRequireRuntime::new(loader, AllowAllCapabilities);
+        let origin = ChunkOrigin::default();
+        let key = |plugin: &str| ModuleCacheKey(Arc::from(format!("plugin:{plugin}/lib")));
+
+        runtime.load_source_cached(&vm, "@demo/lib", &origin, |_| {
+            runtime.invalidate_plugin("demo");
+            Ok(vec![luau::Value::Number(1.0)])
+        })?;
+        assert!(runtime.source_cache.borrow().get(&key("demo")).is_none());
+
+        runtime.load_source_cached(&vm, "@other/lib", &origin, |_| {
+            runtime.invalidate_plugin("demo");
+            Ok(vec![luau::Value::Number(1.0)])
+        })?;
+        assert!(runtime.source_cache.borrow().get(&key("other")).is_some());
+
+        runtime.load_source_cached(&vm, "@demo/lib", &origin, |_| {
+            Ok(vec![luau::Value::Number(2.0)])
+        })?;
+        assert_eq!(
+            runtime.source_cache.borrow().get(&key("demo")).as_deref(),
+            Some(&[luau::Value::Number(2.0)][..])
         );
         Ok(())
     }

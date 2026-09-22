@@ -224,6 +224,11 @@ impl PluginRegistries {
         Ok(())
     }
 
+    /// Tears the plugin down and re-runs its entrypoint from the files
+    /// currently on disk. The manifest stays as loaded: a changed
+    /// `plugin.json` is rejected before teardown and needs `reload_all_plugins`.
+    /// Other plugins that already required this plugin's modules keep the
+    /// old exports until they restart themselves.
     pub(crate) async fn restart_plugin(
         &self,
         plugin_id: &PluginId,
@@ -242,6 +247,14 @@ impl PluginRegistries {
             return Err(PluginRestartError::NotFound(plugin_id.clone()));
         }
 
+        runtime
+            .verify_plugin_manifest(plugin_id.as_str())
+            .await
+            .map_err(|err| PluginRestartError::Failed {
+                plugin_id: plugin_id.clone(),
+                source: err.context("failed to verify plugin manifest"),
+            })?;
+
         let manifests =
             runtime
                 .plugin_manifests()
@@ -257,7 +270,9 @@ impl PluginRegistries {
 
         self.teardown_plugin(plugin_id, true).await;
 
-        match runtime.exec_plugin(plugin_id.as_str()).await {
+        // Caches are dropped on the VM thread right before the entrypoint
+        // re-runs, after teardown, so no old-plugin work can repopulate them.
+        match runtime.restart_plugin(plugin_id.as_str()).await {
             Ok(()) => {
                 refreeze_plugin_registration_exemptions(plugin_id).await;
                 if let Err(err) = crate::plugins::api::rebuild_registered_routes().await {

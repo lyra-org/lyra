@@ -171,8 +171,25 @@ impl PluginExecutorHandle {
         .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn exec_plugin(&self, plugin_id: &str) -> Result<()> {
         self.request_async(|reply| PluginExecutorCommand::ExecPlugin {
+            plugin_id: plugin_id.to_string(),
+            reply,
+        })
+        .await
+    }
+
+    pub(crate) async fn verify_plugin_manifest(&self, plugin_id: &str) -> Result<()> {
+        self.request_async(|reply| PluginExecutorCommand::VerifyPluginManifest {
+            plugin_id: plugin_id.to_string(),
+            reply,
+        })
+        .await
+    }
+
+    pub(crate) async fn restart_plugin(&self, plugin_id: &str) -> Result<()> {
+        self.request_async(|reply| PluginExecutorCommand::RestartPlugin {
             plugin_id: plugin_id.to_string(),
             reply,
         })
@@ -290,8 +307,15 @@ fn handle_plugin_executor_command(
         PluginExecutorCommand::HasPlugin { plugin_id, reply } => {
             reply_if_open(reply, || Ok(runtime.has_plugin(&plugin_id)));
         }
+        #[cfg(test)]
         PluginExecutorCommand::ExecPlugin { plugin_id, reply } => {
             reply_if_open(reply, || runtime.exec_plugin(&plugin_id));
+        }
+        PluginExecutorCommand::VerifyPluginManifest { plugin_id, reply } => {
+            reply_if_open(reply, || runtime.verify_plugin_manifest(&plugin_id));
+        }
+        PluginExecutorCommand::RestartPlugin { plugin_id, reply } => {
+            reply_if_open(reply, || runtime.restart_plugin(&plugin_id));
         }
         PluginExecutorCommand::ExecAll(reply) => {
             reply_if_open(reply, || runtime.exec_all());

@@ -59,7 +59,16 @@ pub(super) enum PluginExecutorCommand {
         plugin_id: String,
         reply: tokio::sync::oneshot::Sender<Result<bool>>,
     },
+    #[cfg(test)]
     ExecPlugin {
+        plugin_id: String,
+        reply: tokio::sync::oneshot::Sender<Result<()>>,
+    },
+    VerifyPluginManifest {
+        plugin_id: String,
+        reply: tokio::sync::oneshot::Sender<Result<()>>,
+    },
+    RestartPlugin {
         plugin_id: String,
         reply: tokio::sync::oneshot::Sender<Result<()>>,
     },
