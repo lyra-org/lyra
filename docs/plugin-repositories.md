@@ -99,7 +99,11 @@ Plugin management requires the manage-plugins permission:
   installing.
 - `POST /api/plugins/install` — install all (or selected) plugins from a
   URL and reload the plugin runtime.
-- `POST /api/plugins/{plugin_id}/update`, `DELETE /api/plugins/{plugin_id}`
+- `POST /api/plugins/update` — body `{}` or `{"plugins": [...]}`; updates
+  the named plugins, or every repository-managed plugin when `plugins` is
+  omitted. Each origin is resolved once and the runtime reloads once; the
+  response lists `updated`, `up_to_date`, and `failed` plugins.
+- `DELETE /api/plugins/{plugin_id}` — uninstall a repository-managed plugin.
 - `GET|POST /api/plugins/repositories`,
   `POST /api/plugins/repositories/{id}/refresh`,
   `DELETE /api/plugins/repositories/{id}` — remembered repositories;

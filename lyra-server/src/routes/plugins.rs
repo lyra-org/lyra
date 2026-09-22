@@ -242,6 +242,15 @@ struct InstallPluginsRequest {
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+struct UpdatePluginsRequest {
+    /// Plugin ids to update; omitted updates every repository-managed
+    /// plugin. An empty list is rejected.
+    #[serde(default)]
+    plugins: Option<Vec<String>>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 struct PluginPreviewResponse {
     id: String,
@@ -301,13 +310,19 @@ struct InstallPluginsResponse {
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-enum UpdatePluginResponse {
-    Updated {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        commit: Option<String>,
-    },
-    UpToDate,
+struct UpdatedPluginResponse {
+    id: String,
+    version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit: Option<String>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct UpdatePluginsResponse {
+    updated: Vec<UpdatedPluginResponse>,
+    up_to_date: Vec<String>,
+    failed: Vec<FailedInstallResponse>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -725,20 +740,38 @@ async fn install_plugins(
     }))
 }
 
-async fn update_installed_plugin(
+async fn update_installed_plugins(
     headers: HeaderMap,
-    Path(plugin_id): Path<String>,
-) -> Result<Json<UpdatePluginResponse>, AppError> {
+    Json(request): Json<UpdatePluginsRequest>,
+) -> Result<Json<UpdatePluginsResponse>, AppError> {
     let _principal = require_manage_plugins(&headers).await?;
-    let outcome = repositories_service::update_plugin(&plugin_id)
+    let report = repositories_service::update_plugins(request.plugins.as_deref())
         .await
         .map_err(map_repository_error)?;
-    Ok(Json(match outcome {
-        repositories_service::UpdateOutcome::Updated { commit } => {
-            UpdatePluginResponse::Updated { commit }
-        }
-        repositories_service::UpdateOutcome::UpToDate => UpdatePluginResponse::UpToDate,
-    }))
+    Ok(Json(update_report_response(report)))
+}
+
+fn update_report_response(report: repositories_service::UpdateReport) -> UpdatePluginsResponse {
+    UpdatePluginsResponse {
+        updated: report
+            .updated
+            .into_iter()
+            .map(|plugin| UpdatedPluginResponse {
+                id: plugin.id,
+                version: plugin.version,
+                commit: plugin.commit,
+            })
+            .collect(),
+        up_to_date: report.up_to_date,
+        failed: report
+            .failed
+            .into_iter()
+            .map(|failure| FailedInstallResponse {
+                id: failure.id,
+                error: failure.error,
+            })
+            .collect(),
+    }
 }
 
 async fn uninstall_installed_plugin(
@@ -943,9 +976,9 @@ fn install_plugins_docs(op: TransformOperation) -> TransformOperation {
 }
 
 #[cfg(feature = "docgen")]
-fn update_installed_plugin_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Update installed plugin").description(
-        "Re-resolves the plugin's recorded origin and reinstalls it when the resolved commit differs. Branch refs track new commits; tag and commit refs are pinned.",
+fn update_installed_plugins_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Update installed plugins").description(
+        "Re-resolves the recorded origin of the selected plugins (or every repository-managed plugin when `plugins` is omitted) and reinstalls those whose resolved commit differs. Each origin is resolved once and the plugin runtime reloads once. Returns per-plugin results.",
     )
 }
 
@@ -1031,6 +1064,7 @@ pub fn plugin_routes() -> Router {
         .route("/settings", get(list_all_settings))
         .route("/resolve", post(resolve_repository))
         .route("/install", post(install_plugins))
+        .route("/update", post(update_installed_plugins))
         .route("/repositories", get(list_plugin_repositories))
         .route("/repositories", post(add_plugin_repository))
         .route(
@@ -1042,7 +1076,6 @@ pub fn plugin_routes() -> Router {
             delete(delete_plugin_repository),
         )
         .route("/{plugin_id}", delete(uninstall_installed_plugin))
-        .route("/{plugin_id}/update", post(update_installed_plugin))
         .route("/{plugin_id}/restart", post(restart_plugin))
         .route("/{plugin_id}/settings", get(get_settings))
         .route("/{plugin_id}/settings", patch(update_settings))
@@ -1070,6 +1103,10 @@ pub(crate) fn plugin_openapi_routes() -> aide::axum::ApiRouter {
         )
         .api_route("/install", post_with(install_plugins, install_plugins_docs))
         .api_route(
+            "/update",
+            post_with(update_installed_plugins, update_installed_plugins_docs),
+        )
+        .api_route(
             "/repositories",
             get_with(list_plugin_repositories, list_plugin_repositories_docs),
         )
@@ -1088,10 +1125,6 @@ pub(crate) fn plugin_openapi_routes() -> aide::axum::ApiRouter {
         .api_route(
             "/{plugin_id}",
             delete_with(uninstall_installed_plugin, uninstall_installed_plugin_docs),
-        )
-        .api_route(
-            "/{plugin_id}/update",
-            post_with(update_installed_plugin, update_installed_plugin_docs),
         )
         .api_route(
             "/{plugin_id}/restart",
@@ -1406,6 +1439,57 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_installed_plugins_reports_invalid_ids_as_failed() -> anyhow::Result<()> {
+        let _registry_guard = REGISTRY_TEST_GUARD.lock().await;
+        let _runtime_guard = runtime_test_lock().await;
+        let _test_dir = initialize_auth_test_runtime().await?;
+        let headers = manage_plugins_headers().await?;
+
+        let Json(response) = update_installed_plugins(
+            headers,
+            Json(UpdatePluginsRequest {
+                plugins: Some(vec!["bad id".to_string()]),
+            }),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+
+        assert!(response.updated.is_empty());
+        assert!(response.up_to_date.is_empty());
+        assert_eq!(response.failed.len(), 1);
+        assert_eq!(response.failed[0].id, "bad id");
+        assert!(response.failed[0].error.contains("invalid plugin id"));
+        Ok(())
+    }
+
+    #[test]
+    fn update_report_response_maps_every_outcome() {
+        let response = update_report_response(services::plugin_repositories::UpdateReport {
+            updated: vec![services::plugin_repositories::UpdatedPlugin {
+                id: "a".into(),
+                version: "1.2.3".into(),
+                commit: Some("c".repeat(40)),
+            }],
+            up_to_date: vec!["b".into()],
+            failed: vec![services::plugin_repositories::FailedInstall {
+                id: "c".into(),
+                error: "boom".into(),
+            }],
+        });
+
+        assert_eq!(response.updated.len(), 1);
+        assert_eq!(response.updated[0].id, "a");
+        assert_eq!(response.updated[0].version, "1.2.3");
+        assert_eq!(
+            response.updated[0].commit.as_deref(),
+            Some("c".repeat(40).as_str())
+        );
+        assert_eq!(response.up_to_date, vec!["b".to_string()]);
+        assert_eq!(response.failed[0].id, "c");
+        assert_eq!(response.failed[0].error, "boom");
     }
 
     #[tokio::test]

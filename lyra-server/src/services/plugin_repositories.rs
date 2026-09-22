@@ -4,6 +4,10 @@
 // www.meshiplaw.com/lyra.
 
 use std::{
+    collections::{
+        BTreeSet,
+        HashMap,
+    },
     path::Path,
     sync::LazyLock,
     time::{
@@ -16,11 +20,13 @@ use std::{
 use harmony_repository::{
     FetchError,
     InstallError,
+    PluginCandidate,
     RepoSpec,
     ResolveError,
     ResolvedRepository,
     SourceRecord,
     install_candidate,
+    manifest::SOURCE_RECORD_FILENAME,
     resolve_plugins,
     uninstall_plugin,
 };
@@ -300,33 +306,47 @@ pub(crate) async fn install(
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum UpdateOutcome {
-    UpToDate,
-    Updated { commit: Option<String> },
+pub(crate) struct UpdatedPlugin {
+    pub(crate) id: String,
+    pub(crate) version: String,
+    pub(crate) commit: Option<String>,
 }
 
-/// Re-resolves an installed plugin's recorded origin and reinstalls it
-/// when the resolved commit differs. Branch refs track new commits; tag
-/// and SHA refs stay pinned by construction.
-pub(crate) async fn update_plugin(plugin_id: &str) -> Result<UpdateOutcome, PluginRepoError> {
+#[derive(Debug, Clone, Default)]
+pub(crate) struct UpdateReport {
+    pub(crate) updated: Vec<UpdatedPlugin>,
+    pub(crate) up_to_date: Vec<String>,
+    pub(crate) failed: Vec<FailedInstall>,
+}
+
+/// Loads the source record of an installed, repository-managed plugin.
+fn load_managed_record(
+    plugins_dir: &Path,
+    plugin_id: &str,
+) -> Result<SourceRecord, PluginRepoError> {
     ensure_plugin_path_id(plugin_id)?;
-    let plugins_dir = crate::plugins::bootstrap::plugins_dir();
     let installed_dir = plugins_dir.join(plugin_id);
     if !installed_dir.is_dir() {
         return Err(PluginRepoError::NotFound(format!(
             "plugin not found: {plugin_id}"
         )));
     }
-
-    let record = SourceRecord::load(&installed_dir)
+    SourceRecord::load(&installed_dir)
         .map_err(anyhow::Error::new)?
         .ok_or_else(|| {
             PluginRepoError::Conflict(format!(
                 "plugin '{plugin_id}' is local and not managed by a repository"
             ))
-        })?;
+        })
+}
 
-    let resolved = resolve(&record.origin, record.git_ref.as_deref()).await?;
+/// Finds the candidate a plugin should be reinstalled from, or `None`
+/// when the installed commit already matches the resolved one.
+fn find_update<'a>(
+    resolved: &'a ResolvedRepository,
+    plugin_id: &str,
+    record: &SourceRecord,
+) -> Result<Option<&'a PluginCandidate>, PluginRepoError> {
     let candidate = resolved
         .candidates
         .iter()
@@ -337,21 +357,128 @@ pub(crate) async fn update_plugin(plugin_id: &str) -> Result<UpdateOutcome, Plug
                 record.location()
             ))
         })?;
-
     if record.commit.is_some() && record.commit == candidate.source.commit {
-        return Ok(UpdateOutcome::UpToDate);
+        return Ok(None);
+    }
+    Ok(Some(candidate))
+}
+
+/// Ids of installed plugins that carry a source record file. Unreadable
+/// records are included so they surface as per-plugin failures.
+fn managed_plugin_ids(plugins_dir: &Path) -> Result<BTreeSet<String>, PluginRepoError> {
+    let entries = match std::fs::read_dir(plugins_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(BTreeSet::new());
+        }
+        Err(error) => return Err(PluginRepoError::Internal(error.into())),
+    };
+    let mut ids = BTreeSet::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| PluginRepoError::Internal(error.into()))?;
+        let Ok(id) = entry.file_name().into_string() else {
+            continue;
+        };
+        let dir = entry.path();
+        if dir.is_dir() && dir.join(SOURCE_RECORD_FILENAME).is_file() {
+            ids.insert(id);
+        }
+    }
+    Ok(ids)
+}
+
+/// Updates the named plugins, or every repository-managed plugin when
+/// `plugin_ids` is `None`. An explicitly empty selection is rejected. Each distinct origin and ref is resolved once;
+/// per-plugin failures don't abort siblings. The runtime reloads once,
+/// and only when something was reinstalled.
+pub(crate) async fn update_plugins(
+    plugin_ids: Option<&[String]>,
+) -> Result<UpdateReport, PluginRepoError> {
+    let plugins_dir = crate::plugins::bootstrap::plugins_dir();
+    if plugin_ids.is_some_and(<[String]>::is_empty) {
+        return Err(PluginRepoError::BadRequest(
+            "no plugins selected to update".to_string(),
+        ));
+    }
+    let ids: BTreeSet<String> = match plugin_ids {
+        Some(ids) => ids.iter().cloned().collect(),
+        None => managed_plugin_ids(&plugins_dir)?,
+    };
+
+    let mut report = UpdateReport::default();
+    let mut records = Vec::new();
+    for id in ids {
+        match load_managed_record(&plugins_dir, &id) {
+            Ok(record) => records.push((id, record)),
+            Err(error) => report.failed.push(FailedInstall {
+                id,
+                error: error.to_string(),
+            }),
+        }
+    }
+
+    let mut resolved: HashMap<(String, Option<String>), Result<ResolvedRepository, String>> =
+        HashMap::new();
+    for (_, record) in &records {
+        let key = (record.origin.clone(), record.git_ref.clone());
+        if let std::collections::hash_map::Entry::Vacant(entry) = resolved.entry(key) {
+            let result = resolve(&record.origin, record.git_ref.as_deref())
+                .await
+                .map_err(|error| error.to_string());
+            entry.insert(result);
+        }
+    }
+
+    let mut pending = Vec::new();
+    for (id, record) in &records {
+        let repository = match &resolved[&(record.origin.clone(), record.git_ref.clone())] {
+            Ok(repository) => repository,
+            Err(error) => {
+                report.failed.push(FailedInstall {
+                    id: id.clone(),
+                    error: error.clone(),
+                });
+                continue;
+            }
+        };
+        match find_update(repository, id, record) {
+            Ok(Some(candidate)) => pending.push((id, candidate)),
+            Ok(None) => report.up_to_date.push(id.clone()),
+            Err(error) => report.failed.push(FailedInstall {
+                id: id.clone(),
+                error: error.to_string(),
+            }),
+        }
     }
 
     {
         let _guard = MUTATION_LOCK.lock().await;
-        install_candidate(candidate, &plugins_dir, Some(now_rfc3339()))
-            .map_err(map_install_error)?;
+        for (id, candidate) in pending {
+            if load_managed_record(&plugins_dir, id).is_err() {
+                report.failed.push(FailedInstall {
+                    id: id.clone(),
+                    error: format!("plugin '{id}' was removed during update"),
+                });
+                continue;
+            }
+            match install_candidate(candidate, &plugins_dir, Some(now_rfc3339())) {
+                Ok(record) => report.updated.push(UpdatedPlugin {
+                    id: id.clone(),
+                    version: candidate.plugin.manifest.version.clone(),
+                    commit: record.commit,
+                }),
+                Err(error) => report.failed.push(FailedInstall {
+                    id: id.clone(),
+                    error: error.to_string(),
+                }),
+            }
+        }
     }
-    reload_runtime().await?;
+    if !report.updated.is_empty() {
+        reload_runtime().await?;
+    }
 
-    Ok(UpdateOutcome::Updated {
-        commit: candidate.source.commit.clone(),
-    })
+    Ok(report)
 }
 
 /// Uninstalls a repository-managed plugin and reloads the runtime.
@@ -472,4 +599,96 @@ fn now_rfc3339() -> String {
     time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use harmony_repository::{
+        Forge,
+        manifest::SOURCE_RECORD_SCHEMA_VERSION,
+    };
+
+    use super::*;
+
+    fn store_record(dir: &Path, commit: Option<String>) -> anyhow::Result<()> {
+        std::fs::create_dir_all(dir)?;
+        SourceRecord {
+            schema_version: SOURCE_RECORD_SCHEMA_VERSION,
+            origin: "https://github.com/o/r".into(),
+            forge: Forge::GitHub,
+            git_ref: None,
+            commit,
+            subpath: None,
+            via_repository: None,
+            installed_at: None,
+        }
+        .store(dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn load_managed_record_distinguishes_missing_local_and_managed() -> anyhow::Result<()> {
+        let plugins_dir = tempfile::TempDir::new()?;
+        std::fs::create_dir(plugins_dir.path().join("local"))?;
+        store_record(&plugins_dir.path().join("managed"), Some("a".repeat(40)))?;
+
+        assert!(matches!(
+            load_managed_record(plugins_dir.path(), "bad id"),
+            Err(PluginRepoError::BadRequest(_))
+        ));
+        assert!(matches!(
+            load_managed_record(plugins_dir.path(), "missing"),
+            Err(PluginRepoError::NotFound(_))
+        ));
+        assert!(matches!(
+            load_managed_record(plugins_dir.path(), "local"),
+            Err(PluginRepoError::Conflict(_))
+        ));
+        let record = load_managed_record(plugins_dir.path(), "managed")?;
+        assert_eq!(record.origin, "https://github.com/o/r");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_plugins_rejects_empty_selection() {
+        assert!(matches!(
+            update_plugins(Some(&[])).await,
+            Err(PluginRepoError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn managed_plugin_ids_keeps_broken_records_and_skips_local_plugins() -> anyhow::Result<()> {
+        let plugins_dir = tempfile::TempDir::new()?;
+        std::fs::create_dir(plugins_dir.path().join("local"))?;
+        std::fs::write(plugins_dir.path().join("stray.txt"), "")?;
+        store_record(&plugins_dir.path().join("zeta"), None)?;
+        store_record(&plugins_dir.path().join("alpha"), Some("a".repeat(40)))?;
+
+        std::fs::create_dir(plugins_dir.path().join("broken"))?;
+        std::fs::write(
+            plugins_dir
+                .path()
+                .join("broken")
+                .join(SOURCE_RECORD_FILENAME),
+            "{",
+        )?;
+
+        assert_eq!(
+            managed_plugin_ids(plugins_dir.path())?
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![
+                "alpha".to_string(),
+                "broken".to_string(),
+                "zeta".to_string()
+            ]
+        );
+        assert!(matches!(
+            load_managed_record(plugins_dir.path(), "broken"),
+            Err(PluginRepoError::Internal(_))
+        ));
+        assert!(managed_plugin_ids(&plugins_dir.path().join("absent"))?.is_empty());
+        Ok(())
+    }
 }
