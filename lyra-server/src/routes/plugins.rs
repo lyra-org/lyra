@@ -189,34 +189,30 @@ struct GroupResponse {
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 struct PluginSettingsResponse {
-    plugin_id: String,
     groups: Vec<GroupResponse>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
-enum PluginSettingsEntry {
-    Ready {
-        plugin_id: String,
-        groups: Vec<GroupResponse>,
-    },
-    Initializing {
-        plugin_id: String,
-    },
-    NotDeclared {
-        plugin_id: String,
-    },
-    Invalid {
-        plugin_id: String,
-        message: String,
-    },
+enum PluginSettingsStatus {
+    Ready { groups: Vec<GroupResponse> },
+    Initializing,
+    NotDeclared,
+    Invalid { message: String },
 }
 
+/// One plugin in a settings listing. Listings only include plugins that
+/// declare the requested scope, so the entry carries enough of the manifest
+/// for a client to present the plugin without the manifest list.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
-struct PluginSettingsListResponse {
-    entries: Vec<PluginSettingsEntry>,
+struct PluginSettingsEntry {
+    plugin_id: String,
+    name: String,
+    version: String,
+    #[serde(flatten)]
+    status: PluginSettingsStatus,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -562,37 +558,27 @@ async fn load_settings_response(
         .map(|group| group_to_response(group, &stored))
         .collect::<anyhow::Result<_>>()?;
 
-    Ok(Json(PluginSettingsResponse { plugin_id, groups }))
+    Ok(Json(PluginSettingsResponse { groups }))
 }
 
-fn build_entry(
+fn build_status(
     registry: &Registry,
     db: &DbAny,
     plugin_id: &str,
     scope: SettingsScope,
     user_db_id: Option<DbId>,
-) -> PluginSettingsEntry {
+) -> PluginSettingsStatus {
     let typed = match PluginId::new(plugin_id.to_string()) {
         Ok(id) => id,
-        Err(_) => {
-            return PluginSettingsEntry::NotDeclared {
-                plugin_id: plugin_id.to_string(),
-            };
-        }
+        Err(_) => return PluginSettingsStatus::NotDeclared,
     };
 
     let schema = match registry.get_schema(plugin_id, scope) {
         Some(schema) => schema,
         None if !registry.is_frozen_for_plugin(&typed) => {
-            return PluginSettingsEntry::Initializing {
-                plugin_id: plugin_id.to_string(),
-            };
+            return PluginSettingsStatus::Initializing;
         }
-        None => {
-            return PluginSettingsEntry::NotDeclared {
-                plugin_id: plugin_id.to_string(),
-            };
-        }
+        None => return PluginSettingsStatus::NotDeclared,
     };
 
     let stored = match user_db_id {
@@ -604,8 +590,7 @@ fn build_entry(
     let stored = match stored {
         Ok(values) => values,
         Err(error) => {
-            return PluginSettingsEntry::Invalid {
-                plugin_id: plugin_id.to_string(),
+            return PluginSettingsStatus::Invalid {
                 message: format!("{error:#}"),
             };
         }
@@ -617,12 +602,8 @@ fn build_entry(
         .map(|group| group_to_response(group, &stored))
         .collect::<anyhow::Result<Vec<_>>>()
     {
-        Ok(groups) => PluginSettingsEntry::Ready {
-            plugin_id: plugin_id.to_string(),
-            groups,
-        },
-        Err(error) => PluginSettingsEntry::Invalid {
-            plugin_id: plugin_id.to_string(),
+        Ok(groups) => PluginSettingsStatus::Ready { groups },
+        Err(error) => PluginSettingsStatus::Invalid {
             message: format!("{error:#}"),
         },
     }
@@ -638,25 +619,29 @@ async fn list_plugins(headers: HeaderMap) -> Result<Json<Vec<PluginManifestRespo
 async fn collect_settings_entries(
     scope: SettingsScope,
     user_db_id: Option<DbId>,
-) -> PluginSettingsListResponse {
+) -> Vec<PluginSettingsEntry> {
     let manifests = STATE.generation().plugin_manifests.get();
     let registry = plugin_settings_registry::settings_registry()
         .read_owned()
         .await;
     let db = STATE.db.read().await;
 
-    let entries = manifests
+    manifests
         .as_ref()
         .iter()
-        .map(|manifest| build_entry(&registry, &db, &manifest.id, scope, user_db_id))
-        .collect();
-
-    PluginSettingsListResponse { entries }
+        .filter_map(|manifest| {
+            let status = build_status(&registry, &db, &manifest.id, scope, user_db_id);
+            (!matches!(status, PluginSettingsStatus::NotDeclared)).then(|| PluginSettingsEntry {
+                plugin_id: manifest.id.clone(),
+                name: manifest.name.clone(),
+                version: manifest.version.clone(),
+                status,
+            })
+        })
+        .collect()
 }
 
-async fn list_all_settings(
-    headers: HeaderMap,
-) -> Result<Json<PluginSettingsListResponse>, AppError> {
+async fn list_all_settings(headers: HeaderMap) -> Result<Json<Vec<PluginSettingsEntry>>, AppError> {
     let _principal = require_manage_plugins(&headers).await?;
     Ok(Json(
         collect_settings_entries(SettingsScope::Global, None).await,
@@ -665,7 +650,7 @@ async fn list_all_settings(
 
 async fn list_all_user_settings(
     headers: HeaderMap,
-) -> Result<Json<PluginSettingsListResponse>, AppError> {
+) -> Result<Json<Vec<PluginSettingsEntry>>, AppError> {
     let principal = require_authenticated(&headers).await?;
     Ok(Json(
         collect_settings_entries(SettingsScope::User, Some(principal.user_db_id)).await,
@@ -870,7 +855,7 @@ async fn load_user_settings_response(
         .map(|group| group_to_response(group, &stored))
         .collect::<anyhow::Result<_>>()?;
 
-    Ok(Json(PluginSettingsResponse { plugin_id, groups }))
+    Ok(Json(PluginSettingsResponse { groups }))
 }
 
 async fn get_user_settings(
@@ -919,7 +904,7 @@ async fn delete_user_settings(
 #[cfg(feature = "docgen")]
 fn get_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get plugin settings")
-        .description("Returns the settings schema and current values for a plugin.")
+        .description("Returns the settings groups, with schema and current values, for a plugin.")
 }
 
 #[cfg(feature = "docgen")]
@@ -932,14 +917,14 @@ fn list_plugins_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_all_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List all plugin settings").description(
-        "Returns the global settings schema and current values for every loaded plugin in a single response. Each entry carries a `status` field: `ready`, `initializing` (registry not yet frozen), `not_declared` (plugin did not declare this scope), or `invalid` (stored state is stale or malformed).",
+        "Returns a list with the global settings schema and current values for every loaded plugin that declares global settings. Each entry carries the plugin's name and version plus a `status` field: `ready`, `initializing` (registry not yet frozen), or `invalid` (stored state is stale or malformed).",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn list_all_user_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List all user plugin settings").description(
-        "Returns the user-scoped settings schema and the authenticated user's current values for every loaded plugin in a single response. Per-entry `status` mirrors the admin list endpoint.",
+        "Returns a list with the user-scoped settings schema and the authenticated user's current values for every loaded plugin that declares user settings. Entries mirror the admin list endpoint.",
     )
 }
 
@@ -1012,7 +997,7 @@ fn restart_plugin_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn update_settings_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Update plugin settings")
-        .description("Updates setting values for a plugin and returns the updated schema.")
+        .description("Updates setting values for a plugin and returns the updated settings groups.")
 }
 
 #[cfg(feature = "docgen")]
@@ -1475,34 +1460,28 @@ mod tests {
     }
 
     #[test]
-    fn build_entry_returns_initializing_for_unknown_plugin_while_registry_is_open() {
+    fn build_status_returns_initializing_for_unknown_plugin_while_registry_is_open() {
         let db = db::test_db::new_test_db().expect("test db");
         let registry = Registry::default();
 
-        let entry = build_entry(&registry, &db, "demo", SettingsScope::Global, None);
+        let status = build_status(&registry, &db, "demo", SettingsScope::Global, None);
 
-        match entry {
-            PluginSettingsEntry::Initializing { plugin_id } => assert_eq!(plugin_id, "demo"),
-            _ => panic!("expected Initializing"),
-        }
+        assert!(matches!(status, PluginSettingsStatus::Initializing));
     }
 
     #[test]
-    fn build_entry_returns_not_declared_for_unknown_plugin_when_registry_is_frozen() {
+    fn build_status_returns_not_declared_for_unknown_plugin_when_registry_is_frozen() {
         let db = db::test_db::new_test_db().expect("test db");
         let mut registry = Registry::default();
         registry.freeze();
 
-        let entry = build_entry(&registry, &db, "demo", SettingsScope::Global, None);
+        let status = build_status(&registry, &db, "demo", SettingsScope::Global, None);
 
-        match entry {
-            PluginSettingsEntry::NotDeclared { plugin_id } => assert_eq!(plugin_id, "demo"),
-            _ => panic!("expected NotDeclared"),
-        }
+        assert!(matches!(status, PluginSettingsStatus::NotDeclared));
     }
 
     #[test]
-    fn build_entry_returns_ready_when_schema_is_registered() -> anyhow::Result<()> {
+    fn build_status_returns_ready_when_schema_is_registered() -> anyhow::Result<()> {
         let db = db::test_db::new_test_db()?;
         let mut registry = Registry::default();
         registry.register_schema(
@@ -1511,13 +1490,10 @@ mod tests {
             empty_schema(),
         )?;
 
-        let entry = build_entry(&registry, &db, "demo", SettingsScope::Global, None);
+        let status = build_status(&registry, &db, "demo", SettingsScope::Global, None);
 
-        match entry {
-            PluginSettingsEntry::Ready { plugin_id, groups } => {
-                assert_eq!(plugin_id, "demo");
-                assert!(groups.is_empty());
-            }
+        match status {
+            PluginSettingsStatus::Ready { groups } => assert!(groups.is_empty()),
             _ => panic!("expected Ready"),
         }
         Ok(())
