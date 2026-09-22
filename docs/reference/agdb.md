@@ -38,10 +38,23 @@ project-local guidance for using agdb in Lyra.
 
 - Storage is a **single file** database with a write-ahead log (WAL):
   - WAL filename is `.{db_filename}` (same directory).
-  - WAL records the **previous bytes** before writes; on load it is applied to
-    restore a consistent state after crashes.
-- Storage fragments over time. `DbImpl` calls `storage.shrink_to_fit()` on drop.
-  You can call `Db::optimize_storage()` explicitly to defragment.
+  - WAL records the **previous bytes** before writes; on load it is replayed in
+    reverse to restore the state before the interrupted transaction.
+  - The WAL is cleared on commit. A `transaction_mut` keeps one WAL scope open
+    for the whole closure, so the WAL grows with the bytes it overwrites.
+- Durability is controlled by `SyncMode`:
+  - `SyncMode::None` (default): no `fsync`; the OS flushes dirty pages. A crash
+    is always recoverable, but an OS crash or power loss can roll back recently
+    committed transactions.
+  - `SyncMode::Commit`: `fdatasync` on the main file and WAL at every commit.
+    Required on network filesystems with client-side write caching; slows
+    every write.
+  - `Db::set_sync_mode(mode)` / `Db::sync_mode()`; the mode is not persisted.
+  - `Db::sync()` issues a one-off `fdatasync` regardless of mode, e.g. before
+    copying raw database files.
+- Storage fragments over time. `DbImpl` calls `optimize_storage()` on drop
+  (skipped when poisoned). You can call `Db::optimize_storage()` explicitly to
+  defragment.
 - Storage variants:
   - `Db` (default): file + in-memory buffer; reads are in-memory, writes sync to
     both (fast reads, persistent).
@@ -78,6 +91,19 @@ project-local guidance for using agdb in Lyra.
   - `Db::transaction_mut(|t| ...)` for read/write.
 - No manual commit/rollback. If the closure returns `Ok`, it commits; `Err`
   rolls back.
+- `transaction_mut` is atomic on disk: a crash or process exit inside the
+  closure leaves none of its writes after reopening.
+- If a rollback itself fails, agdb restores the pre-transaction state from the
+  WAL and reloads, then returns the closure's original error. If that recovery
+  also fails, the database is **poisoned**:
+  - The failing `transaction_mut` returns `DbErrorType::Poisoned`, with the
+    original error as `cause`.
+  - Every later query fails. Direct `Db::exec` / `Db::exec_mut` errors are
+    wrapped as `Poisoned`; errors raised inside explicit `transaction` /
+    `transaction_mut` closures are **not**, and keep their original type.
+  - Only dropping and reopening the database recovers it.
+  - Lyra stops the server when a request fails with `Poisoned` so it restarts
+    against a reopened database (`db::is_poisoned`).
 - Nested transactions are not supported.
 - Project convention: wrap related DB interactions (especially writes) in a
   single explicit transaction (`transaction` / `transaction_mut`) so any error
@@ -166,6 +192,16 @@ project-local guidance for using agdb in Lyra.
   - Replaces existing key-values with the same key (upsert).
 - `result` counts inserted/updated **key-value pairs**, not elements.
 - `elements` contains only **newly created nodes**.
+- `insert().amend(..)` / `amend_uniform(..)` merges into existing values
+  instead of replacing them, without a read:
+  - Integers add with saturation (no overflow error); `F64` also accepts
+    `I64`/`U64` operands.
+  - `String` and `Bytes` append; `Vec*` extends with a vec or pushes a matching
+    scalar. No deduplication.
+  - A missing key is inserted as given.
+  - Mismatched types are a `TypeError`.
+- Prefer plain `values` when the code holds the complete new value; amend is
+  only for deltas where the stored result is not needed afterwards.
 
 ### Insert Aliases
 
@@ -191,6 +227,14 @@ project-local guidance for using agdb in Lyra.
 - IDs must exist (otherwise error).
 - Missing keys are **not** errors.
 - `result` is the negative count of removed key-value pairs.
+- `remove().amend(..)` / `amend_uniform(..)` is the inverse of insert amend
+  (it builds an insert-values query):
+  - Integers subtract with saturation; `F64` also accepts `I64`/`U64`.
+  - `String` removes **all** occurrences of the substring; `Bytes` is a
+    `TypeError`.
+  - `Vec*` removes the **first** occurrence of each given element.
+  - Missing keys are skipped; a missing element (id or alias) is an error.
+  - `result` counts amended key-value pairs (positive).
 
 ### Remove Aliases
 
