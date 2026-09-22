@@ -92,6 +92,8 @@ to clear it), requires `manage_plugins`, and returns 204.
 
 Plugin management requires the manage-plugins permission:
 
+- `GET /api/plugins` — loaded plugins, each with a `source` of kind
+  `repository` (origin, ref, commit, installed_at) or `local`.
 - `POST /api/plugins/resolve` — preview a repository's plugins,
   including the capability scopes each plugin requests, without
   installing.

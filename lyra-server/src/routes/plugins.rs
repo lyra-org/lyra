@@ -28,6 +28,7 @@ use axum::{
         post,
     },
 };
+use harmony_repository::SourceRecord;
 use serde::{
     Deserialize,
     Serialize,
@@ -95,13 +96,29 @@ fn map_plugin_restart_error(error: PluginRestartError) -> AppError {
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 struct PluginManifestResponse {
-    schema_version: u32,
     id: String,
     name: String,
     version: String,
     description: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    entrypoint: Option<String>,
+    source: PluginSourceResponse,
+}
+
+/// Where an installed plugin came from. `local` plugins were placed in the
+/// plugins directory by hand and are not managed by repository tooling.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum PluginSourceResponse {
+    Local,
+    Repository {
+        origin: String,
+        #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
+        git_ref: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        commit: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        installed_at: Option<String>,
+    },
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -365,18 +382,38 @@ fn repository_response(
     }
 }
 
+fn source_response(record: Option<SourceRecord>) -> PluginSourceResponse {
+    match record {
+        None => PluginSourceResponse::Local,
+        Some(record) => PluginSourceResponse::Repository {
+            origin: record.origin,
+            git_ref: record.git_ref,
+            commit: record.commit,
+            installed_at: record.installed_at,
+        },
+    }
+}
+
 fn manifest_responses(
     manifests: &[harmony_core::plugin::PluginManifest],
-) -> Vec<PluginManifestResponse> {
+    plugins_dir: &std::path::Path,
+) -> Result<Vec<PluginManifestResponse>, AppError> {
     manifests
         .iter()
-        .map(|manifest| PluginManifestResponse {
-            schema_version: manifest.schema_version,
-            id: manifest.id.clone(),
-            name: manifest.name.clone(),
-            version: manifest.version.clone(),
-            description: manifest.description.clone(),
-            entrypoint: manifest.entrypoint.clone(),
+        .map(|manifest| {
+            let record = SourceRecord::load(&plugins_dir.join(&manifest.id)).map_err(|e| {
+                anyhow::anyhow!(
+                    "Could not read source record for plugin `{}`: {e}",
+                    manifest.id
+                )
+            })?;
+            Ok(PluginManifestResponse {
+                id: manifest.id.clone(),
+                name: manifest.name.clone(),
+                version: manifest.version.clone(),
+                description: manifest.description.clone(),
+                source: source_response(record),
+            })
         })
         .collect()
 }
@@ -594,7 +631,8 @@ fn build_entry(
 async fn list_plugins(headers: HeaderMap) -> Result<Json<Vec<PluginManifestResponse>>, AppError> {
     let _principal = require_manage_plugins(&headers).await?;
     let manifests = STATE.generation().plugin_manifests.get();
-    Ok(Json(manifest_responses(manifests.as_ref())))
+    let plugins_dir = crate::plugins::bootstrap::plugins_dir();
+    Ok(Json(manifest_responses(manifests.as_ref(), &plugins_dir)?))
 }
 
 async fn collect_settings_entries(
@@ -886,8 +924,9 @@ fn get_settings_docs(op: TransformOperation) -> TransformOperation {
 
 #[cfg(feature = "docgen")]
 fn list_plugins_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("List plugins")
-        .description("Returns the loaded plugin manifests discovered at startup.")
+    op.summary("List plugins").description(
+        "Returns the loaded plugin manifests along with where each plugin was installed from: a `source` of kind `repository` (origin, ref, commit, installed_at) or `local`.",
+    )
 }
 
 #[cfg(feature = "docgen")]
@@ -1175,6 +1214,53 @@ mod tests {
             label: format!("{id} label"),
             fields,
         }
+    }
+
+    fn manifest(id: &str) -> harmony_core::plugin::PluginManifest {
+        harmony_core::plugin::PluginManifest {
+            schema_version: 1,
+            id: id.to_string(),
+            name: id.to_string(),
+            version: "1.0.0".to_string(),
+            description: String::new(),
+            entrypoint: None,
+            scopes: Vec::new(),
+            dependencies: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn manifest_responses_report_plugin_sources() -> anyhow::Result<()> {
+        let plugins_dir = tempfile::TempDir::new()?;
+        std::fs::create_dir(plugins_dir.path().join("local"))?;
+        std::fs::create_dir(plugins_dir.path().join("managed"))?;
+        SourceRecord {
+            schema_version: harmony_repository::manifest::SOURCE_RECORD_SCHEMA_VERSION,
+            origin: "https://github.com/o/r".into(),
+            forge: harmony_repository::Forge::GitHub,
+            git_ref: Some("v2".into()),
+            commit: Some("a".repeat(40)),
+            subpath: None,
+            via_repository: None,
+            installed_at: None,
+        }
+        .store(&plugins_dir.path().join("managed"))?;
+
+        let responses = manifest_responses(
+            &[manifest("local"), manifest("managed")],
+            plugins_dir.path(),
+        )
+        .expect("source records load");
+        let json = serde_json::to_value(&responses)?;
+
+        assert_eq!(json[0]["source"], serde_json::json!({ "kind": "local" }));
+        assert_eq!(json[1]["source"]["kind"], "repository");
+        assert_eq!(json[1]["source"]["origin"], "https://github.com/o/r");
+        assert_eq!(json[1]["source"]["ref"], "v2");
+        assert_eq!(json[1]["source"]["commit"], "a".repeat(40));
+        assert!(json[1]["source"].get("forge").is_none());
+        assert!(json[1].get("schema_version").is_none());
+        Ok(())
     }
 
     async fn initialize_auth_test_runtime() -> anyhow::Result<PathBuf> {
