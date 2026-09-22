@@ -135,3 +135,9 @@ duration_ms = 171086
 
 [expect.release]
 ids = { release_group_id = "304f842a-f428-4b16-979f-b87e562ad963" }
+
+[expect.artists."8eeb59f4-0071-4261-b1f8-91d8294622d2"]
+fields = { artist_name = "星街すいせい" }
+
+[expect.tracks."f10dae5c-98ae-4807-bd0f-9cd126ed5080".credits."8eeb59f4-0071-4261-b1f8-91d8294622d2"]
+credit_type = "vocalist"
