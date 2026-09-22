@@ -48,7 +48,11 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
 });
 
 /// Installs and uninstalls mutate `plugins_dir`; serialize them so staged
-/// trees and runtime reloads never interleave.
+/// trees and runtime reloads never interleave. Every mutating path holds
+/// the guard from its first filesystem write through the end of
+/// `reload_runtime`, and takes it exactly once: the tokio mutex is not
+/// reentrant, so helpers that write to disk expect the caller to hold it.
+/// Repository resolution (network) always happens before the guard.
 static MUTATION_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 #[derive(Debug, thiserror::Error)]
@@ -261,21 +265,19 @@ pub(crate) struct InstallReport {
     pub(crate) failed: Vec<FailedInstall>,
 }
 
-/// Resolves a repository URL and installs its plugins (optionally a
-/// subset) into `plugins_dir`. An explicitly empty selection is rejected.
-/// Per-plugin failures don't abort siblings. Does not reload the runtime;
-/// callers decide when the new set goes live.
-pub(crate) async fn install_to_disk(
+/// Resolves a repository URL and validates the requested selection. An
+/// explicitly empty selection is rejected, as is a repository that offers
+/// nothing to install.
+async fn resolve_selection(
     url: &str,
     git_ref: Option<&str>,
     plugin_ids: Option<&[String]>,
-) -> Result<InstallReport, PluginRepoError> {
+) -> Result<ResolvedRepository, PluginRepoError> {
     if plugin_ids.is_some_and(<[String]>::is_empty) {
         return Err(PluginRepoError::BadRequest(
             "no plugins selected to install".to_string(),
         ));
     }
-    let _guard = MUTATION_LOCK.lock().await;
     let resolved = resolve(url, git_ref).await?;
 
     if let Some(ids) = plugin_ids {
@@ -287,23 +289,34 @@ pub(crate) async fn install_to_disk(
             }
         }
     }
-    let selected: Vec<_> = resolved
-        .candidates
-        .iter()
-        .filter(|candidate| plugin_ids.is_none_or(|ids| ids.iter().any(|id| id == candidate.id())))
-        .collect();
-    if selected.is_empty() {
+    if selected_candidates(&resolved, plugin_ids).is_empty() {
         return Err(PluginRepoError::BadRequest(
             "repository provides no plugins to install".to_string(),
         ));
     }
+    Ok(resolved)
+}
 
+fn selected_candidates<'a>(
+    resolved: &'a ResolvedRepository,
+    plugin_ids: Option<&[String]>,
+) -> Vec<&'a PluginCandidate> {
+    resolved
+        .candidates
+        .iter()
+        .filter(|candidate| plugin_ids.is_none_or(|ids| ids.iter().any(|id| id == candidate.id())))
+        .collect()
+}
+
+/// Writes the selected candidates into `plugins_dir`. Per-plugin failures
+/// don't abort siblings. The caller holds `MUTATION_LOCK`.
+fn install_selected(resolved: &ResolvedRepository, plugin_ids: Option<&[String]>) -> InstallReport {
     let plugins_dir = crate::plugins::bootstrap::plugins_dir();
     let mut report = InstallReport {
         installed: Vec::new(),
         failed: Vec::new(),
     };
-    for candidate in selected {
+    for candidate in selected_candidates(resolved, plugin_ids) {
         match install_candidate(candidate, &plugins_dir, Some(now_rfc3339())) {
             Ok(record) => report.installed.push(InstalledPlugin {
                 id: candidate.id().to_string(),
@@ -316,8 +329,20 @@ pub(crate) async fn install_to_disk(
             }),
         }
     }
+    report
+}
 
-    Ok(report)
+/// Resolves a repository URL and installs its plugins (optionally a
+/// subset) into `plugins_dir`. Does not reload the runtime; callers decide
+/// when the new set goes live.
+pub(crate) async fn install_to_disk(
+    url: &str,
+    git_ref: Option<&str>,
+    plugin_ids: Option<&[String]>,
+) -> Result<InstallReport, PluginRepoError> {
+    let resolved = resolve_selection(url, git_ref, plugin_ids).await?;
+    let _guard = MUTATION_LOCK.lock().await;
+    Ok(install_selected(&resolved, plugin_ids))
 }
 
 /// Installs and then reloads the plugin runtime so the new set goes live.
@@ -326,7 +351,9 @@ pub(crate) async fn install(
     git_ref: Option<&str>,
     plugin_ids: Option<&[String]>,
 ) -> Result<InstallReport, PluginRepoError> {
-    let report = install_to_disk(url, git_ref, plugin_ids).await?;
+    let resolved = resolve_selection(url, git_ref, plugin_ids).await?;
+    let _guard = MUTATION_LOCK.lock().await;
+    let report = install_selected(&resolved, plugin_ids);
     if !report.installed.is_empty() {
         reload_runtime().await?;
     }
@@ -488,27 +515,25 @@ pub(crate) async fn update_plugins(
         }
     }
 
-    {
-        let _guard = MUTATION_LOCK.lock().await;
-        for (id, candidate) in pending {
-            if load_managed_record(&plugins_dir, id).is_err() {
-                report.failed.push(FailedInstall {
-                    id: id.clone(),
-                    error: format!("plugin '{id}' was removed during update"),
-                });
-                continue;
-            }
-            match install_candidate(candidate, &plugins_dir, Some(now_rfc3339())) {
-                Ok(record) => report.updated.push(UpdatedPlugin {
-                    id: id.clone(),
-                    version: candidate.plugin.manifest.version.clone(),
-                    commit: record.commit,
-                }),
-                Err(error) => report.failed.push(FailedInstall {
-                    id: id.clone(),
-                    error: error.to_string(),
-                }),
-            }
+    let _guard = MUTATION_LOCK.lock().await;
+    for (id, candidate) in pending {
+        if load_managed_record(&plugins_dir, id).is_err() {
+            report.failed.push(FailedInstall {
+                id: id.clone(),
+                error: format!("plugin '{id}' was removed during update"),
+            });
+            continue;
+        }
+        match install_candidate(candidate, &plugins_dir, Some(now_rfc3339())) {
+            Ok(record) => report.updated.push(UpdatedPlugin {
+                id: id.clone(),
+                version: candidate.plugin.manifest.version.clone(),
+                commit: record.commit,
+            }),
+            Err(error) => report.failed.push(FailedInstall {
+                id: id.clone(),
+                error: error.to_string(),
+            }),
         }
     }
     if !report.updated.is_empty() {
@@ -520,20 +545,20 @@ pub(crate) async fn update_plugins(
 
 /// Uninstalls a repository-managed plugin and reloads the runtime.
 pub(crate) async fn uninstall(plugin_id: &str) -> Result<(), PluginRepoError> {
-    {
-        let _guard = MUTATION_LOCK.lock().await;
-        uninstall_plugin(&crate::plugins::bootstrap::plugins_dir(), plugin_id)
-            .map_err(map_install_error)?;
-    }
+    let _guard = MUTATION_LOCK.lock().await;
+    uninstall_plugin(&crate::plugins::bootstrap::plugins_dir(), plugin_id)
+        .map_err(map_install_error)?;
     reload_runtime().await
 }
 
 /// Reloads the plugin runtime from disk; the recovery step after a failed
 /// reload and the way CLI installs go live without a restart.
 pub(crate) async fn reload_plugins() -> Result<(), PluginRepoError> {
+    let _guard = MUTATION_LOCK.lock().await;
     reload_runtime().await
 }
 
+/// Reloads the runtime from `plugins_dir`. The caller holds `MUTATION_LOCK`.
 async fn reload_runtime() -> Result<(), PluginRepoError> {
     STATE
         .generation()
