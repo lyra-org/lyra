@@ -99,8 +99,14 @@ to clear it), requires `manage_plugins`, and returns 204.
 Plugin management requires the manage-plugins permission:
 
 - `GET /api/plugins` — loaded plugins, each with a `source` of kind
-  `repository` (origin, ref, commit, pinned, installed_at), `local`, or
-  `invalid` (error) when the source record could not be read.
+  `repository` (origin, ref, commit, pinned, status, installed_at),
+  `local`, or `invalid` (error) when the source record could not be read.
+  `status` compares the installed commit with the commit stored for the
+  subscribed repository of the same origin and ref, without contacting
+  the forge: `up_to_date`, `update_available`, or `unknown` when no such
+  subscription exists or a commit is missing on either side. Pinned
+  plugins are always `up_to_date`. Refreshing the repository, or
+  updating plugins, stores the latest commit.
 - `POST /api/plugins/resolve` — body `{"url": ..., "ref": ...}`; preview
   a repository without installing. Returns the resolved repository shape
   described below, minus `id` and `refreshed_at`.

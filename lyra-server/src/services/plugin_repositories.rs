@@ -17,6 +17,7 @@ use std::{
     },
 };
 
+use agdb::DbAny;
 use harmony_repository::{
     FetchError,
     InstallError,
@@ -129,17 +130,34 @@ fn ensure_plugin_path_id(plugin_id: &str) -> Result<(), PluginRepoError> {
     Ok(())
 }
 
+/// Whether a repository-managed plugin is at the latest known commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UpdateStatus {
+    /// Installed at the latest known commit, or pinned.
+    UpToDate,
+    /// Installed at a different commit.
+    UpdateAvailable,
+    /// No commit is known on one side.
+    Unknown,
+}
+
+impl UpdateStatus {
+    fn compare(installed: Option<&str>, latest: Option<&str>) -> Self {
+        match (installed, latest) {
+            (Some(installed), Some(latest)) if installed == latest => Self::UpToDate,
+            (Some(_), Some(_)) => Self::UpdateAvailable,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 /// Where a catalogue plugin stands relative to the plugins directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CatalogStatus {
     /// Not installed.
     Available,
-    /// Installed from a repository at the offered commit.
-    UpToDate,
-    /// Installed from a repository at a different commit.
-    UpdateAvailable,
-    /// Installed from a repository, but no commit is recorded on one side.
-    Unknown,
+    /// Installed from a repository; compared against the offered commit.
+    Installed(UpdateStatus),
     /// Installed without a source record, so repository tooling leaves it alone.
     Local,
 }
@@ -188,13 +206,68 @@ fn catalog_status(installed_dir: &Path, available_commit: Option<&str>) -> Catal
         Ok(None) => return CatalogStatus::Local,
         Ok(Some(record)) => record,
         // Managed, but the commit is unknowable until it is reinstalled.
-        Err(_) => return CatalogStatus::Unknown,
+        Err(_) => return CatalogStatus::Installed(UpdateStatus::Unknown),
     };
-    match (record.commit.as_deref(), available_commit) {
-        (Some(installed), Some(available)) if installed == available => CatalogStatus::UpToDate,
-        (Some(_), Some(_)) => CatalogStatus::UpdateAvailable,
-        _ => CatalogStatus::Unknown,
+    CatalogStatus::Installed(UpdateStatus::compare(
+        record.commit.as_deref(),
+        available_commit,
+    ))
+}
+
+/// Where an installed plugin stands relative to the subscribed repository
+/// it was installed from, using only stored commits: no forge call is
+/// made. Pinned plugins are always up to date. Without a subscription
+/// for the same origin and ref, or a commit on either side, the answer
+/// is `Unknown`.
+pub(crate) fn update_status(
+    record: &SourceRecord,
+    repositories: &[repo_db::PluginRepository],
+) -> UpdateStatus {
+    if record.pinned {
+        return UpdateStatus::UpToDate;
     }
+    let subscription = find_subscription(repositories, &record.origin, record.git_ref.as_deref());
+    UpdateStatus::compare(
+        record.commit.as_deref(),
+        subscription.and_then(|repository| repository.commit.as_deref()),
+    )
+}
+
+/// The subscription plugins installed from `origin` at `git_ref` belong
+/// to: the same repository as [`RepoSpec::is_same_repo`] sees it, so
+/// owner and name compare case-insensitively, and the same ref.
+fn find_subscription<'a>(
+    repositories: &'a [repo_db::PluginRepository],
+    origin: &str,
+    git_ref: Option<&str>,
+) -> Option<&'a repo_db::PluginRepository> {
+    let spec = RepoSpec::parse(origin, None).ok();
+    repositories.iter().find(|repository| {
+        repository.git_ref.as_deref() == git_ref
+            && match (&spec, RepoSpec::parse(&repository.origin, None)) {
+                (Some(spec), Ok(subscribed)) => spec.is_same_repo(&subscribed),
+                _ => repository.origin == origin,
+            }
+    })
+}
+
+/// Stores a freshly resolved commit on the matching subscription, so
+/// update status reflects the forge without a separate refresh.
+fn record_resolved_commit(
+    db: &mut DbAny,
+    origin: &str,
+    git_ref: Option<&str>,
+    commit: Option<String>,
+) -> Result<(), PluginRepoError> {
+    let repositories = repo_db::list(&*db)?;
+    let Some(subscription) = find_subscription(&repositories, origin, git_ref) else {
+        return Ok(());
+    };
+    let mut subscription = subscription.clone();
+    subscription.commit = commit;
+    subscription.refreshed_at_ms = Some(now_ms());
+    repo_db::update(db, &subscription)?;
+    Ok(())
 }
 
 fn build_preview(resolved: &ResolvedRepository, plugins_dir: &Path) -> RepositoryPreview {
@@ -504,6 +577,19 @@ async fn update_plugins_in(
             entry.insert(result);
         }
     }
+    if resolved.values().any(Result::is_ok) {
+        let mut db = STATE.db.write().await;
+        for ((origin, git_ref), repository) in &resolved {
+            if let Ok(repository) = repository {
+                record_resolved_commit(
+                    &mut db,
+                    origin,
+                    git_ref.as_deref(),
+                    repository.commit.clone(),
+                )?;
+            }
+        }
+    }
 
     let mut pending = Vec::new();
     for (id, record) in &records {
@@ -788,14 +874,118 @@ mod tests {
         };
         assert_eq!(status("absent", Some(&commit)), CatalogStatus::Available);
         assert_eq!(status("local", Some(&commit)), CatalogStatus::Local);
-        assert_eq!(status("pinned", Some(&commit)), CatalogStatus::UpToDate);
+        assert_eq!(
+            status("pinned", Some(&commit)),
+            CatalogStatus::Installed(UpdateStatus::UpToDate)
+        );
         assert_eq!(
             status("pinned", Some(&"b".repeat(40))),
-            CatalogStatus::UpdateAvailable
+            CatalogStatus::Installed(UpdateStatus::UpdateAvailable)
         );
-        assert_eq!(status("pinned", None), CatalogStatus::Unknown);
-        assert_eq!(status("unpinned", Some(&commit)), CatalogStatus::Unknown);
-        assert_eq!(status("broken", Some(&commit)), CatalogStatus::Unknown);
+        assert_eq!(
+            status("pinned", None),
+            CatalogStatus::Installed(UpdateStatus::Unknown)
+        );
+        assert_eq!(
+            status("unpinned", Some(&commit)),
+            CatalogStatus::Installed(UpdateStatus::Unknown)
+        );
+        assert_eq!(
+            status("broken", Some(&commit)),
+            CatalogStatus::Installed(UpdateStatus::Unknown)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn update_status_compares_stored_commits_of_the_matching_subscription() -> anyhow::Result<()> {
+        let plugins_dir = tempfile::TempDir::new()?;
+        let mut db = crate::db::test_db::new_test_db()?;
+        let commit = "a".repeat(40);
+
+        repo_db::create(
+            &mut db,
+            &repo_db::PluginRepository {
+                db_id: None,
+                id: "main".into(),
+                origin: "https://github.com/o/r".into(),
+                name: "Plugins".into(),
+                description: String::new(),
+                git_ref: None,
+                commit: Some(commit.clone()),
+                refreshed_at_ms: Some(1),
+            },
+        )?;
+        let repositories = repo_db::list(&db)?;
+
+        let mut plugins: Vec<(&str, SourceRecord)> = vec![
+            ("current", record(Some(commit.clone()))),
+            ("stale", record(Some("c".repeat(40)))),
+            ("unresolved", record(None)),
+            ("pinned", record(Some("c".repeat(40)))),
+            ("other-ref", record(Some(commit.clone()))),
+            ("unsubscribed", record(Some(commit.clone()))),
+            ("mixed-case", record(Some("c".repeat(40)))),
+        ];
+        plugins[3].1.pinned = true;
+        plugins[4].1.git_ref = Some("stable".into());
+        plugins[5].1.origin = "https://github.com/o/elsewhere".into();
+        plugins[6].1.origin = "https://github.com/O/R".into();
+        for (id, plugin) in &plugins {
+            let dir = plugins_dir.path().join(id);
+            std::fs::create_dir_all(&dir)?;
+            plugin.store(&dir)?;
+        }
+
+        let status = |id: &str| -> anyhow::Result<UpdateStatus> {
+            let record = load_managed_record(plugins_dir.path(), id)?;
+            Ok(update_status(&record, &repositories))
+        };
+        assert_eq!(status("current")?, UpdateStatus::UpToDate);
+        assert_eq!(status("stale")?, UpdateStatus::UpdateAvailable);
+        assert_eq!(status("unresolved")?, UpdateStatus::Unknown);
+        assert_eq!(status("pinned")?, UpdateStatus::UpToDate);
+        assert_eq!(status("other-ref")?, UpdateStatus::Unknown);
+        assert_eq!(status("unsubscribed")?, UpdateStatus::Unknown);
+        assert_eq!(status("mixed-case")?, UpdateStatus::UpdateAvailable);
+        Ok(())
+    }
+
+    #[test]
+    fn resolved_commits_are_stored_on_the_matching_subscription() -> anyhow::Result<()> {
+        let mut db = crate::db::test_db::new_test_db()?;
+        repo_db::create(
+            &mut db,
+            &repo_db::PluginRepository {
+                db_id: None,
+                id: "main".into(),
+                origin: "https://github.com/O/R".into(),
+                name: "Plugins".into(),
+                description: String::new(),
+                git_ref: None,
+                commit: Some("a".repeat(40)),
+                refreshed_at_ms: None,
+            },
+        )?;
+        record_resolved_commit(
+            &mut db,
+            "https://github.com/o/r",
+            Some("v2"),
+            Some("b".repeat(40)),
+        )?;
+        let subscription = repo_db::get_by_id(&db, "main")?.expect("subscription exists");
+        assert_eq!(subscription.commit.as_deref(), Some(&*"a".repeat(40)));
+        assert_eq!(subscription.refreshed_at_ms, None);
+
+        record_resolved_commit(
+            &mut db,
+            "https://github.com/o/r",
+            None,
+            Some("b".repeat(40)),
+        )?;
+        let subscription = repo_db::get_by_id(&db, "main")?.expect("subscription exists");
+        assert_eq!(subscription.commit.as_deref(), Some(&*"b".repeat(40)));
+        assert!(subscription.refreshed_at_ms.is_some());
         Ok(())
     }
 
