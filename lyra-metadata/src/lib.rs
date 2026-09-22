@@ -12,10 +12,12 @@ mod path;
 mod year;
 
 pub use artists::{
+    ArtistCreditName,
     ArtistRelationKind,
     ArtistRelationMetadata,
     ParsedArtistCredits,
     ParsedArtistType,
+    matches_artist_credit,
     normalize_unicode_nfc,
     normalize_unicode_nfkc,
     parse_cv_artist_credits,

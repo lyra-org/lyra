@@ -376,3 +376,117 @@ pub(crate) fn enrich_artists_with_title_features(artists: &mut Vec<String>, titl
         }
     }
 }
+
+/// A provider's ordered credit spelling, including the text following its artist name.
+#[derive(Debug, Clone)]
+pub struct ArtistCreditName {
+    pub name: String,
+    pub join_phrase: String,
+}
+
+/// Matches a complete combined label without splitting names or inferring identities.
+pub fn matches_artist_credit(label: &str, credits: &[ArtistCreditName]) -> bool {
+    fn normalized(value: &str) -> String {
+        value.nfc().collect::<String>().to_lowercase()
+    }
+    if credits.len() < 2 || credits.iter().any(|credit| credit.name.trim().is_empty()) {
+        return false;
+    }
+    let label = normalized(label);
+    let mut remaining = label.trim();
+    for (index, credit) in credits.iter().enumerate() {
+        let name = normalized(credit.name.trim());
+        let join = normalized(&credit.join_phrase);
+        let Some(rest) = remaining.strip_prefix(&name) else {
+            return false;
+        };
+        if index + 1 == credits.len() {
+            return rest.trim() == join.trim();
+        }
+        remaining = if matches!(join.trim(), "&" | "and") {
+            if let Some(tail) = rest.trim_start().strip_prefix('&') {
+                tail.trim_start()
+            } else if rest.starts_with(char::is_whitespace)
+                && let Some(tail) = rest.trim_start().strip_prefix("and")
+                && tail.starts_with(char::is_whitespace)
+            {
+                tail.trim_start()
+            } else {
+                return false;
+            }
+        } else if let Some(tail) = rest.strip_prefix(&join) {
+            tail
+        } else {
+            return false;
+        };
+    }
+    false
+}
+
+#[cfg(test)]
+mod credit_matching_tests {
+    use super::*;
+
+    fn credits(names: &[(&str, &str)]) -> Vec<ArtistCreditName> {
+        names
+            .iter()
+            .map(|(name, join)| ArtistCreditName {
+                name: (*name).into(),
+                join_phrase: (*join).into(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn combined_credit_matches_only_complete_ordered_names() {
+        let credits = credits(&[("imase", " & "), ("なとり", "")]);
+        for label in [
+            "imase & なとり",
+            "imase and なとり",
+            "IMASE AND なとり",
+            "imase&なとり",
+        ] {
+            assert!(matches_artist_credit(label, &credits), "{label}");
+        }
+        for label in [
+            "imase",
+            "なとり & imase",
+            "imase & なとり & someone",
+            "imaseandなとり",
+        ] {
+            assert!(!matches_artist_credit(label, &credits), "{label}");
+        }
+    }
+
+    #[test]
+    fn band_names_and_unknown_join_phrases_are_literal() {
+        assert!(!matches_artist_credit(
+            "Florence and the Machine",
+            &credits(&[("Florence and the Machine", "")])
+        ));
+        let names = credits(&[("Florence and the Machine", " / "), ("Candy", "")]);
+        assert!(matches_artist_credit(
+            "Florence and the Machine / Candy",
+            &names
+        ));
+        assert!(!matches_artist_credit(
+            "Florence & the Machine / Candy",
+            &names
+        ));
+        assert!(!matches_artist_credit(
+            "Florence and the Machine & Candy",
+            &names
+        ));
+        assert!(!matches_artist_credit(
+            "Candy",
+            &credits(&[("C", " and "), ("y", "")])
+        ));
+    }
+
+    #[test]
+    fn trailing_join_phrase_and_unicode_are_preserved() {
+        let names = credits(&[("Café", " ("), ("Voice", ")")]);
+        assert!(matches_artist_credit("Cafe\u{301} (Voice)", &names));
+        assert!(!matches_artist_credit("Café (Voice", &names));
+    }
+}

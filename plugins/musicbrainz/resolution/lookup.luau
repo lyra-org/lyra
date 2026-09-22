@@ -1181,6 +1181,39 @@ local function ensure_artist_entity(mb_artist: ReleaseArtist?): number?
 	return artist_id
 end
 
+local function reconcile_artist_credits(
+	owner_id: number,
+	credits: { ReleaseArtistCredit },
+	tagged_artist_mb_ids: { [number]: string }
+)
+	local current_provider = provider
+	if current_provider == nil or #credits < 2 then
+		return
+	end
+	local artist_ids: { [string]: number } = {}
+	for artist_id, mb_id in tagged_artist_mb_ids do
+		artist_ids[mb_id] = artist_id
+	end
+	local resolved: { metadata.ArtistCreditInput } = {}
+	for _, credit in credits do
+		local mb_id = credit.artist and credit.artist.id
+		local artist_id = if mb_id then artist_ids[mb_id] else nil
+		if artist_id == nil then
+			artist_id = ensure_artist_entity(credit.artist)
+		end
+		local name = trim_text(credit.name or (credit.artist and credit.artist.name))
+		if artist_id == nil or name == "" then
+			return
+		end
+		table.insert(resolved, {
+			artist_id = artist_id,
+			name = name,
+			join_phrase = credit.joinphrase,
+		})
+	end
+	current_provider:reconcile_artist_credits(owner_id, resolved)
+end
+
 type ArtistRelationType = metadata.ArtistRelationType
 local ArtistRelationType = metadata.ArtistRelationType
 
@@ -1880,6 +1913,10 @@ local function process_release(
 		end
 	end
 
+	if artist_credits then
+		reconcile_artist_credits(release_db_id, artist_credits, tagged_artist_mb_ids)
+	end
+
 	if #release_context.tracks > 0 then
 		local mb_tracks = flatten_release_tracks(release)
 		local local_tracks: { LocalTrack } = {}
@@ -2018,6 +2055,9 @@ local function process_release(
 								maybe_fetch_artist_relations(ensured_artist_id, mb_artist)
 							end
 						end
+					end
+					if local_track.db_id and next(character_voice_artist_ids) == nil then
+						reconcile_artist_credits(local_track.db_id, mb_credit_list, tagged_artist_mb_ids)
 					end
 				end
 			end

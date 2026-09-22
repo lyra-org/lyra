@@ -1178,6 +1178,62 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn rescan_preserves_reconciled_artist_credits() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library = test_db::insert_test_library_node(
+            &mut db,
+            "Reconciliation",
+            PathBuf::from("/music/combined"),
+        )?;
+        let library_id = library.db_id.unwrap();
+        let entry = insert_entry(&mut db, "/music/combined/track.flac")?;
+        connect(&mut db, library_id, entry)?;
+        let metadata = track_metadata(entry.0, "Combined Album", "imase and なとり", None, None, 1);
+        apply_metadata(&mut db, library_id, vec![metadata.clone()])?;
+        let release_id: DbId = select_releases(&db)?[0].db_id.clone().unwrap().into();
+        let track_id: DbId = db::tracks::get(&db, release_id)?[0]
+            .db_id
+            .clone()
+            .unwrap()
+            .into();
+        let mut desired = Vec::new();
+        for (name, join_phrase) in [("imase", " & "), ("なとり", "")] {
+            let artist_id = test_db::insert_artist(&mut db, name)?;
+            db::external_ids::upsert(
+                &mut db,
+                artist_id,
+                "test",
+                "artist_id",
+                name,
+                db::IdSource::Plugin,
+            )?;
+            desired.push(db::credits::ArtistCreditInput {
+                artist_id,
+                name: name.into(),
+                join_phrase: join_phrase.into(),
+            });
+        }
+        for owner in [release_id, track_id] {
+            db.transaction_mut(|tx| db::credits::reconcile_artists(tx, owner, "test", &desired))?;
+        }
+        apply_metadata(&mut db, library_id, vec![metadata])?;
+        for owner in [release_id, track_id] {
+            let mut ids = db::artists::get(&db, owner)?
+                .into_iter()
+                .map(|artist| DbId::from(artist.db_id.unwrap()).0)
+                .collect::<Vec<_>>();
+            ids.sort();
+            let mut expected = desired
+                .iter()
+                .map(|credit| credit.artist_id.0)
+                .collect::<Vec<_>>();
+            expected.sort();
+            assert_eq!(ids, expected);
+        }
+        Ok(())
+    }
+
     fn track_metadata_with_audio_properties(
         entry_db_id: DbId,
         title: &str,
