@@ -124,6 +124,9 @@ enum PluginSourceResponse {
         /// True when `ref` is a tag or commit, so updates never move the
         /// plugin. Branch installs track new commits.
         pinned: bool,
+        /// Compared against the subscribed repository with the same origin
+        /// and ref, from stored commits only.
+        status: UpdateStatusResponse,
         #[serde(skip_serializing_if = "Option::is_none")]
         installed_at: Option<String>,
     },
@@ -267,6 +270,18 @@ struct UpdatePluginsRequest {
     plugins: Option<Vec<String>>,
 }
 
+/// Whether an installed plugin is at the latest known commit. `unknown`
+/// means no subscription matches its origin and ref, or no commit is
+/// recorded on one side. Pinned plugins are always `up_to_date`.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum UpdateStatusResponse {
+    UpToDate,
+    UpdateAvailable,
+    Unknown,
+}
+
 /// Where a catalogue plugin stands relative to the plugins directory.
 /// `unknown` means it was installed from a repository but no commit is
 /// recorded on one side; `local` means it was installed without a source
@@ -387,13 +402,27 @@ struct PluginRepositoryResponse {
     refreshed_at: Option<String>,
 }
 
+fn update_status_response(status: repositories_service::UpdateStatus) -> UpdateStatusResponse {
+    use repositories_service::UpdateStatus;
+    match status {
+        UpdateStatus::UpToDate => UpdateStatusResponse::UpToDate,
+        UpdateStatus::UpdateAvailable => UpdateStatusResponse::UpdateAvailable,
+        UpdateStatus::Unknown => UpdateStatusResponse::Unknown,
+    }
+}
+
 fn catalog_status_response(status: repositories_service::CatalogStatus) -> CatalogStatusResponse {
-    use repositories_service::CatalogStatus;
+    use repositories_service::{
+        CatalogStatus,
+        UpdateStatus,
+    };
     match status {
         CatalogStatus::Available => CatalogStatusResponse::Available,
-        CatalogStatus::UpToDate => CatalogStatusResponse::UpToDate,
-        CatalogStatus::UpdateAvailable => CatalogStatusResponse::UpdateAvailable,
-        CatalogStatus::Unknown => CatalogStatusResponse::Unknown,
+        CatalogStatus::Installed(UpdateStatus::UpToDate) => CatalogStatusResponse::UpToDate,
+        CatalogStatus::Installed(UpdateStatus::UpdateAvailable) => {
+            CatalogStatusResponse::UpdateAvailable
+        }
+        CatalogStatus::Installed(UpdateStatus::Unknown) => CatalogStatusResponse::Unknown,
         CatalogStatus::Local => CatalogStatusResponse::Local,
     }
 }
@@ -446,10 +475,17 @@ fn repository_response(
     }
 }
 
-fn source_response(record: Option<SourceRecord>) -> PluginSourceResponse {
+fn source_response(
+    record: Option<SourceRecord>,
+    repositories: &[crate::db::plugin_repositories::PluginRepository],
+) -> PluginSourceResponse {
     match record {
         None => PluginSourceResponse::Local,
         Some(record) => PluginSourceResponse::Repository {
+            status: update_status_response(repositories_service::update_status(
+                &record,
+                repositories,
+            )),
             origin: record.origin,
             git_ref: record.git_ref,
             commit: record.commit,
@@ -462,6 +498,7 @@ fn source_response(record: Option<SourceRecord>) -> PluginSourceResponse {
 fn manifest_responses(
     manifests: &[harmony_core::plugin::PluginManifest],
     plugins_dir: &std::path::Path,
+    repositories: &[crate::db::plugin_repositories::PluginRepository],
 ) -> Vec<PluginManifestResponse> {
     manifests
         .iter()
@@ -471,7 +508,7 @@ fn manifest_responses(
             version: manifest.version.clone(),
             description: manifest.description.clone(),
             source: match SourceRecord::load(&plugins_dir.join(&manifest.id)) {
-                Ok(record) => source_response(record),
+                Ok(record) => source_response(record, repositories),
                 Err(error) => PluginSourceResponse::Invalid {
                     error: error.to_string(),
                 },
@@ -679,7 +716,14 @@ async fn list_plugins(headers: HeaderMap) -> Result<Json<Vec<PluginManifestRespo
     let _principal = require_manage_plugins(&headers).await?;
     let manifests = STATE.generation().plugin_manifests.get();
     let plugins_dir = crate::plugins::bootstrap::plugins_dir();
-    Ok(Json(manifest_responses(manifests.as_ref(), &plugins_dir)))
+    let repositories = repositories_service::list_repositories()
+        .await
+        .map_err(map_repository_error)?;
+    Ok(Json(manifest_responses(
+        manifests.as_ref(),
+        &plugins_dir,
+        &repositories,
+    )))
 }
 
 async fn collect_settings_entries(
@@ -1012,7 +1056,7 @@ fn get_settings_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn list_plugins_docs(op: TransformOperation) -> TransformOperation {
     op.summary("List plugins").description(
-        "Returns the loaded plugin manifests along with where each plugin was installed from: a `source` of kind `repository` (origin, ref, commit, pinned, installed_at), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move.",
+        "Returns the loaded plugin manifests along with where each plugin was installed from: a `source` of kind `repository` (origin, ref, commit, pinned, status, installed_at), `local`, or `invalid` (error) when the source record could not be read and the plugin should be uninstalled or reinstalled. `pinned` is true for tag and commit installs, which updates never move. `status` compares the installed commit with the one stored for the subscribed repository of the same origin and ref (`up_to_date`, `update_available`, or `unknown`) without contacting the forge; refreshing the repository or updating plugins stores the latest commit.",
     )
 }
 
@@ -1370,6 +1414,7 @@ mod tests {
         let responses = manifest_responses(
             &[manifest("local"), manifest("managed"), manifest("broken")],
             plugins_dir.path(),
+            &[],
         );
         let json = serde_json::to_value(&responses)?;
 
@@ -1379,6 +1424,7 @@ mod tests {
         assert_eq!(json[1]["source"]["ref"], "v2");
         assert_eq!(json[1]["source"]["commit"], "a".repeat(40));
         assert_eq!(json[1]["source"]["pinned"], true);
+        assert_eq!(json[1]["source"]["status"], "up_to_date");
         assert!(json[1]["source"].get("forge").is_none());
         assert!(json[1].get("schema_version").is_none());
         assert_eq!(json[2]["source"]["kind"], "invalid");
@@ -1393,6 +1439,7 @@ mod tests {
             CatalogStatus,
             PluginPreview,
             RepositoryPreview,
+            UpdateStatus,
         };
 
         let preview = RepositoryPreview {
@@ -1410,7 +1457,7 @@ mod tests {
                     description: String::new(),
                     scopes: vec!["metadata".into()],
                     commit: Some("a".repeat(40)),
-                    status: CatalogStatus::UpdateAvailable,
+                    status: CatalogStatus::Installed(UpdateStatus::UpdateAvailable),
                     source_origin: None,
                 },
                 PluginPreview {
