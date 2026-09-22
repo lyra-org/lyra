@@ -10,9 +10,9 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agdb"
-version = "0.13.2"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddb5c615fe52399cdc387e66c9fe13e8a0176a783f80bb2fe27d74b53c05bfb8"
+checksum = "b3d97fc62f1fbd6e98bbb080509ddc79112e6a5d3abfa94f1f9c637837b90574"
 dependencies = [
  "agdb_derive",
  "serde",
@@ -20,9 +20,9 @@ dependencies = [
 
 [[package]]
 name = "agdb_derive"
-version = "0.13.2"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19a904f28250efac47c7126ca1eabc08d4072d76acccdf9813b6a71c0682ba44"
+checksum = "1b3bbbc63ce9edd019c2e3f533048dcfd8bffc3d353d502aab41e6f3d91644c3"
 dependencies = [
  "proc-macro2",
  "quote",
