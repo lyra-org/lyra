@@ -352,7 +352,7 @@ pub async fn run_plugins_add(url: &str, git_ref: Option<&str>) -> Result<()> {
         anyhow::bail!("{} plugin(s) failed to install", report.failed.len());
     }
 
-    println!("restart the server (or reload plugins through the API) to load them");
+    println!("restart the server (or POST /api/plugins/reload) to load them");
     Ok(())
 }
 

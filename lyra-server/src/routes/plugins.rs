@@ -774,6 +774,14 @@ fn update_report_response(report: repositories_service::UpdateReport) -> UpdateP
     }
 }
 
+async fn reload_plugins(headers: HeaderMap) -> Result<StatusCode, AppError> {
+    let _principal = require_manage_plugins(&headers).await?;
+    repositories_service::reload_plugins()
+        .await
+        .map_err(map_repository_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn uninstall_installed_plugin(
     headers: HeaderMap,
     Path(plugin_id): Path<String>,
@@ -983,6 +991,13 @@ fn update_installed_plugins_docs(op: TransformOperation) -> TransformOperation {
 }
 
 #[cfg(feature = "docgen")]
+fn reload_plugins_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Reload plugins").description(
+        "Reloads the plugin runtime from the plugins directory. Use it after a CLI install or when a previous reload failed.",
+    )
+}
+
+#[cfg(feature = "docgen")]
 fn uninstall_installed_plugin_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Uninstall plugin")
         .description(
@@ -1065,6 +1080,7 @@ pub fn plugin_routes() -> Router {
         .route("/resolve", post(resolve_repository))
         .route("/install", post(install_plugins))
         .route("/update", post(update_installed_plugins))
+        .route("/reload", post(reload_plugins))
         .route("/repositories", get(list_plugin_repositories))
         .route("/repositories", post(add_plugin_repository))
         .route(
@@ -1106,6 +1122,7 @@ pub(crate) fn plugin_openapi_routes() -> aide::axum::ApiRouter {
             "/update",
             post_with(update_installed_plugins, update_installed_plugins_docs),
         )
+        .api_route("/reload", post_with(reload_plugins, reload_plugins_docs))
         .api_route(
             "/repositories",
             get_with(list_plugin_repositories, list_plugin_repositories_docs),
@@ -1490,6 +1507,21 @@ mod tests {
         assert_eq!(response.up_to_date, vec!["b".to_string()]);
         assert_eq!(response.failed[0].id, "c");
         assert_eq!(response.failed[0].error, "boom");
+    }
+
+    #[tokio::test]
+    async fn reload_plugins_requires_manage_plugins() -> anyhow::Result<()> {
+        let _registry_guard = REGISTRY_TEST_GUARD.lock().await;
+        let _runtime_guard = runtime_test_lock().await;
+        let _test_dir = initialize_auth_test_runtime().await?;
+
+        let response = reload_plugins(HeaderMap::new())
+            .await
+            .expect_err("unauthenticated reload should be rejected")
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        Ok(())
     }
 
     #[tokio::test]

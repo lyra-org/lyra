@@ -103,6 +103,8 @@ Plugin management requires the manage-plugins permission:
   the named plugins, or every repository-managed plugin when `plugins` is
   omitted. Each origin is resolved once and the runtime reloads once; the
   response lists `updated`, `up_to_date`, and `failed` plugins.
+- `POST /api/plugins/reload` — reload the plugin runtime from disk, for
+  example after a CLI install or a failed reload. Returns 204.
 - `DELETE /api/plugins/{plugin_id}` — uninstall a repository-managed plugin.
 - `GET|POST /api/plugins/repositories`,
   `POST /api/plugins/repositories/{id}/refresh`,
