@@ -288,6 +288,15 @@ impl RepoSpec {
             Forge::Gitea => format!("{repo}/git/commits/{git_ref}"),
         }
     }
+
+    fn branch_api_url(&self, git_ref: &str) -> String {
+        let repo = self.repo_api_url();
+        let git_ref = utf8_percent_encode(git_ref, REF_SEGMENT);
+        match self.forge {
+            Forge::GitHub | Forge::Gitea => format!("{repo}/branches/{git_ref}"),
+            Forge::GitLab => format!("{repo}/repository/branches/{git_ref}"),
+        }
+    }
 }
 
 fn extract_ref_from_segments(segments: &mut Vec<String>) -> Option<String> {
@@ -337,6 +346,34 @@ fn is_commit_sha(value: &str) -> bool {
     matches!(value.len(), 40 | 64) && value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// Whether `git_ref` is an abbreviated SHA that the forge expanded to
+/// `commit`. Branches and tags can be named like hex strings, so the
+/// resolved commit has to confirm the interpretation.
+fn is_abbreviated_sha_of(git_ref: &str, commit: Option<&str>) -> bool {
+    (7..40).contains(&git_ref.len())
+        && git_ref.chars().all(|c| c.is_ascii_hexdigit())
+        && commit.is_some_and(|commit| {
+            commit
+                .to_ascii_lowercase()
+                .starts_with(&git_ref.to_ascii_lowercase())
+        })
+}
+
+/// Whether an explicit ref pins the install. Commit SHAs and tags are
+/// pinned; branches and `HEAD` track new commits. `commit` is what the
+/// forge resolved the ref to and `branch` its answer on whether the ref
+/// names a branch. Without a resolved commit the API is unreachable, so
+/// the branch answer is not trusted and the ref is assumed to track.
+fn ref_is_pinned(git_ref: &str, commit: Option<&str>, branch: Option<bool>) -> bool {
+    if git_ref == "HEAD" {
+        return false;
+    }
+    if is_commit_sha(git_ref) || is_abbreviated_sha_of(git_ref, commit) {
+        return true;
+    }
+    commit.is_some() && branch.is_some_and(|branch| !branch)
+}
+
 /// A repository tree downloaded into a temporary directory. The directory is
 /// removed when this value is dropped; callers copy what they keep.
 #[derive(Debug)]
@@ -345,6 +382,9 @@ pub struct FetchedRepo {
     root: PathBuf,
     pub git_ref: String,
     pub commit: Option<String>,
+    /// Whether the ref is a tag or commit and so never moves. Branches and
+    /// refs the forge API could not classify track new commits.
+    pub pinned: bool,
 }
 
 impl FetchedRepo {
@@ -356,6 +396,7 @@ impl FetchedRepo {
 struct RefPlan {
     candidates: Vec<String>,
     commit: Option<String>,
+    pinned: bool,
     /// True when the candidates came from an explicit ref or the forge API.
     /// Guessed candidates may 404 without it being an error.
     authoritative: bool,
@@ -399,6 +440,7 @@ pub async fn fetch_repo(client: &Client, spec: &RepoSpec) -> Result<FetchedRepo,
             _tempdir: tempdir,
             git_ref: candidate.clone(),
             commit: plan.commit.clone(),
+            pinned: plan.pinned,
         });
     }
 
@@ -412,12 +454,22 @@ pub async fn fetch_repo(client: &Client, spec: &RepoSpec) -> Result<FetchedRepo,
 
 async fn plan_refs(client: &Client, spec: &RepoSpec) -> RefPlan {
     if let Some(explicit) = &spec.explicit_ref {
-        let commit = if is_commit_sha(explicit) {
-            Some(explicit.to_ascii_lowercase())
+        if is_commit_sha(explicit) {
+            return RefPlan {
+                candidates: vec![explicit.clone()],
+                commit: Some(explicit.to_ascii_lowercase()),
+                pinned: true,
+                authoritative: true,
+            };
+        }
+        let commit = resolve_commit(client, spec, explicit).await;
+        let branch = if commit.is_none() || is_abbreviated_sha_of(explicit, commit.as_deref()) {
+            None
         } else {
-            resolve_commit(client, spec, explicit).await
+            branch_exists(client, spec, explicit).await
         };
         return RefPlan {
+            pinned: ref_is_pinned(explicit, commit.as_deref(), branch),
             candidates: vec![explicit.clone()],
             commit,
             authoritative: true,
@@ -429,6 +481,7 @@ async fn plan_refs(client: &Client, spec: &RepoSpec) -> RefPlan {
         return RefPlan {
             candidates: vec![branch],
             commit,
+            pinned: false,
             authoritative: true,
         };
     }
@@ -436,6 +489,7 @@ async fn plan_refs(client: &Client, spec: &RepoSpec) -> RefPlan {
     RefPlan {
         candidates: FALLBACK_REFS.iter().map(|r| r.to_string()).collect(),
         commit: None,
+        pinned: false,
         authoritative: false,
     }
 }
@@ -458,7 +512,18 @@ pub async fn resolve_commit(client: &Client, spec: &RepoSpec, git_ref: &str) -> 
     value.get(key)?.as_str().map(str::to_string)
 }
 
-async fn api_get(client: &Client, url: &str) -> Option<serde_json::Value> {
+/// Asks the forge whether `git_ref` names a branch. `None` when the API
+/// gave no usable answer.
+pub async fn branch_exists(client: &Client, spec: &RepoSpec, git_ref: &str) -> Option<bool> {
+    let response = api_request(client, &spec.branch_api_url(git_ref)).await?;
+    match response.status() {
+        status if status.is_success() => Some(true),
+        StatusCode::NOT_FOUND => Some(false),
+        _ => None,
+    }
+}
+
+async fn api_request(client: &Client, url: &str) -> Option<reqwest::Response> {
     let response = client
         .get(url)
         .header(header::USER_AGENT, USER_AGENT)
@@ -466,19 +531,26 @@ async fn api_get(client: &Client, url: &str) -> Option<serde_json::Value> {
         .send()
         .await;
 
-    let response = match response {
-        Ok(response) => response,
+    match response {
+        Ok(response) => {
+            if !response.status().is_success() {
+                tracing::debug!(
+                    "forge api request {url} returned HTTP {}",
+                    response.status()
+                );
+            }
+            Some(response)
+        }
         Err(err) => {
             tracing::debug!("forge api request {url} failed: {err}");
-            return None;
+            None
         }
-    };
+    }
+}
 
+async fn api_get(client: &Client, url: &str) -> Option<serde_json::Value> {
+    let response = api_request(client, url).await?;
     if !response.status().is_success() {
-        tracing::debug!(
-            "forge api request {url} returned HTTP {}",
-            response.status()
-        );
         return None;
     }
 
@@ -803,6 +875,42 @@ mod tests {
     }
 
     #[test]
+    fn branch_api_urls_match_forge_conventions() {
+        let github = RepoSpec::parse("https://github.com/o/r", None).unwrap();
+        assert_eq!(
+            github.branch_api_url("release/v2"),
+            "https://api.github.com/repos/o/r/branches/release%2Fv2"
+        );
+
+        let gitlab = RepoSpec::parse("https://gitlab.com/group/proj", None).unwrap();
+        assert_eq!(
+            gitlab.branch_api_url("main"),
+            "https://gitlab.com/api/v4/projects/group%2Fproj/repository/branches/main"
+        );
+
+        let gitea = RepoSpec::parse("https://codeberg.org/o/r", None).unwrap();
+        assert_eq!(
+            gitea.branch_api_url("main"),
+            "https://codeberg.org/api/v1/repos/o/r/branches/main"
+        );
+    }
+
+    #[test]
+    fn classifies_refs_as_pinned_or_tracking() {
+        let sha = "a".repeat(40);
+        assert!(ref_is_pinned(&sha, None, Some(true)));
+        assert!(ref_is_pinned("AAAAAAA", Some(&sha), Some(true)));
+        assert!(!ref_is_pinned("aaaaaaa", Some(&"b".repeat(40)), Some(true)));
+        assert!(!ref_is_pinned("aaaaaaa", None, None));
+        assert!(!ref_is_pinned("abcdef", Some("abcdef0123"), None));
+        assert!(!ref_is_pinned("main", Some(&sha), Some(true)));
+        assert!(ref_is_pinned("v1.2.0", Some(&sha), Some(false)));
+        assert!(!ref_is_pinned("v1.2.0", None, Some(false)));
+        assert!(!ref_is_pinned("v1.2.0", Some(&sha), None));
+        assert!(!ref_is_pinned("HEAD", Some(&sha), Some(false)));
+    }
+
+    #[test]
     fn detects_commit_shas() {
         assert!(is_commit_sha(&"a".repeat(40)));
         assert!(is_commit_sha(&"F".repeat(64)));
@@ -900,7 +1008,65 @@ mod tests {
 
         assert_eq!(fetched.git_ref, "develop");
         assert_eq!(fetched.commit.as_deref(), Some(sha.as_str()));
+        assert!(!fetched.pinned);
         assert!(fetched.root().join("plugin.json").is_file());
+    }
+
+    #[tokio::test]
+    async fn explicit_refs_are_pinned_unless_the_forge_knows_them_as_branches() {
+        let sha = "c".repeat(40);
+        let server = TestServer::start(HashMap::from([
+            (
+                "/api/v1/repos/owner/repo/git/commits/v1.2.0".to_string(),
+                CannedResponse::json(&format!(r#"{{"sha":"{sha}"}}"#)),
+            ),
+            (
+                "/api/v1/repos/owner/repo/git/commits/develop".to_string(),
+                CannedResponse::json(&format!(r#"{{"sha":"{sha}"}}"#)),
+            ),
+            (
+                "/api/v1/repos/owner/repo/branches/develop".to_string(),
+                CannedResponse::json(r#"{"name":"develop"}"#),
+            ),
+            (
+                format!("/owner/repo/archive/{sha}.tar.gz"),
+                CannedResponse::targz(targz(&[("repo/plugin.json", "{}")])),
+            ),
+        ]))
+        .await;
+
+        for (git_ref, pinned) in [("v1.2.0", true), ("develop", false)] {
+            let url = format!("{}/owner/repo?ref={git_ref}", server.url());
+            let spec = RepoSpec::parse(&url, None).unwrap();
+            let fetched = fetch_repo(&client(), &spec).await.unwrap();
+
+            assert_eq!(fetched.git_ref, git_ref);
+            assert_eq!(fetched.commit.as_deref(), Some(sha.as_str()));
+            assert_eq!(fetched.pinned, pinned, "{git_ref}");
+        }
+    }
+
+    #[tokio::test]
+    async fn abbreviated_shas_pin_without_branch_lookups() {
+        let sha = "d".repeat(40);
+        let server = TestServer::start(HashMap::from([
+            (
+                "/api/v1/repos/owner/repo/git/commits/ddddddd".to_string(),
+                CannedResponse::json(&format!(r#"{{"sha":"{sha}"}}"#)),
+            ),
+            (
+                format!("/owner/repo/archive/{sha}.tar.gz"),
+                CannedResponse::targz(targz(&[("repo/plugin.json", "{}")])),
+            ),
+        ]))
+        .await;
+
+        let url = format!("{}/owner/repo?ref=ddddddd", server.url());
+        let spec = RepoSpec::parse(&url, None).unwrap();
+        let fetched = fetch_repo(&client(), &spec).await.unwrap();
+
+        assert_eq!(fetched.commit.as_deref(), Some(sha.as_str()));
+        assert!(fetched.pinned);
     }
 
     #[tokio::test]
@@ -916,6 +1082,23 @@ mod tests {
 
         assert_eq!(fetched.git_ref, "master");
         assert_eq!(fetched.commit, None);
+        assert!(!fetched.pinned);
+    }
+
+    #[tokio::test]
+    async fn explicit_refs_track_when_the_forge_api_is_unreachable() {
+        let server = TestServer::start(HashMap::from([(
+            "/owner/repo/archive/v1.tar.gz".to_string(),
+            CannedResponse::targz(targz(&[("repo/plugin.json", "{}")])),
+        )]))
+        .await;
+
+        let url = format!("{}/owner/repo?ref=v1", server.url());
+        let spec = RepoSpec::parse(&url, None).unwrap();
+        let fetched = fetch_repo(&client(), &spec).await.unwrap();
+
+        assert_eq!(fetched.commit, None);
+        assert!(!fetched.pinned);
     }
 
     #[tokio::test]
@@ -932,6 +1115,7 @@ mod tests {
         let fetched = fetch_repo(&client(), &spec).await.unwrap();
 
         assert_eq!(fetched.commit.as_deref(), Some(sha.as_str()));
+        assert!(fetched.pinned);
     }
 
     #[tokio::test]

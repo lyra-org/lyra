@@ -74,10 +74,16 @@ was reviewed. When the API is unreachable, common branch names
 recorded.
 
 Installed plugins carry a `.harmony-source.json` record with their
-origin, ref, and commit. Updates re-resolve the recorded ref:
+origin, ref, commit, and whether the ref is pinned. The ref is classified
+at install time: no ref or a branch tracks new commits; a tag or commit
+is pinned. When the forge API cannot classify the ref, it is recorded as
+tracking. Updates re-resolve tracking refs and never touch pinned ones,
+which are reported as up to date without contacting the forge.
 
-- branch refs (or no ref) track new commits,
-- tag and commit refs stay pinned.
+Records written by an older schema fail to load. Such a plugin is listed
+with a source of kind `invalid`, updates report it as failed, and the
+catalog shows it as `unknown`. Uninstalling or reinstalling it rewrites
+the record; both accept a directory whose record is unreadable.
 
 Plugins without a source record are local: bundled or hand-copied. They
 are never touched by repository installs, updates, or uninstalls.
@@ -93,7 +99,8 @@ to clear it), requires `manage_plugins`, and returns 204.
 Plugin management requires the manage-plugins permission:
 
 - `GET /api/plugins` — loaded plugins, each with a `source` of kind
-  `repository` (origin, ref, commit, installed_at) or `local`.
+  `repository` (origin, ref, commit, pinned, installed_at), `local`, or
+  `invalid` (error) when the source record could not be read.
 - `POST /api/plugins/resolve` — body `{"url": ..., "ref": ...}`; preview
   a repository without installing. Returns the resolved repository shape
   described below, minus `id` and `refreshed_at`.
@@ -105,8 +112,9 @@ Plugin management requires the manage-plugins permission:
   and ref.
 - `POST /api/plugins/update` — body `{}` or `{"plugins": [...]}`; updates
   the named plugins, or every repository-managed plugin when `plugins` is
-  omitted. Each origin is resolved once and the runtime reloads once; the
-  response lists `updated`, `up_to_date`, and `failed` plugins.
+  omitted. Pinned plugins are `up_to_date` without a forge call. Each
+  origin is resolved once and the runtime reloads once; the response lists
+  `updated`, `up_to_date`, and `failed` plugins.
 - `POST /api/plugins/reload` — reload the plugin runtime from disk, for
   example after a CLI install or a failed reload. Returns 204.
 - `DELETE /api/plugins/{plugin_id}` — uninstall a repository-managed plugin.
