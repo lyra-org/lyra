@@ -158,6 +158,82 @@ pub(crate) fn owner_ids_by_artist<Owner: DbType>(
         .collect())
 }
 
+/// A stored credit on an owner, resolved to the artist it points at.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CreditLink {
+    pub(crate) credit_id: DbId,
+    pub(crate) artist_id: DbId,
+    pub(crate) credit_type: CreditType,
+    pub(crate) detail: Option<String>,
+}
+
+/// Resolves each credit on `owner_id` to its artist, skipping credits without one.
+/// Artist edges come from one bounded search rather than a lookup per credit.
+fn links_for_owner(db: &impl super::DbAccess, owner_id: DbId) -> anyhow::Result<Vec<CreditLink>> {
+    let credits: Vec<Credit> = db
+        .exec(
+            QueryBuilder::select()
+                .elements::<Credit>()
+                .search()
+                .from(owner_id)
+                .where_()
+                .neighbor()
+                .end_where()
+                .query(),
+        )?
+        .try_into()?;
+    if credits.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut artist_by_credit = std::collections::HashMap::with_capacity(credits.len());
+    for edge in credit_artist_edges(db, owner_id)? {
+        if edge.to.0 > 0 {
+            artist_by_credit.entry(edge.from).or_insert(edge.to);
+        }
+    }
+
+    Ok(credits
+        .into_iter()
+        .filter_map(|credit| {
+            let credit_id = DbId::from(credit.db_id?);
+            let artist_id = *artist_by_credit.get(&credit_id)?;
+            Some(CreditLink {
+                credit_id,
+                artist_id,
+                credit_type: credit.credit_type,
+                detail: credit.detail,
+            })
+        })
+        .collect())
+}
+
+/// Finds the owner's `credit → artist` edges, three steps from the owner. The search
+/// expands only edges and credits, so it never walks neighbors such as a release's tracks.
+fn credit_artist_edges(
+    db: &impl super::DbAccess,
+    owner_id: DbId,
+) -> anyhow::Result<Vec<DbElement>> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .from(owner_id)
+                .where_()
+                .edge()
+                .and()
+                .distance(CountComparison::Equal(3))
+                .and()
+                .beyond()
+                .where_()
+                .edge()
+                .or()
+                .element::<Credit>()
+                .end_where()
+                .query(),
+        )?
+        .elements)
+}
+
 pub(crate) fn replace_for_owner(
     db: &mut impl super::DbAccess,
     owner_id: DbId,
@@ -283,18 +359,7 @@ pub(crate) fn reconcile_artists(
     )? {
         return Ok(());
     }
-    let existing: Vec<Credit> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<Credit>()
-                .search()
-                .from(owner_id)
-                .where_()
-                .neighbor()
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
+    let existing = links_for_owner(db, owner_id)?;
     let names = desired
         .iter()
         .map(|input| lyra_metadata::ArtistCreditName {
@@ -304,21 +369,19 @@ pub(crate) fn reconcile_artists(
         .collect::<Vec<_>>();
     let mut linked = std::collections::HashSet::new();
     let mut remove = Vec::new();
-    for credit in existing {
-        if credit.credit_type != CreditType::Artist || credit.detail.is_some() {
+    for CreditLink {
+        credit_id,
+        artist_id,
+        credit_type,
+        detail,
+    } in existing
+    {
+        if credit_type != CreditType::Artist || detail.is_some() {
             continue;
         }
-        let Some(credit_id) = credit.db_id.map(DbId::from) else {
-            continue;
-        };
-        let edges = super::graph::direct_edges_from(db, credit_id)?;
-        let Some(artist_id) = edges
-            .iter()
-            .find_map(|edge| (edge.to.0 > 0).then_some(edge.to))
-        else {
-            continue;
-        };
         linked.insert(artist_id);
+        // Only a split credit can replace a combined artist, and only one the scanner created:
+        // unlocked, unnamed by the user, without identities, and named exactly like the credit.
         if target_ids.len() < 2 || target_ids.contains(&artist_id) {
             continue;
         }
@@ -392,6 +455,7 @@ mod reconciliation_tests {
     };
     use agdb::DbAny;
 
+    /// Inserts an artist with the `test` identity that `reconcile_artists` requires.
     fn destination(db: &mut DbAny, name: &str, join: &str) -> anyhow::Result<ArtistCreditInput> {
         let artist_id = insert_artist(db, name)?;
         db::external_ids::upsert(
@@ -409,30 +473,31 @@ mod reconciliation_tests {
         })
     }
 
-    fn links(
-        db: &DbAny,
-        owner: DbId,
-    ) -> anyhow::Result<Vec<(DbId, CreditType, Option<String>, DbId)>> {
-        let credits: Vec<Credit> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<Credit>()
-                    .search()
-                    .from(owner)
-                    .where_()
-                    .neighbor()
-                    .end_where()
-                    .query(),
-            )?
-            .try_into()?;
-        let mut result = Vec::new();
-        for credit in credits {
-            let id: DbId = credit.db_id.unwrap().into();
-            let artist = db::graph::direct_edges_from(db, id)?[0].to;
-            result.push((artist, credit.credit_type, credit.detail, id));
-        }
-        result.sort_by_key(|entry| entry.3.0);
-        Ok(result)
+    fn links(db: &DbAny, owner: DbId) -> anyhow::Result<Vec<CreditLink>> {
+        let mut links = links_for_owner(db, owner)?;
+        links.sort_unstable_by_key(|link| link.credit_id.0);
+        Ok(links)
+    }
+
+    #[test]
+    fn links_only_walk_the_owner_credits() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release = insert_release(&mut db, "release")?;
+        let track = insert_track(&mut db, "track")?;
+        connect(&mut db, release, track)?;
+        let release_artist = insert_artist(&mut db, "Release Artist")?;
+        let track_artist = insert_artist(&mut db, "Track Artist")?;
+        connect_artist(&mut db, release, release_artist)?;
+        connect_artist(&mut db, track, track_artist)?;
+
+        let release_links = links(&db, release)?;
+        assert_eq!(release_links.len(), 1);
+        assert_eq!(release_links[0].artist_id, release_artist);
+        // `links` filters by credit id, so only the raw edges show whether the search strayed.
+        let edges = credit_artist_edges(&db, release)?;
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].from, release_links[0].credit_id);
+        Ok(())
     }
 
     #[test]
@@ -477,13 +542,9 @@ mod reconciliation_tests {
         db.transaction_mut(|tx| reconcile_artists(tx, owner, "test", &desired))?;
         let after = links(&db, owner)?;
         assert_eq!(after.len(), 5);
-        assert!(
-            !after
-                .iter()
-                .any(|(artist, role, detail, _)| *artist == combined
-                    && *role == CreditType::Artist
-                    && detail.is_none())
-        );
+        assert!(!after.iter().any(|link| link.artist_id == combined
+            && link.credit_type == CreditType::Artist
+            && link.detail.is_none()));
         assert_eq!(links(&db, other_owner)?.len(), 1);
         assert_eq!(
             db::artists::get_by_id(&db, combined)?.unwrap().artist_name,
