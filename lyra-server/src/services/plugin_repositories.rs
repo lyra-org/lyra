@@ -491,6 +491,12 @@ pub(crate) async fn uninstall(plugin_id: &str) -> Result<(), PluginRepoError> {
     reload_runtime().await
 }
 
+/// Reloads the plugin runtime from disk; the recovery step after a failed
+/// reload and the way CLI installs go live without a restart.
+pub(crate) async fn reload_plugins() -> Result<(), PluginRepoError> {
+    reload_runtime().await
+}
+
 async fn reload_runtime() -> Result<(), PluginRepoError> {
     STATE
         .generation()
