@@ -238,6 +238,15 @@ pub(crate) fn replace_element_in_transaction<'a, T: DbType>(
     Ok(())
 }
 
+/// Whether `error` reports a poisoned database, which only reopening recovers.
+pub(crate) fn is_poisoned(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<DbError>()
+            .is_some_and(|error| error.ty == agdb::DbErrorType::Poisoned)
+    })
+}
+
 pub(crate) use ids::{
     NodeId,
     ResolveId,
@@ -446,4 +455,29 @@ pub(crate) use providers::external_ids;
 
 pub fn is_supported_extension(path: &std::path::Path) -> bool {
     entries::classify_file_kind(path).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use agdb::{
+        DbError,
+        DbErrorType,
+    };
+    use anyhow::Context;
+
+    use super::is_poisoned;
+
+    #[test]
+    fn is_poisoned_finds_poisoned_error_behind_context() {
+        let error = Err::<(), _>(DbError::db(DbErrorType::Poisoned, "poisoned"))
+            .context("recording listen")
+            .unwrap_err();
+        assert!(is_poisoned(&error));
+    }
+
+    #[test]
+    fn is_poisoned_ignores_other_db_errors() {
+        let error = anyhow::Error::from(DbError::db(DbErrorType::NotFound, "missing"));
+        assert!(!is_poisoned(&error));
+    }
 }
