@@ -1978,7 +1978,6 @@ local function process_release(
 					for mb_artist_id in character_voice_artist_ids do
 						matched_mb_artist_ids[mb_artist_id] = true
 					end
-					local unmatched_local_artists: { LocalArtist } = {}
 
 					for _, track_artist: LocalArtist in local_track.artists do
 						local track_artist_id = track_artist.db_id
@@ -1994,8 +1993,6 @@ local function process_release(
 									if tag_local_artist(track_artist_id, matched_mb_artist) then
 										track_artist_count += 1
 									end
-								else
-									table.insert(unmatched_local_artists, track_artist)
 								end
 							end
 						end
@@ -2006,25 +2003,6 @@ local function process_release(
 						local mb_artist = mb_credit.artist
 						if mb_artist and mb_artist.id and not matched_mb_artist_ids[mb_artist.id] then
 							table.insert(unmatched_mb_artists, mb_artist)
-						end
-					end
-
-					local can_assign_by_order = #unmatched_local_artists > 0
-						and #unmatched_local_artists == #unmatched_mb_artists
-						and #unmatched_local_artists <= 4
-					if can_assign_by_order then
-						for idx: number, track_artist: LocalArtist in unmatched_local_artists do
-							local mb_artist = unmatched_mb_artists[idx]
-							if
-								track_artist.db_id
-								and mb_artist ~= nil
-								and mb_artist.id ~= nil
-								and not tagged_artist_ids[track_artist.db_id]
-								and tag_local_artist(track_artist.db_id, mb_artist)
-							then
-								matched_mb_artist_ids[mb_artist.id] = true
-								track_artist_count += 1
-							end
 						end
 					end
 
