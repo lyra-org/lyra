@@ -17,5 +17,6 @@ pub(crate) fn manual_metadata_owns_field(
 #[cfg(test)]
 pub(crate) use crate::db::{
     playbacks,
+    playlists,
     test_db,
 };

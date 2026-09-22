@@ -1127,7 +1127,7 @@ fn plugin_executor_exposes_playlist_sources_from_lyra_covers_module() -> Result<
         release_db_ids.push((release_db_id, track_db_id));
     }
     let uncovered_track_db_id = crate::plugins::db::test_db::insert_track(&mut db, "Uncovered")?;
-    let playlist = crate::db::playlists::Playlist {
+    let playlist = crate::plugins::db::Playlist {
         db_id: None,
         id: nanoid::nanoid!(),
         name: "Sources".to_string(),
@@ -1136,12 +1136,14 @@ fn plugin_executor_exposes_playlist_sources_from_lyra_covers_module() -> Result<
         created_at: None,
         updated_at: None,
     };
-    let playlist_db_id = crate::db::playlists::create(&mut db, &playlist, user_db_id)?;
+    let playlist_db_id = crate::plugins::db::playlists::create(&mut db, &playlist, user_db_id)?;
     for (_, track_db_id) in &release_db_ids {
-        db.transaction_mut(|t| crate::db::playlists::add_track(t, playlist_db_id, *track_db_id))?;
+        db.transaction_mut(|t| {
+            crate::plugins::db::playlists::add_track(t, playlist_db_id, *track_db_id)
+        })?;
     }
     db.transaction_mut(|t| {
-        crate::db::playlists::add_track(t, playlist_db_id, uncovered_track_db_id)
+        crate::plugins::db::playlists::add_track(t, playlist_db_id, uncovered_track_db_id)
     })?;
 
     let mut expected = Vec::new();
@@ -1149,8 +1151,8 @@ fn plugin_executor_exposes_playlist_sources_from_lyra_covers_module() -> Result<
         let release_public_id = crate::plugins::db::releases::get_by_id(&db, *release_db_id)?
             .expect("release should exist")
             .id;
-        let score = crate::db::covers::display::deterministic_random_score(
-            crate::db::covers::display::DisplayCoverTargetKind::Playlist,
+        let score = crate::plugins::db::covers::display::deterministic_random_score(
+            crate::plugins::db::covers::display::DisplayCoverTargetKind::Playlist,
             &playlist.id,
             &release_public_id,
         );
