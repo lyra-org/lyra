@@ -140,6 +140,9 @@ pub(crate) async fn run_server(capture: Option<CaptureArgs>, listener: TcpListen
     plugin_bootstrap::teardown_loaded_plugins().await;
     services::wait_for_running_library_syncs().await;
 
+    if let Some(reason) = services::shutdown::failure() {
+        anyhow::bail!("server stopped after a fatal error: {reason}");
+    }
     Ok(())
 }
 

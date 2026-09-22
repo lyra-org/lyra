@@ -127,6 +127,9 @@ impl IntoResponse for AppError {
             (self.status_code, axum::Json(body)).into_response()
         } else if self.status_code == StatusCode::INTERNAL_SERVER_ERROR {
             tracing::error!(error = %self.error, "internal server error");
+            if crate::db::is_poisoned(&self.error) {
+                crate::services::shutdown::fail("database poisoned; restart to reopen it");
+            }
             (self.status_code, "Error: internal server error").into_response()
         } else {
             (self.status_code, format!("Error: {}", self.error)).into_response()

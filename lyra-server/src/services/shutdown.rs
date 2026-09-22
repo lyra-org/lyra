@@ -5,6 +5,7 @@
 
 use std::sync::{
     LazyLock,
+    Mutex,
     RwLock,
 };
 use std::time::Duration;
@@ -15,6 +16,7 @@ pub(crate) const TRANSCODE_ABORT_TIMEOUT: Duration = Duration::from_secs(2);
 
 static SERVER_SHUTDOWN: LazyLock<RwLock<CancellationToken>> =
     LazyLock::new(|| RwLock::new(CancellationToken::new()));
+static FAILURE: Mutex<Option<String>> = Mutex::new(None);
 
 pub(crate) fn token() -> CancellationToken {
     SERVER_SHUTDOWN
@@ -24,6 +26,9 @@ pub(crate) fn token() -> CancellationToken {
 }
 
 pub(crate) fn reset() -> CancellationToken {
+    *FAILURE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     let token = CancellationToken::new();
     *SERVER_SHUTDOWN
         .write()
@@ -33,4 +38,24 @@ pub(crate) fn reset() -> CancellationToken {
 
 pub(crate) fn cancel() {
     token().cancel();
+}
+
+/// Stops the server and makes it exit with an error once shutdown completes.
+pub(crate) fn fail(reason: &str) {
+    let mut failure = FAILURE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if failure.is_none() {
+        tracing::error!(reason, "stopping server after fatal error");
+        *failure = Some(reason.to_string());
+    }
+    drop(failure);
+    cancel();
+}
+
+pub(crate) fn failure() -> Option<String> {
+    FAILURE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
 }
