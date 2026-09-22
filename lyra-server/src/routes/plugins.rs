@@ -1101,7 +1101,7 @@ fn delete_plugin_repository_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn restart_plugin_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Restart plugin").description(
-        "Tears down the plugin's current runtime registrations, re-runs its entrypoint, and activates its routes.",
+        "Tears down the plugin's current runtime registrations, re-runs its entrypoint from the files on disk, and activates its routes. Manifest changes require a full reload. Other plugins that already required this plugin's modules keep the old exports until they restart.",
     ).response::<204, ()>()
 }
 

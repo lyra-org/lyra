@@ -1662,6 +1662,128 @@ fn plugin_executor_handle_discovers_and_executes_on_runtime_thread() -> Result<(
     Ok(())
 }
 
+#[test]
+fn plugin_executor_restart_reloads_plugin_sources_from_disk() -> Result<()> {
+    let test_dir = std::env::temp_dir().join(format!(
+        "lyra-restart-reload-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    ));
+    let plugin_dir = test_dir.join("plugins").join("demo");
+    std::fs::create_dir_all(&plugin_dir)?;
+    std::fs::write(
+        plugin_dir.join("plugin.json"),
+        r#"{
+            "schema_version": 1,
+            "id": "demo",
+            "name": "Demo",
+            "version": "1.0.0",
+            "description": "Demo plugin",
+            "entrypoint": "init.luau",
+            "scopes": []
+        }"#,
+    )?;
+    let write_sources = |answer: &str| -> Result<()> {
+        std::fs::write(
+            plugin_dir.join("lib.luau"),
+            format!("return {{ answer = {answer} }}"),
+        )?;
+        std::fs::write(
+            plugin_dir.join("init.luau"),
+            "restart_reload_output = require('./lib').answer",
+        )?;
+        Ok(())
+    };
+    write_sources("1")?;
+
+    let (runtime, errors) =
+        PluginExecutor::discover_from_plugins_dir(test_dir.join("plugins"), default_server_info())?;
+    assert!(errors.is_empty(), "{errors:?}");
+    let read_output = |runtime: &PluginExecutor| {
+        runtime.eval_plugin_source("demo", "check.luau", &b"return restart_reload_output"[..])
+    };
+
+    runtime.exec_plugin("demo")?;
+    assert_eq!(read_output(&runtime)?, vec![luau::Value::Number(1.0)]);
+
+    write_sources("2")?;
+    runtime.verify_plugin_manifest("demo")?;
+    runtime.restart_plugin("demo")?;
+    assert_eq!(read_output(&runtime)?, vec![luau::Value::Number(2.0)]);
+
+    let _ = std::fs::remove_dir_all(test_dir);
+    Ok(())
+}
+
+#[test]
+fn plugin_executor_handle_restart_runs_new_entrypoint_on_runtime_thread() -> Result<()> {
+    let test_dir = std::env::temp_dir().join(format!(
+        "lyra-handle-restart-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    ));
+    let plugin_dir = test_dir.join("plugins").join("demo");
+    std::fs::create_dir_all(&plugin_dir)?;
+    std::fs::write(
+        plugin_dir.join("plugin.json"),
+        r#"{
+            "schema_version": 1,
+            "id": "demo",
+            "name": "Demo",
+            "version": "1.0.0",
+            "description": "Demo plugin",
+            "entrypoint": "init.luau",
+            "scopes": []
+        }"#,
+    )?;
+    std::fs::write(plugin_dir.join("init.luau"), "return nil")?;
+
+    let db = crate::plugins::db::test_db::new_test_db()?;
+    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+    let (runtime, errors) = PluginExecutorHandle::discover_from_plugins_dir_with_db_and_modules(
+        test_dir.join("plugins"),
+        default_server_info(),
+        default_auth_capabilities(),
+        db,
+        Vec::new(),
+        None,
+    )?;
+    assert!(errors.is_empty(), "{errors:?}");
+    futures::executor::block_on(runtime.exec_all())?;
+
+    std::fs::write(plugin_dir.join("init.luau"), "error('second version ran')")?;
+    futures::executor::block_on(runtime.verify_plugin_manifest("demo"))?;
+    let error = futures::executor::block_on(runtime.restart_plugin("demo"))
+        .expect_err("restart must run the rewritten entrypoint");
+    assert!(
+        format!("{error:#}").contains("second version ran"),
+        "{error:#}"
+    );
+
+    std::fs::write(
+        plugin_dir.join("plugin.json"),
+        r#"{
+            "schema_version": 1,
+            "id": "demo",
+            "name": "Demo",
+            "version": "2.0.0",
+            "description": "Demo plugin",
+            "entrypoint": "init.luau",
+            "scopes": []
+        }"#,
+    )?;
+    let error = futures::executor::block_on(runtime.verify_plugin_manifest("demo"))
+        .expect_err("changed manifest must be rejected");
+    assert!(format!("{error:#}").contains("reload plugins"), "{error:#}");
+
+    let _ = std::fs::remove_dir_all(test_dir);
+    Ok(())
+}
+
 fn run_playlist_binding_test(source: &str) -> Result<()> {
     use crate::{
         plugins::db,

@@ -56,7 +56,7 @@ pub(crate) const PLUGIN_CONFIG_MAX_SCOPE_LEN: usize = 128;
 pub(crate) const PLUGIN_CONFIG_MAX_DEPENDENCIES: usize = 32;
 pub(crate) const PLUGIN_CONFIG_MAX_DEPENDENCY_ALTERNATIVES: usize = 16;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct PluginManifest {
     pub schema_version: u32,
     pub id: String,
@@ -76,14 +76,14 @@ pub struct PluginManifest {
 
 /// Bare-string variant is shorthand for a single-alternative required
 /// dependency; the group form expresses alternatives and/or `required: false`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(untagged)]
 pub enum DependencyEntry {
     Id(String),
     Group(DependencyGroup),
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DependencyGroup {
     pub any_of: Vec<String>,
@@ -757,7 +757,46 @@ impl PluginManager {
         );
         Ok(())
     }
+}
 
+fn read_manifest(dir: &Path) -> Result<PluginManifest, PluginLoadError> {
+    let config_path = dir.join(PLUGIN_CONFIG_FILENAME);
+
+    if !config_path.exists() {
+        return Err(PluginLoadError::ConfigNotFound(config_path));
+    }
+
+    // DoS cap — check size before reading the whole file into memory.
+    match std::fs::metadata(&config_path) {
+        Ok(meta) if meta.len() > PLUGIN_CONFIG_MAX_BYTES => {
+            return Err(PluginLoadError::ConfigTooLarge {
+                path: config_path,
+                bytes: meta.len(),
+                max: PLUGIN_CONFIG_MAX_BYTES,
+            });
+        }
+        Ok(_) => {}
+        Err(e) => {
+            return Err(PluginLoadError::ConfigParseError {
+                path: config_path,
+                error: e.to_string(),
+            });
+        }
+    }
+
+    let config_str =
+        std::fs::read_to_string(&config_path).map_err(|e| PluginLoadError::ConfigParseError {
+            path: config_path.clone(),
+            error: e.to_string(),
+        })?;
+
+    serde_json::from_str(&config_str).map_err(|e| PluginLoadError::ConfigParseError {
+        path: config_path,
+        error: e.to_string(),
+    })
+}
+
+impl PluginManager {
     fn load_plugin(
         &self,
         dir: &Path,
@@ -790,42 +829,7 @@ impl PluginManager {
         dir: &Path,
         valid_scope_ids: &HashSet<Arc<str>>,
     ) -> Result<LoadedPlugin, PluginLoadError> {
-        let config_path = dir.join(PLUGIN_CONFIG_FILENAME);
-
-        if !config_path.exists() {
-            return Err(PluginLoadError::ConfigNotFound(config_path));
-        }
-
-        // DoS cap — check size before reading the whole file into memory.
-        match std::fs::metadata(&config_path) {
-            Ok(meta) if meta.len() > PLUGIN_CONFIG_MAX_BYTES => {
-                return Err(PluginLoadError::ConfigTooLarge {
-                    path: config_path,
-                    bytes: meta.len(),
-                    max: PLUGIN_CONFIG_MAX_BYTES,
-                });
-            }
-            Ok(_) => {}
-            Err(e) => {
-                return Err(PluginLoadError::ConfigParseError {
-                    path: config_path,
-                    error: e.to_string(),
-                });
-            }
-        }
-
-        let config_str = std::fs::read_to_string(&config_path).map_err(|e| {
-            PluginLoadError::ConfigParseError {
-                path: config_path.clone(),
-                error: e.to_string(),
-            }
-        })?;
-
-        let manifest: PluginManifest =
-            serde_json::from_str(&config_str).map_err(|e| PluginLoadError::ConfigParseError {
-                path: config_path,
-                error: e.to_string(),
-            })?;
+        let manifest = read_manifest(dir)?;
 
         if manifest.schema_version != PLUGIN_SCHEMA_VERSION {
             return Err(PluginLoadError::InvalidSchemaVersion {
@@ -1052,6 +1056,40 @@ impl Runtime {
             .iter()
             .find(|plugin| plugin.manifest.id == plugin_id)
             .ok_or_else(|| anyhow::anyhow!("plugin not found: {plugin_id}"))?;
+        self.exec_loaded_plugin(plugin)
+    }
+
+    fn loaded_plugin(&self, plugin_id: &str) -> anyhow::Result<&LoadedPlugin> {
+        self.plugins
+            .iter()
+            .find(|plugin| plugin.manifest.id == plugin_id)
+            .ok_or_else(|| anyhow::anyhow!("plugin not found: {plugin_id}"))
+    }
+
+    /// Fails when `plugin.json` on disk no longer matches the loaded
+    /// manifest. Scopes and dependencies are fixed when the runtime is
+    /// built, so manifest changes need a full reload rather than a restart.
+    pub fn verify_plugin_manifest(&self, plugin_id: &str) -> anyhow::Result<()> {
+        let plugin = self.loaded_plugin(plugin_id)?;
+        let on_disk = read_manifest(&plugin.directory)
+            .map_err(|error| anyhow::anyhow!("{error}"))
+            .with_context(|| format!("read plugin '{plugin_id}' manifest"))?;
+        if on_disk != plugin.manifest {
+            anyhow::bail!(
+                "plugin '{plugin_id}' manifest changed on disk; reload plugins to apply it"
+            );
+        }
+        Ok(())
+    }
+
+    /// Drops every cached artifact owned by `plugin_id` (its evaluated
+    /// sources and the module tables installed for its origin) and re-runs
+    /// its entrypoint from the files on disk. Other plugins that already
+    /// required its modules keep the exports they have until they restart.
+    pub fn restart_plugin(&self, plugin_id: &str) -> anyhow::Result<()> {
+        let plugin = self.loaded_plugin(plugin_id)?;
+        let require = self.vm.data().get::<RequireRuntime>()?;
+        require.invalidate_plugin(plugin_id);
         self.exec_loaded_plugin(plugin)
     }
 
@@ -1538,6 +1576,101 @@ mod tests {
         )?;
 
         assert_eq!(values, vec![luau::Value::Number(42.0)]);
+        Ok(())
+    }
+
+    fn temp_plugin_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "harmony-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp plugin dir");
+        dir
+    }
+
+    fn write_demo_plugin(plugin_dir: &std::path::Path, answer: &str) {
+        std::fs::write(
+            plugin_dir.join("lib.luau"),
+            format!("return {{ answer = {answer} }}"),
+        )
+        .expect("write lib");
+        std::fs::write(
+            plugin_dir.join("init.luau"),
+            "demo_answer = require('./lib').answer",
+        )
+        .expect("write init");
+    }
+
+    #[test]
+    fn restart_plugin_reloads_sources_from_disk_and_verify_rejects_manifest_changes()
+    -> anyhow::Result<()> {
+        let plugins_dir = temp_plugin_dir("invalidate");
+        let plugin_dir = plugins_dir.join("demo");
+        std::fs::create_dir_all(&plugin_dir)?;
+        std::fs::write(
+            plugin_dir.join(super::PLUGIN_CONFIG_FILENAME),
+            r#"{"schema_version":1,"id":"demo","name":"demo","version":"1.0.0","description":"","entrypoint":"init.luau","scopes":[]}"#,
+        )?;
+        write_demo_plugin(&plugin_dir, "1");
+
+        let manifest = manifest("demo", &[]);
+        let plugin = LoadedPlugin {
+            manifest: manifest.clone(),
+            directory: plugin_dir.clone(),
+            declared_scopes: HashSet::new(),
+            dependencies: Vec::new(),
+        };
+        let runtime = RuntimeBuilder::new(
+            crate::FilesystemSourceLoader::new(&plugins_dir, &plugins_dir),
+            manifest_arc(vec![manifest]),
+        )
+        .plugins(Arc::from(vec![plugin]))
+        .build()?;
+        let read_answer = |runtime: &super::Runtime| {
+            runtime.eval_source_with_context(
+                Arc::<[u8]>::from(&b"return demo_answer"[..]),
+                CallContext::default(),
+            )
+        };
+
+        runtime.exec_plugin("demo")?;
+        assert_eq!(read_answer(&runtime)?, vec![luau::Value::Number(1.0)]);
+
+        write_demo_plugin(&plugin_dir, "2");
+        runtime.exec_plugin("demo")?;
+        assert_eq!(
+            read_answer(&runtime)?,
+            vec![luau::Value::Number(1.0)],
+            "exec without invalidation serves the cached entrypoint"
+        );
+
+        runtime.verify_plugin_manifest("demo")?;
+        runtime.restart_plugin("demo")?;
+        assert_eq!(read_answer(&runtime)?, vec![luau::Value::Number(2.0)]);
+
+        std::fs::write(
+            plugin_dir.join(super::PLUGIN_CONFIG_FILENAME),
+            r#"{"schema_version":1,"id":"demo","name":"demo","version":"1.1.0","description":"","entrypoint":"init.luau","scopes":[]}"#,
+        )?;
+        let error = runtime
+            .verify_plugin_manifest("demo")
+            .expect_err("changed manifest must be rejected");
+        assert!(error.to_string().contains("reload plugins"), "{error}");
+
+        std::fs::write(
+            plugin_dir.join(super::PLUGIN_CONFIG_FILENAME),
+            "0".repeat(super::PLUGIN_CONFIG_MAX_BYTES as usize + 1),
+        )?;
+        let error = runtime
+            .verify_plugin_manifest("demo")
+            .expect_err("oversized manifest must be rejected");
+        assert!(format!("{error:#}").contains("exceeds cap"), "{error:#}");
+
+        let _ = std::fs::remove_dir_all(plugins_dir);
         Ok(())
     }
 

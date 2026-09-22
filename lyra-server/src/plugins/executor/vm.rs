@@ -183,8 +183,17 @@ impl PluginExecutor {
         self.runtime.has_plugin(plugin_id)
     }
 
+    #[cfg(test)]
     pub(crate) fn exec_plugin(&self, plugin_id: &str) -> Result<()> {
         self.runtime.exec_plugin(plugin_id)
+    }
+
+    pub(crate) fn verify_plugin_manifest(&self, plugin_id: &str) -> Result<()> {
+        self.runtime.verify_plugin_manifest(plugin_id)
+    }
+
+    pub(crate) fn restart_plugin(&self, plugin_id: &str) -> Result<()> {
+        self.runtime.restart_plugin(plugin_id)
     }
 
     pub(crate) fn exec_all(&self) -> Result<()> {
