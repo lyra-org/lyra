@@ -65,7 +65,8 @@ pub struct PreparedFixture {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CreditSnapshot {
-    pub artist_id: String,
+    pub artist_name: String,
+    pub artist_id: Option<String>,
     pub credit_type: String,
     pub detail: Option<String>,
 }
@@ -630,16 +631,26 @@ fn snapshot_credits(db: &DbAny, owner_id: DbId) -> anyhow::Result<Vec<CreditSnap
             None => continue,
         };
         let credit_artist_ids = external_ids_map(db, credit_artist_db_id)?;
-        let Some((_, artist_ext_id)) = credit_artist_ids.first_key_value() else {
-            continue;
-        };
+        let artist = db::artists::get_by_id(db, credit_artist_db_id)?
+            .context("credit artist disappeared during snapshot")?;
+        let artist_ext_id = credit_artist_ids
+            .first_key_value()
+            .map(|(_, id)| id.clone());
         snapshots.push(CreditSnapshot {
-            artist_id: artist_ext_id.clone(),
+            artist_id: artist_ext_id,
+            artist_name: artist.artist_name,
             credit_type: credit.credit_type.to_string(),
             detail: credit.detail,
         });
     }
-    snapshots.sort_by(|a, b| (&a.artist_id, &a.credit_type).cmp(&(&b.artist_id, &b.credit_type)));
+    snapshots.sort_by(|a, b| {
+        (&a.artist_id, &a.artist_name, &a.credit_type, &a.detail).cmp(&(
+            &b.artist_id,
+            &b.artist_name,
+            &b.credit_type,
+            &b.detail,
+        ))
+    });
     Ok(snapshots)
 }
 

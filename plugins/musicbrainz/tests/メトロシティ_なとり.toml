@@ -16,5 +16,11 @@ track_total = 1
 duration_ms = 200511
 
 [expect.release]
+artist_credits = ["imase", "なとり"]
+credits = { "bc83173f-c86f-4343-b3e7-aad839a47a54" = { credit_type = "artist" }, "cad9e169-893d-4432-a23f-3aa16beb9f0e" = { credit_type = "artist" } }
 ids = { release_id = "eebe00b8-abb3-4d5e-ad70-e1ffd8d44933" }
 fields = { release_title = "メトロシティ", release_date = "2024-09-25" }
+
+[expect.tracks."9c988822-1b2a-4dda-b9af-36cc9b94a9e6"]
+artist_credits = ["imase", "なとり"]
+credits = { "bc83173f-c86f-4343-b3e7-aad839a47a54" = { credit_type = "artist" }, "cad9e169-893d-4432-a23f-3aa16beb9f0e" = { credit_type = "artist" } }

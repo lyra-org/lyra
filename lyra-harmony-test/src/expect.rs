@@ -72,6 +72,9 @@ pub struct ExpectedEntity {
     pub fields: BTreeMap<String, toml::Value>,
     #[serde(default)]
     pub credits: BTreeMap<String, ExpectedCredit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Exact primary credit names, including duplicates and artists without provider IDs.
+    pub artist_credits: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -163,9 +166,24 @@ fn compare_expected_entity(
         }
     }
 
+    if let Some(expected_names) = &expected.artist_credits {
+        let mut expected_names = expected_names.clone();
+        expected_names.sort();
+        let mut actual_names = actual
+            .credits
+            .iter()
+            .filter(|credit| credit.credit_type == "artist")
+            .map(|credit| credit.artist_name.clone())
+            .collect::<Vec<_>>();
+        actual_names.sort();
+        if actual_names != expected_names {
+            failures.push(format!("  {label}: primary artist credits mismatch\n    expected: {expected_names:?}\n    actual:   {actual_names:?}"));
+        }
+    }
+
     for (artist_ext_id, expected_credit) in &expected.credits {
         let matching = actual.credits.iter().find(|c| {
-            c.artist_id == *artist_ext_id
+            c.artist_id.as_deref() == Some(artist_ext_id.as_str())
                 && expected_credit
                     .credit_type
                     .as_ref()
@@ -241,6 +259,7 @@ fn captured_entity(entity: &EntitySnapshot) -> ExpectedEntity {
         ids,
         fields,
         credits: BTreeMap::new(),
+        artist_credits: None,
     }
 }
 

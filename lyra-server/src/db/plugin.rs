@@ -31,6 +31,7 @@ pub(crate) use crate::db::{
 pub(crate) use crate::db::{
     artists,
     covers,
+    credits,
     datastore,
     entities,
     entries,

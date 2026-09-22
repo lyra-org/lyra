@@ -237,3 +237,349 @@ impl_luau_record_userdata!(
     },
     methods {}
 );
+
+#[derive(Clone, Debug)]
+pub(crate) struct ArtistCreditInput {
+    pub(crate) artist_id: DbId,
+    pub(crate) name: String,
+    pub(crate) join_phrase: String,
+}
+
+/// Call inside a transaction: validation, additions, and removal form one update.
+pub(crate) fn reconcile_artists(
+    db: &mut impl super::DbAccess,
+    owner_id: DbId,
+    provider_id: &str,
+    desired: &[ArtistCreditInput],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        super::releases::get_by_id(db, owner_id)?.is_some()
+            || super::tracks::get_by_id(db, owner_id)?.is_some(),
+        "owner_id must reference a release or track"
+    );
+    anyhow::ensure!(!desired.is_empty(), "credits must not be empty");
+    let mut target_ids = std::collections::HashSet::new();
+    for input in desired {
+        anyhow::ensure!(
+            !input.name.trim().is_empty(),
+            "credit name must not be empty"
+        );
+        anyhow::ensure!(
+            super::artists::get_by_id(db, input.artist_id)?.is_some(),
+            "artist_id must reference an artist"
+        );
+        anyhow::ensure!(
+            super::external_ids::get_for_entity_inside_tx(db, input.artist_id)?
+                .iter()
+                .any(|id| id.provider_id == provider_id && !id.id_value.is_empty()),
+            "artist_id must have an identity from this provider"
+        );
+        target_ids.insert(input.artist_id);
+    }
+    if super::metadata::manual_overrides::owns_field(
+        db,
+        owner_id,
+        super::metadata::manual_overrides::ManualMetadataField::Credits,
+    )? {
+        return Ok(());
+    }
+    let existing: Vec<Credit> = db
+        .exec(
+            QueryBuilder::select()
+                .elements::<Credit>()
+                .search()
+                .from(owner_id)
+                .where_()
+                .neighbor()
+                .end_where()
+                .query(),
+        )?
+        .try_into()?;
+    let names = desired
+        .iter()
+        .map(|input| lyra_metadata::ArtistCreditName {
+            name: input.name.clone(),
+            join_phrase: input.join_phrase.clone(),
+        })
+        .collect::<Vec<_>>();
+    let mut linked = std::collections::HashSet::new();
+    let mut remove = Vec::new();
+    for credit in existing {
+        if credit.credit_type != CreditType::Artist || credit.detail.is_some() {
+            continue;
+        }
+        let Some(credit_id) = credit.db_id.map(DbId::from) else {
+            continue;
+        };
+        let edges = super::graph::direct_edges_from(db, credit_id)?;
+        let Some(artist_id) = edges
+            .iter()
+            .find_map(|edge| (edge.to.0 > 0).then_some(edge.to))
+        else {
+            continue;
+        };
+        linked.insert(artist_id);
+        if target_ids.len() < 2 || target_ids.contains(&artist_id) {
+            continue;
+        }
+        let Some(artist) = super::artists::get_by_id(db, artist_id)? else {
+            continue;
+        };
+        if artist.locked.unwrap_or(false)
+            || super::metadata::manual_overrides::owns_field(
+                db,
+                artist_id,
+                super::metadata::manual_overrides::ManualMetadataField::ArtistName,
+            )?
+            || !super::external_ids::get_for_entity_inside_tx(db, artist_id)?
+                .iter()
+                .all(|id| id.id_value.is_empty())
+        {
+            continue;
+        }
+        if lyra_metadata::matches_artist_credit(&artist.scan_name, &names) {
+            remove.push(credit_id);
+        }
+    }
+    for input in desired {
+        if !linked.insert(input.artist_id) {
+            continue;
+        }
+        let credit = Credit {
+            db_id: None,
+            id: nanoid::nanoid!(),
+            credit_type: CreditType::Artist,
+            detail: None,
+        };
+        let credit_id = db
+            .exec_mut(QueryBuilder::insert().element(&credit).query())?
+            .ids()[0];
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from("credits")
+                .to(credit_id)
+                .query(),
+        )?;
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(owner_id)
+                .to(credit_id)
+                .values_uniform([("owned", 1).into()])
+                .query(),
+        )?;
+        db.exec_mut(
+            QueryBuilder::insert()
+                .edges()
+                .from(credit_id)
+                .to(input.artist_id)
+                .query(),
+        )?;
+    }
+    if !remove.is_empty() {
+        db.exec_mut(QueryBuilder::remove().ids(remove).query())?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod reconciliation_tests {
+    use super::*;
+    use crate::db::{
+        self,
+        test_db::*,
+    };
+    use agdb::DbAny;
+
+    fn destination(db: &mut DbAny, name: &str, join: &str) -> anyhow::Result<ArtistCreditInput> {
+        let artist_id = insert_artist(db, name)?;
+        db::external_ids::upsert(
+            db,
+            artist_id,
+            "test",
+            "artist_id",
+            name,
+            db::IdSource::Plugin,
+        )?;
+        Ok(ArtistCreditInput {
+            artist_id,
+            name: name.into(),
+            join_phrase: join.into(),
+        })
+    }
+
+    fn links(
+        db: &DbAny,
+        owner: DbId,
+    ) -> anyhow::Result<Vec<(DbId, CreditType, Option<String>, DbId)>> {
+        let credits: Vec<Credit> = db
+            .exec(
+                QueryBuilder::select()
+                    .elements::<Credit>()
+                    .search()
+                    .from(owner)
+                    .where_()
+                    .neighbor()
+                    .end_where()
+                    .query(),
+            )?
+            .try_into()?;
+        let mut result = Vec::new();
+        for credit in credits {
+            let id: DbId = credit.db_id.unwrap().into();
+            let artist = db::graph::direct_edges_from(db, id)?[0].to;
+            result.push((artist, credit.credit_type, credit.detail, id));
+        }
+        result.sort_by_key(|entry| entry.3.0);
+        Ok(result)
+    }
+
+    #[test]
+    fn reconcile_preserves_shared_artist_other_roles_and_is_idempotent() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let owner = insert_release(&mut db, "release")?;
+        let other_owner = insert_track(&mut db, "other")?;
+        let combined = insert_artist(&mut db, "imase and なとり")?;
+        let unrelated = insert_artist(&mut db, "Other")?;
+        let local = CreditLinkInput {
+            artist_id: combined,
+            credit_type: CreditType::Artist,
+            detail: None,
+        };
+        replace_for_owner(
+            &mut db,
+            owner,
+            &[
+                local.clone(),
+                CreditLinkInput {
+                    artist_id: combined,
+                    credit_type: CreditType::Vocalist,
+                    detail: None,
+                },
+                CreditLinkInput {
+                    artist_id: combined,
+                    credit_type: CreditType::Artist,
+                    detail: Some("guest".into()),
+                },
+                CreditLinkInput {
+                    artist_id: unrelated,
+                    credit_type: CreditType::Artist,
+                    detail: None,
+                },
+            ],
+        )?;
+        replace_for_owner(&mut db, other_owner, &[local])?;
+        let desired = vec![
+            destination(&mut db, "imase", " & ")?,
+            destination(&mut db, "なとり", "")?,
+        ];
+        db.transaction_mut(|tx| reconcile_artists(tx, owner, "test", &desired))?;
+        let after = links(&db, owner)?;
+        assert_eq!(after.len(), 5);
+        assert!(
+            !after
+                .iter()
+                .any(|(artist, role, detail, _)| *artist == combined
+                    && *role == CreditType::Artist
+                    && detail.is_none())
+        );
+        assert_eq!(links(&db, other_owner)?.len(), 1);
+        assert_eq!(
+            db::artists::get_by_id(&db, combined)?.unwrap().artist_name,
+            "imase and なとり"
+        );
+        db.transaction_mut(|tx| reconcile_artists(tx, owner, "test", &desired))?;
+        assert_eq!(links(&db, owner)?, after);
+        Ok(())
+    }
+
+    #[test]
+    fn reconcile_preserves_manual_and_provider_identified_credits() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let owner = insert_track(&mut db, "track")?;
+        let combined = insert_artist(&mut db, "A & B")?;
+        replace_for_owner(
+            &mut db,
+            owner,
+            &[CreditLinkInput {
+                artist_id: combined,
+                credit_type: CreditType::Artist,
+                detail: None,
+            }],
+        )?;
+        let desired = vec![
+            destination(&mut db, "A", " & ")?,
+            destination(&mut db, "B", "")?,
+        ];
+        use db::metadata::manual_overrides::{
+            self,
+            ManualMetadataField,
+        };
+        manual_overrides::upsert(
+            &mut db,
+            owner,
+            &[(ManualMetadataField::Credits, serde_json::json!(true))].into(),
+        )?;
+        let before = links(&db, owner)?;
+        db.transaction_mut(|tx| reconcile_artists(tx, owner, "test", &desired))?;
+        assert_eq!(links(&db, owner)?, before);
+        manual_overrides::replace(&mut db, owner, &Default::default())?;
+        manual_overrides::upsert(
+            &mut db,
+            combined,
+            &[(
+                ManualMetadataField::ArtistName,
+                serde_json::json!("Collaboration Band"),
+            )]
+            .into(),
+        )?;
+        db.transaction_mut(|tx| reconcile_artists(tx, owner, "test", &desired))?;
+        assert_eq!(links(&db, owner)?.len(), 3);
+        manual_overrides::replace(&mut db, combined, &Default::default())?;
+        db::external_ids::upsert(
+            &mut db,
+            combined,
+            "another",
+            "artist_id",
+            "band",
+            db::IdSource::Plugin,
+        )?;
+        db.transaction_mut(|tx| reconcile_artists(tx, owner, "test", &desired))?;
+        assert_eq!(links(&db, owner)?.len(), 3);
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_destination_rolls_back_all_changes() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let owner = insert_release(&mut db, "release")?;
+        let combined = insert_artist(&mut db, "A & B")?;
+        replace_for_owner(
+            &mut db,
+            owner,
+            &[CreditLinkInput {
+                artist_id: combined,
+                credit_type: CreditType::Artist,
+                detail: None,
+            }],
+        )?;
+        let mut desired = vec![
+            destination(&mut db, "A", " & ")?,
+            destination(&mut db, "B", "")?,
+        ];
+        let before = links(&db, owner)?;
+        desired[1].artist_id = owner;
+        assert!(
+            db.transaction_mut(|tx| reconcile_artists(tx, owner, "test", &desired))
+                .is_err()
+        );
+        assert_eq!(links(&db, owner)?, before);
+        assert!(
+            db.transaction_mut(|tx| reconcile_artists(tx, owner, "test", &[]))
+                .is_err()
+        );
+        assert_eq!(links(&db, owner)?, before);
+        Ok(())
+    }
+}

@@ -232,6 +232,18 @@ fn metadata_type_aliases() -> Vec<TypeAliasDescriptor> {
 fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
     vec![
         interface(
+            "ArtistCreditInput",
+            vec![
+                field("artist_id", number()),
+                described_field("name", string(), "The provider's credited artist name."),
+                described_field(
+                    "join_phrase",
+                    opt(string()),
+                    "Text following this name, including spaces or closing punctuation.",
+                ),
+            ],
+        ),
+        interface(
             "MetadataIdRow",
             vec![
                 field("provider_id", string()),
@@ -672,6 +684,14 @@ fn provider_class() -> ClassDescriptor {
             ],
             vec![],
         ),
+        MethodDescriptor {
+            description: Some("Adds the supplied primary artist credits on this owner. Artists must have identities from this provider. Removes a combined local credit only when the complete ordered names and join phrases match (and and & are equivalent at boundaries). Preserves manual credits, manually named, identified or locked artists, unrelated credits, and other roles; never renames or deletes artists."),
+            ..method(
+                "reconcile_artist_credits",
+                vec![param("owner_id", number()), param("credits", array(ty("ArtistCreditInput")))],
+                vec![],
+            )
+        },
         method(
             "link_artist_relation",
             vec![
@@ -741,6 +761,7 @@ fn method(
                 | "ensure_artist"
                 | "mark_unmatched"
                 | "link_credit"
+                | "reconcile_artist_credits"
                 | "link_artist_relation"
                 | "save"
         ),
