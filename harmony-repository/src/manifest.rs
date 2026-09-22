@@ -257,7 +257,7 @@ fn reject_nested_paths(entries: &[RepositoryEntry]) -> Result<(), ManifestError>
 }
 
 pub const SOURCE_RECORD_FILENAME: &str = ".harmony-source.json";
-pub const SOURCE_RECORD_SCHEMA_VERSION: u32 = 1;
+pub const SOURCE_RECORD_SCHEMA_VERSION: u32 = 2;
 
 /// Provenance of an installed plugin, written next to its `plugin.json`.
 /// Plugins without a record are local (bundled or hand-copied) and are
@@ -269,12 +269,14 @@ pub struct SourceRecord {
     /// Canonical URL of the repository the plugin was installed from.
     pub origin: String,
     pub forge: Forge,
-    /// Ref the install tracks. `None` follows the default branch. Branch
-    /// refs track new commits; tag and SHA refs are pinned.
+    /// Ref the install tracks. `None` follows the default branch.
     pub git_ref: Option<String>,
     /// Commit the installed tree came from, when the forge API was
     /// reachable at install time.
     pub commit: Option<String>,
+    /// Whether `git_ref` is a tag or commit, so updates never move it.
+    /// Branches, and refs the forge could not classify, track new commits.
+    pub pinned: bool,
     /// Directory within `origin` for plugins installed through a
     /// multi-plugin repository's path entry.
     pub subpath: Option<String>,
@@ -283,6 +285,11 @@ pub struct SourceRecord {
     pub via_repository: Option<String>,
     /// RFC 3339 timestamp supplied by the host.
     pub installed_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SchemaVersion {
+    schema_version: u32,
 }
 
 impl SourceRecord {
@@ -296,7 +303,8 @@ impl SourceRecord {
     }
 
     /// Reads the record from a plugin directory. `Ok(None)` means the
-    /// plugin is local.
+    /// plugin is local. Records written by an older schema are an error;
+    /// reinstalling the plugin rewrites them.
     pub fn load(plugin_dir: &Path) -> Result<Option<Self>, std::io::Error> {
         let path = plugin_dir.join(SOURCE_RECORD_FILENAME);
         let json = match std::fs::read_to_string(&path) {
@@ -304,6 +312,18 @@ impl SourceRecord {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e),
         };
+        let version: SchemaVersion = serde_json::from_str(&json)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        if version.schema_version != SOURCE_RECORD_SCHEMA_VERSION {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "{SOURCE_RECORD_FILENAME} has schema_version {} (expected \
+                     {SOURCE_RECORD_SCHEMA_VERSION}); reinstall the plugin",
+                    version.schema_version
+                ),
+            ));
+        }
         serde_json::from_str(&json)
             .map(Some)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
@@ -550,8 +570,9 @@ mod tests {
             schema_version: SOURCE_RECORD_SCHEMA_VERSION,
             origin: "https://github.com/o/r".into(),
             forge: Forge::GitHub,
-            git_ref: Some("main".into()),
+            git_ref: Some("v1.2.0".into()),
             commit: Some("a".repeat(40)),
+            pinned: true,
             subpath: Some("musicbrainz".into()),
             via_repository: Some("https://github.com/lyra/plugins".into()),
             installed_at: Some("2026-06-09T12:00:00Z".into()),
@@ -560,6 +581,29 @@ mod tests {
         record.store(dir.path()).unwrap();
         let loaded = SourceRecord::load(dir.path()).unwrap();
         assert_eq!(loaded.as_ref(), Some(&record));
+    }
+
+    #[test]
+    fn rejects_source_records_from_older_schemas() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join(SOURCE_RECORD_FILENAME),
+            r#"{
+                "schema_version": 1,
+                "origin": "https://github.com/o/r",
+                "forge": "github",
+                "git_ref": null,
+                "commit": null,
+                "subpath": null,
+                "via_repository": null,
+                "installed_at": null
+            }"#,
+        )
+        .unwrap();
+
+        let err = SourceRecord::load(dir.path()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("schema_version 1"), "{err}");
     }
 
     #[test]

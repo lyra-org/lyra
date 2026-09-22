@@ -184,8 +184,11 @@ fn catalog_status(installed_dir: &Path, available_commit: Option<&str>) -> Catal
     if !installed_dir.is_dir() {
         return CatalogStatus::Available;
     }
-    let Some(record) = SourceRecord::load(installed_dir).ok().flatten() else {
-        return CatalogStatus::Local;
+    let record = match SourceRecord::load(installed_dir) {
+        Ok(None) => return CatalogStatus::Local,
+        Ok(Some(record)) => record,
+        // Managed, but the commit is unknowable until it is reinstalled.
+        Err(_) => return CatalogStatus::Unknown,
     };
     match (record.commit.as_deref(), available_commit) {
         (Some(installed), Some(available)) if installed == available => CatalogStatus::UpToDate,
@@ -452,13 +455,21 @@ fn managed_plugin_ids(plugins_dir: &Path) -> Result<BTreeSet<String>, PluginRepo
 }
 
 /// Updates the named plugins, or every repository-managed plugin when
-/// `plugin_ids` is `None`. An explicitly empty selection is rejected. Each distinct origin and ref is resolved once;
-/// per-plugin failures don't abort siblings. The runtime reloads once,
-/// and only when something was reinstalled.
+/// `plugin_ids` is `None`. An explicitly empty selection is rejected.
+/// Pinned plugins are up to date by construction and are not resolved.
+/// Each distinct origin and ref is resolved once; per-plugin failures
+/// don't abort siblings. The runtime reloads once, and only when
+/// something was reinstalled.
 pub(crate) async fn update_plugins(
     plugin_ids: Option<&[String]>,
 ) -> Result<UpdateReport, PluginRepoError> {
-    let plugins_dir = crate::plugins::bootstrap::plugins_dir();
+    update_plugins_in(&crate::plugins::bootstrap::plugins_dir(), plugin_ids).await
+}
+
+async fn update_plugins_in(
+    plugins_dir: &Path,
+    plugin_ids: Option<&[String]>,
+) -> Result<UpdateReport, PluginRepoError> {
     if plugin_ids.is_some_and(<[String]>::is_empty) {
         return Err(PluginRepoError::BadRequest(
             "no plugins selected to update".to_string(),
@@ -466,13 +477,14 @@ pub(crate) async fn update_plugins(
     }
     let ids: BTreeSet<String> = match plugin_ids {
         Some(ids) => ids.iter().cloned().collect(),
-        None => managed_plugin_ids(&plugins_dir)?,
+        None => managed_plugin_ids(plugins_dir)?,
     };
 
     let mut report = UpdateReport::default();
     let mut records = Vec::new();
     for id in ids {
-        match load_managed_record(&plugins_dir, &id) {
+        match load_managed_record(plugins_dir, &id) {
+            Ok(record) if record.pinned => report.up_to_date.push(id),
             Ok(record) => records.push((id, record)),
             Err(error) => report.failed.push(FailedInstall {
                 id,
@@ -517,14 +529,14 @@ pub(crate) async fn update_plugins(
 
     let _guard = MUTATION_LOCK.lock().await;
     for (id, candidate) in pending {
-        if load_managed_record(&plugins_dir, id).is_err() {
+        if load_managed_record(plugins_dir, id).is_err() {
             report.failed.push(FailedInstall {
                 id: id.clone(),
                 error: format!("plugin '{id}' was removed during update"),
             });
             continue;
         }
-        match install_candidate(candidate, &plugins_dir, Some(now_rfc3339())) {
+        match install_candidate(candidate, plugins_dir, Some(now_rfc3339())) {
             Ok(record) => report.updated.push(UpdatedPlugin {
                 id: id.clone(),
                 version: candidate.plugin.manifest.version.clone(),
@@ -676,19 +688,23 @@ mod tests {
 
     use super::*;
 
-    fn store_record(dir: &Path, commit: Option<String>) -> anyhow::Result<()> {
-        std::fs::create_dir_all(dir)?;
+    fn record(commit: Option<String>) -> SourceRecord {
         SourceRecord {
             schema_version: SOURCE_RECORD_SCHEMA_VERSION,
             origin: "https://github.com/o/r".into(),
             forge: Forge::GitHub,
             git_ref: None,
             commit,
+            pinned: false,
             subpath: None,
             via_repository: None,
             installed_at: None,
         }
-        .store(dir)?;
+    }
+
+    fn store_record(dir: &Path, commit: Option<String>) -> anyhow::Result<()> {
+        std::fs::create_dir_all(dir)?;
+        record(commit).store(dir)?;
         Ok(())
     }
 
@@ -724,6 +740,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_plugins_reports_pinned_plugins_up_to_date_without_resolving()
+    -> anyhow::Result<()> {
+        let plugins_dir = tempfile::TempDir::new()?;
+        let dir = plugins_dir.path().join("pinned");
+        std::fs::create_dir_all(&dir)?;
+        let mut pinned = record(Some("a".repeat(40)));
+        pinned.origin = "http://127.0.0.1:9/o/r".into();
+        pinned.git_ref = Some("v1.0.0".into());
+        pinned.pinned = true;
+        pinned.store(&dir)?;
+
+        let report = update_plugins_in(plugins_dir.path(), None).await?;
+
+        assert!(report.updated.is_empty());
+        assert!(report.failed.is_empty());
+        assert_eq!(report.up_to_date, vec!["pinned".to_string()]);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn install_to_disk_rejects_empty_selection() {
         assert!(matches!(
             install_to_disk("https://github.com/o/r", None, Some(&[])).await,
@@ -738,6 +774,14 @@ mod tests {
         std::fs::create_dir(plugins_dir.path().join("local"))?;
         store_record(&plugins_dir.path().join("pinned"), Some(commit.clone()))?;
         store_record(&plugins_dir.path().join("unpinned"), None)?;
+        std::fs::create_dir(plugins_dir.path().join("broken"))?;
+        std::fs::write(
+            plugins_dir
+                .path()
+                .join("broken")
+                .join(SOURCE_RECORD_FILENAME),
+            "{",
+        )?;
 
         let status = |id: &str, available: Option<&str>| {
             catalog_status(&plugins_dir.path().join(id), available)
@@ -751,6 +795,7 @@ mod tests {
         );
         assert_eq!(status("pinned", None), CatalogStatus::Unknown);
         assert_eq!(status("unpinned", Some(&commit)), CatalogStatus::Unknown);
+        assert_eq!(status("broken", Some(&commit)), CatalogStatus::Unknown);
         Ok(())
     }
 

@@ -140,6 +140,7 @@ pub async fn resolve_plugins(
                 forge: spec.forge,
                 git_ref: spec.explicit_ref.clone(),
                 commit: fetched.commit.clone(),
+                pinned: fetched.pinned,
                 subpath: None,
                 via_repository: None,
                 installed_at: None,
@@ -177,6 +178,7 @@ pub async fn resolve_plugins(
                             forge: spec.forge,
                             git_ref: spec.explicit_ref.clone(),
                             commit: fetched.commit.clone(),
+                            pinned: fetched.pinned,
                             subpath: Some(path.clone()),
                             via_repository: None,
                             installed_at: None,
@@ -204,6 +206,7 @@ pub async fn resolve_plugins(
                             forge: remote.forge,
                             git_ref: remote.explicit_ref.clone(),
                             commit: sub.commit.clone(),
+                            pinned: sub.pinned,
                             subpath: None,
                             via_repository: Some(spec.canonical_url()),
                             installed_at: None,
@@ -308,6 +311,7 @@ mod tests {
         );
         assert_eq!(candidate.source.subpath, None);
         assert_eq!(candidate.source.via_repository, None);
+        assert!(!candidate.source.pinned);
         assert!(candidate.source_dir().join("init.luau").is_file());
     }
 

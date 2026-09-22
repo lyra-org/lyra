@@ -91,24 +91,18 @@ pub fn install_candidate(
 
     let target = plugins_dir.join(id);
     if path_exists(&target)? {
-        match SourceRecord::load(&target).map_err(|source| InstallError::Io {
-            context: format!(
-                "Could not read source record `{}`",
-                target.join(SOURCE_RECORD_FILENAME).display()
-            ),
-            source,
-        })? {
-            None => {
+        match managed_state(&target)? {
+            Managed::Local => {
                 return Err(InstallError::NotManaged { id: id.to_string() });
             }
-            Some(existing) if existing.origin != candidate.source.origin => {
+            Managed::Record(existing) if existing.origin != candidate.source.origin => {
                 return Err(InstallError::OriginMismatch {
                     id: id.to_string(),
                     existing: existing.origin,
                     requested: candidate.source.origin.clone(),
                 });
             }
-            Some(_) => {}
+            Managed::Record(_) | Managed::Broken => {}
         }
     }
 
@@ -183,7 +177,12 @@ pub fn install_candidate(
 
 /// Removes a repository-managed plugin. Local plugins (no source record)
 /// are refused; deleting those is a deliberate filesystem operation.
-pub fn uninstall_plugin(plugins_dir: &Path, id: &str) -> Result<SourceRecord, InstallError> {
+/// Returns the removed record, or `None` when it was present but
+/// unreadable.
+pub fn uninstall_plugin(
+    plugins_dir: &Path,
+    id: &str,
+) -> Result<Option<SourceRecord>, InstallError> {
     ensure_valid_id(id)?;
 
     let target = plugins_dir.join(id);
@@ -201,21 +200,45 @@ pub fn uninstall_plugin(plugins_dir: &Path, id: &str) -> Result<SourceRecord, In
         }
     }
 
-    let record = SourceRecord::load(&target)
-        .map_err(|source| InstallError::Io {
-            context: format!(
-                "Could not read source record `{}`",
-                target.join(SOURCE_RECORD_FILENAME).display()
-            ),
-            source,
-        })?
-        .ok_or_else(|| InstallError::NotManaged { id: id.to_string() })?;
+    let record = match managed_state(&target)? {
+        Managed::Local => return Err(InstallError::NotManaged { id: id.to_string() }),
+        Managed::Record(record) => Some(record),
+        Managed::Broken => None,
+    };
 
     std::fs::remove_dir_all(&target).map_err(|source| InstallError::Io {
         context: format!("Could not remove directory `{}`", target.display()),
         source,
     })?;
     Ok(record)
+}
+
+enum Managed {
+    /// No source record: bundled or hand-copied.
+    Local,
+    Record(SourceRecord),
+    /// A source record is present but cannot be parsed, for example one
+    /// written by an older schema. The directory is still managed, and
+    /// replacing or removing it is how such records are recovered.
+    Broken,
+}
+
+fn managed_state(target: &Path) -> Result<Managed, InstallError> {
+    match SourceRecord::load(target) {
+        Ok(None) => Ok(Managed::Local),
+        Ok(Some(record)) => Ok(Managed::Record(record)),
+        Err(source) if source.kind() == std::io::ErrorKind::InvalidData => {
+            tracing::warn!(path = %target.join(SOURCE_RECORD_FILENAME).display(), %source, "unreadable source record; treating plugin as managed");
+            Ok(Managed::Broken)
+        }
+        Err(source) => Err(InstallError::Io {
+            context: format!(
+                "Could not read source record `{}`",
+                target.join(SOURCE_RECORD_FILENAME).display()
+            ),
+            source,
+        }),
+    }
 }
 
 /// Ids come from validated manifests, but install and uninstall also take
@@ -401,9 +424,30 @@ mod tests {
         let plugins_dir = TempDir::new().unwrap();
         install_candidate(&resolved.candidates[0], plugins_dir.path(), None).unwrap();
 
-        let record = uninstall_plugin(plugins_dir.path(), "foo").unwrap();
+        let record = uninstall_plugin(plugins_dir.path(), "foo")
+            .unwrap()
+            .expect("record was readable");
         assert_eq!(record.origin, resolved.candidates[0].source.origin);
         assert!(!plugins_dir.path().join("foo").exists());
+    }
+
+    #[tokio::test]
+    async fn unreadable_records_can_be_replaced_and_removed() {
+        let (_server, resolved) = resolved_foo().await;
+        let plugins_dir = TempDir::new().unwrap();
+        let installed = plugins_dir.path().join("foo");
+        let broken = |json: &str| {
+            std::fs::create_dir_all(&installed).unwrap();
+            std::fs::write(installed.join(SOURCE_RECORD_FILENAME), json).unwrap();
+        };
+
+        broken(r#"{"schema_version": 1}"#);
+        install_candidate(&resolved.candidates[0], plugins_dir.path(), None).unwrap();
+        assert!(SourceRecord::load(&installed).unwrap().is_some());
+
+        broken("{");
+        assert_eq!(uninstall_plugin(plugins_dir.path(), "foo").unwrap(), None);
+        assert!(!installed.exists());
     }
 
     #[test]
