@@ -21,8 +21,9 @@ pub(crate) struct PluginRepository {
     pub(crate) name: String,
     pub(crate) description: String,
     pub(crate) git_ref: Option<String>,
-    pub(crate) last_commit: Option<String>,
-    pub(crate) refreshed_at_ms: u64,
+    pub(crate) commit: Option<String>,
+    /// Unset until the first refresh.
+    pub(crate) refreshed_at_ms: Option<u64>,
 }
 
 const DEFAULT_ORIGIN: &str = "https://git.lyra.pub/lyra/lyra?forge=gitlab";
@@ -53,8 +54,8 @@ pub(crate) fn seed_default(db: &mut DbAny) -> anyhow::Result<()> {
                     name: manifest.name,
                     description: manifest.description,
                     git_ref: (!release_tag.is_empty()).then(|| release_tag.to_string()),
-                    last_commit: None,
-                    refreshed_at_ms: 0,
+                    commit: None,
+                    refreshed_at_ms: None,
                 },
             )?;
         }
@@ -109,7 +110,8 @@ pub(crate) fn update_in_transaction(
         repo_db_id,
         [
             ("git_ref", record.git_ref.is_none()),
-            ("last_commit", record.last_commit.is_none()),
+            ("commit", record.commit.is_none()),
+            ("refreshed_at_ms", record.refreshed_at_ms.is_none()),
         ],
         record,
     )
@@ -197,8 +199,8 @@ mod tests {
             assert_eq!(record.origin, DEFAULT_ORIGIN);
             let tag = env!("LYRA_RELEASE_TAG");
             assert_eq!(record.git_ref.as_deref(), (!tag.is_empty()).then_some(tag));
-            assert_eq!(record.last_commit, None);
-            assert_eq!(record.refreshed_at_ms, 0);
+            assert_eq!(record.commit, None);
+            assert_eq!(record.refreshed_at_ms, None);
             record.db_id.unwrap()
         };
         remove(&mut *created.db.try_write()?, id)?;
@@ -267,8 +269,8 @@ mod tests {
             name: "Test Plugins".to_string(),
             description: String::new(),
             git_ref: None,
-            last_commit: None,
-            refreshed_at_ms: 0,
+            commit: None,
+            refreshed_at_ms: None,
         }
     }
 
@@ -281,14 +283,15 @@ mod tests {
         record.db_id = Some(db_id);
 
         record.name = "Renamed".to_string();
-        record.last_commit = Some("a".repeat(40));
-        record.refreshed_at_ms = 42;
+        record.commit = Some("a".repeat(40));
+        record.refreshed_at_ms = Some(42);
         update(&mut db, &record)?;
 
         let listed = list(&db)?;
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].name, "Renamed");
-        assert_eq!(listed[0].last_commit.as_deref(), Some(&*"a".repeat(40)));
+        assert_eq!(listed[0].commit.as_deref(), Some(&*"a".repeat(40)));
+        assert_eq!(listed[0].refreshed_at_ms, Some(42));
 
         let fetched = get_by_id(&db, &record.id)?.expect("repository exists");
         assert_eq!(fetched.db_id, Some(db_id));
@@ -300,21 +303,21 @@ mod tests {
     }
 
     #[test]
-    fn update_clears_a_dropped_last_commit() -> anyhow::Result<()> {
+    fn update_clears_a_dropped_commit() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
 
         let mut record = repository("https://github.com/lyra/plugins");
         record.db_id = Some(create(&mut db, &record)?);
-        record.last_commit = Some("a".repeat(40));
+        record.commit = Some("a".repeat(40));
         update(&mut db, &record)?;
 
         // A later refresh where the forge commit API call failed.
-        record.last_commit = None;
+        record.commit = None;
         update(&mut db, &record)?;
 
         let fetched = get_by_id(&db, &record.id)?.expect("repository exists");
         assert_eq!(
-            fetched.last_commit, None,
+            fetched.commit, None,
             "an unresolved commit must not leave a stale SHA driving update checks"
         );
         Ok(())

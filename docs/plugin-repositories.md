@@ -94,11 +94,15 @@ Plugin management requires the manage-plugins permission:
 
 - `GET /api/plugins` — loaded plugins, each with a `source` of kind
   `repository` (origin, ref, commit, installed_at) or `local`.
-- `POST /api/plugins/resolve` — preview a repository's plugins,
-  including the capability scopes each plugin requests, without
-  installing.
-- `POST /api/plugins/install` — install all (or selected) plugins from a
-  URL and reload the plugin runtime.
+- `POST /api/plugins/resolve` — body `{"url": ..., "ref": ...}`; preview
+  a repository without installing. Returns the resolved repository shape
+  described below, minus `id` and `refreshed_at`.
+- `POST /api/plugins/install` — body `{"url": ..., "ref": ..., "plugins": [...]}`;
+  install all (or the selected) plugins from an ad-hoc URL and reload the
+  plugin runtime. An empty `plugins` list is rejected.
+- `POST /api/plugins/repositories/{id}/install` — body `{}` or
+  `{"plugins": [...]}`; the same, from a subscribed repository's origin
+  and ref.
 - `POST /api/plugins/update` — body `{}` or `{"plugins": [...]}`; updates
   the named plugins, or every repository-managed plugin when `plugins` is
   omitted. Each origin is resolved once and the runtime reloads once; the
@@ -106,10 +110,50 @@ Plugin management requires the manage-plugins permission:
 - `POST /api/plugins/reload` — reload the plugin runtime from disk, for
   example after a CLI install or a failed reload. Returns 204.
 - `DELETE /api/plugins/{plugin_id}` — uninstall a repository-managed plugin.
-- `GET|POST /api/plugins/repositories`,
-  `POST /api/plugins/repositories/{id}/refresh`,
-  `DELETE /api/plugins/repositories/{id}` — remembered repositories;
-  removing one keeps its installed plugins.
+- `GET /api/plugins/repositories` — subscribed repositories as remembered
+  by the server: `{id, origin, name, description, ref?, commit?, refreshed_at?}`;
+  `refreshed_at` appears once the repository has been refreshed.
+- `POST /api/plugins/repositories` (body `{"url": ..., "ref": ...}`) and
+  `POST /api/plugins/repositories/{id}/refresh` — subscribe to, or
+  re-resolve, a repository. Both return the resolved repository.
+- `DELETE /api/plugins/repositories/{id}` — forget a subscription; its
+  installed plugins stay on disk.
+
+A resolved repository looks like:
+
+```json
+{
+  "id": "…",
+  "origin": "https://github.com/owner/repo",
+  "name": "Lyra Official Plugins",
+  "description": "…",
+  "ref": "v2",
+  "resolved_ref": "v2",
+  "commit": "…",
+  "refreshed_at": "2026-01-01T00:00:00Z",
+  "plugins": [
+    {
+      "id": "musicbrainz",
+      "name": "MusicBrainz",
+      "version": "1.0.0",
+      "description": "…",
+      "scopes": ["metadata"],
+      "commit": "…",
+      "status": "update_available",
+      "source": { "origin": "https://codeberg.org/someone/lyra-foo" }
+    }
+  ]
+}
+```
+
+`ref` is the subscribed or requested ref and is absent when none was
+given; `resolved_ref` is what it resolved to. `name` and `description`
+come from `repository.json` when present, else the repository name and an
+empty string. Each plugin's `status` is one of `available` (not
+installed), `up_to_date`, `update_available`, `unknown` (installed from a
+repository but no commit recorded on one side), or `local` (installed
+without a source record). `source` is present only when a `url` entry
+points at another repository.
 
 From the command line:
 

@@ -125,6 +125,21 @@ fn ensure_plugin_path_id(plugin_id: &str) -> Result<(), PluginRepoError> {
     Ok(())
 }
 
+/// Where a catalogue plugin stands relative to the plugins directory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CatalogStatus {
+    /// Not installed.
+    Available,
+    /// Installed from a repository at the offered commit.
+    UpToDate,
+    /// Installed from a repository at a different commit.
+    UpdateAvailable,
+    /// Installed from a repository, but no commit is recorded on one side.
+    Unknown,
+    /// Installed without a source record, so repository tooling leaves it alone.
+    Local,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct PluginPreview {
     pub(crate) id: String,
@@ -132,25 +147,24 @@ pub(crate) struct PluginPreview {
     pub(crate) version: String,
     pub(crate) description: String,
     pub(crate) scopes: Vec<String>,
-    pub(crate) origin: String,
-    pub(crate) subpath: Option<String>,
     pub(crate) commit: Option<String>,
-    pub(crate) installed: bool,
-    /// Whether the installed copy carries a source record (was installed
-    /// through repository tooling rather than placed locally).
-    pub(crate) managed: bool,
-    /// `None` when either side's commit is unknown.
-    pub(crate) update_available: Option<bool>,
+    pub(crate) status: CatalogStatus,
+    /// Origin of the plugin when a multi-plugin index points at another
+    /// repository; `None` when it lives in the resolved repository itself.
+    pub(crate) source_origin: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct RepositoryPreview {
     pub(crate) origin: String,
-    pub(crate) git_ref: String,
+    /// The requested ref, when one was given.
+    pub(crate) git_ref: Option<String>,
+    pub(crate) resolved_ref: String,
     pub(crate) commit: Option<String>,
-    /// Set when the repository carries a `repository.json` index.
-    pub(crate) name: Option<String>,
-    pub(crate) description: Option<String>,
+    /// From the `repository.json` index when present, else the repository
+    /// name.
+    pub(crate) name: String,
+    pub(crate) description: String,
     pub(crate) plugins: Vec<PluginPreview>,
 }
 
@@ -162,48 +176,56 @@ async fn resolve(url: &str, git_ref: Option<&str>) -> Result<ResolvedRepository,
         .map_err(map_resolve_error)
 }
 
+fn catalog_status(installed_dir: &Path, available_commit: Option<&str>) -> CatalogStatus {
+    if !installed_dir.is_dir() {
+        return CatalogStatus::Available;
+    }
+    let Some(record) = SourceRecord::load(installed_dir).ok().flatten() else {
+        return CatalogStatus::Local;
+    };
+    match (record.commit.as_deref(), available_commit) {
+        (Some(installed), Some(available)) if installed == available => CatalogStatus::UpToDate,
+        (Some(_), Some(_)) => CatalogStatus::UpdateAvailable,
+        _ => CatalogStatus::Unknown,
+    }
+}
+
 fn build_preview(resolved: &ResolvedRepository, plugins_dir: &Path) -> RepositoryPreview {
     let plugins = resolved
         .candidates
         .iter()
         .map(|candidate| {
             let manifest = &candidate.plugin.manifest;
-            let installed_dir = plugins_dir.join(candidate.id());
-            let installed = installed_dir.is_dir();
-            let record = SourceRecord::load(&installed_dir).ok().flatten();
-            let update_available = match (&record, &candidate.source.commit) {
-                (Some(record), Some(available)) => record
-                    .commit
-                    .as_ref()
-                    .map(|installed_commit| installed_commit != available),
-                _ => None,
-            };
-
+            let source = &candidate.source;
             PluginPreview {
                 id: manifest.id.clone(),
                 name: manifest.name.clone(),
                 version: manifest.version.clone(),
                 description: manifest.description.clone(),
                 scopes: manifest.scopes.clone(),
-                origin: candidate.source.origin.clone(),
-                subpath: candidate.source.subpath.clone(),
-                commit: candidate.source.commit.clone(),
-                installed,
-                managed: record.is_some(),
-                update_available,
+                commit: source.commit.clone(),
+                status: catalog_status(&plugins_dir.join(candidate.id()), source.commit.as_deref()),
+                source_origin: source
+                    .via_repository
+                    .is_some()
+                    .then(|| source.origin.clone()),
             }
         })
         .collect();
 
+    let index = resolved.index.as_ref();
     RepositoryPreview {
         origin: resolved.spec.canonical_url(),
-        git_ref: resolved.git_ref.clone(),
+        git_ref: resolved.spec.explicit_ref.clone(),
+        resolved_ref: resolved.git_ref.clone(),
         commit: resolved.commit.clone(),
-        name: resolved.index.as_ref().map(|index| index.name.clone()),
-        description: resolved
-            .index
-            .as_ref()
-            .map(|index| index.description.clone()),
+        name: index.map_or_else(
+            || resolved.spec.repo_name.clone(),
+            |index| index.name.clone(),
+        ),
+        description: index
+            .map(|index| index.description.clone())
+            .unwrap_or_default(),
         plugins,
     }
 }
@@ -240,13 +262,19 @@ pub(crate) struct InstallReport {
 }
 
 /// Resolves a repository URL and installs its plugins (optionally a
-/// subset) into `plugins_dir`. Per-plugin failures don't abort siblings.
-/// Does not reload the runtime; callers decide when the new set goes live.
+/// subset) into `plugins_dir`. An explicitly empty selection is rejected.
+/// Per-plugin failures don't abort siblings. Does not reload the runtime;
+/// callers decide when the new set goes live.
 pub(crate) async fn install_to_disk(
     url: &str,
     git_ref: Option<&str>,
     plugin_ids: Option<&[String]>,
 ) -> Result<InstallReport, PluginRepoError> {
+    if plugin_ids.is_some_and(<[String]>::is_empty) {
+        return Err(PluginRepoError::BadRequest(
+            "no plugins selected to install".to_string(),
+        ));
+    }
     let _guard = MUTATION_LOCK.lock().await;
     let resolved = resolve(url, git_ref).await?;
 
@@ -303,6 +331,15 @@ pub(crate) async fn install(
         reload_runtime().await?;
     }
     Ok(report)
+}
+
+/// Installs from a subscribed repository's origin and ref.
+pub(crate) async fn install_from_repository(
+    repository_id: &str,
+    plugin_ids: Option<&[String]>,
+) -> Result<InstallReport, PluginRepoError> {
+    let record = load_repository(repository_id).await?;
+    install(&record.origin, record.git_ref.as_deref(), plugin_ids).await
 }
 
 #[derive(Debug, Clone)]
@@ -522,14 +559,11 @@ pub(crate) async fn add_repository(
         db_id: None,
         id: nanoid!(),
         origin: origin.clone(),
-        name: preview
-            .name
-            .clone()
-            .unwrap_or_else(|| resolved.spec.repo_name.clone()),
-        description: preview.description.clone().unwrap_or_default(),
+        name: preview.name.clone(),
+        description: preview.description.clone(),
         git_ref: resolved.spec.explicit_ref.clone(),
-        last_commit: resolved.commit.clone(),
-        refreshed_at_ms: now_ms(),
+        commit: resolved.commit.clone(),
+        refreshed_at_ms: Some(now_ms()),
     };
 
     let mut db = STATE.db.write().await;
@@ -552,26 +586,27 @@ pub(crate) async fn list_repositories() -> Result<Vec<repo_db::PluginRepository>
     repo_db::list(&*db).map_err(PluginRepoError::Internal)
 }
 
+async fn load_repository(
+    repository_id: &str,
+) -> Result<repo_db::PluginRepository, PluginRepoError> {
+    let db = STATE.db.read().await;
+    repo_db::get_by_id(&*db, repository_id)
+        .map_err(PluginRepoError::Internal)?
+        .ok_or_else(|| PluginRepoError::NotFound(format!("repository not found: {repository_id}")))
+}
+
 pub(crate) async fn refresh_repository(
     repository_id: &str,
 ) -> Result<(repo_db::PluginRepository, RepositoryPreview), PluginRepoError> {
-    let mut record = {
-        let db = STATE.db.read().await;
-        repo_db::get_by_id(&*db, repository_id).map_err(PluginRepoError::Internal)?
-    }
-    .ok_or_else(|| PluginRepoError::NotFound(format!("repository not found: {repository_id}")))?;
+    let mut record = load_repository(repository_id).await?;
 
     let resolved = resolve(&record.origin, record.git_ref.as_deref()).await?;
     let preview = build_preview(&resolved, &crate::plugins::bootstrap::plugins_dir());
 
-    if let Some(name) = &preview.name {
-        record.name = name.clone();
-    }
-    if let Some(description) = &preview.description {
-        record.description = description.clone();
-    }
-    record.last_commit = resolved.commit.clone();
-    record.refreshed_at_ms = now_ms();
+    record.name = preview.name.clone();
+    record.description = preview.description.clone();
+    record.commit = resolved.commit.clone();
+    record.refreshed_at_ms = Some(now_ms());
     {
         let mut db = STATE.db.write().await;
         repo_db::update(&mut db, &record).map_err(PluginRepoError::Internal)?;
@@ -661,6 +696,37 @@ mod tests {
             update_plugins(Some(&[])).await,
             Err(PluginRepoError::BadRequest(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn install_to_disk_rejects_empty_selection() {
+        assert!(matches!(
+            install_to_disk("https://github.com/o/r", None, Some(&[])).await,
+            Err(PluginRepoError::BadRequest(_))
+        ));
+    }
+
+    #[test]
+    fn catalog_status_reflects_install_state_and_commits() -> anyhow::Result<()> {
+        let plugins_dir = tempfile::TempDir::new()?;
+        let commit = "a".repeat(40);
+        std::fs::create_dir(plugins_dir.path().join("local"))?;
+        store_record(&plugins_dir.path().join("pinned"), Some(commit.clone()))?;
+        store_record(&plugins_dir.path().join("unpinned"), None)?;
+
+        let status = |id: &str, available: Option<&str>| {
+            catalog_status(&plugins_dir.path().join(id), available)
+        };
+        assert_eq!(status("absent", Some(&commit)), CatalogStatus::Available);
+        assert_eq!(status("local", Some(&commit)), CatalogStatus::Local);
+        assert_eq!(status("pinned", Some(&commit)), CatalogStatus::UpToDate);
+        assert_eq!(
+            status("pinned", Some(&"b".repeat(40))),
+            CatalogStatus::UpdateAvailable
+        );
+        assert_eq!(status("pinned", None), CatalogStatus::Unknown);
+        assert_eq!(status("unpinned", Some(&commit)), CatalogStatus::Unknown);
+        Ok(())
     }
 
     #[test]

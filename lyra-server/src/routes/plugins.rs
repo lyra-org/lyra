@@ -243,11 +243,43 @@ struct InstallPluginsRequest {
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
+struct RepositoryInstallRequest {
+    /// Plugin ids to install; omitted installs everything the
+    /// repository provides. An empty list is rejected.
+    #[serde(default)]
+    plugins: Option<Vec<String>>,
+}
+
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
 struct UpdatePluginsRequest {
     /// Plugin ids to update; omitted updates every repository-managed
     /// plugin. An empty list is rejected.
     #[serde(default)]
     plugins: Option<Vec<String>>,
+}
+
+/// Where a catalogue plugin stands relative to the plugins directory.
+/// `unknown` means it was installed from a repository but no commit is
+/// recorded on one side; `local` means it was installed without a source
+/// record and repository tooling leaves it alone.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum CatalogStatusResponse {
+    Available,
+    UpToDate,
+    UpdateAvailable,
+    Unknown,
+    Local,
+}
+
+/// Set when a multi-plugin index points at a plugin living in another
+/// repository.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Serialize)]
+struct PluginPreviewSourceResponse {
+    origin: String,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -259,29 +291,33 @@ struct PluginPreviewResponse {
     description: String,
     /// Capability scopes the plugin will be granted when installed.
     scopes: Vec<String>,
-    origin: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    subpath: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     commit: Option<String>,
-    installed: bool,
-    managed: bool,
+    status: CatalogStatusResponse,
     #[serde(skip_serializing_if = "Option::is_none")]
-    update_available: Option<bool>,
+    source: Option<PluginPreviewSourceResponse>,
 }
 
+/// A resolved repository and the plugins it provides. `id` is present only
+/// for subscribed repositories, `refreshed_at` only once one has been
+/// refreshed.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
-struct RepositoryPreviewResponse {
+struct ResolvedRepositoryResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
     origin: String,
-    #[serde(rename = "ref")]
-    git_ref: String,
+    name: String,
+    description: String,
+    /// The subscribed or requested ref, when one was given.
+    #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
+    git_ref: Option<String>,
+    /// The branch, tag, or commit the repository resolved to.
+    resolved_ref: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     commit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
+    refreshed_at: Option<String>,
     plugins: Vec<PluginPreviewResponse>,
 }
 
@@ -325,6 +361,7 @@ struct UpdatePluginsResponse {
     failed: Vec<FailedInstallResponse>,
 }
 
+/// A subscribed repository as remembered by the server.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 struct PluginRepositoryResponse {
@@ -334,31 +371,40 @@ struct PluginRepositoryResponse {
     description: String,
     #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
     git_ref: Option<String>,
+    /// Commit seen at the last refresh.
     #[serde(skip_serializing_if = "Option::is_none")]
-    last_commit: Option<String>,
-    refreshed_at_ms: u64,
+    commit: Option<String>,
+    /// Absent until the first refresh.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refreshed_at: Option<String>,
 }
 
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Serialize)]
-struct PluginRepositoriesResponse {
-    repositories: Vec<PluginRepositoryResponse>,
+fn catalog_status_response(status: repositories_service::CatalogStatus) -> CatalogStatusResponse {
+    use repositories_service::CatalogStatus;
+    match status {
+        CatalogStatus::Available => CatalogStatusResponse::Available,
+        CatalogStatus::UpToDate => CatalogStatusResponse::UpToDate,
+        CatalogStatus::UpdateAvailable => CatalogStatusResponse::UpdateAvailable,
+        CatalogStatus::Unknown => CatalogStatusResponse::Unknown,
+        CatalogStatus::Local => CatalogStatusResponse::Local,
+    }
 }
 
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(Serialize)]
-struct RepositoryWithPreviewResponse {
-    repository: PluginRepositoryResponse,
-    preview: RepositoryPreviewResponse,
-}
-
-fn preview_response(preview: repositories_service::RepositoryPreview) -> RepositoryPreviewResponse {
-    RepositoryPreviewResponse {
+fn resolved_repository_response(
+    record: Option<&crate::db::plugin_repositories::PluginRepository>,
+    preview: repositories_service::RepositoryPreview,
+) -> ResolvedRepositoryResponse {
+    ResolvedRepositoryResponse {
+        id: record.map(|record| record.id.clone()),
         origin: preview.origin,
-        git_ref: preview.git_ref,
-        commit: preview.commit,
         name: preview.name,
         description: preview.description,
+        git_ref: preview.git_ref,
+        resolved_ref: preview.resolved_ref,
+        commit: preview.commit,
+        refreshed_at: record
+            .and_then(|record| record.refreshed_at_ms)
+            .map(super::unix_ms_to_rfc3339_u64),
         plugins: preview
             .plugins
             .into_iter()
@@ -368,12 +414,11 @@ fn preview_response(preview: repositories_service::RepositoryPreview) -> Reposit
                 version: plugin.version,
                 description: plugin.description,
                 scopes: plugin.scopes,
-                origin: plugin.origin,
-                subpath: plugin.subpath,
                 commit: plugin.commit,
-                installed: plugin.installed,
-                managed: plugin.managed,
-                update_available: plugin.update_available,
+                status: catalog_status_response(plugin.status),
+                source: plugin
+                    .source_origin
+                    .map(|origin| PluginPreviewSourceResponse { origin }),
             })
             .collect(),
     }
@@ -388,8 +433,8 @@ fn repository_response(
         name: record.name,
         description: record.description,
         git_ref: record.git_ref,
-        last_commit: record.last_commit,
-        refreshed_at_ms: record.refreshed_at_ms,
+        commit: record.commit,
+        refreshed_at: record.refreshed_at_ms.map(super::unix_ms_to_rfc3339_u64),
     }
 }
 
@@ -698,12 +743,12 @@ async fn restart_plugin(
 async fn resolve_repository(
     headers: HeaderMap,
     Json(request): Json<RepositoryUrlRequest>,
-) -> Result<Json<RepositoryPreviewResponse>, AppError> {
+) -> Result<Json<ResolvedRepositoryResponse>, AppError> {
     let _principal = require_manage_plugins(&headers).await?;
     let preview = repositories_service::resolve_preview(&request.url, request.git_ref.as_deref())
         .await
         .map_err(map_repository_error)?;
-    Ok(Json(preview_response(preview)))
+    Ok(Json(resolved_repository_response(None, preview)))
 }
 
 async fn install_plugins(
@@ -718,8 +763,24 @@ async fn install_plugins(
     )
     .await
     .map_err(map_repository_error)?;
+    Ok(Json(install_report_response(report)))
+}
 
-    Ok(Json(InstallPluginsResponse {
+async fn install_repository_plugins(
+    headers: HeaderMap,
+    Path(repository_id): Path<String>,
+    Json(request): Json<RepositoryInstallRequest>,
+) -> Result<Json<InstallPluginsResponse>, AppError> {
+    let _principal = require_manage_plugins(&headers).await?;
+    let report =
+        repositories_service::install_from_repository(&repository_id, request.plugins.as_deref())
+            .await
+            .map_err(map_repository_error)?;
+    Ok(Json(install_report_response(report)))
+}
+
+fn install_report_response(report: repositories_service::InstallReport) -> InstallPluginsResponse {
+    InstallPluginsResponse {
         installed: report
             .installed
             .into_iter()
@@ -737,7 +798,7 @@ async fn install_plugins(
                 error: failure.error,
             })
             .collect(),
-    }))
+    }
 }
 
 async fn update_installed_plugins(
@@ -795,43 +856,37 @@ async fn uninstall_installed_plugin(
 
 async fn list_plugin_repositories(
     headers: HeaderMap,
-) -> Result<Json<PluginRepositoriesResponse>, AppError> {
+) -> Result<Json<Vec<PluginRepositoryResponse>>, AppError> {
     let _principal = require_manage_plugins(&headers).await?;
     let repositories = repositories_service::list_repositories()
         .await
         .map_err(map_repository_error)?;
-    Ok(Json(PluginRepositoriesResponse {
-        repositories: repositories.into_iter().map(repository_response).collect(),
-    }))
+    Ok(Json(
+        repositories.into_iter().map(repository_response).collect(),
+    ))
 }
 
 async fn add_plugin_repository(
     headers: HeaderMap,
     Json(request): Json<RepositoryUrlRequest>,
-) -> Result<Json<RepositoryWithPreviewResponse>, AppError> {
+) -> Result<Json<ResolvedRepositoryResponse>, AppError> {
     let _principal = require_manage_plugins(&headers).await?;
     let (record, preview) =
         repositories_service::add_repository(&request.url, request.git_ref.as_deref())
             .await
             .map_err(map_repository_error)?;
-    Ok(Json(RepositoryWithPreviewResponse {
-        repository: repository_response(record),
-        preview: preview_response(preview),
-    }))
+    Ok(Json(resolved_repository_response(Some(&record), preview)))
 }
 
 async fn refresh_plugin_repository(
     headers: HeaderMap,
     Path(repository_id): Path<String>,
-) -> Result<Json<RepositoryWithPreviewResponse>, AppError> {
+) -> Result<Json<ResolvedRepositoryResponse>, AppError> {
     let _principal = require_manage_plugins(&headers).await?;
     let (record, preview) = repositories_service::refresh_repository(&repository_id)
         .await
         .map_err(map_repository_error)?;
-    Ok(Json(RepositoryWithPreviewResponse {
-        repository: repository_response(record),
-        preview: preview_response(preview),
-    }))
+    Ok(Json(resolved_repository_response(Some(&record), preview)))
 }
 
 async fn delete_plugin_repository(
@@ -972,14 +1027,21 @@ fn list_all_user_settings_docs(op: TransformOperation) -> TransformOperation {
 #[cfg(feature = "docgen")]
 fn resolve_repository_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Resolve plugin repository").description(
-        "Fetches a Git repository URL and returns the plugins it provides, including the capability scopes each plugin requests, without installing anything.",
+        "Fetches a Git repository URL and returns it in the same shape as a subscribed repository, minus `id` and `refreshed_at`: name, description, resolved ref, commit, and the plugins it provides with the capability scopes each requests and a `status` against the plugins directory (`available`, `up_to_date`, `update_available`, `unknown`, `local`). Nothing is installed.",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn install_plugins_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("Install plugins from repository").description(
-        "Resolves a Git repository URL, installs all (or the selected) plugins it provides, and reloads the plugin runtime. Returns per-plugin results.",
+    op.summary("Install plugins from URL").description(
+        "Resolves a Git repository URL, installs all (or the selected) plugins it provides, and reloads the plugin runtime. An empty `plugins` list is rejected. Returns per-plugin results.",
+    )
+}
+
+#[cfg(feature = "docgen")]
+fn install_repository_plugins_docs(op: TransformOperation) -> TransformOperation {
+    op.summary("Install plugins from subscribed repository").description(
+        "Resolves a subscribed repository's origin and ref, installs all (or the selected) plugins it provides, and reloads the plugin runtime. An empty `plugins` list is rejected. Returns per-plugin results.",
     )
 }
 
@@ -1008,21 +1070,22 @@ fn uninstall_installed_plugin_docs(op: TransformOperation) -> TransformOperation
 
 #[cfg(feature = "docgen")]
 fn list_plugin_repositories_docs(op: TransformOperation) -> TransformOperation {
-    op.summary("List plugin repositories")
-        .description("Returns the subscribed plugin repositories.")
+    op.summary("List plugin repositories").description(
+        "Returns the subscribed plugin repositories as remembered by the server, without resolving them. `commit` and `refreshed_at` reflect the last refresh and are absent until one has happened.",
+    )
 }
 
 #[cfg(feature = "docgen")]
 fn add_plugin_repository_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Add plugin repository").description(
-        "Resolves a Git repository URL, remembers it as a subscription, and returns the repository record together with its current plugin listing.",
+        "Resolves a Git repository URL, remembers it as a subscription, and returns the resolved repository with its `id`, `refreshed_at`, and current plugin listing.",
     )
 }
 
 #[cfg(feature = "docgen")]
 fn refresh_plugin_repository_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Refresh plugin repository").description(
-        "Re-resolves a subscribed repository and returns its updated record and plugin listing, including per-plugin update availability.",
+        "Re-resolves a subscribed repository and returns it with its updated plugin listing; each plugin's `status` reports whether it is installed and whether an update is available.",
     )
 }
 
@@ -1088,6 +1151,10 @@ pub fn plugin_routes() -> Router {
             post(refresh_plugin_repository),
         )
         .route(
+            "/repositories/{repository_id}/install",
+            post(install_repository_plugins),
+        )
+        .route(
             "/repositories/{repository_id}",
             delete(delete_plugin_repository),
         )
@@ -1134,6 +1201,10 @@ pub(crate) fn plugin_openapi_routes() -> aide::axum::ApiRouter {
         .api_route(
             "/repositories/{repository_id}/refresh",
             post_with(refresh_plugin_repository, refresh_plugin_repository_docs),
+        )
+        .api_route(
+            "/repositories/{repository_id}/install",
+            post_with(install_repository_plugins, install_repository_plugins_docs),
         )
         .api_route(
             "/repositories/{repository_id}",
@@ -1295,6 +1366,97 @@ mod tests {
         assert_eq!(json[1]["source"]["commit"], "a".repeat(40));
         assert!(json[1]["source"].get("forge").is_none());
         assert!(json[1].get("schema_version").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn resolved_repository_response_flattens_record_and_preview() -> anyhow::Result<()> {
+        use services::plugin_repositories::{
+            CatalogStatus,
+            PluginPreview,
+            RepositoryPreview,
+        };
+
+        let preview = RepositoryPreview {
+            origin: "https://github.com/o/r".into(),
+            git_ref: Some("main".into()),
+            resolved_ref: "main".into(),
+            commit: Some("a".repeat(40)),
+            name: "Catalog".into(),
+            description: "Plugins".into(),
+            plugins: vec![
+                PluginPreview {
+                    id: "here".into(),
+                    name: "Here".into(),
+                    version: "1.0.0".into(),
+                    description: String::new(),
+                    scopes: vec!["metadata".into()],
+                    commit: Some("a".repeat(40)),
+                    status: CatalogStatus::UpdateAvailable,
+                    source_origin: None,
+                },
+                PluginPreview {
+                    id: "there".into(),
+                    name: "There".into(),
+                    version: "2.0.0".into(),
+                    description: String::new(),
+                    scopes: Vec::new(),
+                    commit: None,
+                    status: CatalogStatus::Available,
+                    source_origin: Some("https://github.com/o/other".into()),
+                },
+            ],
+        };
+        let record = db::plugin_repositories::PluginRepository {
+            db_id: None,
+            id: "repo".into(),
+            origin: "https://github.com/o/r".into(),
+            name: "Stale".into(),
+            description: String::new(),
+            git_ref: Some("main".into()),
+            commit: None,
+            refreshed_at_ms: Some(1_000),
+        };
+
+        let json = serde_json::to_value(resolved_repository_response(None, preview.clone()))?;
+        assert!(json.get("id").is_none());
+        assert!(json.get("refreshed_at").is_none());
+        assert_eq!(json["name"], "Catalog");
+        assert_eq!(json["ref"], "main");
+        assert_eq!(json["resolved_ref"], "main");
+        assert_eq!(json["plugins"][0]["status"], "update_available");
+        assert!(json["plugins"][0].get("source").is_none());
+        assert_eq!(json["plugins"][1]["status"], "available");
+        assert_eq!(
+            json["plugins"][1]["source"]["origin"],
+            "https://github.com/o/other"
+        );
+
+        let json = serde_json::to_value(resolved_repository_response(Some(&record), preview))?;
+        assert_eq!(json["id"], "repo");
+        assert_eq!(json["refreshed_at"], "1970-01-01T00:00:01Z");
+        assert_eq!(json["name"], "Catalog");
+        Ok(())
+    }
+
+    #[test]
+    fn repository_response_omits_refresh_time_until_refreshed() -> anyhow::Result<()> {
+        let json = serde_json::to_value(repository_response(
+            db::plugin_repositories::PluginRepository {
+                db_id: None,
+                id: "repo".into(),
+                origin: "https://github.com/o/r".into(),
+                name: "Catalog".into(),
+                description: String::new(),
+                git_ref: None,
+                commit: Some("a".repeat(40)),
+                refreshed_at_ms: None,
+            },
+        ))?;
+        assert_eq!(json["commit"], "a".repeat(40));
+        assert!(json.get("refreshed_at").is_none());
+        assert!(json.get("ref").is_none());
+        assert!(json.get("last_commit").is_none());
         Ok(())
     }
 
@@ -1479,6 +1641,30 @@ mod tests {
         assert_eq!(response.failed.len(), 1);
         assert_eq!(response.failed[0].id, "bad id");
         assert!(response.failed[0].error.contains("invalid plugin id"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn install_repository_plugins_rejects_unknown_repository() -> anyhow::Result<()> {
+        let _registry_guard = REGISTRY_TEST_GUARD.lock().await;
+        let _runtime_guard = runtime_test_lock().await;
+        let _test_dir = initialize_auth_test_runtime().await?;
+        let headers = manage_plugins_headers().await?;
+
+        let Err(error) = install_repository_plugins(
+            headers,
+            Path("missing".to_string()),
+            Json(RepositoryInstallRequest {
+                plugins: Some(vec!["demo".to_string()]),
+            }),
+        )
+        .await
+        else {
+            panic!("unknown repository should be rejected");
+        };
+        let response = error.into_response();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
         Ok(())
     }
 
