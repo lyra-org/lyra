@@ -262,6 +262,14 @@ pub(crate) fn default_config() -> MetadataMappingConfig {
                 destination: FieldName::Date,
             },
             MappingRule {
+                source_key: "RecordingDate".to_string(),
+                destination: FieldName::Date,
+            },
+            MappingRule {
+                source_key: "Year".to_string(),
+                destination: FieldName::Date,
+            },
+            MappingRule {
                 source_key: "CopyrightMessage".to_string(),
                 destination: FieldName::Copyright,
             },
@@ -317,7 +325,10 @@ mod tests {
         let expected_album = tag.album().map(|s| s.to_string());
         let expected_title = tag.title().map(|s| s.to_string());
         let expected_genre = tag.genre().map(|s| s.to_string());
-        let expected_date = tag.get_string(ItemKey::ReleaseDate).map(|s| s.to_string());
+        let expected_date = [ItemKey::ReleaseDate, ItemKey::RecordingDate, ItemKey::Year]
+            .into_iter()
+            .find_map(|key| tag.get_string(key))
+            .map(|s| s.to_string());
         let expected_copyright = tag
             .get_string(ItemKey::CopyrightMessage)
             .map(|s| s.to_string());

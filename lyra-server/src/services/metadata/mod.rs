@@ -524,6 +524,42 @@ mod tests {
         Ok(())
     }
 
+    fn processed_date(comments: &[(&str, &str)]) -> anyhow::Result<(Option<String>, Option<u32>)> {
+        let path = fixture_with_comments(&format!("date-{}", comments.len()), comments)?;
+        let (tag, properties) = read_audio_tags(path.clone())?;
+        std::fs::remove_file(&path)?;
+
+        let raw = mapping::apply_mapping(
+            &tag,
+            &properties,
+            &path.to_string_lossy(),
+            &mapping::default_config(),
+        );
+        let track = lyra_metadata::process_raw_tags(vec![raw]).remove(0);
+        Ok((track.date, track.year))
+    }
+
+    #[test]
+    fn date_tags_fall_back_from_release_to_recording_date_and_year() -> anyhow::Result<()> {
+        assert_eq!(
+            processed_date(&[("YEAR", "2017")])?,
+            (Some("2017".to_string()), Some(2017))
+        );
+        assert_eq!(
+            processed_date(&[("YEAR", "2017"), ("DATE", "2019-05-03T12:00")])?,
+            (Some("2019-05-03".to_string()), Some(2019))
+        );
+        assert_eq!(
+            processed_date(&[
+                ("YEAR", "2017"),
+                ("DATE", "2019-05-03"),
+                ("RELEASEDATE", "2020-01-10"),
+            ])?,
+            (Some("2020-01-10".to_string()), Some(2020))
+        );
+        Ok(())
+    }
+
     #[test]
     fn gain_tags_resolve_to_replaygain_reference() -> anyhow::Result<()> {
         let path = fixture_with_comments(
