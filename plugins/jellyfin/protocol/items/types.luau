@@ -95,6 +95,7 @@ export type SerializableItemInfo = {
 	Artist: string?,
 	HasLyrics: boolean?,
 	NormalizationGain: number?,
+	AlbumNormalizationGain: number?,
 	MediaSources: { MediaSourceInfo }?,
 	MediaStreams: { MediaStreamInfo }?,
 	CommunityRating: number?,

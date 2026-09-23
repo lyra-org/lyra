@@ -115,6 +115,8 @@ type TrackRecord = {
 	channel_count: index<Track, "channel_count">,
 	bit_depth: index<Track, "bit_depth">,
 	bitrate_bps: index<Track, "bitrate_bps">,
+	track_gain_db: index<Track, "track_gain_db">,
+	album_gain_db: index<Track, "album_gain_db">,
 	created_at: index<Track, "created_at">,
 	ctime: index<Track, "ctime">,
 }
@@ -687,6 +689,8 @@ function helpers.track_record_from_track(track: Track?): TrackRecord?
 		channel_count = track.channel_count,
 		bit_depth = track.bit_depth,
 		bitrate_bps = track.bitrate_bps,
+		track_gain_db = track.track_gain_db,
+		album_gain_db = track.album_gain_db,
 		created_at = track.created_at,
 		ctime = track.ctime,
 	}
@@ -1408,6 +1412,15 @@ function helpers.sum_runtime_ticks(track_items: { Track }?): number?
 	return total_ticks
 end
 
+function helpers.album_gain_db(track_items: { Track }): number?
+	for _, track: Track in track_items do
+		if track.album_gain_db ~= nil then
+			return track.album_gain_db
+		end
+	end
+	return nil
+end
+
 function helpers.build_media_info(
 	track: TrackLike?,
 	source: PlaybackSourceInfo?,
@@ -2028,6 +2041,7 @@ function helpers.to_release_item(
 		People = helpers.resolve_people_for_item(release.db_id, "release", context),
 		ChildCount = #release_tracks,
 		RunTimeTicks = runtime_ticks,
+		NormalizationGain = helpers.album_gain_db(release_tracks),
 		ImageTags = if cover_info then { Primary = cover_info.hash } else nil,
 		AlbumPrimaryImageTag = if cover_info then cover_info.hash else nil,
 		ImageBlurHashes = helpers.default_image_blur_hashes(cover_info),
@@ -2228,7 +2242,8 @@ function helpers.to_track_item(
 		ImageTags = helpers.default_image_tags(),
 		ImageBlurHashes = helpers.default_image_blur_hashes(release_cover_info),
 		HasLyrics = has_lyrics,
-		NormalizationGain = nil,
+		NormalizationGain = track.track_gain_db,
+		AlbumNormalizationGain = track.album_gain_db,
 		UserData = helpers.build_item_user_data(
 			track.db_id,
 			track_item_id,

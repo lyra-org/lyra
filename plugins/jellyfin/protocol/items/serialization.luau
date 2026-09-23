@@ -288,6 +288,9 @@ function module.item_to_json(item: ItemInfo): JsonObject
 	if item.NormalizationGain ~= nil then
 		output.NormalizationGain = item.NormalizationGain
 	end
+	if item.AlbumNormalizationGain ~= nil then
+		output.AlbumNormalizationGain = item.AlbumNormalizationGain
+	end
 	local media_sources = json_object_array(item.MediaSources)
 	if media_sources ~= nil then
 		output.MediaSources = media_sources
