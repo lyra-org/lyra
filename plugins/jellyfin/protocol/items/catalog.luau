@@ -108,6 +108,7 @@ type TrackRecord = {
 	db_id: index<Track, "db_id">,
 	track_title: index<Track, "track_title">,
 	sort_title: index<Track, "sort_title">,
+	year: index<Track, "year">,
 	disc: index<Track, "disc">,
 	track: index<Track, "track">,
 	duration_ms: index<Track, "duration_ms">,
@@ -682,6 +683,7 @@ function helpers.track_record_from_track(track: Track?): TrackRecord?
 		db_id = track.db_id,
 		track_title = track.track_title,
 		sort_title = track.sort_title,
+		year = track.year,
 		disc = track.disc,
 		track = track.track,
 		duration_ms = track.duration_ms,
@@ -965,6 +967,14 @@ function helpers.release_date_to_premiere_date(release_date: string?): string?
 	local month = tonumber(string.sub(release_date, 6, 7)) or 1
 	local day = tonumber(string.sub(release_date, 9, 10)) or 1
 	return string.format("%04d-%02d-%02dT00:00:00.0000000Z", math.floor(y), math.floor(month), math.floor(day))
+end
+
+-- A release date from a different year than the track's own falls back to January 1st.
+function helpers.track_premiere_date(track_year: number?, release_date: string?): string?
+	if track_year == nil or helpers.release_year(release_date) == track_year then
+		return helpers.release_date_to_premiere_date(release_date)
+	end
+	return string.format("%04d-01-01T00:00:00.0000000Z", math.floor(track_year))
 end
 
 function helpers.first_or_nil<T>(items: { T }?): T?
@@ -2213,6 +2223,7 @@ function helpers.to_track_item(
 	local track_genres = helpers.lookup_by_id(if context then context.genre_infos_by_release_id else nil, release_db_id)
 		or helpers.resolve_release_genres(release_db_id)
 	local track_sort_name = helpers.track_sort_name(track)
+	local release_date = if release then release.release_date else nil
 
 	local item: ItemInfo = {
 		Id = track_item_id,
@@ -2227,6 +2238,8 @@ function helpers.to_track_item(
 		DateCreated = helpers.unix_to_iso8601(track.ctime or track.created_at),
 		IndexNumber = track.track,
 		ParentIndexNumber = track.disc,
+		ProductionYear = track.year or helpers.release_year(release_date),
+		PremiereDate = helpers.track_premiere_date(track.year, release_date),
 		Album = if release then release.release_title else nil,
 		AlbumId = release_id,
 		ParentId = release_id,
