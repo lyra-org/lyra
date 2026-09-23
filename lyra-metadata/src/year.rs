@@ -29,8 +29,10 @@ pub fn extract_year(date: Option<&str>, copyright: Option<&str>) -> Option<u32> 
     None
 }
 
+/// Accepts `YYYY`, `YYYY-MM` or `YYYY-MM-DD`, dropping any ISO 8601 time part.
 pub(crate) fn normalize_release_date(value: &str) -> Option<String> {
     let value = value.trim();
+    let value = value.split_once('T').map_or(value, |(date, _)| date);
     match value.len() {
         4 if valid_release_year(value) => Some(value.to_string()),
         7 if valid_release_year_month(value) => Some(value.to_string()),
@@ -167,4 +169,41 @@ pub(crate) fn extract_year_from_text_for_lookup(text: &str) -> Option<u32> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_release_date_keeps_partial_dates() {
+        assert_eq!(normalize_release_date("2019").as_deref(), Some("2019"));
+        assert_eq!(
+            normalize_release_date("2019-05").as_deref(),
+            Some("2019-05")
+        );
+        assert_eq!(
+            normalize_release_date(" 2019-05-03 ").as_deref(),
+            Some("2019-05-03")
+        );
+    }
+
+    #[test]
+    fn normalize_release_date_drops_time_parts() {
+        assert_eq!(
+            normalize_release_date("2019-05-03T12:00").as_deref(),
+            Some("2019-05-03")
+        );
+        assert_eq!(
+            normalize_release_date("2019-05-03T07:00:00Z").as_deref(),
+            Some("2019-05-03")
+        );
+    }
+
+    #[test]
+    fn normalize_release_date_rejects_invalid_dates() {
+        assert_eq!(normalize_release_date("2019-02-30"), None);
+        assert_eq!(normalize_release_date("May 2019"), None);
+        assert_eq!(normalize_release_date("T2019"), None);
+    }
 }
