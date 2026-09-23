@@ -870,7 +870,7 @@ mod tests {
             config::WriteOptions,
             file::AudioFile,
             flac::FlacFile,
-            ogg::VorbisComments,
+            ogg::tag::VorbisComments,
             tag::TagExt,
         };
 
