@@ -91,6 +91,8 @@ pub(crate) fn insert_track(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> 
         channel_count: None,
         bit_depth: None,
         bitrate_bps: None,
+        track_gain_db: None,
+        album_gain_db: None,
         locked: None,
         created_at: None,
         ctime: None,

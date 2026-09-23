@@ -311,6 +311,8 @@ mod tests {
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            track_gain_db: None,
+            album_gain_db: None,
             locked: Some(false),
             created_at: None,
             ctime: None,
@@ -508,6 +510,8 @@ mod tests {
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            track_gain_db: None,
+            album_gain_db: None,
         }
     }
 
@@ -1049,6 +1053,8 @@ mod tests {
                 channel_count: None,
                 bit_depth: None,
                 bitrate_bps: None,
+                track_gain_db: None,
+                album_gain_db: None,
             }],
         )?;
 
@@ -1127,6 +1133,8 @@ mod tests {
                 channel_count: None,
                 bit_depth: None,
                 bitrate_bps: None,
+                track_gain_db: None,
+                album_gain_db: None,
             }],
         )?;
 
@@ -1275,6 +1283,8 @@ mod tests {
             channel_count,
             bit_depth,
             bitrate_bps,
+            track_gain_db: None,
+            album_gain_db: None,
         }
     }
 
@@ -1413,6 +1423,50 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn apply_metadata_replaces_gains_on_reingest() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let library = test_db::insert_test_library_node(
+            &mut db,
+            "Gain Library",
+            PathBuf::from("/music/gain"),
+        )?;
+        let library_db_id = library.db_id.expect("test library has db_id");
+        let entry_db_id = insert_entry(&mut db, "/music/gain/track.flac")?;
+        connect(&mut db, library_db_id, entry_db_id)?;
+
+        let with_gains = |track_gain_db, album_gain_db| TrackMetadata {
+            track_gain_db,
+            album_gain_db,
+            ..track_metadata_with_audio_properties(
+                entry_db_id,
+                "Gain Track",
+                None,
+                None,
+                None,
+                None,
+            )
+        };
+
+        apply_metadata(
+            &mut db,
+            library_db_id,
+            vec![with_gains(Some(-6.5), Some(-7.25))],
+        )?;
+        let releases = select_releases(&db)?;
+        let release_db_id: DbId = releases[0].db_id.clone().unwrap().into();
+        let tracks = db::tracks::get(&db, release_db_id)?;
+        assert_eq!(tracks[0].track_gain_db, Some(-6.5));
+        assert_eq!(tracks[0].album_gain_db, Some(-7.25));
+
+        apply_metadata(&mut db, library_db_id, vec![with_gains(None, None)])?;
+        let tracks = db::tracks::get(&db, release_db_id)?;
+        assert_eq!(tracks[0].track_gain_db, None);
+        assert_eq!(tracks[0].album_gain_db, None);
+
+        Ok(())
+    }
+
     /// Cross-track label/cat# selection pulls both fields from the same
     /// track — never a Frankensteined pairing that exists in no source.
     #[test]
@@ -1464,6 +1518,8 @@ mod tests {
                 channel_count: None,
                 bit_depth: None,
                 bitrate_bps: None,
+                track_gain_db: None,
+                album_gain_db: None,
             };
 
         apply_metadata(
@@ -1544,6 +1600,8 @@ mod tests {
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            track_gain_db: None,
+            album_gain_db: None,
         };
 
         apply_metadata(
@@ -1623,6 +1681,8 @@ mod tests {
                 channel_count: None,
                 bit_depth: None,
                 bitrate_bps: None,
+                track_gain_db: None,
+                album_gain_db: None,
             };
 
         apply_metadata(
@@ -1916,6 +1976,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 channel_count: None,
                 bit_depth: None,
                 bitrate_bps: None,
+                track_gain_db: None,
+                album_gain_db: None,
             },
             TrackMetadata {
                 entry_db_id: entry_two,
@@ -1950,6 +2012,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 channel_count: None,
                 bit_depth: None,
                 bitrate_bps: None,
+                track_gain_db: None,
+                album_gain_db: None,
             },
         ];
 
@@ -2021,6 +2085,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 channel_count: None,
                 bit_depth: None,
                 bitrate_bps: None,
+                track_gain_db: None,
+                album_gain_db: None,
             },
             TrackMetadata {
                 entry_db_id: entry_two,
@@ -2055,6 +2121,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 channel_count: None,
                 bit_depth: None,
                 bitrate_bps: None,
+                track_gain_db: None,
+                album_gain_db: None,
             },
         ];
 
@@ -2127,6 +2195,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 channel_count: None,
                 bit_depth: None,
                 bitrate_bps: None,
+                track_gain_db: None,
+                album_gain_db: None,
             },
             TrackMetadata {
                 entry_db_id: entry_two,
@@ -2161,6 +2231,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 channel_count: None,
                 bit_depth: None,
                 bitrate_bps: None,
+                track_gain_db: None,
+                album_gain_db: None,
             },
         ];
         apply_metadata(&mut db, library_db_id, first_scan)?;
@@ -2199,6 +2271,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 channel_count: None,
                 bit_depth: None,
                 bitrate_bps: None,
+                track_gain_db: None,
+                album_gain_db: None,
             },
             TrackMetadata {
                 entry_db_id: entry_two,
@@ -2233,6 +2307,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
                 channel_count: None,
                 bit_depth: None,
                 bitrate_bps: None,
+                track_gain_db: None,
+                album_gain_db: None,
             },
         ];
         apply_metadata(&mut db, library_db_id, second_scan)?;
@@ -2487,6 +2563,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            track_gain_db: None,
+            album_gain_db: None,
         };
         apply_metadata(&mut db, library_db_id, vec![first_scan])?;
 
@@ -2601,6 +2679,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            track_gain_db: None,
+            album_gain_db: None,
         };
         apply_metadata(&mut db, library_db_id, vec![second_scan])?;
 
@@ -2670,6 +2750,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             channel_count: Some(2),
             bit_depth: Some(16),
             bitrate_bps: Some(900_000),
+            track_gain_db: None,
+            album_gain_db: None,
         };
         apply_metadata(&mut db, library_db_id, vec![tagged])?;
 
@@ -2731,6 +2813,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            track_gain_db: None,
+            album_gain_db: None,
         };
         apply_metadata(&mut db, library_db_id, vec![stripped])?;
 
@@ -2807,6 +2891,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            track_gain_db: None,
+            album_gain_db: None,
         };
         apply_metadata(&mut db, library_db_id, vec![first_scan])?;
 
@@ -2889,6 +2975,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            track_gain_db: None,
+            album_gain_db: None,
         };
         apply_metadata(&mut db, library_db_id, vec![second_scan])?;
 
@@ -3237,6 +3325,8 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            track_gain_db: None,
+            album_gain_db: None,
         };
         apply_metadata(&mut db, library_db_id, vec![scan])?;
 

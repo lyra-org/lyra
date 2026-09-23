@@ -531,6 +531,8 @@ fn track_type() -> LuauType {
         field("channel_count", Option::<u32>::luau_type()),
         field("bit_depth", Option::<u32>::luau_type()),
         field("bitrate_bps", Option::<u32>::luau_type()),
+        field("track_gain_db", Option::<f64>::luau_type()),
+        field("album_gain_db", Option::<f64>::luau_type()),
         field("locked", Option::<bool>::luau_type()),
         field("created_at", Option::<u64>::luau_type()),
         field("ctime", Option::<u64>::luau_type()),
