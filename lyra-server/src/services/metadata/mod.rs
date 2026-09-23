@@ -41,6 +41,7 @@ use lofty::{
         tag::VorbisComments,
     },
     probe::Probe,
+    properties::FileProperties,
     tag::{
         ItemKey,
         Tag,
@@ -72,16 +73,16 @@ fn classify_entry_file_kind(entry: &Entry) -> Option<String> {
         .or_else(|| crate::db::entries::classify_file_kind(&entry.full_path).map(str::to_string))
 }
 
-pub(crate) fn read_audio_tags(
-    path: std::path::PathBuf,
-) -> anyhow::Result<(Tag, lofty::file::TaggedFile)> {
-    let (tagged_file, fallbacks) = read_tagged_file(&path)
+pub(crate) fn read_audio_tags(path: std::path::PathBuf) -> anyhow::Result<(Tag, FileProperties)> {
+    let (mut tagged_file, fallbacks) = read_tagged_file(&path)
         .with_context(|| format!("failed to read file: {}", path.display()))?;
 
-    let mut tag = tagged_file
+    let tag_type = tagged_file
         .primary_tag()
         .or_else(|| tagged_file.first_tag())
-        .cloned()
+        .map(Tag::tag_type);
+    let mut tag = tag_type
+        .and_then(|tag_type| tagged_file.remove(tag_type))
         .ok_or_else(|| anyhow!("no tags found in {}", path.display()))?;
 
     for (key, value) in [
@@ -95,7 +96,7 @@ pub(crate) fn read_audio_tags(
         }
     }
 
-    Ok((tag, tagged_file))
+    Ok((tag, tagged_file.properties().clone()))
 }
 
 /// Vorbis comments lofty has no `ItemKey` for, so its generic `Tag` discards them.
@@ -133,7 +134,7 @@ fn read_tagged_file(path: &std::path::Path) -> anyhow::Result<(TaggedFile, Vorbi
         probe = probe.guess_file_type()?;
     }
 
-    let options = ParseOptions::new();
+    let options = ParseOptions::new().read_cover_art(false);
     match probe.file_type() {
         Some(FileType::Flac) => {
             let file = FlacFile::read_from(&mut probe.into_inner(), options)?;
@@ -150,7 +151,7 @@ fn read_tagged_file(path: &std::path::Path) -> anyhow::Result<(TaggedFile, Vorbi
             let fallbacks = VorbisFallbacks::read(Some(file.vorbis_comments()));
             Ok((file.into(), fallbacks))
         }
-        _ => Ok((probe.read()?, VorbisFallbacks::default())),
+        _ => Ok((probe.options(options).read()?, VorbisFallbacks::default())),
     }
 }
 
@@ -301,7 +302,7 @@ pub(crate) async fn parse_metadata(
         let path = entry.full_path.clone();
         let path_for_task = path.clone();
         let task_result = tokio::task::spawn_blocking(move || read_audio_tags(path_for_task)).await;
-        let (tag, tagged_file) = match task_result {
+        let (tag, properties) = match task_result {
             Ok(Ok(result)) => result,
             Ok(Err(err)) => {
                 tracing::warn!(
@@ -329,7 +330,7 @@ pub(crate) async fn parse_metadata(
             }
         };
         let file_path = path.to_string_lossy().to_string();
-        let raw = mapping::apply_mapping(&tag, &tagged_file, &file_path, mapping_config);
+        let raw = mapping::apply_mapping(&tag, &properties, &file_path, mapping_config);
         if let Err(missing) = mapping::check_required_fields(&raw) {
             tracing::warn!(
                 path = %path.display(),
@@ -533,12 +534,12 @@ mod tests {
                 ("R128_ALBUM_GAIN", "-512"),
             ],
         )?;
-        let (tag, tagged_file) = read_audio_tags(path.clone())?;
+        let (tag, properties) = read_audio_tags(path.clone())?;
         std::fs::remove_file(&path)?;
 
         let raw = mapping::apply_mapping(
             &tag,
-            &tagged_file,
+            &properties,
             &path.to_string_lossy(),
             &mapping::default_config(),
         );

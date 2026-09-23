@@ -19,7 +19,11 @@ use anyhow::{
     Context,
     anyhow,
 };
-use lofty::file::AudioFile;
+use lofty::{
+    config::ParseOptions,
+    file::AudioFile,
+    probe::Probe,
+};
 use lyra_metadata::{
     normalize_unicode_nfc,
     normalize_unicode_nfkc,
@@ -576,7 +580,8 @@ pub(super) async fn parse_cue_metadata_for_entry(
 }
 
 fn probe_audio_duration_ms(path: &Path) -> Option<u64> {
-    let tagged_file = lofty::probe::Probe::open(path).ok()?.read().ok()?;
+    let options = ParseOptions::new().read_tags(false).read_cover_art(false);
+    let tagged_file = Probe::open(path).ok()?.options(options).read().ok()?;
     Some(tagged_file.properties().duration().as_millis() as u64)
 }
 
