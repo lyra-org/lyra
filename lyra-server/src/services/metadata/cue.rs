@@ -567,6 +567,8 @@ pub(super) async fn parse_cue_metadata_for_entry(
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            track_gain_db: None,
+            album_gain_db: None,
         });
     }
 
@@ -672,6 +674,7 @@ pub(super) fn merge_embedded_into_cue_metadata(
     merge_opt(&mut cue.channel_count, &embedded.channel_count);
     merge_opt(&mut cue.bit_depth, &embedded.bit_depth);
     merge_opt(&mut cue.bitrate_bps, &embedded.bitrate_bps);
+    merge_opt(&mut cue.album_gain_db, &embedded.album_gain_db);
     merge_opt(&mut cue.barcode, &embedded.barcode);
     if !embedded.media_formats.is_empty() {
         cue.media_formats = embedded.media_formats.clone();
@@ -688,6 +691,7 @@ pub(super) fn merge_embedded_into_cue_metadata(
 
     if !preserve_cue_track_identity {
         merge_opt(&mut cue.title, &embedded.title);
+        merge_opt(&mut cue.track_gain_db, &embedded.track_gain_db);
         merge_opt_vec(&mut cue.artists, &embedded.artists);
     }
 }
@@ -759,6 +763,8 @@ mod tests {
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            track_gain_db: None,
+            album_gain_db: None,
         }
     }
 

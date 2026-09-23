@@ -540,6 +540,8 @@ fn raw_track_to_service_metadata(
         channel_count: track.channel_count,
         bit_depth: track.bit_depth,
         bitrate_bps: track.bitrate_bps,
+        track_gain_db: track.track_gain_db,
+        album_gain_db: track.album_gain_db,
     }
 }
 

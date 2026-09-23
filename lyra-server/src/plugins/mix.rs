@@ -813,6 +813,16 @@ fn track_type() -> LuauType {
             description: None,
         },
         FieldDescriptor {
+            name: "track_gain_db",
+            ty: Option::<f64>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "album_gain_db",
+            ty: Option::<f64>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
             name: "locked",
             ty: Option::<bool>::luau_type(),
             description: None,

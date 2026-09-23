@@ -41,6 +41,8 @@ pub(crate) struct TrackMetadata {
     pub(crate) channel_count: Option<u32>,
     pub(crate) bit_depth: Option<u32>,
     pub(crate) bitrate_bps: Option<u32>,
+    pub(crate) track_gain_db: Option<f64>,
+    pub(crate) album_gain_db: Option<f64>,
 }
 
 impl lyra_metadata::ReleaseCoalesceTrack for TrackMetadata {
