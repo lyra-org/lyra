@@ -17,8 +17,7 @@ use serde::{
     Serialize,
 };
 
-/// Disc/track number+total and duration are not here; their
-/// format-specific parsing is not expressible as a mapping rule.
+/// Mapping rule destinations. Numbering and duration are read directly.
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -50,45 +49,47 @@ pub(crate) struct MetadataMappingConfig {
     pub(crate) version: u64,
 }
 
-/// Literal arms so a lofty rename fails to compile. Limited to keys that
-/// can populate a [`FieldName`]; mirror additions in [`SUPPORTED_KEY_NAMES`].
+/// Source keys a [`MappingRule`] may name: those that can populate a [`FieldName`].
+pub(crate) const SOURCE_KEYS: &[(&str, ItemKey)] = &[
+    ("AlbumTitle", ItemKey::AlbumTitle),
+    ("OriginalAlbumTitle", ItemKey::OriginalAlbumTitle),
+    ("SetSubtitle", ItemKey::SetSubtitle),
+    ("ShowName", ItemKey::ShowName),
+    ("ContentGroup", ItemKey::ContentGroup),
+    ("Work", ItemKey::Work),
+    ("TrackTitle", ItemKey::TrackTitle),
+    ("TrackSubtitle", ItemKey::TrackSubtitle),
+    ("Movement", ItemKey::Movement),
+    ("AlbumArtist", ItemKey::AlbumArtist),
+    ("AlbumArtists", ItemKey::AlbumArtists),
+    ("TrackArtist", ItemKey::TrackArtist),
+    ("TrackArtists", ItemKey::TrackArtists),
+    ("OriginalArtist", ItemKey::OriginalArtist),
+    ("Composer", ItemKey::Composer),
+    ("Conductor", ItemKey::Conductor),
+    ("Performer", ItemKey::Performer),
+    ("Producer", ItemKey::Producer),
+    ("Lyricist", ItemKey::Lyricist),
+    ("Arranger", ItemKey::Arranger),
+    ("Remixer", ItemKey::Remixer),
+    ("Engineer", ItemKey::Engineer),
+    ("Writer", ItemKey::Writer),
+    ("Director", ItemKey::Director),
+    ("RecordingDate", ItemKey::RecordingDate),
+    ("ReleaseDate", ItemKey::ReleaseDate),
+    ("OriginalReleaseDate", ItemKey::OriginalReleaseDate),
+    ("Year", ItemKey::Year),
+    ("CopyrightMessage", ItemKey::CopyrightMessage),
+    ("Genre", ItemKey::Genre),
+    ("Label", ItemKey::Label),
+    ("CatalogNumber", ItemKey::CatalogNumber),
+];
+
 pub(crate) fn resolve_item_key(name: &str) -> Option<ItemKey> {
-    let key = match name {
-        "AlbumTitle" => ItemKey::AlbumTitle,
-        "OriginalAlbumTitle" => ItemKey::OriginalAlbumTitle,
-        "SetSubtitle" => ItemKey::SetSubtitle,
-        "ShowName" => ItemKey::ShowName,
-        "ContentGroup" => ItemKey::ContentGroup,
-        "Work" => ItemKey::Work,
-        "TrackTitle" => ItemKey::TrackTitle,
-        "TrackSubtitle" => ItemKey::TrackSubtitle,
-        "Movement" => ItemKey::Movement,
-        "AlbumArtist" => ItemKey::AlbumArtist,
-        "AlbumArtists" => ItemKey::AlbumArtists,
-        "TrackArtist" => ItemKey::TrackArtist,
-        "TrackArtists" => ItemKey::TrackArtists,
-        "OriginalArtist" => ItemKey::OriginalArtist,
-        "Composer" => ItemKey::Composer,
-        "Conductor" => ItemKey::Conductor,
-        "Performer" => ItemKey::Performer,
-        "Producer" => ItemKey::Producer,
-        "Lyricist" => ItemKey::Lyricist,
-        "Arranger" => ItemKey::Arranger,
-        "Remixer" => ItemKey::Remixer,
-        "Engineer" => ItemKey::Engineer,
-        "Writer" => ItemKey::Writer,
-        "Director" => ItemKey::Director,
-        "RecordingDate" => ItemKey::RecordingDate,
-        "ReleaseDate" => ItemKey::ReleaseDate,
-        "OriginalReleaseDate" => ItemKey::OriginalReleaseDate,
-        "Year" => ItemKey::Year,
-        "CopyrightMessage" => ItemKey::CopyrightMessage,
-        "Genre" => ItemKey::Genre,
-        "Label" => ItemKey::Label,
-        "CatalogNumber" => ItemKey::CatalogNumber,
-        _ => return None,
-    };
-    Some(key)
+    SOURCE_KEYS
+        .iter()
+        .find(|(key_name, _)| *key_name == name)
+        .map(|&(_, key)| key)
 }
 
 /// Disc/track numbers, totals, and duration require format-specific parsing.
@@ -272,56 +273,9 @@ pub(crate) fn default_config() -> MetadataMappingConfig {
     }
 }
 
-/// Kept in sync with [`resolve_item_key`] via
-/// `every_supported_name_resolves`.
-pub(crate) const SUPPORTED_KEY_NAMES: &[&str] = &[
-    "AlbumTitle",
-    "OriginalAlbumTitle",
-    "SetSubtitle",
-    "ShowName",
-    "ContentGroup",
-    "Work",
-    "TrackTitle",
-    "TrackSubtitle",
-    "Movement",
-    "AlbumArtist",
-    "AlbumArtists",
-    "TrackArtist",
-    "TrackArtists",
-    "OriginalArtist",
-    "Composer",
-    "Conductor",
-    "Performer",
-    "Producer",
-    "Lyricist",
-    "Arranger",
-    "Remixer",
-    "Engineer",
-    "Writer",
-    "Director",
-    "RecordingDate",
-    "ReleaseDate",
-    "OriginalReleaseDate",
-    "Year",
-    "CopyrightMessage",
-    "Genre",
-    "Label",
-    "CatalogNumber",
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn every_supported_name_resolves() {
-        for name in SUPPORTED_KEY_NAMES {
-            assert!(
-                resolve_item_key(name).is_some(),
-                "supported key '{name}' failed to resolve",
-            );
-        }
-    }
 
     #[test]
     fn unknown_key_returns_none() {
@@ -330,13 +284,7 @@ mod tests {
         assert!(resolve_item_key("album_title").is_none());
     }
 
-    /// v1 coverage gap: `tests/assets/metadata/` only carries FLAC
-    /// (Vorbis Comments) fixtures. Byte-identical extraction is thus
-    /// verified for that one format; ID3v2.3, ID3v2.4, MP4, and APE
-    /// are covered only insofar as lofty's abstract `Tag` layer
-    /// reaches them uniformly, but divergence in `Accessor` paths
-    /// per format is undetected here. Adding per-format fixtures is
-    /// v2 scope (~1-2 days of fixture creation work).
+    /// Only FLAC fixtures exist, so other tag formats go unchecked here.
     #[test]
     fn apply_mapping_round_trips_flac_fixture() -> anyhow::Result<()> {
         use std::path::PathBuf;
@@ -405,22 +353,6 @@ mod tests {
     }
 
     #[test]
-    fn supported_names_count_matches_match_arms() {
-        // Drift sentinel: if you add a new arm to `resolve_item_key`
-        // you must also add the name to `SUPPORTED_KEY_NAMES` (and
-        // bump this expected count). Keeps the two lists aligned so
-        // the admin UI can advertise every key the resolver accepts.
-        const EXPECTED: usize = 32;
-        assert_eq!(
-            SUPPORTED_KEY_NAMES.len(),
-            EXPECTED,
-            "SUPPORTED_KEY_NAMES length changed; update EXPECTED here \
-             and verify every resolve_item_key match arm has a \
-             corresponding entry in the const",
-        );
-    }
-
-    #[test]
     fn default_config_rules_all_resolve() {
         let cfg = default_config();
         for rule in &cfg.rules {
@@ -433,15 +365,14 @@ mod tests {
     }
 
     #[test]
-    fn supported_names_list_is_unique() {
-        let mut sorted: Vec<&&str> = SUPPORTED_KEY_NAMES.iter().collect();
-        sorted.sort();
-        let len_before = sorted.len();
-        sorted.dedup();
+    fn source_key_names_are_unique() {
+        let mut names: Vec<&str> = SOURCE_KEYS.iter().map(|&(name, _)| name).collect();
+        names.sort_unstable();
+        names.dedup();
         assert_eq!(
-            len_before,
-            sorted.len(),
-            "SUPPORTED_KEY_NAMES contains duplicates",
+            names.len(),
+            SOURCE_KEYS.len(),
+            "SOURCE_KEYS contains duplicates"
         );
     }
 }
