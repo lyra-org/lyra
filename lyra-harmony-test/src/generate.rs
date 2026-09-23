@@ -965,6 +965,17 @@ fn write_raw_tags_sections(
         if let Some(bit_depth) = raw.bit_depth {
             out.push_str(&format!("bit_depth = {bit_depth}\n"));
         }
+        for (key, value) in [
+            ("replaygain_track_gain", &raw.gain.replaygain_track_gain),
+            ("replaygain_album_gain", &raw.gain.replaygain_album_gain),
+            ("r128_track_gain", &raw.gain.r128_track_gain),
+            ("r128_album_gain", &raw.gain.r128_album_gain),
+        ] {
+            if let Some(value) = value {
+                let escaped = escape_toml_string(value);
+                out.push_str(&format!("{key} = \"{escaped}\"\n"));
+            }
+        }
     }
 
     Ok(())

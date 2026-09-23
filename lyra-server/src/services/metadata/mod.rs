@@ -520,4 +520,29 @@ mod tests {
         assert_eq!(tag.get_string(ItemKey::Barcode), Some("4988031554531"));
         Ok(())
     }
+
+    #[test]
+    fn gain_tags_resolve_to_replaygain_reference() -> anyhow::Result<()> {
+        let path = fixture_with_comments(
+            "gain-tags",
+            &[
+                ("REPLAYGAIN_TRACK_GAIN", "-6.54 dB"),
+                ("R128_TRACK_GAIN", "-512"),
+                ("R128_ALBUM_GAIN", "-512"),
+            ],
+        )?;
+        let (tag, tagged_file) = read_audio_tags(path.clone())?;
+        std::fs::remove_file(&path)?;
+
+        let raw = mapping::apply_mapping(
+            &tag,
+            &tagged_file,
+            &path.to_string_lossy(),
+            &mapping::default_config(),
+        );
+        let track = lyra_metadata::process_raw_tags(vec![raw]).remove(0);
+        assert_eq!(track.track_gain_db, Some(-6.54));
+        assert_eq!(track.album_gain_db, Some(3.0));
+        Ok(())
+    }
 }

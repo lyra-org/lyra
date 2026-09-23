@@ -11,7 +11,10 @@ use lofty::{
         Tag,
     },
 };
-use lyra_metadata::RawTrackTags;
+use lyra_metadata::{
+    RawGainTags,
+    RawTrackTags,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -92,8 +95,8 @@ pub(crate) fn resolve_item_key(name: &str) -> Option<ItemKey> {
         .map(|&(_, key)| key)
 }
 
-/// Disc/track numbers, totals, and duration require format-specific parsing.
-/// Media and barcode identify editions and have no [`FieldName`] destination.
+/// Fields without a [`FieldName`] (numbering, audio properties, edition
+/// and gain tags) are read directly.
 pub(crate) fn apply_mapping(
     tag: &Tag,
     tagged_file: &lofty::file::TaggedFile,
@@ -153,6 +156,12 @@ pub(crate) fn apply_mapping(
             .overall_bitrate()
             .filter(|&v| v > 0)
             .and_then(|kbps| kbps.checked_mul(1_000)),
+        gain: RawGainTags {
+            replaygain_track_gain: non_empty_string(tag, ItemKey::ReplayGainTrackGain),
+            replaygain_album_gain: non_empty_string(tag, ItemKey::ReplayGainAlbumGain),
+            r128_track_gain: non_empty_string(tag, ItemKey::R128TrackGain),
+            r128_album_gain: non_empty_string(tag, ItemKey::R128AlbumGain),
+        },
     }
 }
 

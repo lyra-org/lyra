@@ -8,6 +8,7 @@ mod coalesce;
 mod context;
 mod edition;
 mod filename;
+mod loudness;
 mod path;
 mod year;
 
@@ -41,6 +42,7 @@ pub use edition::{
     release_media_formats,
 };
 pub use filename::fill_from_filename;
+pub use loudness::RawGainTags;
 pub use path::{
     extract_lookup_hints_from_file_path,
     extract_lookup_hints_from_file_path_with_library_root,
@@ -99,6 +101,8 @@ pub struct RawTrackTags {
     pub bit_depth: Option<u32>,
     #[serde(default)]
     pub bitrate_bps: Option<u32>,
+    #[serde(flatten)]
+    pub gain: RawGainTags,
 }
 
 /// Processed track metadata (pure, no database IDs).
@@ -131,6 +135,11 @@ pub struct TrackMetadata {
     pub channel_count: Option<u32>,
     pub bit_depth: Option<u32>,
     pub bitrate_bps: Option<u32>,
+    /// Gain in dB relative to the ReplayGain 2.0 reference (-18 LUFS).
+    #[serde(default)]
+    pub track_gain_db: Option<f64>,
+    #[serde(default)]
+    pub album_gain_db: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -266,6 +275,8 @@ pub fn process_raw_tags(raw_tags: Vec<RawTrackTags>) -> Vec<TrackMetadata> {
             channel_count: raw.channel_count,
             bit_depth: raw.bit_depth,
             bitrate_bps: raw.bitrate_bps,
+            track_gain_db: raw.gain.track_gain_db(),
+            album_gain_db: raw.gain.album_gain_db(),
         };
 
         paths.push(PathBuf::from(raw.file_path));
@@ -432,6 +443,7 @@ mod tests {
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            gain: Default::default(),
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -472,6 +484,7 @@ mod tests {
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            gain: Default::default(),
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -508,6 +521,7 @@ mod tests {
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            gain: Default::default(),
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -558,6 +572,7 @@ mod tests {
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            gain: Default::default(),
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -622,6 +637,7 @@ mod tests {
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            gain: Default::default(),
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -679,6 +695,7 @@ mod tests {
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            gain: Default::default(),
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -721,6 +738,7 @@ mod tests {
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            gain: Default::default(),
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -752,6 +770,7 @@ mod tests {
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            gain: Default::default(),
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -784,6 +803,7 @@ mod tests {
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            gain: Default::default(),
         };
 
         let processed = process_raw_tags(vec![raw]);
@@ -960,6 +980,8 @@ mod tests {
             channel_count: None,
             bit_depth: None,
             bitrate_bps: None,
+            track_gain_db: None,
+            album_gain_db: None,
         }
     }
 
@@ -1255,6 +1277,7 @@ mod tests {
                 channel_count: None,
                 bit_depth: None,
                 bitrate_bps: None,
+                gain: Default::default(),
             },
             RawTrackTags {
                 file_path: "/music/unicode/02.flac".to_string(),
@@ -1278,6 +1301,7 @@ mod tests {
                 channel_count: None,
                 bit_depth: None,
                 bitrate_bps: None,
+                gain: Default::default(),
             },
         ]);
 
