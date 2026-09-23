@@ -50,17 +50,8 @@ pub(crate) struct MetadataMappingConfig {
     pub(crate) version: u64,
 }
 
-/// Literal `ItemKey::Variant` arms — a lofty rename breaks this at
-/// compile time, never silently. The set is curated to keys that can
-/// populate a [`FieldName`]; MusicBrainz IDs, ReplayGain, ISRC,
-/// sort-orders etc. are excluded because no destination accepts them.
-///
-/// Audited against lofty 0.24.0: every arm below is present in the
-/// current enum (compile-checked), and nothing exposed here was
-/// renamed or removed in the 0.23 → 0.24 transition (the full test
-/// suite continued to pass across the bump). When adding a new arm,
-/// add the same string to [`SUPPORTED_KEY_NAMES`] so the admin UI
-/// can advertise it — the drift tests enforce alignment.
+/// Literal arms so a lofty rename fails to compile. Limited to keys that
+/// can populate a [`FieldName`]; mirror additions in [`SUPPORTED_KEY_NAMES`].
 pub(crate) fn resolve_item_key(name: &str) -> Option<ItemKey> {
     let key = match name {
         "AlbumTitle" => ItemKey::AlbumTitle,

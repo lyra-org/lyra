@@ -37,8 +37,8 @@ use lofty::{
     flac::FlacFile,
     ogg::{
         OpusFile,
-        VorbisComments,
         VorbisFile,
+        tag::VorbisComments,
     },
     probe::Probe,
     tag::{
