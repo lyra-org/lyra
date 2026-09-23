@@ -37,7 +37,7 @@ use crate::{
                 FieldName,
                 MappingRule,
                 MetadataMappingConfig,
-                SUPPORTED_KEY_NAMES,
+                SOURCE_KEYS,
             },
             mapping_admin::{
                 DryRunReport,
@@ -55,7 +55,7 @@ use crate::{
 struct MetadataMappingResponse {
     version: u64,
     rules: Vec<MetadataMappingRule>,
-    supported_source_keys: &'static [&'static str],
+    supported_source_keys: Vec<&'static str>,
     /// `true` while a committed config is still reingesting libraries.
     /// Poll this endpoint after `PUT /api/metadata/mapping` to wait for
     /// completion.
@@ -135,7 +135,7 @@ async fn get_metadata_mapping(
             .into_iter()
             .map(MetadataMappingRule::from)
             .collect(),
-        supported_source_keys: SUPPORTED_KEY_NAMES,
+        supported_source_keys: SOURCE_KEYS.iter().map(|&(name, _)| name).collect(),
         reingest_in_progress: reingest_in_progress(),
     }))
 }

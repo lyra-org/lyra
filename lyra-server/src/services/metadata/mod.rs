@@ -154,18 +154,6 @@ fn read_tagged_file(path: &std::path::Path) -> anyhow::Result<(TaggedFile, Vorbi
     }
 }
 
-/// Disc/track number+total and duration bypass the mapping — their
-/// extraction does format-specific parsing (n/N strings, packed MP4
-/// atoms) not expressible as a rule.
-pub(crate) fn extract_raw_tags_from_lofty(
-    tag: &Tag,
-    tagged_file: &lofty::file::TaggedFile,
-    file_path: &str,
-    config: &MetadataMappingConfig,
-) -> lyra_metadata::RawTrackTags {
-    mapping::apply_mapping(tag, tagged_file, file_path, config)
-}
-
 #[derive(Debug, Clone)]
 pub(crate) enum SkipReason {
     ReadFailed(String),
@@ -341,7 +329,7 @@ pub(crate) async fn parse_metadata(
             }
         };
         let file_path = path.to_string_lossy().to_string();
-        let raw = extract_raw_tags_from_lofty(&tag, &tagged_file, &file_path, mapping_config);
+        let raw = mapping::apply_mapping(&tag, &tagged_file, &file_path, mapping_config);
         if let Err(missing) = mapping::check_required_fields(&raw) {
             tracing::warn!(
                 path = %path.display(),

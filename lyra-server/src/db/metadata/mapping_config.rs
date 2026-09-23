@@ -100,11 +100,8 @@ pub(crate) fn get(db: &DbAny) -> anyhow::Result<Option<MetadataMappingConfig>> {
     decode(&node).map(Some)
 }
 
-/// Persist `config`, asserting its version strictly exceeds the
-/// currently stored one. Every rule's `source_key` must resolve to a
-/// known [`ItemKey`] variant; unknown keys fail the write at the DB
-/// boundary so scripts and repair tools can't bypass the route
-/// validator.
+/// Persist `config` if its version exceeds the stored one. Unknown
+/// `source_key`s are rejected here so no caller can bypass validation.
 pub(crate) fn update(db: &mut DbAny, config: &MetadataMappingConfig) -> anyhow::Result<()> {
     for rule in &config.rules {
         if resolve_item_key(&rule.source_key).is_none() {

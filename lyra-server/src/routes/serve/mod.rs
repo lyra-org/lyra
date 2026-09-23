@@ -681,7 +681,7 @@ mod tests {
         let (tag, tagged_file) = crate::services::metadata::read_audio_tags(fixture_dst.clone())?;
         let fixture_str = fixture_dst.to_string_lossy().to_string();
         let mapping_config = crate::services::metadata::mapping::default_config();
-        let raw_tags = crate::services::metadata::extract_raw_tags_from_lofty(
+        let raw_tags = crate::services::metadata::mapping::apply_mapping(
             &tag,
             &tagged_file,
             &fixture_str,
