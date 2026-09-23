@@ -4,7 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 use lofty::{
-    file::AudioFile,
+    properties::FileProperties,
     tag::{
         Accessor,
         ItemKey,
@@ -99,7 +99,7 @@ pub(crate) fn resolve_item_key(name: &str) -> Option<ItemKey> {
 /// and gain tags) are read directly.
 pub(crate) fn apply_mapping(
     tag: &Tag,
-    tagged_file: &lofty::file::TaggedFile,
+    properties: &FileProperties,
     file_path: &str,
     config: &MetadataMappingConfig,
 ) -> RawTrackTags {
@@ -130,7 +130,6 @@ pub(crate) fn apply_mapping(
         }
     }
 
-    let properties = tagged_file.properties();
     RawTrackTags {
         file_path: file_path.to_string(),
         album,
@@ -299,7 +298,10 @@ mod tests {
         use std::path::PathBuf;
 
         use lofty::{
-            file::TaggedFileExt,
+            file::{
+                AudioFile,
+                TaggedFileExt,
+            },
             probe::Probe,
         };
 
@@ -338,7 +340,12 @@ mod tests {
         let expected_track_total = tag.track_total();
 
         let config = default_config();
-        let raw = apply_mapping(&tag, &tagged_file, &fixture.to_string_lossy(), &config);
+        let raw = apply_mapping(
+            &tag,
+            tagged_file.properties(),
+            &fixture.to_string_lossy(),
+            &config,
+        );
 
         assert_eq!(
             raw.album, expected_album,

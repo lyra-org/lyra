@@ -678,12 +678,12 @@ mod tests {
         let fixture_dst = test_dir.join("integration_track.flac");
         tokio::fs::copy(&fixture_src, &fixture_dst).await?;
 
-        let (tag, tagged_file) = crate::services::metadata::read_audio_tags(fixture_dst.clone())?;
+        let (tag, properties) = crate::services::metadata::read_audio_tags(fixture_dst.clone())?;
         let fixture_str = fixture_dst.to_string_lossy().to_string();
         let mapping_config = crate::services::metadata::mapping::default_config();
         let raw_tags = crate::services::metadata::mapping::apply_mapping(
             &tag,
-            &tagged_file,
+            &properties,
             &fixture_str,
             &mapping_config,
         );
