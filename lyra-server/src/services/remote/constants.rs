@@ -9,6 +9,7 @@ pub(crate) const PING_INTERVAL: Duration = Duration::from_secs(30);
 pub(crate) const PONG_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const AUTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
+pub(crate) const MAX_CONSECUTIVE_AUTH_ERRORS: u32 = 5;
 pub(crate) const MAX_MESSAGE_SIZE: usize = 64 * 1024;
 pub(crate) const MAX_CONNECTIONS_PER_USER: usize = 8;
 /// Why the server closes a connection.

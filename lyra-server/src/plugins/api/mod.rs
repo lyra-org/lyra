@@ -183,6 +183,8 @@ use crate::routes::{
 };
 use crate::services::auth::resolve_optional_auth;
 use crate::services::remote::constants::{
+    AUTH_CHECK_INTERVAL,
+    MAX_CONSECUTIVE_AUTH_ERRORS,
     MAX_MESSAGE_SIZE,
     PING_INTERVAL,
     PONG_TIMEOUT,

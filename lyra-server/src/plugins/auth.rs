@@ -203,6 +203,24 @@ impl DispatchAuth {
         *self.0.lock().expect("dispatch auth slot poisoned") = Some(principal);
     }
 
+    /// Replaces the principal only while the slot still acts for the same user,
+    /// leaving a principal the plugin resolved for someone else in place.
+    pub(crate) fn refresh(&self, principal: ServicePrincipal) {
+        let mut slot = self.0.lock().expect("dispatch auth slot poisoned");
+        if slot
+            .as_ref()
+            .is_some_and(|current| current.user_public_id == principal.user_public_id)
+        {
+            *slot = Some(principal);
+        }
+    }
+
+    /// Empties the slot, refusing principal-requiring host calls until a
+    /// credential is resolved again.
+    pub(crate) fn clear(&self) {
+        *self.0.lock().expect("dispatch auth slot poisoned") = None;
+    }
+
     pub(crate) fn principal(&self) -> Option<ServicePrincipal> {
         self.0.lock().expect("dispatch auth slot poisoned").clone()
     }
