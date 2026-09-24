@@ -110,6 +110,10 @@ pub(crate) fn insert_track(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> 
     Ok(track_id)
 }
 
+pub(crate) fn insert_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId> {
+    super::users::create(db, &test_user(username)?)
+}
+
 pub(crate) fn insert_release(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> {
     let release = super::releases::Release {
         db_id: None,

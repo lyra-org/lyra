@@ -74,7 +74,7 @@ const CORE_INDEXES: &[&str] = &[
     "scan_name",
     "label_scan_name",
     "tag",
-    "tag_owner_name", // composite "{owner_db_id}:{normalized_name}" for O(log N) tag lookup
+    "tag_owner_name", // composite "{owner_public_id}:{normalized_name}" for O(log N) tag lookup
     // Required for library uniqueness lookups: `select().elements::<T>().search()`
     // filters output but doesn't stop traversal, so without these the checks
     // walk the entire libraries subgraph on every create/update.
