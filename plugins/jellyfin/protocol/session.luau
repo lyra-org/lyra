@@ -564,7 +564,7 @@ function module.parse_playlist_query_track_ids(query: ApiQueryParams?): { number
 	return item_ids.parse_jellyfin_ids_csv(raw_ids)
 end
 
-function module.parse_playlist_query_entry_ids(query: ApiQueryParams?, playlist: PlaylistInfo): { number }?
+function module.parse_playlist_query_entry_ids(query: ApiQueryParams?, playlist: PlaylistInfo): { string }?
 	local raw = requests.parse_query_string(query, { "entryIds", "EntryIds", "entryids" }, nil)
 	if not raw then
 		return nil

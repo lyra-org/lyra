@@ -308,47 +308,37 @@ pub(crate) fn add_tracks(
         .collect())
 }
 
-pub(crate) fn remove_track(db: &mut DbAny, entry_db_id: QueryId) -> anyhow::Result<()> {
-    let entry_db_id = resolve_id(db, entry_db_id)?;
-    let playlist_db_id = get_playlist_for_entry(db, entry_db_id)?;
-    db.transaction_mut(|t| {
-        db::playlists::remove_track(t, entry_db_id)?;
-        if let Some(playlist_db_id) = playlist_db_id {
-            db::covers::display::sync_playlist_cover(t, playlist_db_id)?;
-        }
-        Ok(())
-    })
-}
-
-pub(crate) fn get_playlist_for_entry(
+/// The playlist's entry with public id `entry_id`, looked up under the caller's guard.
+pub(crate) fn find_entry(
     db: &DbAny,
-    entry_db_id: DbId,
-) -> anyhow::Result<Option<DbId>> {
-    let result = db.exec(QueryBuilder::select().ids(entry_db_id).query())?;
-    Ok(result
-        .elements
-        .first()
-        .and_then(|element| (element.id.0 < 0 && element.from.0 != 0).then_some(element.from)))
+    playlist_db_id: DbId,
+    entry_id: &str,
+) -> anyhow::Result<Option<PlaylistTrackLink>> {
+    Ok(get_tracks(db, QueryId::Id(playlist_db_id))?
+        .into_iter()
+        .find(|track| track.entry_id == entry_id))
 }
 
+fn require_entry(
+    db: &DbAny,
+    playlist_db_id: DbId,
+    entry_id: &str,
+) -> anyhow::Result<PlaylistTrackLink> {
+    find_entry(db, playlist_db_id, entry_id)?
+        .ok_or_else(|| anyhow::anyhow!("playlist entry not found: {entry_id}"))
+}
+
+/// Removes the playlist's entries named by public id, failing before any removal when one is
+/// not in the playlist.
 pub(crate) fn remove_tracks(
     db: &mut DbAny,
-    playlist_id: QueryId,
-    entry_ids: &[QueryId],
+    playlist_db_id: DbId,
+    entry_ids: &[String],
 ) -> anyhow::Result<Vec<PlaylistTrackLink>> {
-    let playlist_db_id = resolve_id(db, playlist_id)?;
-    let existing_tracks = get_tracks(db, QueryId::Id(playlist_db_id))?;
-    let mut removed = Vec::with_capacity(entry_ids.len());
-
-    for entry_id in entry_ids {
-        let entry_db_id = resolve_id(db, entry_id.clone())?;
-        let track = existing_tracks
-            .iter()
-            .find(|track| track.entry_db_id == entry_db_id)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("playlist entry not found: {}", entry_db_id.0))?;
-        removed.push(track);
-    }
+    let removed = entry_ids
+        .iter()
+        .map(|entry_id| require_entry(db, playlist_db_id, entry_id))
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     db.transaction_mut(|t| -> anyhow::Result<()> {
         for track in &removed {
@@ -362,12 +352,11 @@ pub(crate) fn remove_tracks(
 
 pub(crate) fn move_track(
     db: &mut DbAny,
-    playlist_id: QueryId,
-    entry_id: QueryId,
+    playlist_db_id: DbId,
+    entry_id: &str,
     new_position: u64,
 ) -> anyhow::Result<()> {
-    let playlist_db_id = resolve_id(db, playlist_id)?;
-    let entry_db_id = resolve_id(db, entry_id)?;
+    let entry_db_id = require_entry(db, playlist_db_id, entry_id)?.entry_db_id;
     db.transaction_mut(|t| db::playlists::move_track(t, playlist_db_id, entry_db_id, new_position))
 }
 
@@ -596,7 +585,7 @@ mod tests {
         let playlist_db_id = create_playlist(&mut db, user_db_id, "Shrinking")?;
         let added = add_tracks(&mut db, QueryId::Id(playlist_db_id), &[QueryId::Id(track)])?;
 
-        remove_track(&mut db, QueryId::Id(added[0].entry_db_id))?;
+        remove_tracks(&mut db, playlist_db_id, &[added[0].entry_id.clone()])?;
 
         let summary = summaries(
             &db,

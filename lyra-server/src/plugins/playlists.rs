@@ -100,8 +100,7 @@ impl From<db::Playlist> for PlaylistInfo {
 
 #[derive(Clone, Serialize)]
 struct PlaylistTrackLink {
-    entry_id: i64,
-    entry_public_id: String,
+    entry_id: String,
     track_id: i64,
     position: u64,
 }
@@ -109,8 +108,7 @@ struct PlaylistTrackLink {
 impl From<playlist_service::PlaylistTrackLink> for PlaylistTrackLink {
     fn from(link: playlist_service::PlaylistTrackLink) -> Self {
         Self {
-            entry_id: link.entry_db_id.0,
-            entry_public_id: link.entry_id,
+            entry_id: link.entry_id,
             track_id: link.track_db_id.0,
             position: link.position,
         }
@@ -262,15 +260,17 @@ fn add_track_spec() -> FunctionSpec {
         .args::<ResolveId>()
         .arg_name("track_id")
         .args::<ResolveId>()
-        .returns::<Option<i64>>()
+        .returns::<Option<String>>()
         .call_async(Arc::new(add_track_callback))
 }
 
 fn remove_track_spec() -> FunctionSpec {
     FunctionSpec::async_fn("remove_track")
         .context::<crate::plugins::auth::DispatchAuth>()
-        .arg_name("entry_id")
+        .arg_name("playlist_id")
         .args::<ResolveId>()
+        .arg_name("entry_id")
+        .args::<String>()
         .returns::<bool>()
         .call_async(Arc::new(remove_track_callback))
 }
@@ -281,7 +281,7 @@ fn move_track_spec() -> FunctionSpec {
         .arg_name("playlist_id")
         .args::<ResolveId>()
         .arg_name("entry_id")
-        .args::<i64>()
+        .args::<String>()
         .arg_name("new_position")
         .args::<u64>()
         .returns::<bool>()
@@ -636,40 +636,26 @@ fn add_track_callback(
             QueryId::Id(track_db_id),
         )
         .map_err(crate::plugins::runtime_error)?;
-        Ok(luau::Value::from(link.edge_id.0))
+        Ok(luau::Value::String(link.entry_id.into_bytes()))
     }))
 }
 
 fn remove_track_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let entry_id = parse_resolve_id(frame.args.read_named::<luau::Value>("entry_id")?)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<PlaylistsModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let playlist_id = parse_resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
+    let entry_id: String = frame.args.read_named("entry_id")?;
+    let db = frame.vm.data().get::<PlaylistsModuleStore>()?.db()?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
-        let Some(QueryId::Id(entry_db_id)) = entry_id
-            .to_query_id(&db)
-            .map_err(crate::plugins::runtime_error)?
+        let Some(playlist_db_id) =
+            owned_playlist_with_entry(&db, &principal, playlist_id, &entry_id)?
         else {
             return Ok(luau::Value::Boolean(false));
         };
-        let Some(playlist_db_id) = playlist_for_track_entry(&db, entry_db_id)? else {
-            return Ok(luau::Value::Boolean(false));
-        };
-        if !crate::services::auth::access::playlist_owned(&db, &principal, playlist_db_id)
-            .map_err(crate::plugins::runtime_error)?
-        {
-            return Ok(luau::Value::Boolean(false));
-        }
-        playlist_service::remove_track(&mut db, QueryId::Id(entry_db_id))
+        playlist_service::remove_tracks(&mut db, playlist_db_id, &[entry_id])
             .map_err(crate::plugins::runtime_error)?;
         Ok(luau::Value::Boolean(true))
     }))
@@ -679,10 +665,7 @@ fn move_track_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let playlist_id = parse_resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
-    let entry_id = match parse_resolve_id(frame.args.read_named::<luau::Value>("entry_id")?)? {
-        ResolveId::DbId(id) => id,
-        _ => return Err(crate::plugins::runtime_error("entry_id must be an integer")),
-    };
+    let entry_id: String = frame.args.read_named("entry_id")?;
     let new_position = match frame.args.read_named::<luau::Value>("new_position")? {
         luau::Value::Integer(value) if value >= 0 => value as u64,
         luau::Value::Number(value)
@@ -702,57 +685,39 @@ fn move_track_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
-        let Some(QueryId::Id(playlist_db_id)) = playlist_id
-            .to_query_id(&db)
-            .map_err(crate::plugins::runtime_error)?
+        let Some(playlist_db_id) =
+            owned_playlist_with_entry(&db, &principal, playlist_id, &entry_id)?
         else {
             return Ok(luau::Value::Boolean(false));
         };
-        if !crate::services::auth::access::playlist_owned(&db, &principal, playlist_db_id)
-            .map_err(crate::plugins::runtime_error)?
-            || playlist_for_track_entry(&db, entry_id)? != Some(playlist_db_id)
-        {
-            return Ok(luau::Value::Boolean(false));
-        }
-        playlist_service::move_track(
-            &mut db,
-            QueryId::Id(playlist_db_id),
-            QueryId::Id(entry_id),
-            new_position,
-        )
-        .map_err(crate::plugins::runtime_error)?;
+        playlist_service::move_track(&mut db, playlist_db_id, &entry_id, new_position)
+            .map_err(crate::plugins::runtime_error)?;
         Ok(luau::Value::Boolean(true))
     }))
 }
 
-fn playlist_for_track_entry(db: &DbAny, entry_id: DbId) -> luau::runtime::Result<Option<DbId>> {
-    if entry_id.0 >= 0 {
-        return Ok(None);
-    }
-    let playlist_id = match playlist_service::get_playlist_for_entry(db, entry_id) {
-        Ok(Some(id)) => id,
-        Ok(None) => return Ok(None),
-        Err(error)
-            if error
-                .downcast_ref::<agdb::DbError>()
-                .is_some_and(|error| error.ty == agdb::DbErrorType::NotFound) =>
-        {
-            return Ok(None);
-        }
-        Err(error) => return Err(crate::plugins::runtime_error(error)),
-    };
-    if playlist_service::get(db, QueryId::Id(playlist_id))
+/// The caller's playlist `playlist_id` when it holds the entry `entry_id`, checked under `db`'s
+/// guard.
+fn owned_playlist_with_entry(
+    db: &DbAny,
+    principal: &Principal,
+    playlist_id: ResolveId,
+    entry_id: &str,
+) -> luau::runtime::Result<Option<DbId>> {
+    let Some(QueryId::Id(playlist_db_id)) = playlist_id
+        .to_query_id(db)
         .map_err(crate::plugins::runtime_error)?
-        .is_none()
+    else {
+        return Ok(None);
+    };
+    if !crate::services::auth::access::playlist_owned(db, principal, playlist_db_id)
+        .map_err(crate::plugins::runtime_error)?
     {
         return Ok(None);
     }
-    let tracks = playlist_service::get_tracks(db, QueryId::Id(playlist_id))
-        .map_err(crate::plugins::runtime_error)?;
-    Ok(tracks
-        .iter()
-        .any(|track| track.entry_db_id == entry_id)
-        .then_some(playlist_id))
+    Ok(playlist_service::find_entry(db, playlist_db_id, entry_id)
+        .map_err(crate::plugins::runtime_error)?
+        .map(|_| playlist_db_id))
 }
 
 fn visible_track_links(
@@ -995,8 +960,7 @@ impl DescribeInterface for PlaylistTrackLink {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("PlaylistTrackLink", None);
         descriptor.fields.extend([
-            field("entry_id", i64::luau_type()),
-            field("entry_public_id", String::luau_type()),
+            field("entry_id", String::luau_type()),
             field("track_id", i64::luau_type()),
             field("position", u64::luau_type()),
         ]);
@@ -1153,15 +1117,18 @@ fn module_descriptor() -> ModuleDescriptor {
                     param("playlist_id", resolve_id_type()),
                     param("track_id", resolve_id_type()),
                 ],
-                returns: vec![Option::<i64>::luau_type()],
+                returns: vec![Option::<String>::luau_type()],
                 yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["remove_track"],
                 description: Some(
-                    "Returns true when removed, or false if the entry is missing or not owned by the caller.",
+                    "Returns true when removed, or false if the playlist is not owned by the caller or the entry is not in it.",
                 ),
-                params: vec![param("entry_id", resolve_id_type())],
+                params: vec![
+                    param("playlist_id", resolve_id_type()),
+                    param("entry_id", String::luau_type()),
+                ],
                 returns: vec![bool::luau_type()],
                 yields: true,
             },
@@ -1172,7 +1139,7 @@ fn module_descriptor() -> ModuleDescriptor {
                 ),
                 params: vec![
                     param("playlist_id", resolve_id_type()),
-                    param("entry_id", i64::luau_type()),
+                    param("entry_id", String::luau_type()),
                     param("new_position", u64::luau_type()),
                 ],
                 returns: vec![bool::luau_type()],

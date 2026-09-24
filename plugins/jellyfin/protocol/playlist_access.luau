@@ -90,15 +90,15 @@ function module.track_ids(playlist: PlaylistInfo): { number }
 	return track_ids
 end
 
-function module.resolve_entry_ids(playlist: PlaylistInfo, raw_ids: { string }): { number }?
-	local by_hex: { [string]: number } = {}
+function module.resolve_entry_ids(playlist: PlaylistInfo, raw_ids: { string }): { string }?
+	local by_hex: { [string]: string } = {}
 	for _, entry in module.track_refs(playlist) do
-		local hex_id = item_ids.encode_jellyfin_item_id(entry.entry_public_id)
+		local hex_id = item_ids.encode_jellyfin_item_id(entry.entry_id)
 		if hex_id then
 			by_hex[hex_id] = entry.entry_id
 		end
 	end
-	local resolved: { number } = {}
+	local resolved: { string } = {}
 	local seen: { [string]: boolean } = {}
 	for _, raw_id in raw_ids do
 		local hex_id = constants.normalize_item_id(raw_id)
