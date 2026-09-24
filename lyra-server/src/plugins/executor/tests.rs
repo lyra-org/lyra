@@ -534,6 +534,62 @@ fn plugin_executor_registers_similar_releases_handler() -> Result<()> {
 }
 
 #[test]
+fn provider_id_keeps_one_generator_handler_per_registration() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
+    let runtime = runtime_with_scopes(&["lyra.metadata"])?;
+    let handlers = runtime
+        .vm
+        .data()
+        .get::<crate::plugins::metadata::MetadataCallbackRegistry>()?;
+    runtime.run_plugin_source(
+        "demo",
+        "init.luau",
+        &br#"
+            local metadata = require("@lyra/metadata")
+            local ET = metadata.EntityType
+            provider = metadata.Provider.new("replaced-generator-provider")
+            provider:id({ id_type = "thing_id", entity = ET.Release, scheme = "example:thing" }, function()
+                return nil
+            end)
+        "#[..],
+    )?;
+    assert_eq!(handlers.len(), 1);
+
+    runtime.run_plugin_source(
+        "demo",
+        "replace.luau",
+        &br#"
+            local metadata = require("@lyra/metadata")
+            provider:id({ id_type = "thing_id", entity = metadata.EntityType.Release, scheme = "example:thing" }, function()
+                return nil
+            end)
+        "#[..],
+    )?;
+    assert_eq!(handlers.len(), 1, "the replaced handler is removed");
+
+    let error = runtime
+        .run_plugin_source(
+            "demo",
+            "conflict.luau",
+            &br#"
+                local metadata = require("@lyra/metadata")
+                provider:id({ id_type = "thing_id", entity = metadata.EntityType.Artist, scheme = "example:other" }, function()
+                    return nil
+                end)
+            "#[..],
+        )
+        .expect_err("conflicting scheme must be rejected");
+    assert!(error.to_string().contains("same scheme"), "{error:#}");
+    assert_eq!(
+        handlers.len(),
+        1,
+        "a rejected registration keeps no handler"
+    );
+    Ok(())
+}
+
+#[test]
 fn plugin_executor_rejects_invalid_id_scheme() -> Result<()> {
     let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
     crate::testing::init_default_test_state()?;

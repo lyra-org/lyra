@@ -4,6 +4,7 @@
 // www.meshiplaw.com/lyra.
 
 mod context;
+mod links;
 mod projection;
 pub(crate) mod relations;
 
@@ -41,14 +42,23 @@ use crate::db::{
     Release,
     Track,
 };
-use crate::services::providers::IdentifiersByScheme;
+use crate::services::providers::{
+    IdLink,
+    IdentifiersByScheme,
+};
 
 pub(crate) use context::{
     EntityContextError,
     build_entity_provider_context,
     build_release_context,
 };
+pub(crate) use links::{
+    IdLinkRows,
+    apply_id_links,
+    id_link_request,
+};
 pub(crate) use projection::{
+    IdIncludes,
     project_entities,
     project_entity,
 };
@@ -59,6 +69,7 @@ pub(crate) type ExternalIdsByProvider = BTreeMap<String, BTreeMap<String, String
 pub(crate) enum EntityInclude {
     ExternalIds,
     Identifiers,
+    Links,
     Releases,
     Artists,
     Tracks,
@@ -71,6 +82,7 @@ impl EntityInclude {
         match raw.trim().to_ascii_lowercase().as_str() {
             "external_ids" => Some(Self::ExternalIds),
             "identifiers" => Some(Self::Identifiers),
+            "links" => Some(Self::Links),
             "releases" => Some(Self::Releases),
             "artists" => Some(Self::Artists),
             "tracks" => Some(Self::Tracks),
@@ -84,6 +96,7 @@ impl EntityInclude {
         match self {
             Self::ExternalIds => "external_ids",
             Self::Identifiers => "identifiers",
+            Self::Links => "links",
             Self::Releases => "releases",
             Self::Artists => "artists",
             Self::Tracks => "tracks",
@@ -95,6 +108,7 @@ impl EntityInclude {
     pub(crate) const ALL: &[Self] = &[
         Self::ExternalIds,
         Self::Identifiers,
+        Self::Links,
         Self::Releases,
         Self::Artists,
         Self::Tracks,
@@ -333,6 +347,7 @@ pub(crate) struct ReleaseProjectionTrack {
     pub(crate) ctime: Option<u64>,
     pub(crate) external_ids: ExternalIdsByProvider,
     pub(crate) identifiers: IdentifiersByScheme,
+    pub(crate) links: Option<Vec<IdLink>>,
     pub(crate) artists: Vec<Artist>,
     pub(crate) lookup_hints: EntityLookupHints,
 }
@@ -359,6 +374,7 @@ describe_interface!(ReleaseProjectionTrack, "ReleaseProjectionTrack", {
     ctime: Option<u64> as "ctime",
     external_ids: ExternalIdsByProvider as "external_ids",
     identifiers: IdentifiersByScheme as "identifiers",
+    links: Option<Vec<IdLink>> as "links",
     artists: Vec<Artist> as "artists",
     lookup_hints: EntityLookupHints as "lookup_hints",
 });
@@ -394,6 +410,7 @@ impl ReleaseProjectionTrack {
             ctime: track.ctime,
             external_ids,
             identifiers,
+            links: None,
             artists,
             lookup_hints,
         }
@@ -422,6 +439,7 @@ interface_into_lua!(ReleaseProjectionTrack =>
     ctime as "ctime",
     external_ids as "external_ids",
     identifiers as "identifiers",
+    links as "links",
     artists as "artists",
     lookup_hints as "lookup_hints",
 );
@@ -430,6 +448,7 @@ interface_into_lua!(ReleaseProjectionTrack =>
 pub(crate) struct ReleaseProjectionIncludes {
     pub(crate) external_ids: Option<ExternalIdsByProvider>,
     pub(crate) identifiers: Option<IdentifiersByScheme>,
+    pub(crate) links: Option<Vec<IdLink>>,
     pub(crate) artists: Option<Vec<Artist>>,
     pub(crate) tracks: Option<Vec<ReleaseProjectionTrack>>,
     pub(crate) credits: Option<Vec<CreditedArtistProjectionInfo>>,
@@ -438,6 +457,7 @@ pub(crate) struct ReleaseProjectionIncludes {
 describe_interface!(ReleaseProjectionIncludes, "ReleaseProjectionIncludes", {
     external_ids: Option<ExternalIdsByProvider> as "external_ids",
     identifiers: Option<IdentifiersByScheme> as "identifiers",
+    links: Option<Vec<IdLink>> as "links",
     artists: Option<Vec<Artist>> as "artists",
     tracks: Option<Vec<ReleaseProjectionTrack>> as "tracks",
     credits: Option<Vec<CreditedArtistProjectionInfo>> as "credits",
@@ -446,6 +466,7 @@ describe_interface!(ReleaseProjectionIncludes, "ReleaseProjectionIncludes", {
 interface_into_lua!(ReleaseProjectionIncludes =>
     external_ids as "external_ids",
     identifiers as "identifiers",
+    links as "links",
     artists as "artists",
     tracks as "tracks",
     credits as "credits",
@@ -455,6 +476,7 @@ interface_into_lua!(ReleaseProjectionIncludes =>
 pub(crate) struct TrackProjectionIncludes {
     pub(crate) external_ids: Option<ExternalIdsByProvider>,
     pub(crate) identifiers: Option<IdentifiersByScheme>,
+    pub(crate) links: Option<Vec<IdLink>>,
     pub(crate) releases: Option<Vec<Release>>,
     pub(crate) artists: Option<Vec<Artist>>,
     pub(crate) entries: Option<Vec<ProjectionEntryInfo>>,
@@ -464,6 +486,7 @@ pub(crate) struct TrackProjectionIncludes {
 describe_interface!(TrackProjectionIncludes, "TrackProjectionIncludes", {
     external_ids: Option<ExternalIdsByProvider> as "external_ids",
     identifiers: Option<IdentifiersByScheme> as "identifiers",
+    links: Option<Vec<IdLink>> as "links",
     releases: Option<Vec<Release>> as "releases",
     artists: Option<Vec<Artist>> as "artists",
     entries: Option<Vec<ProjectionEntryInfo>> as "entries",
@@ -473,6 +496,7 @@ describe_interface!(TrackProjectionIncludes, "TrackProjectionIncludes", {
 interface_into_lua!(TrackProjectionIncludes =>
     external_ids as "external_ids",
     identifiers as "identifiers",
+    links as "links",
     releases as "releases",
     artists as "artists",
     entries as "entries",
@@ -483,6 +507,7 @@ interface_into_lua!(TrackProjectionIncludes =>
 pub(crate) struct ArtistProjectionIncludes {
     pub(crate) external_ids: Option<ExternalIdsByProvider>,
     pub(crate) identifiers: Option<IdentifiersByScheme>,
+    pub(crate) links: Option<Vec<IdLink>>,
     pub(crate) releases: Option<Vec<Release>>,
     pub(crate) tracks: Option<Vec<Track>>,
 }
@@ -490,6 +515,7 @@ pub(crate) struct ArtistProjectionIncludes {
 describe_interface!(ArtistProjectionIncludes, "ArtistProjectionIncludes", {
     external_ids: Option<ExternalIdsByProvider> as "external_ids",
     identifiers: Option<IdentifiersByScheme> as "identifiers",
+    links: Option<Vec<IdLink>> as "links",
     releases: Option<Vec<Release>> as "releases",
     tracks: Option<Vec<Track>> as "tracks",
 });
@@ -497,6 +523,7 @@ describe_interface!(ArtistProjectionIncludes, "ArtistProjectionIncludes", {
 interface_into_lua!(ArtistProjectionIncludes =>
     external_ids as "external_ids",
     identifiers as "identifiers",
+    links as "links",
     releases as "releases",
     tracks as "tracks",
 );
@@ -1231,7 +1258,7 @@ mod tests {
             QueryId::Id(track_id),
             &[EntityInclude::Identifiers],
             None,
-            &schemes,
+            &mut IdIncludes::new(&schemes, &[]),
         )?;
         let EntityProjectionInfo::Track(single) = single else {
             panic!("expected track projection");
@@ -1244,14 +1271,20 @@ mod tests {
             vec![QueryId::Id(track_id)],
             &[EntityInclude::Identifiers],
             None,
-            &schemes,
+            &mut IdIncludes::new(&schemes, &[]),
         )?;
         let EntityProjectionInfo::Track(many) = &many[0] else {
             panic!("expected track projection");
         };
         assert_eq!(many.includes.identifiers.as_ref(), Some(&expected));
 
-        let without = project_entity(&db, QueryId::Id(track_id), &[], None, &schemes)?;
+        let without = project_entity(
+            &db,
+            QueryId::Id(track_id),
+            &[],
+            None,
+            &mut IdIncludes::new(&schemes, &[]),
+        )?;
         let EntityProjectionInfo::Track(without) = without else {
             panic!("expected track projection");
         };

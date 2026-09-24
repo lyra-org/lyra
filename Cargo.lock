@@ -1528,6 +1528,7 @@ dependencies = [
  "multimap",
  "nanoid",
  "nucleo-matcher",
+ "percent-encoding",
  "rand 0.9.2",
  "rayon",
  "reqwest",

@@ -97,6 +97,7 @@ fn release_ids_for_prefetch(
 
 #[cfg(test)]
 mod tests {
+    use crate::services::entities::IdIncludes;
     use crate::services::providers::IdSchemes;
     use agdb::QueryId;
 
@@ -139,7 +140,7 @@ mod tests {
             QueryId::Id(release_id),
             &[EntityInclude::Credits],
             None,
-            &IdSchemes::default(),
+            &mut IdIncludes::new(&IdSchemes::default(), &[]),
         )?;
         let EntityProjectionInfo::Release(release) = projection else {
             panic!("expected release projection");
@@ -175,7 +176,7 @@ mod tests {
             QueryId::Id(track_id),
             &[EntityInclude::Credits],
             None,
-            &IdSchemes::default(),
+            &mut IdIncludes::new(&IdSchemes::default(), &[]),
         )?;
         let EntityProjectionInfo::Track(track) = projection else {
             panic!("expected track projection");
@@ -210,7 +211,7 @@ mod tests {
             vec![QueryId::Id(track_id)],
             &[EntityInclude::Credits],
             None,
-            &IdSchemes::default(),
+            &mut IdIncludes::new(&IdSchemes::default(), &[]),
         )?;
         let EntityProjectionInfo::Track(track) = &projections[0] else {
             panic!("expected track projection");
@@ -235,7 +236,7 @@ mod tests {
             QueryId::Id(artist_id),
             &[EntityInclude::Credits],
             None,
-            &IdSchemes::default(),
+            &mut IdIncludes::new(&IdSchemes::default(), &[]),
         )
         .expect_err("artist projections should reject credit includes");
 

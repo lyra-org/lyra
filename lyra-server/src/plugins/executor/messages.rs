@@ -113,6 +113,10 @@ pub(crate) struct MixHandlerResult {
 #[derive(Clone, Debug)]
 pub(crate) struct MetadataDispatchContext;
 
+/// Marks calls made from an id link generator.
+#[derive(Clone, Debug)]
+pub(crate) struct IdLinkDispatchContext;
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MetadataRefreshCancellation {
     cancelled: Arc<AtomicBool>,

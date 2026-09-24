@@ -10,6 +10,7 @@ use std::{
         HashSet,
     },
     future::Future,
+    sync::Arc,
     time::{
         Duration,
         Instant,
@@ -107,7 +108,7 @@ struct ProviderSnapshot {
     handlers: Vec<ProviderHandler>,
     release_id_pairs: HashSet<(String, String)>,
     unique_release_id_pairs: HashSet<(String, String)>,
-    id_schemes: IdSchemes,
+    id_schemes: Arc<IdSchemes>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

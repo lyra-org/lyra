@@ -23,6 +23,11 @@ use anyhow::{
 use tokio::sync::RwLock;
 
 use super::super::options::OptionDeclaration;
+use super::links::{
+    IdLinkCache,
+    IdLinkGenerator,
+    IdLinkGenerators,
+};
 use super::schemes::IdSchemes;
 use crate::plugins::lifecycle::{
     PluginId,
@@ -44,11 +49,16 @@ pub(crate) struct ProviderRegistries {
     sync_locks: Arc<tokio::sync::Mutex<HashSet<String>>>,
     library_refresh_locks: Arc<tokio::sync::Mutex<HashSet<agdb::DbId>>>,
     call_locks: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    id_links: Arc<std::sync::Mutex<IdLinkCache>>,
 }
 
 impl ProviderRegistries {
     pub(crate) fn registry(&self) -> Arc<RwLock<ProviderRegistry>> {
         self.registry.clone()
+    }
+
+    pub(crate) fn id_link_cache(&self) -> Arc<std::sync::Mutex<IdLinkCache>> {
+        self.id_links.clone()
     }
 }
 
@@ -56,7 +66,7 @@ pub(crate) fn provider_registry() -> Arc<RwLock<ProviderRegistry>> {
     crate::STATE.generation().providers.registry()
 }
 
-pub(crate) async fn id_schemes() -> IdSchemes {
+pub(crate) async fn id_schemes() -> Arc<IdSchemes> {
     provider_registry().read().await.id_schemes()
 }
 
@@ -122,12 +132,14 @@ where
 }
 
 /// Registered metadata providers, bucketed by the plugin that declared them.
-/// `plugin_by_provider` is the derived O(1) dispatch index rebuilt after
-/// every teardown — the outer map is the source of truth.
+/// `plugin_by_provider` and the id snapshots are derived from the outer map,
+/// the source of truth, and rebuilt whenever it changes.
 #[derive(Default)]
 pub(crate) struct ProviderRegistry {
     providers: HashMap<PluginId, HashMap<String, ProviderState>>,
     plugin_by_provider: HashMap<String, PluginId>,
+    id_schemes: Arc<IdSchemes>,
+    id_link_generators: Arc<IdLinkGenerators>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -138,9 +150,15 @@ pub(crate) struct ProviderIdSpec {
     pub(crate) scheme: Option<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum ProviderIdUrlGenerator {
+    /// Absolute http(s) URL with a single `{id}` placeholder.
     Template(String),
+    /// Plugin function called as `(id, ctx)` on the VM that registered it.
+    Function {
+        handler: ProviderCallbackHandle,
+        vm_id: u64,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -203,15 +221,17 @@ impl ProviderRegistry {
     }
 
     /// Schemes resolve by `(provider_id, id_type)`, so every entity
-    /// registering an id type must declare the same scheme.
+    /// registering an id type must declare the same scheme. `generator` runs
+    /// only once the registration is accepted; the generator it replaces is
+    /// returned.
     pub(crate) fn set_id_registration(
         &mut self,
         provider_id: &str,
         id_spec: ProviderIdSpec,
-        generator: Option<ProviderIdUrlGenerator>,
-    ) -> std::result::Result<(), String> {
+        generator: impl FnOnce() -> Option<ProviderIdUrlGenerator>,
+    ) -> std::result::Result<Option<ProviderIdUrlGenerator>, String> {
         let Some(provider) = self.state_mut(provider_id) else {
-            return Ok(());
+            return Ok(None);
         };
         if let Some(conflict) = provider.id_specs.values().find(|existing| {
             existing.id_type == id_spec.id_type
@@ -227,18 +247,13 @@ impl ProviderRegistry {
             ));
         }
         let key = (id_spec.entity, id_spec.id_type.clone());
-        match generator {
-            Some(ProviderIdUrlGenerator::Template(template)) => {
-                provider
-                    .id_generators
-                    .insert(key.clone(), ProviderIdUrlGenerator::Template(template));
-            }
-            None => {
-                provider.id_generators.remove(&key);
-            }
-        }
+        let replaced = match generator() {
+            Some(generator) => provider.id_generators.insert(key.clone(), generator),
+            None => provider.id_generators.remove(&key),
+        };
         provider.id_specs.insert(key, id_spec);
-        Ok(())
+        self.rebuild_id_snapshots();
+        Ok(replaced)
     }
 
     pub(crate) fn set_refresh_callback(
@@ -373,16 +388,41 @@ impl ProviderRegistry {
         pairs
     }
 
-    pub(crate) fn id_schemes(&self) -> IdSchemes {
+    pub(crate) fn id_schemes(&self) -> Arc<IdSchemes> {
+        self.id_schemes.clone()
+    }
+
+    pub(crate) fn id_link_generators(&self) -> Arc<IdLinkGenerators> {
+        self.id_link_generators.clone()
+    }
+
+    fn rebuild_id_snapshots(&mut self) {
         let mut schemes = IdSchemes::default();
+        let mut generators = IdLinkGenerators::default();
         for (provider_id, state) in self.iter_states() {
             for spec in state.id_specs.values() {
                 if let Some(scheme) = &spec.scheme {
                     schemes.insert(provider_id, &spec.id_type, scheme);
                 }
             }
+            for ((entity, id_type), generator) in &state.id_generators {
+                let scheme = state
+                    .id_specs
+                    .get(&(*entity, id_type.clone()))
+                    .and_then(|spec| spec.scheme.clone());
+                generators.insert(
+                    provider_id,
+                    *entity,
+                    id_type,
+                    IdLinkGenerator {
+                        scheme,
+                        generator: generator.clone(),
+                    },
+                );
+            }
         }
-        schemes
+        self.id_schemes = Arc::new(schemes);
+        self.id_link_generators = Arc::new(generators);
     }
 
     pub(crate) fn unique_track_id_pairs(&self) -> HashSet<(String, String)> {
@@ -481,6 +521,7 @@ pub(crate) mod tests {
         let provider = registry.state(provider_id)?;
         match provider.id_generators.get(&(entity, id_type.to_string()))? {
             ProviderIdUrlGenerator::Template(template) => Some(template.clone()),
+            ProviderIdUrlGenerator::Function { .. } => None,
         }
     }
 
@@ -505,8 +546,9 @@ pub(crate) mod tests {
         }
     }
 
-    fn template(url: &str) -> Option<ProviderIdUrlGenerator> {
-        Some(ProviderIdUrlGenerator::Template(url.to_string()))
+    fn template(url: &str) -> impl FnOnce() -> Option<ProviderIdUrlGenerator> {
+        let url = url.to_string();
+        move || Some(ProviderIdUrlGenerator::Template(url))
     }
 
     #[test]
@@ -555,6 +597,58 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn id_snapshots_follow_registrations_and_teardown() {
+        let mut registry = ProviderRegistry::default();
+        let plugin_id = PluginId::new("demo").expect("valid plugin id");
+        registry
+            .register(plugin_id.clone(), "demo".to_string())
+            .expect("register provider");
+        registry
+            .set_id_registration(
+                "demo",
+                id_spec("item", EntityType::Release, Some("example:item")),
+                template("https://example.test/{id}"),
+            )
+            .expect("registration");
+        let registered = registry.id_link_generators();
+        assert!(
+            registered
+                .get("demo", EntityType::Release, "item")
+                .is_some()
+        );
+        let rows = [crate::db::external_ids::ExternalId {
+            db_id: None,
+            provider_id: "demo".to_string(),
+            id_type: "item".to_string(),
+            id_value: "x".to_string(),
+            source: crate::db::IdSource::Plugin,
+        }];
+        assert!(
+            registry
+                .id_schemes()
+                .resolve(&rows)
+                .contains_key("example:item")
+        );
+
+        registry.clear_bucket(&plugin_id);
+        registry.rebuild_derived();
+
+        assert!(registry.id_schemes().resolve(&rows).is_empty());
+        assert!(
+            registry
+                .id_link_generators()
+                .get("demo", EntityType::Release, "item")
+                .is_none()
+        );
+        assert!(
+            registered
+                .get("demo", EntityType::Release, "item")
+                .is_some(),
+            "earlier snapshots are unaffected"
+        );
+    }
+
+    #[test]
     fn id_type_rejects_a_different_scheme_on_another_entity() {
         let mut registry = ProviderRegistry::default();
         let plugin_id = PluginId::new("demo").expect("valid plugin id");
@@ -565,7 +659,7 @@ pub(crate) mod tests {
             .set_id_registration(
                 "demo",
                 id_spec("item", EntityType::Release, Some("example:item")),
-                None,
+                || None,
             )
             .expect("first registration");
 
@@ -573,7 +667,7 @@ pub(crate) mod tests {
             .set_id_registration(
                 "demo",
                 id_spec("item", EntityType::Artist, Some("example:other")),
-                None,
+                || None,
             )
             .expect_err("conflicting scheme must be rejected");
 
@@ -650,6 +744,7 @@ impl PluginScopedInner for ProviderRegistry {
                     .insert(provider_id.clone(), plugin_id.clone());
             }
         }
+        self.rebuild_id_snapshots();
     }
 }
 

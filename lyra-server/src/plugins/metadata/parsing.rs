@@ -25,6 +25,7 @@ use crate::services::{
         MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT,
         ProviderIdSpec,
         ProviderRequireSpec,
+        validate_id_link_template,
         validate_id_scheme,
     },
 };
@@ -332,16 +333,8 @@ pub(super) fn parse_id_url_template(bytes: Vec<u8>) -> luau::runtime::Result<Str
         .map_err(|_| crate::plugins::runtime_error("provider:id URL template must be utf-8"))?
         .trim()
         .to_string();
-    if template.is_empty() {
-        return Err(crate::plugins::runtime_error(
-            "provider:id URL template must be a non-empty string",
-        ));
-    }
-    if template.matches("{id}").count() != 1 {
-        return Err(crate::plugins::runtime_error(
-            "provider:id URL template must contain exactly one {id} placeholder",
-        ));
-    }
+    validate_id_link_template(&template)
+        .map_err(|err| crate::plugins::runtime_error(format!("provider:id {err}")))?;
     Ok(template)
 }
 

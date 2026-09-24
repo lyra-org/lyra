@@ -298,10 +298,10 @@ fn provider_id_callback(
 
     let id_spec = parse_id_spec(vm, &spec)?;
     let generator = match generator {
-        Some(luau::Value::String(bytes)) => Some(ProviderIdUrlGenerator::Template(
-            parse_id_url_template(bytes)?,
-        )),
-        Some(luau::Value::Function(_)) | Some(luau::Value::NativeFunction(_)) => None,
+        Some(luau::Value::String(bytes)) => {
+            Some(IdGenerator::Template(parse_id_url_template(bytes)?))
+        }
+        Some(luau::Value::Function(function)) => Some(IdGenerator::Function(function)),
         Some(luau::Value::Nil) | None => None,
         Some(other) => {
             return Err(crate::plugins::runtime_error(format!(
@@ -310,7 +310,9 @@ fn provider_id_callback(
             )));
         }
     };
-
+    let handlers = vm.data().get::<MetadataCallbackRegistry>()?;
+    let context = core_call_context(context);
+    let vm_id = vm.id();
     let provider = provider.clone();
     Ok(luau::ScheduledFuture::new(async move {
         let generation = STATE.generation();
@@ -320,10 +322,40 @@ fn provider_id_callback(
             .await
             .map_err(crate::plugins::runtime_error)?;
         let mut registry = provider_registry().write_owned().await;
-        registry
-            .set_id_registration(&provider.provider_id, id_spec, generator)
-            .map_err(|err| crate::plugins::runtime_error(format!("provider:id: {err}")))
+        let entity = id_spec.entity;
+        let replaced = registry
+            .set_id_registration(&provider.provider_id, id_spec, || {
+                generator.map(|generator| match generator {
+                    IdGenerator::Template(template) => ProviderIdUrlGenerator::Template(template),
+                    IdGenerator::Function(function) => ProviderIdUrlGenerator::Function {
+                        handler: ProviderCallbackHandle {
+                            handler_id: handlers.register(
+                                provider.provider_id.clone(),
+                                entity,
+                                function,
+                                context,
+                            ),
+                        },
+                        vm_id,
+                    },
+                })
+            })
+            .map_err(|err| crate::plugins::runtime_error(format!("provider:id: {err}")))?;
+        if let Some(ProviderIdUrlGenerator::Function {
+            handler,
+            vm_id: replaced_vm_id,
+        }) = replaced
+            && replaced_vm_id == vm_id
+        {
+            handlers.remove(handler.handler_id);
+        }
+        Ok(())
     }))
+}
+
+enum IdGenerator {
+    Template(String),
+    Function(luau::Function),
 }
 
 fn declare_option_callback(

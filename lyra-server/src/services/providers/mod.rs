@@ -29,6 +29,7 @@ pub(crate) fn enabled_provider_configs_by_priority(
 
 mod admin;
 mod dedup;
+mod links;
 mod refresh;
 mod registry;
 mod requirements;
@@ -58,6 +59,20 @@ pub(crate) use admin::{
     update_provider_priority,
 };
 pub(crate) use capture::run_capture;
+pub(crate) use links::{
+    ID_LINK_BATCH_TIMEOUT,
+    ID_LINK_CALL_BUDGET,
+    IdLink,
+    IdLinkCall,
+    IdLinkCallError,
+    IdLinkCallResult,
+    IdLinkGenerators,
+    IdLinkLocale,
+    IdLinkRequest,
+    IdLinkTarget,
+    resolve_id_links,
+    validate_id_link_template,
+};
 pub(crate) use refresh::{
     LibraryRefreshOptions,
     refresh_entity_metadata,

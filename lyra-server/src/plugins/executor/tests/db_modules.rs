@@ -2018,3 +2018,380 @@ fn stale_principal_cannot_report_playback_for_a_user_with_its_recycled_db_id() -
     assert!(reported.is_none());
     Ok(())
 }
+
+#[test]
+fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
+    let release = futures::executor::block_on(async {
+        use crate::plugins::db::{
+            external_ids::{
+                self,
+                IdSource,
+            },
+            test_db,
+        };
+        let mut db = crate::STATE.db.write().await;
+        let library = test_db::insert_library(&mut db, "Link Library", "/tmp/lyra-link-library")?;
+        db.exec_mut(
+            agdb::QueryBuilder::insert()
+                .values_uniform([("language", "jpn").into(), ("country", "JP").into()])
+                .ids(library)
+                .query(),
+        )?;
+        let release = test_db::insert_release(&mut db, "Link Release")?;
+        let track = test_db::insert_track(&mut db, "Link Track")?;
+        test_db::connect(&mut db, library, release)?;
+        test_db::connect(&mut db, release, track)?;
+        for (node, id_type, value) in [
+            (release, "thing_id", "r1"),
+            (release, "localized_id", "l1"),
+            (release, "nil_id", "n1"),
+            (release, "broken_id", "b1"),
+            (track, "thing_id", "t1"),
+        ] {
+            external_ids::upsert(
+                &mut db,
+                node,
+                "link-provider",
+                id_type,
+                value,
+                IdSource::Plugin,
+            )?;
+        }
+        Ok::<_, anyhow::Error>(release)
+    })?;
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("demo", &["lyra.metadata", "lyra.entities"])]),
+        default_server_info(),
+        crate::STATE.db.get(),
+    )?;
+    let source = format!(
+        r#"
+            local metadata = require("@lyra/metadata")
+            local entities = require("@lyra/entities")
+            local ET = metadata.EntityType
+            local provider = metadata.Provider.new("link-provider")
+            provider:id({{ id_type = "thing_id", entity = ET.Release, scheme = "example:thing" }},
+                "https://example.test/release/{{id}}")
+            provider:id({{ id_type = "thing_id", entity = ET.Track, scheme = "example:thing" }},
+                "https://example.test/track/{{id}}")
+            provider:id({{ id_type = "localized_id", entity = ET.Release }}, function(id, ctx)
+                seen_entity = ctx.entity
+                return `https://example.test/{{ctx.library.language}}-{{ctx.library.country}}/{{ctx.id_type}}/{{id}}?thing={{ctx.external_ids.thing_id}}`
+            end)
+            provider:id({{ id_type = "nil_id", entity = ET.Release }}, function()
+                return nil
+            end)
+            provider:id({{ id_type = "broken_id", entity = ET.Release }}, function()
+                error("boom")
+            end)
+
+            local without = entities.query_release({{ id = {release} }})
+            local with = entities.query_release({{ id = {release}, include = {{ "links", "tracks" }} }})
+            local urls = {{}}
+            for _, link in with.includes.links do
+                table.insert(urls, link.url)
+            end
+            local first = with.includes.links[1]
+            return without.includes.links == nil,
+                table.concat(urls, " "),
+                first.provider_name,
+                first.id_type,
+                first.id,
+                with.includes.tracks[1].links[1].url,
+                with.includes.links[2].scheme
+        "#,
+        release = release.0,
+    );
+
+    let values = runtime.eval_plugin_source("demo", "init.luau", source.as_bytes())?;
+
+    let text = |value: &str| luau::Value::String(value.as_bytes().to_vec());
+    assert_eq!(
+        values,
+        vec![
+            luau::Value::Boolean(true),
+            text(
+                "https://example.test/jpn-JP/localized_id/l1?thing=r1 https://example.test/release/r1"
+            ),
+            text("link-provider"),
+            text("localized_id"),
+            text("l1"),
+            text("https://example.test/track/t1"),
+            text("example:thing"),
+        ]
+    );
+    let seen = runtime.eval_plugin_source("demo", "seen.luau", &b"return seen_entity"[..])?;
+    let entity = crate::services::EntityType::_harmony_userdata_class().read_value(
+        &runtime.vm,
+        "entity",
+        seen[0].clone(),
+    )?;
+    assert_eq!(entity, crate::services::EntityType::Release);
+    Ok(())
+}
+
+fn insert_release_with_ids(provider_id: &str, ids: &[(&str, &str)]) -> Result<agdb::DbId> {
+    futures::executor::block_on(async {
+        use crate::plugins::db::{
+            external_ids::{
+                self,
+                IdSource,
+            },
+            test_db,
+        };
+        let mut db = crate::STATE.db.write().await;
+        let release = test_db::insert_release(&mut db, "Link Release")?;
+        for (id_type, value) in ids {
+            external_ids::upsert(
+                &mut db,
+                release,
+                provider_id,
+                id_type,
+                value,
+                IdSource::Plugin,
+            )?;
+        }
+        Ok(release)
+    })
+}
+
+fn link_runtime() -> Result<PluginExecutor> {
+    PluginExecutor::with_database(
+        Arc::from(vec![manifest(
+            "demo",
+            &["harmony.task", "lyra.metadata", "lyra.entities"],
+        )]),
+        default_server_info(),
+        crate::STATE.db.get(),
+    )
+}
+
+fn release_link_urls(runtime: &PluginExecutor, release: agdb::DbId) -> Result<String> {
+    let values = runtime.eval_plugin_source(
+        "demo",
+        "links.luau",
+        format!(
+            r#"
+                local entities = require("@lyra/entities")
+                local release = entities.query_release({{ id = {release}, include = "links" }})
+                local urls = {{}}
+                for _, link in release.includes.links do
+                    table.insert(urls, link.url)
+                end
+                return table.concat(urls, " ")
+            "#,
+            release = release.0,
+        )
+        .as_bytes(),
+    )?;
+    match values.first() {
+        Some(luau::Value::String(urls)) => Ok(String::from_utf8(urls.clone())?),
+        other => anyhow::bail!("expected link urls, got {other:?}"),
+    }
+}
+
+#[test]
+fn entities_links_isolate_failing_slow_and_unsafe_generators() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
+    let release = insert_release_with_ids(
+        "isolated-links",
+        &[
+            ("busy_id", "b"),
+            ("z_slow_id", "s"),
+            ("unsafe_id", "u"),
+            ("ok_id", "o"),
+            ("template_id", "a/b c"),
+        ],
+    )?;
+    let runtime = link_runtime()?;
+    runtime.run_plugin_source(
+        "demo",
+        "init.luau",
+        &br#"
+            local task = require("@harmony/task")
+            local entities = require("@lyra/entities")
+            local metadata = require("@lyra/metadata")
+            local ET = metadata.EntityType
+            local provider = metadata.Provider.new("isolated-links")
+            busy_runs = 0
+            slow_runs = 0
+            provider:id({ id_type = "busy_id", entity = ET.Release }, function()
+                busy_runs += 1
+                while true do
+                end
+            end)
+            provider:id({ id_type = "z_slow_id", entity = ET.Release }, function(id)
+                slow_runs += 1
+                task.spawn(function()
+                    local ok, err = pcall(entities.query, { id = 1, include = "links" })
+                    spawned_links_error = if ok then "allowed" else tostring(err)
+                end)
+                task.wait(60)
+                return `https://example.test/slow/{id}`
+            end)
+            provider:id({ id_type = "unsafe_id", entity = ET.Release }, function(id)
+                return `javascript:alert("{id}")`
+            end)
+            provider:id({ id_type = "ok_id", entity = ET.Release }, function(id)
+                return `https://example.test/ok/{id}`
+            end)
+            provider:id({ id_type = "template_id", entity = ET.Release }, "https://example.test/t/{id}")
+        "#[..],
+    )?;
+
+    let started = std::time::Instant::now();
+    let urls = release_link_urls(&runtime, release)?;
+    assert!(started.elapsed() >= crate::services::providers::ID_LINK_BATCH_TIMEOUT);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    assert_eq!(
+        urls,
+        "https://example.test/ok/o https://example.test/t/a%2Fb%20c"
+    );
+    let spawned =
+        runtime.eval_plugin_source("demo", "spawned.luau", &b"return spawned_links_error"[..])?;
+    assert!(
+        matches!(&spawned[0], luau::Value::String(error)
+            if String::from_utf8_lossy(error).contains("cannot be requested from an id link generator")),
+        "{spawned:?}"
+    );
+
+    assert_eq!(release_link_urls(&runtime, release)?, urls);
+    let runs =
+        runtime.eval_plugin_source("demo", "runs.luau", &b"return busy_runs, slow_runs"[..])?;
+    assert_eq!(
+        runs,
+        vec![luau::Value::Number(1.0), luau::Value::Number(2.0)],
+        "the busy generator is suspended; the one cut off by the batch deadline is not"
+    );
+    Ok(())
+}
+
+#[test]
+fn entities_links_skip_generators_registered_on_another_vm() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
+    let release = insert_release_with_ids("vm-links", &[("thing_id", "x")])?;
+    let register = |runtime: &PluginExecutor, site: &str| {
+        runtime.run_plugin_source(
+            "demo",
+            "init.luau",
+            format!(
+                r#"
+                    local metadata = require("@lyra/metadata")
+                    local provider = metadata.Provider.new("vm-links")
+                    provider:id({{ id_type = "thing_id", entity = metadata.EntityType.Release }}, function(id)
+                        return `https://{site}.example.test/{{id}}`
+                    end)
+                "#
+            )
+            .into_bytes(),
+        )
+    };
+    let old = link_runtime()?;
+    register(&old, "old")?;
+    assert_eq!(
+        release_link_urls(&old, release)?,
+        "https://old.example.test/x"
+    );
+
+    let plugin_id = crate::plugins::lifecycle::PluginId::new("demo")?;
+    futures::executor::block_on(crate::services::providers::teardown_plugin_providers(
+        &plugin_id,
+    ));
+    let new = link_runtime()?;
+    register(&new, "new")?;
+
+    assert_eq!(
+        release_link_urls(&old, release)?,
+        "",
+        "the old VM must not run the new VM's handler ids"
+    );
+    assert_eq!(
+        release_link_urls(&new, release)?,
+        "https://new.example.test/x"
+    );
+    Ok(())
+}
+
+#[test]
+fn entities_links_time_out_and_suspend_a_busy_generator_within_the_batch_deadline() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
+    let releases = (0..40)
+        .map(|index| {
+            let id = index.to_string();
+            insert_release_with_ids("busy-links", &[("busy_id", &id), ("ok_id", &id)])
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let runtime = link_runtime()?;
+    runtime.run_plugin_source(
+        "demo",
+        "init.luau",
+        &br#"
+            local metadata = require("@lyra/metadata")
+            local ET = metadata.EntityType
+            local provider = metadata.Provider.new("busy-links")
+            busy_runs = 0
+            provider:id({ id_type = "busy_id", entity = ET.Release }, function()
+                busy_runs += 1
+                while true do
+                end
+            end)
+            provider:id({ id_type = "ok_id", entity = ET.Release }, function(id)
+                return `https://example.test/ok/{id}`
+            end)
+        "#[..],
+    )?;
+    let busy_runs = || -> Result<Vec<luau::Value>> {
+        runtime.eval_plugin_source("demo", "busy_runs.luau", &b"return busy_runs"[..])
+    };
+    let ids = releases
+        .iter()
+        .map(|release| release.0.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let link_count = || {
+        runtime.eval_plugin_source(
+            "demo",
+            "links.luau",
+            format!(
+                r#"
+                    local entities = require("@lyra/entities")
+                    local projections = entities.query_many({{ ids = {{ {ids} }}, include = "links" }})
+                    local count = 0
+                    for _, projection in projections do
+                        count += #projection.includes.links
+                    end
+                    return count
+                "#
+            )
+            .as_bytes(),
+        )
+    };
+    let all_ok_links = vec![luau::Value::Number(releases.len() as f64)];
+
+    let started = std::time::Instant::now();
+    assert_eq!(link_count()?, all_ok_links);
+    assert!(
+        started.elapsed() < crate::services::providers::ID_LINK_BATCH_TIMEOUT,
+        "took {:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        busy_runs()?,
+        vec![luau::Value::Number(1.0)],
+        "an interrupted generator must count as timed out, so its other calls are skipped"
+    );
+
+    assert_eq!(link_count()?, all_ok_links);
+    assert_eq!(
+        busy_runs()?,
+        vec![luau::Value::Number(1.0)],
+        "a timed-out generator is suspended"
+    );
+    Ok(())
+}

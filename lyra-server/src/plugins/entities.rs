@@ -43,6 +43,8 @@ use crate::services::entities::{
     TrackProjectionInfo,
     TrackProjectionKind,
 };
+#[cfg(feature = "docgen")]
+use crate::services::providers::IdLink;
 use crate::{
     plugins::db::{
         self,
@@ -53,10 +55,16 @@ use crate::{
         entities::{
             EntityInclude,
             EntityProjectionInfo,
+            IdIncludes,
+            apply_id_links,
+            id_link_request,
             project_entities,
             project_entity,
         },
-        providers::id_schemes,
+        providers::{
+            provider_registry,
+            resolve_id_links,
+        },
     },
 };
 
@@ -139,6 +147,7 @@ fn query_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request: luau::Table = frame.args.read_named("request")?;
     let (resolve_id, includes, library_id) = parse_query_request(frame.vm, &request)?;
+    let link_vm = link_generator_vm(&frame, &includes)?;
     let store = frame
         .vm
         .data()
@@ -148,14 +157,20 @@ fn query_callback(
     let db = store.db()?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let schemes = id_schemes().await;
-        let db = db.read().await;
-        let query_id = resolve_id
-            .to_query_id(&db)
-            .map_err(crate::plugins::runtime_error)?
-            .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))?;
-        let projection = project_entity(&db, query_id, &includes, library_id, &schemes)
-            .map_err(crate::plugins::runtime_error)?;
+        let mut projections =
+            project_with_links(db, link_vm, &includes, library_id, |db, id_includes| {
+                let query_id = resolve_id
+                    .to_query_id(db)
+                    .map_err(crate::plugins::runtime_error)?
+                    .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))?;
+                let projection = project_entity(db, query_id, &includes, library_id, id_includes)
+                    .map_err(crate::plugins::runtime_error)?;
+                Ok(vec![projection])
+            })
+            .await?;
+        let projection = projections
+            .pop()
+            .ok_or_else(|| crate::plugins::runtime_error("projection missing"))?;
 
         let value = match (kind, projection) {
             (ProjectionKind::Any, projection) => projection_to_luau_owned(projection)?,
@@ -238,6 +253,7 @@ fn query_many_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request: luau::Table = frame.args.read_named("request")?;
     let (ids, includes, library_id) = parse_query_many_request(frame.vm, &request)?;
+    let link_vm = link_generator_vm(&frame, &includes)?;
     let store = frame
         .vm
         .data()
@@ -247,22 +263,24 @@ fn query_many_callback(
     let db = store.db()?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let schemes = id_schemes().await;
-        let db = db.read().await;
-        let mut query_ids = Vec::new();
         let mut keys = Vec::new();
-        for (key, resolve_id) in ids {
-            let Some(query_id) = resolve_id
-                .to_query_id(&db)
-                .map_err(crate::plugins::runtime_error)?
-            else {
-                continue;
-            };
-            keys.push(key);
-            query_ids.push(query_id);
-        }
-        let projections = project_entities(&db, query_ids, &includes, library_id, &schemes)
-            .map_err(crate::plugins::runtime_error)?;
+        let projections =
+            project_with_links(db, link_vm, &includes, library_id, |db, id_includes| {
+                let mut query_ids = Vec::new();
+                for (key, resolve_id) in ids {
+                    let Some(query_id) = resolve_id
+                        .to_query_id(db)
+                        .map_err(crate::plugins::runtime_error)?
+                    else {
+                        continue;
+                    };
+                    keys.push(key);
+                    query_ids.push(query_id);
+                }
+                project_entities(db, query_ids, &includes, library_id, id_includes)
+                    .map_err(crate::plugins::runtime_error)
+            })
+            .await?;
 
         let mut table = luau::OwnedTable::with_capacity(0, keys.len());
         for (key, projection) in keys.into_iter().zip(projections) {
@@ -270,6 +288,73 @@ fn query_many_callback(
         }
         Ok(luau::Value::TableData(table))
     }))
+}
+
+/// The VM to run link generators on when the `links` include is requested.
+/// Generators can't request links themselves, even from tasks they spawn,
+/// since those inherit the caller context.
+fn link_generator_vm(
+    frame: &luau::AsyncCallFrame<'_>,
+    includes: &[EntityInclude],
+) -> luau::runtime::Result<Option<luau::Vm>> {
+    if !includes.contains(&EntityInclude::Links) {
+        return Ok(None);
+    }
+    if frame
+        .context
+        .caller
+        .get::<crate::plugins::executor::IdLinkDispatchContext>()
+        .is_ok()
+    {
+        return Err(crate::plugins::runtime_error(
+            "the links include cannot be requested from an id link generator",
+        ));
+    }
+    Ok(Some(frame.vm.clone()))
+}
+
+/// Projects under one DB read, then resolves the `links` include after the
+/// lock is released, since generator functions may use the database.
+async fn project_with_links(
+    db: DbAsync,
+    link_vm: Option<luau::Vm>,
+    includes: &[EntityInclude],
+    library_id: Option<agdb::DbId>,
+    project: impl FnOnce(
+        &agdb::DbAny,
+        &mut IdIncludes<'_>,
+    ) -> luau::runtime::Result<Vec<EntityProjectionInfo>>,
+) -> luau::runtime::Result<Vec<EntityProjectionInfo>> {
+    let (schemes, generators) = {
+        let registry = provider_registry();
+        let registry = registry.read().await;
+        (
+            registry.id_schemes(),
+            link_vm.is_some().then(|| registry.id_link_generators()),
+        )
+    };
+    let (mut projections, links) = {
+        let db = db.read().await;
+        let mut id_includes = IdIncludes::new(&schemes, includes);
+        let projections = project(&db, &mut id_includes)?;
+        let links = match (link_vm, generators, id_includes.into_link_rows()) {
+            (Some(vm), Some(generators), Some(rows)) => {
+                let request = id_link_request(&db, rows, library_id, &generators)
+                    .map_err(crate::plugins::runtime_error)?;
+                Some((vm, generators, request))
+            }
+            _ => None,
+        };
+        (projections, links)
+    };
+    if let Some((vm, generators, request)) = links {
+        let links = resolve_id_links(request, &generators, |provider_id, calls| {
+            crate::plugins::executor::dispatch_id_links_in_vm(vm.clone(), provider_id, calls)
+        })
+        .await;
+        apply_id_links(&mut projections, &links);
+    }
+    Ok(projections)
 }
 
 type QueryManyRequest = (
@@ -686,6 +771,7 @@ fn entity_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
         ReleaseProjectionInfo::interface_descriptor(),
         TrackProjectionInfo::interface_descriptor(),
         ArtistProjectionInfo::interface_descriptor(),
+        IdLink::interface_descriptor(),
     ]
 }
 
