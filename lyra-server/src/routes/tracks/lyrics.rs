@@ -128,8 +128,7 @@ async fn get_track_lyrics(
             .map_err(|error| AppError::bad_request(error.to_string()))?;
     }
     let require_synced = format == "lrc";
-    let candidates =
-        db::lyrics::get_visible_for_track(db, track_db_id, Some(&principal.user_public_id))?;
+    let candidates = lyrics_service::visible_for_track(db, track_db_id, Some(&principal))?;
     let providers = db::providers::get(db)?;
     let language_hint = lyrics_service::normalize_language_hint(query.language.as_deref())
         .map_err(|error| AppError::bad_request(error.to_string()))?;
@@ -137,7 +136,6 @@ async fn get_track_lyrics(
     let winner = lyrics_service::pick_preferred(
         &candidates,
         &providers,
-        Some(&principal.user_public_id),
         query.provider.as_deref(),
         language_hint.as_deref(),
         track.duration_ms,
@@ -148,7 +146,6 @@ async fn get_track_lyrics(
             && lyrics_service::pick_preferred(
                 &candidates,
                 &providers,
-                Some(&principal.user_public_id),
                 query.provider.as_deref(),
                 language_hint.as_deref(),
                 track.duration_ms,
@@ -197,13 +194,11 @@ async fn get_track_lyrics_candidates(
 
     let format = parse_lyrics_format(query.format.as_deref())?;
     let require_synced = format == "lrc";
-    let candidates =
-        db::lyrics::get_visible_for_track(db, track_db_id, Some(&principal.user_public_id))?;
+    let candidates = lyrics_service::visible_for_track(db, track_db_id, Some(&principal))?;
     let providers = db::providers::get(db)?;
     let mut items: Vec<_> = lyrics_service::eligible_candidates(
         &candidates,
         &providers,
-        Some(&principal.user_public_id),
         require_synced,
         track.duration_ms,
     )
@@ -244,7 +239,7 @@ async fn put_personal_track_lyrics(
         &mut db,
         track_db_id,
         &id,
-        &principal.user_public_id,
+        &principal,
         input,
     )
     .map_err(lyrics_upload_error_to_app_error)?;
@@ -261,12 +256,8 @@ async fn delete_personal_track_lyrics(
     let Some(track_db_id) = db::lookup::find_node_id_by_id(&*db, &id)? else {
         return Ok(StatusCode::NO_CONTENT);
     };
-    lyrics_service::delete_personal_lyrics_for_track_by_db_id(
-        &mut db,
-        track_db_id,
-        &principal.user_public_id,
-    )
-    .map_err(lyrics_upload_error_to_app_error)?;
+    lyrics_service::delete_personal_lyrics_for_track_by_db_id(&mut db, track_db_id, &principal)
+        .map_err(lyrics_upload_error_to_app_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -900,22 +891,8 @@ mod tests {
             StatusCode::NO_CONTENT
         );
         let db = STATE.db.read().await;
-        assert!(
-            db::lyrics::find_personal(
-                &*db,
-                track_db_id,
-                &db::users::get_by_id(&*db, alice_id)?.unwrap().id
-            )?
-            .is_none()
-        );
-        assert!(
-            db::lyrics::find_personal(
-                &*db,
-                track_db_id,
-                &db::users::get_by_id(&*db, bob_id)?.unwrap().id
-            )?
-            .is_some()
-        );
+        assert!(db::lyrics::find_personal(&*db, track_db_id, alice_id)?.is_none());
+        assert!(db::lyrics::find_personal(&*db, track_db_id, bob_id)?.is_some());
         Ok(())
     }
 }

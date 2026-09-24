@@ -244,7 +244,7 @@ struct LyricsModule;
 
 fn lyrics_detail_to_info(detail: LyricsDetail) -> LyricsInfo {
     let LyricsDetail { lyrics, lines } = detail;
-    let kind = lyrics.kind();
+    let kind = lyrics.kind;
     let is_provider = kind == LyricsKind::Provider;
     LyricsInfo {
         db_id: lyrics.db_id,
@@ -394,7 +394,7 @@ fn get_callback(
         let detail = lyrics_service::get_preferred_detail(
             &db,
             track_db_id,
-            Some(principal.user_public_id.as_str()),
+            Some(&principal),
             provider.as_deref(),
             language.as_deref(),
             require_synced.unwrap_or(false),
@@ -448,7 +448,7 @@ fn upsert_personal_callback(
             &mut db,
             track_db_id,
             &track_public_id,
-            &principal.user_public_id,
+            &principal,
             input,
         )
         .map_err(crate::plugins::runtime_error)?;
@@ -468,7 +468,7 @@ fn delete_personal_for_track_callback(
         let deleted = lyrics_service::delete_personal_lyrics_for_track_by_db_id(
             &mut db,
             track_db_id,
-            &principal.user_public_id,
+            &principal,
         )
         .map_err(crate::plugins::runtime_error)?;
         Ok(luau::Value::Boolean(deleted))
@@ -518,7 +518,7 @@ fn has_callback(
         let detail = lyrics_service::get_preferred_detail(
             &db,
             track_db_id,
-            Some(principal.user_public_id.as_str()),
+            Some(&principal),
             None,
             None,
             false,
@@ -538,6 +538,11 @@ fn has_many_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let db = STATE.db.read().await;
         let providers = db::providers::get(&db).map_err(crate::plugins::runtime_error)?;
+        let owner = Some(
+            principal
+                .require(&db)
+                .map_err(crate::plugins::runtime_error)?,
+        );
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, track_ids.len());
 
         for track_id in track_ids {
@@ -551,16 +556,12 @@ fn has_many_callback(
                         .map_err(crate::plugins::runtime_error)?
                     {
                         Some(track) => {
-                            let candidates = db::lyrics::get_visible_for_track(
-                                &db,
-                                track_id,
-                                Some(principal.user_public_id.as_str()),
-                            )
-                            .map_err(crate::plugins::runtime_error)?;
+                            let candidates =
+                                db::lyrics::get_visible_for_track(&db, track_id, owner)
+                                    .map_err(crate::plugins::runtime_error)?;
                             lyrics_service::pick_preferred(
                                 &candidates,
                                 &providers,
-                                Some(principal.user_public_id.as_str()),
                                 None,
                                 None,
                                 track.duration_ms,

@@ -878,7 +878,7 @@ mod tests {
         );
 
         let db = STATE.db.read().await;
-        let lyrics = db::lyrics::get_for_track(&*db, track_id)?;
+        let lyrics = db::lyrics::get_visible_for_track(&*db, track_id, None)?;
         assert!(
             lyrics
                 .iter()
@@ -939,7 +939,7 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("replacement track missing"))?;
         assert_eq!(current.id, replacement_public_id);
         assert!(
-            db::lyrics::get_for_track(&*db, track_id)?.is_empty(),
+            db::lyrics::get_visible_for_track(&*db, track_id, None)?.is_empty(),
             "stale provider result must not be written to the replacement track"
         );
         Ok(())
