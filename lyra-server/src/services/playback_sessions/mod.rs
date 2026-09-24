@@ -1648,10 +1648,10 @@ mod tests {
         let track_db_id = insert_track(&mut db, "Track A", 200_000)?;
         let native_track_db_id = insert_track(&mut db, "Track B", 200_000)?;
 
-        let jellyfin_started = report_playback_session(
+        let demo_started = report_playback_session(
             &mut db,
             SessionPlaybackReportRequest {
-                plugin_id: "jellyfin",
+                plugin_id: "demo",
                 user_db_id,
                 session_key: "device:1",
                 track_db_id,
@@ -1691,14 +1691,14 @@ mod tests {
         assert_eq!(paused_playbacks.len(), 2);
         assert!(evicted_playbacks.is_empty());
 
-        let jellyfin_paused = paused_playbacks
+        let demo_paused = paused_playbacks
             .iter()
-            .find(|playback| playback.playback_session_id == jellyfin_started.playback_session_id)
-            .expect("jellyfin playback paused");
-        assert_eq!(jellyfin_paused.playback.position_ms, 13_000);
-        assert_eq!(jellyfin_paused.playback.state, PlaybackState::Paused);
-        assert_eq!(jellyfin_paused.playback.activity_ms, Some(3_000));
-        assert_eq!(jellyfin_paused.playback.updated_at_ms, 4_000);
+            .find(|playback| playback.playback_session_id == demo_started.playback_session_id)
+            .expect("demo playback paused");
+        assert_eq!(demo_paused.playback.position_ms, 13_000);
+        assert_eq!(demo_paused.playback.state, PlaybackState::Paused);
+        assert_eq!(demo_paused.playback.activity_ms, Some(3_000));
+        assert_eq!(demo_paused.playback.updated_at_ms, 4_000);
 
         let native_paused = paused_playbacks
             .iter()
@@ -1709,12 +1709,12 @@ mod tests {
         assert_eq!(native_paused.playback.activity_ms, Some(2_000));
         assert_eq!(native_paused.playback.updated_at_ms, 4_000);
 
-        let jellyfin_scope = PlaybackScopeKey {
-            plugin_id: "jellyfin",
+        let demo_scope = PlaybackScopeKey {
+            plugin_id: "demo",
             user_public_id: &user_public_id(&db, user_db_id),
             session_key: "device:1",
         };
-        assert!(get_playback_session(&jellyfin_scope).is_none());
+        assert!(get_playback_session(&demo_scope).is_none());
 
         let native_scope = PlaybackScopeKey {
             plugin_id: "native",
@@ -1723,9 +1723,8 @@ mod tests {
         };
         assert!(get_playback_session(&native_scope).is_none());
 
-        let persisted =
-            db::playback_sessions::get_by_id(&db, jellyfin_started.playback_session_id)?
-                .expect("persisted playback");
+        let persisted = db::playback_sessions::get_by_id(&db, demo_started.playback_session_id)?
+            .expect("persisted playback");
         assert_eq!(persisted.position_ms, 13_000);
         assert_eq!(persisted.state, PlaybackState::Paused);
 
@@ -1747,7 +1746,7 @@ mod tests {
         let started_a = report_playback_session(
             &mut db,
             SessionPlaybackReportRequest {
-                plugin_id: "jellyfin",
+                plugin_id: "demo",
                 user_db_id,
                 session_key: "device:1",
                 track_db_id: track_a_id,
@@ -1765,7 +1764,7 @@ mod tests {
         let started_b = report_playback_session(
             &mut db,
             SessionPlaybackReportRequest {
-                plugin_id: "jellyfin",
+                plugin_id: "demo",
                 user_db_id,
                 session_key: "device:1",
                 track_db_id: track_b_id,
@@ -1806,7 +1805,7 @@ mod tests {
         assert_eq!(paused_b.playback.updated_at_ms, 5_000);
 
         let scope = PlaybackScopeKey {
-            plugin_id: "jellyfin",
+            plugin_id: "demo",
             user_public_id: &user_public_id(&db, user_db_id),
             session_key: "device:1",
         };

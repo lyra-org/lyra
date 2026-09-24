@@ -943,11 +943,11 @@ mod tests {
     fn matches_registered_paths_with_case_insensitive_lowering() {
         let mut matcher: matchit::Router<()> = matchit::Router::new();
         matcher
-            .insert("/jellyfin/users/{id}", ())
+            .insert("/demo/users/{id}", ())
             .expect("pattern should insert");
 
-        assert!(matches_route_path(&matcher, "/jellyfin/users/abc"));
-        assert!(matches_route_path(&matcher, "/Jellyfin/Users/abc"));
+        assert!(matches_route_path(&matcher, "/demo/users/abc"));
+        assert!(matches_route_path(&matcher, "/Demo/Users/abc"));
         assert!(!matches_route_path(&matcher, "/assets/app.js"));
         assert!(!matches_route_path(&matcher, "/"));
     }
