@@ -369,6 +369,7 @@ for _, id_spec in id_specs do
 		id_type = field_name,
 		entity = id_spec.entity,
 		unique = id_spec.unique,
+		scheme = "musicbrainz:" .. id_spec.id_type,
 	}, BASE_URL .. "/" .. id_spec.id_type .. "/{id}")
 end
 
@@ -520,8 +521,15 @@ local acoustid_deps: acoustid.ResolveDeps = {
 }
 
 provider:id({
+	id_type = "wikidata_qid",
+	entity = ET.Release,
+	scheme = "wikidata:item",
+}, "https://www.wikidata.org/wiki/{id}")
+
+provider:id({
 	id_type = "acoustid_track_id",
 	entity = ET.Track,
+	scheme = "acoustid:track",
 }, "https://acoustid.org/track/{id}")
 
 provider:declare_option({
