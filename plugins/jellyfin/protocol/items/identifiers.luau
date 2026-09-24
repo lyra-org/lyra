@@ -64,6 +64,11 @@ function module.decode_jellyfin_item_id(value: string?): number?
 	return nil
 end
 
+-- The public id an item id encodes, without resolving it to a `DbId`.
+function module.decode_jellyfin_public_id(value: string?): string?
+	return hex_to_nanoid_safe(value)
+end
+
 -- User ids are public ids end to end; never map them through `ids.get_db_id`.
 function module.decode_jellyfin_user_id(value: string?): string?
 	return hex_to_nanoid_safe(value)

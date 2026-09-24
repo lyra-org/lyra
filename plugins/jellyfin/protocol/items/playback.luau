@@ -5,6 +5,7 @@
 -- www.meshiplaw.com/lyra.
 
 local api = require("@lyra/api")
+local ids = require("@lyra/ids")
 local lyrics = require("@lyra/lyrics")
 local playback_sources = require("@lyra/playback_sources")
 local playbacks = require("@lyra/playback_sessions")
@@ -34,11 +35,27 @@ type JsonArray = { ApiJsonValue }
 
 export type PlaybackPayload = { [string]: string | number | boolean? }
 
-type PlaybackSessionState = {
-	track_id: number,
-	playback_start_ticks: number,
+-- What a Jellyfin client reported playing on its session, keyed by the Jellyfin session id.
+export type ClientPlayback = {
+	user_id: string,
+	session_info: JsonObject,
+	-- Whether the client reports over its socket rather than HTTP.
+	via_socket: boolean,
+	reported_s: number,
+	track_public_id: string,
 	position_ms: number?,
 	duration_ms: number?,
+	is_paused: boolean,
+}
+
+type PlaybackSessionState = ClientPlayback & {
+	playback_start_ticks: number,
+}
+
+-- Who reported a playback event: the Jellyfin session it lists under, and its transport.
+export type PlaybackReporter = {
+	session_info: JsonObject,
+	via_socket: boolean,
 }
 
 type MediaStream = {
@@ -100,6 +117,36 @@ type AudioPlaybackLimits = {
 local playback_session_state_by_key: { [string]: PlaybackSessionState } = {}
 local playback_session_state_count = 0
 local MAX_PLAYBACK_SESSION_STATES = 500
+-- Jellyfin stops a session's playback once it has gone this long without a report.
+local CLIENT_PLAYBACK_IDLE_SECONDS = 300
+
+local function forget_session_state(session_key: string)
+	if playback_session_state_by_key[session_key] ~= nil then
+		playback_session_state_by_key[session_key] = nil
+		playback_session_state_count -= 1
+	end
+end
+
+-- Makes room for one more session: idle sessions go first, then the least recently reported.
+local function evict_session_states()
+	if playback_session_state_count < MAX_PLAYBACK_SESSION_STATES then
+		return
+	end
+	local oldest_allowed_s = os.time() - CLIENT_PLAYBACK_IDLE_SECONDS
+	local oldest_key: string? = nil
+	local oldest_s = math.huge
+	for session_key, state in playback_session_state_by_key do
+		if state.reported_s < oldest_allowed_s then
+			forget_session_state(session_key)
+		elseif state.reported_s < oldest_s then
+			oldest_key = session_key
+			oldest_s = state.reported_s
+		end
+	end
+	if playback_session_state_count >= MAX_PLAYBACK_SESSION_STATES and oldest_key then
+		forget_session_state(oldest_key)
+	end
+end
 
 local module = {}
 module.trim = requests.trim
@@ -727,11 +774,18 @@ function module.report_playback_event(
 	auth_context: AuthContext,
 	payload: PlaybackPayload?,
 	event_name: string,
-	session_key: string
+	session_key: string,
+	reporter: PlaybackReporter
 ): (boolean, string?)
 	local raw_item_id = scalar_field(payload, "ItemId")
-	local item_id = module.decode_jellyfin_item_id(if type(raw_item_id) == "string" then raw_item_id else nil)
-	if item_id == nil then
+	local item_public_id =
+		item_ids.decode_jellyfin_public_id(if type(raw_item_id) == "string" then raw_item_id else nil)
+	local item_id = if item_public_id then ids.get_db_id(item_public_id) else nil
+	if item_public_id == nil or item_id == nil then
+		-- A stop ends whatever this session was playing, even when it can't name the item.
+		if event_name == "stopped" then
+			forget_session_state(session_key)
+		end
 		return false, "invalid or missing playback item id"
 	end
 
@@ -767,20 +821,22 @@ function module.report_playback_event(
 
 	if
 		prior_session_state
-		and prior_session_state.track_id ~= nil
-		and prior_session_state.track_id ~= item_id
+		and prior_session_state.track_public_id ~= item_public_id
 		and not is_terminal_playback_state(normalized_state)
 	then
-		local _, stop_error = playbacks.report_session({
-			session_key = session_key :: string,
-			track_id = prior_session_state.track_id,
-			position_ms = prior_session_state.position_ms,
-			duration_ms = prior_session_state.duration_ms,
-			state = "stopped",
-			event = "progress",
-		})
-		if stop_error then
-			return false, stop_error
+		local prior_track_id = ids.get_db_id(prior_session_state.track_public_id)
+		if prior_track_id then
+			local _, stop_error = playbacks.report_session({
+				session_key = session_key :: string,
+				track_id = prior_track_id,
+				position_ms = prior_session_state.position_ms,
+				duration_ms = prior_session_state.duration_ms,
+				state = "stopped",
+				event = "progress",
+			})
+			if stop_error then
+				return false, stop_error
+			end
 		end
 	end
 
@@ -792,33 +848,54 @@ function module.report_playback_event(
 		state = normalized_state,
 		event = as_playback_event(normalized_event_name),
 	})
+
+	-- A stop ends the session's playback when it names the item playing, even when the server
+	-- rejects it.
+	if is_terminal_playback_state(normalized_state) then
+		local current = playback_session_state_by_key[session_key]
+		if current and current.track_public_id == item_public_id then
+			forget_session_state(session_key)
+		end
+	end
 	if report_error then
 		return false, report_error
 	end
 
-	if is_terminal_playback_state(normalized_state) then
-		local current_session_state = playback_session_state_by_key[session_key]
-		if current_session_state and current_session_state.track_id == item_id then
-			playback_session_state_by_key[session_key] = nil
-			playback_session_state_count -= 1
-		end
-	else
+	if not is_terminal_playback_state(normalized_state) then
 		if playback_session_state_by_key[session_key] == nil then
-			if playback_session_state_count >= MAX_PLAYBACK_SESSION_STATES then
-				playback_session_state_by_key = {}
-				playback_session_state_count = 0
-			end
+			evict_session_states()
 			playback_session_state_count += 1
 		end
 		playback_session_state_by_key[session_key] = {
-			track_id = item_id,
+			user_id = auth_context.principal.user_id,
+			session_info = reporter.session_info,
+			via_socket = reporter.via_socket,
+			track_public_id = item_public_id,
 			playback_start_ticks = playback_start_ticks,
 			position_ms = position_ms,
 			duration_ms = duration_ms,
+			is_paused = normalized_state == "paused",
+			reported_s = os.time(),
 		}
 	end
 
 	return true, nil
+end
+
+-- Drops what a session reported, e.g. once its socket is gone and nothing will report a stop.
+function module.forget_client_playback(session_key: string)
+	forget_session_state(session_key)
+end
+
+function module.list_client_playbacks(): { [string]: ClientPlayback }
+	local oldest_s = os.time() - CLIENT_PLAYBACK_IDLE_SECONDS
+	local result: { [string]: ClientPlayback } = {}
+	for session_key, state in playback_session_state_by_key do
+		if state.reported_s >= oldest_s then
+			result[session_key] = state
+		end
+	end
+	return result
 end
 
 function module.resolve_playback_info_item(ctx: ApiContext?): (string?, Track?, ApiResponse?)
