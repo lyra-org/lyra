@@ -25,6 +25,7 @@ use crate::services::{
         MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT,
         ProviderIdSpec,
         ProviderRequireSpec,
+        validate_id_scheme,
     },
 };
 
@@ -164,10 +165,16 @@ pub(super) fn parse_id_spec(
     let id_type = required_string(vm, spec, "id_type")?;
     let entity = required_entity_type(vm, spec, "entity")?;
     let unique = optional_bool(vm, spec, "unique")?.unwrap_or(false);
+    let scheme = optional_table_string(vm, spec, "scheme", "provider:id")?;
+    if let Some(scheme) = &scheme {
+        validate_id_scheme(scheme)
+            .map_err(|err| crate::plugins::runtime_error(format!("provider:id: {err}")))?;
+    }
     Ok(ProviderIdSpec {
         id_type,
         entity,
         unique,
+        scheme,
     })
 }
 

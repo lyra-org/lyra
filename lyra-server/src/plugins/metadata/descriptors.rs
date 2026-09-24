@@ -257,6 +257,11 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("id_type", string()),
                 field("entity", ty("EntityType")),
                 field("unique", opt(boolean())),
+                described_field(
+                    "scheme",
+                    opt(string()),
+                    "What the identifier is, independent of who stores it: lowercase `namespace:kind` (issuing site and its own term, e.g. `example:release`) or a bare standard name (e.g. `isrc`).",
+                ),
             ],
         ),
         interface(

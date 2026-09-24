@@ -130,6 +130,7 @@ pub(crate) struct ProviderIdSpec {
     pub(crate) id_type: String,
     pub(crate) entity: EntityType,
     pub(crate) unique: bool,
+    pub(crate) scheme: Option<String>,
 }
 
 #[derive(Clone)]

@@ -32,6 +32,7 @@ mod dedup;
 mod refresh;
 mod registry;
 mod requirements;
+mod schemes;
 mod sync;
 
 mod capture {
@@ -87,6 +88,7 @@ pub(crate) use requirements::{
     requirements_match,
     requirements_match_with,
 };
+pub(crate) use schemes::validate_id_scheme;
 pub(crate) use sync::{
     run_provider_sync,
     run_provider_sync_loop,
