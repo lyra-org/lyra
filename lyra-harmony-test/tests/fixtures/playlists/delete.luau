@@ -1,6 +1,6 @@
-return function(fixture: { owner_id: number, track_id: number, foreign_id: number, foreign_entry: number })
+return function(fixture: { track_id: number, foreign_id: number, foreign_entry: number })
 	local playlists = require("@lyra/playlists")
-	local id = playlists.create({ user_id = fixture.owner_id, name = "Delete me" })
+	local id = playlists.create({ name = "Delete me" })
 	local entry = playlists.add_track(id, fixture.track_id)
 	local playlist = playlists.get_by_id(id)
 	assert(playlist ~= nil)

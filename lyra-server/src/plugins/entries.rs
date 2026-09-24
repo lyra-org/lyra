@@ -41,6 +41,7 @@ pub(crate) struct EntriesModuleStore {
 }
 
 impl EntriesModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }

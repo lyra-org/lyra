@@ -112,7 +112,7 @@ fn resolve_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let request: luau::Table = frame.args.read_named("request")?;
     let request = parse_label_resolve_request(frame.vm, &request)?;
-    let principal = caller_principal(&frame.context);
+    let principal = caller_principal(&frame.context)?;
     if !can_mutate_global(principal.as_ref()) {
         return Ok(luau::ScheduledFuture::new(async { Ok(0_i64) }));
     }
@@ -159,7 +159,7 @@ fn get_for_release_callback(
         frame.args.read_named("release_id")?,
         "release_id",
     )?);
-    let principal = caller_principal(&frame.context);
+    let principal = caller_principal(&frame.context)?;
     Ok(luau::ScheduledFuture::new(async move {
         let labels = {
             let db = STATE.db.read().await;
@@ -179,7 +179,7 @@ fn get_for_releases_many_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let ids_table: luau::Table = frame.args.read_named("release_ids")?;
     let ids = parse_db_ids(frame.vm, &ids_table)?;
-    let principal = caller_principal(&frame.context);
+    let principal = caller_principal(&frame.context)?;
     Ok(luau::ScheduledFuture::new(async move {
         let labels = {
             let db = STATE.db.read().await;
@@ -377,7 +377,7 @@ fn require_positive_id(value: i64, name: &str) -> luau::runtime::Result<i64> {
     }
 }
 
-fn caller_principal(context: &luau::CallContext) -> Option<Principal> {
+fn caller_principal(context: &luau::CallContext) -> luau::runtime::Result<Option<Principal>> {
     crate::plugins::auth::dispatch_principal(context)
 }
 

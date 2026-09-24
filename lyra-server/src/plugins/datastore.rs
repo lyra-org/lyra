@@ -172,6 +172,7 @@ pub(crate) struct DataStoreModuleStore {
     db: Option<DbAsync>,
 }
 impl DataStoreModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }

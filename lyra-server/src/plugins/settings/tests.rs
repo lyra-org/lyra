@@ -38,10 +38,9 @@ fn declare_settings_registers_global_and_user_schemas() -> Result<()> {
     let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
     crate::testing::init_default_test_state()?;
     let mut db = crate::plugins::db::test_db::new_test_db()?;
-    let user_db_id = crate::plugins::db::users::create(
-        &mut db,
-        &crate::plugins::db::test_db::test_user("settings-test")?,
-    )?;
+    let user = crate::plugins::db::test_db::test_user("settings-test")?;
+    let user_public_id = user.id.clone();
+    crate::plugins::db::users::create(&mut db, &user)?;
     let db = Arc::new(tokio::sync::RwLock::new(db));
 
     let runtime = PluginExecutor::with_database(
@@ -83,9 +82,8 @@ fn declare_settings_registers_global_and_user_schemas() -> Result<()> {
                         default = "user-token",
                     }})
                 end)
-                executor_user_config = user_settings:get({user_db_id})
+                executor_user_config = user_settings:get({user_public_id:?})
             "#,
-            user_db_id = user_db_id.0,
         )
         .into_bytes(),
     )?;

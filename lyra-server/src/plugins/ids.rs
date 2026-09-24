@@ -158,6 +158,7 @@ pub(crate) struct IdsLookupModuleStore {
     db: Option<db::DbAsync>,
 }
 impl IdsLookupModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }

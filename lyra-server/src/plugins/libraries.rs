@@ -53,6 +53,7 @@ pub(crate) struct LibrariesModuleStore {
 }
 
 impl LibrariesModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }
@@ -120,7 +121,7 @@ fn list_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = caller_principal(&frame.context);
+    let principal = caller_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
@@ -191,7 +192,7 @@ fn get_for_entity_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = caller_principal(&frame.context);
+    let principal = caller_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
@@ -228,7 +229,7 @@ fn get_for_entities_callback(
         .as_ref()
         .clone();
     let db = store.db()?;
-    let principal = caller_principal(&frame.context);
+    let principal = caller_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
@@ -312,7 +313,7 @@ impl From<LibraryFull> for LibraryRecord {
     }
 }
 
-fn caller_principal(context: &luau::CallContext) -> Option<Principal> {
+fn caller_principal(context: &luau::CallContext) -> luau::runtime::Result<Option<Principal>> {
     crate::plugins::auth::dispatch_principal(context)
 }
 

@@ -18,8 +18,10 @@ use rand::seq::SliceRandom;
 use crate::STATE;
 use crate::db::{
     self,
+    Permission,
     Track,
 };
+use crate::services::auth::Principal;
 
 mod registry;
 
@@ -43,14 +45,30 @@ const MIXER_HANDLER_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 pub(crate) struct MixOptions {
     pub(crate) limit: Option<usize>,
     /// User the mix is rendered for: used by the built-in algorithm for the
-    /// unheard/heard partition and forwarded to plugins as `ctx.user_id`.
-    /// Distinct from the seed identity — see `MixSeed`.
+    /// unheard/heard partition. Distinct from the seed identity — see `MixSeed`.
     pub(crate) viewer: Option<DbId>,
     /// Current library visibility for the viewer. When present, built-in
     /// candidates and recent-listen seeds are filtered before shuffle and limits.
     pub(crate) viewer_accessible_library_ids: Option<HashSet<String>>,
     /// Query-param options coerced via `declare_option` for `ctx.options`.
     pub(crate) extra: HashMap<String, String>,
+}
+
+impl MixOptions {
+    /// Options rendered for `principal`, limited to the libraries it can see.
+    pub(crate) fn for_principal(
+        principal: &Principal,
+        limit: Option<usize>,
+        extra: HashMap<String, String>,
+    ) -> Self {
+        Self {
+            limit,
+            viewer: Some(principal.user_db_id),
+            viewer_accessible_library_ids: (!principal.permissions.contains(&Permission::Admin))
+                .then(|| principal.accessible_library_ids.clone()),
+            extra,
+        }
+    }
 }
 
 /// Seed identity for a mix request. Carries the seed's `DbId` and, for
@@ -78,14 +96,15 @@ impl MixSeed {
         }
     }
 
-    fn seed_id(&self) -> DbId {
+    /// The seed entity handed to mixer plugins; recent-listens seeds pass their track ids instead.
+    fn plugin_seed_id(&self) -> Option<DbId> {
         match self {
             MixSeed::Track(id)
             | MixSeed::Release(id)
             | MixSeed::Artist(id)
             | MixSeed::Genre(id)
-            | MixSeed::Playlist(id) => *id,
-            MixSeed::Recent { user_db_id } => *user_db_id,
+            | MixSeed::Playlist(id) => Some(*id),
+            MixSeed::Recent { .. } => None,
         }
     }
 }
@@ -306,7 +325,7 @@ async fn dispatch_mixer(
 
         match run_callback_with_timeout(
             handler_id,
-            seed.seed_id(),
+            seed.plugin_seed_id(),
             recent_track_ids.clone(),
             options,
             handler_timeout,
@@ -335,7 +354,7 @@ async fn dispatch_mixer(
 /// Coerces `extra` via declared types into `ctx.options`.
 async fn run_callback_with_timeout(
     handler_id: u64,
-    seed_id: DbId,
+    seed_id: Option<DbId>,
     recent_track_ids: Vec<DbId>,
     options: &MixOptions,
     timeout: std::time::Duration,
@@ -346,9 +365,8 @@ async fn run_callback_with_timeout(
     };
     let request = crate::plugins::executor::MixHandlerRequest {
         handler_id,
-        seed_id: seed_id.0,
+        seed_id: seed_id.map(|id| id.0),
         limit: options.limit,
-        user_id: options.viewer.map(|id| id.0),
         recent_track_ids: recent_track_ids.into_iter().map(|id| id.0).collect(),
         options: coerced_extra_options(mixer_id, &options.extra).await?,
     };

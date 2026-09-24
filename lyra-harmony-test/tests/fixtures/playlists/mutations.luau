@@ -1,7 +1,7 @@
-return function(fixture: { owner_id: number, track_id: number, foreign_id: number, foreign_entry: number })
+return function(fixture: { track_id: number, foreign_id: number, foreign_entry: number })
 	-- The Rust executor test supplies the database fixture and caller principal.
 	local playlists = require("@lyra/playlists")
-	local id = playlists.create({ user_id = fixture.owner_id, name = "Mine" })
+	local id = playlists.create({ name = "Mine" })
 	local updated = playlists.update({ playlist_id = id, name = "Renamed" })
 	assert(updated and updated.name == "Renamed")
 	for _, missing in { "missing-playlist", 999999999, fixture.foreign_id, fixture.track_id } do

@@ -122,6 +122,24 @@ fn seed_caller_principal(context: &mut CallContext, principal: crate::services::
     context.caller.insert(dispatch_auth);
 }
 
+/// A call context acting as an admin who exists in the shared test DB.
+fn admin_call_context(path: &str) -> Result<CallContext> {
+    let mut principal = futures::executor::block_on(async {
+        let user_db_id = {
+            let mut db = crate::STATE.db.write().await;
+            crate::plugins::db::test_db::insert_user(&mut db, "dispatch-admin")?
+        };
+        crate::testing::user_principal(user_db_id).await
+    })?;
+    principal.permissions = vec![crate::plugins::db::Permission::Admin];
+    let mut context = CallContext {
+        origin: plugin_origin("demo", path.to_string()),
+        ..CallContext::default()
+    };
+    seed_caller_principal(&mut context, principal);
+    Ok(context)
+}
+
 fn manifest(id: &str, scopes: &[&str]) -> PluginManifest {
     PluginManifest {
         schema_version: 1,
@@ -648,11 +666,48 @@ fn releases_similar_dispatches_provider_on_current_executor() -> Result<()> {
         candidate.0, candidate_public_id, seed.0
     );
 
-    let values = runtime.eval_plugin_source("demo", "init.luau", source.as_bytes())?;
+    let values = runtime.eval_plugin_source_with_call_context(
+        source.into_bytes(),
+        admin_call_context("init.luau")?,
+    )?;
 
     assert_eq!(
         values,
         vec![luau::Value::String(candidate_public_id.into_bytes())]
+    );
+    Ok(())
+}
+
+#[test]
+fn releases_similar_requires_a_dispatch_principal() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
+    let seed = futures::executor::block_on(async {
+        let mut db = crate::STATE.db.write().await;
+        crate::plugins::db::test_db::insert_release(&mut db, "Seed")
+    })?;
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("demo", &["lyra.releases"])]),
+        default_server_info(),
+        crate::STATE.db.get(),
+    )?;
+    let values = runtime.eval_plugin_source(
+        "demo",
+        "init.luau",
+        format!(
+            r#"
+                local releases = require("@lyra/releases")
+                local ok, err = pcall(releases.similar, {})
+                return ok, string.find(tostring(err), "no authenticated caller", 1, true) ~= nil
+            "#,
+            seed.0
+        )
+        .as_bytes(),
+    )?;
+
+    assert_eq!(
+        values,
+        vec![luau::Value::Boolean(false), luau::Value::Boolean(true)]
     );
     Ok(())
 }
@@ -701,7 +756,10 @@ fn awaited_background_similar_provider_result_survives_executor_polling() -> Res
         "#,
         candidate.0, candidate_public_id, seed.0
     );
-    runtime.eval_plugin_source("demo", "init.luau", source.as_bytes())?;
+    runtime.eval_plugin_source_with_call_context(
+        source.into_bytes(),
+        admin_call_context("init.luau")?,
+    )?;
 
     for _ in 0..50 {
         runtime.poll_background_tasks();
@@ -761,7 +819,10 @@ fn cancelling_awaited_similar_release_call_keeps_executor_usable() -> Result<()>
         "#,
         seed.0
     );
-    runtime.eval_plugin_source("demo", "init.luau", source.as_bytes())?;
+    runtime.eval_plugin_source_with_call_context(
+        source.into_bytes(),
+        admin_call_context("init.luau")?,
+    )?;
     let mut provider_started = false;
     for _ in 0..10 {
         runtime.poll_background_tasks();
@@ -1336,6 +1397,109 @@ fn foreground_dispatch_does_not_hide_finished_websocket_cleanup() -> Result<()> 
     Ok(())
 }
 
+async fn next_websocket_frame(
+    runtime: &PluginExecutor,
+    outbound: &mut tokio::sync::mpsc::Receiver<String>,
+) -> Result<String> {
+    for _ in 0..200 {
+        runtime.poll_background_tasks();
+        match outbound.try_recv() {
+            Ok(text) => return Ok(text),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            Err(error) => return Err(error).context("websocket outbound channel closed"),
+        }
+    }
+    anyhow::bail!("no websocket frame arrived")
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn websocket_spawned_work_acts_as_the_verified_socket_principal() -> Result<()> {
+    let _guard = crate::testing::runtime_test_lock().await;
+    crate::testing::init_default_test_state()?;
+    let _ =
+        crate::plugins::api::install(axum::Router::new(), std::collections::HashSet::new()).await?;
+    let user_db_id = {
+        let mut db = crate::STATE.db.write().await;
+        crate::plugins::db::test_db::insert_user(&mut db, "socket-owner")?
+    };
+    let principal = crate::testing::user_principal(user_db_id).await?;
+    let connection = crate::services::remote::registry::register(
+        principal.user_public_id.clone(),
+        None,
+        "socket-device".to_string(),
+        tokio::sync::watch::channel(None).0,
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest(
+            "demo",
+            &["harmony.task", "lyra.api", "lyra.playback_sessions"],
+        )]),
+        default_server_info(),
+        crate::STATE.db.get(),
+    )?;
+    runtime.run_plugin_source(
+        "demo",
+        "init.luau",
+        &br#"
+            local api = require("@lyra/api")
+            local playback_sessions = require("@lyra/playback_sessions")
+            local task = require("@harmony/task")
+
+            api.websocket("/socket", function(reader, sender)
+                while reader:recv() ~= nil do
+                    task.spawn(function()
+                        local ok, connections = pcall(playback_sessions.list_connections)
+                        sender:send(if ok then `connections:{#connections}` else "denied")
+                    end)
+                end
+            end, "public")
+        "#[..],
+    )?;
+    let handler_id = crate::plugins::api::tests::registered_handler("GET", "/socket")
+        .await
+        .context("registered websocket handler")?;
+    let (inbound_tx, inbound_rx) = tokio::sync::mpsc::channel(4);
+    let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel(4);
+    let state = WebSocketState::new();
+    runtime.start_websocket(WebSocketStartRequest {
+        handler_id,
+        plugin_id: "demo".to_string(),
+        method: "GET".to_string(),
+        path: "/socket".to_string(),
+        headers: Vec::new(),
+        query: HashMap::new(),
+        params: HashMap::new(),
+        auth: Some(crate::services::auth::ResolvedAuth {
+            principal,
+            credential: crate::services::auth::AuthCredential::Default,
+            client_name: None,
+        }),
+        inbound: Arc::new(tokio::sync::Mutex::new(inbound_rx)),
+        outbound: outbound_tx,
+        state: state.clone(),
+    })?;
+
+    inbound_tx.send("probe".to_string()).await?;
+    let allowed = next_websocket_frame(&runtime, &mut outbound_rx).await;
+    {
+        let mut db = crate::STATE.db.write().await;
+        crate::plugins::db::users::delete_user(&mut db, user_db_id)?;
+    }
+    inbound_tx.send("probe".to_string()).await?;
+    let stale = next_websocket_frame(&runtime, &mut outbound_rx).await;
+    state.request_close();
+    crate::services::remote::registry::unregister(connection.connection_id).await;
+
+    assert_eq!(allowed?, "connections:1");
+    assert_eq!(stale?, "denied");
+    Ok(())
+}
+
 #[test]
 fn plugin_executor_dispatches_registered_mix_handler() -> Result<()> {
     let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
@@ -1374,9 +1538,8 @@ fn plugin_executor_dispatches_registered_mix_handler() -> Result<()> {
     .context("registered mix callback")?;
     let result = runtime.dispatch_mix_handler(MixHandlerRequest {
         handler_id,
-        seed_id: 40,
+        seed_id: Some(40),
         limit: Some(10),
-        user_id: None,
         recent_track_ids: Vec::new(),
         options: serde_json::Map::from_iter([("boost".to_string(), serde_json::Value::Bool(true))]),
     })?;
@@ -1809,8 +1972,8 @@ fn run_playlist_binding_test(source: &str) -> Result<()> {
     let foreign_entry =
         playlists::add_track(&mut db, QueryId::Id(foreign_id), QueryId::Id(track_id))?.edge_id;
     let fixture = format!(
-        "local fixture = {{owner_id={}, track_id={}, foreign_id={}, foreign_entry={}}}\n",
-        owner_id.0, track_id.0, foreign_id.0, foreign_entry.0
+        "local fixture = {{track_id={}, foreign_id={}, foreign_entry={}}}\n",
+        track_id.0, foreign_id.0, foreign_entry.0
     );
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.playlists"])]),
