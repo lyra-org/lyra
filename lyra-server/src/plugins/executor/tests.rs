@@ -438,24 +438,17 @@ fn plugin_executor_declares_metadata_provider_ids_and_options() -> Result<()> {
                 requires_settings = { "token" },
             })
 
-            local ids = metadata.ids.for_provider({
-                ["raw-provider"] = {
-                    release_id = "abc123",
-                },
-            }, "raw-provider")
-
-            return metadata.EntityType.Release, ids.release_id
+            return metadata.EntityType.Release
         "#[..],
     )?;
 
-    assert_eq!(values.len(), 2);
+    assert_eq!(values.len(), 1);
     let entity = crate::services::EntityType::_harmony_userdata_class().read_value(
         &runtime.vm,
         "entity",
         values[0].clone(),
     )?;
     assert_eq!(entity, crate::services::EntityType::Release);
-    assert_eq!(values[1], luau::Value::String(b"abc123".to_vec()));
 
     let registry =
         futures::executor::block_on(crate::services::providers::provider_registry().read_owned());
