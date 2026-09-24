@@ -689,11 +689,10 @@ mod tests {
         rate_limit.authenticated_burst = 1;
         let limiter = RateLimiter::new(&rate_limit);
 
-        let mut plugin_request =
-            request_with_peer(Method::GET, "/jellyfin/Users", [203, 0, 113, 20]);
+        let mut plugin_request = request_with_peer(Method::GET, "/demo/Users", [203, 0, 113, 20]);
         plugin_request.headers_mut().insert(
             header::AUTHORIZATION,
-            HeaderValue::from_static("MediaBrowser Token=abc"),
+            HeaderValue::from_static("Custom Token=abc"),
         );
         let checks = limiter.checks_for_request(&plugin_request, true);
         assert_eq!(checks.len(), 1);
