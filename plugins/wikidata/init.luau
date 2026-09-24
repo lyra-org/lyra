@@ -46,10 +46,12 @@ local extract_claim_qid = shared.extract_claim_qid
 provider:id({
 	id_type = "qid",
 	entity = ET.Release,
+	scheme = "wikidata:item",
 }, "https://www.wikidata.org/wiki/{id}")
 provider:id({
 	id_type = "qid",
 	entity = ET.Artist,
+	scheme = "wikidata:item",
 }, "https://www.wikidata.org/wiki/{id}")
 
 local function extract_genre_qids(claims: JsonObject): { string }
@@ -661,19 +663,11 @@ provider:refresh(ET.Release, function(ctx: metadata.ReleaseRefreshContext)
 
 	return nil
 end, function(ctx: metadata.ReleaseRefreshContext): boolean
-	-- Skip releases that already have a WikiData QID — either from us ("qid")
-	-- or pre-populated by MusicBrainz cooperation ("wikidata_qid").
-	-- Once a QID is in external_ids, this release is permanently skipped.
+	-- Skip releases that already have a WikiData QID, whether ours or
+	-- another provider's: both are stored under the `wikidata:item` scheme.
+	-- Once a QID is stored, this release is permanently skipped.
 	-- A wrong QID requires manual correction (no automatic recovery path).
-	local wikidata_ids = metadata.ids.for_provider(ctx.external_ids, "wikidata")
-	if wikidata_ids and wikidata_ids.qid and wikidata_ids.qid ~= "" then
-		return false
-	end
-	local musicbrainz_ids = metadata.ids.for_provider(ctx.external_ids, "musicbrainz")
-	if musicbrainz_ids and musicbrainz_ids.wikidata_qid and musicbrainz_ids.wikidata_qid ~= "" then
-		return false
-	end
-	return true
+	return not (ctx.identifiers and ctx.identifiers["wikidata:item"])
 end)
 
 artists.register(provider)
