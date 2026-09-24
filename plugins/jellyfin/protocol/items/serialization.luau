@@ -313,7 +313,9 @@ function module.item_to_json(item: ItemInfo): JsonObject
 		output.Tags = tags_array
 	end
 	if item.ProviderIds ~= nil then
-		output.ProviderIds = string_map_to_json(item.ProviderIds)
+		output.ProviderIds = if next(item.ProviderIds) == nil
+			then serde.empty_object()
+			else string_map_to_json(item.ProviderIds)
 	end
 	if item.Overview ~= nil then
 		output.Overview = item.Overview
