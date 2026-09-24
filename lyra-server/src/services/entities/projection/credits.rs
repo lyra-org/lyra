@@ -97,13 +97,7 @@ fn release_ids_for_prefetch(
 
 #[cfg(test)]
 mod tests {
-    use agdb::{
-        DbAny,
-        DbId,
-        QueryBuilder,
-        QueryId,
-    };
-    use nanoid::nanoid;
+    use agdb::QueryId;
 
     use crate::{
         db::{
@@ -125,61 +119,18 @@ mod tests {
         },
     };
 
-    fn connect_artist_credit(
-        db: &mut DbAny,
-        owner_id: DbId,
-        artist_id: DbId,
-        credit_type: db::CreditType,
-        detail: Option<&str>,
-    ) -> anyhow::Result<()> {
-        let credit = db::Credit {
-            db_id: None,
-            id: nanoid!(),
-            credit_type,
-            detail: detail.map(str::to_string),
-        };
-        let credit_id = db
-            .exec_mut(QueryBuilder::insert().element(&credit).query())?
-            .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("credits")
-                .to(credit_id)
-                .query(),
-        )?;
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from(owner_id)
-                .to(credit_id)
-                .values_uniform([
-                    ("owned", 1).into(),
-                    (db::credits::EDGE_ORDER_KEY, 0_u64).into(),
-                ])
-                .query(),
-        )?;
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from(credit_id)
-                .to(artist_id)
-                .query(),
-        )?;
-        Ok(())
-    }
-
     #[test]
     fn project_release_includes_credits() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_id = insert_release(&mut db, "Credit Release")?;
         let artist_id = insert_artist(&mut db, "Engineer")?;
-        connect_artist_credit(
+        db::test_db::connect_credit(
             &mut db,
             release_id,
             artist_id,
             db::CreditType::Engineer,
             Some("recording"),
+            0,
         )?;
 
         let projection = project_entity(
@@ -208,12 +159,13 @@ mod tests {
         let track_id = insert_track(&mut db, "Credit Track")?;
         let artist_id = insert_artist(&mut db, "Composer")?;
         connect(&mut db, release_id, track_id)?;
-        connect_artist_credit(
+        db::test_db::connect_credit(
             &mut db,
             release_id,
             artist_id,
             db::CreditType::Composer,
             None,
+            0,
         )?;
 
         let projection =
@@ -237,12 +189,13 @@ mod tests {
         let track_id = insert_track(&mut db, "Batch Track")?;
         let artist_id = insert_artist(&mut db, "Batch Lyricist")?;
         connect(&mut db, release_id, track_id)?;
-        connect_artist_credit(
+        db::test_db::connect_credit(
             &mut db,
             release_id,
             artist_id,
             db::CreditType::Lyricist,
             Some("translation"),
+            0,
         )?;
 
         let projections = project_entities(

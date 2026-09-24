@@ -38,7 +38,6 @@ pub(crate) use crate::db::{
     external_ids,
     favorites,
     genres,
-    graph,
     labels,
     libraries,
     listens,

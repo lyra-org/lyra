@@ -349,8 +349,6 @@ mod tests {
         insert_track,
         new_test_db,
     };
-    use agdb::QueryBuilder;
-    use nanoid::nanoid;
 
     fn default_options() -> ListOptions {
         ListOptions {
@@ -379,50 +377,6 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("artist should exist"))?;
         artist.set_artist_type(artist_type);
         db::artists::update(db, &artist)
-    }
-
-    fn connect_artist_credit(
-        db: &mut DbAny,
-        owner_id: DbId,
-        artist_id: DbId,
-        credit_type: db::CreditType,
-        detail: Option<&str>,
-    ) -> anyhow::Result<()> {
-        let credit = db::Credit {
-            db_id: None,
-            id: nanoid!(),
-            credit_type,
-            detail: detail.map(str::to_string),
-        };
-        let credit_id = db
-            .exec_mut(QueryBuilder::insert().element(&credit).query())?
-            .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("credits")
-                .to(credit_id)
-                .query(),
-        )?;
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from(owner_id)
-                .to(credit_id)
-                .values_uniform([
-                    ("owned", 1).into(),
-                    (db::credits::EDGE_ORDER_KEY, 0_u64).into(),
-                ])
-                .query(),
-        )?;
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from(credit_id)
-                .to(artist_id)
-                .query(),
-        )?;
-        Ok(())
     }
 
     #[test]
@@ -586,22 +540,24 @@ mod tests {
 
         let composer_id = insert_artist(&mut db, "Composer Person")?;
         set_artist_type(&mut db, composer_id, db::ArtistType::Person)?;
-        connect_artist_credit(
+        db::test_db::connect_credit(
             &mut db,
             release_id,
             composer_id,
             db::CreditType::Composer,
             None,
+            0,
         )?;
 
         let group_composer_id = insert_artist(&mut db, "Composer Group")?;
         set_artist_type(&mut db, group_composer_id, db::ArtistType::Group)?;
-        connect_artist_credit(
+        db::test_db::connect_credit(
             &mut db,
             release_id,
             group_composer_id,
             db::CreditType::Composer,
             None,
+            0,
         )?;
 
         let scope = ResolveId::DbId(release_id);
@@ -636,12 +592,13 @@ mod tests {
 
         let composer_id = insert_artist(&mut db, "Fallback Composer")?;
         set_artist_type(&mut db, composer_id, db::ArtistType::Person)?;
-        connect_artist_credit(
+        db::test_db::connect_credit(
             &mut db,
             release_id,
             composer_id,
             db::CreditType::Composer,
             None,
+            0,
         )?;
 
         let scope = ResolveId::DbId(track_id);
@@ -678,19 +635,21 @@ mod tests {
 
         let composer_id = insert_artist(&mut db, "Shared Composer")?;
         set_artist_type(&mut db, composer_id, db::ArtistType::Person)?;
-        connect_artist_credit(
+        db::test_db::connect_credit(
             &mut db,
             release_id,
             composer_id,
             db::CreditType::Composer,
             None,
+            0,
         )?;
-        connect_artist_credit(
+        db::test_db::connect_credit(
             &mut db,
             track_id,
             composer_id,
             db::CreditType::Composer,
             Some("piano"),
+            0,
         )?;
 
         let scope = ResolveId::DbId(library_id);

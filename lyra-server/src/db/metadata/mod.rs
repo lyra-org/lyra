@@ -157,26 +157,6 @@ fn cascade_remove_entities_pre_favorites(
         for ext_id in collect_external_id_ids(db, id)? {
             db.exec_mut(QueryBuilder::remove().ids(ext_id).query())?;
         }
-        // Remove Credit child nodes (owner → Credit → Artist).
-        let credits: Vec<super::Credit> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<super::Credit>()
-                    .search()
-                    .from(id)
-                    .where_()
-                    .neighbor()
-                    .end_where()
-                    .query(),
-            )?
-            .try_into()?;
-        let credit_ids: Vec<DbId> = credits
-            .iter()
-            .filter_map(|c| c.db_id.clone().map(DbId::from))
-            .collect();
-        if !credit_ids.is_empty() {
-            db.exec_mut(QueryBuilder::remove().ids(credit_ids).query())?;
-        }
         // agdb cascades the Release's label edges, but a Label left without
         // releases must be collected.
         super::labels::unlink_release(db, id)?;
@@ -197,15 +177,4 @@ fn cascade_remove_favorites_and_nodes(
     }
     db.exec_mut(QueryBuilder::remove().ids(node_ids).query())?;
     Ok(())
-}
-
-pub(crate) fn get_connected_artist_ids(
-    db: &impl super::DbAccess,
-    owner_db_id: DbId,
-) -> anyhow::Result<Vec<DbId>> {
-    let artists = super::artists::get(db, owner_db_id)?;
-    Ok(artists
-        .into_iter()
-        .filter_map(|a| a.db_id.map(Into::into))
-        .collect())
 }

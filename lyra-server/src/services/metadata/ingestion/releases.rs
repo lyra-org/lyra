@@ -25,24 +25,17 @@ use super::super::{
     TrackMetadata,
     layers::LocalLayer,
 };
-use super::artists::{
-    resolve_artist_ids,
-    sync_artist_edges,
-};
+use super::artists::resolve_artist_ids;
 use crate::db::{
     self,
     ArtistRelationType,
     ArtistType,
-    CreditType,
     DbAccess,
     Release,
     Track,
     graph::ensure_owned_edge,
     indexes::ensure_index,
-    metadata::{
-        get_connected_artist_ids,
-        manual_overrides::ManualMetadataField,
-    },
+    metadata::manual_overrides::ManualMetadataField,
 };
 
 pub(crate) struct TrackIngest {
@@ -356,7 +349,7 @@ fn persist_release_inner(
     // Reuse existing artist edges on rescan to prevent duplicates when plugins
     // have renamed the artist, causing the artist_name index to diverge from file tags.
     let release_artist_ids = if existing_release_id.is_some() {
-        let existing = get_connected_artist_ids(db, release_db_id)?;
+        let existing = db::credits::primary_artist_ids(db, release_db_id)?;
         if !existing.is_empty() {
             existing
         } else {
@@ -367,7 +360,7 @@ fn persist_release_inner(
     };
     if !db::metadata::manual_overrides::owns_field(db, release_db_id, ManualMetadataField::Credits)?
     {
-        sync_artist_edges(db, release_db_id, &release_artist_ids, CreditType::Artist)?;
+        db::credits::replace_primary_for_owner(db, release_db_id, &release_artist_ids)?;
     }
 
     // Infer across the whole release, not just this batch: an incremental scan
@@ -574,7 +567,7 @@ fn persist_release_inner(
 
         let track_artist_names = artists.unwrap_or_default();
         let track_artist_ids = if is_existing_track {
-            let existing = get_connected_artist_ids(db, track_db_id)?;
+            let existing = db::credits::primary_artist_ids(db, track_db_id)?;
             if !existing.is_empty() {
                 existing
             } else {
@@ -588,7 +581,7 @@ fn persist_release_inner(
             track_db_id,
             ManualMetadataField::Credits,
         )? {
-            sync_artist_edges(db, track_db_id, &track_artist_ids, CreditType::Artist)?;
+            db::credits::replace_primary_for_owner(db, track_db_id, &track_artist_ids)?;
         }
         sync_scanned_artist_relations(
             db,

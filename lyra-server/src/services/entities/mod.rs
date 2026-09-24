@@ -1129,50 +1129,6 @@ mod tests {
 
     use agdb::QueryBuilder;
 
-    fn connect_credit(
-        db: &mut DbAny,
-        owner_id: DbId,
-        artist_id: DbId,
-        credit_type: db::CreditType,
-        detail: Option<&str>,
-    ) -> anyhow::Result<()> {
-        let credit = db::Credit {
-            db_id: None,
-            id: nanoid!(),
-            credit_type,
-            detail: detail.map(str::to_string),
-        };
-        let credit_id = db
-            .exec_mut(QueryBuilder::insert().element(&credit).query())?
-            .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("credits")
-                .to(credit_id)
-                .query(),
-        )?;
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from(owner_id)
-                .to(credit_id)
-                .values_uniform([
-                    ("owned", 1).into(),
-                    (db::credits::EDGE_ORDER_KEY, 0_u64).into(),
-                ])
-                .query(),
-        )?;
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from(credit_id)
-                .to(artist_id)
-                .query(),
-        )?;
-        Ok(())
-    }
-
     fn set_artist_type(
         db: &mut DbAny,
         artist_id: DbId,
@@ -1196,12 +1152,13 @@ mod tests {
         set_artist_type(&mut db, character_id, db::ArtistType::Character)?;
         set_artist_type(&mut db, voice_actor_id, db::ArtistType::Person)?;
         connect_artist(&mut db, track_id, character_id)?;
-        connect_credit(
+        db::test_db::connect_credit(
             &mut db,
             track_id,
             voice_actor_id,
             db::CreditType::Vocalist,
             Some("character voice"),
+            0,
         )?;
         db::artists::relations::link(
             &mut db,
@@ -1264,12 +1221,13 @@ mod tests {
         set_artist_type(&mut db, character_id, db::ArtistType::Character)?;
         set_artist_type(&mut db, voice_actor_id, db::ArtistType::Person)?;
         connect_artist(&mut db, release_id, character_id)?;
-        connect_credit(
+        db::test_db::connect_credit(
             &mut db,
             release_id,
             voice_actor_id,
             db::CreditType::Vocalist,
             Some("character voice"),
+            0,
         )?;
         db::artists::relations::link(
             &mut db,

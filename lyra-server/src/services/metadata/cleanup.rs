@@ -454,6 +454,15 @@ fn merge_artist_into(
         }
     }
 
+    let winner_credits = db::credits::CreditSet::new(&db::credits::links_to_artist(db, winner)?);
+    let credit_links = db::credits::links_to_artist(db, loser)?;
+    for link in &credit_links {
+        if !winner_credits.contains(link.owner_id, winner, link.credit.role()) {
+            db::credits::link(db, link.owner_id, winner, &link.credit)?;
+        }
+    }
+    let credit_edge_ids: HashSet<DbId> = credit_links.iter().map(|link| link.edge_id).collect();
+
     let incoming = db.exec(
         QueryBuilder::search()
             .to(loser)
@@ -465,7 +474,7 @@ fn merge_artist_into(
     )?;
 
     for element in &incoming.elements {
-        if relation_edge_ids.contains(&element.id) {
+        if relation_edge_ids.contains(&element.id) || credit_edge_ids.contains(&element.id) {
             continue;
         }
         let from_id = element.from;
@@ -740,6 +749,51 @@ mod tests {
         assert_eq!(
             outgoing[0].0.attributes.as_deref(),
             Some("existing outgoing")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn artist_merge_moves_credits_with_their_values() -> anyhow::Result<()> {
+        let mut db = test_db::new_test_db()?;
+        let track = test_db::insert_track(&mut db, "Track")?;
+        let winner = test_db::insert_artist(&mut db, "Winner")?;
+        let loser = test_db::insert_artist(&mut db, "Loser")?;
+        test_db::connect_credit(&mut db, track, winner, db::CreditType::Artist, None, 0)?;
+        test_db::connect_credit(&mut db, track, loser, db::CreditType::Artist, None, 1)?;
+        test_db::connect_credit(
+            &mut db,
+            track,
+            loser,
+            db::CreditType::Producer,
+            Some("co-producer"),
+            2,
+        )?;
+
+        db.transaction_mut(|transaction| {
+            merge_artist_into(transaction, winner, loser, false, false)
+        })?;
+
+        let mut credits: Vec<db::Credit> = db::credits::links_for_owner(&db, track)?
+            .into_iter()
+            .inspect(|link| assert_eq!(link.artist_id, winner))
+            .map(|link| link.credit)
+            .collect();
+        credits.sort_by_key(|credit| credit.artist_order);
+        assert_eq!(
+            credits,
+            [
+                db::Credit {
+                    credit_type: db::CreditType::Artist,
+                    detail: None,
+                    artist_order: 0,
+                },
+                db::Credit {
+                    credit_type: db::CreditType::Producer,
+                    detail: Some("co-producer".to_string()),
+                    artist_order: 2,
+                },
+            ]
         );
         Ok(())
     }

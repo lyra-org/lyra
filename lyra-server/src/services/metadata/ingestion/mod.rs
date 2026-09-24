@@ -245,7 +245,6 @@ mod tests {
             "releases",
             "tracks",
             "artists",
-            "credits",
             "providers",
             "entries",
             "track_sources",
@@ -362,10 +361,6 @@ mod tests {
     ) -> anyhow::Result<()> {
         db.exec_mut(QueryBuilder::insert().edges().from(from).to(to).query())?;
         Ok(())
-    }
-
-    fn connect_artist(db: &mut DbAny, owner: DbId, artist_id: DbId) -> anyhow::Result<()> {
-        crate::db::test_db::connect_artist(db, owner, artist_id)
     }
 
     fn connect_track_to_entry_source(
@@ -666,9 +661,9 @@ mod tests {
         connect(&mut db, "releases", release_db_id)?;
         connect(&mut db, "artists", artist_db_id)?;
         connect(&mut db, release_db_id, track_db_id)?;
-        connect_artist(&mut db, release_db_id, artist_db_id)?;
+        crate::db::test_db::connect_artist(&mut db, release_db_id, artist_db_id)?;
         connect_track_to_entry_source(&mut db, track_db_id, entry_db_id)?;
-        connect_artist(&mut db, track_db_id, artist_db_id)?;
+        crate::db::test_db::connect_artist(&mut db, track_db_id, artist_db_id)?;
 
         db.exec_mut(QueryBuilder::remove().ids(entry_db_id).query())?;
         cleanup_orphaned_metadata(&mut db)?;
@@ -696,9 +691,9 @@ mod tests {
         connect(&mut db, "releases", release_db_id)?;
         connect(&mut db, "artists", artist_db_id)?;
         connect(&mut db, release_db_id, track_db_id)?;
-        connect_artist(&mut db, release_db_id, artist_db_id)?;
+        crate::db::test_db::connect_artist(&mut db, release_db_id, artist_db_id)?;
         connect_track_to_entry_source(&mut db, track_db_id, entry_db_id)?;
-        connect_artist(&mut db, track_db_id, artist_db_id)?;
+        crate::db::test_db::connect_artist(&mut db, track_db_id, artist_db_id)?;
 
         // Add a metadata layer attached to the track
         let layer = MetadataLayer {
@@ -758,7 +753,7 @@ mod tests {
         connect(&mut db, "releases", release_db_id)?;
         connect(&mut db, "artists", artist_db_id)?;
         connect(&mut db, release_db_id, track_db_id)?;
-        connect_artist(&mut db, release_db_id, artist_db_id)?;
+        crate::db::test_db::connect_artist(&mut db, release_db_id, artist_db_id)?;
         connect_track_to_entry_source(&mut db, track_db_id, entry_db_id)?;
 
         cleanup_orphaned_metadata(&mut db)?;
@@ -791,10 +786,10 @@ mod tests {
         connect(&mut db, "artists", artist_drop_id)?;
 
         connect(&mut db, release_keep_id, track_db_id)?;
-        connect_artist(&mut db, release_keep_id, artist_keep_id)?;
+        crate::db::test_db::connect_artist(&mut db, release_keep_id, artist_keep_id)?;
         connect_track_to_entry_source(&mut db, track_db_id, entry_db_id)?;
 
-        connect_artist(&mut db, release_drop_id, artist_drop_id)?;
+        crate::db::test_db::connect_artist(&mut db, release_drop_id, artist_drop_id)?;
 
         cleanup_orphaned_metadata(&mut db)?;
 

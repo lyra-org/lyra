@@ -180,7 +180,6 @@ pub(crate) fn collect_candidates(
             releases.extend(typed_neighbors(db, library_id, "Release")?);
         }
     }
-    let mut credits = HashSet::new();
     // Walk each distinct release once, collecting IDs before fetching search fields.
     for release in &releases {
         for element in neighbor_types(db, *release)? {
@@ -188,13 +187,8 @@ pub(crate) fn collect_candidates(
                 tracks.insert(element.id);
             } else if super::graph::is_element_type(&element, "Artist") {
                 artists.insert(element.id);
-            } else if super::graph::is_element_type(&element, "Credit") {
-                credits.insert(element.id);
             }
         }
-    }
-    for credit in credits {
-        artists.extend(typed_neighbors(db, credit, "Artist")?);
     }
     Ok(Candidates {
         tracks: fetch(db, tracks, "track_title")?,

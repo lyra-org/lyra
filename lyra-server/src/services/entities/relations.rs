@@ -10,10 +10,8 @@ use std::collections::{
 };
 
 use agdb::{
-    CountComparison,
     DbAny,
     DbId,
-    QueryBuilder,
 };
 use lyra_metadata::LookupHints;
 
@@ -258,63 +256,14 @@ pub(crate) fn external_ids_by_entity(
     Ok(external_ids)
 }
 
-fn credit_owner_ids_by_artist(
+fn crediting_owner_ids_by_artist(
     db: &DbAny,
     artist_ids: &[DbId],
 ) -> anyhow::Result<HashMap<DbId, Vec<DbId>>> {
-    let unique_artist_ids = dedupe_db_ids(artist_ids);
-    let mut owner_ids_by_artist: HashMap<DbId, Vec<DbId>> = unique_artist_ids
-        .iter()
-        .copied()
-        .map(|artist_id| (artist_id, Vec::new()))
-        .collect();
-
-    for artist_id in unique_artist_ids {
-        let credits: Vec<db::Credit> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<db::Credit>()
-                    .search()
-                    .to(artist_id)
-                    .where_()
-                    .neighbor()
-                    .end_where()
-                    .query(),
-            )?
-            .try_into()?;
-
-        let Some(artist_owner_ids) = owner_ids_by_artist.get_mut(&artist_id) else {
-            continue;
-        };
-        let mut seen_owners = HashSet::new();
-
-        for credit in &credits {
-            let Some(credit_db_id) = credit.db_id.clone().map(DbId::from) else {
-                continue;
-            };
-            let incoming: Vec<DbId> = db
-                .exec(
-                    QueryBuilder::search()
-                        .to(credit_db_id)
-                        .where_()
-                        .edge()
-                        .and()
-                        .distance(CountComparison::Equal(1))
-                        .query(),
-                )?
-                .elements
-                .iter()
-                .filter_map(|e| (e.from.0 > 0).then_some(e.from))
-                .collect();
-            for owner_id in incoming {
-                if seen_owners.insert(owner_id) {
-                    artist_owner_ids.push(owner_id);
-                }
-            }
-        }
-    }
-
-    Ok(owner_ids_by_artist)
+    dedupe_db_ids(artist_ids)
+        .into_iter()
+        .map(|artist_id| Ok((artist_id, db::credits::crediting_owner_ids(db, artist_id)?)))
+        .collect()
 }
 
 pub(crate) fn artist_owned_entities_by_artist(
@@ -323,7 +272,7 @@ pub(crate) fn artist_owned_entities_by_artist(
     include_releases: bool,
     include_tracks: bool,
 ) -> anyhow::Result<ArtistOwnedEntities> {
-    let owner_ids_by_artist = credit_owner_ids_by_artist(db, artist_ids)?;
+    let owner_ids_by_artist = crediting_owner_ids_by_artist(db, artist_ids)?;
     let mut all_owner_ids = Vec::new();
     let mut seen_owner_ids = HashSet::new();
     for owner_ids in owner_ids_by_artist.values() {
