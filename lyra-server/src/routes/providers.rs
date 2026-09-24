@@ -795,6 +795,7 @@ mod tests {
         Track,
     };
     use crate::services::entities::build_release_context;
+    use crate::services::providers::IdSchemes;
     use agdb::{
         DbAny,
         DbId,
@@ -986,7 +987,7 @@ mod tests {
         connect(&mut db, release_db_id, disc_2_track_1)?;
         connect(&mut db, release_db_id, track_1)?;
 
-        let context = build_release_context(&db, release_db_id, None)?;
+        let context = build_release_context(&db, release_db_id, None, &IdSchemes::default())?;
         let tracks = context
             .get("tracks")
             .and_then(Value::as_array)
@@ -1017,7 +1018,7 @@ mod tests {
             IdSource::Plugin,
         )?;
 
-        let context = build_release_context(&db, release_db_id, None)?;
+        let context = build_release_context(&db, release_db_id, None, &IdSchemes::default())?;
         let tracks = context
             .get("tracks")
             .and_then(Value::as_array)
@@ -1052,7 +1053,7 @@ mod tests {
         connect(&mut db, release_db_id, track_db_id)?;
         connect_track_to_entry_source(&mut db, track_db_id, entry_db_id)?;
 
-        let context = build_release_context(&db, release_db_id, None)?;
+        let context = build_release_context(&db, release_db_id, None, &IdSchemes::default())?;
 
         let album_hints = context
             .get("lookup_hints")
@@ -1104,7 +1105,12 @@ mod tests {
         connect(&mut db, release_db_id, track_db_id)?;
         connect_track_to_entry_source(&mut db, track_db_id, entry_db_id)?;
 
-        let context = build_release_context(&db, release_db_id, Some(library_db_id))?;
+        let context = build_release_context(
+            &db,
+            release_db_id,
+            Some(library_db_id),
+            &IdSchemes::default(),
+        )?;
 
         let album_hints = context
             .get("lookup_hints")
@@ -1152,7 +1158,7 @@ mod tests {
         connect(&mut db, release_db_id, track_db_id)?;
         connect(&mut db, release_db_id, artist_db_id)?;
 
-        let context = build_release_context(&db, release_db_id, None)?;
+        let context = build_release_context(&db, release_db_id, None, &IdSchemes::default())?;
         let tracks = context
             .get("tracks")
             .and_then(Value::as_array)
@@ -1195,7 +1201,7 @@ mod tests {
             1,
         )?;
 
-        let context = build_release_context(&db, release_db_id, None)?;
+        let context = build_release_context(&db, release_db_id, None, &IdSchemes::default())?;
         let artists = context
             .get("artists")
             .and_then(Value::as_array)
@@ -1235,7 +1241,7 @@ mod tests {
             1,
         )?;
 
-        let context = build_release_context(&db, release_db_id, None)?;
+        let context = build_release_context(&db, release_db_id, None, &IdSchemes::default())?;
         let tracks = context
             .get("tracks")
             .and_then(Value::as_array)
@@ -1279,7 +1285,7 @@ mod tests {
             1,
         )?;
 
-        let context = build_release_context(&db, release_db_id, None)?;
+        let context = build_release_context(&db, release_db_id, None, &IdSchemes::default())?;
         let tracks = context
             .get("tracks")
             .and_then(Value::as_array)

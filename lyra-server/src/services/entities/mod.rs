@@ -41,6 +41,7 @@ use crate::db::{
     Release,
     Track,
 };
+use crate::services::providers::IdentifiersByScheme;
 
 pub(crate) use context::{
     EntityContextError,
@@ -57,6 +58,7 @@ pub(crate) type ExternalIdsByProvider = BTreeMap<String, BTreeMap<String, String
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) enum EntityInclude {
     ExternalIds,
+    Identifiers,
     Releases,
     Artists,
     Tracks,
@@ -68,6 +70,7 @@ impl EntityInclude {
     pub(crate) fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "external_ids" => Some(Self::ExternalIds),
+            "identifiers" => Some(Self::Identifiers),
             "releases" => Some(Self::Releases),
             "artists" => Some(Self::Artists),
             "tracks" => Some(Self::Tracks),
@@ -80,6 +83,7 @@ impl EntityInclude {
     pub(crate) const fn as_key(self) -> &'static str {
         match self {
             Self::ExternalIds => "external_ids",
+            Self::Identifiers => "identifiers",
             Self::Releases => "releases",
             Self::Artists => "artists",
             Self::Tracks => "tracks",
@@ -90,6 +94,7 @@ impl EntityInclude {
 
     pub(crate) const ALL: &[Self] = &[
         Self::ExternalIds,
+        Self::Identifiers,
         Self::Releases,
         Self::Artists,
         Self::Tracks,
@@ -327,6 +332,7 @@ pub(crate) struct ReleaseProjectionTrack {
     pub(crate) created_at: Option<u64>,
     pub(crate) ctime: Option<u64>,
     pub(crate) external_ids: ExternalIdsByProvider,
+    pub(crate) identifiers: IdentifiersByScheme,
     pub(crate) artists: Vec<Artist>,
     pub(crate) lookup_hints: EntityLookupHints,
 }
@@ -352,6 +358,7 @@ describe_interface!(ReleaseProjectionTrack, "ReleaseProjectionTrack", {
     created_at: Option<u64> as "created_at",
     ctime: Option<u64> as "ctime",
     external_ids: ExternalIdsByProvider as "external_ids",
+    identifiers: IdentifiersByScheme as "identifiers",
     artists: Vec<Artist> as "artists",
     lookup_hints: EntityLookupHints as "lookup_hints",
 });
@@ -360,6 +367,7 @@ impl ReleaseProjectionTrack {
     pub(super) fn from_track(
         track: Track,
         external_ids: ExternalIdsByProvider,
+        identifiers: IdentifiersByScheme,
         artists: Vec<Artist>,
         lookup_hints: EntityLookupHints,
     ) -> Self {
@@ -385,6 +393,7 @@ impl ReleaseProjectionTrack {
             created_at: track.created_at,
             ctime: track.ctime,
             external_ids,
+            identifiers,
             artists,
             lookup_hints,
         }
@@ -412,6 +421,7 @@ interface_into_lua!(ReleaseProjectionTrack =>
     created_at as "created_at",
     ctime as "ctime",
     external_ids as "external_ids",
+    identifiers as "identifiers",
     artists as "artists",
     lookup_hints as "lookup_hints",
 );
@@ -419,6 +429,7 @@ interface_into_lua!(ReleaseProjectionTrack =>
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct ReleaseProjectionIncludes {
     pub(crate) external_ids: Option<ExternalIdsByProvider>,
+    pub(crate) identifiers: Option<IdentifiersByScheme>,
     pub(crate) artists: Option<Vec<Artist>>,
     pub(crate) tracks: Option<Vec<ReleaseProjectionTrack>>,
     pub(crate) credits: Option<Vec<CreditedArtistProjectionInfo>>,
@@ -426,6 +437,7 @@ pub(crate) struct ReleaseProjectionIncludes {
 
 describe_interface!(ReleaseProjectionIncludes, "ReleaseProjectionIncludes", {
     external_ids: Option<ExternalIdsByProvider> as "external_ids",
+    identifiers: Option<IdentifiersByScheme> as "identifiers",
     artists: Option<Vec<Artist>> as "artists",
     tracks: Option<Vec<ReleaseProjectionTrack>> as "tracks",
     credits: Option<Vec<CreditedArtistProjectionInfo>> as "credits",
@@ -433,6 +445,7 @@ describe_interface!(ReleaseProjectionIncludes, "ReleaseProjectionIncludes", {
 
 interface_into_lua!(ReleaseProjectionIncludes =>
     external_ids as "external_ids",
+    identifiers as "identifiers",
     artists as "artists",
     tracks as "tracks",
     credits as "credits",
@@ -441,6 +454,7 @@ interface_into_lua!(ReleaseProjectionIncludes =>
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct TrackProjectionIncludes {
     pub(crate) external_ids: Option<ExternalIdsByProvider>,
+    pub(crate) identifiers: Option<IdentifiersByScheme>,
     pub(crate) releases: Option<Vec<Release>>,
     pub(crate) artists: Option<Vec<Artist>>,
     pub(crate) entries: Option<Vec<ProjectionEntryInfo>>,
@@ -449,6 +463,7 @@ pub(crate) struct TrackProjectionIncludes {
 
 describe_interface!(TrackProjectionIncludes, "TrackProjectionIncludes", {
     external_ids: Option<ExternalIdsByProvider> as "external_ids",
+    identifiers: Option<IdentifiersByScheme> as "identifiers",
     releases: Option<Vec<Release>> as "releases",
     artists: Option<Vec<Artist>> as "artists",
     entries: Option<Vec<ProjectionEntryInfo>> as "entries",
@@ -457,6 +472,7 @@ describe_interface!(TrackProjectionIncludes, "TrackProjectionIncludes", {
 
 interface_into_lua!(TrackProjectionIncludes =>
     external_ids as "external_ids",
+    identifiers as "identifiers",
     releases as "releases",
     artists as "artists",
     entries as "entries",
@@ -466,18 +482,21 @@ interface_into_lua!(TrackProjectionIncludes =>
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct ArtistProjectionIncludes {
     pub(crate) external_ids: Option<ExternalIdsByProvider>,
+    pub(crate) identifiers: Option<IdentifiersByScheme>,
     pub(crate) releases: Option<Vec<Release>>,
     pub(crate) tracks: Option<Vec<Track>>,
 }
 
 describe_interface!(ArtistProjectionIncludes, "ArtistProjectionIncludes", {
     external_ids: Option<ExternalIdsByProvider> as "external_ids",
+    identifiers: Option<IdentifiersByScheme> as "identifiers",
     releases: Option<Vec<Release>> as "releases",
     tracks: Option<Vec<Track>> as "tracks",
 });
 
 interface_into_lua!(ArtistProjectionIncludes =>
     external_ids as "external_ids",
+    identifiers as "identifiers",
     releases as "releases",
     tracks as "tracks",
 );
@@ -1125,9 +1144,120 @@ mod tests {
         new_test_db,
     };
     use crate::services::EntityType;
+    use crate::services::providers::IdSchemes;
     use nanoid::nanoid;
 
-    use agdb::QueryBuilder;
+    use agdb::{
+        QueryBuilder,
+        QueryId,
+    };
+
+    fn example_schemes() -> IdSchemes {
+        let mut schemes = IdSchemes::default();
+        schemes.insert("alpha", "thing_id", "example:thing");
+        schemes
+    }
+
+    fn add_ids(db: &mut DbAny, owner_id: DbId, value: &str) -> anyhow::Result<()> {
+        db::external_ids::upsert(
+            db,
+            owner_id,
+            "alpha",
+            "thing_id",
+            value,
+            db::IdSource::Plugin,
+        )?;
+        db::external_ids::upsert(
+            db,
+            owner_id,
+            "alpha",
+            "unlabeled_id",
+            "hidden",
+            db::IdSource::Plugin,
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn provider_contexts_include_identifiers() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Identified Release")?;
+        let track_id = insert_track(&mut db, "Identified Track")?;
+        let artist_id = insert_artist(&mut db, "Identified Artist")?;
+        db::test_db::connect(&mut db, release_id, track_id)?;
+        add_ids(&mut db, release_id, "release-thing")?;
+        add_ids(&mut db, track_id, "track-thing")?;
+        add_ids(&mut db, artist_id, "artist-thing")?;
+        let schemes = example_schemes();
+
+        let release = build_release_context(&db, release_id, None, &schemes)?;
+        assert_eq!(
+            release["identifiers"],
+            serde_json::json!({ "example:thing": "release-thing" })
+        );
+        assert_eq!(
+            release["tracks"][0]["identifiers"],
+            serde_json::json!({ "example:thing": "track-thing" })
+        );
+        assert_eq!(
+            release["external_ids"]["alpha"]["unlabeled_id"],
+            serde_json::json!("hidden")
+        );
+
+        let (_, track) = build_entity_provider_context(&db, track_id, None, &schemes)?;
+        assert_eq!(
+            track["identifiers"],
+            serde_json::json!({ "example:thing": "track-thing" })
+        );
+        let (_, artist) = build_entity_provider_context(&db, artist_id, None, &schemes)?;
+        assert_eq!(
+            artist["identifiers"],
+            serde_json::json!({ "example:thing": "artist-thing" })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn projections_include_identifiers_on_request() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let track_id = insert_track(&mut db, "Projected Track")?;
+        add_ids(&mut db, track_id, "track-thing")?;
+        let schemes = example_schemes();
+        let expected =
+            IdentifiersByScheme::from([("example:thing".to_string(), "track-thing".to_string())]);
+
+        let single = project_entity(
+            &db,
+            QueryId::Id(track_id),
+            &[EntityInclude::Identifiers],
+            None,
+            &schemes,
+        )?;
+        let EntityProjectionInfo::Track(single) = single else {
+            panic!("expected track projection");
+        };
+        assert_eq!(single.includes.identifiers.as_ref(), Some(&expected));
+        assert!(single.includes.external_ids.is_none());
+
+        let many = project_entities(
+            &db,
+            vec![QueryId::Id(track_id)],
+            &[EntityInclude::Identifiers],
+            None,
+            &schemes,
+        )?;
+        let EntityProjectionInfo::Track(many) = &many[0] else {
+            panic!("expected track projection");
+        };
+        assert_eq!(many.includes.identifiers.as_ref(), Some(&expected));
+
+        let without = project_entity(&db, QueryId::Id(track_id), &[], None, &schemes)?;
+        let EntityProjectionInfo::Track(without) = without else {
+            panic!("expected track projection");
+        };
+        assert!(without.includes.identifiers.is_none());
+        Ok(())
+    }
 
     fn set_artist_type(
         db: &mut DbAny,
@@ -1336,7 +1466,8 @@ mod tests {
                 .query(),
         )?;
 
-        let (entity_type, _) = build_entity_provider_context(&db, release_id, None)?;
+        let (entity_type, _) =
+            build_entity_provider_context(&db, release_id, None, &IdSchemes::default())?;
         assert_eq!(entity_type, EntityType::Release);
 
         Ok(())
@@ -1377,7 +1508,8 @@ mod tests {
                 .query(),
         )?;
 
-        let (entity_type, _) = build_entity_provider_context(&db, track_id, None)?;
+        let (entity_type, _) =
+            build_entity_provider_context(&db, track_id, None, &IdSchemes::default())?;
         assert_eq!(entity_type, EntityType::Track);
 
         Ok(())
@@ -1409,7 +1541,8 @@ mod tests {
                 .query(),
         )?;
 
-        let (entity_type, _) = build_entity_provider_context(&db, artist_id, None)?;
+        let (entity_type, _) =
+            build_entity_provider_context(&db, artist_id, None, &IdSchemes::default())?;
         assert_eq!(entity_type, EntityType::Artist);
 
         Ok(())
@@ -1418,7 +1551,7 @@ mod tests {
     #[test]
     fn build_entity_provider_context_errors_for_unknown_entity() -> anyhow::Result<()> {
         let db = new_test_db()?;
-        let result = build_entity_provider_context(&db, DbId(999999), None);
+        let result = build_entity_provider_context(&db, DbId(999999), None, &IdSchemes::default());
         assert!(result.is_err());
 
         Ok(())

@@ -49,11 +49,14 @@ use crate::{
         DbAsync,
         ResolveId,
     },
-    services::entities::{
-        EntityInclude,
-        EntityProjectionInfo,
-        project_entities,
-        project_entity,
+    services::{
+        entities::{
+            EntityInclude,
+            EntityProjectionInfo,
+            project_entities,
+            project_entity,
+        },
+        providers::id_schemes,
     },
 };
 
@@ -145,12 +148,13 @@ fn query_callback(
     let db = store.db()?;
 
     Ok(luau::ScheduledFuture::new(async move {
+        let schemes = id_schemes().await;
         let db = db.read().await;
         let query_id = resolve_id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
             .ok_or_else(|| crate::plugins::runtime_error("could not resolve id"))?;
-        let projection = project_entity(&db, query_id, &includes, library_id)
+        let projection = project_entity(&db, query_id, &includes, library_id, &schemes)
             .map_err(crate::plugins::runtime_error)?;
 
         let value = match (kind, projection) {
@@ -243,6 +247,7 @@ fn query_many_callback(
     let db = store.db()?;
 
     Ok(luau::ScheduledFuture::new(async move {
+        let schemes = id_schemes().await;
         let db = db.read().await;
         let mut query_ids = Vec::new();
         let mut keys = Vec::new();
@@ -256,7 +261,7 @@ fn query_many_callback(
             keys.push(key);
             query_ids.push(query_id);
         }
-        let projections = project_entities(&db, query_ids, &includes, library_id)
+        let projections = project_entities(&db, query_ids, &includes, library_id, &schemes)
             .map_err(crate::plugins::runtime_error)?;
 
         let mut table = luau::OwnedTable::with_capacity(0, keys.len());

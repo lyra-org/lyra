@@ -97,6 +97,7 @@ fn release_ids_for_prefetch(
 
 #[cfg(test)]
 mod tests {
+    use crate::services::providers::IdSchemes;
     use agdb::QueryId;
 
     use crate::{
@@ -138,6 +139,7 @@ mod tests {
             QueryId::Id(release_id),
             &[EntityInclude::Credits],
             None,
+            &IdSchemes::default(),
         )?;
         let EntityProjectionInfo::Release(release) = projection else {
             panic!("expected release projection");
@@ -168,8 +170,13 @@ mod tests {
             0,
         )?;
 
-        let projection =
-            project_entity(&db, QueryId::Id(track_id), &[EntityInclude::Credits], None)?;
+        let projection = project_entity(
+            &db,
+            QueryId::Id(track_id),
+            &[EntityInclude::Credits],
+            None,
+            &IdSchemes::default(),
+        )?;
         let EntityProjectionInfo::Track(track) = projection else {
             panic!("expected track projection");
         };
@@ -203,6 +210,7 @@ mod tests {
             vec![QueryId::Id(track_id)],
             &[EntityInclude::Credits],
             None,
+            &IdSchemes::default(),
         )?;
         let EntityProjectionInfo::Track(track) = &projections[0] else {
             panic!("expected track projection");
@@ -222,8 +230,14 @@ mod tests {
         let mut db = new_test_db()?;
         let artist_id = insert_artist(&mut db, "Artist")?;
 
-        let err = project_entity(&db, QueryId::Id(artist_id), &[EntityInclude::Credits], None)
-            .expect_err("artist projections should reject credit includes");
+        let err = project_entity(
+            &db,
+            QueryId::Id(artist_id),
+            &[EntityInclude::Credits],
+            None,
+            &IdSchemes::default(),
+        )
+        .expect_err("artist projections should reject credit includes");
 
         assert!(err.to_string().contains("not supported"));
         Ok(())

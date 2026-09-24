@@ -50,8 +50,10 @@ use crate::{
         upload,
     },
     services::providers::{
+        IdentifiersByScheme,
         ProviderCallStage,
         ProviderRequireSpec,
+        id_schemes,
         requirements_match_with,
         with_provider_call,
     },
@@ -68,6 +70,7 @@ pub(crate) struct LyricsTrackContext {
     pub(crate) album_name: Option<String>,
     pub(crate) duration_ms: Option<u64>,
     pub(crate) external_ids: HashMap<String, HashMap<String, String>>,
+    pub(crate) identifiers: IdentifiersByScheme,
     /// Skip Miss/Instrumental fast path; cooldown still applies.
     pub(crate) force_refresh: bool,
 }
@@ -80,6 +83,7 @@ pub(crate) fn track_context_to_json(context: &LyricsTrackContext) -> serde_json:
         "album_name": context.album_name,
         "duration_ms": context.duration_ms,
         "external_ids": context.external_ids,
+        "identifiers": context.identifiers,
         "force_refresh": context.force_refresh,
     })
 }
@@ -533,6 +537,10 @@ fn context_path_present(context: &LyricsTrackContext, path: &str) -> bool {
                 .and_then(|m| m.get(id_type))
                 .is_some_and(|v| !v.trim().is_empty()),
         },
+        "identifiers" => match parts.next() {
+            None => !context.identifiers.is_empty(),
+            Some(scheme) => parts.next().is_none() && context.identifiers.contains_key(scheme),
+        },
         _ => false,
     }
 }
@@ -544,6 +552,7 @@ async fn build_track_context(
     // Collect everything we need under one short read lock; defer all CPU-side
     // shaping (string trimming, HashMap building) until after the lock drops
     // so concurrent dispatches don't pin readers across owned-data work.
+    let schemes = id_schemes().await;
     let (track, artists, release, external_ids_raw, libraries) = {
         let db = STATE.db.read().await;
         let Some(track) = db::tracks::get_by_id(&db, track_db_id)? else {
@@ -568,6 +577,7 @@ async fn build_track_context(
         .to_string();
     let album_name = release.map(|r| r.release_title);
 
+    let identifiers = schemes.resolve(&external_ids_raw);
     let mut external_ids: HashMap<String, HashMap<String, String>> = HashMap::new();
     for ext in external_ids_raw {
         external_ids
@@ -590,6 +600,7 @@ async fn build_track_context(
         album_name,
         duration_ms: track.duration_ms,
         external_ids,
+        identifiers,
         force_refresh: false,
     };
     let local = LocalTrackContext {
@@ -664,6 +675,27 @@ mod tests {
         AtomicUsize,
         Ordering,
     };
+
+    #[test]
+    fn require_paths_check_identifiers() {
+        let context = LyricsTrackContext {
+            track_db_id: 1,
+            track_name: "Track".to_string(),
+            artist_name: "Artist".to_string(),
+            album_name: None,
+            duration_ms: None,
+            external_ids: HashMap::new(),
+            identifiers: IdentifiersByScheme::from([(
+                "example:thing".to_string(),
+                "thing-1".to_string(),
+            )]),
+            force_refresh: false,
+        };
+
+        assert!(context_path_present(&context, "identifiers"));
+        assert!(context_path_present(&context, "identifiers.example:thing"));
+        assert!(!context_path_present(&context, "identifiers.example:other"));
+    }
 
     fn lyrics_payload(text: &str) -> PluginLyricsInput {
         PluginLyricsInput {

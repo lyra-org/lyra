@@ -162,7 +162,8 @@ pub fn build_release_context_from_tags_with_library_root(
             "db_id": track_id,
             "track_title": track.title.as_deref().unwrap_or(""),
             "artists": track_artists,
-            "external_ids": {}
+            "external_ids": {},
+            "identifiers": {}
         });
 
         if let Some(file_path) = track.file_path.as_deref() {
@@ -196,7 +197,8 @@ pub fn build_release_context_from_tags_with_library_root(
         "artists": album_artists_json,
         "tracks": tracks_json,
         "lookup_hints": release_lookup_hints,
-        "external_ids": {}
+        "external_ids": {},
+        "identifiers": {}
     });
 
     if let Some(release_date) = tracks.iter().filter_map(release_date_from_track).max() {

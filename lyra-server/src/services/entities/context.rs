@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use crate::db;
 
 use crate::services::EntityType;
+use crate::services::providers::IdSchemes;
 
 use super::{
     EntityInclude,
@@ -180,6 +181,7 @@ pub(crate) fn build_release_context(
     db: &DbAny,
     entity_id: DbId,
     library_id: Option<DbId>,
+    schemes: &IdSchemes,
 ) -> anyhow::Result<Value> {
     let library_root = if let Some(lib_id) = library_id {
         db::libraries::get_by_id(db, lib_id)?
@@ -197,9 +199,11 @@ pub(crate) fn build_release_context(
             EntityInclude::Tracks,
             EntityInclude::Artists,
             EntityInclude::ExternalIds,
+            EntityInclude::Identifiers,
         ],
         library_root.as_deref(),
         &PreFetchedIncludes::default(),
+        schemes,
     )?;
     let mut context =
         flatten_projection_for_provider_context(EntityProjectionInfo::Release(projection))?;
@@ -210,7 +214,7 @@ pub(crate) fn build_release_context(
     Ok(context)
 }
 
-fn build_track_context(db: &DbAny, entity_id: DbId) -> anyhow::Result<Value> {
+fn build_track_context(db: &DbAny, entity_id: DbId, schemes: &IdSchemes) -> anyhow::Result<Value> {
     let projection = project_entity(
         db,
         QueryId::Id(entity_id),
@@ -218,20 +222,23 @@ fn build_track_context(db: &DbAny, entity_id: DbId) -> anyhow::Result<Value> {
             EntityInclude::Releases,
             EntityInclude::Artists,
             EntityInclude::ExternalIds,
+            EntityInclude::Identifiers,
         ],
         None,
+        schemes,
     )?;
     let mut context = flatten_projection_for_provider_context(projection)?;
     attach_custom_fields_to_context(db, &mut context)?;
     Ok(context)
 }
 
-fn build_artist_context(db: &DbAny, entity_id: DbId) -> anyhow::Result<Value> {
+fn build_artist_context(db: &DbAny, entity_id: DbId, schemes: &IdSchemes) -> anyhow::Result<Value> {
     let projection = project_entity(
         db,
         QueryId::Id(entity_id),
-        &[EntityInclude::ExternalIds],
+        &[EntityInclude::ExternalIds, EntityInclude::Identifiers],
         None,
+        schemes,
     )?;
     let mut context = flatten_projection_for_provider_context(projection)?;
     attach_custom_fields_to_context(db, &mut context)?;
@@ -242,6 +249,7 @@ pub(crate) fn build_entity_provider_context(
     db: &DbAny,
     entity_id: DbId,
     library_id: Option<DbId>,
+    schemes: &IdSchemes,
 ) -> Result<(EntityType, Value), EntityContextError> {
     let result = db
         .exec(QueryBuilder::select().ids(entity_id).query())
@@ -254,11 +262,15 @@ pub(crate) fn build_entity_provider_context(
     match entity_type {
         DetectedEntityType::Release => Ok((
             EntityType::Release,
-            build_release_context(db, entity_id, library_id)?,
+            build_release_context(db, entity_id, library_id, schemes)?,
         )),
-        DetectedEntityType::Track => Ok((EntityType::Track, build_track_context(db, entity_id)?)),
-        DetectedEntityType::Artist => {
-            Ok((EntityType::Artist, build_artist_context(db, entity_id)?))
-        }
+        DetectedEntityType::Track => Ok((
+            EntityType::Track,
+            build_track_context(db, entity_id, schemes)?,
+        )),
+        DetectedEntityType::Artist => Ok((
+            EntityType::Artist,
+            build_artist_context(db, entity_id, schemes)?,
+        )),
     }
 }
