@@ -20,19 +20,13 @@ use crate::db::{
     graph::remove_edges_between,
 };
 
-fn metadata_source_identity(meta: &TrackMetadata) -> String {
-    meta.source_key
-        .clone()
-        .unwrap_or_else(|| format!("entry:{}:embedded", meta.entry_db_id.0))
-}
-
 fn prune_stale_track_sources(db: &mut DbAny, metadata: &[TrackMetadata]) -> anyhow::Result<()> {
     let mut expected_by_entry: HashMap<DbId, HashSet<String>> = HashMap::new();
     for meta in metadata {
         expected_by_entry
             .entry(meta.entry_db_id)
             .or_default()
-            .insert(metadata_source_identity(meta));
+            .insert(meta.source_key.clone());
     }
 
     for (entry_db_id, expected_source_keys) in expected_by_entry {
@@ -73,13 +67,13 @@ pub(crate) fn build_existing_track_map(
     let mut track_ids = HashMap::new();
 
     for meta in metadata {
-        let identity = metadata_source_identity(meta);
-        if track_ids.contains_key(&identity) {
+        if track_ids.contains_key(&meta.source_key) {
             continue;
         }
 
-        if let Some(track_id) = db::track_sources::get_track_id_by_source_key(db, &identity)? {
-            track_ids.insert(identity, track_id);
+        if let Some(track_id) = db::track_sources::get_track_id_by_source_key(db, &meta.source_key)?
+        {
+            track_ids.insert(meta.source_key.clone(), track_id);
         }
     }
 

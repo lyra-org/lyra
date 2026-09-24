@@ -25,8 +25,9 @@ pub(crate) struct CueSheet {
     pub(crate) identity: String,
 }
 
-fn cue_sheet_identity(cue_entry_id: DbId) -> String {
-    format!("cue_entry:{}", cue_entry_id.0)
+fn cue_sheet_identity(db: &impl DbAccess, cue_entry_id: DbId) -> anyhow::Result<String> {
+    let cue_entry_public_id = super::cue_entry_public_id(db, cue_entry_id)?;
+    Ok(format!("cue_entry:{cue_entry_public_id}"))
 }
 
 fn find_sheet_id_by_identity(db: &impl DbAccess, identity: &str) -> anyhow::Result<Option<DbId>> {
@@ -38,7 +39,7 @@ pub(crate) fn upsert(
     cue_entry_id: DbId,
     source_hash: &str,
 ) -> anyhow::Result<DbId> {
-    let identity = cue_sheet_identity(cue_entry_id);
+    let identity = cue_sheet_identity(db, cue_entry_id)?;
     let existing_id = find_sheet_id_by_identity(db, &identity)?;
     let sheet = CueSheet {
         db_id: existing_id,
