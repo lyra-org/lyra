@@ -416,11 +416,7 @@ fn merge_artist_into(
 ) -> anyhow::Result<()> {
     let incoming_relations = db::artists::relations::get_relations_to(db, loser, None)?;
     let outgoing_relations = db::artists::relations::get_relations_from(db, loser, None)?;
-    let relation_edge_ids: HashSet<DbId> = incoming_relations
-        .iter()
-        .chain(&outgoing_relations)
-        .filter_map(|(relation, _)| relation.db_id.clone().map(DbId::from))
-        .collect();
+    let relation_edge_ids = db::artists::relations::incoming_edge_ids(db, loser)?;
 
     for (relation, source_id) in incoming_relations {
         if source_id != winner
@@ -750,6 +746,27 @@ mod tests {
             outgoing[0].0.attributes.as_deref(),
             Some("existing outgoing")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn artist_merge_does_not_turn_relations_into_ownership_edges() -> anyhow::Result<()> {
+        let mut db = test_db::new_test_db()?;
+        let winner = test_db::insert_artist(&mut db, "Winner")?;
+        let loser = test_db::insert_artist(&mut db, "Loser")?;
+        db::artists::relations::link(
+            &mut db,
+            winner,
+            loser,
+            db::ArtistRelationType::MemberOf,
+            None,
+        )?;
+
+        db.transaction_mut(|transaction| {
+            merge_artist_into(transaction, winner, loser, false, false)
+        })?;
+
+        assert!(db::graph::direct_edge_ids(&db, winner, winner)?.is_empty());
         Ok(())
     }
 
