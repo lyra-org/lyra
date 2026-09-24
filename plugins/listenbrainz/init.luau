@@ -6,7 +6,6 @@
 
 local entities = require("@lyra/entities")
 local http = require("@harmony/http")
-local ids = require("@lyra/ids")
 local serde = require("@harmony/serde")
 local json = serde.json
 local metadata = require("@lyra/metadata")
@@ -316,11 +315,10 @@ local function submit_single_listen(token: string, update: PlaybackUpdatePayload
 end
 
 playbacks.on_update(function(update)
-	local user_db_id = ids.get_db_id(update.user_public_id)
-	if user_db_id == nil then
+	local ok, settings = pcall(user_config.get, user_config, update.user_public_id)
+	if not ok then
 		return
 	end
-	local settings = user_config:get(user_db_id)
 	local token = settings.token :: string?
 	if not token or token == "" then
 		return
