@@ -707,18 +707,21 @@ provider:id({
 	id_type = "artist_id",
 	entity = ET.Artist,
 	unique = true,
+	scheme = "theaudiodb:artist",
 }, audiodb_url("artist/{id}"))
 
 provider:id({
 	id_type = "album_id",
 	entity = ET.Release,
 	unique = true,
+	scheme = "theaudiodb:album",
 }, audiodb_url("album/{id}"))
 
 provider:id({
 	id_type = "track_id",
 	entity = ET.Track,
 	unique = true,
+	scheme = "theaudiodb:track",
 }, audiodb_url("track/{id}"))
 
 provider:search(ET.Artist, function(query: string): { SearchResultItem }
