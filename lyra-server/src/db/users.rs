@@ -58,21 +58,11 @@ pub(crate) struct Session {
 }
 
 /// Case-insensitive (lowercased) username lookup.
-pub(crate) fn get_by_username(db: &DbAny, username: &str) -> anyhow::Result<Option<User>> {
-    let mut users: Vec<User> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<User>()
-                .search()
-                .from("users")
-                .where_()
-                .key("username")
-                .value(username.to_lowercase())
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
-    Ok(users.pop())
+pub(crate) fn get_by_username(
+    db: &impl super::DbAccess,
+    username: &str,
+) -> anyhow::Result<Option<User>> {
+    super::graph::fetch_typed_by_index(db, "username", &username.to_lowercase(), "User")
 }
 
 pub(crate) fn get_by_id(
@@ -82,7 +72,14 @@ pub(crate) fn get_by_id(
     super::graph::fetch_typed_by_id(db, user_db_id, "User")
 }
 
-pub(crate) fn get_by_public_id(db: &DbAny, id: &str) -> anyhow::Result<Option<User>> {
+pub(crate) fn get_by_public_id(
+    db: &impl super::DbAccess,
+    id: &str,
+) -> anyhow::Result<Option<User>> {
+    super::graph::fetch_typed_by_index(db, "id", id, "User")
+}
+
+pub(crate) fn get(db: &impl super::DbAccess) -> anyhow::Result<Vec<User>> {
     let mut users: Vec<User> = db
         .exec(
             QueryBuilder::select()
@@ -90,22 +87,8 @@ pub(crate) fn get_by_public_id(db: &DbAny, id: &str) -> anyhow::Result<Option<Us
                 .search()
                 .from("users")
                 .where_()
-                .key("id")
-                .value(id)
+                .neighbor()
                 .end_where()
-                .query(),
-        )?
-        .try_into()?;
-    Ok(users.pop())
-}
-
-pub(crate) fn get(db: &DbAny) -> anyhow::Result<Vec<User>> {
-    let mut users: Vec<User> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<User>()
-                .search()
-                .from("users")
                 .query(),
         )?
         .try_into()?;
@@ -118,19 +101,7 @@ pub(crate) fn find_session_by_id(
     db: &impl super::DbAccess,
     session_id: DbId,
 ) -> anyhow::Result<Option<Session>> {
-    let mut sessions: Vec<Session> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<Session>()
-                .search()
-                .from("sessions")
-                .where_()
-                .ids(session_id)
-                .query(),
-        )?
-        .try_into()?;
-
-    Ok(sessions.pop())
+    super::graph::fetch_typed_by_id(db, session_id, "Session")
 }
 
 pub(crate) fn find_by_session_token_hash(
@@ -413,6 +384,50 @@ mod tests {
 
         let user = get_by_username(&db, "default")?;
         assert!(user.is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn point_lookups_resolve_users_and_sessions_by_type() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = create(&mut db, &test_user("alice")?)?;
+        let user = get_by_id(&db, user_db_id)?.ok_or_else(|| anyhow!("user must exist"))?;
+        let session_id = login(&mut db, user_db_id, &test_session("token-hash-point"))?;
+
+        assert_eq!(
+            get_by_public_id(&db, &user.id)?.and_then(|user| user.db_id),
+            Some(user_db_id)
+        );
+        assert_eq!(
+            get_by_username(&db, "ALICE")?.and_then(|user| user.db_id),
+            Some(user_db_id)
+        );
+        assert!(get_by_public_id(&db, "missing")?.is_none());
+        assert!(get_by_username(&db, "missing")?.is_none());
+
+        let impostor_db_id = db
+            .exec_mut(
+                QueryBuilder::insert()
+                    .nodes()
+                    .values([[
+                        ("db_element_id", "Track").into(),
+                        ("id", "impostor-id").into(),
+                        ("username", "mallory").into(),
+                    ]])
+                    .query(),
+            )?
+            .ids()[0];
+        assert!(get_by_public_id(&db, "impostor-id")?.is_none());
+        assert!(get_by_username(&db, "mallory")?.is_none());
+
+        assert_eq!(
+            find_session_by_id(&db, session_id)?.map(|session| session.token_hash),
+            Some("token-hash-point".to_string())
+        );
+        assert!(find_session_by_id(&db, user_db_id)?.is_none());
+        assert!(find_session_by_id(&db, impostor_db_id)?.is_none());
+        assert!(find_session_by_id(&db, DbId(999_999))?.is_none());
 
         Ok(())
     }
