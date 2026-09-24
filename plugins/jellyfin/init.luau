@@ -973,7 +973,7 @@ api.get(P .. "/Users/{userId}/Items/{itemId}", function(ctx: ApiContext)
 		return responses.bad_request("missing item id")
 	end
 
-	local item = catalog.find_item_by_id(item_ids.decode_jellyfin_item_id(raw_item_id), principal.user_id)
+	local item = catalog.find_item_by_id(item_ids.decode_jellyfin_item_id(raw_item_id), principal.user_id, true)
 	if not item then
 		return responses.not_found("item not found")
 	end
@@ -998,7 +998,7 @@ api.get(P .. "/Items/{id}", function(ctx: ApiContext)
 		return api.response.json(200, root_folder_json(principal.user_id))
 	end
 
-	local item = catalog.find_item_by_id(item_ids.decode_jellyfin_item_id(raw_id), principal.user_id)
+	local item = catalog.find_item_by_id(item_ids.decode_jellyfin_item_id(raw_id), principal.user_id, true)
 	if not item then
 		return responses.not_found("item not found")
 	end
