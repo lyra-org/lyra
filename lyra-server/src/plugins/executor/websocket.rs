@@ -43,7 +43,6 @@ impl PluginExecutor {
                 state: request.state.clone(),
             },
         )?;
-        let auth_principal = request.auth.as_ref().map(|auth| auth.principal.clone());
         let ctx = api_context_value(&ApiHandlerRequest {
             handler_id: request.handler_id,
             plugin_id: request.plugin_id,
@@ -58,9 +57,6 @@ impl PluginExecutor {
         })?;
         let thread = self.vm.create_thread(&handler.handler)?;
         let mut context = handler.context.clone();
-        if let Some(principal) = auth_principal {
-            request.dispatch_auth.record(principal);
-        }
         context.caller.insert(request.dispatch_auth);
         let scheduler = self.vm.data().get::<LocalScheduler>()?;
         let handle = scheduler.spawn_luau_thread(
