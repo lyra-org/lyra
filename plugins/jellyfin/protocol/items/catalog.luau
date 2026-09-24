@@ -169,7 +169,7 @@ export type ItemsQueryOptions = {
 	include_overview: boolean,
 	include_parent_id: boolean,
 	group_items: boolean,
-	user_id: number?,
+	user_id: string?,
 	_favorite_id_lookup: FavoriteLookup?,
 	_genre_infos_by_release_id: { [number]: { genres.GenreInfo } }?,
 	_tag_infos_by_item_id: TagInfoMap?,
@@ -192,7 +192,7 @@ type LyricsLookup = { [number]: boolean }
 type PlayCountLookup = { [number]: number }
 type LastPlayedLookup = { [number]: number }
 type ItemContext = {
-	user_id: number?,
+	user_id: string?,
 	favorite_lookup: FavoriteLookup,
 	play_count_lookup: PlayCountLookup,
 	last_played_lookup: LastPlayedLookup,
@@ -492,7 +492,7 @@ end
 function helpers.build_item_user_data(
 	item_id: number?,
 	item_hex_id: string?,
-	user_id: number?,
+	user_id: string?,
 	key: string?,
 	include_play_count: boolean,
 	favorite_lookup: FavoriteLookup?,
@@ -1147,15 +1147,15 @@ function helpers.normalize_tag_info_map(target_ids: { number }, raw_tag_map: Tag
 	return mapped
 end
 
-function helpers.fetch_tag_info_map(user_id: number?, target_ids: { number }): TagInfoMap
+function helpers.fetch_tag_info_map(user_id: string?, target_ids: { number }): TagInfoMap
 	if #target_ids == 0 then
 		return {}
 	end
-	if user_id == nil or user_id <= 0 then
+	if user_id == nil then
 		return helpers.normalize_tag_info_map(target_ids, nil)
 	end
 
-	local ok, raw_tag_map = pcall(tags_module.get_for_targets_many, user_id, target_ids)
+	local ok, raw_tag_map = pcall(tags_module.get_for_targets_many, target_ids)
 	if not ok or type(raw_tag_map) ~= "table" then
 		return helpers.normalize_tag_info_map(target_ids, nil)
 	end
@@ -1163,13 +1163,13 @@ function helpers.fetch_tag_info_map(user_id: number?, target_ids: { number }): T
 	return helpers.normalize_tag_info_map(target_ids, raw_tag_map :: TagInfoMap)
 end
 
-function helpers.fetch_tag_infos(user_id: number?, target_id: number?): { TagInfo }?
+function helpers.fetch_tag_infos(user_id: string?, target_id: number?): { TagInfo }?
 	local resolved_id = helpers.resolve_numeric_id(target_id)
-	if user_id == nil or user_id <= 0 or resolved_id == nil then
+	if user_id == nil or resolved_id == nil then
 		return nil
 	end
 
-	local ok, raw_tags = pcall(tags_module.get_for_target, user_id, resolved_id)
+	local ok, raw_tags = pcall(tags_module.get_for_target, resolved_id)
 	if not ok or type(raw_tags) ~= "table" then
 		return nil
 	end
@@ -1770,7 +1770,7 @@ end
 
 function helpers.to_artist_item(
 	artist: ArtistLike?,
-	user_id: number?,
+	user_id: string?,
 	favorite_lookup: FavoriteLookup?,
 	context: ItemContext?
 ): ItemInfo?
@@ -1825,7 +1825,7 @@ end
 
 function helpers.to_person_item(
 	artist: ArtistLike?,
-	user_id: number?,
+	user_id: string?,
 	favorite_lookup: FavoriteLookup?,
 	context: ItemContext?
 ): ItemInfo?
@@ -1956,7 +1956,7 @@ end
 
 function helpers.to_playlist_item(
 	playlist: PlaylistInfo?,
-	user_id: number?,
+	user_id: string?,
 	child_count: number?,
 	context: ItemContext?
 ): ItemInfo?
@@ -2004,7 +2004,7 @@ end
 
 function helpers.to_release_item(
 	release: ReleaseLike?,
-	user_id: number?,
+	user_id: string?,
 	favorite_lookup: FavoriteLookup?,
 	context: ItemContext?
 ): ItemInfo?
@@ -2156,7 +2156,7 @@ end
 function helpers.to_track_item(
 	track: TrackLike?,
 	preferred_release_id: number?,
-	user_id: number?,
+	user_id: string?,
 	favorite_lookup: FavoriteLookup?,
 	include_media_info: boolean?,
 	context: ItemContext?
@@ -2965,7 +2965,7 @@ function helpers.favorite_id_lookup(options: ItemsQueryOptions?, force_load: boo
 
 	local user_id = if options then options.user_id else nil
 	local lookup: FavoriteLookup = {}
-	if not user_id or user_id <= 0 then
+	if not user_id then
 		if options then
 			options._favorite_id_lookup = lookup
 		end
@@ -2973,7 +2973,7 @@ function helpers.favorite_id_lookup(options: ItemsQueryOptions?, force_load: boo
 	end
 
 	for _, kind in FAVORITE_ENTITY_KINDS do
-		local ok, ids = pcall(favorites.list_ids, user_id, kind)
+		local ok, ids = pcall(favorites.list_ids, kind)
 		if ok and type(ids) == "table" then
 			for _, target_id in ids do
 				if type(target_id) == "number" and target_id > 0 then
@@ -3180,7 +3180,7 @@ function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 	return options
 end
 
-function module.with_user_query_options(options: ItemsQueryOptions, user_id: number): ItemsQueryOptions
+function module.with_user_query_options(options: ItemsQueryOptions, user_id: string): ItemsQueryOptions
 	local scoped_options = helpers.clone_items_query_options(options)
 	scoped_options.user_id = user_id
 	return scoped_options
@@ -3565,7 +3565,7 @@ function helpers.prefetch_track_stats_and_media(
 	end
 
 	if context.include_user_data == true then
-		local stats = listens.get_stats(seed.track_ids, options.user_id)
+		local stats = listens.get_stats(seed.track_ids)
 		if type(stats) == "table" then
 			local play_counts = stats.counts
 			if type(play_counts) == "table" then
@@ -4110,7 +4110,7 @@ function helpers.append_scoped_listing_stubs(
 	stubs: { ItemInfo },
 	selected_types: ItemTypeSelection,
 	scope: number?,
-	user_id: number?
+	user_id: string?
 ): ()
 	local accessible_library_ids: { number }? = nil
 	if
@@ -4146,7 +4146,7 @@ function helpers.append_scoped_listing_stubs(
 	end
 
 	if selected_types.playlists and scope == nil then
-		local playlist_items = playlist_access.list_for_user(user_id)
+		local playlist_items = if user_id then playlist_access.list_owned() else {}
 		local viewable_playlists: { PlaylistInfo } = {}
 		for _, playlist: PlaylistInfo in playlist_items do
 			if playlist_access.can_view(playlist, user_id) then
@@ -5138,7 +5138,7 @@ function similar.release_genre_map(release_ids: { number }): { [number]: { genre
 	return mapped
 end
 
-function similar.tag_map(user_id: number?, target_ids: { number }): TagInfoMap
+function similar.tag_map(user_id: string?, target_ids: { number }): TagInfoMap
 	return helpers.fetch_tag_info_map(user_id, target_ids)
 end
 
@@ -5566,8 +5566,7 @@ local function build_consumer_opts(options: ItemsQueryOptions): (mix.MixConsumer
 		engine_limit = INSTANT_MIX_MAX_LIMIT
 	end
 
-	local user_id: number? = options.user_id
-	return { limit = engine_limit, user_id = user_id }, requested_limit
+	return { limit = engine_limit }, requested_limit
 end
 
 -- Returns `(items, total_count, start_index, found)`. Audio seeds use
@@ -5645,7 +5644,7 @@ function module.list_instant_mix_audio_from_genre_name(
 	return items, total_count, start_index, true
 end
 
-function module.find_item_by_id(item_id: number?, user_id: number?): ItemInfo?
+function module.find_item_by_id(item_id: number?, user_id: string?): ItemInfo?
 	if not item_id or item_id <= 0 then
 		return nil
 	end
@@ -5973,7 +5972,7 @@ end
 
 function helpers.paginate_name_lookup(
 	name: string,
-	user_id: number,
+	user_id: string,
 	list_fn: (ItemsQueryOptions) -> ({ ItemInfo }, number, number)
 ): ItemInfo?
 	local lowered_name = string.lower(name)
@@ -6040,16 +6039,16 @@ function module.find_person_db_id_by_name(name: string): number?
 	end)
 end
 
-function module.find_artist_by_name(name: string, user_id: number): ItemInfo?
+function module.find_artist_by_name(name: string, user_id: string): ItemInfo?
 	return helpers.paginate_name_lookup(name, user_id, module.list_artist_items)
 end
 
-function module.find_person_by_name(name: string, user_id: number): ItemInfo?
+function module.find_person_by_name(name: string, user_id: string): ItemInfo?
 	return helpers.paginate_name_lookup(name, user_id, module.list_person_items)
 end
 
 -- Single page since list_genre_items is exhaustive; pagination would be wasted.
-function module.find_genre_by_name(name: string, user_id: number): ItemInfo?
+function module.find_genre_by_name(name: string, user_id: string): ItemInfo?
 	local options = module.with_user_query_options(module.coerce_items_query(nil), user_id)
 	options.search_term = name
 	options.limit = NAME_LOOKUP_PAGE_SIZE * NAME_LOOKUP_MAX_PAGES
@@ -6059,7 +6058,7 @@ function module.find_genre_by_name(name: string, user_id: number): ItemInfo?
 end
 
 -- Visited-set prevents cycle duplicates; boolean return distinguishes "missing" from "no ancestors".
-function module.ancestors_chain(item_id: number, user_id: number): ({ ItemInfo }, boolean)
+function module.ancestors_chain(item_id: number, user_id: string): ({ ItemInfo }, boolean)
 	local chain: { ItemInfo } = {}
 	if item_id <= 0 then
 		return chain, false

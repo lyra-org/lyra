@@ -64,6 +64,11 @@ function module.decode_jellyfin_item_id(value: string?): number?
 	return nil
 end
 
+-- User ids are public ids end to end; never map them through `ids.get_db_id`.
+function module.decode_jellyfin_user_id(value: string?): string?
+	return hex_to_nanoid_safe(value)
+end
+
 local function batch_decode_hex_ids(hex_values: { string }): { number }
 	local nanoids: { string } = {}
 	local seen: { [string]: boolean } = {}

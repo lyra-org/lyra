@@ -27,30 +27,27 @@ function module.find(playlist_id: number?): PlaylistInfo?
 	return result
 end
 
-function module.owner_id(playlist: PlaylistInfo?): number?
+-- The owner's public id.
+function module.owner_id(playlist: PlaylistInfo?): string?
 	local raw_playlist_id = if playlist then playlist.db_id else nil
 	if raw_playlist_id == nil or raw_playlist_id <= 0 then
 		return nil
 	end
 
 	local ok, owner_id = pcall(playlists.get_owner, raw_playlist_id)
-	if not ok then
-		return nil
-	end
-
-	if owner_id == nil or type(owner_id) ~= "number" or owner_id <= 0 then
+	if not ok or type(owner_id) ~= "string" then
 		return nil
 	end
 
 	return owner_id
 end
 
-function module.can_edit(playlist: PlaylistInfo?, user_id: number?): boolean
+function module.can_edit(playlist: PlaylistInfo?, user_id: string?): boolean
 	local owner_id = module.owner_id(playlist)
-	return owner_id ~= nil and user_id ~= nil and owner_id == tonumber(user_id)
+	return owner_id ~= nil and owner_id == user_id
 end
 
-function module.can_view(playlist: PlaylistInfo?, user_id: number?): boolean
+function module.can_view(playlist: PlaylistInfo?, user_id: string?): boolean
 	if module.can_edit(playlist, user_id) then
 		return true
 	end
@@ -58,11 +55,9 @@ function module.can_view(playlist: PlaylistInfo?, user_id: number?): boolean
 	return playlist ~= nil and playlist.is_public == true
 end
 
-function module.list_for_user(user_id: number?): { PlaylistInfo }
-	if user_id == nil or user_id <= 0 then
-		return {}
-	end
-	local ok, playlist_items = pcall(playlists.get_by_user, user_id)
+-- Playlists owned by the dispatch principal.
+function module.list_owned(): { PlaylistInfo }
+	local ok, playlist_items = pcall(playlists.list_owned)
 	if not ok or type(playlist_items) ~= "table" then
 		return {}
 	end

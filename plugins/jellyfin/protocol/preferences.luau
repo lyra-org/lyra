@@ -81,13 +81,14 @@ local function require_device_id(ctx: ApiContext): string?
 	return valid_segment(raw, MAX_DEVICE_ID_LENGTH)
 end
 
-local function display_prefs_key(user_id: number, client: string, prefs_id: string): string
+-- Keys are scoped by the user's public id, which is never reused.
+local function display_prefs_key(user_id: string, client: string, prefs_id: string): string
 	-- Length-prefix each variable segment so no separator injection is possible.
-	return string.format("%d:%d:%s:%d:%s", user_id, #client, client, #prefs_id, prefs_id)
+	return string.format("%d:%s:%d:%s:%d:%s", #user_id, user_id, #client, client, #prefs_id, prefs_id)
 end
 
-local function device_options_key(user_id: number, device_id: string): string
-	return string.format("%d:%d:%s", user_id, #device_id, device_id)
+local function device_options_key(user_id: string, device_id: string): string
+	return string.format("%d:%s:%d:%s", #user_id, user_id, #device_id, device_id)
 end
 
 local function default_display_prefs(prefs_id: string, client: string): JsonObject
@@ -122,7 +123,7 @@ local function body_within_size_cap(ctx: ApiContext): boolean
 	return #raw <= MAX_BLOB_BYTES
 end
 
-function module.display_prefs_get(ctx: ApiContext, user_id: number, prefs_id_raw: string): ApiResponse
+function module.display_prefs_get(ctx: ApiContext, user_id: string, prefs_id_raw: string): ApiResponse
 	local prefs_id = valid_segment(prefs_id_raw, MAX_PREFS_ID_LENGTH)
 	if not prefs_id then
 		return responses.bad_request("invalid displayPreferencesId")
@@ -154,7 +155,7 @@ function module.display_prefs_get(ctx: ApiContext, user_id: number, prefs_id_raw
 	return api.response.json(200, merged)
 end
 
-function module.display_prefs_set(ctx: ApiContext, user_id: number, prefs_id_raw: string): ApiResponse
+function module.display_prefs_set(ctx: ApiContext, user_id: string, prefs_id_raw: string): ApiResponse
 	local prefs_id = valid_segment(prefs_id_raw, MAX_PREFS_ID_LENGTH)
 	if not prefs_id then
 		return responses.bad_request("invalid displayPreferencesId")
@@ -186,7 +187,7 @@ function module.display_prefs_set(ctx: ApiContext, user_id: number, prefs_id_raw
 	return api.response.empty(204)
 end
 
-function module.device_options_get(ctx: ApiContext, user_id: number): ApiResponse
+function module.device_options_get(ctx: ApiContext, user_id: string): ApiResponse
 	local device_id = require_device_id(ctx)
 	if not device_id then
 		return responses.bad_request("invalid or missing id")
@@ -214,7 +215,7 @@ function module.device_options_get(ctx: ApiContext, user_id: number): ApiRespons
 	return api.response.json(200, merged)
 end
 
-function module.device_options_set(ctx: ApiContext, user_id: number): ApiResponse
+function module.device_options_set(ctx: ApiContext, user_id: string): ApiResponse
 	local device_id = require_device_id(ctx)
 	if not device_id then
 		return responses.bad_request("invalid or missing id")
