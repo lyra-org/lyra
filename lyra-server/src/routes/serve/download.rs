@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use crate::services::auth::media_tokens::MediaTokenPurpose;
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
@@ -106,14 +107,9 @@ async fn get_download(
     Query(query): Query<DownloadQuery>,
     headers: HeaderMap,
 ) -> Result<Response<Body>, AppError> {
-    let track_db_id = {
-        let db = crate::STATE.db.read().await;
-        crate::db::lookup::find_node_id_by_id(&*db, &track_id)?
-            .ok_or_else(|| AppError::not_found(format!("not found: {track_id}")))?
-    };
     download_track_response(
         &headers,
-        track_db_id,
+        &track_id,
         DownloadTrackRequest {
             output: ServeTrackOptions {
                 format: query.format,
@@ -132,7 +128,7 @@ async fn get_download(
 
 pub(crate) async fn download_track_response(
     headers: &HeaderMap,
-    track_db_id: agdb::DbId,
+    track_id: &str,
     request: DownloadTrackRequest,
 ) -> Result<Response<Body>, AppError> {
     let DownloadTrackRequest {
@@ -148,22 +144,16 @@ pub(crate) async fn download_track_response(
             },
         media_token,
     } = request;
-    match super::require_download_track_access(headers, media_token.as_deref(), track_db_id).await?
-    {
-        super::TrackAccess::Principal(principal) => {
-            let db = crate::STATE.db.read().await;
-            crate::services::auth::access::require_entity_accessible(
-                &*db,
-                &principal,
-                track_db_id,
-                || AppError::not_found(format!("Track not found: {}", track_db_id.0)),
-            )?;
-        }
-        super::TrackAccess::MediaToken => {}
-    }
+    let access = super::require_track_access(
+        headers,
+        media_token.as_deref(),
+        MediaTokenPurpose::Download,
+        track_id,
+    )
+    .await?;
     let validated = validate_request(format, codec)?;
     let source = apply_request_start_offset(
-        validate_and_get_track_source(track_db_id).await?,
+        validate_and_get_track_source(track_id, &access).await?,
         start_offset_ms,
     )?;
 
@@ -183,7 +173,7 @@ pub(crate) async fn download_track_response(
         return file_response(&source.full_path, delivery.content_type, headers).await;
     }
 
-    let temp_path = temp_output_path(track_db_id, delivery.output_format);
+    let temp_path = temp_output_path(track_id, delivery.output_format);
     let temp_path_string = temp_path.to_string_lossy().into_owned();
     let output = delivery.configure_output(Output::new(temp_path_string));
 

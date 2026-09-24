@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use crate::services::auth::media_tokens::MediaTokenPurpose;
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use anyhow::anyhow;
@@ -127,15 +128,17 @@ async fn get_stream(
     Path(track_id): Path<String>,
     Query(query): Query<StreamQuery>,
 ) -> Result<Response<Body>, AppError> {
-    let track_db_id = {
-        let db = crate::STATE.db.read().await;
-        crate::db::lookup::find_node_id_by_id(&*db, &track_id)?
-            .ok_or_else(|| AppError::not_found(format!("not found: {track_id}")))?
-    };
-    super::require_stream_access(&headers, query.media_token.as_deref(), track_db_id).await?;
+    let access = super::require_track_access(
+        &headers,
+        query.media_token.as_deref(),
+        MediaTokenPurpose::Stream,
+        &track_id,
+    )
+    .await?;
     stream_track_response(
         &headers,
-        track_db_id,
+        &track_id,
+        &access,
         ServeTrackOptions {
             format: query.format,
             codec: query.codec,
@@ -151,7 +154,8 @@ async fn get_stream(
 
 pub(crate) async fn stream_track_response(
     headers: &HeaderMap,
-    track_db_id: agdb::DbId,
+    track_id: &str,
+    access: &super::TrackAccess,
     options: ServeTrackOptions,
 ) -> Result<Response<Body>, AppError> {
     let ServeTrackOptions {
@@ -165,7 +169,7 @@ pub(crate) async fn stream_track_response(
     } = options;
     let validated = validate_request(format, codec)?;
     let source = apply_request_start_offset(
-        validate_and_get_track_source(track_db_id).await?,
+        validate_and_get_track_source(track_id, access).await?,
         start_offset_ms,
     )?;
 

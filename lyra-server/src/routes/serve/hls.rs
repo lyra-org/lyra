@@ -3,6 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
+use crate::services::auth::media_tokens::MediaTokenPurpose;
 #[cfg(feature = "docgen")]
 use aide::transform::TransformOperation;
 use axum::{
@@ -56,7 +57,6 @@ use crate::{
         },
     },
 };
-use agdb::DbId;
 
 use super::{
     TranscodeKnobs,
@@ -386,36 +386,53 @@ async fn get_hls_playlist(
     Path(track_id): Path<String>,
     Query(query): Query<HlsQuery>,
 ) -> Result<Response<Body>, AppError> {
-    let track_db_id = {
-        let db = STATE.db.read().await;
-        db::lookup::find_node_id_by_id(&*db, &track_id)?
-            .ok_or_else(|| AppError::not_found(format!("not found: {track_id}")))?
-    };
-    super::require_hls_playlist_access(&headers, query.media_token.as_deref(), track_db_id).await?;
+    let access = super::require_track_access(
+        &headers,
+        query.media_token.as_deref(),
+        MediaTokenPurpose::HlsPlaylist,
+        &track_id,
+    )
+    .await?;
     serve_hls_playlist_for_track(
-        track_db_id,
-        query.codec,
-        query.bitrate_bps,
-        query.sample_rate_hz,
-        query.channels,
-        query.prefer_vbr,
-        query.start_offset_ms,
+        &track_id,
+        &access,
+        HlsPlaylistOptions {
+            codec: query.codec,
+            bitrate_bps: query.bitrate_bps,
+            sample_rate_hz: query.sample_rate_hz,
+            channels: query.channels,
+            prefer_vbr: query.prefer_vbr,
+            start_offset_ms: query.start_offset_ms,
+        },
     )
     .await
 }
 
+pub(crate) struct HlsPlaylistOptions {
+    pub(crate) codec: Option<String>,
+    pub(crate) bitrate_bps: Option<u32>,
+    pub(crate) sample_rate_hz: Option<u32>,
+    pub(crate) channels: Option<u32>,
+    pub(crate) prefer_vbr: Option<bool>,
+    pub(crate) start_offset_ms: Option<u64>,
+}
+
 pub(crate) async fn serve_hls_playlist_for_track(
-    track_db_id: DbId,
-    codec: Option<String>,
-    bitrate_bps: Option<u32>,
-    sample_rate_hz: Option<u32>,
-    channels: Option<u32>,
-    prefer_vbr: Option<bool>,
-    start_offset_ms: Option<u64>,
+    track_id: &str,
+    access: &super::TrackAccess,
+    options: HlsPlaylistOptions,
 ) -> Result<Response<Body>, AppError> {
+    let HlsPlaylistOptions {
+        codec,
+        bitrate_bps,
+        sample_rate_hz,
+        channels,
+        prefer_vbr,
+        start_offset_ms,
+    } = options;
     let request_started = Instant::now();
     let source = apply_request_start_offset(
-        validate_and_get_track_source(track_db_id).await?,
+        validate_and_get_track_source(track_id, access).await?,
         start_offset_ms,
     )?;
     if let (Some(track_duration_ms), Some(range_duration_ms)) = (
@@ -424,7 +441,7 @@ pub(crate) async fn serve_hls_playlist_for_track(
     ) && track_duration_ms.abs_diff(range_duration_ms) >= HLS_DURATION_MISMATCH_WARN_THRESHOLD_MS
     {
         tracing::warn!(
-            track_db_id = track_db_id.0,
+            track_id,
             source_db_id = source.source_id.0,
             track_duration_ms,
             range_duration_ms,
@@ -503,7 +520,7 @@ pub(crate) async fn serve_hls_playlist_for_track(
     let startup_latency_ms = request_started.elapsed().as_millis() as u64;
     let (active_jobs, active_sessions) = hls_registry_counts().await;
     tracing::info!(
-        track_db_id = track_db_id.0,
+        track_id,
         source_db_id = source.source_id.0,
         %session_id,
         codec = ?profile.codec,
