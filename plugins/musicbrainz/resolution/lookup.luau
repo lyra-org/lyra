@@ -106,15 +106,11 @@ local should_preserve_local_track_positions = track_helpers.should_preserve_loca
 local single_track_duration_diff = track_helpers.single_track_duration_diff
 
 local function musicbrainz_external_ids(external_ids: ExternalIdsByProvider?): ReleaseIds?
-	local ids = metadata.ids.for_provider(external_ids, "musicbrainz")
-	if ids == nil then
-		return nil
-	end
-	return ids :: ReleaseIds
+	return if external_ids then external_ids.musicbrainz :: ReleaseIds? else nil
 end
 
 local function musicbrainz_artist_id(external_ids: ExternalIdsByProvider?): string?
-	local ids = metadata.ids.for_provider(external_ids, "musicbrainz")
+	local ids = external_ids and external_ids.musicbrainz
 	if ids == nil then
 		return nil
 	end
