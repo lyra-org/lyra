@@ -217,54 +217,6 @@ local function normalize_release_group(raw_group: JsonObject?): ReleaseGroup?
 	}
 end
 
-local function normalize_release_mediums(raw_media: { JsonValue }?): { ReleaseMedium }
-	local media: { ReleaseMedium } = {}
-	if raw_media == nil then
-		return media
-	end
-	for _, raw_medium: JsonValue in raw_media do
-		if type(raw_medium) == "table" then
-			local medium = raw_medium :: JsonObject
-			local tracks: { ReleaseMediumTrack } = {}
-			local raw_tracks = json_array_field(medium, "tracks")
-			if raw_tracks ~= nil then
-				for _, raw_track: JsonValue in raw_tracks do
-					if type(raw_track) == "table" then
-						local track = raw_track :: JsonObject
-						local title = json_string_field(track, "title")
-						if title ~= nil then
-							local raw_recording = json_object_field(track, "recording")
-							local recording_relations: { Relation }? = if raw_recording
-								then json_array_field(raw_recording, "relations") :: { Relation }?
-								else nil
-							table.insert(tracks, {
-								id = json_string_field(track, "id"),
-								title = title,
-								position = json_number_field(track, "position"),
-								recording = {
-									id = json_string_field(raw_recording, "id"),
-									relations = recording_relations,
-								},
-								length = json_number_field(track, "length"),
-								["artist-credit"] = normalize_release_artist_credits(
-									json_array_field(track, "artist-credit")
-								),
-							})
-						end
-					end
-				end
-			end
-			table.insert(media, {
-				position = json_number_field(medium, "position"),
-				format = json_string_field(medium, "format"),
-				["track-count"] = json_number_field(medium, "track-count"),
-				tracks = tracks,
-			})
-		end
-	end
-	return media
-end
-
 local function normalize_release(raw_release: JsonObject): Release
 	local text_representation = json_object_field(raw_release, "text-representation")
 	local cover_art_archive = json_object_field(raw_release, "cover-art-archive")
@@ -277,7 +229,7 @@ local function normalize_release(raw_release: JsonObject): Release
 		barcode = json_string_field(raw_release, "barcode"),
 		packaging = json_string_field(raw_release, "packaging"),
 		score = json_number_field(raw_release, "score"),
-		media = normalize_release_mediums(json_array_field(raw_release, "media")),
+		media = release_search.normalize_release_mediums(json_array_field(raw_release, "media")),
 		genres = normalize_release_genres(json_array_field(raw_release, "genres")),
 		["track-count"] = json_number_field(raw_release, "track-count"),
 		["artist-credit"] = normalize_release_artist_credits(json_array_field(raw_release, "artist-credit")),

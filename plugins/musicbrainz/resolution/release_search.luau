@@ -284,7 +284,7 @@ local function normalize_release_medium_track(raw_track: JsonValue): ReleaseMedi
 	}
 end
 
-local function normalize_release_medium_list(raw_media: { JsonValue }?): { ReleaseMedium }
+local function normalize_release_mediums(raw_media: { JsonValue }?): { ReleaseMedium }
 	local media: { ReleaseMedium } = {}
 	if raw_media == nil then
 		return media
@@ -329,7 +329,7 @@ local function normalize_release(raw_release: JsonValue): Release?
 		barcode = json_string_field(release, "barcode"),
 		packaging = json_string_field(release, "packaging"),
 		score = json_number_field(release, "score"),
-		media = normalize_release_medium_list(json_array_field(release, "media")),
+		media = normalize_release_mediums(json_array_field(release, "media")),
 		["track-count"] = json_number_field(release, "track-count"),
 		["artist-credit"] = normalize_artist_credit_list(json_array_field(release, "artist-credit")),
 		["release-group"] = normalize_release_group(json_object_field(release, "release-group")),
@@ -1544,6 +1544,7 @@ local function search_and_fetch_release(
 	return mark_lookup_ids_unmatched()
 end
 
+module.normalize_release_mediums = normalize_release_mediums
 module.search_and_fetch_release = search_and_fetch_release
 
 return module
