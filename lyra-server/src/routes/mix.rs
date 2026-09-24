@@ -33,7 +33,7 @@ use crate::{
         },
         mix::{
             self,
-            MixSeed,
+            MixSeedId,
         },
         tracks as track_service,
     },
@@ -125,14 +125,12 @@ pub(crate) async fn get_track_mix(
     let principal = require_principal(&headers).await?;
     validate_limit(query.base.limit)?;
 
-    let db_id = resolve_accessible_seed_id(&id, "track", &principal).await?;
     let options = mix_options(&query.base, &principal);
     let mix_result = if track_seed_use_instant(query.instant) {
-        mix::instant_mix_from_audio(db_id, &options).await?
+        mix::instant_mix_from_audio(&id, &options).await?
     } else {
-        mix::from_seed(MixSeed::Track(db_id), &options).await?
+        mix::from_seed(MixSeedId::Track(id.clone()), &options).await?
     };
-    verify_id_stable(&id, db_id, "track").await?;
     let tracks = mix_result.ok_or_else(|| AppError::not_found(format!("track not found: {id}")))?;
     render_mix_response(&principal, &query.base, tracks).await
 }
@@ -145,10 +143,8 @@ pub(crate) async fn get_release_mix(
     let principal = require_principal(&headers).await?;
     validate_limit(query.limit)?;
 
-    let db_id = resolve_accessible_seed_id(&id, "release", &principal).await?;
     let options = mix_options(&query, &principal);
-    let mix_result = mix::from_seed(MixSeed::Release(db_id), &options).await?;
-    verify_id_stable(&id, db_id, "release").await?;
+    let mix_result = mix::from_seed(MixSeedId::Release(id.clone()), &options).await?;
     let tracks =
         mix_result.ok_or_else(|| AppError::not_found(format!("release not found: {id}")))?;
     render_mix_response(&principal, &query, tracks).await
@@ -162,10 +158,8 @@ pub(crate) async fn get_artist_mix(
     let principal = require_principal(&headers).await?;
     validate_limit(query.limit)?;
 
-    let db_id = resolve_accessible_seed_id(&id, "artist", &principal).await?;
     let options = mix_options(&query, &principal);
-    let mix_result = mix::from_seed(MixSeed::Artist(db_id), &options).await?;
-    verify_id_stable(&id, db_id, "artist").await?;
+    let mix_result = mix::from_seed(MixSeedId::Artist(id.clone()), &options).await?;
     let tracks =
         mix_result.ok_or_else(|| AppError::not_found(format!("artist not found: {id}")))?;
     render_mix_response(&principal, &query, tracks).await
@@ -179,10 +173,8 @@ pub(crate) async fn get_genre_mix(
     let principal = require_principal(&headers).await?;
     validate_limit(query.limit)?;
 
-    let db_id = resolve_seed_id(&id, "genre").await?;
     let options = mix_options(&query, &principal);
-    let mix_result = mix::from_seed(MixSeed::Genre(db_id), &options).await?;
-    verify_id_stable(&id, db_id, "genre").await?;
+    let mix_result = mix::from_seed(MixSeedId::Genre(id.clone()), &options).await?;
     let tracks = mix_result.ok_or_else(|| AppError::not_found(format!("genre not found: {id}")))?;
     render_mix_response(&principal, &query, tracks).await
 }
@@ -195,16 +187,8 @@ pub(crate) async fn get_playlist_mix(
     let principal = require_principal(&headers).await?;
     validate_limit(query.limit)?;
 
-    let db_id = resolve_seed_id(&id, "playlist").await?;
-    {
-        let db = STATE.db.read().await;
-        if !crate::services::auth::access::playlist_accessible(&*db, &principal, db_id)? {
-            return Err(AppError::not_found(format!("playlist not found: {id}")));
-        }
-    }
     let options = mix_options(&query, &principal);
-    let mix_result = mix::from_seed(MixSeed::Playlist(db_id), &options).await?;
-    verify_id_stable(&id, db_id, "playlist").await?;
+    let mix_result = mix::from_seed(MixSeedId::Playlist(id.clone()), &options).await?;
     let tracks =
         mix_result.ok_or_else(|| AppError::not_found(format!("playlist not found: {id}")))?;
     render_mix_response(&principal, &query, tracks).await
@@ -218,31 +202,10 @@ pub(crate) async fn get_me_mix(
     validate_limit(query.limit)?;
 
     let options = mix_options(&query, &principal);
-    let tracks = mix::from_seed(MixSeed::Recent, &options)
+    let tracks = mix::from_seed(MixSeedId::Recent, &options)
         .await?
         .ok_or_else(|| AppError::not_found("user not found".to_string()))?;
     render_mix_response(&principal, &query, tracks).await
-}
-
-/// 404s on unknown public id. Type-mismatch is the service layer's job.
-async fn resolve_seed_id(id: &str, label: &str) -> Result<agdb::DbId, AppError> {
-    let db = &*STATE.db.read().await;
-    db::lookup::find_node_id_by_id(db, id)?
-        .ok_or_else(|| AppError::not_found(format!("{label} not found: {id}")))
-}
-
-async fn resolve_accessible_seed_id(
-    id: &str,
-    label: &str,
-    principal: &Principal,
-) -> Result<agdb::DbId, AppError> {
-    let db = &*STATE.db.read().await;
-    let db_id = db::lookup::find_node_id_by_id(db, id)?
-        .ok_or_else(|| AppError::not_found(format!("{label} not found: {id}")))?;
-    crate::services::auth::access::require_entity_accessible(db, principal, db_id, || {
-        AppError::not_found(format!("{label} not found: {id}"))
-    })?;
-    Ok(db_id)
 }
 
 /// Keeps the mixer's tracks that still exist under their public id and that the principal can
@@ -264,22 +227,6 @@ fn filter_accessible_tracks(
         }
     }
     Ok(filtered)
-}
-
-/// Asserts the id still maps to `expected_db_id` — agdb reuses DbIds, so
-/// a delete+create during dispatch could redirect the response.
-async fn verify_id_stable(
-    public_id: &str,
-    expected_db_id: agdb::DbId,
-    label: &str,
-) -> Result<(), AppError> {
-    let db = &*STATE.db.read().await;
-    match db::lookup::find_node_id_by_id(db, public_id)? {
-        Some(now) if now == expected_db_id => Ok(()),
-        _ => Err(AppError::not_found(format!(
-            "{label} not found: {public_id}"
-        ))),
-    }
 }
 
 const KNOWN_QUERY_KEYS: &[&str] = &["limit", "inc", "instant"];

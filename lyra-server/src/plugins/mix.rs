@@ -50,7 +50,7 @@ use crate::{
         self as mix_service,
         MAX_LIMIT,
         MixOptions,
-        MixSeed,
+        MixSeedId,
         MixSeedType,
     },
     services::options::{
@@ -376,7 +376,7 @@ fn mixer_new_callback(
 fn consumer_callback(
     mut frame: luau::AsyncCallFrame<'_>,
     label: &'static str,
-    variant: fn(DbId) -> MixSeed,
+    variant: fn(String) -> MixSeedId,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let seed = parse_seed_id(frame.args.read_named("seed_id")?, label)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
@@ -386,6 +386,9 @@ fn consumer_callback(
         &principal,
     )?;
     Ok(luau::ScheduledFuture::new(async move {
+        let Some(seed) = seed_public_id(seed).await? else {
+            return tracks_to_luau(None);
+        };
         let tracks = mix_service::from_seed(variant(seed), &options)
             .await
             .map_err(crate::plugins::runtime_error)?;
@@ -396,31 +399,31 @@ fn consumer_callback(
 fn from_track_callback(
     frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    consumer_callback(frame, "from_track", MixSeed::Track)
+    consumer_callback(frame, "from_track", MixSeedId::Track)
 }
 
 fn from_release_callback(
     frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    consumer_callback(frame, "from_release", MixSeed::Release)
+    consumer_callback(frame, "from_release", MixSeedId::Release)
 }
 
 fn from_artist_callback(
     frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    consumer_callback(frame, "from_artist", MixSeed::Artist)
+    consumer_callback(frame, "from_artist", MixSeedId::Artist)
 }
 
 fn from_genre_callback(
     frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    consumer_callback(frame, "from_genre", MixSeed::Genre)
+    consumer_callback(frame, "from_genre", MixSeedId::Genre)
 }
 
 fn from_playlist_callback(
     frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    consumer_callback(frame, "from_playlist", MixSeed::Playlist)
+    consumer_callback(frame, "from_playlist", MixSeedId::Playlist)
 }
 
 fn instant_mix_from_audio_callback(
@@ -434,7 +437,10 @@ fn instant_mix_from_audio_callback(
         &principal,
     )?;
     Ok(luau::ScheduledFuture::new(async move {
-        let tracks = mix_service::instant_mix_from_audio(seed, &options)
+        let Some(seed) = seed_public_id(seed).await? else {
+            return tracks_to_luau(None);
+        };
+        let tracks = mix_service::instant_mix_from_audio(&seed, &options)
             .await
             .map_err(crate::plugins::runtime_error)?;
         tracks_to_luau(tracks)
@@ -587,6 +593,12 @@ fn core_call_context(context: &luau::CallContext) -> harmony_core::CallContext {
         caller,
         task_group: harmony_core::TaskGroupId(context.task_group.0),
     }
+}
+
+/// The mix service seeds by public id, which it re-resolves under each guard it takes.
+async fn seed_public_id(seed: DbId) -> luau::runtime::Result<Option<String>> {
+    let db = STATE.db.read().await;
+    crate::plugins::db::lookup::find_id_by_db_id(&*db, seed).map_err(crate::plugins::runtime_error)
 }
 
 fn parse_seed_id(seed_id: i64, label: &'static str) -> luau::runtime::Result<DbId> {

@@ -21,7 +21,10 @@ use crate::db::{
     Permission,
     Track,
 };
-use crate::services::auth::Principal;
+use crate::services::auth::{
+    Principal,
+    access,
+};
 
 mod registry;
 
@@ -71,9 +74,45 @@ impl MixOptions {
     }
 }
 
-/// Seed identity for a mix request. `Recent` seeds from the viewer's listen history.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum MixSeed {
+/// A mix request's seed by public id. `Recent` seeds from the viewer's listen history.
+#[derive(Clone, Debug)]
+pub(crate) enum MixSeedId {
+    Track(String),
+    Release(String),
+    Artist(String),
+    Genre(String),
+    Playlist(String),
+    Recent,
+}
+
+impl MixSeedId {
+    /// The seed's current `DbId`s, resolved under `db`'s guard; `None` when the entity is gone.
+    fn resolve(&self, db: &DbAny) -> anyhow::Result<Option<MixSeed>> {
+        let resolve = |seed: fn(DbId) -> MixSeed, id: &str| -> anyhow::Result<Option<MixSeed>> {
+            Ok(db::lookup::find_node_id_by_id(db, id)?.map(seed))
+        };
+        match self {
+            Self::Track(id) => resolve(MixSeed::Track, id),
+            Self::Release(id) => resolve(MixSeed::Release, id),
+            Self::Artist(id) => resolve(MixSeed::Artist, id),
+            Self::Genre(id) => resolve(MixSeed::Genre, id),
+            Self::Playlist(id) => resolve(MixSeed::Playlist, id),
+            Self::Recent => Ok(Some(MixSeed::Recent)),
+        }
+    }
+
+    /// The seed resolved and visible to the viewer under `db`'s guard.
+    fn resolve_visible(&self, db: &DbAny, options: &MixOptions) -> anyhow::Result<Option<MixSeed>> {
+        let Some(seed) = self.resolve(db)? else {
+            return Ok(None);
+        };
+        Ok(seed_visible(db, &seed, options)?.then_some(seed))
+    }
+}
+
+/// A seed resolved to `DbId`s, valid only under the guard that resolved it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MixSeed {
     Track(DbId),
     Release(DbId),
     Artist(DbId),
@@ -107,24 +146,40 @@ impl MixSeed {
     }
 }
 
-/// The viewer's `DbId`, verified under `db`'s guard.
-fn require_viewer(db: &DbAny, options: &MixOptions) -> anyhow::Result<DbId> {
-    let viewer = options
+fn viewer(options: &MixOptions) -> anyhow::Result<&Principal> {
+    options
         .viewer
         .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("recent-listens mixes need a viewer"))?;
-    Ok(viewer.require(db)?)
+        .ok_or_else(|| anyhow::anyhow!("mixes need a viewer"))
 }
 
-fn seed_exists(db: &DbAny, seed: &MixSeed, options: &MixOptions) -> anyhow::Result<bool> {
+/// The viewer's `DbId`, verified under `db`'s guard.
+fn require_viewer(db: &DbAny, options: &MixOptions) -> anyhow::Result<DbId> {
+    Ok(viewer(options)?.require(db)?)
+}
+
+/// Whether the seed exists and the viewer may see it, checked under `db`'s guard.
+fn seed_visible(db: &DbAny, seed: &MixSeed, options: &MixOptions) -> anyhow::Result<bool> {
+    let viewer = viewer(options)?;
     Ok(match seed {
-        MixSeed::Track(id) => db::tracks::get_by_id(db, *id)?.is_some(),
-        MixSeed::Release(id) => db::releases::get_by_id(db, *id)?.is_some(),
-        MixSeed::Artist(id) => db::artists::get_by_id(db, *id)?.is_some(),
+        MixSeed::Track(id) => {
+            db::tracks::get_by_id(db, *id)?.is_some() && access::entity_accessible(db, viewer, *id)?
+        }
+        MixSeed::Release(id) => {
+            db::releases::get_by_id(db, *id)?.is_some()
+                && access::entity_accessible(db, viewer, *id)?
+        }
+        MixSeed::Artist(id) => {
+            db::artists::get_by_id(db, *id)?.is_some()
+                && access::entity_accessible(db, viewer, *id)?
+        }
         MixSeed::Genre(id) => db::genres::get_by_id(db, *id)?.is_some(),
-        MixSeed::Playlist(id) => db::playlists::get_by_id(db, *id)?.is_some(),
+        MixSeed::Playlist(id) => {
+            db::playlists::get_by_id(db, *id)?.is_some()
+                && access::playlist_accessible(db, viewer, *id)?
+        }
         MixSeed::Recent => {
-            require_viewer(db, options)?;
+            viewer.require(db)?;
             true
         }
     })
@@ -145,21 +200,18 @@ fn builtin_from_seed(
     }
 }
 
-/// `Ok(None)` = missing/wrong-type seed (route 404s); validated before and
-/// after dispatch to close the agdb DbId recycle window.
+/// `Ok(None)` = missing, wrong-type or hidden seed (route 404s). The seed is resolved by
+/// public id under each guard, so a dispatch that outlives the seed's `DbId` returns `None`.
 pub(crate) async fn from_seed(
-    seed: MixSeed,
+    seed_id: MixSeedId,
     options: &MixOptions,
 ) -> anyhow::Result<Option<Vec<Track>>> {
-    {
-        let db = STATE.db.read().await;
-        if !seed_exists(&db, &seed, options)? {
-            return Ok(None);
-        }
-    }
+    let Some(seed) = seed_id.resolve_visible(&*STATE.db.read().await, options)? else {
+        return Ok(None);
+    };
     let dispatched = dispatch_mixer(&seed, options).await?;
     let db = STATE.db.read().await;
-    if !seed_exists(&db, &seed, options)? {
+    if seed_id.resolve_visible(&db, options)? != Some(seed) {
         return Ok(None);
     }
     let tracks = match dispatched {
@@ -212,18 +264,21 @@ fn finalize_mixer_tracks(
 
 /// Pins the seed at index 0 under one read guard, then truncates to `limit`.
 pub(crate) async fn instant_mix_from_audio(
-    track_db_id: DbId,
+    track_id: &str,
     options: &MixOptions,
 ) -> anyhow::Result<Option<Vec<Track>>> {
-    {
-        let db = STATE.db.read().await;
-        if db::tracks::get_by_id(&db, track_db_id)?.is_none() {
-            return Ok(None);
-        }
-    }
-    let dispatched = dispatch_mixer(&MixSeed::Track(track_db_id), options).await?;
+    let seed_id = MixSeedId::Track(track_id.to_string());
+    let Some(seed @ MixSeed::Track(track_db_id)) =
+        seed_id.resolve_visible(&*STATE.db.read().await, options)?
+    else {
+        return Ok(None);
+    };
+    let dispatched = dispatch_mixer(&seed, options).await?;
 
     let db = STATE.db.read().await;
+    if seed_id.resolve_visible(&db, options)? != Some(seed) {
+        return Ok(None);
+    }
     let Some(seed) = db::tracks::get_by_id(&db, track_db_id)? else {
         return Ok(None);
     };
@@ -958,6 +1013,114 @@ mod tests {
         },
     };
 
+    #[tokio::test]
+    async fn seeds_hidden_from_the_viewer_yield_no_mix() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
+        let (owner, viewer, hidden_track, private_playlist) = {
+            let mut db = STATE.db.write().await;
+            let owner_id = crate::db::test_db::insert_user(&mut db, "mix-playlist-owner")?;
+            let viewer_id = crate::db::test_db::insert_user(&mut db, "mix-viewer")?;
+            let library = insert_library(&mut db, "Hidden Mix Library", "/tmp/lyra-hidden-mix")?;
+            let hidden_track = insert_track(&mut db, "Hidden Seed")?;
+            connect(&mut db, library, hidden_track)?;
+            let private_playlist = db::playlists::create(
+                &mut db,
+                &db::playlists::Playlist {
+                    db_id: None,
+                    id: nanoid::nanoid!(),
+                    name: "Private".to_string(),
+                    description: None,
+                    is_public: Some(false),
+                    created_at: None,
+                    updated_at: None,
+                },
+                owner_id,
+            )?;
+            let public_id = |id| {
+                db::lookup::find_id_by_db_id(&*db, id).map(|id| id.expect("seed has a public id"))
+            };
+            (
+                Principal::for_user(&*db, owner_id, Vec::new(), HashSet::new()),
+                Principal::for_user(&*db, viewer_id, Vec::new(), HashSet::new()),
+                public_id(hidden_track)?,
+                public_id(private_playlist)?,
+            )
+        };
+        let viewer_options = MixOptions::for_principal(&viewer, None, HashMap::new());
+
+        assert!(
+            instant_mix_from_audio(&hidden_track, &viewer_options)
+                .await?
+                .is_none()
+        );
+        assert!(
+            from_seed(MixSeedId::Track(hidden_track), &viewer_options)
+                .await?
+                .is_none()
+        );
+        assert!(
+            from_seed(
+                MixSeedId::Playlist(private_playlist.clone()),
+                &viewer_options
+            )
+            .await?
+            .is_none()
+        );
+        let owner_options = MixOptions::for_principal(&owner, None, HashMap::new());
+        assert!(
+            from_seed(MixSeedId::Playlist(private_playlist), &owner_options)
+                .await?
+                .is_some()
+        );
+        Ok(())
+    }
+
+    /// Mixes from a track seed while, at gap `gap`, the seed is deleted and a new track takes
+    /// its `DbId`. Returns whether the gap ran and whether a mix came back.
+    async fn mix_with_recycled_seed(gap: Option<usize>) -> anyhow::Result<(bool, bool)> {
+        crate::testing::init_default_test_state()?;
+        let (viewer, seed_db_id, seed_id, library) = {
+            let mut db = STATE.db.write().await;
+            let viewer_id = crate::db::test_db::insert_user(&mut db, "mix-recycle-viewer")?;
+            let library = insert_library(&mut db, "Recycle Mix", "/tmp/lyra-recycle-mix")?;
+            let seed = insert_track(&mut db, "Seed")?;
+            connect(&mut db, library, seed)?;
+            let seed_id = db::lookup::find_id_by_db_id(&*db, seed)?.expect("seed public id");
+            (
+                Principal::for_user(&*db, viewer_id, vec![Permission::Admin], HashSet::new()),
+                seed,
+                seed_id,
+                library,
+            )
+        };
+        let options = MixOptions::for_principal(&viewer, None, HashMap::new());
+        let (reached, mix) = crate::testing::run_with_recycle_at(
+            gap,
+            from_seed(MixSeedId::Track(seed_id), &options),
+            |db| {
+                db.exec_mut(QueryBuilder::remove().ids(seed_db_id).query())
+                    .expect("remove seed");
+                let recycled = insert_track(db, "Replacement").expect("insert replacement");
+                assert_eq!(recycled, seed_db_id, "agdb must reuse the seed DbId");
+                connect(db, library, recycled).expect("connect replacement");
+            },
+        )
+        .await;
+        Ok((reached, mix?.is_some()))
+    }
+
+    #[tokio::test]
+    async fn from_seed_drops_a_seed_whose_id_was_recycled_mid_mix() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        assert_eq!(mix_with_recycled_seed(None).await?, (false, true));
+        crate::testing::for_each_db_gap(mix_with_recycled_seed, async |gap, mixed| {
+            assert!(!mixed, "mixed a recycled seed at gap {gap}");
+            Ok(())
+        })
+        .await
+    }
+
     #[test]
     fn from_track_returns_genre_matched_tracks() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
@@ -1341,20 +1504,6 @@ mod tests {
         Ok(())
     }
 
-    fn viewer(db: &DbAny, user_db_id: DbId) -> Principal {
-        let user = db::users::get_by_id(db, user_db_id)
-            .expect("user lookup")
-            .expect("user exists");
-        Principal::from_parts(
-            user_db_id,
-            user.id,
-            user.username,
-            Vec::new(),
-            None,
-            HashSet::new(),
-        )
-    }
-
     fn insert_user(db: &mut DbAny) -> anyhow::Result<DbId> {
         use crate::db::users::User;
         use agdb::QueryBuilder;
@@ -1551,7 +1700,12 @@ mod tests {
             &db,
             seed_track,
             &MixOptions {
-                viewer: Some(viewer(&db, user_id)),
+                viewer: Some(Principal::for_user(
+                    &db,
+                    user_id,
+                    Vec::new(),
+                    HashSet::new(),
+                )),
                 ..Default::default()
             },
         )?;
@@ -1656,7 +1810,12 @@ mod tests {
         connect(&mut db, jazz_release, jazz_track)?;
 
         let options = MixOptions {
-            viewer: Some(viewer(&db, user_id)),
+            viewer: Some(Principal::for_user(
+                &db,
+                user_id,
+                Vec::new(),
+                HashSet::new(),
+            )),
             ..Default::default()
         };
         let result = builtin_from_recent_listens(&db, user_id, &options)?;
@@ -1675,7 +1834,12 @@ mod tests {
         let user_id = insert_user(&mut db)?;
 
         let options = MixOptions {
-            viewer: Some(viewer(&db, user_id)),
+            viewer: Some(Principal::for_user(
+                &db,
+                user_id,
+                Vec::new(),
+                HashSet::new(),
+            )),
             ..Default::default()
         };
         let result = builtin_from_recent_listens(&db, user_id, &options)?;
