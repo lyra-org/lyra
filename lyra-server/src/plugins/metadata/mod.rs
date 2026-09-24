@@ -24,7 +24,6 @@ use crate::services::EntityType;
 use self::layer::MetadataLayer;
 use self::provider::{
     MetadataProvider,
-    ids_for_provider_spec,
     provider_new_spec,
 };
 
@@ -55,7 +54,6 @@ pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/metadata")
         .capability("lyra.metadata")
         .function(provider_new_spec())
-        .function(ids_for_provider_spec())
         .userdata(EntityType::_harmony_userdata_spec())
         .userdata(server_db::ArtistType::_harmony_userdata_spec())
         .userdata(server_db::CreditType::_harmony_userdata_spec())

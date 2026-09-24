@@ -72,16 +72,6 @@ pub(super) fn provider_new_spec() -> FunctionSpec {
         .call_async(Arc::new(provider_new_callback))
 }
 
-pub(super) fn ids_for_provider_spec() -> FunctionSpec {
-    FunctionSpec::sync_fn("ids.for_provider")
-        .arg_name("external_ids")
-        .arg_name("provider_id")
-        .args::<luau::Table>()
-        .args::<String>()
-        .returns::<Option<luau::Table>>()
-        .call(ids_for_provider_callback)
-}
-
 fn provider_new_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
@@ -138,17 +128,6 @@ fn provider_new_callback(
             MetadataProvider::_harmony_userdata_class().create_value(&vm, &origin, provider)?;
         Ok(provider)
     }))
-}
-
-fn ids_for_provider_callback(mut frame: luau::CallFrame<'_>) -> luau::runtime::Result<()> {
-    let external_ids: luau::Table = frame.args.read_named("external_ids")?;
-    let provider_id: String = frame.args.read_named("provider_id")?;
-    match external_ids.get_raw(frame.vm, &provider_id)? {
-        luau::Value::Table(table) => frame.returns.write(Some(table)),
-        luau::Value::TableData(data) => frame.returns.write(luau::Value::TableData(data)),
-        luau::Value::Nil => frame.returns.write(luau::Value::Nil),
-        _ => frame.returns.write(luau::Value::Nil),
-    }
 }
 
 #[harmony_macros::userdata(

@@ -37,25 +37,13 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
 #[cfg(feature = "docgen")]
 fn metadata_module_descriptor() -> ModuleDescriptor {
     let mut descriptor = ModuleDescriptor::new("Metadata", "metadata", None);
-    descriptor.functions.extend([
-        ModuleFunctionDescriptor {
-            path: vec!["Provider", "new"],
-            description: Some("Creates a metadata provider registration object."),
-            params: vec![param("id", string())],
-            returns: vec![ty("Provider")],
-            yields: true,
-        },
-        ModuleFunctionDescriptor {
-            path: vec!["ids", "for_provider"],
-            description: Some("Returns external IDs for a single provider."),
-            params: vec![
-                param("external_ids", opt(ty("ExternalIdsByProvider"))),
-                param("provider_id", string()),
-            ],
-            returns: vec![opt(ty("ProviderExternalIdMap"))],
-            yields: false,
-        },
-    ]);
+    descriptor.functions.push(ModuleFunctionDescriptor {
+        path: vec!["Provider", "new"],
+        description: Some("Creates a metadata provider registration object."),
+        params: vec![param("id", string())],
+        returns: vec![ty("Provider")],
+        yields: true,
+    });
     descriptor
 }
 
