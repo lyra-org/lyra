@@ -428,6 +428,7 @@ fn plugin_executor_declares_metadata_provider_ids_and_options() -> Result<()> {
                 id_type = "release_id",
                 entity = metadata.EntityType.Release,
                 unique = true,
+                scheme = "example:release",
             }, "https://example.test/release/{id}")
             provider:declare_option({
                 name = "force",
@@ -467,6 +468,7 @@ fn plugin_executor_declares_metadata_provider_ids_and_options() -> Result<()> {
     assert_eq!(id_spec.id_type, "release_id");
     assert_eq!(id_spec.entity, crate::services::EntityType::Release);
     assert!(id_spec.unique);
+    assert_eq!(id_spec.scheme.as_deref(), Some("example:release"));
     assert!(has_generator);
     assert_eq!(
         crate::services::providers::registry_tests::id_url_template(
@@ -533,6 +535,35 @@ fn plugin_executor_registers_similar_releases_handler() -> Result<()> {
     assert_eq!(default_spec.timeout, std::time::Duration::from_secs(10));
     assert!(default_spec.require.all_of.is_empty());
     assert!(default_spec.require.any_of.is_empty());
+    Ok(())
+}
+
+#[test]
+fn plugin_executor_rejects_invalid_id_scheme() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
+    let runtime = runtime_with_scopes(&["lyra.metadata"])?;
+    let error = runtime
+        .eval_plugin_source(
+            "demo",
+            "init.luau",
+            &br#"
+                local metadata = require("@lyra/metadata")
+                local provider = metadata.Provider.new("invalid-scheme-provider")
+                provider:id({
+                    id_type = "thing_id",
+                    entity = metadata.EntityType.Release,
+                    scheme = "Example:Thing",
+                })
+            "#[..],
+        )
+        .expect_err("uppercase scheme must be rejected");
+
+    assert!(
+        error
+            .to_string()
+            .contains("provider:id: scheme 'Example:Thing' must be lowercase")
+    );
     Ok(())
 }
 
