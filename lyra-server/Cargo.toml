@@ -40,6 +40,7 @@ multimap = "0.10"
 gethostname = "1"
 nanoid = "0.4"
 nucleo-matcher = "0.3"
+percent-encoding = { workspace = true }
 rand = "0.9"
 rayon = "1"
 reqwest = { workspace = true, default-features = false, features = ["charset", "http2", "json", "rustls-no-provider", "system-proxy"] }

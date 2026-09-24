@@ -26,6 +26,7 @@ use super::{
     EntityProjectionInfo,
     projection::{
         DetectedEntityType,
+        IdIncludes,
         PreFetchedIncludes,
         detect_entity_type,
         project_entity,
@@ -203,7 +204,7 @@ pub(crate) fn build_release_context(
         ],
         library_root.as_deref(),
         &PreFetchedIncludes::default(),
-        schemes,
+        &mut IdIncludes::new(schemes, &[]),
     )?;
     let mut context =
         flatten_projection_for_provider_context(EntityProjectionInfo::Release(projection))?;
@@ -225,7 +226,7 @@ fn build_track_context(db: &DbAny, entity_id: DbId, schemes: &IdSchemes) -> anyh
             EntityInclude::Identifiers,
         ],
         None,
-        schemes,
+        &mut IdIncludes::new(schemes, &[]),
     )?;
     let mut context = flatten_projection_for_provider_context(projection)?;
     attach_custom_fields_to_context(db, &mut context)?;
@@ -238,7 +239,7 @@ fn build_artist_context(db: &DbAny, entity_id: DbId, schemes: &IdSchemes) -> any
         QueryId::Id(entity_id),
         &[EntityInclude::ExternalIds, EntityInclude::Identifiers],
         None,
-        schemes,
+        &mut IdIncludes::new(schemes, &[]),
     )?;
     let mut context = flatten_projection_for_provider_context(projection)?;
     attach_custom_fields_to_context(db, &mut context)?;

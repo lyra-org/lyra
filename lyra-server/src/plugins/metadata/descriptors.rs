@@ -260,6 +260,33 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
             ],
         ),
         interface(
+            "IdLinkLocale",
+            vec![
+                field("language", opt(string())),
+                field("country", opt(string())),
+            ],
+        ),
+        InterfaceDescriptor {
+            name: "IdLinkContext",
+            description: Some(
+                "Passed to a `provider:id` generator function. Fields may be added. Results are cached per id and context while the plugin stays loaded, so a generator must depend only on these inputs.",
+            ),
+            fields: vec![
+                field("entity", ty("EntityType")),
+                field("id_type", string()),
+                described_field(
+                    "library",
+                    ty("IdLinkLocale"),
+                    "Locale of the request's library, else the entity's library with the lowest db id.",
+                ),
+                described_field(
+                    "external_ids",
+                    map(string(), string()),
+                    "This provider's other IDs on the same entity, keyed by id_type.",
+                ),
+            ],
+        },
+        interface(
             "OptionConfig",
             vec![
                 field("name", string()),
@@ -606,20 +633,28 @@ fn layer_class() -> ClassDescriptor {
 fn provider_class() -> ClassDescriptor {
     let mut class = ClassDescriptor::new("Provider", None);
     class.methods.extend([
-        method(
-            "id",
-            vec![
-                param("spec", ty("ProviderIdRegistration")),
-                param(
-                    "generator",
-                    opt(union([
-                        string(),
-                        LuauType::function(vec![fn_param("id", string())], vec![string()]),
-                    ])),
-                ),
-            ],
-            vec![],
-        ),
+        MethodDescriptor {
+            description: Some(
+                "Registers an ID type. `generator` builds its web link for the `links` include: an absolute http(s) URL template whose `{id}`, placed after the host, is replaced by the percent-encoded id, or a function returning an absolute http(s) URL, or nil for no link. Link functions run when links are read, with a small CPU budget and a short batch deadline; their results are cached per id and `IdLinkContext` until the plugin reloads, and using up the CPU budget pauses that function for a while.",
+            ),
+            ..method(
+                "id",
+                vec![
+                    param("spec", ty("ProviderIdRegistration")),
+                    param(
+                        "generator",
+                        opt(union([
+                            string(),
+                            LuauType::function(
+                                vec![fn_param("id", string()), fn_param("ctx", ty("IdLinkContext"))],
+                                vec![opt(string())],
+                            ),
+                        ])),
+                    ),
+                ],
+                vec![],
+            )
+        },
         method(
             "search",
             vec![

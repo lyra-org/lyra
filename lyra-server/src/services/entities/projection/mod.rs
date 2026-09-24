@@ -28,6 +28,7 @@ use crate::db::{
     Track,
     external_ids::ExternalId,
 };
+use crate::services::EntityType;
 use crate::services::providers::IdSchemes;
 
 use super::{
@@ -38,6 +39,7 @@ use super::{
     EntityInclude,
     EntityLookupHints,
     EntityProjectionInfo,
+    IdLinkRows,
     ProjectionEntryInfo,
     ReleaseProjectionIncludes,
     ReleaseProjectionInfo,
@@ -59,6 +61,36 @@ enum ResolvedEntity {
     Release(DbId, Release),
     Track(DbId, Track),
     Artist(DbId, Artist),
+}
+
+/// Schemes for the `identifiers` include, and the ID rows gathered for the
+/// `links` include, which `apply_id_links` fills once resolved.
+pub(crate) struct IdIncludes<'a> {
+    schemes: &'a IdSchemes,
+    link_rows: Option<IdLinkRows>,
+}
+
+impl<'a> IdIncludes<'a> {
+    pub(crate) fn new(schemes: &'a IdSchemes, includes: &[EntityInclude]) -> Self {
+        Self {
+            schemes,
+            link_rows: includes
+                .contains(&EntityInclude::Links)
+                .then(IdLinkRows::default),
+        }
+    }
+
+    /// Keeps `rows` for the `links` include; a no-op when it wasn't requested.
+    fn record_link_rows(&mut self, db_id: DbId, entity: EntityType, rows: Vec<ExternalId>) {
+        if let Some(link_rows) = &mut self.link_rows {
+            link_rows.insert(db_id, entity, rows);
+        }
+    }
+
+    /// `None` when the `links` include wasn't requested.
+    pub(crate) fn into_link_rows(self) -> Option<IdLinkRows> {
+        self.link_rows
+    }
 }
 
 #[derive(Default)]
@@ -100,7 +132,7 @@ fn build_release_tracks_with_external_ids(
     release_id: DbId,
     library_root: Option<&str>,
     prefetched: &PreFetchedIncludes,
-    schemes: &IdSchemes,
+    ids: &mut IdIncludes<'_>,
 ) -> anyhow::Result<(Vec<ReleaseProjectionTrack>, LookupHints)> {
     let tracks = lookup_or_fetch(prefetched.release_tracks.as_ref(), release_id, || {
         relations::release_tracks(db, release_id)
@@ -130,10 +162,15 @@ fn build_release_tracks_with_external_ids(
             (Vec::new(), Vec::new(), LookupHints::default())
         };
         track_lookup_hints.push(lookup_hints.clone());
+        let external_ids = relations::external_ids_by_provider(&id_rows);
+        let identifiers = ids.schemes.resolve(&id_rows);
+        if let Some(track_id) = track_db_id {
+            ids.record_link_rows(track_id, EntityType::Track, id_rows);
+        }
         projected.push(ReleaseProjectionTrack::from_track(
             track,
-            relations::external_ids_by_provider(&id_rows),
-            schemes.resolve(&id_rows),
+            external_ids,
+            identifiers,
             artists,
             lookup_hints.into(),
         ));
@@ -167,19 +204,23 @@ fn external_id_rows(
     })
 }
 
-/// Rows backing the `external_ids` and `identifiers` includes, fetched once.
+fn includes_id_rows(includes: &[EntityInclude]) -> bool {
+    includes.iter().any(|include| {
+        matches!(
+            include,
+            EntityInclude::ExternalIds | EntityInclude::Identifiers | EntityInclude::Links
+        )
+    })
+}
+
+/// Rows backing the `external_ids`, `identifiers` and `links` includes, fetched once.
 fn included_external_id_rows(
     db: &DbAny,
     entity_id: DbId,
     includes: &[EntityInclude],
     prefetched: &PreFetchedIncludes,
 ) -> anyhow::Result<Vec<ExternalId>> {
-    if includes.iter().any(|include| {
-        matches!(
-            include,
-            EntityInclude::ExternalIds | EntityInclude::Identifiers
-        )
-    }) {
+    if includes_id_rows(includes) {
         external_id_rows(db, entity_id, prefetched)
     } else {
         Ok(Vec::new())
@@ -246,7 +287,7 @@ pub(super) fn project_release(
     includes: &[EntityInclude],
     library_root: Option<&str>,
     prefetched: &PreFetchedIncludes,
-    schemes: &IdSchemes,
+    ids: &mut IdIncludes<'_>,
 ) -> anyhow::Result<ReleaseProjectionInfo> {
     let mut projection = ReleaseProjectionInfo {
         entity_type: ReleaseProjectionKind::Release,
@@ -263,8 +304,9 @@ pub(super) fn project_release(
                     Some(relations::external_ids_by_provider(&id_rows));
             }
             EntityInclude::Identifiers => {
-                projection.includes.identifiers = Some(schemes.resolve(&id_rows));
+                projection.includes.identifiers = Some(ids.schemes.resolve(&id_rows));
             }
+            EntityInclude::Links => {}
             EntityInclude::Artists => {
                 projection.includes.artists = Some(lookup_or_fetch(
                     prefetched.artists_by_owner.as_ref(),
@@ -281,7 +323,7 @@ pub(super) fn project_release(
                     release_id,
                     library_root,
                     prefetched,
-                    schemes,
+                    ids,
                 )?;
                 release_lookup_hints = lookup_hints;
                 projection.includes.tracks = Some(tracks);
@@ -299,6 +341,7 @@ pub(super) fn project_release(
         }
     }
 
+    ids.record_link_rows(release_id, EntityType::Release, id_rows);
     projection.lookup_hints = release_lookup_hints.into();
     Ok(projection)
 }
@@ -309,7 +352,7 @@ fn project_track(
     track: Track,
     includes: &[EntityInclude],
     prefetched: &PreFetchedIncludes,
-    schemes: &IdSchemes,
+    ids: &mut IdIncludes<'_>,
 ) -> anyhow::Result<TrackProjectionInfo> {
     let mut projection = TrackProjectionInfo {
         entity_type: TrackProjectionKind::Track,
@@ -324,8 +367,9 @@ fn project_track(
                     Some(relations::external_ids_by_provider(&id_rows));
             }
             EntityInclude::Identifiers => {
-                projection.includes.identifiers = Some(schemes.resolve(&id_rows));
+                projection.includes.identifiers = Some(ids.schemes.resolve(&id_rows));
             }
+            EntityInclude::Links => {}
             EntityInclude::Releases => {
                 projection.includes.releases = Some(lookup_or_fetch(
                     prefetched.releases_by_track.as_ref(),
@@ -367,6 +411,7 @@ fn project_track(
         }
     }
 
+    ids.record_link_rows(track_id, EntityType::Track, id_rows);
     Ok(projection)
 }
 
@@ -376,7 +421,7 @@ fn project_artist(
     artist: Artist,
     includes: &[EntityInclude],
     prefetched: &PreFetchedIncludes,
-    schemes: &IdSchemes,
+    ids: &mut IdIncludes<'_>,
 ) -> anyhow::Result<ArtistProjectionInfo> {
     let mut projection = ArtistProjectionInfo {
         entity_type: ArtistProjectionKind::Artist,
@@ -391,8 +436,9 @@ fn project_artist(
                     Some(relations::external_ids_by_provider(&id_rows));
             }
             EntityInclude::Identifiers => {
-                projection.includes.identifiers = Some(schemes.resolve(&id_rows));
+                projection.includes.identifiers = Some(ids.schemes.resolve(&id_rows));
             }
+            EntityInclude::Links => {}
             EntityInclude::Releases => {
                 projection.includes.releases = Some(lookup_or_fetch(
                     prefetched.artist_releases.as_ref(),
@@ -419,15 +465,18 @@ fn project_artist(
         }
     }
 
+    ids.record_link_rows(artist_id, EntityType::Artist, id_rows);
     Ok(projection)
 }
 
+/// Projects one entity; the `links` include only records ID rows in
+/// `ids`, for `apply_id_links` to fill once resolved.
 pub(crate) fn project_entity(
     db: &DbAny,
     query_id: QueryId,
     includes: &[EntityInclude],
     library_id: Option<DbId>,
-    schemes: &IdSchemes,
+    ids: &mut IdIncludes<'_>,
 ) -> anyhow::Result<EntityProjectionInfo> {
     use agdb::DbType;
 
@@ -452,7 +501,7 @@ pub(crate) fn project_entity(
                 includes,
                 library_root.as_deref(),
                 &no_prefetch,
-                schemes,
+                ids,
             )?))
         }
         DetectedEntityType::Track => {
@@ -463,7 +512,7 @@ pub(crate) fn project_entity(
                 track,
                 includes,
                 &no_prefetch,
-                schemes,
+                ids,
             )?))
         }
         DetectedEntityType::Artist => {
@@ -474,18 +523,19 @@ pub(crate) fn project_entity(
                 artist,
                 includes,
                 &no_prefetch,
-                schemes,
+                ids,
             )?))
         }
     }
 }
 
+/// Projects entities in order, as `project_entity` does, prefetching includes in bulk.
 pub(crate) fn project_entities(
     db: &DbAny,
     query_ids: Vec<QueryId>,
     includes: &[EntityInclude],
     library_id: Option<DbId>,
-    schemes: &IdSchemes,
+    ids: &mut IdIncludes<'_>,
 ) -> anyhow::Result<Vec<EntityProjectionInfo>> {
     use agdb::DbType;
 
@@ -609,7 +659,7 @@ pub(crate) fn project_entities(
         None
     };
     let mut external_id_ids = Vec::new();
-    if has_include(EntityInclude::ExternalIds) || has_include(EntityInclude::Identifiers) {
+    if includes_id_rows(includes) {
         external_id_ids.extend(unique_entity_ids.iter().copied());
     }
     if has_include(EntityInclude::Tracks) {
@@ -670,7 +720,7 @@ pub(crate) fn project_entities(
                     includes,
                     library_root.as_deref(),
                     &prefetched,
-                    schemes,
+                    ids,
                 )?));
             }
             ResolvedEntity::Track(track_id, track) => {
@@ -680,7 +730,7 @@ pub(crate) fn project_entities(
                     track,
                     includes,
                     &prefetched,
-                    schemes,
+                    ids,
                 )?));
             }
             ResolvedEntity::Artist(artist_id, artist) => {
@@ -690,7 +740,7 @@ pub(crate) fn project_entities(
                     artist,
                     includes,
                     &prefetched,
-                    schemes,
+                    ids,
                 )?));
             }
         }
@@ -733,7 +783,7 @@ mod tests {
             QueryId::Id(release_id),
             &[EntityInclude::Entries],
             None,
-            &IdSchemes::default(),
+            &mut IdIncludes::new(&IdSchemes::default(), &[]),
         )
         .expect_err("release projections should reject entry includes");
 
@@ -753,7 +803,7 @@ mod tests {
             vec![QueryId::Id(artist_id)],
             &[EntityInclude::Tracks],
             None,
-            &IdSchemes::default(),
+            &mut IdIncludes::new(&IdSchemes::default(), &[]),
         )?;
         let EntityProjectionInfo::Artist(artist) = &projections[0] else {
             panic!("expected artist projection");

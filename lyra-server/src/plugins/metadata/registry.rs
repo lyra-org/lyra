@@ -51,6 +51,15 @@ impl MetadataCallbackRegistry {
         id
     }
 
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.handlers.borrow().len()
+    }
+
+    pub(crate) fn remove(&self, id: u64) {
+        self.handlers.borrow_mut().remove(&id);
+    }
+
     /// Drops the plugin's callbacks so a restart can't dispatch into them.
     pub(crate) fn remove_plugin(&self, plugin_id: &str) {
         self.handlers
