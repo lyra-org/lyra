@@ -202,27 +202,43 @@ impl ProviderRegistry {
         self.providers.values().flat_map(|bucket| bucket.iter())
     }
 
+    /// Schemes resolve by `(provider_id, id_type)`, so every entity
+    /// registering an id type must declare the same scheme.
     pub(crate) fn set_id_registration(
         &mut self,
         provider_id: &str,
         id_spec: ProviderIdSpec,
         generator: Option<ProviderIdUrlGenerator>,
-    ) {
-        if let Some(provider) = self.state_mut(provider_id) {
-            provider
-                .id_specs
-                .insert(id_spec.id_type.clone(), id_spec.clone());
-            match generator {
-                Some(ProviderIdUrlGenerator::Template(template)) => {
-                    provider
-                        .id_generators
-                        .insert(id_spec.id_type, ProviderIdUrlGenerator::Template(template));
-                }
-                None => {
-                    provider.id_generators.remove(&id_spec.id_type);
-                }
+    ) -> std::result::Result<(), String> {
+        let Some(provider) = self.state_mut(provider_id) else {
+            return Ok(());
+        };
+        if let Some(conflict) = provider.id_specs.values().find(|existing| {
+            existing.id_type == id_spec.id_type
+                && existing.entity != id_spec.entity
+                && existing.scheme != id_spec.scheme
+        }) {
+            return Err(format!(
+                "id_type '{}' on provider '{provider_id}' is registered for {} with scheme '{}'; {} must use the same scheme",
+                id_spec.id_type,
+                conflict.entity,
+                conflict.scheme.as_deref().unwrap_or("none"),
+                id_spec.entity
+            ));
+        }
+        let key = (id_spec.entity, id_spec.id_type.clone());
+        match generator {
+            Some(ProviderIdUrlGenerator::Template(template)) => {
+                provider
+                    .id_generators
+                    .insert(key.clone(), ProviderIdUrlGenerator::Template(template));
+            }
+            None => {
+                provider.id_generators.remove(&key);
             }
         }
+        provider.id_specs.insert(key, id_spec);
+        Ok(())
     }
 
     pub(crate) fn set_refresh_callback(
@@ -379,13 +395,21 @@ impl ProviderRegistry {
         id_type: &str,
         entity: EntityType,
     ) -> bool {
-        self.id_spec_entity(provider_id, id_type) == Some(entity)
+        self.state(provider_id)
+            .is_some_and(|state| state.id_specs.contains_key(&(entity, id_type.to_string())))
     }
 
-    pub(crate) fn id_spec_entity(&self, provider_id: &str, id_type: &str) -> Option<EntityType> {
+    pub(crate) fn id_spec_entities(&self, provider_id: &str, id_type: &str) -> Vec<EntityType> {
         self.state(provider_id)
-            .and_then(|state| state.id_specs.get(id_type))
-            .map(|spec| spec.entity)
+            .map(|state| {
+                state
+                    .id_specs
+                    .values()
+                    .filter(|spec| spec.id_type == id_type)
+                    .map(|spec| spec.entity)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub(crate) fn declare_option(
@@ -438,21 +462,24 @@ pub(crate) mod tests {
     pub(crate) fn id_registration(
         registry: &ProviderRegistry,
         provider_id: &str,
+        entity: EntityType,
         id_type: &str,
     ) -> Option<(ProviderIdSpec, bool)> {
         let provider = registry.state(provider_id)?;
-        let spec = provider.id_specs.get(id_type)?.clone();
-        let has_generator = provider.id_generators.contains_key(id_type);
+        let key = (entity, id_type.to_string());
+        let spec = provider.id_specs.get(&key)?.clone();
+        let has_generator = provider.id_generators.contains_key(&key);
         Some((spec, has_generator))
     }
 
     pub(crate) fn id_url_template(
         registry: &ProviderRegistry,
         provider_id: &str,
+        entity: EntityType,
         id_type: &str,
     ) -> Option<String> {
         let provider = registry.state(provider_id)?;
-        match provider.id_generators.get(id_type)? {
+        match provider.id_generators.get(&(entity, id_type.to_string()))? {
             ProviderIdUrlGenerator::Template(template) => Some(template.clone()),
         }
     }
@@ -467,6 +494,91 @@ pub(crate) mod tests {
             .expect_err("reserved source id must be rejected");
 
         assert!(err.to_string().contains(LOCAL_SOURCE_ID));
+    }
+
+    fn id_spec(id_type: &str, entity: EntityType, scheme: Option<&str>) -> ProviderIdSpec {
+        ProviderIdSpec {
+            id_type: id_type.to_string(),
+            entity,
+            unique: entity == EntityType::Release,
+            scheme: scheme.map(str::to_string),
+        }
+    }
+
+    fn template(url: &str) -> Option<ProviderIdUrlGenerator> {
+        Some(ProviderIdUrlGenerator::Template(url.to_string()))
+    }
+
+    #[test]
+    fn id_type_registered_for_several_entities_keeps_each_registration() {
+        let mut registry = ProviderRegistry::default();
+        let plugin_id = PluginId::new("demo").expect("valid plugin id");
+        registry
+            .register(plugin_id, "demo".to_string())
+            .expect("register provider");
+
+        for (entity, url) in [
+            (EntityType::Release, "https://example.test/release/{id}"),
+            (EntityType::Artist, "https://example.test/artist/{id}"),
+        ] {
+            registry
+                .set_id_registration(
+                    "demo",
+                    id_spec("item", entity, Some("example:item")),
+                    template(url),
+                )
+                .expect("same scheme is accepted");
+        }
+
+        for entity in [EntityType::Release, EntityType::Artist] {
+            assert!(registry.id_spec_matches_entity("demo", "item", entity));
+            assert!(
+                registry
+                    .id_pairs(entity)
+                    .contains(&("demo".to_string(), "item".to_string()))
+            );
+        }
+        assert!(!registry.id_spec_matches_entity("demo", "item", EntityType::Track));
+        assert!(
+            registry
+                .unique_id_pairs(EntityType::Release)
+                .contains(&("demo".to_string(), "item".to_string()))
+        );
+        assert!(registry.unique_id_pairs(EntityType::Artist).is_empty());
+        assert_eq!(
+            id_url_template(&registry, "demo", EntityType::Artist, "item").as_deref(),
+            Some("https://example.test/artist/{id}")
+        );
+        let mut entities = registry.id_spec_entities("demo", "item");
+        entities.sort_by_key(|entity| entity.as_str());
+        assert_eq!(entities, vec![EntityType::Artist, EntityType::Release]);
+    }
+
+    #[test]
+    fn id_type_rejects_a_different_scheme_on_another_entity() {
+        let mut registry = ProviderRegistry::default();
+        let plugin_id = PluginId::new("demo").expect("valid plugin id");
+        registry
+            .register(plugin_id, "demo".to_string())
+            .expect("register provider");
+        registry
+            .set_id_registration(
+                "demo",
+                id_spec("item", EntityType::Release, Some("example:item")),
+                None,
+            )
+            .expect("first registration");
+
+        let err = registry
+            .set_id_registration(
+                "demo",
+                id_spec("item", EntityType::Artist, Some("example:other")),
+                None,
+            )
+            .expect_err("conflicting scheme must be rejected");
+
+        assert!(err.contains("same scheme"), "{err}");
+        assert!(!registry.id_spec_matches_entity("demo", "item", EntityType::Artist));
     }
 
     #[tokio::test]
@@ -543,8 +655,8 @@ impl PluginScopedInner for ProviderRegistry {
 
 #[derive(Default)]
 struct ProviderState {
-    id_generators: HashMap<String, ProviderIdUrlGenerator>,
-    id_specs: HashMap<String, ProviderIdSpec>,
+    id_generators: HashMap<(EntityType, String), ProviderIdUrlGenerator>,
+    id_specs: HashMap<(EntityType, String), ProviderIdSpec>,
     search_callbacks: HashMap<EntityType, ProviderCallbackHandle>,
     refresh_callbacks: HashMap<EntityType, ProviderCallbackHandle>,
     sync_filter_callbacks: HashMap<EntityType, ProviderCallbackHandle>,

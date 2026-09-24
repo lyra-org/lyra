@@ -320,8 +320,9 @@ fn provider_id_callback(
             .await
             .map_err(crate::plugins::runtime_error)?;
         let mut registry = provider_registry().write_owned().await;
-        registry.set_id_registration(&provider.provider_id, id_spec, generator);
-        Ok(())
+        registry
+            .set_id_registration(&provider.provider_id, id_spec, generator)
+            .map_err(|err| crate::plugins::runtime_error(format!("provider:id: {err}")))
     }))
 }
 
@@ -819,7 +820,7 @@ fn mark_unmatched_callback(
             let registry = provider_registry().read_owned().await;
             normalized_id_types
                 .iter()
-                .map(|id_type| registry.id_spec_entity(&provider_id, id_type))
+                .map(|id_type| registry.id_spec_entities(&provider_id, id_type))
                 .collect::<Vec<_>>()
         };
         let mut db_write = db.write().await;
@@ -833,9 +834,8 @@ fn mark_unmatched_callback(
             })?;
 
         {
-            for (id_type, registered_entity) in normalized_id_types.iter().zip(registered_entities)
-            {
-                if registered_entity != Some(entity_type) {
+            for (id_type, entities) in normalized_id_types.iter().zip(registered_entities) {
+                if !entities.contains(&entity_type) {
                     return Err(crate::plugins::runtime_error(format!(
                         "provider:mark_unmatched: id_type '{id_type}' is not registered for {entity_type} on provider '{provider_id}'"
                     )));
