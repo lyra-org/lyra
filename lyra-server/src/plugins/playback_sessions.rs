@@ -394,7 +394,7 @@ fn list_connections_callback(
 
             let scope_key = PlaybackScopeKey {
                 plugin_id: "native",
-                user_db_id: conn.user_db_id,
+                user_public_id: &conn.user_public_id,
                 session_key: &conn.session_key,
             };
 
@@ -546,7 +546,7 @@ fn send_command_callback(
         if let Ok(now_ms) = playbacks::now_ms() {
             let scope_key = PlaybackScopeKey {
                 plugin_id: "native",
-                user_db_id: target.user_db_id,
+                user_public_id: &target.user_public_id,
                 session_key: &target.session_key,
             };
             playbacks::mark_command_dispatched(&scope_key, now_ms);

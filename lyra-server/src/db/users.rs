@@ -79,6 +79,13 @@ pub(crate) fn get_by_public_id(
     super::graph::fetch_typed_by_index(db, "id", id, "User")
 }
 
+pub(crate) fn find_db_id_by_public_id(
+    db: &impl super::DbAccess,
+    id: &str,
+) -> anyhow::Result<Option<DbId>> {
+    Ok(get_by_public_id(db, id)?.and_then(|user| user.db_id))
+}
+
 pub(crate) fn get(db: &impl super::DbAccess) -> anyhow::Result<Vec<User>> {
     let mut users: Vec<User> = db
         .exec(

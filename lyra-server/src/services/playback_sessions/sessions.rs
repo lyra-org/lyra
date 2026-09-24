@@ -43,7 +43,7 @@ pub(crate) struct CurrentBindingSnapshot {
 
 pub(crate) struct PlaybackScopeKey<'a> {
     pub(crate) plugin_id: &'a str,
-    pub(crate) user_db_id: DbId,
+    pub(crate) user_public_id: &'a str,
     pub(crate) session_key: &'a str,
 }
 
@@ -52,7 +52,7 @@ impl PlaybackScopeKey<'_> {
         // Lookups allocate; scope counts are bounded by active clients and plugins.
         OwnedPlaybackScopeKey {
             plugin_id: self.plugin_id.to_string(),
-            user_db_id: self.user_db_id,
+            user_public_id: self.user_public_id.to_string(),
             session_key: self.session_key.to_string(),
         }
     }
@@ -61,7 +61,7 @@ impl PlaybackScopeKey<'_> {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct OwnedPlaybackScopeKey {
     pub(crate) plugin_id: String,
-    pub(crate) user_db_id: DbId,
+    pub(crate) user_public_id: String,
     pub(crate) session_key: String,
 }
 
@@ -69,7 +69,7 @@ impl OwnedPlaybackScopeKey {
     pub(crate) fn as_borrowed(&self) -> PlaybackScopeKey<'_> {
         PlaybackScopeKey {
             plugin_id: &self.plugin_id,
-            user_db_id: self.user_db_id,
+            user_public_id: &self.user_public_id,
             session_key: &self.session_key,
         }
     }
@@ -93,7 +93,7 @@ pub(crate) fn get_playback_session(scope: &PlaybackScopeKey<'_>) -> Option<Playb
 }
 
 pub(crate) fn get_playback_sessions_for_user_session(
-    user_db_id: DbId,
+    user_public_id: &str,
     session_key: &str,
 ) -> Vec<(OwnedPlaybackScopeKey, PlaybackSessionScope)> {
     let scopes_handle = playback_scopes();
@@ -102,7 +102,7 @@ pub(crate) fn get_playback_sessions_for_user_session(
         .expect("playback session scopes RwLock poisoned");
     scopes
         .iter()
-        .filter(|(key, _)| key.user_db_id == user_db_id && key.session_key == session_key)
+        .filter(|(key, _)| key.user_public_id == user_public_id && key.session_key == session_key)
         .map(|(key, scope)| (key.clone(), scope.clone()))
         .collect()
 }
@@ -237,6 +237,14 @@ pub(crate) fn clear_playback_session_scope(scope: &PlaybackScopeKey<'_>) {
         .write()
         .expect("playback session scopes RwLock poisoned");
     scopes.remove(&key);
+}
+
+pub(crate) fn clear_playback_scopes_for_user(user_public_id: &str) {
+    let scopes_handle = playback_scopes();
+    let mut scopes = scopes_handle
+        .write()
+        .expect("playback session scopes RwLock poisoned");
+    scopes.retain(|key, _| key.user_public_id != user_public_id);
 }
 
 pub(crate) fn snapshot_current_binding(

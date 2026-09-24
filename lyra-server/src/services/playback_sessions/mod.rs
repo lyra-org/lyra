@@ -33,6 +33,7 @@ pub(crate) use self::sessions::{
     PlaybackScopeKey,
     bind_current_playback_session_scope,
     clear_current_binding_if_unchanged,
+    clear_playback_scopes_for_user,
     clear_session_bindings_for_playback,
     get_playback_session,
     is_remote_control_degraded,
@@ -327,6 +328,13 @@ mod tests {
         Ok((new_test_db()?, guard))
     }
 
+    fn user_public_id(db: &DbAny, user_db_id: DbId) -> String {
+        db::users::get_by_id(db, user_db_id)
+            .expect("user lookup")
+            .expect("user exists")
+            .id
+    }
+
     fn insert_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId> {
         let user = db::User {
             db_id: None,
@@ -479,7 +487,7 @@ mod tests {
         let track_b = insert_track(&mut db, "B", 200_000)?;
         let scope = PlaybackScopeKey {
             plugin_id: "external",
-            user_db_id: user,
+            user_public_id: &user_public_id(&db, user),
             session_key: "auth:1",
         };
         let playing = || PlaybackMutation {
@@ -1173,7 +1181,7 @@ mod tests {
 
         let scope = PlaybackScopeKey {
             plugin_id: "external",
-            user_db_id,
+            user_public_id: &user_public_id(&db, user_db_id),
             session_key: "auth:1",
         };
         let session = get_playback_session(&scope).expect("session should exist");
@@ -1490,7 +1498,7 @@ mod tests {
         }
         let scope = PlaybackScopeKey {
             plugin_id: "external",
-            user_db_id: user,
+            user_public_id: &user_public_id(&db, user),
             session_key: "auth:1",
         };
         mark_command_dispatched(&scope, 3_000);
@@ -1549,7 +1557,7 @@ mod tests {
 
         let scope = PlaybackScopeKey {
             plugin_id: "external",
-            user_db_id,
+            user_public_id: &user_public_id(&db, user_db_id),
             session_key: "auth:1",
         };
         assert!(!is_remote_control_degraded(&scope, 100_000));
@@ -1577,7 +1585,7 @@ mod tests {
 
         let scope = PlaybackScopeKey {
             plugin_id: "external",
-            user_db_id,
+            user_public_id: &user_public_id(&db, user_db_id),
             session_key: "auth:1",
         };
 
@@ -1608,7 +1616,7 @@ mod tests {
 
         let scope = PlaybackScopeKey {
             plugin_id: "external",
-            user_db_id,
+            user_public_id: &user_public_id(&db, user_db_id),
             session_key: "auth:1",
         };
 
@@ -1636,6 +1644,7 @@ mod tests {
     async fn disconnect_pauses_playing_scopes_at_effective_position() -> anyhow::Result<()> {
         let (mut db, _guard) = new_scoped_test_db().await?;
         let user_db_id = insert_user(&mut db, "alice")?;
+        let alice_public_id = user_public_id(&db, user_db_id);
         let track_db_id = insert_track(&mut db, "Track A", 200_000)?;
         let native_track_db_id = insert_track(&mut db, "Track B", 200_000)?;
 
@@ -1677,7 +1686,7 @@ mod tests {
         .expect("started native playback");
 
         let (paused_playbacks, evicted_playbacks) =
-            pause_playing_scopes_on_disconnect(&mut db, user_db_id, "device:1", 4_000)?;
+            pause_playing_scopes_on_disconnect(&mut db, &alice_public_id, "device:1", 4_000)?;
 
         assert_eq!(paused_playbacks.len(), 2);
         assert!(evicted_playbacks.is_empty());
@@ -1702,14 +1711,14 @@ mod tests {
 
         let jellyfin_scope = PlaybackScopeKey {
             plugin_id: "jellyfin",
-            user_db_id,
+            user_public_id: &user_public_id(&db, user_db_id),
             session_key: "device:1",
         };
         assert!(get_playback_session(&jellyfin_scope).is_none());
 
         let native_scope = PlaybackScopeKey {
             plugin_id: "native",
-            user_db_id,
+            user_public_id: &user_public_id(&db, user_db_id),
             session_key: "device:1",
         };
         assert!(get_playback_session(&native_scope).is_none());
@@ -1731,6 +1740,7 @@ mod tests {
     async fn disconnect_pauses_previous_scope_at_demotion_position() -> anyhow::Result<()> {
         let (mut db, _guard) = new_scoped_test_db().await?;
         let user_db_id = insert_user(&mut db, "alice")?;
+        let alice_public_id = user_public_id(&db, user_db_id);
         let track_a_id = insert_track(&mut db, "Track A", 200_000)?;
         let track_b_id = insert_track(&mut db, "Track B", 200_000)?;
 
@@ -1772,7 +1782,7 @@ mod tests {
         .expect("track B should start");
 
         let (paused_playbacks, evicted_playbacks) =
-            pause_playing_scopes_on_disconnect(&mut db, user_db_id, "device:1", 5_000)?;
+            pause_playing_scopes_on_disconnect(&mut db, &alice_public_id, "device:1", 5_000)?;
 
         assert_eq!(paused_playbacks.len(), 2);
         assert!(evicted_playbacks.is_empty());
@@ -1797,7 +1807,7 @@ mod tests {
 
         let scope = PlaybackScopeKey {
             plugin_id: "jellyfin",
-            user_db_id,
+            user_public_id: &user_public_id(&db, user_db_id),
             session_key: "device:1",
         };
         assert!(get_playback_session(&scope).is_none());

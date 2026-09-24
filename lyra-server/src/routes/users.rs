@@ -63,19 +63,25 @@ use crate::{
         deserialize_inc,
         forbid_api_key_credential,
     },
-    services::auth::{
-        AuthCredential,
-        AuthError,
-        DEFAULT_USERNAME,
-        api_keys,
-        login_with_password,
-        logout_with_token,
-        require_grantable_permissions,
-        require_manage_roles,
-        require_manage_users,
-        require_permission,
-        require_principal,
-        sessions::SessionMetadata,
+    services::{
+        auth::{
+            AuthCredential,
+            AuthError,
+            DEFAULT_USERNAME,
+            api_keys,
+            login_with_password,
+            logout_with_token,
+            require_grantable_permissions,
+            require_manage_roles,
+            require_manage_users,
+            require_permission,
+            require_principal,
+            sessions::SessionMetadata,
+        },
+        remote::{
+            constants::CloseReason,
+            registry as remote_registry,
+        },
     },
 };
 
@@ -412,8 +418,10 @@ async fn delete_user(
         db::users::delete_user(t, user_db_id)?;
         Ok(revoked)
     })?;
+    crate::services::playback_sessions::clear_playback_scopes_for_user(&user.id);
     drop(db);
     api_keys::forget_last_used_many(revoked_api_key_ids);
+    remote_registry::close_user_connections(&user.id, CloseReason::UserDeleted).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -962,6 +970,88 @@ mod tests {
         };
 
         create_headers_for_user(user_db_id).await
+    }
+
+    #[tokio::test]
+    async fn delete_user_clears_that_users_playback_scopes() -> anyhow::Result<()> {
+        use crate::services::playback_sessions::{
+            PlaybackScopeKey,
+            bind_current_playback_session_scope,
+            get_playback_session,
+        };
+
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let admin_headers = create_headers_with_permissions(
+            "scope-admin",
+            "scope-admin",
+            vec![Permission::ManageUsers],
+        )
+        .await?;
+        let (target_id, _) = create_user("scope-owner").await?;
+        let (bystander_id, _) = create_user("scope-bystander").await?;
+        let scope = |user_public_id| PlaybackScopeKey {
+            plugin_id: "test-plugin",
+            user_public_id,
+            session_key: "device",
+        };
+        for user_public_id in [target_id.as_str(), bystander_id.as_str()] {
+            bind_current_playback_session_scope(
+                &scope(user_public_id),
+                agdb::DbId(1),
+                "playback".to_string(),
+                1,
+            );
+        }
+
+        delete_user(admin_headers, Path(target_id.clone()))
+            .await
+            .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+
+        assert!(get_playback_session(&scope(&target_id)).is_none());
+        assert!(get_playback_session(&scope(&bystander_id)).is_some());
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn delete_user_closes_that_users_sockets() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        for connection in remote_registry::list_connections().await {
+            remote_registry::unregister(connection.connection_id).await;
+        }
+        let admin_headers = create_headers_with_permissions(
+            "socket-admin",
+            "socket-admin",
+            vec![Permission::ManageUsers],
+        )
+        .await?;
+        let (target_id, _) = create_user("socket-owner").await?;
+        let (bystander_id, _) = create_user("socket-bystander").await?;
+        let (target_close, target_rx) = tokio::sync::watch::channel(None);
+        let (bystander_close, bystander_rx) = tokio::sync::watch::channel(None);
+        let target =
+            remote_registry::register(target_id.clone(), None, "device".into(), target_close)
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let bystander =
+            remote_registry::register(bystander_id, None, "device".into(), bystander_close)
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+
+        delete_user(admin_headers, Path(target_id))
+            .await
+            .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+
+        assert_eq!(*target_rx.borrow(), Some(CloseReason::UserDeleted));
+        assert_eq!(*bystander_rx.borrow(), None);
+
+        remote_registry::unregister(target.connection_id).await;
+        remote_registry::unregister(bystander.connection_id).await;
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
     }
 
     #[tokio::test]

@@ -12,14 +12,15 @@ use std::sync::{
     LazyLock,
 };
 
-use agdb::DbId;
 use tokio::sync::{
     Notify,
     RwLock,
     mpsc,
+    watch,
 };
 
 use super::constants::{
+    CloseReason,
     MAX_CONNECTIONS_PER_USER,
     RemoteAction,
 };
@@ -35,15 +36,15 @@ pub(crate) type ConnectionId = u64;
 
 const COMMAND_CHANNEL_CAPACITY: usize = 16;
 
-/// `user_db_id` is metadata only; authorize/evict/count on `user_public_id`.
+pub(crate) type CloseSender = watch::Sender<Option<CloseReason>>;
+
 pub(crate) struct ConnectionHandle {
     pub(crate) connection_id: ConnectionId,
     pub(crate) token: String,
-    pub(crate) user_db_id: DbId,
     pub(crate) user_public_id: String,
     pub(crate) client_name: Option<String>,
     pub(crate) session_key: String,
-    pub(crate) cancel: Arc<Notify>,
+    pub(crate) close: CloseSender,
     pub(crate) command_tx: mpsc::Sender<OutgoingMessage>,
     pub(crate) supported_commands: HashSet<RemoteAction>,
 }
@@ -88,7 +89,7 @@ impl ConnectionRegistry {
         });
         if let Some(id) = dup_id {
             let handle = self.remove(id)?;
-            handle.cancel.notify_one();
+            request_close(&handle.close, CloseReason::DuplicateSession);
             Some(handle)
         } else {
             None
@@ -97,11 +98,10 @@ impl ConnectionRegistry {
 
     fn insert(
         &mut self,
-        user_db_id: DbId,
         user_public_id: String,
         client_name: Option<String>,
         session_key: String,
-        cancel: Arc<Notify>,
+        close: CloseSender,
         command_tx: mpsc::Sender<OutgoingMessage>,
     ) -> Result<ConnectionId, RegistryError> {
         let id = self
@@ -122,11 +122,10 @@ impl ConnectionRegistry {
             ConnectionHandle {
                 connection_id,
                 token: token.clone(),
-                user_db_id,
                 user_public_id,
                 client_name,
                 session_key,
-                cancel,
+                close,
                 command_tx,
                 supported_commands: HashSet::new(),
             },
@@ -180,11 +179,10 @@ pub(crate) struct RegisterResult {
 }
 
 pub(crate) async fn register(
-    user_db_id: DbId,
     user_public_id: String,
     client_name: Option<String>,
     session_key: String,
-    cancel: Arc<Notify>,
+    close: CloseSender,
 ) -> Result<RegisterResult, RegistryError> {
     let mut registry = REGISTRY.write().await;
 
@@ -205,14 +203,8 @@ pub(crate) async fn register(
 
     let evicted = registry.evict_duplicate(&user_public_id, &session_key);
     let (command_tx, command_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
-    let connection_id = registry.insert(
-        user_db_id,
-        user_public_id,
-        client_name,
-        session_key,
-        cancel,
-        command_tx,
-    )?;
+    let connection_id =
+        registry.insert(user_public_id, client_name, session_key, close, command_tx)?;
     Ok(RegisterResult {
         connection_id,
         evicted,
@@ -260,7 +252,7 @@ pub(crate) async fn send_to_connection(
 pub(super) async fn insert_handoff(
     source_id: Option<ConnectionId>,
     target_id: ConnectionId,
-    user_db_id: DbId,
+    user_public_id: String,
     playback_id: String,
     queue_revision: u64,
 ) -> Result<(String, super::handoffs::HandoffCompletion, Arc<Notify>), String> {
@@ -276,12 +268,12 @@ pub(super) async fn insert_handoff(
         .and_then(|source| {
             let scope_key = playback_sessions::PlaybackScopeKey {
                 plugin_id: "native",
-                user_db_id: source.user_db_id,
+                user_public_id: &source.user_public_id,
                 session_key: &source.session_key,
             };
             playback_sessions::snapshot_current_binding(&scope_key).map(|snapshot| {
                 ExpectedSourceBinding {
-                    user_db_id: source.user_db_id,
+                    user_public_id: source.user_public_id.clone(),
                     session_key: source.session_key.clone(),
                     snapshot,
                 }
@@ -291,7 +283,7 @@ pub(super) async fn insert_handoff(
         source_id,
         source_binding,
         target_id,
-        user_db_id,
+        user_public_id,
         playback_id,
         queue_revision,
     )
@@ -319,7 +311,7 @@ pub(super) async fn queue_handoff_command(
 
 pub(super) async fn claim_handoff_progress(
     token: &str,
-    user_db_id: DbId,
+    user_public_id: &str,
     session_key: &str,
     playback_id: &str,
     queue_revision: u64,
@@ -327,7 +319,7 @@ pub(super) async fn claim_handoff_progress(
     let mut registry = REGISTRY.write().await;
     let target_id = registry.pending_handoffs.validate_progress_reference(
         token,
-        user_db_id,
+        user_public_id,
         playback_id,
         queue_revision,
     )?;
@@ -335,7 +327,7 @@ pub(super) async fn claim_handoff_progress(
         .connections
         .get(&target_id)
         .ok_or_else(|| "handoff target connection not found".to_string())?;
-    if target.user_db_id != user_db_id || target.session_key != session_key {
+    if target.user_public_id != user_public_id || target.session_key != session_key {
         return Err("handoff progress did not come from the designated target".to_string());
     }
     registry.pending_handoffs.claim_progress(token)
@@ -377,7 +369,7 @@ pub(super) async fn finish_handoff_progress(
     playback_sessions::bind_current_playback_session_scope(
         &playback_sessions::PlaybackScopeKey {
             plugin_id: "native",
-            user_db_id: target.user_db_id,
+            user_public_id: &target.user_public_id,
             session_key: &target.session_key,
         },
         applied
@@ -391,7 +383,7 @@ pub(super) async fn finish_handoff_progress(
         playback_sessions::clear_current_binding_if_unchanged(
             &playback_sessions::PlaybackScopeKey {
                 plugin_id: "native",
-                user_db_id: source.user_db_id,
+                user_public_id: &source.user_public_id,
                 session_key: &source.session_key,
             },
             &source.snapshot,
@@ -447,6 +439,31 @@ pub(crate) async fn unregister(connection_id: ConnectionId) -> Option<Connection
     REGISTRY.write().await.remove(connection_id)
 }
 
+fn request_close(close: &CloseSender, reason: CloseReason) {
+    close.send_if_modified(|current| {
+        if current.is_some() {
+            return false;
+        }
+        *current = Some(reason);
+        true
+    });
+}
+
+/// Asks every connection of the user to close; each unregisters itself on the way out.
+pub(crate) async fn close_user_connections(user_public_id: &str, reason: CloseReason) -> usize {
+    let registry = REGISTRY.read().await;
+    let mut closed = 0;
+    for handle in registry
+        .connections
+        .values()
+        .filter(|handle| handle.user_public_id == user_public_id)
+    {
+        request_close(&handle.close, reason);
+        closed += 1;
+    }
+    closed
+}
+
 pub(crate) async fn list_connections() -> Vec<ConnectionSnapshot> {
     let registry = REGISTRY.read().await;
     registry
@@ -460,7 +477,6 @@ fn snapshot_from_handle(handle: &ConnectionHandle) -> ConnectionSnapshot {
     ConnectionSnapshot {
         connection_id: handle.connection_id,
         token: handle.token.clone(),
-        user_db_id: handle.user_db_id,
         user_public_id: handle.user_public_id.clone(),
         client_name: handle.client_name.clone(),
         session_key: handle.session_key.clone(),
@@ -472,7 +488,6 @@ fn snapshot_from_handle(handle: &ConnectionHandle) -> ConnectionSnapshot {
 pub(crate) struct ConnectionSnapshot {
     pub(crate) connection_id: ConnectionId,
     pub(crate) token: String,
-    pub(crate) user_db_id: DbId,
     pub(crate) user_public_id: String,
     pub(crate) client_name: Option<String>,
     pub(crate) session_key: String,
@@ -488,8 +503,8 @@ mod tests {
         ConnectionRegistry::new()
     }
 
-    fn test_cancel() -> Arc<Notify> {
-        Arc::new(Notify::new())
+    fn test_close() -> CloseSender {
+        watch::channel(None).0
     }
 
     fn test_tx() -> mpsc::Sender<OutgoingMessage> {
@@ -500,24 +515,10 @@ mod tests {
     fn insert_assigns_sequential_ids() {
         let mut reg = test_registry();
         let id1 = reg
-            .insert(
-                DbId(1),
-                "user-1".into(),
-                None,
-                "a".into(),
-                test_cancel(),
-                test_tx(),
-            )
+            .insert("user-1".into(), None, "a".into(), test_close(), test_tx())
             .unwrap();
         let id2 = reg
-            .insert(
-                DbId(1),
-                "user-1".into(),
-                None,
-                "b".into(),
-                test_cancel(),
-                test_tx(),
-            )
+            .insert("user-1".into(), None, "b".into(), test_close(), test_tx())
             .unwrap();
         assert_eq!(id1, 1);
         assert_eq!(id2, 2);
@@ -534,22 +535,20 @@ mod tests {
         let mut reg = test_registry();
         for i in 0..MAX_CONNECTIONS_PER_USER {
             reg.insert(
-                DbId(1),
                 "user-1".into(),
                 None,
                 format!("key-{i}"),
-                test_cancel(),
+                test_close(),
                 test_tx(),
             )
             .unwrap();
         }
         let err = reg
             .insert(
-                DbId(1),
                 "user-1".into(),
                 None,
                 "overflow".into(),
-                test_cancel(),
+                test_close(),
                 test_tx(),
             )
             .unwrap_err();
@@ -559,65 +558,19 @@ mod tests {
     #[test]
     fn insert_allows_different_users_independently() {
         let mut reg = test_registry();
-        reg.insert(
-            DbId(1),
-            "user-1".into(),
-            None,
-            "a".into(),
-            test_cancel(),
-            test_tx(),
-        )
-        .unwrap();
-        reg.insert(
-            DbId(2),
-            "user-2".into(),
-            None,
-            "a".into(),
-            test_cancel(),
-            test_tx(),
-        )
-        .unwrap();
+        reg.insert("user-1".into(), None, "a".into(), test_close(), test_tx())
+            .unwrap();
+        reg.insert("user-2".into(), None, "a".into(), test_close(), test_tx())
+            .unwrap();
         assert_eq!(reg.count_user_connections("user-1"), 1);
         assert_eq!(reg.count_user_connections("user-2"), 1);
-    }
-
-    #[test]
-    fn count_user_connections_keys_on_public_id_not_db_id() {
-        let mut reg = test_registry();
-        reg.insert(
-            DbId(42),
-            "alice".into(),
-            None,
-            "a".into(),
-            test_cancel(),
-            test_tx(),
-        )
-        .unwrap();
-        reg.insert(
-            DbId(42),
-            "bob".into(),
-            None,
-            "a".into(),
-            test_cancel(),
-            test_tx(),
-        )
-        .unwrap();
-        assert_eq!(reg.count_user_connections("alice"), 1);
-        assert_eq!(reg.count_user_connections("bob"), 1);
     }
 
     #[test]
     fn evict_duplicate_removes_matching_connection_and_token() {
         let mut reg = test_registry();
         let id = reg
-            .insert(
-                DbId(1),
-                "user-1".into(),
-                None,
-                "key".into(),
-                test_cancel(),
-                test_tx(),
-            )
+            .insert("user-1".into(), None, "key".into(), test_close(), test_tx())
             .unwrap();
         let token = reg.connections[&id].token.clone();
         assert!(reg.tokens.contains_key(&token));
@@ -630,32 +583,18 @@ mod tests {
     #[test]
     fn evict_duplicate_returns_none_when_no_match() {
         let mut reg = test_registry();
-        reg.insert(
-            DbId(1),
-            "user-1".into(),
-            None,
-            "key".into(),
-            test_cancel(),
-            test_tx(),
-        )
-        .unwrap();
+        reg.insert("user-1".into(), None, "key".into(), test_close(), test_tx())
+            .unwrap();
         let evicted = reg.evict_duplicate("user-1", "other-key");
         assert!(evicted.is_none());
         assert_eq!(reg.count_user_connections("user-1"), 1);
     }
 
     #[test]
-    fn evict_duplicate_does_not_match_recycled_db_id_with_different_public_id() {
+    fn evict_duplicate_only_matches_the_same_user() {
         let mut reg = test_registry();
-        reg.insert(
-            DbId(42),
-            "alice".into(),
-            None,
-            "key".into(),
-            test_cancel(),
-            test_tx(),
-        )
-        .unwrap();
+        reg.insert("alice".into(), None, "key".into(), test_close(), test_tx())
+            .unwrap();
         let evicted = reg.evict_duplicate("bob", "key");
         assert!(
             evicted.is_none(),
@@ -664,43 +603,49 @@ mod tests {
         assert_eq!(reg.count_user_connections("alice"), 1);
     }
 
-    #[tokio::test]
-    async fn evict_duplicate_notifies_cancel() {
+    #[test]
+    fn evict_duplicate_requests_duplicate_session_close() {
         let mut reg = test_registry();
-        let cancel = test_cancel();
-        let cancel_clone = cancel.clone();
-        reg.insert(
-            DbId(1),
-            "user-1".into(),
-            None,
-            "key".into(),
-            cancel,
-            test_tx(),
-        )
-        .unwrap();
+        let (close, close_rx) = watch::channel(None);
+        reg.insert("user-1".into(), None, "key".into(), close, test_tx())
+            .unwrap();
 
         reg.evict_duplicate("user-1", "key");
 
-        tokio::time::timeout(
-            std::time::Duration::from_millis(10),
-            cancel_clone.notified(),
-        )
-        .await
-        .expect("cancel should have been notified");
+        assert_eq!(*close_rx.borrow(), Some(CloseReason::DuplicateSession));
+    }
+
+    #[tokio::test]
+    async fn close_user_connections_only_signals_that_user() {
+        let _guard = crate::testing::runtime_test_lock().await;
+        for connection in list_connections().await {
+            unregister(connection.connection_id).await;
+        }
+        let (alice_close, alice_rx) = watch::channel(None);
+        let (bob_close, bob_rx) = watch::channel(None);
+        let alice = register("alice".into(), None, "key".into(), alice_close)
+            .await
+            .unwrap();
+        let bob = register("bob".into(), None, "key".into(), bob_close)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            close_user_connections("alice", CloseReason::UserDeleted).await,
+            1
+        );
+        assert_eq!(*alice_rx.borrow(), Some(CloseReason::UserDeleted));
+        assert_eq!(*bob_rx.borrow(), None);
+
+        unregister(alice.connection_id).await;
+        unregister(bob.connection_id).await;
     }
 
     #[test]
     fn remove_returns_handle_and_cleans_token() {
         let mut reg = test_registry();
         let id = reg
-            .insert(
-                DbId(1),
-                "user-1".into(),
-                None,
-                "key".into(),
-                test_cancel(),
-                test_tx(),
-            )
+            .insert("user-1".into(), None, "key".into(), test_close(), test_tx())
             .unwrap();
         let token = reg.connections[&id].token.clone();
         assert!(reg.tokens.contains_key(&token));
@@ -716,21 +661,19 @@ mod tests {
         let mut reg = test_registry();
         let source_id = reg
             .insert(
-                DbId(1),
                 "user-1".into(),
                 None,
                 "source".into(),
-                test_cancel(),
+                test_close(),
                 test_tx(),
             )
             .unwrap();
         let target_id = reg
             .insert(
-                DbId(1),
                 "user-1".into(),
                 Some("Living Room".to_string()),
                 "target".into(),
-                test_cancel(),
+                test_close(),
                 test_tx(),
             )
             .unwrap();
@@ -749,14 +692,7 @@ mod tests {
         let mut reg = test_registry();
         reg.next_id = u64::MAX;
         let err = reg
-            .insert(
-                DbId(1),
-                "user-1".into(),
-                None,
-                "key".into(),
-                test_cancel(),
-                test_tx(),
-            )
+            .insert("user-1".into(), None, "key".into(), test_close(), test_tx())
             .unwrap_err();
         assert!(matches!(err, RegistryError::IdExhausted));
     }

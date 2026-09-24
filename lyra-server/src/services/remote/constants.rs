@@ -11,10 +11,31 @@ pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const AUTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 pub(crate) const MAX_MESSAGE_SIZE: usize = 64 * 1024;
 pub(crate) const MAX_CONNECTIONS_PER_USER: usize = 8;
-pub(crate) const CLOSE_CODE_DUPLICATE_SESSION: u16 = 4000;
-pub(crate) const CLOSE_CODE_REGISTRATION_REJECTED: u16 = 4001;
-pub(crate) const CLOSE_REASON_DUPLICATE_SESSION: &str = "duplicate_session";
-pub(crate) const CLOSE_REASON_REGISTRATION_REJECTED: &str = "registration_rejected";
+/// Why the server closes a connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CloseReason {
+    DuplicateSession,
+    RegistrationRejected,
+    UserDeleted,
+}
+
+impl CloseReason {
+    pub(crate) fn code(self) -> u16 {
+        match self {
+            Self::DuplicateSession => 4000,
+            Self::RegistrationRejected => 4001,
+            Self::UserDeleted => 4002,
+        }
+    }
+
+    pub(crate) fn reason(self) -> &'static str {
+        match self {
+            Self::DuplicateSession => "duplicate_session",
+            Self::RegistrationRejected => "registration_rejected",
+            Self::UserDeleted => "user_deleted",
+        }
+    }
+}
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

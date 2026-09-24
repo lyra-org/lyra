@@ -230,7 +230,7 @@ fn controlling_connection(
         .filter_map(|connection| {
             let scope_key = sessions::PlaybackScopeKey {
                 plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
-                user_db_id: connection.user_db_id,
+                user_public_id: &connection.user_public_id,
                 session_key: &connection.session_key,
             };
             let scope = sessions::get_playback_session(&scope_key)?;
@@ -250,7 +250,7 @@ fn controller_to_response(
 ) -> ControllerResponse {
     let scope_key = sessions::PlaybackScopeKey {
         plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
-        user_db_id: connection.user_db_id,
+        user_public_id: &connection.user_public_id,
         session_key: &connection.session_key,
     };
     ControllerResponse {
@@ -484,7 +484,7 @@ async fn create_playback(
         sessions::bind_current_playback_session_scope(
             &sessions::PlaybackScopeKey {
                 plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
-                user_db_id: auth.principal.user_db_id,
+                user_public_id: &auth.principal.user_public_id,
                 session_key,
             },
             update.session.playback_session_id,
