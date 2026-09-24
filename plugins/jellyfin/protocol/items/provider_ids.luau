@@ -13,6 +13,8 @@ local item_types = require("./types")
 type Artist = artists.Artist
 type EntityProjectionInfo = entities.EntityProjectionInfo
 type EntityQueryManyRequest = entities.EntityQueryManyRequest
+type ExternalUrlInfo = item_types.ExternalUrlInfo
+type IdLink = entities.IdLink
 type IdentifiersByScheme = { [string]: string }
 type ItemInfo = item_types.SerializableItemInfo
 
@@ -49,9 +51,10 @@ local PROVIDER_ID_KEYS: { [string]: { ProviderIdKey } } = {
 	},
 }
 
--- Per Jellyfin item id.
+-- Per Jellyfin item id; a map is present only when its field was requested.
 export type ItemProviderIds = {
-	identifiers: { [string]: IdentifiersByScheme },
+	identifiers: { [string]: IdentifiersByScheme }?,
+	links: { [string]: { IdLink } }?,
 }
 
 export type PageEntityIds = {
@@ -90,15 +93,31 @@ local function page_entity_ids(page: PageEntityIds, artists_by_owner_id: { [numb
 	return ids
 end
 
--- One batch query for the page.
-function module.fetch(page: PageEntityIds, artists_by_owner_id: { [number]: { Artist }? }): ItemProviderIds?
-	local ids = page_entity_ids(page, artists_by_owner_id)
+-- One batch query for the page. Credited artists are only needed for ProviderIds.
+function module.fetch(
+	page: PageEntityIds,
+	artists_by_owner_id: { [number]: { Artist }? },
+	include_provider_ids: boolean,
+	include_external_urls: boolean,
+	library_id: number?
+): ItemProviderIds?
+	local ids = page_entity_ids(page, if include_provider_ids then artists_by_owner_id else {})
 	if #ids == 0 then
 		return nil
 	end
 
-	local index: ItemProviderIds = { identifiers = {} }
-	local request: EntityQueryManyRequest = { ids = ids, include = { "identifiers" } }
+	local include: { string } = {}
+	local index: ItemProviderIds = {}
+	if include_provider_ids then
+		table.insert(include, "identifiers")
+		index.identifiers = {}
+	end
+	if include_external_urls then
+		table.insert(include, "links")
+		index.links = {}
+	end
+
+	local request: EntityQueryManyRequest = { ids = ids, include = include, library_id = library_id }
 	local ok, projections = pcall(entities.query_many, request)
 	if not ok or type(projections) ~= "table" then
 		return index
@@ -110,8 +129,12 @@ function module.fetch(page: PageEntityIds, artists_by_owner_id: { [number]: { Ar
 			continue
 		end
 		local identifiers = projection.includes.identifiers
-		if identifiers then
+		if index.identifiers and identifiers then
 			index.identifiers[item_id] = identifiers
+		end
+		local links = projection.includes.links
+		if index.links and links then
+			index.links[item_id] = links
 		end
 	end
 	return index
@@ -151,8 +174,34 @@ local function provider_ids(
 	return provider_ids
 end
 
+-- Links of the item's own entity, first occurrence of each URL.
+local function external_urls(item: ItemInfo, links_by_item_id: { [string]: { IdLink } }): { ExternalUrlInfo }?
+	if PROVIDER_ID_KEYS[item.Type or ""] == nil then
+		return nil
+	end
+
+	local urls: { ExternalUrlInfo } = {}
+	local seen: { [string]: boolean } = {}
+	for _, link: IdLink in (if item.Id then links_by_item_id[item.Id] else nil) or {} do
+		if not seen[link.url] then
+			seen[link.url] = true
+			local url: ExternalUrlInfo = { Name = link.label, Url = link.url }
+			table.insert(urls, url)
+		end
+	end
+	return urls
+end
+
 function module.apply(item: ItemInfo, index: ItemProviderIds)
-	item.ProviderIds = provider_ids(item, index.identifiers)
+	if index.identifiers then
+		item.ProviderIds = provider_ids(item, index.identifiers)
+	end
+	if index.links then
+		local urls = external_urls(item, index.links)
+		if urls then
+			item.ExternalUrls = urls
+		end
+	end
 end
 
 return module

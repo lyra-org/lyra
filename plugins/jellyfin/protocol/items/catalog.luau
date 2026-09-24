@@ -170,6 +170,7 @@ export type ItemsQueryOptions = {
 	include_overview: boolean,
 	include_parent_id: boolean,
 	include_provider_ids: boolean,
+	include_external_urls: boolean,
 	group_items: boolean,
 	user_id: string?,
 	_favorite_id_lookup: FavoriteLookup?,
@@ -204,6 +205,7 @@ type ItemContext = {
 	include_overview: boolean,
 	include_parent_id: boolean,
 	include_provider_ids: boolean,
+	include_external_urls: boolean,
 	related_artists_by_owner_id: ArtistRelationMap,
 	artist_relations_by_artist_id: ArtistRelationInfoMap,
 	credited_artists_by_owner_id: CreditRelationMap,
@@ -553,6 +555,7 @@ function helpers.clone_items_query_options(options: ItemsQueryOptions): ItemsQue
 		include_overview = options.include_overview,
 		include_parent_id = options.include_parent_id,
 		include_provider_ids = options.include_provider_ids,
+		include_external_urls = options.include_external_urls,
 		group_items = options.group_items,
 		user_id = options.user_id,
 		_favorite_id_lookup = options._favorite_id_lookup,
@@ -3106,6 +3109,7 @@ function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 		include_overview = false,
 		include_parent_id = false,
 		include_provider_ids = false,
+		include_external_urls = false,
 		group_items = true,
 		user_id = nil,
 		_favorite_id_lookup = nil,
@@ -3165,6 +3169,7 @@ function module.coerce_items_query(query: ApiQueryParams?): ItemsQueryOptions
 	options.include_overview = helpers.query_requests_field(options.fields, "overview")
 	options.include_parent_id = helpers.query_requests_field(options.fields, "parentid")
 	options.include_provider_ids = helpers.query_requests_field(options.fields, "providerids")
+	options.include_external_urls = helpers.query_requests_field(options.fields, "externalurls")
 	options.group_items = helpers.parse_query_bool(query, { "GroupItems", "groupItems" }, true) ~= false
 	return options
 end
@@ -3282,6 +3287,7 @@ function helpers.new_realization_context(options: ItemsQueryOptions): ItemContex
 		include_overview = options.include_overview == true,
 		include_parent_id = options.include_parent_id == true,
 		include_provider_ids = options.include_provider_ids == true,
+		include_external_urls = options.include_external_urls == true,
 		related_artists_by_owner_id = {},
 		artist_relations_by_artist_id = {},
 		credited_artists_by_owner_id = {},
@@ -3510,12 +3516,18 @@ function helpers.prefetch_credit_relations(context: ItemContext, seed: Realizati
 end
 
 function helpers.prefetch_provider_ids(context: ItemContext, seed: RealizationSeedInfo): ()
-	if not context.include_provider_ids then
+	if not context.include_provider_ids and not context.include_external_urls then
 		return
 	end
 
-	-- Credited artists feed the album and track artist keys.
-	local index: provider_ids.ItemProviderIds? = provider_ids.fetch(seed, context.related_artists_by_owner_id)
+	local library_id = if context.library_hex_id then item_ids.decode_jellyfin_item_id(context.library_hex_id) else nil
+	local index: provider_ids.ItemProviderIds? = provider_ids.fetch(
+		seed,
+		context.related_artists_by_owner_id,
+		context.include_provider_ids,
+		context.include_external_urls,
+		library_id
+	)
 	context.item_provider_ids = index
 end
 
@@ -5648,7 +5660,7 @@ function module.list_instant_mix_audio_from_genre_name(
 	return items, total_count, start_index, true
 end
 
--- `with_provider_ids` adds ProviderIds, as single-item responses carry.
+-- `with_provider_ids` adds ProviderIds and ExternalUrls, as single-item responses carry.
 function module.find_item_by_id(item_id: number?, user_id: string?, with_provider_ids: boolean?): ItemInfo?
 	if not item_id or item_id <= 0 then
 		return nil
@@ -5679,6 +5691,7 @@ function module.find_item_by_id(item_id: number?, user_id: string?, with_provide
 		include_overview = true,
 		include_parent_id = true,
 		include_provider_ids = with_provider_ids == true,
+		include_external_urls = with_provider_ids == true,
 		search_term = nil,
 		artist_ids = {},
 		person_ids = {},
