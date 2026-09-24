@@ -23,6 +23,7 @@ pub(crate) use download::{
     download_track_response,
 };
 pub(crate) use hls::{
+    HlsPlaylistOptions,
     resolve_hls_profile,
     serve_hls_playlist_for_track,
 };
@@ -149,7 +150,10 @@ pub(crate) async fn require_download_access(headers: &HeaderMap) -> Result<Princ
     require_download(headers).await.map_err(Into::into)
 }
 
-enum TrackAccess {
+/// How a request reached a track. A principal's library access is checked under the guard that
+/// resolves the track's source; a media token was already bound to the track's public id.
+#[derive(Debug)]
+pub(crate) enum TrackAccess {
     Principal(Principal),
     MediaToken,
 }
@@ -164,104 +168,68 @@ fn media_token_error_to_app_error(err: MediaTokenError) -> AppError {
 fn validate_track_media_token(
     media_token: Option<&str>,
     purpose: MediaTokenPurpose,
-    track_db_id: DbId,
+    track_id: &str,
 ) -> Result<(), MediaTokenError> {
     let Some(media_token) = media_token.map(str::trim).filter(|token| !token.is_empty()) else {
         return Err(MediaTokenError::Invalid);
     };
-    validate_media_token(media_token, purpose, track_db_id)
+    validate_media_token(media_token, purpose, track_id)
 }
 
-async fn require_authenticated_track_access(
+/// The principal a request to serve a track for `purpose` must be, without a media token.
+async fn authorize_track_request(
     headers: &HeaderMap,
-    track_db_id: DbId,
+    purpose: MediaTokenPurpose,
 ) -> Result<Principal, AppError> {
-    let principal = require_authenticated(headers).await?;
-    {
-        let db = STATE.db.read().await;
-        crate::services::auth::access::require_entity_accessible(
-            &*db,
-            &principal,
-            track_db_id,
-            || AppError::not_found(format!("Track not found: {}", track_db_id.0)),
-        )?;
-    }
-    Ok(principal)
-}
-
-pub(crate) async fn require_stream_access(
-    headers: &HeaderMap,
-    media_token: Option<&str>,
-    track_db_id: DbId,
-) -> Result<(), AppError> {
-    match validate_track_media_token(media_token, MediaTokenPurpose::Stream, track_db_id) {
-        Ok(()) => return Ok(()),
-        Err(token_error) if media_token.is_some() => {
-            match require_authenticated_track_access(headers, track_db_id).await {
-                Ok(_) => return Ok(()),
-                Err(_) => return Err(media_token_error_to_app_error(token_error)),
-            }
+    match purpose {
+        MediaTokenPurpose::Stream | MediaTokenPurpose::HlsPlaylist => {
+            Ok(require_authenticated(headers).await?)
         }
-        Err(_) => {}
+        MediaTokenPurpose::Download => require_download_access(headers).await,
     }
-
-    require_authenticated_track_access(headers, track_db_id)
-        .await
-        .map(|_| ())
 }
 
-pub(crate) async fn require_hls_playlist_access(
+/// Grants access to a track for `purpose` through a media token bound to it, or else the
+/// request's credential. A failed media token reports its own error over the credential's.
+pub(crate) async fn require_track_access(
     headers: &HeaderMap,
     media_token: Option<&str>,
-    track_db_id: DbId,
-) -> Result<(), AppError> {
-    match validate_track_media_token(media_token, MediaTokenPurpose::HlsPlaylist, track_db_id) {
-        Ok(()) => return Ok(()),
-        Err(token_error) if media_token.is_some() => {
-            match require_authenticated_track_access(headers, track_db_id).await {
-                Ok(_) => return Ok(()),
-                Err(_) => return Err(media_token_error_to_app_error(token_error)),
-            }
-        }
-        Err(_) => {}
-    }
-
-    require_authenticated_track_access(headers, track_db_id)
-        .await
-        .map(|_| ())
-}
-
-async fn require_download_track_access(
-    headers: &HeaderMap,
-    media_token: Option<&str>,
-    track_db_id: DbId,
+    purpose: MediaTokenPurpose,
+    track_id: &str,
 ) -> Result<TrackAccess, AppError> {
-    match validate_track_media_token(media_token, MediaTokenPurpose::Download, track_db_id) {
-        Ok(()) => return Ok(TrackAccess::MediaToken),
-        Err(token_error) if media_token.is_some() => match require_download_access(headers).await {
-            Ok(principal) => return Ok(TrackAccess::Principal(principal)),
-            Err(_) => return Err(media_token_error_to_app_error(token_error)),
-        },
-        Err(_) => {}
+    match validate_track_media_token(media_token, purpose, track_id) {
+        Ok(()) => Ok(TrackAccess::MediaToken),
+        Err(token_error) if media_token.is_some() => authorize_track_request(headers, purpose)
+            .await
+            .map(TrackAccess::Principal)
+            .map_err(|_| media_token_error_to_app_error(token_error)),
+        Err(_) => authorize_track_request(headers, purpose)
+            .await
+            .map(TrackAccess::Principal),
     }
-
-    require_download_access(headers)
-        .await
-        .map(TrackAccess::Principal)
 }
 
-pub async fn validate_and_get_track_source(
-    track_db_id: DbId,
+/// Resolves the track's playable source, checking `access` under the same guard.
+pub(crate) async fn validate_and_get_track_source(
+    track_id: &str,
+    access: &TrackAccess,
 ) -> Result<ValidatedTrackSource, AppError> {
     let db = &*STATE.db.read().await;
-    let track = db::tracks::get_by_id(db, track_db_id)?
-        .ok_or_else(|| AppError::not_found(format!("Track not found: {}", track_db_id.0)))?;
+    let not_found = || AppError::not_found(format!("Track not found: {track_id}"));
+    let track_db_id = db::lookup::find_node_id_by_id(db, track_id)?.ok_or_else(not_found)?;
+    if let TrackAccess::Principal(principal) = access {
+        principal.require(db)?;
+        crate::services::auth::access::require_entity_accessible(
+            db,
+            principal,
+            track_db_id,
+            not_found,
+        )?;
+    }
+    let track = db::tracks::get_by_id(db, track_db_id)?.ok_or_else(not_found)?;
 
     let source = playback_source_service::resolve(db, track_db_id, false)?.ok_or_else(|| {
-        AppError::not_found(format!(
-            "Playable source not found for track: {}",
-            track_db_id.0
-        ))
+        AppError::not_found(format!("Playable source not found for track: {track_id}"))
     })?;
     if !source.full_path.is_file() {
         return Err(AppError::not_found(format!(
@@ -297,14 +265,14 @@ pub async fn validate_and_get_track_source(
     })
 }
 
-pub fn temp_output_path(track_db_id: DbId, format: AudioFormat) -> PathBuf {
+pub fn temp_output_path(track_id: &str, format: AudioFormat) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
     std::env::temp_dir().join(format!(
         "lyra-download-{}-{}.{}",
-        track_db_id.0,
+        track_id,
         nanos,
         format.extension()
     ))
@@ -413,8 +381,7 @@ mod tests {
         ValidatedTrackSource,
         apply_request_start_offset,
         require_download_access,
-        require_hls_playlist_access,
-        require_stream_access,
+        require_track_access,
     };
     use std::{
         path::PathBuf,
@@ -564,17 +531,106 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn media_token_does_not_follow_a_recycled_track_id() -> anyhow::Result<()> {
+        use axum::body::{
+            Body,
+            to_bytes,
+        };
+        use tower::ServiceExt;
+
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("token-holder", vec![]).await?;
+
+        let response = crate::routes::tracks::track_routes()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri(format!("/{track_id}/playback-url"))
+                    .header(AUTHORIZATION, headers[AUTHORIZATION].clone())
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await?)?;
+        let hls_url = body["hls_url"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("hls_url missing"))?;
+        let query = hls_url
+            .split_once('?')
+            .map(|(_, query)| query)
+            .ok_or_else(|| anyhow::anyhow!("hls_url has no query"))?;
+
+        let recycled_track_id = {
+            let mut db = STATE.db.write().await;
+            let track_db_id = db::lookup::find_node_id_by_id(&*db, &track_id)?
+                .ok_or_else(|| anyhow::anyhow!("track missing"))?;
+            db.exec_mut(agdb::QueryBuilder::remove().ids(track_db_id).query())?;
+            let recycled = db::test_db::insert_track(&mut db, "Recycled")?;
+            assert_eq!(recycled, track_db_id, "agdb must reuse the track DbId");
+            db::lookup::find_id_by_db_id(&*db, recycled)?
+                .ok_or_else(|| anyhow::anyhow!("recycled track has no public id"))?
+        };
+
+        let response = super::stream_routes()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/{recycled_track_id}/hls.m3u8?{query}"))
+                    .body(Body::empty())?,
+            )
+            .await?;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn track_source_rejects_a_deleted_principal() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        let track_id = prepare_streamable_track(&test_dir).await?;
+        let headers = create_user_with_permissions("departed", vec![]).await?;
+        let principal = crate::services::auth::require_authenticated(&headers).await?;
+        {
+            let mut db = STATE.db.write().await;
+            let user_db_id = principal.require(&*db)?;
+            db.transaction_mut(|t| db::users::delete_user(t, user_db_id))?;
+        }
+
+        let status = super::validate_and_get_track_source(
+            &track_id,
+            &super::TrackAccess::Principal(principal),
+        )
+        .await
+        .expect_err("a deleted principal must not resolve a track source")
+        .into_response()
+        .status();
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
     #[tokio::test]
     async fn require_stream_access_allows_matching_media_token_without_bearer() -> anyhow::Result<()>
     {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
 
-        let track_id = agdb::DbId(123);
+        let track_id = "track-123";
         let token = issue_media_token(track_id, MediaTokenPurpose::Stream);
-        require_stream_access(&HeaderMap::new(), Some(&token.token), track_id)
-            .await
-            .expect("matching stream media token should grant access");
+        require_track_access(
+            &HeaderMap::new(),
+            Some(&token.token),
+            MediaTokenPurpose::Stream,
+            track_id,
+        )
+        .await
+        .expect("matching stream media token should grant access");
 
         let _ = std::fs::remove_dir_all(test_dir);
         Ok(())
@@ -585,13 +641,18 @@ mod tests {
         let _guard = runtime_test_lock().await;
         let test_dir = initialize_test_runtime().await?;
 
-        let track_id = agdb::DbId(123);
+        let track_id = "track-123";
         let token = issue_media_token(track_id, MediaTokenPurpose::Stream);
-        let status = require_hls_playlist_access(&HeaderMap::new(), Some(&token.token), track_id)
-            .await
-            .expect_err("stream token should not authorize HLS playlist creation")
-            .into_response()
-            .status();
+        let status = require_track_access(
+            &HeaderMap::new(),
+            Some(&token.token),
+            MediaTokenPurpose::HlsPlaylist,
+            track_id,
+        )
+        .await
+        .expect_err("stream token should not authorize HLS playlist creation")
+        .into_response()
+        .status();
         assert_eq!(status, StatusCode::UNAUTHORIZED);
 
         let _ = std::fs::remove_dir_all(test_dir);
@@ -669,7 +730,7 @@ mod tests {
         assert_eq!(err.into_response().status(), StatusCode::BAD_REQUEST);
     }
 
-    async fn prepare_streamable_track(test_dir: &std::path::Path) -> anyhow::Result<i64> {
+    async fn prepare_streamable_track(test_dir: &std::path::Path) -> anyhow::Result<String> {
         let fixture_src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/assets/metadata/integration_track.flac");
         let fixture_dst = test_dir.join("integration_track.flac");
@@ -694,11 +755,12 @@ mod tests {
             vec![raw_tags],
         )
         .await?;
-        let track_id = *fixture
+        let track_db_id = *fixture
             .track_ids
             .first()
             .ok_or_else(|| anyhow::anyhow!("prepare_fixture produced no track ids"))?;
-        Ok(track_id)
+        db::lookup::find_id_by_db_id(&*STATE.db.read().await, agdb::DbId(track_db_id))?
+            .ok_or_else(|| anyhow::anyhow!("fixture track has no public id"))
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -710,7 +772,8 @@ mod tests {
 
         let response = super::stream::stream_track_response(
             &headers,
-            agdb::DbId(track_id),
+            &track_id,
+            &super::TrackAccess::MediaToken,
             ServeTrackOptions::default(),
         )
         .await
@@ -739,7 +802,8 @@ mod tests {
 
         let response = super::stream::stream_track_response(
             &headers,
-            agdb::DbId(track_id),
+            &track_id,
+            &super::TrackAccess::MediaToken,
             ServeTrackOptions {
                 format: Some("mp3".to_string()),
                 bitrate_bps: Some(96_000),
@@ -781,7 +845,8 @@ mod tests {
         // The fixture is 44.1 kHz, so 22.05 kHz is a real downsample.
         let response = super::stream::stream_track_response(
             &headers,
-            agdb::DbId(track_id),
+            &track_id,
+            &super::TrackAccess::MediaToken,
             ServeTrackOptions {
                 format: Some("flac".to_string()),
                 sample_rate_hz: Some(22_050),
@@ -825,7 +890,8 @@ mod tests {
         for (sample_rate_hz, channels) in [(44_100, 1), (48_000, 2)] {
             let response = super::stream::stream_track_response(
                 &headers,
-                agdb::DbId(track_id),
+                &track_id,
+                &super::TrackAccess::MediaToken,
                 ServeTrackOptions {
                     format: Some("flac".to_string()),
                     sample_rate_hz: Some(sample_rate_hz),
@@ -860,7 +926,8 @@ mod tests {
 
         let response = super::stream::stream_track_response(
             &headers,
-            agdb::DbId(track_id),
+            &track_id,
+            &super::TrackAccess::MediaToken,
             ServeTrackOptions {
                 format: Some("flac".to_string()),
                 bitrate_bps: Some(96_000),
@@ -893,7 +960,8 @@ mod tests {
 
         let result = super::stream::stream_track_response(
             &headers,
-            agdb::DbId(track_id),
+            &track_id,
+            &super::TrackAccess::MediaToken,
             ServeTrackOptions {
                 format: Some("mp3".to_string()),
                 bitrate_bps: Some(0),

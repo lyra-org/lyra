@@ -729,30 +729,21 @@ async fn create_track_playback_url(
     validate_playback_url_query(&query)?;
     let principal = require_authenticated(&headers).await?;
 
-    let track_db_id = {
-        let db = &*STATE.db.read().await;
-        let track_db_id = db::lookup::find_node_id_by_id(db, &id)?
-            .ok_or_else(|| AppError::not_found(format!("Track not found: {id}")))?;
-        crate::services::auth::access::require_entity_accessible(
-            db,
-            &principal,
-            track_db_id,
-            || AppError::not_found(format!("Track not found: {id}")),
-        )?;
-        track_db_id
-    };
-
-    let source = super::serve::validate_and_get_track_source(track_db_id).await?;
+    let source = super::serve::validate_and_get_track_source(
+        &id,
+        &super::serve::TrackAccess::Principal(principal.clone()),
+    )
+    .await?;
     let transports = resolve_playback_transports(&query, source)?;
 
     // HLS always survives, which is what keeps `expires_at` total and the response
     // non-empty; tokens for the other transports are only minted when they are usable.
-    let hls_token = issue_media_token(track_db_id, MediaTokenPurpose::HlsPlaylist);
+    let hls_token = issue_media_token(&id, MediaTokenPurpose::HlsPlaylist);
     let mut expires_at = hls_token.expires_at;
     let hls_url = build_hls_url(&id, &hls_token.token, &query);
 
     let stream_url = if transports.stream {
-        let stream_token = issue_media_token(track_db_id, MediaTokenPurpose::Stream);
+        let stream_token = issue_media_token(&id, MediaTokenPurpose::Stream);
         expires_at = expires_at.min(stream_token.expires_at);
         Some(build_stream_url(&id, &stream_token.token, &query))
     } else {
@@ -760,7 +751,7 @@ async fn create_track_playback_url(
     };
 
     let download_url = if require_permission(&principal, db::Permission::Download).is_ok() {
-        let download_token = issue_media_token(track_db_id, MediaTokenPurpose::Download);
+        let download_token = issue_media_token(&id, MediaTokenPurpose::Download);
         expires_at = expires_at.min(download_token.expires_at);
         Some(build_download_url(&id, &download_token.token, &query))
     } else {

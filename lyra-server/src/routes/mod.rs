@@ -90,7 +90,9 @@ pub use roles::role_routes;
 pub use search::search_routes;
 pub(crate) use serve::{
     DownloadTrackRequest,
+    HlsPlaylistOptions,
     ServeTrackOptions,
+    TrackAccess,
     build_ranged_file_body,
     download_track_response,
     serve_hls_playlist_for_track,

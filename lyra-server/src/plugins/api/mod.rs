@@ -168,7 +168,9 @@ use crate::plugins::auth::{
 };
 use crate::routes::{
     DownloadTrackRequest,
+    HlsPlaylistOptions,
     ServeTrackOptions,
+    TrackAccess,
     build_ranged_file_body,
     download_track_response,
     registry::{

@@ -12,8 +12,6 @@ use std::{
     },
 };
 
-use agdb::DbId;
-
 use crate::{
     STATE,
     db,
@@ -40,7 +38,7 @@ pub(crate) enum MediaTokenPurpose {
 
 #[derive(Clone, Debug)]
 struct MediaTokenGrant {
-    track_db_id: DbId,
+    track_id: String,
     purpose: MediaTokenPurpose,
     issued_at: Instant,
     last_used_at: Instant,
@@ -107,12 +105,12 @@ fn enforce_media_token_cap(cache: &mut HashMap<String, MediaTokenGrant>) {
     }
 }
 
-pub(crate) fn issue_media_token(track_db_id: DbId, purpose: MediaTokenPurpose) -> IssuedMediaToken {
+pub(crate) fn issue_media_token(track_id: &str, purpose: MediaTokenPurpose) -> IssuedMediaToken {
     let now = Instant::now();
     let expires_at = now_secs().saturating_add(MEDIA_TOKEN_MAX_TTL_SECONDS as i64);
     let token = random_hex_secret::<MEDIA_TOKEN_BYTES>();
     let grant = MediaTokenGrant {
-        track_db_id,
+        track_id: track_id.to_string(),
         purpose,
         issued_at: now,
         last_used_at: now,
@@ -131,7 +129,7 @@ pub(crate) fn issue_media_token(track_db_id: DbId, purpose: MediaTokenPurpose) -
 pub(crate) fn validate_media_token(
     token: &str,
     purpose: MediaTokenPurpose,
-    track_db_id: DbId,
+    track_id: &str,
 ) -> Result<(), MediaTokenError> {
     let token = token.trim();
     if token.is_empty() {
@@ -153,7 +151,7 @@ pub(crate) fn validate_media_token(
         return Err(MediaTokenError::Expired);
     }
 
-    if grant.purpose != purpose || grant.track_db_id != track_db_id {
+    if grant.purpose != purpose || grant.track_id != track_id {
         return Err(MediaTokenError::Invalid);
     }
 
@@ -169,9 +167,9 @@ mod tests {
     fn media_token_validates_for_matching_track_and_purpose() {
         let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
         crate::testing::init_default_test_state().expect("init test state");
-        let issued = issue_media_token(DbId(42), MediaTokenPurpose::Stream);
+        let issued = issue_media_token("track-42", MediaTokenPurpose::Stream);
 
-        validate_media_token(&issued.token, MediaTokenPurpose::Stream, DbId(42))
+        validate_media_token(&issued.token, MediaTokenPurpose::Stream, "track-42")
             .expect("matching media token should validate");
     }
 
@@ -179,14 +177,14 @@ mod tests {
     fn media_token_rejects_wrong_track_or_purpose() {
         let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
         crate::testing::init_default_test_state().expect("init test state");
-        let issued = issue_media_token(DbId(42), MediaTokenPurpose::Stream);
+        let issued = issue_media_token("track-42", MediaTokenPurpose::Stream);
 
         assert!(matches!(
-            validate_media_token(&issued.token, MediaTokenPurpose::Stream, DbId(43)),
+            validate_media_token(&issued.token, MediaTokenPurpose::Stream, "track-43"),
             Err(MediaTokenError::Invalid)
         ));
         assert!(matches!(
-            validate_media_token(&issued.token, MediaTokenPurpose::HlsPlaylist, DbId(42)),
+            validate_media_token(&issued.token, MediaTokenPurpose::HlsPlaylist, "track-42"),
             Err(MediaTokenError::Invalid)
         ));
     }

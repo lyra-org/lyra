@@ -27,7 +27,7 @@ async fn require_plugin_track_access(
     principal: Option<&Principal>,
     track_db_id: agdb::DbId,
     permission: Option<Permission>,
-) -> Result<(), AppError> {
+) -> Result<(String, TrackAccess), AppError> {
     let Some(principal) = principal else {
         return Err(AppError::unauthorized("authentication required"));
     };
@@ -36,9 +36,16 @@ async fn require_plugin_track_access(
     if let Some(permission) = permission {
         require_permission(principal, permission)?;
     }
-    crate::services::auth::access::require_entity_accessible(&*db, principal, track_db_id, || {
-        AppError::not_found(format!("Track not found: {}", track_db_id.0))
-    })
+    let not_found = || AppError::not_found(format!("Track not found: {}", track_db_id.0));
+    crate::services::auth::access::require_entity_accessible(
+        &*db,
+        principal,
+        track_db_id,
+        not_found,
+    )?;
+    let track_id =
+        crate::plugins::db::lookup::find_id_by_db_id(&*db, track_db_id)?.ok_or_else(not_found)?;
+    Ok((track_id, TrackAccess::Principal(principal.clone())))
 }
 
 /// Plugins may name any filesystem path in a file response, so resolve the
@@ -73,16 +80,17 @@ pub(super) async fn plugin_api_response_to_axum(
             let track_id = response
                 .track_id
                 .ok_or_else(|| anyhow::anyhow!("stream_track response requires track_id"))?;
-            if let Err(error) =
-                require_plugin_track_access(principal, agdb::DbId(track_id), None).await
-            {
-                return Ok(error.into_response());
-            }
+            let (track_id, access) =
+                match require_plugin_track_access(principal, agdb::DbId(track_id), None).await {
+                    Ok(resolved) => resolved,
+                    Err(error) => return Ok(error.into_response()),
+                };
             let options = parse_track_serve_options(response.options.as_ref())?;
             return Ok(
                 match stream_track_response(
                     request_headers,
-                    agdb::DbId(track_id),
+                    &track_id,
+                    &access,
                     ServeTrackOptions {
                         format: options.format,
                         codec: join_preferred_codecs(options.preferred_codecs),
@@ -104,20 +112,21 @@ pub(super) async fn plugin_api_response_to_axum(
             let track_id = response
                 .track_id
                 .ok_or_else(|| anyhow::anyhow!("download_track response requires track_id"))?;
-            if let Err(error) = require_plugin_track_access(
+            let (track_id, _) = match require_plugin_track_access(
                 principal,
                 agdb::DbId(track_id),
                 Some(Permission::Download),
             )
             .await
             {
-                return Ok(error.into_response());
-            }
+                Ok(resolved) => resolved,
+                Err(error) => return Ok(error.into_response()),
+            };
             let options = parse_track_serve_options(response.options.as_ref())?;
             return Ok(
                 match download_track_response(
                     request_headers,
-                    agdb::DbId(track_id),
+                    &track_id,
                     DownloadTrackRequest {
                         output: ServeTrackOptions {
                             format: options.format,
@@ -142,21 +151,24 @@ pub(super) async fn plugin_api_response_to_axum(
             let track_id = response
                 .track_id
                 .ok_or_else(|| anyhow::anyhow!("hls_playlist response requires track_id"))?;
-            if let Err(error) =
-                require_plugin_track_access(principal, agdb::DbId(track_id), None).await
-            {
-                return Ok(error.into_response());
-            }
+            let (track_id, access) =
+                match require_plugin_track_access(principal, agdb::DbId(track_id), None).await {
+                    Ok(resolved) => resolved,
+                    Err(error) => return Ok(error.into_response()),
+                };
             let options = parse_hls_serve_options(response.options.as_ref())?;
             return Ok(
                 match serve_hls_playlist_for_track(
-                    agdb::DbId(track_id),
-                    join_preferred_codecs(options.preferred_codecs),
-                    options.bitrate_bps,
-                    options.sample_rate_hz,
-                    options.channels,
-                    options.prefer_vbr,
-                    options.start_offset_ms,
+                    &track_id,
+                    &access,
+                    HlsPlaylistOptions {
+                        codec: join_preferred_codecs(options.preferred_codecs),
+                        bitrate_bps: options.bitrate_bps,
+                        sample_rate_hz: options.sample_rate_hz,
+                        channels: options.channels,
+                        prefer_vbr: options.prefer_vbr,
+                        start_offset_ms: options.start_offset_ms,
+                    },
                 )
                 .await
                 {
@@ -304,6 +316,7 @@ mod tests {
     ) -> Result<(), StatusCode> {
         require_plugin_track_access(principal, track_db_id, permission)
             .await
+            .map(|_| ())
             .map_err(|error| error.into_response().status())
     }
 
