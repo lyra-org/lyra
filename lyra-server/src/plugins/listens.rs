@@ -205,7 +205,7 @@ async fn resolve_stats(
     merge_unique_external_ids: bool,
 ) -> luau::runtime::Result<ResolvedStats> {
     let db = db.read().await;
-    let user_db_id = Some(crate::plugins::auth::require_user_db_id(principal, &db)?);
+    let viewer_db_id = crate::plugins::auth::require_user_db_id(principal, &db)?;
 
     if !merge_unique_external_ids {
         let mut counts = HashMap::new();
@@ -220,7 +220,7 @@ async fn resolve_stats(
             }
         }
 
-        let stats = db::listens::get_stats(&db, &accessible_track_ids, user_db_id)
+        let stats = db::listens::get_stats(&db, &accessible_track_ids, viewer_db_id)
             .map_err(crate::plugins::runtime_error)?;
         for stat in stats {
             counts.insert(stat.db_id, stat.count);
@@ -269,7 +269,7 @@ async fn resolve_stats(
     }
 
     let merged_track_ids = merged_unique_ids.into_iter().collect::<Vec<_>>();
-    let merged_stats = db::listens::get_stats(&db, &merged_track_ids, user_db_id)
+    let merged_stats = db::listens::get_stats(&db, &merged_track_ids, viewer_db_id)
         .map_err(crate::plugins::runtime_error)?;
     let merged_by_id: HashMap<DbId, &db::listens::ListenStats> =
         merged_stats.iter().map(|stat| (stat.db_id, stat)).collect();

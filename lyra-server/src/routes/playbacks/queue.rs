@@ -60,6 +60,7 @@ pub(super) async fn replace_queue(
     let principal = require_principal(&headers).await?;
     let current_ms = now_ms()?;
     let mut db = STATE.db.write().await;
+    let user_db_id = principal.require(&db)?;
     let record = resolve_owned_playback_projection(&db, &principal, &id, current_ms)?;
     require_revision(
         request.expected_revision,
@@ -72,7 +73,7 @@ pub(super) async fn replace_queue(
     let updated = playbacks::replace_queue(
         &mut db,
         record.db_id,
-        principal.user_db_id,
+        user_db_id,
         request.expected_revision,
         queue,
         current_ms,

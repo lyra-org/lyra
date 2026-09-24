@@ -286,6 +286,17 @@ pub(crate) fn playlist_accessible(
     principal: &Principal,
     playlist_db_id: DbId,
 ) -> anyhow::Result<bool> {
+    playlist_accessible_as(db, principal, principal.require(db)?, playlist_db_id)
+}
+
+/// [`playlist_accessible`] for callers checking many playlists, with `user_db_id` taken from
+/// [`Principal::require`] under the same guard as `db`.
+pub(crate) fn playlist_accessible_as(
+    db: &impl db::DbAccess,
+    principal: &Principal,
+    user_db_id: DbId,
+    playlist_db_id: DbId,
+) -> anyhow::Result<bool> {
     if principal.permissions.contains(&db::Permission::Admin) {
         return Ok(true);
     }
@@ -295,7 +306,7 @@ pub(crate) fn playlist_accessible(
     if playlist.is_public.unwrap_or(false) {
         return Ok(true);
     }
-    Ok(db::playlists::get_owner(db, playlist_db_id)? == Some(principal.user_db_id))
+    Ok(db::playlists::get_owner(db, playlist_db_id)? == Some(user_db_id))
 }
 
 pub(crate) fn resolve_library_db_id(
@@ -314,7 +325,8 @@ pub(crate) fn resolve_library_db_id(
         return Ok(library_db_id);
     }
 
-    db::libraries::find_node_id_accessible_to_user(db, principal.user_db_id, library_id)?
+    let user_db_id = principal.require(db).map_err(anyhow::Error::from)?;
+    db::libraries::find_node_id_accessible_to_user(db, user_db_id, library_id)?
         .ok_or_else(|| AccessError::LibraryNotFound(library_id.to_string()))
 }
 
@@ -355,15 +367,8 @@ mod tests {
         },
     };
 
-    fn principal(user_db_id: DbId, permissions: Vec<db::Permission>) -> Principal {
-        Principal {
-            user_db_id,
-            user_public_id: format!("user-{}", user_db_id.0),
-            username: format!("user-{}", user_db_id.0),
-            permissions,
-            role_name: None,
-            accessible_library_ids: HashSet::new(),
-        }
+    fn principal(db: &DbAny, user_db_id: DbId, permissions: Vec<db::Permission>) -> Principal {
+        Principal::for_user(db, user_db_id, permissions, HashSet::new())
     }
 
     fn create_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId> {
@@ -403,7 +408,7 @@ mod tests {
         let user_db_id = create_user(&mut db, "viewer")?;
         let visible = create_library(&mut db, "Visible", Some(user_db_id))?;
         let hidden = create_library(&mut db, "Hidden", None)?;
-        let mut principal = principal(user_db_id, vec![]);
+        let mut principal = principal(&db, user_db_id, vec![]);
         principal.accessible_library_ids = db::libraries::accessible_library_ids(&db, user_db_id)?;
 
         let visible_libraries = libraries(&db, &principal)?;
@@ -431,7 +436,7 @@ mod tests {
         connect(&mut db, visible.db_id.unwrap(), track_db_id)?;
         connect(&mut db, hidden.db_id.unwrap(), track_db_id)?;
 
-        let mut principal = principal(user_db_id, vec![]);
+        let mut principal = principal(&db, user_db_id, vec![]);
         principal.accessible_library_ids.insert(visible.id);
         assert!(entity_accessible(&db, &principal, track_db_id)?);
         assert_eq!(
@@ -449,19 +454,19 @@ mod tests {
         let viewer_db_id = create_user(&mut db, "viewer")?;
         let library = create_library(&mut db, "Music", Some(owner_db_id))?;
 
-        let owner = principal(owner_db_id, vec![]);
+        let owner = principal(&db, owner_db_id, vec![]);
         assert_eq!(
             resolve_library_db_id(&db, &owner, &library.id)?,
             library.db_id.unwrap()
         );
 
-        let viewer = principal(viewer_db_id, vec![]);
+        let viewer = principal(&db, viewer_db_id, vec![]);
         assert!(matches!(
             resolve_library_db_id(&db, &viewer, &library.id),
             Err(AccessError::LibraryNotFound(_))
         ));
 
-        let mut admin = principal(viewer_db_id, vec![db::Permission::Admin]);
+        let mut admin = principal(&db, viewer_db_id, vec![db::Permission::Admin]);
         admin.accessible_library_ids.insert(library.id.clone());
         assert_eq!(
             resolve_library_db_id(&db, &admin, &library.id)?,
@@ -502,9 +507,9 @@ mod tests {
             owner_db_id,
         )?;
 
-        let owner = principal(owner_db_id, vec![]);
-        let viewer = principal(viewer_db_id, vec![]);
-        let admin = principal(viewer_db_id, vec![db::Permission::Admin]);
+        let owner = principal(&db, owner_db_id, vec![]);
+        let viewer = principal(&db, viewer_db_id, vec![]);
+        let admin = principal(&db, viewer_db_id, vec![db::Permission::Admin]);
         assert!(playlist_accessible(&db, &owner, private_id)?);
         assert!(!playlist_accessible(&db, &viewer, private_id)?);
         assert!(playlist_accessible(&db, &viewer, public_id)?);
@@ -515,7 +520,14 @@ mod tests {
     #[test]
     fn empty_library_filter_is_invalid() {
         let db = new_test_db().unwrap();
-        let principal = principal(DbId(1), vec![]);
+        let principal = Principal::from_parts(
+            DbId(1),
+            "missing".to_string(),
+            "missing".to_string(),
+            Vec::new(),
+            None,
+            HashSet::new(),
+        );
         assert!(matches!(
             resolve_optional_library_filter(&db, &principal, Some("  ")),
             Err(AccessError::InvalidRequest(_))

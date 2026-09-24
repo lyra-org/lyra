@@ -47,6 +47,7 @@ pub(super) async fn report_progress(
         ));
     }
     let mut db = STATE.db.write().await;
+    let user_db_id = principal.require(&db)?;
     let record = resolve_visible_playback(&db, principal, &id, current_ms)?;
     require_revision(
         request.queue_revision,
@@ -117,7 +118,7 @@ pub(super) async fn report_progress(
         &mut db,
         playbacks::ReportProgressRequest {
             playback_db_id: record.playback_db_id,
-            user_db_id: principal.user_db_id,
+            user_db_id,
             client_name: auth.client_name,
             queue_revision: request.queue_revision,
             current_track_db_id,

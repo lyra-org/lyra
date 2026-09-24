@@ -400,7 +400,7 @@ async fn delete_user(
         .db_id
         .ok_or_else(|| AppError::not_found(format!("user has no db_id: {user_id}")))?;
 
-    if user_db_id == principal.user_db_id {
+    if user_db_id == principal.require(&db)? {
         return Err(AppError::bad_request("cannot delete yourself"));
     }
 
@@ -488,7 +488,7 @@ async fn update_role(
         if user.username == DEFAULT_USERNAME {
             return Err(AppError::bad_request("cannot demote the default user"));
         }
-        if user_db_id == principal.user_db_id {
+        if user_db_id == principal.require(&db)? {
             return Err(AppError::bad_request("cannot demote yourself"));
         }
         if db::roles::count_admins(&db)? <= 1 {
@@ -535,10 +535,10 @@ async fn update_me(
         validate_password(new_password)?;
 
         let new_hash = hash_password(new_password)?;
-        let user_db_id = principal.user_db_id;
         let current_password = current_password.to_string();
 
         let mut db = STATE.db.write().await;
+        let user_db_id = principal.require(&db)?;
         let revoked_api_key_ids = db
             .transaction_mut(|t| -> anyhow::Result<Vec<agdb::DbId>> {
                 let user = db::users::get_by_id(t, user_db_id)?
@@ -584,7 +584,8 @@ async fn get_me(
     let include_permissions = parse_me_includes(query.inc)?;
 
     let db = STATE.db.read().await;
-    let user = db::users::get_by_id(&db, principal.user_db_id)?
+    let user_db_id = principal.require(&db)?;
+    let user = db::users::get_by_id(&db, user_db_id)?
         .ok_or_else(|| AppError::not_found("user not found"))?;
 
     Ok(Json(MeResponse {
@@ -970,6 +971,104 @@ mod tests {
         };
 
         create_headers_for_user(user_db_id).await
+    }
+
+    fn status_of<T>(result: Result<T, AppError>) -> StatusCode {
+        result.map_or_else(|error| error.into_response().status(), |_| StatusCode::OK)
+    }
+
+    /// Runs `request` as a fresh admin, naming a fresh target user, while at gap `gap` the admin
+    /// is deleted.
+    async fn request_as_deleted_caller(
+        gap: Option<usize>,
+        request: impl AsyncFnOnce(HeaderMap, String) -> StatusCode,
+    ) -> anyhow::Result<(bool, StatusCode)> {
+        let (caller_db_id, target_id) = {
+            let mut db = STATE.db.write().await;
+            db::roles::ensure_builtin_roles(&mut db)?;
+            let caller_db_id = db::users::create(
+                &mut db,
+                &User {
+                    db_id: None,
+                    id: nanoid!(),
+                    username: format!("caller-{}", nanoid!()),
+                    password: hash_password("caller-password")
+                        .map_err(|err| anyhow::anyhow!("hash_password failed: {err:?}"))?,
+                },
+            )?;
+            db::roles::ensure_user_has_role(&mut db, caller_db_id, db::roles::BUILTIN_ADMIN_ROLE)?;
+            let target = db::test_db::test_user(&format!("target-{}", nanoid!()))?;
+            db::users::create(&mut db, &target)?;
+            (caller_db_id, target.id)
+        };
+        let headers = create_headers_for_user(caller_db_id).await?;
+        Ok(
+            crate::testing::run_with_recycle_at(gap, request(headers, target_id), |db| {
+                db.transaction_mut(|t| db::users::delete_user(t, caller_db_id))
+                    .expect("delete caller");
+            })
+            .await,
+        )
+    }
+
+    async fn assert_deleted_caller_unauthorized(
+        request: impl AsyncFn(HeaderMap, String) -> StatusCode,
+    ) -> anyhow::Result<()> {
+        let (_, control) = request_as_deleted_caller(None, &request).await?;
+        assert!(control.is_success(), "control run failed with {control}");
+        crate::testing::for_each_db_gap(
+            async |gap| request_as_deleted_caller(gap, &request).await,
+            async |gap, status| {
+                assert_eq!(status, StatusCode::UNAUTHORIZED, "gap {gap}");
+                Ok(())
+            },
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn get_me_rejects_a_caller_deleted_mid_request() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        assert_deleted_caller_unauthorized(async |headers, _| {
+            status_of(get_me(headers, Query(MeQuery { inc: None })).await)
+        })
+        .await?;
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_me_rejects_a_caller_deleted_mid_request() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        assert_deleted_caller_unauthorized(async |headers, _| {
+            status_of(
+                update_me(
+                    headers,
+                    Json(UpdateMeRequest {
+                        current_password: Some("caller-password".to_string()),
+                        new_password: Some("rotated-password".to_string()),
+                    }),
+                )
+                .await,
+            )
+        })
+        .await?;
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn delete_user_rejects_a_caller_deleted_mid_request() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let test_dir = initialize_test_runtime().await?;
+        assert_deleted_caller_unauthorized(async |headers, target_id| {
+            status_of(delete_user(headers, Path(target_id)).await)
+        })
+        .await?;
+        let _ = std::fs::remove_dir_all(test_dir);
+        Ok(())
     }
 
     #[tokio::test]

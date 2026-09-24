@@ -658,9 +658,9 @@ async fn get_releases(
                 accessible_releases
             }
         };
+        let user_db_id = principal.require(db)?;
         if !rating_filter.is_empty() {
-            let rated_target_ids =
-                db::ratings::target_ids_matching(db, principal.user_db_id, rating_filter)?;
+            let rated_target_ids = db::ratings::target_ids_matching(db, user_db_id, rating_filter)?;
             accessible_releases.retain(|release| {
                 release
                     .db_id
@@ -674,7 +674,7 @@ async fn get_releases(
             accessible_releases,
             &sort,
             search_term.as_deref(),
-            principal.user_db_id,
+            user_db_id,
         )?;
         let page = page_request.start(
             &snapshot_key,
@@ -743,7 +743,7 @@ async fn search_release_covers(
 ) -> Result<Json<ReleaseCoverSearchResponse>, AppError> {
     let principal = require_authenticated(&headers).await?;
 
-    let release_db_id = {
+    {
         let db = STATE.db.read().await;
         let release_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
@@ -756,16 +756,11 @@ async fn search_release_covers(
         if db::releases::get_by_id(&db, release_db_id)?.is_none() {
             return Err(AppError::not_found(format!("Release not found: {}", id)));
         }
-        release_db_id
-    };
+    }
 
     let provider_filter = query.provider.as_deref();
-    let found = covers::search_release_cover_candidates(
-        release_db_id,
-        provider_filter,
-        query.force_refresh,
-    )
-    .await?;
+    let found =
+        covers::search_release_cover_candidates(&id, provider_filter, query.force_refresh).await?;
     let results = route_covers::map_provider_cover_search_results(found);
 
     Ok(Json(ReleaseCoverSearchResponse {

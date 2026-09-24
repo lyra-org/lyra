@@ -178,14 +178,14 @@ fn plugin_executor_preserves_typed_call_context_across_luau_yield() -> Result<()
     };
     seed_caller_principal(
         &mut context,
-        crate::services::auth::Principal {
-            user_db_id: agdb::DbId(7),
-            user_public_id: "user-public-id".to_string(),
-            username: "raw-user".to_string(),
-            permissions: vec![crate::plugins::db::Permission::Admin],
-            role_name: Some("admin".to_string()),
-            accessible_library_ids: std::collections::HashSet::new(),
-        },
+        crate::services::auth::Principal::from_parts(
+            agdb::DbId(7),
+            "user-public-id".to_string(),
+            "raw-user".to_string(),
+            vec![crate::plugins::db::Permission::Admin],
+            Some("admin".to_string()),
+            std::collections::HashSet::new(),
+        ),
     );
     runtime.run_plugin_source_with_call_context(
         br#"
@@ -274,19 +274,20 @@ fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<
     })?;
 
     let runtime = runtime_with_scopes(&["lyra.lyrics"])?;
-    let principal =
-        |user_db_id, user_public_id: String, can_access: bool| crate::services::auth::Principal {
+    let principal = |user_db_id, user_public_id: String, can_access: bool| {
+        crate::services::auth::Principal::from_parts(
             user_db_id,
             user_public_id,
-            username: "lyrics-user".to_string(),
-            permissions: Vec::new(),
-            role_name: None,
-            accessible_library_ids: if can_access {
+            "lyrics-user".to_string(),
+            Vec::new(),
+            None,
+            if can_access {
                 std::collections::HashSet::from([library_public_id.clone()])
             } else {
                 Default::default()
             },
-        };
+        )
+    };
 
     let mut alice_context = CallContext {
         origin: plugin_origin("demo", "alice.luau"),
@@ -1073,17 +1074,14 @@ async fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Res
     })
     .await?;
 
-    let (user_db_id, token) = {
-        let user_db_id = {
-            let mut db = crate::STATE.db.write().await;
-            crate::plugins::db::users::create(
-                &mut db,
-                &crate::plugins::db::test_db::test_user("dispatch-auth-user")?,
-            )?
-        };
-        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
-        (user_db_id, session.token)
+    let user = crate::plugins::db::test_db::test_user("dispatch-auth-user")?;
+    let user_db_id = {
+        let mut db = crate::STATE.db.write().await;
+        crate::plugins::db::users::create(&mut db, &user)?
     };
+    let token = crate::testing::create_session(user_db_id, Default::default())
+        .await?
+        .token;
 
     let _ =
         crate::plugins::api::install(axum::Router::new(), std::collections::HashSet::new()).await?;
@@ -1129,7 +1127,7 @@ async fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Res
     let principal = response
         .principal
         .context("resolve_auth during dispatch should bind the principal to the response")?;
-    assert_eq!(principal.user_db_id, user_db_id);
+    assert_eq!(principal.user_public_id, user.id);
 
     let anon_handler = crate::plugins::api::tests::registered_handler("GET", "/anon")
         .await
@@ -1149,7 +1147,7 @@ async fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Res
     let principal = response
         .principal
         .context("boundary auth should seed the dispatch principal")?;
-    assert_eq!(principal.user_db_id, user_db_id);
+    assert_eq!(principal.user_public_id, user.id);
 
     let _ = std::fs::remove_dir_all(test_dir);
     Ok(())
@@ -1986,14 +1984,14 @@ fn run_playlist_binding_test(source: &str) -> Result<()> {
     };
     seed_caller_principal(
         &mut context,
-        crate::services::auth::Principal {
-            user_db_id: DbId(owner_id.0),
-            user_public_id: owner.id,
-            username: "playlist-owner".into(),
-            permissions: vec![db::Permission::Admin],
-            role_name: None,
-            accessible_library_ids: Default::default(),
-        },
+        crate::services::auth::Principal::from_parts(
+            DbId(owner_id.0),
+            owner.id,
+            "playlist-owner".into(),
+            vec![db::Permission::Admin],
+            None,
+            Default::default(),
+        ),
     );
     runtime.eval_plugin_source_with_call_context(
         format!("{fixture}local run = (function()\n{source}\nend)()\nrun(fixture)").as_bytes(),

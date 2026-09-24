@@ -413,7 +413,7 @@ fn query_artist_route_items(
     }
 
     let listen_stats: HashMap<DbId, db::listens::ListenStats> = if needs_listens {
-        db::listens::get_stats_for_user_tracks(db, &all_track_ids, principal.user_db_id)?
+        db::listens::get_stats_for_user_tracks(db, &all_track_ids, principal.require(db)?)?
             .into_iter()
             .map(|stats| (stats.db_id, stats))
             .collect()
@@ -770,7 +770,7 @@ pub(crate) async fn list_artist_responses(
         };
         if !rating_filter.is_empty() {
             let rated_target_ids =
-                db::ratings::target_ids_matching(db, principal.user_db_id, rating_filter)?;
+                db::ratings::target_ids_matching(db, principal.require(db)?, rating_filter)?;
             accessible_artists.retain(|artist| {
                 artist
                     .db_id
@@ -869,7 +869,7 @@ async fn search_artist_covers(
 ) -> Result<Json<ArtistCoverSearchResponse>, AppError> {
     let principal = require_authenticated(&headers).await?;
 
-    let artist_db_id = {
+    {
         let db = STATE.db.read().await;
         let artist_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
@@ -879,13 +879,11 @@ async fn search_artist_covers(
         if db::artists::get_by_id(&db, artist_db_id)?.is_none() {
             return Err(AppError::not_found(format!("Artist not found: {}", id)));
         }
-        artist_db_id
-    };
+    }
 
     let provider_filter = query.provider.as_deref();
     let found =
-        covers::search_artist_cover_candidates(artist_db_id, provider_filter, query.force_refresh)
-            .await?;
+        covers::search_artist_cover_candidates(&id, provider_filter, query.force_refresh).await?;
     let results = route_covers::map_provider_cover_search_results(found);
 
     Ok(Json(ArtistCoverSearchResponse {
@@ -1040,25 +1038,25 @@ mod tests {
     }
 
     fn admin_principal(accessible_library_ids: HashSet<String>) -> Principal {
-        Principal {
-            user_db_id: DbId(1),
-            user_public_id: "admin".to_string(),
-            username: "admin".to_string(),
-            permissions: vec![db::Permission::Admin],
-            role_name: Some("admin".to_string()),
+        Principal::from_parts(
+            DbId(1),
+            "admin".to_string(),
+            "admin".to_string(),
+            vec![db::Permission::Admin],
+            Some("admin".to_string()),
             accessible_library_ids,
-        }
+        )
     }
 
     fn user_principal(accessible_library_ids: HashSet<String>) -> Principal {
-        Principal {
-            user_db_id: DbId(1),
-            user_public_id: "user".to_string(),
-            username: "user".to_string(),
-            permissions: Vec::new(),
-            role_name: Some("user".to_string()),
+        Principal::from_parts(
+            DbId(1),
+            "user".to_string(),
+            "user".to_string(),
+            Vec::new(),
+            Some("user".to_string()),
             accessible_library_ids,
-        }
+        )
     }
 
     fn insert_cover_for(db: &mut DbAny, owner_db_id: DbId) -> anyhow::Result<db::Cover> {
@@ -1543,14 +1541,12 @@ mod tests {
                     1,
                 )?;
             }
-            Principal {
+            Principal::for_user(
+                &*db,
                 user_db_id,
-                user_public_id: "artist-rating-user".to_string(),
-                username: "artist-rating-user".to_string(),
-                permissions: vec![db::Permission::Admin],
-                role_name: Some("admin".to_string()),
-                accessible_library_ids: HashSet::new(),
-            }
+                vec![db::Permission::Admin],
+                HashSet::new(),
+            )
         };
         let exact_four = db::ratings::RatingFilter::new(
             db::ratings::RatingValue::new(4),
@@ -1851,14 +1847,12 @@ mod benches {
         ArtistSortBench {
             db,
             user_db_id,
-            principal: Principal {
+            principal: Principal::for_user(
+                &db,
                 user_db_id,
-                user_public_id: "artist-sort-bench".to_string(),
-                username: "artist-sort-bench".to_string(),
-                permissions: vec![db::Permission::Admin],
-                role_name: Some("admin".to_string()),
-                accessible_library_ids: HashSet::new(),
-            },
+                vec![db::Permission::Admin],
+                HashSet::new(),
+            ),
             artists,
         }
     }

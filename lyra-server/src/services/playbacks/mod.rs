@@ -319,7 +319,7 @@ pub(crate) fn report_progress(
                     t,
                     playback_sessions::ReportPlaybackRequest {
                         playback_session_id: session_id,
-                        user_db_id: Some(user_db_id),
+                        user_db_id,
                         mutation,
                         now_ms,
                         activity_policy: playback_sessions::ActivityPolicy::AnyState,
@@ -579,11 +579,12 @@ pub(crate) fn get_visible_detail(
     principal: &Principal,
     now_ms: u64,
 ) -> Result<Option<PlaybackDetail>, PlaybackError> {
-    let Some(detail) = get_owned_detail(db, playback_db_id, principal.user_db_id, now_ms)? else {
+    let user_db_id = principal.require(db).map_err(anyhow::Error::from)?;
+    let Some(detail) = get_owned_detail(db, playback_db_id, user_db_id, now_ms)? else {
         return Ok(None);
     };
-    let is_admin = db::roles::has_admin_role(db, principal.user_db_id)?;
-    let accessible_library_ids = db::libraries::accessible_library_ids(db, principal.user_db_id)?;
+    let is_admin = db::roles::has_admin_role(db, user_db_id)?;
+    let accessible_library_ids = db::libraries::accessible_library_ids(db, user_db_id)?;
     if let Some(current) = detail.current_session.as_ref()
         && !track_accessible_in_scope(db, current.track_db_id, is_admin, &accessible_library_ids)?
     {
@@ -612,7 +613,8 @@ pub(crate) fn list_visible_projections(
     active_only: bool,
     now_ms: u64,
 ) -> Result<Vec<db::playbacks::PlaybackListProjection>, PlaybackError> {
-    let projections = db::playbacks::list_projections_for_user(db, principal.user_db_id)?;
+    let user_db_id = principal.require(db).map_err(anyhow::Error::from)?;
+    let projections = db::playbacks::list_projections_for_user(db, user_db_id)?;
     if projections.len() > db::playbacks::MAX_PLAYBACKS_PER_USER
         || projections.len() > pagination::snapshot_item_capacity()
     {
@@ -626,12 +628,12 @@ pub(crate) fn list_visible_projections(
     let session_ids = current_ids.values().copied().collect::<Vec<_>>();
     let sessions = db::playback_sessions::get_list_projections_by_ids(db, session_ids.clone())?;
     let track_ids = db::playback_sessions::track_ids_for_sessions(db, &session_ids)?;
-    let is_admin = db::roles::has_admin_role(db, principal.user_db_id)?;
+    let is_admin = db::roles::has_admin_role(db, user_db_id)?;
     let accessible_track_ids = if is_admin {
         HashSet::new()
     } else {
         let current_track_ids = track_ids.values().copied().collect::<Vec<_>>();
-        db::libraries::accessible_track_ids(db, principal.user_db_id, &current_track_ids)?
+        db::libraries::accessible_track_ids(db, user_db_id, &current_track_ids)?
     };
     let active_cutoff = now_ms.saturating_sub(playback_sessions::ACTIVE_SESSION_TTL_MS);
     let mut visible = Vec::with_capacity(projections.len());
@@ -782,7 +784,8 @@ pub(crate) fn queue_visible_to_principal(
     playback: &db::playbacks::Playback,
 ) -> Result<Option<QueueSnapshot>, PlaybackError> {
     let queue = queue_from_playback(playback)?;
-    if queue_tracks_accessible_to_user(db, principal.user_db_id, &queue)? {
+    let user_db_id = principal.require(db).map_err(anyhow::Error::from)?;
+    if queue_tracks_accessible_to_user(db, user_db_id, &queue)? {
         Ok(Some(queue))
     } else {
         Ok(None)
@@ -1008,14 +1011,14 @@ mod tests {
     #[test]
     fn repeated_queue_tracks_share_validation_queries() -> anyhow::Result<()> {
         let (db, user_db_id, first_track_db_id, _, first_track_id, _) = setup()?;
-        let principal = Principal {
+        let principal = Principal::from_parts(
             user_db_id,
-            user_public_id: "user".to_string(),
-            username: "user".to_string(),
-            permissions: vec![db::Permission::Admin],
-            role_name: None,
-            accessible_library_ids: HashSet::new(),
-        };
+            "user".to_string(),
+            "user".to_string(),
+            vec![db::Permission::Admin],
+            None,
+            HashSet::new(),
+        );
         let single_db = CountingDb::new(&db);
         let single = validate_queue(
             &single_db,

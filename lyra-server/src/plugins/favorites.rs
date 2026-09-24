@@ -125,9 +125,6 @@ fn add_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
-        principal
-            .require(&db)
-            .map_err(crate::plugins::runtime_error)?;
         let Some(public_target_id) =
             db::lookup::find_id_by_db_id(&*db, target_id).map_err(crate::plugins::runtime_error)?
         else {
@@ -170,9 +167,6 @@ fn has_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        principal
-            .require(&db)
-            .map_err(crate::plugins::runtime_error)?;
         let Some(public_target_id) =
             db::lookup::find_id_by_db_id(&*db, target_id).map_err(crate::plugins::runtime_error)?
         else {
@@ -194,9 +188,6 @@ fn has_many_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        principal
-            .require(&db)
-            .map_err(crate::plugins::runtime_error)?;
         let public_ids_by_db_id = db::lookup::find_ids_by_db_ids(&*db, &target_ids)
             .map_err(crate::plugins::runtime_error)?;
         let public_ids = target_ids

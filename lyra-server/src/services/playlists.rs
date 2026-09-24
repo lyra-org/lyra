@@ -394,14 +394,14 @@ mod tests {
     }
 
     fn principal(user_db_id: DbId, permissions: Vec<db::Permission>) -> Principal {
-        Principal {
+        Principal::from_parts(
             user_db_id,
-            user_public_id: "summary-principal".to_string(),
-            username: "summary-principal".to_string(),
+            "summary-principal".to_string(),
+            "summary-principal".to_string(),
             permissions,
-            role_name: None,
-            accessible_library_ids: std::collections::HashSet::new(),
-        }
+            None,
+            std::collections::HashSet::new(),
+        )
     }
 
     fn create_playlist(db: &mut DbAny, user_db_id: DbId, name: &str) -> anyhow::Result<DbId> {

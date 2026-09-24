@@ -515,7 +515,7 @@ async fn list_genres(
                 &release_ids,
                 &sort,
                 search_term.as_deref(),
-                principal.user_db_id,
+                principal.require(db)?,
             )?;
             let page = page_request.start(
                 &snapshot_key,

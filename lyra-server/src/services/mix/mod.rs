@@ -45,8 +45,8 @@ const MIXER_HANDLER_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 pub(crate) struct MixOptions {
     pub(crate) limit: Option<usize>,
     /// User the mix is rendered for: used by the built-in algorithm for the
-    /// unheard/heard partition. Distinct from the seed identity — see `MixSeed`.
-    pub(crate) viewer: Option<DbId>,
+    /// unheard/heard partition and as the owner of `MixSeed::Recent`.
+    pub(crate) viewer: Option<Principal>,
     /// Current library visibility for the viewer. When present, built-in
     /// candidates and recent-listen seeds are filtered before shuffle and limits.
     pub(crate) viewer_accessible_library_ids: Option<HashSet<String>>,
@@ -63,7 +63,7 @@ impl MixOptions {
     ) -> Self {
         Self {
             limit,
-            viewer: Some(principal.user_db_id),
+            viewer: Some(principal.clone()),
             viewer_accessible_library_ids: (!principal.permissions.contains(&Permission::Admin))
                 .then(|| principal.accessible_library_ids.clone()),
             extra,
@@ -71,9 +71,7 @@ impl MixOptions {
     }
 }
 
-/// Seed identity for a mix request. Carries the seed's `DbId` and, for
-/// `Recent`, the user whose listen history seeds the mix — kept separate
-/// from `MixOptions::viewer` so the two are never confused.
+/// Seed identity for a mix request. `Recent` seeds from the viewer's listen history.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum MixSeed {
     Track(DbId),
@@ -81,7 +79,7 @@ pub(crate) enum MixSeed {
     Artist(DbId),
     Genre(DbId),
     Playlist(DbId),
-    Recent { user_db_id: DbId },
+    Recent,
 }
 
 impl MixSeed {
@@ -92,7 +90,7 @@ impl MixSeed {
             MixSeed::Artist(_) => MixSeedType::Artist,
             MixSeed::Genre(_) => MixSeedType::Genre,
             MixSeed::Playlist(_) => MixSeedType::Playlist,
-            MixSeed::Recent { .. } => MixSeedType::RecentListens,
+            MixSeed::Recent => MixSeedType::RecentListens,
         }
     }
 
@@ -104,19 +102,31 @@ impl MixSeed {
             | MixSeed::Artist(id)
             | MixSeed::Genre(id)
             | MixSeed::Playlist(id) => Some(*id),
-            MixSeed::Recent { .. } => None,
+            MixSeed::Recent => None,
         }
     }
 }
 
-fn seed_exists(db: &DbAny, seed: &MixSeed) -> anyhow::Result<bool> {
+/// The viewer's `DbId`, verified under `db`'s guard.
+fn require_viewer(db: &DbAny, options: &MixOptions) -> anyhow::Result<DbId> {
+    let viewer = options
+        .viewer
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("recent-listens mixes need a viewer"))?;
+    Ok(viewer.require(db)?)
+}
+
+fn seed_exists(db: &DbAny, seed: &MixSeed, options: &MixOptions) -> anyhow::Result<bool> {
     Ok(match seed {
         MixSeed::Track(id) => db::tracks::get_by_id(db, *id)?.is_some(),
         MixSeed::Release(id) => db::releases::get_by_id(db, *id)?.is_some(),
         MixSeed::Artist(id) => db::artists::get_by_id(db, *id)?.is_some(),
         MixSeed::Genre(id) => db::genres::get_by_id(db, *id)?.is_some(),
         MixSeed::Playlist(id) => db::playlists::get_by_id(db, *id)?.is_some(),
-        MixSeed::Recent { user_db_id } => db::users::get_by_id(db, *user_db_id)?.is_some(),
+        MixSeed::Recent => {
+            require_viewer(db, options)?;
+            true
+        }
     })
 }
 
@@ -131,7 +141,7 @@ fn builtin_from_seed(
         MixSeed::Artist(id) => builtin_from_artist(db, *id, options),
         MixSeed::Genre(id) => builtin_from_genre(db, *id, options),
         MixSeed::Playlist(id) => builtin_from_playlist(db, *id, options),
-        MixSeed::Recent { user_db_id } => builtin_from_recent_listens(db, *user_db_id, options),
+        MixSeed::Recent => builtin_from_recent_listens(db, require_viewer(db, options)?, options),
     }
 }
 
@@ -143,13 +153,13 @@ pub(crate) async fn from_seed(
 ) -> anyhow::Result<Option<Vec<Track>>> {
     {
         let db = STATE.db.read().await;
-        if !seed_exists(&db, &seed)? {
+        if !seed_exists(&db, &seed, options)? {
             return Ok(None);
         }
     }
     let dispatched = dispatch_mixer(&seed, options).await?;
     let db = STATE.db.read().await;
-    if !seed_exists(&db, &seed)? {
+    if !seed_exists(&db, &seed, options)? {
         return Ok(None);
     }
     let tracks = match dispatched {
@@ -289,11 +299,11 @@ async fn dispatch_mixer(
         return Ok(None);
     }
 
-    let recent_track_ids = if let MixSeed::Recent { user_db_id } = seed {
+    let recent_track_ids = if let MixSeed::Recent = seed {
         let db = STATE.db.read().await;
         recent_listen_track_ids(
             &db,
-            *user_db_id,
+            require_viewer(&db, options)?,
             options.viewer_accessible_library_ids.as_ref(),
         )?
     } else {
@@ -730,7 +740,7 @@ fn tracks_for_genres(
     )?;
 
     // Partition into unheard and heard, preserving score order within each
-    let (unheard, heard) = partition_by_listen_history(db, all_tracks, options.viewer)?;
+    let (unheard, heard) = partition_by_listen_history(db, all_tracks, options.viewer.as_ref())?;
 
     let mut combined = unheard;
     combined.extend(heard);
@@ -779,7 +789,7 @@ fn fallback_from_seed_tracks(
     }
 
     tracks.shuffle(&mut rand::rng());
-    let (unheard, heard) = partition_by_listen_history(db, tracks, options.viewer)?;
+    let (unheard, heard) = partition_by_listen_history(db, tracks, options.viewer.as_ref())?;
     let mut combined = unheard;
     combined.extend(heard);
     cap_per_artist(db, combined, options.limit.unwrap_or(DEFAULT_LIMIT))
@@ -840,18 +850,19 @@ fn release_weighted_scores(
 fn partition_by_listen_history(
     db: &DbAny,
     tracks: Vec<Track>,
-    user_db_id: Option<DbId>,
+    viewer: Option<&Principal>,
 ) -> anyhow::Result<(Vec<Track>, Vec<Track>)> {
-    let Some(user_db_id) = user_db_id else {
+    let Some(viewer) = viewer else {
         return Ok((tracks, Vec::new()));
     };
+    let user_db_id = viewer.require(db)?;
 
     let track_ids: Vec<DbId> = tracks
         .iter()
         .filter_map(|t| t.db_id.clone().map(DbId::from))
         .collect();
 
-    let counts = db::listens::get_counts(db, &track_ids, Some(user_db_id))?;
+    let counts = db::listens::get_counts(db, &track_ids, user_db_id)?;
 
     let mut unheard = Vec::new();
     let mut heard = Vec::new();
@@ -1330,6 +1341,20 @@ mod tests {
         Ok(())
     }
 
+    fn viewer(db: &DbAny, user_db_id: DbId) -> Principal {
+        let user = db::users::get_by_id(db, user_db_id)
+            .expect("user lookup")
+            .expect("user exists");
+        Principal::from_parts(
+            user_db_id,
+            user.id,
+            user.username,
+            Vec::new(),
+            None,
+            HashSet::new(),
+        )
+    }
+
     fn insert_user(db: &mut DbAny) -> anyhow::Result<DbId> {
         use crate::db::users::User;
         use agdb::QueryBuilder;
@@ -1526,7 +1551,7 @@ mod tests {
             &db,
             seed_track,
             &MixOptions {
-                viewer: Some(user_id),
+                viewer: Some(viewer(&db, user_id)),
                 ..Default::default()
             },
         )?;
@@ -1631,7 +1656,7 @@ mod tests {
         connect(&mut db, jazz_release, jazz_track)?;
 
         let options = MixOptions {
-            viewer: Some(user_id),
+            viewer: Some(viewer(&db, user_id)),
             ..Default::default()
         };
         let result = builtin_from_recent_listens(&db, user_id, &options)?;
@@ -1650,7 +1675,7 @@ mod tests {
         let user_id = insert_user(&mut db)?;
 
         let options = MixOptions {
-            viewer: Some(user_id),
+            viewer: Some(viewer(&db, user_id)),
             ..Default::default()
         };
         let result = builtin_from_recent_listens(&db, user_id, &options)?;

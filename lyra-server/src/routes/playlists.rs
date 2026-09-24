@@ -364,7 +364,7 @@ fn query_playlist_route_items(
     sort: &[PlaylistRouteSortSpec],
     search_term: Option<&str>,
 ) -> anyhow::Result<(Vec<Playlist>, HashMap<DbId, playlists::PlaylistSummary>)> {
-    let playlists_for_user = playlists::get_by_user(db, principal.user_db_id)?;
+    let playlists_for_user = playlists::get_by_user(db, principal.require(db)?)?;
     let mut entries = playlists_for_user
         .into_iter()
         .map(|playlist| PlaylistRouteSortEntry {
@@ -466,8 +466,9 @@ async fn require_playlist_owner(
 ) -> Result<crate::services::auth::Principal, AppError> {
     let principal = require_principal(headers).await?;
     let db = STATE.db.read().await;
+    let user_db_id = principal.require(&db)?;
     let owner_db_id = db::playlists::get_owner(&db, playlist_db_id)?;
-    if owner_db_id != Some(principal.user_db_id) {
+    if owner_db_id != Some(user_db_id) {
         return Err(AppError::forbidden("you do not own this playlist"));
     }
     Ok(principal)
@@ -571,10 +572,11 @@ async fn create_playlist(
 
     let now = now_epoch();
     let mut db = STATE.db.write().await;
+    let user_db_id = principal.require(&db)?;
     let playlist_db_id = playlists::create(
         &mut db,
         &playlists::CreatePlaylistRequest {
-            user_db_id: principal.user_db_id,
+            user_db_id,
             name,
             description: request.description,
             is_public: request.is_public,
@@ -627,12 +629,13 @@ async fn get_playlists(
     let db = &*STATE.db.read().await;
     let (page_playlists, next_cursor, mut summaries) =
         if let Some(page) = page_request.resume(&snapshot_key)? {
+            let user_db_id = principal.require(db)?;
             let playlists_page = super::load_snapshot_items(
                 db,
                 &page.item_ids,
                 db::playlists::get_by_id,
                 |db, playlist_db_id| {
-                    Ok(db::playlists::get_owner(db, playlist_db_id)? == Some(principal.user_db_id))
+                    Ok(db::playlists::get_owner(db, playlist_db_id)? == Some(user_db_id))
                 },
             )?;
             (playlists_page, page.next_cursor, HashMap::new())
@@ -1086,7 +1089,6 @@ mod tests {
     use agdb::{
         DbAny,
         DbId,
-        QueryBuilder,
     };
 
     use super::UpdatePlaylistRequest;
@@ -1126,36 +1128,19 @@ mod tests {
     use super::*;
 
     fn create_test_user(db: &mut DbAny) -> anyhow::Result<DbId> {
-        let user_db_id = db
-            .exec_mut(
-                QueryBuilder::insert()
-                    .nodes()
-                    .values([[("username", "playlist-test-user").into()]])
-                    .query(),
-            )?
-            .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("users")
-                .to(user_db_id)
-                .query(),
-        )?;
-        Ok(user_db_id)
+        db::test_db::insert_user(db, "playlist-test-user")
     }
 
     fn test_principal(db: &mut DbAny) -> anyhow::Result<(DbId, Principal)> {
         let user_db_id = create_test_user(db)?;
         Ok((
             user_db_id,
-            Principal {
+            Principal::for_user(
+                db,
                 user_db_id,
-                user_public_id: "route-principal".to_string(),
-                username: "route-principal".to_string(),
-                permissions: vec![db::Permission::Admin],
-                role_name: Some("admin".to_string()),
-                accessible_library_ids: std::collections::HashSet::new(),
-            },
+                vec![db::Permission::Admin],
+                std::collections::HashSet::new(),
+            ),
         ))
     }
 
@@ -1171,6 +1156,23 @@ mod tests {
                 updated_at: None,
             },
         )
+    }
+
+    #[test]
+    fn query_playlist_route_items_rejects_principal_whose_db_id_was_recycled() -> anyhow::Result<()>
+    {
+        let mut db = db::test_db::new_test_db()?;
+        let (alice, stale) = test_principal(&mut db)?;
+        let replacement = db::test_db::recycle_user(&mut db, alice, "replacement")?;
+        seed_playlist(&mut db, replacement, "Replacement's Playlist")?;
+
+        let error = query_playlist_route_items(&db, &stale, &default_playlist_sort(), None)
+            .expect_err("a deleted user's principal must not list its replacement's playlists");
+        assert!(matches!(
+            error.downcast_ref::<crate::services::auth::AuthError>(),
+            Some(crate::services::auth::AuthError::InvalidBearerCredential)
+        ));
+        Ok(())
     }
 
     #[test]

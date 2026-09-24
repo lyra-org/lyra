@@ -120,12 +120,7 @@ pub(crate) async fn user_principal(user_db_id: DbId) -> anyhow::Result<services:
     let db = STATE.db.read().await;
     let user = crate::db::users::get_by_id(&db, user_db_id)?
         .ok_or_else(|| anyhow::anyhow!("user {user_db_id:?} does not exist"))?;
-    Ok(services::auth::resolve_principal(
-        &db,
-        user_db_id,
-        user.id,
-        user.username,
-    ))
+    Ok(services::auth::resolve_principal(&db, user_db_id, user))
 }
 
 #[cfg(test)]
@@ -182,6 +177,44 @@ pub(crate) async fn run_with_db_gaps<T>(
             }
             tokio::task::yield_now().await;
         }
+    }
+    unreachable!("gap counter overflowed")
+}
+
+/// Runs `operation`, applying `recycle` in gap `gap` only; `None` is a control run that recycles
+/// nothing. Returns whether the gap was reached, so the recycle actually ran, and the output.
+#[cfg(test)]
+pub(crate) async fn run_with_recycle_at<T>(
+    gap: Option<usize>,
+    operation: impl std::future::Future<Output = T>,
+    recycle: impl FnOnce(&mut DbAny),
+) -> (bool, T) {
+    let mut recycle = Some(recycle);
+    let output = run_with_db_gaps(operation, |index, db| {
+        if Some(index) == gap
+            && let Some(recycle) = recycle.take()
+        {
+            recycle(db);
+        }
+    })
+    .await;
+    (recycle.is_none(), output)
+}
+
+/// Runs `attempt` at gaps 0, 1, … until one is never reached, handing each reached run's output
+/// to `check`. Fails unless at least one gap ran.
+#[cfg(test)]
+pub(crate) async fn for_each_db_gap<T>(
+    mut attempt: impl AsyncFnMut(Option<usize>) -> anyhow::Result<(bool, T)>,
+    mut check: impl AsyncFnMut(usize, T) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    for gap in 0.. {
+        let (reached, output) = attempt(Some(gap)).await?;
+        if !reached {
+            anyhow::ensure!(gap > 0, "the operation released no guard to recycle in");
+            return Ok(());
+        }
+        check(gap, output).await?;
     }
     unreachable!("gap counter overflowed")
 }
@@ -487,7 +520,7 @@ pub async fn run_luau_plugin_test_file(
             password: String::new(),
         };
         let user_db_id = db::users::create(&mut db, &user)?;
-        services::auth::resolve_principal(&db, user_db_id, user.id, user.username)
+        services::auth::resolve_principal(&db, user_db_id, user)
     };
 
     let isolated = TempPluginsDir::new(plugin)?;

@@ -388,43 +388,49 @@ fn aggregate_stats(stats: Vec<db::listens::ListenStats>) -> (u64, Option<u64>) {
     (listen_count, last_played_ms)
 }
 
-async fn resolve_accessible_track_filter(
+/// Provider id pairs to merge play counts across, or `None` when merging is off.
+async fn merge_track_id_pairs(
+    merge_unique_external_ids: bool,
+) -> Option<HashSet<(String, String)>> {
+    if !merge_unique_external_ids {
+        return None;
+    }
+    Some(
+        provider_registry()
+            .read_owned()
+            .await
+            .unique_track_id_pairs(),
+    )
+}
+
+/// Resolves the track filter under the guard that reads listens with it.
+fn resolve_accessible_track_filter(
+    db: &agdb::DbAny,
     principal: &Principal,
     track_id: &str,
-    merge_unique_external_ids: bool,
+    merge_pairs: Option<&HashSet<(String, String)>>,
 ) -> Result<ResolvedTrackFilter, AppError> {
-    let unique_track_id_pairs = if merge_unique_external_ids {
-        let registry = provider_registry().read_owned().await;
-        registry.unique_track_id_pairs()
-    } else {
-        HashSet::new()
-    };
-
-    let db = STATE.db.read().await;
-    let track_db_id = db::lookup::find_node_id_by_id(&*db, track_id)?
+    let track_db_id = db::lookup::find_node_id_by_id(db, track_id)?
         .ok_or_else(|| AppError::not_found(format!("Track not found: {}", track_id)))?;
-    crate::services::auth::access::require_entity_accessible(&*db, principal, track_db_id, || {
+    crate::services::auth::access::require_entity_accessible(db, principal, track_db_id, || {
         AppError::not_found(format!("Track not found: {}", track_id))
     })?;
 
-    let stat_track_ids = if merge_unique_external_ids {
-        playback_service::resolve_merged_track_ids_for_play_count(
-            &db,
-            track_db_id,
-            &unique_track_id_pairs,
-        )?
-    } else {
-        vec![track_db_id]
+    let stat_track_ids = match merge_pairs {
+        Some(pairs) => {
+            playback_service::resolve_merged_track_ids_for_play_count(db, track_db_id, pairs)?
+        }
+        None => vec![track_db_id],
     };
 
     let mut accessible_track_ids = Vec::with_capacity(stat_track_ids.len());
     for id in stat_track_ids {
-        if crate::services::auth::access::entity_accessible(&*db, principal, id)? {
+        if crate::services::auth::access::entity_accessible(db, principal, id)? {
             accessible_track_ids.push(id);
         }
     }
 
-    let track_public_ids = db::lookup::find_ids_by_db_ids(&*db, &accessible_track_ids)?
+    let track_public_ids = db::lookup::find_ids_by_db_ids(db, &accessible_track_ids)?
         .into_values()
         .collect::<HashSet<_>>();
 
@@ -434,19 +440,41 @@ async fn resolve_accessible_track_filter(
     })
 }
 
+/// Whose listens a per-user listing reads, resolved under the guard that reads them.
+enum ListenOwner<'a> {
+    Principal,
+    Public(&'a str),
+}
+
+impl ListenOwner<'_> {
+    fn resolve(&self, db: &agdb::DbAny, principal: &Principal) -> Result<(DbId, String), AppError> {
+        match self {
+            Self::Principal => Ok((principal.require(db)?, principal.user_public_id.clone())),
+            Self::Public(user_id) => {
+                let user = db::users::get_by_public_id(db, user_id)?
+                    .ok_or_else(|| AppError::not_found(format!("User not found: {user_id}")))?;
+                let user_db_id = user
+                    .db_id
+                    .ok_or_else(|| anyhow::anyhow!("user missing db_id"))?;
+                Ok((user_db_id, user.id))
+            }
+        }
+    }
+}
+
 async fn rows_for_user(
     principal: &Principal,
-    user_db_id: DbId,
-    user_public_id: String,
+    owner: ListenOwner<'_>,
     track_id: Option<String>,
     merge_unique_external_ids: bool,
 ) -> Result<Vec<ListenRow>, AppError> {
     if let Some(track_id) = track_id {
-        let track_filter =
-            resolve_accessible_track_filter(principal, &track_id, merge_unique_external_ids)
-                .await?;
+        let merge_pairs = merge_track_id_pairs(merge_unique_external_ids).await;
         let db = STATE.db.read().await;
-        let stats = db::listens::get_stats(&db, &track_filter.track_db_ids, Some(user_db_id))?;
+        let track_filter =
+            resolve_accessible_track_filter(&db, principal, &track_id, merge_pairs.as_ref())?;
+        let (user_db_id, user_public_id) = owner.resolve(&db, principal)?;
+        let stats = db::listens::get_stats(&db, &track_filter.track_db_ids, user_db_id)?;
         let (listen_count, last_played_ms) = aggregate_stats(stats);
         return Ok(vec![ListenRow {
             user_id: user_public_id,
@@ -457,6 +485,7 @@ async fn rows_for_user(
     }
 
     let db = STATE.db.read().await;
+    let (user_db_id, _) = owner.resolve(&db, principal)?;
     let summaries = db::listens::list_summaries_for_user(&db, user_db_id)?;
     let mut rows = Vec::with_capacity(summaries.len());
     for summary in summaries {
@@ -474,16 +503,6 @@ async fn rows_for_user(
     Ok(rows)
 }
 
-async fn resolve_user_by_public_id(user_id: &str) -> Result<(DbId, String), AppError> {
-    let db = STATE.db.read().await;
-    let user = db::users::get_by_public_id(&db, user_id)?
-        .ok_or_else(|| AppError::not_found(format!("User not found: {}", user_id)))?;
-    let user_db_id = user
-        .db_id
-        .ok_or_else(|| anyhow::anyhow!("user missing db_id"))?;
-    Ok((user_db_id, user.id))
-}
-
 async fn rows_for_managed_listens(
     principal: &Principal,
     query: &ListenQuery,
@@ -492,27 +511,27 @@ async fn rows_for_managed_listens(
     validate_merge_usage(query.track_id.as_deref(), merge_unique_external_ids)?;
 
     if let Some(user_id) = query.user_id.as_deref() {
-        let (user_db_id, user_public_id) = resolve_user_by_public_id(user_id).await?;
         return rows_for_user(
             principal,
-            user_db_id,
-            user_public_id,
+            ListenOwner::Public(user_id),
             query.track_id.clone(),
             merge_unique_external_ids,
         )
         .await;
     }
 
-    let track_filter = if let Some(track_id) = query.track_id.as_deref() {
-        Some(resolve_accessible_track_filter(principal, track_id, merge_unique_external_ids).await?)
-    } else {
-        None
-    };
-
+    let merge_pairs = merge_track_id_pairs(merge_unique_external_ids).await;
     let db = STATE.db.read().await;
+    let track_filter = query
+        .track_id
+        .as_deref()
+        .map(|track_id| {
+            resolve_accessible_track_filter(&db, principal, track_id, merge_pairs.as_ref())
+        })
+        .transpose()?;
     let summaries = db::listens::list_summaries(
         &db,
-        None,
+        db::listens::ListenOwners::All,
         track_filter.as_ref().map(|filter| &filter.track_public_ids),
     )?;
 
@@ -620,8 +639,7 @@ pub(super) async fn get_me_listens(
     } else {
         let mut rows = rows_for_user(
             &principal,
-            principal.user_db_id,
-            principal.user_public_id.clone(),
+            ListenOwner::Principal,
             query.track_id.clone(),
             merge_unique_external_ids,
         )

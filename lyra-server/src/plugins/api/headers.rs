@@ -341,13 +341,15 @@ mod tests {
             (user_db_id, user_public_id, library_public_id, track_db_id)
         };
 
-        let principal = |permissions: Vec<Permission>, library_ids: HashSet<String>| Principal {
-            user_db_id,
-            user_public_id: user_public_id.clone(),
-            username: "plugin-bridge-user".to_string(),
-            permissions,
-            role_name: None,
-            accessible_library_ids: library_ids,
+        let principal = |permissions: Vec<Permission>, library_ids: HashSet<String>| {
+            Principal::from_parts(
+                user_db_id,
+                user_public_id.clone(),
+                "plugin-bridge-user".to_string(),
+                permissions,
+                None,
+                library_ids,
+            )
         };
         let accessible_libraries = HashSet::from([library_public_id.clone()]);
 

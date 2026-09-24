@@ -326,7 +326,7 @@ async fn refresh_track_lyrics(
         track_db_id
     };
 
-    lyrics_service::providers::dispatch_for_track(track_db_id, true).await?;
+    lyrics_service::providers::dispatch_for_track_identity(track_db_id, Some(&id), true).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

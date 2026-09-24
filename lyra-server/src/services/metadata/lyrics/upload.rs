@@ -433,17 +433,13 @@ mod tests {
     use super::*;
 
     fn create_principal(db: &mut DbAny, username: &str) -> anyhow::Result<Principal> {
-        let user = db::test_db::test_user(username)?;
-        let user_public_id = user.id.clone();
-        let user_db_id = db::users::create(db, &user)?;
-        Ok(Principal {
+        let user_db_id = db::test_db::insert_user(db, username)?;
+        Ok(Principal::for_user(
+            db,
             user_db_id,
-            user_public_id,
-            username: username.to_string(),
-            permissions: Vec::new(),
-            role_name: None,
-            accessible_library_ids: Default::default(),
-        })
+            Vec::new(),
+            Default::default(),
+        ))
     }
 
     #[test]
@@ -608,15 +604,14 @@ mod tests {
             DbId(999_999),
             &alice
         )?);
+        let bob_db_id = bob.require(&db)?;
         assert!(!delete_personal_lyrics_for_track_by_db_id(
-            &mut db,
-            bob.user_db_id,
-            &alice
+            &mut db, bob_db_id, &alice
         )?);
-        let rows = db::lyrics::get_visible_for_track(&db, track_id, Some(bob.user_db_id))?;
+        let rows = db::lyrics::get_visible_for_track(&db, track_id, Some(bob_db_id))?;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].plain_text, "bob");
-        assert!(db::lyrics::find_personal(&db, track_id, bob.user_db_id)?.is_some());
+        assert!(db::lyrics::find_personal(&db, track_id, bob_db_id)?.is_some());
         Ok(())
     }
 
@@ -669,12 +664,10 @@ mod tests {
         let track_id = crate::db::test_db::insert_track(&mut db, "song")?;
         let track_public_id = db::tracks::get_by_id(&db, track_id)?.unwrap().id;
         let stale = create_principal(&mut db, "deleted")?;
-        db::users::delete_user(&mut db, stale.user_db_id)?;
+        let stale_db_id = stale.require(&db)?;
+        db::users::delete_user(&mut db, stale_db_id)?;
         let current = create_principal(&mut db, "current")?;
-        assert_eq!(
-            current.user_db_id, stale.user_db_id,
-            "agdb reuses freed ids"
-        );
+        assert_eq!(current.require(&db)?, stale_db_id, "agdb reuses freed ids");
         upsert_personal_lyrics_by_db_id(
             &mut db,
             track_id,

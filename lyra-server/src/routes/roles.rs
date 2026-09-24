@@ -189,9 +189,10 @@ fn ensure_admin_permission_removal_allowed(
             "cannot remove admin permission from a role assigned to the default user",
         ));
     }
+    let own_db_id = principal.require(db)?;
     if assigned_users
         .iter()
-        .any(|user| user.db_id == Some(principal.user_db_id))
+        .any(|user| user.db_id == Some(own_db_id))
     {
         return Err(AppError::bad_request(
             "cannot remove admin permission from your own role",

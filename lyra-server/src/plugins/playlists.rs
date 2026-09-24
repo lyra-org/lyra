@@ -300,7 +300,7 @@ fn list_callback(frame: luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau:
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        crate::plugins::auth::require_user_db_id(&principal, &db)?;
+        let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let playlists = playlist_service::list(&db)
             .map_err(crate::plugins::runtime_error)?
             .into_iter()
@@ -308,8 +308,13 @@ fn list_callback(frame: luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau:
                 let Some(playlist_db_id) = playlist.db_id.clone().map(DbId::from) else {
                     return false;
                 };
-                crate::services::auth::access::playlist_accessible(&db, &principal, playlist_db_id)
-                    .unwrap_or(false)
+                crate::services::auth::access::playlist_accessible_as(
+                    &db,
+                    &principal,
+                    user_db_id,
+                    playlist_db_id,
+                )
+                .unwrap_or(false)
             })
             .map(PlaylistInfo::from)
             .collect::<Vec<_>>();
@@ -459,13 +464,15 @@ fn get_tracks_many_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        crate::plugins::auth::require_user_db_id(&principal, &db)?;
+        let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let result = playlist_service::get_tracks_many(&db, &playlist_ids)
             .map_err(crate::plugins::runtime_error)?;
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, playlist_ids.len());
         for id in playlist_ids {
-            let links = if crate::services::auth::access::playlist_accessible(&db, &principal, id)
-                .map_err(crate::plugins::runtime_error)?
+            let links = if crate::services::auth::access::playlist_accessible_as(
+                &db, &principal, user_db_id, id,
+            )
+            .map_err(crate::plugins::runtime_error)?
             {
                 result
                     .get(&id)

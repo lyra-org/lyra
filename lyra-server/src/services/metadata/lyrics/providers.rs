@@ -283,7 +283,7 @@ pub(crate) async fn dispatch_for_track(track_db_id: DbId, force_refresh: bool) -
     dispatch_for_track_identity(track_db_id, None, force_refresh).await
 }
 
-async fn dispatch_for_track_identity(
+pub(crate) async fn dispatch_for_track_identity(
     track_db_id: DbId,
     expected_public_id: Option<&str>,
     force_refresh: bool,
