@@ -30,8 +30,13 @@ pub(crate) struct CueTrack {
     pub(crate) identity: String,
 }
 
-fn cue_track_identity(cue_entry_id: DbId, track_no: u32) -> String {
-    format!("cue_entry:{}#track:{}", cue_entry_id.0, track_no)
+fn cue_track_identity(
+    db: &impl DbAccess,
+    cue_entry_id: DbId,
+    track_no: u32,
+) -> anyhow::Result<String> {
+    let cue_entry_public_id = super::cue_entry_public_id(db, cue_entry_id)?;
+    Ok(format!("cue_entry:{cue_entry_public_id}#track:{track_no}"))
 }
 
 fn find_track_id_by_identity(db: &impl DbAccess, identity: &str) -> anyhow::Result<Option<DbId>> {
@@ -54,7 +59,7 @@ pub(crate) fn upsert(
     index00_frames: Option<u32>,
     index01_frames: u32,
 ) -> anyhow::Result<DbId> {
-    let identity = cue_track_identity(cue_entry_id, track_no);
+    let identity = cue_track_identity(db, cue_entry_id, track_no)?;
     let existing_id = find_track_id_by_identity(db, &identity)?;
     let cue_track = CueTrack {
         db_id: existing_id,
@@ -178,15 +183,48 @@ mod tests {
     use super::*;
     use crate::db::test_db::new_test_db;
 
+    fn insert_entry(db: &mut agdb::DbAny, public_id: &str) -> anyhow::Result<DbId> {
+        Ok(db
+            .exec_mut(
+                QueryBuilder::insert()
+                    .nodes()
+                    .values([[("id", public_id).into()]])
+                    .query(),
+            )?
+            .ids()[0])
+    }
+
+    #[test]
+    fn upsert_does_not_reuse_a_cue_track_of_a_recycled_cue_entry_id() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let sheet_id = db
+            .exec_mut(QueryBuilder::insert().nodes().count(1).query())?
+            .ids()[0];
+        let audio_entry_id = db
+            .exec_mut(QueryBuilder::insert().nodes().count(1).query())?
+            .ids()[0];
+        let deleted_entry = insert_entry(&mut db, "deleted-cue")?;
+        let stale = db.transaction_mut(|t| {
+            upsert(t, sheet_id, deleted_entry, 1, audio_entry_id, None, 200)
+        })?;
+
+        db.exec_mut(QueryBuilder::remove().ids(deleted_entry).query())?;
+        let new_entry = insert_entry(&mut db, "new-cue")?;
+        assert_eq!(new_entry, deleted_entry, "agdb must reuse the entry DbId");
+
+        let fresh =
+            db.transaction_mut(|t| upsert(t, sheet_id, new_entry, 1, audio_entry_id, None, 200))?;
+        assert_ne!(fresh, stale);
+        Ok(())
+    }
+
     #[test]
     fn upsert_clears_a_dropped_pregap_index() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let sheet_id = db
             .exec_mut(QueryBuilder::insert().nodes().count(1).query())?
             .ids()[0];
-        let cue_entry_id = db
-            .exec_mut(QueryBuilder::insert().nodes().count(1).query())?
-            .ids()[0];
+        let cue_entry_id = insert_entry(&mut db, "cue-entry")?;
         let audio_entry_id = db
             .exec_mut(QueryBuilder::insert().nodes().count(1).query())?
             .ids()[0];

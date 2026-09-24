@@ -28,7 +28,7 @@ pub(crate) struct TrackMetadata {
     pub(crate) media_formats: Vec<lyra_metadata::MediaFormat>,
     pub(crate) barcode: Option<String>,
     pub(crate) source_kind: Option<String>,
-    pub(crate) source_key: Option<String>,
+    pub(crate) source_key: String,
     pub(crate) segment_start_ms: Option<u64>,
     pub(crate) segment_end_ms: Option<u64>,
     pub(crate) cue_sheet_entry_id: Option<DbId>,

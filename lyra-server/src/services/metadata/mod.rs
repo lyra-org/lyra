@@ -291,7 +291,7 @@ pub(crate) async fn parse_metadata(
         }
     }
 
-    let mut entry_ids_by_path: HashMap<String, VecDeque<DbId>> = HashMap::new();
+    let mut entry_ids_by_path: HashMap<String, VecDeque<(DbId, String)>> = HashMap::new();
     let mut raw_tags = Vec::new();
 
     for entry in audio_entries {
@@ -346,7 +346,7 @@ pub(crate) async fn parse_metadata(
         entry_ids_by_path
             .entry(raw.file_path.clone())
             .or_default()
-            .push_back(entry_db_id);
+            .push_back((entry_db_id, entry.id.clone()));
         raw_tags.push(raw);
     }
 
@@ -359,7 +359,7 @@ pub(crate) async fn parse_metadata(
             .file_path
             .clone()
             .ok_or_else(|| anyhow!("processed metadata missing file_path"))?;
-        let entry_db_id = entry_ids_by_path
+        let (entry_db_id, entry_public_id) = entry_ids_by_path
             .get_mut(&path)
             .and_then(|ids| ids.pop_front())
             .ok_or_else(|| anyhow!("missing entry id mapping for processed track: {path}"))?;
@@ -411,7 +411,7 @@ pub(crate) async fn parse_metadata(
             media_formats: track.media_formats,
             barcode: track.barcode,
             source_kind: Some(SOURCE_KIND_EMBEDDED_TAGS.to_string()),
-            source_key: Some(build_embedded_source_key(entry_db_id)),
+            source_key: build_embedded_source_key(&entry_public_id),
             segment_start_ms: None,
             segment_end_ms: None,
             cue_sheet_entry_id: None,

@@ -558,7 +558,7 @@ pub(super) async fn parse_cue_metadata_for_entry(
             media_formats: Vec::new(),
             barcode: None,
             source_kind: Some(SOURCE_KIND_CUE.to_string()),
-            source_key: Some(build_cue_source_key(cue_entry_id, track.track_no)),
+            source_key: build_cue_source_key(&cue_entry.id, track.track_no),
             segment_start_ms: Some(start_ms),
             segment_end_ms: end_ms,
             cue_sheet_entry_id: Some(cue_entry_id),
@@ -644,12 +644,12 @@ pub(super) fn resolve_audio_entry_for_cue_track(
     }
 }
 
-pub(super) fn build_embedded_source_key(entry_id: DbId) -> String {
-    format!("entry:{}:embedded", entry_id.0)
+pub(super) fn build_embedded_source_key(entry_public_id: &str) -> String {
+    format!("entry:{entry_public_id}:embedded")
 }
 
-pub(super) fn build_cue_source_key(cue_entry_id: DbId, track_no: u32) -> String {
-    format!("cue:{}:track:{}", cue_entry_id.0, track_no)
+pub(super) fn build_cue_source_key(cue_entry_public_id: &str, track_no: u32) -> String {
+    format!("cue:{cue_entry_public_id}:track:{track_no}")
 }
 
 pub(super) fn merge_embedded_into_cue_metadata(
@@ -768,7 +768,7 @@ mod tests {
             media_formats: Vec::new(),
             barcode: None,
             source_kind: None,
-            source_key: None,
+            source_key: format!("entry:{entry_id}:embedded"),
             segment_start_ms: None,
             segment_end_ms: None,
             cue_sheet_entry_id: None,

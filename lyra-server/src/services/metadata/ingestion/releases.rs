@@ -507,7 +507,6 @@ fn persist_release_inner(
         track_layer.save(db, track_db_id)?;
 
         let source_kind = source_kind.unwrap_or_else(|| "embedded_tags".to_string());
-        let source_key = source_key.unwrap_or_else(|| format!("entry:{}:embedded", entry_db_id.0));
 
         let cue_track_id = if source_kind == "cue" {
             let cue_index01_frames = cue_index01_frames.or_else(|| {

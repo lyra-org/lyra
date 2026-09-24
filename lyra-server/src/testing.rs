@@ -527,7 +527,7 @@ fn raw_track_to_service_metadata(
         media_formats: track.media_formats,
         barcode: track.barcode,
         source_kind: Some("embedded_tags".to_string()),
-        source_key: Some(format!("entry:{}:embedded", entry_db_id.0)),
+        source_key: format!("entry:{}:embedded", entry_db_id.0),
         segment_start_ms: None,
         segment_end_ms: None,
         cue_sheet_entry_id: None,

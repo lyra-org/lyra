@@ -256,6 +256,7 @@ pub(crate) fn diff_and_needs_hash(
     for mut e in scanned.into_iter() {
         if let Some(old) = db_by_path.get(&e.full_path) {
             e.db_id = old.db_id;
+            e.id = old.id.clone();
             if old.size == e.size && old.mtime == e.mtime {
                 e.hash = old.hash.clone();
             }

@@ -1094,3 +1094,198 @@ async fn sync_provider_release_cover(context: &ReleaseArtifactContext<'_>) -> bo
 pub(crate) async fn sync_library(db: &DbAsync, library: &Library) -> anyhow::Result<()> {
     sync_library_pipeline(db, library, None).await
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::BTreeMap,
+        path::{
+            Path,
+            PathBuf,
+        },
+        time::{
+            Duration,
+            SystemTime,
+            UNIX_EPOCH,
+        },
+    };
+
+    use agdb::QueryBuilder;
+
+    use super::*;
+    use crate::STATE;
+
+    const CUE_SHEET: &str = r#"PERFORMER "Cue Artist"
+TITLE "Cue Album"
+FILE "album.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Cue Track 1"
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    TITLE "Cue Track 2"
+    INDEX 01 00:01:00
+"#;
+
+    fn fixture_flac() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/assets/metadata/integration_track.flac")
+    }
+
+    fn temp_library(name: &str) -> anyhow::Result<(PathBuf, PathBuf)> {
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let root = std::env::temp_dir().join(format!("lyra-{name}-{}-{nanos}", std::process::id()));
+        let album = root.join("Album");
+        std::fs::create_dir_all(&album)?;
+        Ok((root, album))
+    }
+
+    /// Moves `path`'s mtime by `offset_secs` so the scan sees a change within one second.
+    fn shift_mtime(path: &Path, offset_secs: u64) -> anyhow::Result<()> {
+        let modified = std::fs::metadata(path)?.modified()?;
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .or_else(|_| std::fs::File::open(path))?
+            .set_modified(modified + Duration::from_secs(offset_secs))?;
+        Ok(())
+    }
+
+    /// Adds a file to the album and moves the album directory's mtime, so its group is
+    /// re-ingested.
+    fn change_album_directory(album: &Path, marker: &str, offset_secs: u64) -> anyhow::Result<()> {
+        std::fs::write(album.join(marker), marker)?;
+        shift_mtime(album, offset_secs)
+    }
+
+    /// Entry public id and track public ids per file path.
+    async fn snapshot(
+        library: &Library,
+    ) -> anyhow::Result<BTreeMap<PathBuf, (String, Vec<String>)>> {
+        let db = STATE.db.read().await;
+        let mut out = BTreeMap::new();
+        for entry in db::entries::get(&db, library.db_id.expect("library db_id"))? {
+            let Some(entry_db_id) = entry.db_id else {
+                continue;
+            };
+            let mut tracks = db::tracks::get_by_entry(&db, entry_db_id)?
+                .into_iter()
+                .map(|track| track.id)
+                .collect::<Vec<_>>();
+            tracks.sort();
+            out.insert(entry.full_path, (entry.id, tracks));
+        }
+        Ok(out)
+    }
+
+    async fn cue_track_ids() -> anyhow::Result<Vec<DbId>> {
+        let db = STATE.db.read().await;
+        let mut ids = db
+            .exec(
+                QueryBuilder::search()
+                    .from("cue_tracks")
+                    .where_()
+                    .neighbor()
+                    .query(),
+            )?
+            .ids();
+        ids.sort();
+        Ok(ids)
+    }
+
+    async fn sync(library: &Library) -> anyhow::Result<()> {
+        sync_library(&STATE.db.get(), library).await
+    }
+
+    async fn assert_track_survives_file_change(
+        name: &str,
+        change: impl FnOnce(&Path) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
+        let (root, album) = temp_library(name)?;
+        let audio = album.join("track.flac");
+        std::fs::copy(fixture_flac(), &audio)?;
+        let library = super::super::prepare_capture_library(root.clone()).await?;
+
+        let before = snapshot(&library).await?;
+        assert_eq!(before[&audio].1.len(), 1, "fixture must ingest one track");
+
+        change(&audio)?;
+        sync(&library).await?;
+        change_album_directory(&album, "later.txt", 10)?;
+        sync(&library).await?;
+
+        let after = snapshot(&library).await?;
+        assert_eq!(after[&audio], before[&audio], "entry id or track changed");
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn entry_id_and_track_survive_an_mtime_touch() -> anyhow::Result<()> {
+        assert_track_survives_file_change("entry-touch", |audio| shift_mtime(audio, 5)).await
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn entry_id_and_track_survive_an_in_place_content_change() -> anyhow::Result<()> {
+        assert_track_survives_file_change("entry-content", |audio| {
+            let mut bytes = std::fs::read(audio)?;
+            bytes.extend_from_slice(&[0; 64]);
+            std::fs::write(audio, bytes)?;
+            shift_mtime(audio, 5)
+        })
+        .await
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn entry_id_and_track_survive_a_retag_in_place() -> anyhow::Result<()> {
+        use lofty::{
+            config::WriteOptions,
+            prelude::*,
+        };
+
+        assert_track_survives_file_change("entry-retag", |audio| {
+            let mut tagged = lofty::read_from_path(audio)?;
+            let tag = tagged
+                .primary_tag_mut()
+                .ok_or_else(|| anyhow::anyhow!("fixture has no primary tag"))?;
+            tag.set_title("Retagged Title".to_string());
+            tag.save_to_path(audio, WriteOptions::default())?;
+            shift_mtime(audio, 5)
+        })
+        .await
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cue_sheet_edit_keeps_its_cue_tracks() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
+        let (root, album) = temp_library("cue-edit")?;
+        let audio = album.join("album.flac");
+        let cue = album.join("album.cue");
+        std::fs::copy(fixture_flac(), &audio)?;
+        std::fs::write(&cue, CUE_SHEET)?;
+        let library = super::super::prepare_capture_library(root.clone()).await?;
+
+        let before = snapshot(&library).await?;
+        let cue_tracks_before = cue_track_ids().await?;
+        assert_eq!(before[&audio].1.len(), 2, "cue must ingest two tracks");
+        assert_eq!(cue_tracks_before.len(), 2);
+
+        std::fs::write(&cue, CUE_SHEET.replace("Cue Track 2", "Cue Track Two"))?;
+        shift_mtime(&cue, 5)?;
+        shift_mtime(&album, 5)?;
+        sync(&library).await?;
+
+        let after = snapshot(&library).await?;
+        assert_eq!(
+            cue_track_ids().await?,
+            cue_tracks_before,
+            "cue tracks were recreated"
+        );
+        assert_eq!(after[&audio].1, before[&audio].1, "tracks were recreated");
+        assert_eq!(after[&cue].0, before[&cue].0, "cue entry id changed");
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+}

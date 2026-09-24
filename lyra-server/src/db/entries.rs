@@ -204,6 +204,7 @@ pub(crate) fn sync_entry_group(
         {
             let mut updated = entry;
             updated.db_id = existing.db_id;
+            updated.id = existing.id.clone();
             to_update.push(updated);
         }
     }
