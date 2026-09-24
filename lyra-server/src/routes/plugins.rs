@@ -1566,9 +1566,7 @@ mod tests {
             user_db_id
         };
 
-        let session =
-            services::auth::sessions::create_session_for_user(user_db_id, Default::default())
-                .await?;
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::AUTHORIZATION,

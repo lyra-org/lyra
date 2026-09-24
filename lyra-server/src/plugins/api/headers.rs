@@ -32,9 +32,7 @@ async fn require_plugin_track_access(
         return Err(AppError::unauthorized("authentication required"));
     };
     let db = crate::STATE.db.read().await;
-    if !principal.revalidate(&db) {
-        return Err(AppError::unauthorized("invalid bearer credential"));
-    }
+    principal.require(&*db)?;
     if let Some(permission) = permission {
         require_permission(principal, permission)?;
     }

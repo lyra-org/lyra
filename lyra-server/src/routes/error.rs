@@ -268,11 +268,14 @@ impl From<ProviderAdminError> for AppError {
 
 impl From<anyhow::Error> for AppError {
     fn from(err: anyhow::Error) -> Self {
-        Self {
-            error: err,
-            status_code: StatusCode::INTERNAL_SERVER_ERROR,
-            retry_after: None,
-            json_body: None,
+        match err.downcast::<AuthError>() {
+            Ok(err) => err.into(),
+            Err(err) => Self {
+                error: err,
+                status_code: StatusCode::INTERNAL_SERVER_ERROR,
+                retry_after: None,
+                json_body: None,
+            },
         }
     }
 }

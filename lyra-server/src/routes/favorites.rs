@@ -348,7 +348,6 @@ mod tests {
     use super::*;
     use crate::{
         db,
-        services::auth::sessions,
         testing::{
             LibraryFixtureConfig,
             initialize_runtime,
@@ -412,7 +411,7 @@ mod tests {
             let mut db = STATE.db.write().await;
             db::users::create(&mut db, &db::test_db::test_user("favorites-check-user")?)?
         };
-        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,

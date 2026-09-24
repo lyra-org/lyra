@@ -638,11 +638,7 @@ mod tests {
     };
 
     async fn bearer_headers_for_user(user_db_id: DbId) -> anyhow::Result<HeaderMap> {
-        let session = crate::services::auth::sessions::create_session_for_user(
-            user_db_id,
-            Default::default(),
-        )
-        .await?;
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
         let mut headers = HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,

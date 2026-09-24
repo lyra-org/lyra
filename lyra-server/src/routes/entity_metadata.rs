@@ -188,7 +188,6 @@ mod tests {
             insert_library,
             insert_release,
         },
-        services::auth::sessions,
         testing::{
             LibraryFixtureConfig,
             initialize_runtime,
@@ -258,7 +257,7 @@ mod tests {
                 .id;
             (user_id, source_public_id, hidden_public_id, source_id)
         };
-        let session = sessions::create_session_for_user(user_id, Default::default()).await?;
+        let session = crate::testing::create_session(user_id, Default::default()).await?;
         let authorization = format!("Bearer {}", session.token);
         let routes = entity_metadata_routes();
 

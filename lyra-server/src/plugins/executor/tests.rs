@@ -1018,11 +1018,7 @@ async fn plugin_executor_binds_host_resolved_principal_to_api_responses() -> Res
                 &crate::plugins::db::test_db::test_user("dispatch-auth-user")?,
             )?
         };
-        let session = crate::services::auth::sessions::create_session_for_user(
-            user_db_id,
-            Default::default(),
-        )
-        .await?;
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
         (user_db_id, session.token)
     };
 
@@ -1112,9 +1108,7 @@ async fn plugin_executor_treats_expired_session_as_unauthenticated() -> Result<(
                 &crate::plugins::db::test_db::test_user("expired-plugin-session")?,
             )?
         };
-        let session =
-            crate::services::auth::sessions::create_session_for_user(user_id, Default::default())
-                .await?;
+        let session = crate::testing::create_session(user_id, Default::default()).await?;
         let db = crate::STATE.db.read().await;
         let (_, _, session_id) = crate::plugins::db::users::find_by_session_token_hash(
             &db,

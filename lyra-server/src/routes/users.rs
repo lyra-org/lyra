@@ -646,14 +646,14 @@ async fn create_api_key(
     Json(body): Json<CreateApiKeyRequest>,
 ) -> Result<(StatusCode, Json<CreatedApiKeyResponse>), AppError> {
     let principal = forbid_api_key_credential(&headers).await?.principal;
-    let api_key = api_keys::create_api_key(principal.user_db_id, &body.name).await?;
+    let api_key = api_keys::create_api_key(&principal, &body.name).await?;
 
     Ok((StatusCode::CREATED, Json(api_key.into())))
 }
 
 async fn list_api_keys(headers: HeaderMap) -> Result<Json<Vec<ApiKeyResponse>>, AppError> {
     let principal = forbid_api_key_credential(&headers).await?.principal;
-    let api_keys = api_keys::list_api_keys_for_user(principal.user_db_id).await?;
+    let api_keys = api_keys::list_api_keys_for_user(&principal).await?;
 
     Ok(Json(api_keys.into_iter().map(Into::into).collect()))
 }
@@ -663,7 +663,7 @@ async fn delete_api_key(
     Path(api_key_id): Path<String>,
 ) -> Result<StatusCode, AppError> {
     let principal = forbid_api_key_credential(&headers).await?.principal;
-    if !api_keys::revoke_api_key_for_user(principal.user_db_id, &api_key_id).await? {
+    if !api_keys::revoke_api_key_for_user(&principal, &api_key_id).await? {
         return Err(AppError::not_found("api key not found"));
     }
 
@@ -853,13 +853,10 @@ pub(crate) fn me_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        services::auth::sessions,
-        testing::{
-            LibraryFixtureConfig,
-            initialize_runtime,
-            runtime_test_lock,
-        },
+    use crate::testing::{
+        LibraryFixtureConfig,
+        initialize_runtime,
+        runtime_test_lock,
     };
     use axum::{
         Json,
@@ -928,7 +925,7 @@ mod tests {
     }
 
     async fn create_headers_for_user(user_db_id: agdb::DbId) -> anyhow::Result<HeaderMap> {
-        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
         Ok(bearer_headers(&session.token))
     }
 
@@ -1208,6 +1205,7 @@ mod tests {
             };
             db::users::create(&mut db, &target)?
         };
+        let target_user_principal = crate::testing::user_principal(target_user_db_id).await?;
 
         let target_session_headers = create_headers_for_user(target_user_db_id).await?;
         let (_, Json(target_api_key)) = create_api_key(
@@ -1250,7 +1248,7 @@ mod tests {
             "target's api key must not resolve after admin password reset"
         );
 
-        let listed = api_keys::list_api_keys_for_user(target_user_db_id).await?;
+        let listed = api_keys::list_api_keys_for_user(&target_user_principal).await?;
         assert!(
             listed.is_empty(),
             "target user should have no api keys after admin reset; got {listed:?}"

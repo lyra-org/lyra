@@ -112,18 +112,13 @@ pub(crate) struct Principal {
 }
 
 impl Principal {
-    pub(crate) fn revalidate(&self, db: &agdb::DbAny) -> bool {
-        match db::users::get_by_public_id(db, &self.user_public_id) {
-            Ok(Some(user)) => user.db_id == Some(self.user_db_id),
-            Ok(None) => false,
-            Err(e) => {
-                tracing::warn!(
-                    user_public_id = %self.user_public_id,
-                    error = %e,
-                    "principal revalidate query failed"
-                );
-                false
-            }
+    /// The user's `DbId`, verified under the caller's guard. `DbId`s are recycled, so the stored
+    /// id only counts while it still points at a User with this principal's public id. Call it
+    /// under the same guard or transaction as the operation it authorizes.
+    pub(crate) fn require(&self, db: &impl db::DbAccess) -> AuthResult<DbId> {
+        match db::users::get_by_id(db, self.user_db_id)? {
+            Some(user) if user.id == self.user_public_id => Ok(self.user_db_id),
+            _ => Err(AuthError::InvalidBearerCredential),
         }
     }
 }
@@ -290,7 +285,7 @@ fn resolve_accessible_library_ids(
     }
 }
 
-fn resolve_principal(
+pub(crate) fn resolve_principal(
     db: &agdb::DbAny,
     user_db_id: DbId,
     user_public_id: String,
@@ -370,15 +365,8 @@ async fn resolve_auth_from_api_key(key: &str) -> AuthResult<Option<ResolvedAuth>
         return Ok(None);
     };
 
-    let db = STATE.db.read().await;
-    let Some(user) = db::users::get_by_id(&db, api_key.user_db_id).map_err(AuthError::from)? else {
-        return Ok(None);
-    };
-
-    let principal = resolve_principal(&db, api_key.user_db_id, user.id, user.username);
-
     Ok(Some(ResolvedAuth {
-        principal,
+        principal: api_key.principal,
         credential: AuthCredential::ApiKey {
             api_key_id: api_key.api_key_id,
             name: api_key.name,
@@ -470,9 +458,7 @@ async fn create_login_result(
     principal: Principal,
     metadata: sessions::SessionMetadata,
 ) -> AuthResult<LoginResult> {
-    let session = sessions::create_session_for_user(principal.user_db_id, metadata)
-        .await
-        .map_err(AuthError::from)?;
+    let session = sessions::create_session_for_user(&principal, metadata).await?;
 
     Ok(LoginResult {
         token: session.token,
@@ -564,12 +550,7 @@ pub(crate) async fn require_auth(headers: &HeaderMap) -> Result<ResolvedAuth, Au
         return Err(AuthError::InvalidBearerCredential);
     };
 
-    {
-        let db = STATE.db.read().await;
-        if !auth.principal.revalidate(&db) {
-            return Err(AuthError::InvalidBearerCredential);
-        }
-    }
+    auth.principal.require(&*STATE.db.read().await)?;
 
     Ok(auth)
 }
@@ -582,14 +563,11 @@ pub(crate) async fn resolve_optional_auth(headers: &HeaderMap) -> AuthResult<Opt
         Err(err) => return Err(err),
     };
 
-    {
-        let db = STATE.db.read().await;
-        if !auth.principal.revalidate(&db) {
-            return Ok(None);
-        }
+    match auth.principal.require(&*STATE.db.read().await) {
+        Ok(_) => Ok(Some(auth)),
+        Err(AuthError::InvalidBearerCredential) => Ok(None),
+        Err(err) => Err(err),
     }
-
-    Ok(Some(auth))
 }
 
 /// The default user is intentionally promoted to admin on every boot. When
@@ -718,7 +696,8 @@ mod tests {
             let mut db = STATE.db.write().await;
             db::users::create(&mut db, &db::test_db::test_user("alice")?)?
         };
-        let api_key = api_keys::create_api_key(user_db_id, "laptop").await?;
+        let principal = crate::testing::user_principal(user_db_id).await?;
+        let api_key = api_keys::create_api_key(&principal, "laptop").await?;
         let api_key_db_id = {
             let db = STATE.db.read().await;
             db::api_keys::get_by_public_id(&db, &api_key.id)?
@@ -758,7 +737,7 @@ mod tests {
             let mut db = STATE.db.write().await;
             db::users::create(&mut db, &db::test_db::test_user("expiring")?)?
         };
-        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
         let session_db_id = {
             let db = STATE.db.read().await;
             db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?
@@ -805,7 +784,7 @@ mod tests {
             let mut db = STATE.db.write().await;
             db::users::create(&mut db, &db::test_db::test_user("optional-expiring")?)?
         };
-        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
         let session_db_id = {
             let db = STATE.db.read().await;
             db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?
@@ -851,7 +830,7 @@ mod tests {
             let mut db = STATE.db.write().await;
             db::users::create(&mut db, &db::test_db::test_user("no-ttl")?)?
         };
-        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
 
         let mut config = STATE.config().as_ref().clone();
         config.auth.session_ttl_seconds = 1;
@@ -879,7 +858,7 @@ mod tests {
             (session_user_db_id, api_key_user_db_id)
         };
 
-        let session = sessions::create_session_for_user(
+        let session = crate::testing::create_session(
             session_user_db_id,
             sessions::SessionMetadata {
                 user_agent: None,
@@ -967,7 +946,7 @@ mod tests {
             db::users::create(&mut db, &db::test_db::test_user("other-user")?)?
         };
         let other_session =
-            sessions::create_session_for_user(other_user_db_id, Default::default()).await?;
+            crate::testing::create_session(other_user_db_id, Default::default()).await?;
 
         let auth = resolve_auth_from_bearer(Some(&other_session.token))
             .await?
@@ -999,7 +978,7 @@ mod tests {
             })?
         };
 
-        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
         let auth = resolve_auth_from_bearer(Some(&session.token))
             .await?
             .ok_or_else(|| anyhow::anyhow!("session should resolve"))?;
@@ -1027,7 +1006,7 @@ mod tests {
             (user_db_id, library.id)
         };
 
-        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
         let auth = resolve_auth_from_bearer(Some(&session.token))
             .await?
             .ok_or_else(|| anyhow::anyhow!("admin session should resolve"))?;
@@ -1064,7 +1043,7 @@ mod tests {
             (user_db_id, library_db_id, library.id)
         };
 
-        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
         let headers = bearer_headers(&session.token);
         let err = require_manage_libraries_on(&headers, &library_id)
             .await
@@ -1089,8 +1068,82 @@ mod tests {
         Ok(())
     }
 
+    async fn settle() {
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+    }
+
     #[tokio::test]
-    async fn principal_revalidate_rejects_recycled_user_db_id() -> anyhow::Result<()> {
+    async fn api_key_auth_does_not_bind_to_recycled_owner_db_id() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        initialize_auth_test_runtime().await?;
+
+        let mut config = STATE.config().as_ref().clone();
+        config.auth.enabled = true;
+        crate::testing::publish_config(config);
+
+        let alice_db_id = {
+            let mut db = STATE.db.write().await;
+            db::users::create(&mut db, &db::test_db::test_user("alice")?)?
+        };
+        let alice = crate::testing::user_principal(alice_db_id).await?;
+        let api_key = api_keys::create_api_key(&alice, "laptop").await?;
+        let headers = bearer_headers(&api_key.key);
+
+        // The held read guard parks key resolution on its last_used write; the recycle then
+        // queues ahead of every guard the resolution takes after that write.
+        let reader = STATE.db.read().await;
+        let auth = tokio::spawn(async move { require_auth(&headers).await });
+        settle().await;
+        let recycle = tokio::spawn(async move {
+            let mut db = STATE.db.write().await;
+            db::test_db::recycle_user(&mut db, alice_db_id, "bob")
+        });
+        settle().await;
+        drop(reader);
+        recycle.await??;
+
+        match auth.await? {
+            Err(AuthError::InvalidBearerCredential) => {}
+            Ok(auth) => panic!(
+                "deleted user's api key authenticated as {}",
+                auth.principal.username
+            ),
+            Err(err) => panic!("unexpected error: {err:?}"),
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_creation_rejects_recycled_user_db_id() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        initialize_auth_test_runtime().await?;
+
+        let alice_db_id = {
+            let mut db = STATE.db.write().await;
+            db::users::create(&mut db, &db::test_db::test_user("alice")?)?
+        };
+        let stale_alice = crate::testing::user_principal(alice_db_id).await?;
+        {
+            let mut db = STATE.db.write().await;
+            db::test_db::recycle_user(&mut db, alice_db_id, "bob")?;
+        }
+
+        let result = create_login_result(stale_alice, Default::default()).await;
+        assert!(
+            result.is_err(),
+            "login verified for a deleted user must not create a session"
+        );
+        let db = STATE.db.read().await;
+        assert!(db::users::find_sessions_for_user(&db, alice_db_id)?.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn principal_require_rejects_recycled_user_db_id() -> anyhow::Result<()> {
         let _guard = crate::testing::runtime_test_lock().await;
         initialize_auth_test_runtime().await?;
 
@@ -1116,7 +1169,7 @@ mod tests {
 
         {
             let db = STATE.db.read().await;
-            assert!(stale_principal.revalidate(&db));
+            assert_eq!(stale_principal.require(&db)?, user_db_id);
         }
 
         {
@@ -1127,7 +1180,7 @@ mod tests {
         {
             let db = STATE.db.read().await;
             assert!(
-                !stale_principal.revalidate(&db),
+                stale_principal.require(&db).is_err(),
                 "deleted-user public id must fail revalidation"
             );
         }
@@ -1137,10 +1190,11 @@ mod tests {
             db::users::create(&mut db, &db::test_db::test_user("recycled-replacement")?)?
         };
 
+        assert_eq!(new_user_db_id, user_db_id, "agdb reuses the freed DbId");
         {
             let db = STATE.db.read().await;
             assert!(
-                !stale_principal.revalidate(&db),
+                stale_principal.require(&db).is_err(),
                 "stale principal must not bind to a freshly-inserted user even if agdb reused the slot"
             );
             let new_user = db::users::get_by_id(&db, new_user_db_id)?
@@ -1153,7 +1207,7 @@ mod tests {
                 role_name: None,
                 accessible_library_ids: HashSet::new(),
             };
-            assert!(fresh_principal.revalidate(&db));
+            assert_eq!(fresh_principal.require(&db)?, new_user_db_id);
         }
 
         Ok(())

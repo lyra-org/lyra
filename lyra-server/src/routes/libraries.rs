@@ -688,10 +688,7 @@ pub(crate) fn library_openapi_routes() -> aide::axum::ApiRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        db,
-        services::auth::sessions,
-    };
+    use crate::db;
 
     /// An explicit `null` must reach the service as `Some(None)` (a clear) and
     /// must not trip the "no fields provided" 400 guard.
@@ -806,10 +803,8 @@ mod tests {
             let run_id = db::sync_runs::create(&mut db, &record)?;
             (manager, listener, library, run_id)
         };
-        let manager_session =
-            sessions::create_session_for_user(manager, Default::default()).await?;
-        let listener_session =
-            sessions::create_session_for_user(listener, Default::default()).await?;
+        let manager_session = crate::testing::create_session(manager, Default::default()).await?;
+        let listener_session = crate::testing::create_session(listener, Default::default()).await?;
         assert_eq!(
             delete_library(HeaderMap::new(), Path(library.id.clone()))
                 .await
@@ -917,7 +912,7 @@ mod tests {
             })?;
             (user_db_id, visible.id, hidden.id)
         };
-        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
 
         let Json(libraries) = list_libraries(bearer_headers(&session.token))
             .await
@@ -955,7 +950,7 @@ mod tests {
             })?;
             (manager_db_id, target_id, library.id)
         };
-        let session = sessions::create_session_for_user(manager_db_id, Default::default()).await?;
+        let session = crate::testing::create_session(manager_db_id, Default::default()).await?;
         let headers = bearer_headers(&session.token);
 
         let granted = grant_library_access(

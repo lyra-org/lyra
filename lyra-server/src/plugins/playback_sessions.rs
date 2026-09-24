@@ -281,9 +281,6 @@ fn report_session_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let user_db_id = require_positive_id(request.user_id, "user_id")?;
-        if user_db_id != principal.user_db_id {
-            return Err(crate::plugins::runtime_error("user not found"));
-        }
         let session_key = require_non_empty_string(request.session_key, "session_key")?;
         let track_db_id = require_positive_id(request.track_id, "track_id")?;
         let active_event = playbacks::classify_active_event(request.event)
@@ -292,6 +289,13 @@ fn report_session_callback(
         let mutation = playback_mutation(request.position_ms, request.duration_ms, request.state);
 
         let mut db = db.write().await;
+        if principal
+            .require(&db)
+            .map_err(crate::plugins::runtime_error)?
+            != user_db_id
+        {
+            return Err(crate::plugins::runtime_error("user not found"));
+        }
         if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
@@ -363,15 +367,19 @@ fn list_connections_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let user_db_id = require_positive_id(user_id, "user_id")?;
-        if user_db_id != principal.user_db_id {
-            return Ok(empty_array_value());
-        }
 
         let connections = registry::list_connections().await;
         let now_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
 
         let (user_public_id, playbacks_list) = {
             let db = db.read().await;
+            if principal
+                .require(&db)
+                .map_err(crate::plugins::runtime_error)?
+                != user_db_id
+            {
+                return Ok(empty_array_value());
+            }
             let user_public_id = resolve_user_public_id(&db, user_db_id)?;
             let playbacks_list = playbacks::list_playbacks(&db, user_db_id)
                 .map_err(crate::plugins::runtime_error)?;
@@ -447,11 +455,19 @@ fn send_command_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let user_db_id = require_positive_id(request.user_id, "user_id")?;
-        if user_db_id != principal.user_db_id {
-            return Err(crate::plugins::runtime_error(
-                "not authorized to control target",
-            ));
-        }
+        let request_user_public_id = {
+            let db = db.read().await;
+            if principal
+                .require(&db)
+                .map_err(crate::plugins::runtime_error)?
+                != user_db_id
+            {
+                return Err(crate::plugins::runtime_error(
+                    "not authorized to control target",
+                ));
+            }
+            resolve_user_public_id(&db, user_db_id)?
+        };
         let target_token = require_non_empty_string(request.target_token, "target_token")?;
         let action_str = require_non_empty_string(request.action, "action")?;
         let action: RemoteAction = serde_json::from_value(serde_json::Value::String(
@@ -463,10 +479,6 @@ fn send_command_callback(
             .await
             .ok_or_else(|| crate::plugins::runtime_error("connection not found"))?;
 
-        let request_user_public_id = {
-            let db = db.read().await;
-            resolve_user_public_id(&db, user_db_id)?
-        };
         if request_user_public_id != target.user_public_id {
             return Err(crate::plugins::runtime_error(
                 "not authorized to control target",
