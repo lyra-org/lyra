@@ -46,6 +46,7 @@ pub(crate) struct GenresModuleStore {
 }
 
 impl GenresModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }

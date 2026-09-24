@@ -32,6 +32,7 @@ pub(super) struct PluginModuleStores {
 }
 
 impl PluginModuleStores {
+    #[cfg(test)]
     pub(super) fn empty() -> Self {
         Self {
             server_settings: None,

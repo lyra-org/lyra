@@ -31,7 +31,6 @@ use crate::{
     STATE,
     db::{
         self,
-        Permission,
         Release,
     },
     plugins::executor::{
@@ -96,22 +95,6 @@ struct SeedContext {
     public_id: String,
     provider_contexts: HashMap<String, Value>,
     library_ids: HashSet<String>,
-}
-
-pub(crate) fn accessible_library_ids_for_user(
-    db: &DbAny,
-    user_db_id: DbId,
-) -> Result<Option<HashSet<String>>> {
-    if db::users::get_by_id(db, user_db_id)?.is_none() {
-        return Err(anyhow!("user not found: {}", user_db_id.0));
-    }
-    let is_admin = db::roles::get_role_for_user(db, user_db_id)?
-        .is_some_and(|role| role.permissions.contains(&Permission::Admin));
-    if is_admin {
-        Ok(None)
-    } else {
-        Ok(Some(db::libraries::accessible_library_ids(db, user_db_id)?))
-    }
 }
 
 pub(crate) async fn similar(

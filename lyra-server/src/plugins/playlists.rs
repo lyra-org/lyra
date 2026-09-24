@@ -53,6 +53,7 @@ pub(crate) struct PlaylistsModuleStore {
 }
 
 impl PlaylistsModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }
@@ -117,7 +118,6 @@ impl From<playlist_service::PlaylistTrackLink> for PlaylistTrackLink {
 }
 
 struct PlaylistCreateRequest {
-    user_id: i64,
     name: String,
     description: Option<String>,
     is_public: Option<bool>,
@@ -125,15 +125,15 @@ struct PlaylistCreateRequest {
     updated_at: Option<u64>,
 }
 
-impl From<PlaylistCreateRequest> for playlist_service::CreatePlaylistRequest {
-    fn from(request: PlaylistCreateRequest) -> Self {
-        Self {
-            user_db_id: DbId(request.user_id),
-            name: request.name,
-            description: request.description,
-            is_public: request.is_public,
-            created_at: request.created_at,
-            updated_at: request.updated_at,
+impl PlaylistCreateRequest {
+    fn into_service_request(self, user_db_id: DbId) -> playlist_service::CreatePlaylistRequest {
+        playlist_service::CreatePlaylistRequest {
+            user_db_id,
+            name: self.name,
+            description: self.description,
+            is_public: self.is_public,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
         }
     }
 }
@@ -165,7 +165,7 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .capability("lyra.playlists")
         .function(list_spec())
         .function(get_by_id_spec())
-        .function(get_by_user_spec())
+        .function(list_owned_spec())
         .function(get_owner_spec())
         .function(get_tracks_spec())
         .function(get_tracks_many_spec())
@@ -194,13 +194,11 @@ fn get_by_id_spec() -> FunctionSpec {
         .call_async(Arc::new(get_by_id_callback))
 }
 
-fn get_by_user_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_by_user")
+fn list_owned_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("list_owned")
         .context::<crate::plugins::auth::DispatchAuth>()
-        .arg_name("user_id")
-        .args::<i64>()
         .returns::<Vec<PlaylistInfo>>()
-        .call_async(Arc::new(get_by_user_callback))
+        .call_async(Arc::new(list_owned_callback))
 }
 
 fn get_owner_spec() -> FunctionSpec {
@@ -208,7 +206,7 @@ fn get_owner_spec() -> FunctionSpec {
         .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("playlist_id")
         .args::<ResolveId>()
-        .returns::<Option<i64>>()
+        .returns::<Option<String>>()
         .call_async(Arc::new(get_owner_callback))
 }
 
@@ -302,9 +300,7 @@ fn list_callback(frame: luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau:
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        principal
-            .require(&db)
-            .map_err(crate::plugins::runtime_error)?;
+        crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let playlists = playlist_service::list(&db)
             .map_err(crate::plugins::runtime_error)?
             .into_iter()
@@ -336,9 +332,7 @@ fn get_by_id_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        principal
-            .require(&db)
-            .map_err(crate::plugins::runtime_error)?;
+        crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let query_id = id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
@@ -360,28 +354,15 @@ fn get_by_id_callback(
     }))
 }
 
-fn get_by_user_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
+fn list_owned_callback(
+    frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let owner_db_id = DbId(frame.args.read_named::<i64>("user_id")?);
-    let store = frame
-        .vm
-        .data()
-        .get::<PlaylistsModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let db = frame.vm.data().get::<PlaylistsModuleStore>()?.db()?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        if principal
-            .require(&db)
-            .map_err(crate::plugins::runtime_error)?
-            != owner_db_id
-        {
-            return harmony_luau::serializable_to_luau_owned(Vec::<PlaylistInfo>::new());
-        }
+        let owner_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let playlists = playlist_service::get_by_user(&db, owner_db_id)
             .map_err(crate::plugins::runtime_error)?
             .into_iter()
@@ -406,9 +387,7 @@ fn get_owner_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        principal
-            .require(&db)
-            .map_err(crate::plugins::runtime_error)?;
+        crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let Some(playlist_id) = playlist_id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
@@ -423,11 +402,16 @@ fn get_owner_callback(
         {
             return Ok(luau::Value::Nil);
         }
-        let owner_id = playlist_service::get_owner(&db, QueryId::Id(playlist_db_id))
+        let Some(owner_db_id) = playlist_service::get_owner(&db, QueryId::Id(playlist_db_id))
             .map_err(crate::plugins::runtime_error)?
-            .map(|id| luau::Value::from(id.0))
-            .unwrap_or(luau::Value::Nil);
-        Ok(owner_id)
+        else {
+            return Ok(luau::Value::Nil);
+        };
+        let owner =
+            db::users::get_by_id(&*db, owner_db_id).map_err(crate::plugins::runtime_error)?;
+        Ok(owner
+            .map(|owner| luau::Value::String(owner.id.into_bytes()))
+            .unwrap_or(luau::Value::Nil))
     }))
 }
 
@@ -446,9 +430,7 @@ fn get_tracks_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        principal
-            .require(&db)
-            .map_err(crate::plugins::runtime_error)?;
+        crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let playlist_id = playlist_id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
@@ -477,9 +459,7 @@ fn get_tracks_many_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        principal
-            .require(&db)
-            .map_err(crate::plugins::runtime_error)?;
+        crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let result = playlist_service::get_tracks_many(&db, &playlist_ids)
             .map_err(crate::plugins::runtime_error)?;
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, playlist_ids.len());
@@ -520,14 +500,8 @@ fn create_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let mut db = db.write().await;
-        if principal
-            .require(&db)
-            .map_err(crate::plugins::runtime_error)?
-            != DbId(request.user_id)
-        {
-            return Err(crate::plugins::runtime_error("user not found"));
-        }
-        let request: playlist_service::CreatePlaylistRequest = request.into();
+        let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
+        let request = request.into_service_request(user_db_id);
         let playlist_id =
             playlist_service::create(&mut db, &request).map_err(crate::plugins::runtime_error)?;
         Ok(luau::Value::from(playlist_id.0))
@@ -810,7 +784,6 @@ fn parse_create_request(
     table: luau::Table,
 ) -> luau::runtime::Result<PlaylistCreateRequest> {
     Ok(PlaylistCreateRequest {
-        user_id: parse_required_i64_field(vm, &table, "user_id")?,
         name: parse_required_string_field(vm, &table, "name")?,
         description: parse_optional_string_field(vm, &table, "description")?,
         is_public: parse_optional_bool_field(vm, &table, "is_public")?,
@@ -838,24 +811,6 @@ fn parse_update_request(
         is_public: parse_optional_bool_field(vm, &table, "is_public")?,
         updated_at: parse_optional_u64_field(vm, &table, "updated_at")?,
     })
-}
-
-fn parse_required_i64_field(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<i64> {
-    match table.get_raw(vm, key)? {
-        luau::Value::Integer(value) => Ok(value),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => Ok(value as i64),
-        luau::Value::Nil => Err(crate::plugins::runtime_error(format!(
-            "missing required field: {key}"
-        ))),
-        other => Err(crate::plugins::runtime_error(format!(
-            "{key} must be an integer, got {}",
-            other.type_name()
-        ))),
-    }
 }
 
 fn parse_optional_u64_field(
@@ -1046,7 +1001,6 @@ impl DescribeInterface for PlaylistCreateRequest {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("PlaylistCreateRequest", None);
         descriptor.fields.extend([
-            field("user_id", i64::luau_type()),
             field("name", String::luau_type()),
             field("description", Option::<String>::luau_type()),
             field("is_public", Option::<bool>::luau_type()),
@@ -1122,17 +1076,17 @@ fn module_descriptor() -> ModuleDescriptor {
                 yields: true,
             },
             ModuleFunctionDescriptor {
-                path: vec!["get_by_user"],
-                description: None,
-                params: vec![param("user_id", i64::luau_type())],
+                path: vec!["list_owned"],
+                description: Some("Playlists owned by the dispatch principal."),
+                params: Vec::new(),
                 returns: vec![Vec::<PlaylistInfo>::luau_type()],
                 yields: true,
             },
             ModuleFunctionDescriptor {
                 path: vec!["get_owner"],
-                description: None,
+                description: Some("The owning user's public id."),
                 params: vec![param("playlist_id", resolve_id_type())],
-                returns: vec![Option::<i64>::luau_type()],
+                returns: vec![Option::<String>::luau_type()],
                 yields: true,
             },
             ModuleFunctionDescriptor {

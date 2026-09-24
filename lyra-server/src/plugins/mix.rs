@@ -45,6 +45,7 @@ use crate::{
         Track,
         mixers::MixerConfig,
     },
+    services::auth::Principal,
     services::mix::{
         self as mix_service,
         MAX_LIMIT,
@@ -317,6 +318,7 @@ fn consumer_spec(
     callback: fn(luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau::ScheduledFuture>,
 ) -> FunctionSpec {
     FunctionSpec::async_fn(name)
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("seed_id")
         .args::<i64>()
         .arg_name("opts")
@@ -377,7 +379,12 @@ fn consumer_callback(
     variant: fn(DbId) -> MixSeed,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let seed = parse_seed_id(frame.args.read_named("seed_id")?, label)?;
-    let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
+    let options = parse_consumer_options(
+        frame.vm,
+        frame.args.read_optional_named("opts")?,
+        &principal,
+    )?;
     Ok(luau::ScheduledFuture::new(async move {
         let tracks = mix_service::from_seed(variant(seed), &options)
             .await
@@ -420,7 +427,12 @@ fn instant_mix_from_audio_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let seed = parse_seed_id(frame.args.read_named("seed_id")?, "instant_mix_from_audio")?;
-    let options = parse_consumer_options(frame.vm, frame.args.read_optional_named("opts")?)?;
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
+    let options = parse_consumer_options(
+        frame.vm,
+        frame.args.read_optional_named("opts")?,
+        &principal,
+    )?;
     Ok(luau::ScheduledFuture::new(async move {
         let tracks = mix_service::instant_mix_from_audio(seed, &options)
             .await
@@ -432,17 +444,18 @@ fn instant_mix_from_audio_callback(
 fn parse_consumer_options(
     vm: &luau::Vm,
     opts: Option<luau::Value>,
+    principal: &Principal,
 ) -> luau::runtime::Result<MixOptions> {
-    let Some(opts) = opts else {
-        return Ok(MixOptions::default());
+    let json = match opts {
+        None | Some(luau::Value::Nil) => serde_json::Value::Object(Default::default()),
+        Some(opts) => harmony_serde::luau_to_json(vm, &opts, 0)?,
     };
-    if matches!(opts, luau::Value::Nil) {
-        return Ok(MixOptions::default());
-    }
-    let json = harmony_serde::luau_to_json(vm, &opts, 0)?;
-    if matches!(&json, serde_json::Value::Array(values) if values.is_empty()) {
-        return Ok(MixOptions::default());
-    }
+    let json = match json {
+        serde_json::Value::Array(values) if values.is_empty() => {
+            serde_json::Value::Object(Default::default())
+        }
+        json => json,
+    };
     let object = json
         .as_object()
         .ok_or_else(|| crate::plugins::runtime_error("mix options must be a table"))?;
@@ -458,10 +471,6 @@ fn parse_consumer_options(
             "mix options 'limit' must be <= {MAX_LIMIT}, got {limit}"
         )));
     }
-    let viewer = object
-        .get("user_id")
-        .map(|value| parse_positive_i64(value, "user_id").map(DbId))
-        .transpose()?;
     let mut extra = HashMap::new();
     if let Some(options) = object.get("options") {
         let options = options.as_object().ok_or_else(|| {
@@ -482,12 +491,7 @@ fn parse_consumer_options(
         }
     }
 
-    Ok(MixOptions {
-        limit,
-        viewer,
-        viewer_accessible_library_ids: None,
-        extra,
-    })
+    Ok(MixOptions::for_principal(principal, limit, extra))
 }
 
 fn parse_option_declaration(
@@ -859,11 +863,6 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
                     description: None,
                 },
                 FieldDescriptor {
-                    name: "user_id",
-                    ty: LuauType::Optional(Box::new(f64::luau_type())),
-                    description: None,
-                },
-                FieldDescriptor {
                     name: "options",
                     ty: LuauType::Optional(Box::new(LuauType::literal(
                         "{ [string]: boolean | string | number }",
@@ -876,11 +875,6 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
             name: "MixRecentListensContext",
             description: Some("Context passed to a recent-listens mix handler."),
             fields: vec![
-                FieldDescriptor {
-                    name: "user_id",
-                    ty: f64::luau_type(),
-                    description: None,
-                },
                 FieldDescriptor {
                     name: "limit",
                     ty: LuauType::Optional(Box::new(f64::luau_type())),
@@ -928,11 +922,6 @@ fn support_interfaces() -> Vec<harmony_luau::InterfaceDescriptor> {
                     description: None,
                 },
                 FieldDescriptor {
-                    name: "user_id",
-                    ty: LuauType::Optional(Box::new(f64::luau_type())),
-                    description: None,
-                },
-                FieldDescriptor {
                     name: "options",
                     ty: LuauType::Optional(Box::new(LuauType::literal(
                         "{ [string]: boolean | string | number }",
@@ -952,4 +941,38 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         &support_interfaces(),
         &[Mixer::class_descriptor()],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    fn principal(permissions: Vec<db::Permission>) -> Principal {
+        Principal {
+            user_db_id: DbId(7),
+            user_public_id: "viewer".to_string(),
+            username: "viewer".to_string(),
+            permissions,
+            role_name: None,
+            accessible_library_ids: HashSet::from(["visible-library".to_string()]),
+        }
+    }
+
+    #[test]
+    fn consumer_options_take_viewer_and_libraries_from_principal() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        let options = parse_consumer_options(&vm, None, &principal(Vec::new()))?;
+        assert_eq!(options.viewer, Some(DbId(7)));
+        assert_eq!(
+            options.viewer_accessible_library_ids,
+            Some(HashSet::from(["visible-library".to_string()]))
+        );
+
+        let admin = parse_consumer_options(&vm, None, &principal(vec![db::Permission::Admin]))?;
+        assert_eq!(admin.viewer, Some(DbId(7)));
+        assert_eq!(admin.viewer_accessible_library_ids, None);
+        Ok(())
+    }
 }

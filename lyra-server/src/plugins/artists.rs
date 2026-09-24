@@ -54,6 +54,7 @@ pub(crate) struct ArtistsModuleStore {
 }
 
 impl ArtistsModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }

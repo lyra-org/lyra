@@ -43,7 +43,8 @@ use crate::services::auth::{
 
 #[derive(Serialize)]
 pub(crate) struct Principal {
-    pub(crate) user_id: i64,
+    /// The user's public id.
+    pub(crate) user_id: String,
     pub(crate) username: String,
     pub(crate) role: Option<String>,
     pub(crate) permissions: Vec<String>,
@@ -126,7 +127,7 @@ impl AuthCapabilities {
 
 pub(crate) fn to_plugin_principal(principal: ServicePrincipal) -> Principal {
     Principal {
-        user_id: principal.user_db_id.0,
+        user_id: principal.user_public_id,
         username: principal.username,
         role: principal.role_name,
         permissions: principal
@@ -206,23 +207,37 @@ impl DispatchAuth {
     }
 }
 
-pub(crate) fn dispatch_principal(context: &luau::CallContext) -> Option<ServicePrincipal> {
-    context
-        .caller
-        .get::<DispatchAuth>()
-        .ok()
-        .and_then(|auth| auth.principal())
+/// The principal acting for this dispatch, or `None` for server-side dispatches,
+/// which carry no [`DispatchAuth`]. A client dispatch that has not resolved a
+/// credential is refused rather than treated as server-side.
+pub(crate) fn dispatch_principal(
+    context: &luau::CallContext,
+) -> luau::runtime::Result<Option<ServicePrincipal>> {
+    let Ok(auth) = context.caller.get::<DispatchAuth>() else {
+        return Ok(None);
+    };
+    auth.principal().map(Some).ok_or_else(no_dispatch_principal)
 }
 
 pub(crate) fn require_dispatch_principal(
     context: &luau::CallContext,
 ) -> luau::runtime::Result<ServicePrincipal> {
-    dispatch_principal(context).ok_or_else(|| {
-        crate::plugins::runtime_error(
-            "no authenticated caller bound to this dispatch; resolve a credential via \
-             lyra/auth first",
-        )
-    })
+    dispatch_principal(context)?.ok_or_else(no_dispatch_principal)
+}
+
+fn no_dispatch_principal() -> luau::runtime::Error {
+    crate::plugins::runtime_error(
+        "no authenticated caller bound to this dispatch; resolve a credential via lyra/auth \
+         first",
+    )
+}
+
+/// [`ServicePrincipal::require`] as a Luau runtime error, for plugin callbacks.
+pub(crate) fn require_user_db_id(
+    principal: &ServicePrincipal,
+    db: &impl crate::plugins::db::DbAccess,
+) -> luau::runtime::Result<agdb::DbId> {
+    principal.require(db).map_err(crate::plugins::runtime_error)
 }
 
 fn resolve_auth_spec() -> FunctionSpec {
@@ -439,8 +454,8 @@ impl DescribeInterface for Principal {
         descriptor.fields.extend([
             FieldDescriptor {
                 name: "user_id",
-                ty: i64::luau_type(),
-                description: None,
+                ty: String::luau_type(),
+                description: Some("The user's public id."),
             },
             FieldDescriptor {
                 name: "username",
@@ -643,7 +658,9 @@ fn module_descriptor() -> ModuleDescriptor {
             ModuleFunctionDescriptor {
                 path: vec!["resolve_auth"],
                 description: Some(
-                    "Resolves a bearer credential to the authenticated principal and credential metadata.",
+                    "Resolves a bearer credential to the authenticated principal and credential metadata. \
+                     On success, the calling dispatch and the tasks it spawned act as that \
+                     principal from then on.",
                 ),
                 params: vec![param("bearer", Option::<String>::luau_type())],
                 returns: vec![Option::<ResolvedAuth>::luau_type()],

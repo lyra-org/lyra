@@ -63,6 +63,7 @@ pub(crate) struct EntitiesModuleStore {
 }
 
 impl EntitiesModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }

@@ -43,7 +43,6 @@ use std::{
     time::Duration,
 };
 
-#[cfg(test)]
 use harmony_core::ModuleId;
 use harmony_core::{
     ChunkOrigin,
@@ -107,7 +106,6 @@ impl PluginExecutor {
     }
 }
 
-#[cfg(test)]
 fn plugin_origin(plugin_id: impl Into<Arc<str>>, path: impl Into<Arc<str>>) -> ChunkOrigin {
     let plugin = plugin_id.into();
     let path = path.into();

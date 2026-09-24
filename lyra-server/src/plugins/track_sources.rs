@@ -34,6 +34,7 @@ pub(crate) struct TrackSourcesModuleStore {
 }
 
 impl TrackSourcesModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }

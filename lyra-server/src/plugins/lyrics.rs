@@ -538,11 +538,7 @@ fn has_many_callback(
     Ok(luau::ScheduledFuture::new(async move {
         let db = STATE.db.read().await;
         let providers = db::providers::get(&db).map_err(crate::plugins::runtime_error)?;
-        let owner = Some(
-            principal
-                .require(&db)
-                .map_err(crate::plugins::runtime_error)?,
-        );
+        let owner = Some(crate::plugins::auth::require_user_db_id(&principal, &db)?);
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, track_ids.len());
 
         for track_id in track_ids {

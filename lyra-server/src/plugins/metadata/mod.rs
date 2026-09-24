@@ -41,6 +41,7 @@ pub(crate) struct MetadataModuleStore {
 }
 
 impl MetadataModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }

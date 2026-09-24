@@ -43,6 +43,7 @@ pub(crate) struct PlaybackSourcesModuleStore {
 }
 
 impl PlaybackSourcesModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }

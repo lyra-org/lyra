@@ -184,13 +184,13 @@ pub(super) struct UserSettingsAccessor {
 #[harmony_macros::userdata_methods]
 impl UserSettingsAccessor {
     #[harmony(
-        description = "Returns validated settings for a user.",
+        description = "Returns validated settings for the user with this public id.",
         returns(SettingsConfig)
     )]
     fn get(
         &self,
         context: &luau::CallContext,
-        user_id: i64,
+        user_id: String,
     ) -> luau::runtime::Result<luau::ScheduledFuture> {
         let caller = current_plugin_id(context)?;
         if caller != self.plugin_id {
@@ -199,14 +199,11 @@ impl UserSettingsAccessor {
                 self.plugin_id
             )));
         }
-        if user_id <= 0 {
-            return Err(luau::Error::Runtime("user_id must be positive".to_string()));
-        }
         let accessor = self.clone();
         Ok(luau::ScheduledFuture::new(async move {
             let stored = accessor
                 .store
-                .load_user_stored_values(agdb::DbId(user_id), &accessor.plugin_id, &accessor.schema)
+                .load_user_stored_values(&user_id, &accessor.plugin_id, &accessor.schema)
                 .await?;
             let builder = settings_builder(stored);
             build_config_table(&accessor.schema.groups, &builder)
@@ -220,6 +217,7 @@ pub(crate) struct PluginSettingsModuleStore {
 }
 
 impl PluginSettingsModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }
@@ -242,7 +240,7 @@ impl PluginSettingsModuleStore {
 
     async fn load_user_stored_values(
         &self,
-        user_db_id: agdb::DbId,
+        user_public_id: &str,
         plugin_id: &PluginId,
         schema: &Schema,
     ) -> luau::runtime::Result<HashMap<String, serde_json::Value>> {
@@ -250,6 +248,9 @@ impl PluginSettingsModuleStore {
             luau::Error::Runtime("plugin settings database is unavailable".into())
         })?;
         let db = db.read().await;
+        let user_db_id = crate::plugins::db::users::find_db_id_by_public_id(&*db, user_public_id)
+            .map_err(crate::plugins::runtime_error)?
+            .ok_or_else(|| crate::plugins::runtime_error("user not found"))?;
         plugin_settings_service::load_validated_user_stored_values(
             &db,
             user_db_id,

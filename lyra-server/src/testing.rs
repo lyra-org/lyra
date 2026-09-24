@@ -413,7 +413,11 @@ pub async fn exec_plugins(
     Ok(isolated)
 }
 
-/// Runs one `.luau` file as `plugin`, without executing the plugin's entrypoint.
+/// Username of the user every Luau test file dispatches as.
+const LUAU_TEST_USERNAME: &str = "luau-tester";
+
+/// Runs one `.luau` file as `plugin`, without executing the plugin's entrypoint, dispatching as
+/// a fresh non-admin user named `LUAU_TEST_USERNAME`.
 pub async fn run_luau_plugin_test_file(
     plugin: &PluginUnderTest,
     test_path: &Path,
@@ -438,6 +442,18 @@ pub async fn run_luau_plugin_test_file(
     })?;
     let relative_path_text = relative_path.to_string_lossy().replace('\\', "/");
 
+    let principal = {
+        let mut db = STATE.db.write().await;
+        let user = db::users::User {
+            db_id: None,
+            id: nanoid!(),
+            username: LUAU_TEST_USERNAME.to_string(),
+            password: String::new(),
+        };
+        let user_db_id = db::users::create(&mut db, &user)?;
+        services::auth::resolve_principal(&db, user_db_id, user.id, user.username)
+    };
+
     let isolated = TempPluginsDir::new(plugin)?;
     let server_info = crate::plugins::server::load_server_info().await?;
     let auth_capabilities =
@@ -446,13 +462,14 @@ pub async fn run_luau_plugin_test_file(
         Arc::from(vec![plugin.manifest.clone()]),
         server_info,
         auth_capabilities,
+        STATE.db.get(),
         isolated.source_root(),
         isolated.plugins_dir(),
     )?;
     let source = std::fs::read(&test_path)
         .with_context(|| format!("read Luau test {}", test_path.display()))?;
     runtime
-        .run_plugin_source(plugin.id().to_string(), relative_path_text, source)
+        .run_plugin_source_as(plugin.id(), &relative_path_text, source, principal)
         .with_context(|| format!("run Luau test {}", test_path.display()))
 }
 

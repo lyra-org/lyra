@@ -72,6 +72,7 @@ pub(crate) struct PlaybackSessionsModuleStore {
 }
 
 impl PlaybackSessionsModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }
@@ -120,7 +121,6 @@ struct PlaybackUpdateHandler;
 
 #[derive(Clone, Debug, Deserialize)]
 struct PlaybackSessionReportRequest {
-    user_id: i64,
     session_key: String,
     track_id: i64,
     event: Option<playbacks::PlaybackEvent>,
@@ -131,7 +131,6 @@ struct PlaybackSessionReportRequest {
 
 #[derive(Clone, Debug, Deserialize)]
 struct SendCommandRequest {
-    user_id: i64,
     target_token: String,
     action: String,
     position_ms: Option<u64>,
@@ -216,8 +215,6 @@ fn report_session_spec() -> FunctionSpec {
 fn list_connections_spec() -> FunctionSpec {
     FunctionSpec::async_fn("list_connections")
         .context::<crate::plugins::auth::DispatchAuth>()
-        .arg_name("user_id")
-        .args::<i64>()
         .returns::<Vec<ConnectionInfo>>()
         .call_async(Arc::new(list_connections_callback))
 }
@@ -280,7 +277,6 @@ fn report_session_callback(
     })?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let user_db_id = require_positive_id(request.user_id, "user_id")?;
         let session_key = require_non_empty_string(request.session_key, "session_key")?;
         let track_db_id = require_positive_id(request.track_id, "track_id")?;
         let active_event = playbacks::classify_active_event(request.event)
@@ -289,13 +285,7 @@ fn report_session_callback(
         let mutation = playback_mutation(request.position_ms, request.duration_ms, request.state);
 
         let mut db = db.write().await;
-        if principal
-            .require(&db)
-            .map_err(crate::plugins::runtime_error)?
-            != user_db_id
-        {
-            return Err(crate::plugins::runtime_error("user not found"));
-        }
+        let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         if !crate::services::auth::access::entity_accessible(&db, &principal, track_db_id)
             .map_err(crate::plugins::runtime_error)?
         {
@@ -353,9 +343,8 @@ fn report_session_callback(
 }
 
 fn list_connections_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
+    frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let user_id: i64 = frame.args.read_named("user_id")?;
     let store = frame
         .vm
         .data()
@@ -366,29 +355,18 @@ fn list_connections_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let user_db_id = require_positive_id(user_id, "user_id")?;
-
         let connections = registry::list_connections().await;
         let now_ms = playbacks::now_ms().map_err(crate::plugins::runtime_error)?;
 
-        let (user_public_id, playbacks_list) = {
+        let playbacks_list = {
             let db = db.read().await;
-            if principal
-                .require(&db)
-                .map_err(crate::plugins::runtime_error)?
-                != user_db_id
-            {
-                return Ok(empty_array_value());
-            }
-            let user_public_id = resolve_user_public_id(&db, user_db_id)?;
-            let playbacks_list = playbacks::list_playbacks(&db, user_db_id)
-                .map_err(crate::plugins::runtime_error)?;
-            (user_public_id, playbacks_list)
+            let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
+            playbacks::list_playbacks(&db, user_db_id).map_err(crate::plugins::runtime_error)?
         };
 
         let mut result = Vec::new();
         for conn in &connections {
-            if conn.user_public_id != user_public_id {
+            if conn.user_public_id != principal.user_public_id {
                 continue;
             }
 
@@ -400,10 +378,10 @@ fn list_connections_callback(
 
             let playback =
                 playbacks::get_playback_session(&scope_key).and_then(|scope| {
-                    let session_id = scope.current_playback_session_id?;
-                    let record = playbacks_list
-                        .iter()
-                        .find(|playback| playback.playback_session_id == session_id)?;
+                    let session_public_id = scope.current_playback_session_public_id?;
+                    let record = playbacks_list.iter().find(|playback| {
+                        playback.playback_session_public_id == session_public_id
+                    })?;
                     if record.library_public_id.as_ref().is_some_and(|library_id| {
                         principal.accessible_library_ids.contains(library_id)
                     }) {
@@ -454,20 +432,10 @@ fn send_command_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let user_db_id = require_positive_id(request.user_id, "user_id")?;
-        let request_user_public_id = {
-            let db = db.read().await;
-            if principal
-                .require(&db)
-                .map_err(crate::plugins::runtime_error)?
-                != user_db_id
-            {
-                return Err(crate::plugins::runtime_error(
-                    "not authorized to control target",
-                ));
-            }
-            resolve_user_public_id(&db, user_db_id)?
-        };
+        // Held through the send, so a user deleted meanwhile commands nothing. Handoffs verify
+        // their owner under their own guard.
+        let db = db.read().await;
+        crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let target_token = require_non_empty_string(request.target_token, "target_token")?;
         let action_str = require_non_empty_string(request.action, "action")?;
         let action: RemoteAction = serde_json::from_value(serde_json::Value::String(
@@ -479,7 +447,7 @@ fn send_command_callback(
             .await
             .ok_or_else(|| crate::plugins::runtime_error("connection not found"))?;
 
-        if request_user_public_id != target.user_public_id {
+        if principal.user_public_id != target.user_public_id {
             return Err(crate::plugins::runtime_error(
                 "not authorized to control target",
             ));
@@ -497,6 +465,7 @@ fn send_command_callback(
             let queue_revision = request.queue_revision.ok_or_else(|| {
                 crate::plugins::runtime_error("queue_revision required for handoff_queue")
             })?;
+            drop(db);
             crate::services::remote::handoffs::dispatch_and_wait(
                 None,
                 &target,
@@ -542,6 +511,7 @@ fn send_command_callback(
             .map_err(|error| {
                 crate::plugins::runtime_error(format!("command dispatch failed: {error}"))
             })?;
+        drop(db);
 
         if let Ok(now_ms) = playbacks::now_ms() {
             let scope_key = PlaybackScopeKey {
@@ -620,15 +590,6 @@ fn require_non_empty_string(value: String, field_name: &str) -> luau::runtime::R
     Ok(value)
 }
 
-fn resolve_user_public_id(
-    db: &impl db::DbAccess,
-    user_db_id: DbId,
-) -> luau::runtime::Result<String> {
-    let user = db::users::get_by_id(db, user_db_id).map_err(crate::plugins::runtime_error)?;
-    user.map(|user| user.id)
-        .ok_or_else(|| crate::plugins::runtime_error("not authorized to control target"))
-}
-
 fn remote_action_string(action: &RemoteAction) -> String {
     serde_json::to_value(action)
         .ok()
@@ -641,10 +602,6 @@ fn playback_state_string(state: db::PlaybackState) -> String {
         .ok()
         .and_then(|value| value.as_str().map(String::from))
         .unwrap_or_default()
-}
-
-fn empty_array_value() -> luau::Value {
-    luau::Value::TableData(luau::OwnedTable::with_capacity(0, 0))
 }
 
 #[cfg(feature = "docgen")]
@@ -686,9 +643,9 @@ fn module_descriptor() -> ModuleDescriptor {
             ModuleFunctionDescriptor {
                 path: vec!["list_connections"],
                 description: Some(
-                    "Lists active connections for the given user with their playback state.",
+                    "Lists the dispatch principal's active connections with their playback state.",
                 ),
-                params: vec![param("user_id", i64::luau_type())],
+                params: Vec::new(),
                 returns: vec![Vec::<ConnectionInfo>::luau_type()],
                 yields: true,
             },
@@ -738,11 +695,6 @@ impl DescribeInterface for PlaybackSessionReportRequest {
         );
         descriptor.fields.extend(playback_request_fields([
             FieldDescriptor {
-                name: "user_id",
-                ty: i64::luau_type(),
-                description: None,
-            },
-            FieldDescriptor {
                 name: "session_key",
                 ty: String::luau_type(),
                 description: Some("Stable external player identity, retained across track changes and authentication-token refresh."),
@@ -772,11 +724,6 @@ impl DescribeInterface for SendCommandRequest {
     fn interface_descriptor() -> InterfaceDescriptor {
         let mut descriptor = InterfaceDescriptor::new("SendCommandRequest", None);
         descriptor.fields.extend([
-            FieldDescriptor {
-                name: "user_id",
-                ty: i64::luau_type(),
-                description: None,
-            },
             FieldDescriptor {
                 name: "target_token",
                 ty: String::luau_type(),

@@ -253,10 +253,9 @@ fn plugin_executor_exposes_db_backed_lyra_users_module() -> Result<()> {
     let mut db = crate::plugins::db::test_db::new_test_db()?;
     crate::plugins::db::roles::ensure_builtin_roles(&mut db)?;
     crate::plugins::db::users::create(&mut db, &crate::plugins::db::test_db::test_user("bob")?)?;
-    let alice_id = crate::plugins::db::users::create(
-        &mut db,
-        &crate::plugins::db::test_db::test_user("alice")?,
-    )?;
+    let alice = crate::plugins::db::test_db::test_user("alice")?;
+    let alice_public_id = alice.id.clone();
+    let alice_id = crate::plugins::db::users::create(&mut db, &alice)?;
     crate::plugins::db::roles::ensure_user_has_role(
         &mut db,
         alice_id,
@@ -277,6 +276,7 @@ fn plugin_executor_exposes_db_backed_lyra_users_module() -> Result<()> {
             local listed = users.list()
             executor_users_count = #listed
             executor_users_first = listed[1].username
+            executor_users_first_id = listed[1].user_id
             executor_users_first_role = listed[1].role
             executor_users_second = listed[2].username
             executor_users_second_role = listed[2].role
@@ -288,13 +288,14 @@ fn plugin_executor_exposes_db_backed_lyra_users_module() -> Result<()> {
     let values = runtime.eval_plugin_source(
         "demo",
         "check.luau",
-        &b"return executor_users_count, executor_users_first, executor_users_first_role, executor_users_second, executor_users_second_role"[..],
+        &b"return executor_users_count, executor_users_first, executor_users_first_id, executor_users_first_role, executor_users_second, executor_users_second_role"[..],
     )?;
     assert_eq!(
         values,
         vec![
             luau::Value::Number(2.0),
             luau::Value::String(b"alice".to_vec()),
+            luau::Value::String(alice_public_id.into_bytes()),
             luau::Value::String(b"admin".to_vec()),
             luau::Value::String(b"bob".to_vec()),
             luau::Value::Nil,
@@ -309,10 +310,15 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
     let user = crate::plugins::db::test_db::test_user("listener")?;
     let user_public_id = user.id.clone();
     let user_db_id = crate::plugins::db::users::create(&mut db, &user)?;
+    let other_user_db_id = crate::plugins::db::test_db::insert_user(&mut db, "other-listener")?;
     let track_db_id = crate::plugins::db::test_db::insert_track(&mut db, "Raw Listen Track")?;
     let track_public_id = crate::plugins::db::lookup::find_id_by_db_id(&db, track_db_id)?
         .context("inserted track has public id")?;
-    for listened_at_ms in [1000_u64, 2500] {
+    for (listener_db_id, listened_at_ms) in [
+        (user_db_id, 1000_u64),
+        (user_db_id, 2500),
+        (other_user_db_id, 3000),
+    ] {
         let listen = crate::plugins::db::listens::Listen {
             db_id: None,
             id: nanoid::nanoid!(),
@@ -341,7 +347,7 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
             &mut db,
             &listen,
             track_db_id,
-            user_db_id,
+            listener_db_id,
             &session,
         )?;
     }
@@ -372,12 +378,11 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
             r#"
                 local listens = require("@lyra/listens")
                 local track_db_id = {track_db_id}
-                executor_listen_count = listens.get_count(track_db_id, {user_db_id})
-                executor_listen_counts = listens.get_counts({{ track_db_id, -1, track_db_id }}, {user_db_id})
-                executor_listen_stats = listens.get_stats({{ track_db_id }}, {user_db_id})
+                executor_listen_count = listens.get_count(track_db_id)
+                executor_listen_counts = listens.get_counts({{ track_db_id, -1, track_db_id }})
+                executor_listen_stats = listens.get_stats({{ track_db_id }})
             "#,
             track_db_id = track_db_id.0,
-            user_db_id = user_db_id.0,
         )
         .into_bytes(),
         context,
@@ -448,17 +453,15 @@ fn plugin_executor_exposes_db_backed_lyra_favorites_module() -> Result<()> {
         format!(
             r#"
                 local favorites = require("@lyra/favorites")
-                local user_db_id = {user_db_id}
                 local track_db_id = {track_db_id}
 
-                executor_favorite_add = favorites.add(user_db_id, track_db_id)
-                executor_favorite_has = favorites.has(user_db_id, track_db_id)
-                executor_favorite_many = favorites.has_many(user_db_id, {{ track_db_id, -1, track_db_id, 999999 }})
-                executor_favorite_ids = favorites.list_ids(user_db_id, "track")
-                executor_favorite_remove = favorites.remove(user_db_id, track_db_id)
-                executor_favorite_has_after_remove = favorites.has(user_db_id, track_db_id)
+                executor_favorite_add = favorites.add(track_db_id)
+                executor_favorite_has = favorites.has(track_db_id)
+                executor_favorite_many = favorites.has_many({{ track_db_id, -1, track_db_id, 999999 }})
+                executor_favorite_ids = favorites.list_ids("track")
+                executor_favorite_remove = favorites.remove(track_db_id)
+                executor_favorite_has_after_remove = favorites.has(track_db_id)
             "#,
-            user_db_id = user_db_id.0,
             track_db_id = track_db_id.0,
         )
         .into_bytes(),
@@ -898,6 +901,7 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
     let mut db = crate::plugins::db::test_db::new_test_db()?;
     let user = crate::plugins::db::test_db::test_user("playlist-user")?;
     let user_public_id = user.id.clone();
+    let expected_owner = user_public_id.clone();
     let user_db_id = crate::plugins::db::users::create(&mut db, &user)?;
     let track_db_id = crate::plugins::db::test_db::insert_track(&mut db, "Raw Playlist Track")?;
     let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
@@ -926,11 +930,9 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
         format!(
             r#"
                 local playlists = require("@lyra/playlists")
-                local user_db_id = {user_db_id}
                 local track_db_id = {track_db_id}
 
                 executor_playlist_id = playlists.create({{
-                    user_id = user_db_id,
                     name = "Raw Playlist",
                     description = "seed",
                     is_public = false,
@@ -939,7 +941,7 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
                 }})
                 executor_playlist = playlists.get_by_id(executor_playlist_id)
                 executor_playlist_owner = playlists.get_owner(executor_playlist_id)
-                executor_user_playlists = playlists.get_by_user(user_db_id)
+                executor_user_playlists = playlists.list_owned()
                 executor_playlist_entry_id = playlists.add_track(executor_playlist_id, track_db_id)
                 executor_playlist_tracks = playlists.get_tracks(executor_playlist_id)
                 executor_playlist_tracks_many = playlists.get_tracks_many({{ executor_playlist_id, -1, executor_playlist_id }})
@@ -953,7 +955,6 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
                 playlists.remove_track(executor_playlist_entry_id)
                 executor_playlist_tracks_after_remove = playlists.get_tracks(executor_playlist_id)
             "#,
-            user_db_id = user_db_id.0,
             track_db_id = track_db_id.0,
         )
         .into_bytes(),
@@ -987,7 +988,7 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
             luau::Value::Boolean(true),
             luau::Value::String(b"Raw Playlist".to_vec()),
             luau::Value::Boolean(true),
-            luau::Value::Number(user_db_id.0 as f64),
+            luau::Value::String(expected_owner.into_bytes()),
             luau::Value::String(b"Raw Playlist".to_vec()),
             luau::Value::Boolean(true),
             luau::Value::Number(track_db_id.0 as f64),
@@ -1352,6 +1353,49 @@ fn plugin_executor_exposes_db_backed_lyra_libraries_module() -> Result<()> {
 }
 
 #[test]
+fn libraries_refuse_a_client_dispatch_without_a_principal() -> Result<()> {
+    let mut db = crate::plugins::db::test_db::new_test_db()?;
+    let library_db_id =
+        crate::plugins::db::test_db::insert_library(&mut db, "Private Library", "/tmp/private")?;
+    let track_db_id = crate::plugins::db::test_db::insert_track(&mut db, "Private Track")?;
+    crate::plugins::db::test_db::connect(&mut db, library_db_id, track_db_id)?;
+    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("demo", &["lyra.libraries"])]),
+        default_server_info(),
+        db,
+    )?;
+    let mut context = CallContext {
+        origin: plugin_origin("demo", "init.luau".to_string()),
+        ..CallContext::default()
+    };
+    context
+        .caller
+        .insert(crate::plugins::auth::DispatchAuth::default());
+    let values = runtime.eval_plugin_source_with_call_context(
+        format!(
+            r#"
+                local libraries = require("@lyra/libraries")
+                local function refused(f, ...)
+                    local ok, err = pcall(f, ...)
+                    return not ok and string.find(tostring(err), "no authenticated caller", 1, true) ~= nil
+                end
+                return refused(libraries.list),
+                    refused(libraries.get_for_entity, {track_db_id}),
+                    refused(libraries.get_for_entities, {{ {track_db_id} }})
+            "#,
+            track_db_id = track_db_id.0,
+        )
+        .into_bytes(),
+        context,
+    )?;
+
+    assert_eq!(values, vec![luau::Value::Boolean(true); 3]);
+    Ok(())
+}
+
+#[test]
 fn plugin_executor_exposes_db_backed_lyra_genres_module() -> Result<()> {
     let mut db = crate::plugins::db::test_db::new_test_db()?;
     let release_db_id = crate::plugins::db::test_db::insert_release(&mut db, "Raw Genre Release")?;
@@ -1434,10 +1478,9 @@ fn plugin_executor_exposes_db_backed_lyra_genres_module() -> Result<()> {
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
     let mut db = crate::plugins::db::test_db::new_test_db()?;
-    let user_db_id = crate::plugins::db::users::create(
-        &mut db,
-        &crate::plugins::db::test_db::test_user("raw-tags")?,
-    )?;
+    let user = crate::plugins::db::test_db::test_user("raw-tags")?;
+    let user_public_id = user.id.clone();
+    let user_db_id = crate::plugins::db::users::create(&mut db, &user)?;
     let track_db_id = crate::plugins::db::test_db::insert_track(&mut db, "Raw Tag Track")?;
     let suffix = nanoid::nanoid!();
     let library_path = std::path::PathBuf::from(format!("/tmp/lyra-plugin-tags-{suffix}"));
@@ -1467,28 +1510,40 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
         default_server_info(),
         db,
     )?;
-    runtime.run_plugin_source(
-        "demo",
-        "init.luau",
+    let mut context = CallContext {
+        origin: plugin_origin("demo", "init.luau"),
+        ..CallContext::default()
+    };
+    seed_caller_principal(
+        &mut context,
+        crate::services::auth::Principal {
+            user_db_id,
+            user_public_id,
+            username: "raw-tags".to_string(),
+            permissions: Vec::new(),
+            role_name: None,
+            accessible_library_ids: std::collections::HashSet::from([library.id.clone()]),
+        },
+    );
+    runtime.run_plugin_source_with_call_context(
         format!(
             r##"
                 local tags = require("@lyra/tags")
-                local user_id = {user_db_id}
                 local track_id = {track_db_id}
 
-                executor_tag_name = tags.add(user_id, track_id, " Workout ", "#335577")
-                executor_has = tags.has(user_id, track_id, "Workout")
-                executor_has_many = tags.has_many(user_id, {{ track_id, -1, track_id, 999999 }}, "Workout")
-                executor_for_target = tags.get_for_target(user_id, track_id)
-                executor_for_targets = tags.get_for_targets_many(user_id, {{ track_id, 999999 }})
-                executor_tagged = tags.get_tagged(user_id, "Workout")
-                tags.remove(user_id, track_id, "Workout")
-                executor_has_after_remove = tags.has(user_id, track_id, "Workout")
+                executor_tag_name = tags.add(track_id, " Workout ", "#335577")
+                executor_has = tags.has(track_id, "Workout")
+                executor_has_many = tags.has_many({{ track_id, -1, track_id, 999999 }}, "Workout")
+                executor_for_target = tags.get_for_target(track_id)
+                executor_for_targets = tags.get_for_targets_many({{ track_id, 999999 }})
+                executor_tagged = tags.get_tagged("Workout")
+                tags.remove(track_id, "Workout")
+                executor_has_after_remove = tags.has(track_id, "Workout")
             "##,
-            user_db_id = user_db_id.0,
             track_db_id = track_db_id.0,
         )
         .into_bytes(),
+        context,
     )?;
 
     let values = runtime.eval_plugin_source(
@@ -1620,13 +1675,13 @@ fn plugin_executor_reports_playback_acceptance_rejection_and_internal_failure() 
         local sessions = require("@lyra/playback_sessions")
         function report(key, state)
             return sessions.report_session({{
-                user_id = {}, track_id = {}, session_key = key, state = state,
+                track_id = {}, session_key = key, state = state,
             }})
         end
         accepted_id, accepted_error = report("player", "playing")
         ignored_id, ignored_error = report("unknown", "stopped")
     "#,
-            user_db_id.0, track_db_id.0
+            track_db_id.0
         )
         .into_bytes(),
         context.clone(),
@@ -1754,17 +1809,15 @@ fn stale_principal_cannot_use_favorites_of_a_user_with_its_recycled_db_id() -> R
         format!(
             r#"
                 local favorites = require("@lyra/favorites")
-                local user_id = {user_id}
                 local function rejects(f, ...)
                     return not pcall(f, ...)
                 end
-                return rejects(favorites.has, user_id, {track}),
-                    rejects(favorites.has_many, user_id, {{ {track} }}),
-                    rejects(favorites.list_ids, user_id, "track"),
-                    rejects(favorites.add, user_id, {other}),
-                    rejects(favorites.remove, user_id, {track})
+                return rejects(favorites.has, {track}),
+                    rejects(favorites.has_many, {{ {track} }}),
+                    rejects(favorites.list_ids, "track"),
+                    rejects(favorites.add, {other}),
+                    rejects(favorites.remove, {track})
             "#,
-            user_id = current_db_id.0,
             track = track_db_id.0,
             other = other_track_db_id.0,
         )
@@ -1819,19 +1872,17 @@ fn stale_principal_cannot_use_playlists_of_a_user_with_its_recycled_db_id() -> R
         format!(
             r#"
                 local playlists = require("@lyra/playlists")
-                local user_id = {user_id}
                 local playlist_id = {playlist_id}
                 local function rejects(f, ...)
                     return not pcall(f, ...)
                 end
                 return rejects(playlists.get_by_id, playlist_id),
-                    rejects(playlists.get_by_user, user_id),
+                    rejects(playlists.list_owned),
                     rejects(playlists.list),
                     rejects(playlists.update, {{ playlist_id = playlist_id, name = "Taken" }}),
                     rejects(playlists.delete, playlist_id),
-                    rejects(playlists.create, {{ user_id = user_id, name = "Stale" }})
+                    rejects(playlists.create, {{ name = "Stale" }})
             "#,
-            user_id = current_db_id.0,
             playlist_id = playlist_db_id.0,
         )
         .into_bytes(),
@@ -1870,11 +1921,10 @@ fn stale_principal_cannot_report_playback_for_a_user_with_its_recycled_db_id() -
             r#"
                 local sessions = require("@lyra/playback_sessions")
                 local ok, err = pcall(sessions.report_session, {{
-                    user_id = {user_id}, track_id = {track_id}, session_key = "player", state = "playing",
+                    track_id = {track_id}, session_key = "player", state = "playing",
                 }})
                 return ok, string.find(tostring(err), "invalid bearer credential", 1, true) ~= nil
             "#,
-            user_id = current_db_id.0,
             track_id = track_db_id.0,
         )
         .into_bytes(),

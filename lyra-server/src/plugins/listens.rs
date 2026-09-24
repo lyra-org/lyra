@@ -46,6 +46,7 @@ pub(crate) struct ListensModuleStore {
 }
 
 impl ListensModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }
@@ -82,8 +83,6 @@ fn get_count_spec() -> FunctionSpec {
         .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("track_id")
         .args::<i64>()
-        .arg_name("user_id")
-        .args::<Option<i64>>()
         .arg_name("merge_unique_external_ids")
         .args::<Option<bool>>()
         .returns::<u64>()
@@ -95,8 +94,6 @@ fn get_counts_spec() -> FunctionSpec {
         .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("track_ids")
         .args::<luau::Table>()
-        .arg_name("user_id")
-        .args::<Option<i64>>()
         .arg_name("merge_unique_external_ids")
         .args::<Option<bool>>()
         .returns::<luau::Table>()
@@ -108,8 +105,6 @@ fn get_stats_spec() -> FunctionSpec {
         .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("track_ids")
         .args::<luau::Table>()
-        .arg_name("user_id")
-        .args::<Option<i64>>()
         .arg_name("merge_unique_external_ids")
         .args::<Option<bool>>()
         .returns::<luau::Table>()
@@ -125,7 +120,6 @@ fn get_count_callback(
             "track_id must be a positive id",
         ));
     }
-    let user_db_id = frame.args.read_optional_named::<i64>("user_id")?.map(DbId);
     let merge = frame
         .args
         .read_optional_named::<bool>("merge_unique_external_ids")?
@@ -141,7 +135,7 @@ fn get_count_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let track_db_id = DbId(track_id);
-        let stats = resolve_stats(db, &[track_db_id], &principal, user_db_id, merge).await?;
+        let stats = resolve_stats(db, &[track_db_id], &principal, merge).await?;
         let count = stats.counts.get(&track_db_id).copied().unwrap_or(0);
         Ok(luau::Value::from(count))
     }))
@@ -152,7 +146,6 @@ fn get_counts_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_ids: luau::Table = frame.args.read_named("track_ids")?;
     let track_ids = parse_db_ids(frame.vm, &track_ids)?;
-    let user_db_id = frame.args.read_optional_named::<i64>("user_id")?.map(DbId);
     let merge = frame
         .args
         .read_optional_named::<bool>("merge_unique_external_ids")?
@@ -167,7 +160,7 @@ fn get_counts_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let stats = resolve_stats(db, &track_ids, &principal, user_db_id, merge).await?;
+        let stats = resolve_stats(db, &track_ids, &principal, merge).await?;
         Ok(luau::Value::TableData(dbid_map_to_table(&stats.counts)))
     }))
 }
@@ -177,7 +170,6 @@ fn get_stats_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let track_ids: luau::Table = frame.args.read_named("track_ids")?;
     let track_ids = parse_db_ids(frame.vm, &track_ids)?;
-    let user_db_id = frame.args.read_optional_named::<i64>("user_id")?.map(DbId);
     let merge = frame
         .args
         .read_optional_named::<bool>("merge_unique_external_ids")?
@@ -192,7 +184,7 @@ fn get_stats_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let stats = resolve_stats(db, &track_ids, &principal, user_db_id, merge).await?;
+        let stats = resolve_stats(db, &track_ids, &principal, merge).await?;
         let mut table = luau::OwnedTable::with_capacity(0, 2);
         table.set_field(
             "counts",
@@ -210,10 +202,10 @@ async fn resolve_stats(
     db: DbAsync,
     track_ids: &[DbId],
     principal: &Principal,
-    user_db_id: Option<DbId>,
     merge_unique_external_ids: bool,
 ) -> luau::runtime::Result<ResolvedStats> {
     let db = db.read().await;
+    let user_db_id = Some(crate::plugins::auth::require_user_db_id(principal, &db)?);
 
     if !merge_unique_external_ids {
         let mut counts = HashMap::new();
@@ -379,7 +371,7 @@ fn module_descriptor() -> ModuleDescriptor {
     ModuleDescriptor {
         name: "Listens",
         local_name: "listens",
-        description: None,
+        description: Some("Listen counts of the dispatch principal."),
         fields: Vec::new(),
         functions: vec![
             ModuleFunctionDescriptor {
@@ -387,7 +379,6 @@ fn module_descriptor() -> ModuleDescriptor {
                 description: None,
                 params: vec![
                     param("track_id", i64::luau_type()),
-                    param("user_id", Option::<i64>::luau_type()),
                     param("merge_unique_external_ids", Option::<bool>::luau_type()),
                 ],
                 returns: vec![u64::luau_type()],
@@ -398,7 +389,6 @@ fn module_descriptor() -> ModuleDescriptor {
                 description: None,
                 params: vec![
                     param("track_ids", Vec::<u64>::luau_type()),
-                    param("user_id", Option::<i64>::luau_type()),
                     param("merge_unique_external_ids", Option::<bool>::luau_type()),
                 ],
                 returns: vec![LuauType::map(u64::luau_type(), u64::luau_type())],
@@ -409,7 +399,6 @@ fn module_descriptor() -> ModuleDescriptor {
                 description: None,
                 params: vec![
                     param("track_ids", Vec::<u64>::luau_type()),
-                    param("user_id", Option::<i64>::luau_type()),
                     param("merge_unique_external_ids", Option::<bool>::luau_type()),
                 ],
                 returns: vec![LuauType::map(

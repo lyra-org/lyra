@@ -38,6 +38,7 @@ pub(crate) struct ChromaprintModuleStore {
 }
 
 impl ChromaprintModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }

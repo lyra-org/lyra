@@ -99,9 +99,8 @@ pub(super) enum PluginExecutorCommand {
 #[derive(Clone, Debug)]
 pub(crate) struct MixHandlerRequest {
     pub(crate) handler_id: u64,
-    pub(crate) seed_id: i64,
+    pub(crate) seed_id: Option<i64>,
     pub(crate) limit: Option<usize>,
-    pub(crate) user_id: Option<i64>,
     pub(crate) recent_track_ids: Vec<i64>,
     pub(crate) options: serde_json::Map<String, serde_json::Value>,
 }

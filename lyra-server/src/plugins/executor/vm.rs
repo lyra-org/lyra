@@ -11,9 +11,8 @@ use std::{
 };
 
 use anyhow::Result;
-#[cfg(test)]
-use harmony_core::CallContext;
 use harmony_core::{
+    CallContext,
     FilesystemSourceLoader,
     ModuleSpec,
     SourceLoader,
@@ -44,6 +43,7 @@ impl PluginExecutor {
         manifests: Arc<[PluginManifest]>,
         server_info: crate::plugins::server::ServerInfo,
         auth_capabilities: crate::plugins::auth::AuthCapabilities,
+        db: crate::plugins::db::DbAsync,
         source_root: impl Into<std::path::PathBuf>,
         plugins_dir: impl Into<std::path::PathBuf>,
     ) -> Result<Self> {
@@ -51,7 +51,7 @@ impl PluginExecutor {
             manifests,
             server_info,
             auth_capabilities,
-            PluginModuleStores::empty(),
+            PluginModuleStores::with_db(db),
             FilesystemSourceLoader::new(source_root, plugins_dir),
         )
     }
@@ -200,6 +200,7 @@ impl PluginExecutor {
         self.runtime.exec_all()
     }
 
+    #[cfg(test)]
     pub(crate) fn run_plugin_source(
         &self,
         plugin_id: impl Into<Arc<str>>,
@@ -207,6 +208,26 @@ impl PluginExecutor {
         source: impl Into<Arc<[u8]>>,
     ) -> Result<()> {
         self.runtime.run_plugin_source(plugin_id, path, source)
+    }
+
+    /// Runs `source` as a dispatch acting for `principal`.
+    pub(crate) fn run_plugin_source_as(
+        &self,
+        plugin_id: &str,
+        path: &str,
+        source: impl Into<Arc<[u8]>>,
+        principal: crate::services::auth::Principal,
+    ) -> Result<()> {
+        let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
+        dispatch_auth.record(principal);
+        let mut context = CallContext {
+            origin: super::plugin_origin(plugin_id.to_string(), path.to_string()),
+            ..CallContext::default()
+        };
+        context.caller.insert(dispatch_auth);
+        self.runtime
+            .eval_source_with_context(source, context)
+            .map(|_| ())
     }
 
     #[cfg(test)]

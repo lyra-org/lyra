@@ -48,6 +48,7 @@ pub(crate) struct CoversModuleStore {
 }
 
 impl CoversModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }

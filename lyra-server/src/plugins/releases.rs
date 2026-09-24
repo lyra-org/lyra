@@ -45,6 +45,7 @@ pub(crate) struct ReleasesModuleStore {
 }
 
 impl ReleasesModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }
@@ -118,6 +119,7 @@ fn list_many_spec() -> FunctionSpec {
 
 fn similar_spec() -> FunctionSpec {
     FunctionSpec::async_fn("similar")
+        .context::<crate::plugins::auth::DispatchAuth>()
         .arg_name("release_db_id")
         .args::<i64>()
         .arg_name("opts")
@@ -280,6 +282,7 @@ fn similar_callback(
         ));
     }
     let request = parse_similar_options(frame.vm, frame.args.read_optional_named("opts")?)?;
+    let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     let provider_vm = frame.vm.clone();
     let store = frame
         .vm
@@ -290,13 +293,9 @@ fn similar_callback(
     let db = store.db()?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let accessible_library_ids = if let Some(user_id) = request.user_id {
-            let db = db.read().await;
-            release_service::accessible_library_ids_for_user(&db, user_id)
-                .map_err(crate::plugins::runtime_error)?
-        } else {
-            None
-        };
+        crate::plugins::auth::require_user_db_id(&principal, &*db.read().await)?;
+        let accessible_library_ids = (!principal.permissions.contains(&db::Permission::Admin))
+            .then(|| principal.accessible_library_ids.clone());
         let options = release_service::SimilarReleaseOptions {
             limit: request.limit,
             accessible_library_ids,
@@ -313,7 +312,6 @@ fn similar_callback(
 
 struct SimilarReleaseRequest {
     limit: usize,
-    user_id: Option<DbId>,
 }
 
 fn parse_similar_options(
@@ -323,7 +321,6 @@ fn parse_similar_options(
     let Some(opts) = opts else {
         return Ok(SimilarReleaseRequest {
             limit: release_service::DEFAULT_SIMILAR_RELEASE_LIMIT,
-            user_id: None,
         });
     };
     let limit = parse_optional_similar_positive_integer(vm, &opts, "limit")?
@@ -340,8 +337,7 @@ fn parse_similar_options(
             release_service::MAX_SIMILAR_RELEASE_LIMIT
         )));
     }
-    let user_id = parse_optional_similar_positive_integer(vm, &opts, "user_id")?.map(DbId);
-    Ok(SimilarReleaseRequest { limit, user_id })
+    Ok(SimilarReleaseRequest { limit })
 }
 
 fn parse_optional_similar_positive_integer(
@@ -679,18 +675,11 @@ fn release_query_options() -> InterfaceDescriptor {
 #[cfg(feature = "docgen")]
 fn similar_release_options() -> InterfaceDescriptor {
     let mut descriptor = InterfaceDescriptor::new("SimilarReleaseOptions", None);
-    descriptor.fields.extend([
-        described_field(
-            "limit",
-            Option::<i64>::luau_type(),
-            "Maximum number of releases to return. Defaults to 20 and cannot exceed 100.",
-        ),
-        described_field(
-            "user_id",
-            Option::<i64>::luau_type(),
-            "Optional viewer DB ID. When supplied, the seed and candidates are restricted to that user's accessible libraries. Omit only for an unrestricted internal lookup.",
-        ),
-    ]);
+    descriptor.fields.extend([described_field(
+        "limit",
+        Option::<i64>::luau_type(),
+        "Maximum number of releases to return. Defaults to 20 and cannot exceed 100.",
+    )]);
     descriptor
 }
 
@@ -784,14 +773,11 @@ mod tests {
             defaults.limit,
             release_service::DEFAULT_SIMILAR_RELEASE_LIMIT
         );
-        assert_eq!(defaults.user_id, None);
 
         let opts = vm.create_table()?;
         opts.set_raw(&vm, "limit", luau::Value::from(7_i64))?;
-        opts.set_raw(&vm, "user_id", luau::Value::Number(42.0))?;
         let parsed = parse_similar_options(&vm, Some(opts))?;
         assert_eq!(parsed.limit, 7);
-        assert_eq!(parsed.user_id, Some(DbId(42)));
         Ok(())
     }
 
@@ -803,7 +789,7 @@ mod tests {
         assert!(parse_similar_options(&vm, Some(opts)).is_err());
 
         let opts = vm.create_table()?;
-        opts.set_raw(&vm, "user_id", luau::Value::Number(4.5))?;
+        opts.set_raw(&vm, "limit", luau::Value::Number(4.5))?;
         assert!(parse_similar_options(&vm, Some(opts)).is_err());
         Ok(())
     }

@@ -31,7 +31,7 @@ use crate::plugins::db::{
 
 #[derive(Clone, Debug, Serialize)]
 struct PublicUser {
-    user_id: i64,
+    user_id: String,
     username: String,
     role: Option<String>,
 }
@@ -42,6 +42,7 @@ pub(crate) struct UsersModuleStore {
 }
 
 impl UsersModuleStore {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self { db: None }
     }
@@ -82,13 +83,13 @@ fn list_callback(frame: luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau:
             .map_err(crate::plugins::runtime_error)?
             .into_iter()
             .filter_map(|user| {
-                let user_id = user.db_id?;
-                let role = db::roles::get_role_for_user(&db, user_id)
+                let user_db_id = user.db_id?;
+                let role = db::roles::get_role_for_user(&db, user_db_id)
                     .ok()
                     .flatten()
                     .map(|role| role.name);
                 Some(PublicUser {
-                    user_id: user_id.0,
+                    user_id: user.id,
                     username: user.username,
                     role,
                 })
@@ -110,8 +111,8 @@ impl DescribeInterface for PublicUser {
         descriptor.fields.extend([
             FieldDescriptor {
                 name: "user_id",
-                ty: i64::luau_type(),
-                description: None,
+                ty: String::luau_type(),
+                description: Some("The user's public id."),
             },
             FieldDescriptor {
                 name: "username",
