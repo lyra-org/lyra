@@ -253,7 +253,6 @@ mod tests {
             "cue_tracks",
             "genres",
             "labels",
-            "release_labels",
             "server",
         ])?
         .into_inner())

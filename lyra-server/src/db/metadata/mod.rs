@@ -177,9 +177,9 @@ fn cascade_remove_entities_pre_favorites(
         if !credit_ids.is_empty() {
             db.exec_mut(QueryBuilder::remove().ids(credit_ids).query())?;
         }
-        // agdb cascades the Release's outgoing edges, but the RL node and
-        // its linked Label would leak without this explicit walk.
-        super::labels::cascade_remove_release_labels_for_owner(db, id)?;
+        // agdb cascades the Release's label edges, but a Label left without
+        // releases must be collected.
+        super::labels::unlink_release(db, id)?;
         // Lyrics + their LyricLine/LyricWord children sit at distance ≥ 2 from
         // the track; agdb's direct-edge cascade misses them. No-op for non-tracks.
         super::lyrics::delete_for_track_in_txn(db, id)?;
