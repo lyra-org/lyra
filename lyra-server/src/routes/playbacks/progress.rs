@@ -94,7 +94,7 @@ pub(super) async fn report_progress(
         Some(
             remote_handoffs::claim_progress(
                 handoff_token,
-                principal.user_db_id,
+                &principal.user_public_id,
                 connection_session_key
                     .as_deref()
                     .expect("handoff progress requires a connection session key"),
@@ -139,7 +139,7 @@ pub(super) async fn report_progress(
     };
     let committed_progress = progress_claim.map(|claim| {
         claim.commit(remote_handoffs::AppliedProgress {
-            user_db_id: principal.user_db_id,
+            user_public_id: principal.user_public_id.clone(),
             playback_db_id: record.playback_db_id,
             playback_public_id: update.playback.id.clone(),
             queue_revision: request.queue_revision,
@@ -154,7 +154,7 @@ pub(super) async fn report_progress(
         sessions::bind_current_playback_session_scope(
             &sessions::PlaybackScopeKey {
                 plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
-                user_db_id: principal.user_db_id,
+                user_public_id: &principal.user_public_id,
                 session_key,
             },
             update.session.playback_session_id,

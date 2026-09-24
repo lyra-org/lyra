@@ -632,13 +632,19 @@ fn pause_bound_playback_on_disconnect(
     .map(Some)
 }
 
+/// Pauses the user's playing scopes for a disconnected session. Does nothing once the user is
+/// gone; deleting a user clears its scopes.
 pub(crate) fn pause_playing_scopes_on_disconnect(
     db: &mut DbAny,
-    user_db_id: DbId,
+    user_public_id: &str,
     session_key: &str,
     now_ms: u64,
 ) -> ServiceResult<(Vec<PlaybackRecord>, Vec<EvictedPlaybackRecord>)> {
-    let scoped_sessions = get_playback_sessions_for_user_session(user_db_id, session_key);
+    let Some(user_db_id) = map_internal(db::users::find_db_id_by_public_id(db, user_public_id))?
+    else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let scoped_sessions = get_playback_sessions_for_user_session(user_public_id, session_key);
     let mut playbacks = Vec::new();
 
     for (scope_key, session) in scoped_sessions {
@@ -867,9 +873,12 @@ pub(crate) fn report_playback_session(
     db: &mut DbAny,
     request: SessionPlaybackReportRequest<'_>,
 ) -> ServiceResult<Option<PlaybackRecord>> {
+    let user = map_internal(db::users::get_by_id(db, request.user_db_id))?.ok_or_else(|| {
+        PlaybackServiceError::not_found(format!("user not found: {}", request.user_db_id.0))
+    })?;
     let scope = PlaybackScopeKey {
         plugin_id: request.plugin_id,
-        user_db_id: request.user_db_id,
+        user_public_id: &user.id,
         session_key: request.session_key,
     };
     sessions::cleanup_stale_scopes(request.now_ms, ACTIVE_SESSION_TTL_MS);

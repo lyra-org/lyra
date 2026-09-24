@@ -4,7 +4,6 @@
 // www.meshiplaw.com/lyra.
 
 use std::collections::HashSet;
-use std::sync::Arc;
 
 use axum::extract::ws::{
     CloseFrame,
@@ -13,9 +12,9 @@ use axum::extract::ws::{
     WebSocket,
 };
 use tokio::sync::{
-    Notify,
     broadcast,
     mpsc,
+    watch,
 };
 use tokio::task::JoinSet;
 use tokio::time::{
@@ -25,8 +24,7 @@ use tokio::time::{
 
 use super::constants::{
     AUTH_CHECK_INTERVAL,
-    CLOSE_CODE_DUPLICATE_SESSION,
-    CLOSE_REASON_DUPLICATE_SESSION,
+    CloseReason,
     PING_INTERVAL,
     PONG_TIMEOUT,
     RemoteAction,
@@ -66,12 +64,12 @@ async fn send_message(socket: &mut WebSocket, msg: Message) -> bool {
         .is_ok_and(|r| r.is_ok())
 }
 
-async fn send_close(socket: &mut WebSocket, code: u16, reason: &'static str) -> bool {
+pub(crate) async fn send_close(socket: &mut WebSocket, reason: CloseReason) -> bool {
     send_message(
         socket,
         Message::Close(Some(CloseFrame {
-            code,
-            reason: Utf8Bytes::from_static(reason),
+            code: reason.code(),
+            reason: Utf8Bytes::from_static(reason.reason()),
         })),
     )
     .await
@@ -240,7 +238,7 @@ async fn handle_remote_control(cmd: ClientCommand, connection_id: ConnectionId) 
             if let Ok(now_ms) = playbacks::now_ms() {
                 let scope_key = playbacks::PlaybackScopeKey {
                     plugin_id: NATIVE_SOURCE_ID,
-                    user_db_id: target_snap.user_db_id,
+                    user_public_id: &target_snap.user_public_id,
                     session_key: &target_snap.session_key,
                 };
                 playbacks::mark_command_dispatched(&scope_key, now_ms);
@@ -311,7 +309,7 @@ async fn pause_playing_scope_for_disconnected_connection(handle: &registry::Conn
         Err(err) => {
             tracing::warn!(
                 connection_id = handle.connection_id,
-                user_db_id = handle.user_db_id.0,
+                user_public_id = %handle.user_public_id,
                 session_key = %handle.session_key,
                 error = %err,
                 "failed to timestamp disconnected playback scope"
@@ -324,7 +322,7 @@ async fn pause_playing_scope_for_disconnected_connection(handle: &registry::Conn
         let mut db = STATE.db.write().await;
         playbacks::pause_playing_scopes_on_disconnect(
             &mut db,
-            handle.user_db_id,
+            &handle.user_public_id,
             &handle.session_key,
             now_ms,
         )
@@ -340,7 +338,7 @@ async fn pause_playing_scope_for_disconnected_connection(handle: &registry::Conn
         Err(err) => {
             tracing::warn!(
                 connection_id = handle.connection_id,
-                user_db_id = handle.user_db_id.0,
+                user_public_id = %handle.user_public_id,
                 session_key = %handle.session_key,
                 error = %err,
                 "failed to pause disconnected playback scope"
@@ -349,12 +347,26 @@ async fn pause_playing_scope_for_disconnected_connection(handle: &registry::Conn
     }
 }
 
+/// Keeps a new registration only if its user still exists. A delete that commits before this
+/// read has already swept the registry, and one that commits after it sweeps this connection, so
+/// no registration outlives its user.
+pub(crate) async fn confirm_registration(
+    connection_id: ConnectionId,
+    user_public_id: &str,
+) -> anyhow::Result<bool> {
+    let user = crate::db::users::get_by_public_id(&*STATE.db.read().await, user_public_id);
+    if !matches!(user, Ok(Some(_))) {
+        registry::unregister(connection_id).await;
+    }
+    Ok(user?.is_some())
+}
+
 pub(crate) async fn run(
     mut socket: WebSocket,
     connection_id: ConnectionId,
     user_public_id: String,
     mut accessible_library_ids: HashSet<String>,
-    cancel: Arc<Notify>,
+    mut close: watch::Receiver<Option<CloseReason>>,
     token: Option<String>,
     mut command_rx: mpsc::Receiver<OutgoingMessage>,
 ) {
@@ -521,14 +533,12 @@ pub(crate) async fn run(
                 }
             }
 
-            _ = cancel.notified() => {
-                tracing::info!(connection_id, "connection evicted by duplicate session_key");
-                let _ = send_close(
-                    &mut socket,
-                    CLOSE_CODE_DUPLICATE_SESSION,
-                    CLOSE_REASON_DUPLICATE_SESSION,
-                )
-                .await;
+            Ok(()) = close.changed() => {
+                let Some(reason) = *close.borrow_and_update() else {
+                    continue;
+                };
+                tracing::info!(connection_id, ?reason, "closing connection at server request");
+                let _ = send_close(&mut socket, reason).await;
                 break;
             }
 
@@ -547,7 +557,7 @@ pub(crate) async fn run(
     if let Some(handle) = &handle {
         tracing::info!(
             connection_id,
-            user_db_id = handle.user_db_id.0,
+            user_public_id = %handle.user_public_id,
             session_key = %handle.session_key,
             "websocket disconnected"
         );
@@ -582,11 +592,10 @@ mod tests {
             registry::unregister(connection.connection_id).await;
         }
         let registered = registry::register(
-            agdb::DbId(9),
             "user".to_string(),
             None,
             "source".to_string(),
-            Arc::new(Notify::new()),
+            watch::channel(None).0,
         )
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -740,6 +749,122 @@ mod tests {
             anyhow::bail!("session should still be valid");
         };
         assert!(refreshed.contains(&library_id));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn disconnect_pause_ignores_the_user_that_reused_the_db_id() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::initialize_runtime(&crate::testing::LibraryFixtureConfig {
+            directory: std::path::PathBuf::from("."),
+            language: None,
+            country: None,
+        })
+        .await?;
+        for connection in registry::list_connections().await {
+            registry::unregister(connection.connection_id).await;
+        }
+
+        let alice = crate::db::test_db::test_user("alice")?;
+        let alice_public_id = alice.id.clone();
+        let alice_db_id = {
+            let mut db = STATE.db.write().await;
+            crate::db::users::create(&mut db, &alice)?
+        };
+        let alice_connection = registry::register(
+            alice_public_id,
+            None,
+            "device".to_string(),
+            watch::channel(None).0,
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+
+        let bob_playback = {
+            let mut db = STATE.db.write().await;
+            let bob_db_id = crate::db::test_db::recycle_user(&mut db, alice_db_id, "bob")?;
+            let track_db_id = crate::db::test_db::insert_track(&mut db, "Bob's Track")?;
+            playbacks::report_playback_session_with_cleanup(
+                &mut db,
+                playbacks::SessionPlaybackReportRequest {
+                    plugin_id: NATIVE_SOURCE_ID,
+                    user_db_id: bob_db_id,
+                    session_key: "device",
+                    track_db_id,
+                    client_name: None,
+                    mutation: playbacks::PlaybackMutation {
+                        position_ms: Some(0),
+                        duration_ms: Some(200_000),
+                        state: Some(PlaybackState::Playing),
+                    },
+                    now_ms: playbacks::now_ms()?,
+                    active_event: playbacks::ActiveEvent::Started,
+                },
+            )?
+            .playback
+            .expect("bob's playback starts")
+        };
+
+        let handle = registry::unregister(alice_connection.connection_id)
+            .await
+            .expect("alice's connection is registered");
+        pause_playing_scope_for_disconnected_connection(&handle).await;
+
+        let db = STATE.db.read().await;
+        let persisted =
+            crate::db::playback_sessions::get_by_id(&*db, bob_playback.playback_session_id)?
+                .expect("bob's playback persists");
+        assert_eq!(
+            persisted.state,
+            PlaybackState::Playing,
+            "a deleted user's disconnect must not pause the DbId's next owner"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn confirm_registration_drops_connections_of_deleted_users() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
+        for connection in registry::list_connections().await {
+            registry::unregister(connection.connection_id).await;
+        }
+        let (kept_public_id, deleted_public_id) = {
+            let mut db = STATE.db.write().await;
+            let kept = crate::db::test_db::test_user("still-here")?;
+            let deleted = crate::db::test_db::test_user("deleted-mid-upgrade")?;
+            crate::db::users::create(&mut db, &kept)?;
+            let deleted_db_id = crate::db::users::create(&mut db, &deleted)?;
+            crate::db::users::delete_user(&mut db, deleted_db_id)?;
+            (kept.id, deleted.id)
+        };
+        let kept = registry::register(
+            kept_public_id.clone(),
+            None,
+            "device".to_string(),
+            watch::channel(None).0,
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let late = registry::register(
+            deleted_public_id.clone(),
+            None,
+            "device".to_string(),
+            watch::channel(None).0,
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+
+        assert!(confirm_registration(kept.connection_id, &kept_public_id).await?);
+        assert!(!confirm_registration(late.connection_id, &deleted_public_id).await?);
+        let remaining = registry::list_connections()
+            .await
+            .into_iter()
+            .map(|connection| connection.connection_id)
+            .collect::<Vec<_>>();
+        assert_eq!(remaining, [kept.connection_id]);
+
+        registry::unregister(kept.connection_id).await;
         Ok(())
     }
 

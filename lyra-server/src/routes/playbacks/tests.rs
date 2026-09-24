@@ -26,11 +26,7 @@ use axum::{
         Response,
     },
 };
-use std::sync::Arc;
-use tokio::sync::{
-    Notify,
-    oneshot,
-};
+use tokio::sync::oneshot;
 
 struct RouteFixture {
     headers: HeaderMap,
@@ -242,11 +238,10 @@ async fn response_keeps_initiating_and_controlling_client_names_distinct() -> an
         .headers
         .insert(AUTHORIZATION, format!("Bearer {}", session.token).parse()?);
     let registered = remote_registry::register(
-        fixture.user_db_id,
-        fixture.user_public_id,
+        fixture.user_public_id.clone(),
         Some("Controlling Client".to_string()),
         "controller-session".to_string(),
-        Arc::new(Notify::new()),
+        tokio::sync::watch::channel(None).0,
     )
     .await
     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -410,11 +405,10 @@ async fn same_track_handoff_completes_on_exact_tokened_progress() -> anyhow::Res
     assert_eq!(replaced.revision, 2);
 
     let registered = remote_registry::register(
-        fixture.user_db_id,
-        fixture.user_public_id,
+        fixture.user_public_id.clone(),
         Some("Target".to_string()),
         "target-session".to_string(),
-        Arc::new(Notify::new()),
+        tokio::sync::watch::channel(None).0,
     )
     .await
     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -423,10 +417,15 @@ async fn same_track_handoff_completes_on_exact_tokened_progress() -> anyhow::Res
         let db = STATE.db.read().await;
         playbacks::validate_handoff_queue(&db, fixture.user_db_id, &created.id, 2)?
     };
-    let (handoff_token, completion_rx) =
-        handoffs::begin(None, target_id, fixture.user_db_id, created.id.clone(), 2)
-            .await
-            .map_err(|error| anyhow::anyhow!(error))?;
+    let (handoff_token, completion_rx) = handoffs::begin(
+        None,
+        target_id,
+        fixture.user_public_id.clone(),
+        created.id.clone(),
+        2,
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!(error))?;
     let wrong_target_progress = report_progress(
         fixture.headers.clone(),
         Path(created.id.clone()),
@@ -501,19 +500,23 @@ async fn changed_track_handoff_progress_creates_session_and_completes() -> anyho
         playbacks::validate_handoff_queue(&db, fixture.user_db_id, &created.id, 2)?
     };
     let registered = remote_registry::register(
-        fixture.user_db_id,
-        fixture.user_public_id,
+        fixture.user_public_id.clone(),
         Some("Target".to_string()),
         "target-session".to_string(),
-        Arc::new(Notify::new()),
+        tokio::sync::watch::channel(None).0,
     )
     .await
     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let target_id = registered.connection_id;
-    let (handoff_token, completion_rx) =
-        handoffs::begin(None, target_id, fixture.user_db_id, created.id.clone(), 2)
-            .await
-            .map_err(|error| anyhow::anyhow!(error))?;
+    let (handoff_token, completion_rx) = handoffs::begin(
+        None,
+        target_id,
+        fixture.user_public_id.clone(),
+        created.id.clone(),
+        2,
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!(error))?;
 
     let Json(progressed) = report_progress(
         fixture.headers,
@@ -557,19 +560,23 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
     .await
     .map_err(|error| anyhow::anyhow!("{error:?}"))?;
     let registered = remote_registry::register(
-        fixture.user_db_id,
-        fixture.user_public_id,
+        fixture.user_public_id.clone(),
         Some("Target".to_string()),
         "target-session".to_string(),
-        Arc::new(Notify::new()),
+        tokio::sync::watch::channel(None).0,
     )
     .await
     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let target_id = registered.connection_id;
-    let (handoff_token, completion_rx) =
-        handoffs::begin(None, target_id, fixture.user_db_id, created.id.clone(), 1)
-            .await
-            .map_err(anyhow::Error::msg)?;
+    let (handoff_token, completion_rx) = handoffs::begin(
+        None,
+        target_id,
+        fixture.user_public_id.clone(),
+        created.id.clone(),
+        1,
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
 
     let committed = {
         let current_ms = now_ms().map_err(|error| anyhow::anyhow!("{error:?}"))?;
@@ -580,7 +587,7 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
             .expect("created track should remain present");
         let claim = handoffs::claim_progress(
             &handoff_token,
-            fixture.user_db_id,
+            &fixture.user_public_id,
             "target-session",
             &created.id,
             1,
@@ -605,7 +612,7 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
             },
         )?;
         claim.commit(handoffs::AppliedProgress {
-            user_db_id: fixture.user_db_id,
+            user_public_id: fixture.user_public_id.clone(),
             playback_db_id,
             playback_public_id: created.id.clone(),
             queue_revision: 1,
@@ -650,7 +657,7 @@ async fn queue_replacement_cannot_overtake_committed_handoff_finish() -> anyhow:
     assert_eq!(replaced.revision, 2);
     let target_scope = sessions::PlaybackScopeKey {
         plugin_id: NATIVE_PLAYBACK_PLUGIN_ID,
-        user_db_id: fixture.user_db_id,
+        user_public_id: &fixture.user_public_id,
         session_key: "target-session",
     };
     assert_eq!(
@@ -681,11 +688,10 @@ async fn stale_revision_is_rejected_before_handoff_is_queued() -> anyhow::Result
     .await
     .map_err(|error| anyhow::anyhow!("{error:?}"))?;
     let registered = remote_registry::register(
-        fixture.user_db_id,
-        fixture.user_public_id,
+        fixture.user_public_id.clone(),
         Some("Target".to_string()),
         "target-session".to_string(),
-        Arc::new(Notify::new()),
+        tokio::sync::watch::channel(None).0,
     )
     .await
     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
