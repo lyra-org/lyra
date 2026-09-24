@@ -457,10 +457,7 @@ mod tests {
             roles::Role,
             users::User,
         },
-        services::auth::{
-            api_keys,
-            sessions,
-        },
+        services::auth::api_keys,
         testing::runtime_test_lock,
     };
     use axum::{
@@ -531,7 +528,7 @@ mod tests {
 
     async fn headers_with(permissions: Vec<Permission>) -> anyhow::Result<HeaderMap> {
         let user_db_id = user_with(permissions).await?;
-        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
         Ok(bearer_headers(&session.token))
     }
 
@@ -1023,7 +1020,8 @@ mod tests {
         let _guard = runtime_test_lock().await;
         initialize_test_state(&[]).await?;
         let user_db_id = user_with(vec![Permission::ManageServer]).await?;
-        let api_key = api_keys::create_api_key(user_db_id, "automation").await?;
+        let principal = crate::testing::user_principal(user_db_id).await?;
+        let api_key = api_keys::create_api_key(&principal, "automation").await?;
         let headers = bearer_headers(&api_key.key);
 
         body(get_server_settings(headers.clone()).await);

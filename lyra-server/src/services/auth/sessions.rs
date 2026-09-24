@@ -23,6 +23,8 @@ use crate::{
         Session,
     },
     services::auth::{
+        AuthError,
+        Principal,
         hash_secret,
         random_hex_secret,
     },
@@ -156,10 +158,12 @@ fn forget_last_seen(session_id: DbId) {
     last_seen_cache(&generation).remove(&session_id);
 }
 
+/// Creates a session for the principal's user, verifying the user under the write lock that
+/// inserts the session.
 pub(crate) async fn create_session_for_user(
-    user_db_id: DbId,
+    principal: &Principal,
     metadata: SessionMetadata,
-) -> SessionServiceResult<CreatedSession> {
+) -> Result<CreatedSession, AuthError> {
     let metadata = metadata.normalized()?;
     let token = random_hex_secret::<SESSION_TOKEN_BYTES>();
     let token_hash = hash_secret(&token);
@@ -180,7 +184,10 @@ pub(crate) async fn create_session_for_user(
         user_agent: metadata.user_agent,
         client_name: metadata.client_name,
     };
-    let session_id = db::users::login(STATE.db.write().await.deref_mut(), user_db_id, &session)?;
+    let mut db_write = STATE.db.write().await;
+    let user_db_id = principal.require(&db_write)?;
+    let session_id = db::users::login(db_write.deref_mut(), user_db_id, &session)?;
+    drop(db_write);
     // Seed the cache so the next request inside the debounce window is a no-op.
     record_persisted_last_seen(session_id, now);
 
@@ -310,10 +317,10 @@ mod tests {
             let mut db = STATE.db.write().await;
             db::users::create(&mut db, &db::test_db::test_user("session-data")?)?
         };
-        let token = create_session_for_user(user_id, SessionMetadata::default())
+        let token = crate::testing::create_session(user_id, SessionMetadata::default())
             .await?
             .token;
-        let other_token = create_session_for_user(user_id, SessionMetadata::default())
+        let other_token = crate::testing::create_session(user_id, SessionMetadata::default())
             .await?
             .token;
         let data = serde_json::json!({"device_id": "phone"});

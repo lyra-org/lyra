@@ -140,11 +140,14 @@ fn add_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        if user_id != principal.user_db_id {
+        let mut db = db.write().await;
+        if principal
+            .require(&db)
+            .map_err(crate::plugins::runtime_error)?
+            != user_id
+        {
             return Ok(luau::Value::Boolean(false));
         }
-
-        let mut db = db.write().await;
         let Some(public_target_id) =
             db::lookup::find_id_by_db_id(&*db, target_id).map_err(crate::plugins::runtime_error)?
         else {
@@ -174,12 +177,15 @@ fn remove_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        if user_id != principal.user_db_id {
+        let mut db = db.write().await;
+        if principal
+            .require(&db)
+            .map_err(crate::plugins::runtime_error)?
+            != user_id
+        {
             return Ok(luau::Value::Boolean(false));
         }
-
-        let mut db = db.write().await;
-        let outcome = favorite_service::remove_by_db_id(&mut db, principal.user_db_id, target_id)
+        let outcome = favorite_service::remove_by_db_id(&mut db, user_id, target_id)
             .map_err(crate::plugins::runtime_error)?;
         Ok(luau::Value::Boolean(matches!(
             outcome,
@@ -203,11 +209,14 @@ fn has_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        if user_id != principal.user_db_id {
+        let db = db.read().await;
+        if principal
+            .require(&db)
+            .map_err(crate::plugins::runtime_error)?
+            != user_id
+        {
             return Ok(luau::Value::Boolean(false));
         }
-
-        let db = db.read().await;
         let Some(public_target_id) =
             db::lookup::find_id_by_db_id(&*db, target_id).map_err(crate::plugins::runtime_error)?
         else {
@@ -236,7 +245,11 @@ fn has_many_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let result = if user_id == principal.user_db_id {
+        let result = if principal
+            .require(&db)
+            .map_err(crate::plugins::runtime_error)?
+            == user_id
+        {
             let public_ids_by_db_id = db::lookup::find_ids_by_db_ids(&*db, &target_ids)
                 .map_err(crate::plugins::runtime_error)?;
             let public_ids = target_ids
@@ -278,12 +291,15 @@ fn list_ids_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        if user_id != principal.user_db_id {
+        let db = db.read().await;
+        if principal
+            .require(&db)
+            .map_err(crate::plugins::runtime_error)?
+            != user_id
+        {
             return Ok(luau::Value::TableData(db_id_array(Vec::new())));
         }
-
-        let db = db.read().await;
-        let ids = favorite_service::list_ids(&db, principal.user_db_id, kind)
+        let ids = favorite_service::list_ids(&db, user_id, kind)
             .map_err(crate::plugins::runtime_error)?;
         let mut visible_ids = Vec::new();
         for id in ids {

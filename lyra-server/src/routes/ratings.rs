@@ -309,7 +309,6 @@ mod tests {
                 insert_track,
             },
         },
-        services::auth::sessions,
         testing::{
             LibraryFixtureConfig,
             initialize_runtime,
@@ -443,7 +442,7 @@ mod tests {
                 db::lookup::find_id_by_db_id(&db, track)?.unwrap(),
             )
         };
-        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
         let authorization = format!("Bearer {}", session.token);
         let routes = rating_routes();
 

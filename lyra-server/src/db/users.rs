@@ -185,6 +185,10 @@ pub(crate) fn create(db: &mut DbAny, user: &User) -> anyhow::Result<DbId> {
 
 pub(crate) fn login(db: &mut DbAny, user_db_id: DbId, session: &Session) -> anyhow::Result<DbId> {
     db.transaction_mut(|t| -> anyhow::Result<DbId> {
+        anyhow::ensure!(
+            get_by_id(t, user_db_id)?.is_some(),
+            "session owner {user_db_id:?} is not a user"
+        );
         let session_id = t
             .exec_mut(QueryBuilder::insert().element(session).query())?
             .ids()[0];
@@ -428,6 +432,22 @@ mod tests {
         assert!(find_session_by_id(&db, user_db_id)?.is_none());
         assert!(find_session_by_id(&db, impostor_db_id)?.is_none());
         assert!(find_session_by_id(&db, DbId(999_999))?.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn login_rejects_owner_that_is_not_a_user() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = create(&mut db, &test_user("alice")?)?;
+        let track_db_id = crate::db::test_db::insert_track(&mut db, "song")?;
+
+        assert!(login(&mut db, track_db_id, &test_session("token-hash-track")).is_err());
+        assert!(find_by_session_token_hash(&db, "token-hash-track")?.is_none());
+
+        delete_user(&mut db, user_db_id)?;
+        assert!(login(&mut db, user_db_id, &test_session("token-hash-gone")).is_err());
+        assert!(find_by_session_token_hash(&db, "token-hash-gone")?.is_none());
 
         Ok(())
     }

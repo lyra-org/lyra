@@ -710,12 +710,9 @@ mod tests {
             let user_db_id = crate::db::users::create(&mut db, &user)?;
             (user_db_id, user_public_id)
         };
-        let token = crate::services::auth::sessions::create_session_for_user(
-            user_db_id,
-            Default::default(),
-        )
-        .await?
-        .token;
+        let token = crate::testing::create_session(user_db_id, Default::default())
+            .await?
+            .token;
 
         assert!(matches!(
             check_auth(&Some(token.clone()), &user_public_id).await,

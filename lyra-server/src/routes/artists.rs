@@ -959,7 +959,6 @@ mod tests {
             insert_track,
             new_test_db,
         },
-        services::auth::sessions,
         testing::{
             LibraryFixtureConfig,
             initialize_runtime,
@@ -1029,7 +1028,7 @@ mod tests {
             user_db_id
         };
 
-        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
@@ -1656,7 +1655,7 @@ mod tests {
                 .id;
             (user_db_id, artist_public_id)
         };
-        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
         let authorization = format!("Bearer {}", session.token);
         let routes = artist_routes();
 

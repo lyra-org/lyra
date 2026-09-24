@@ -11,8 +11,10 @@ use crate::{
     STATE,
     db,
     services::auth::{
+        Principal,
         hash_secret,
         random_hex_secret,
+        resolve_principal,
     },
 };
 
@@ -106,7 +108,7 @@ pub(crate) struct ApiKeyInfo {
 pub(crate) struct ResolvedApiKey {
     pub(crate) api_key_id: DbId,
     pub(crate) name: String,
-    pub(crate) user_db_id: DbId,
+    pub(crate) principal: Principal,
 }
 
 fn to_api_key_info(api_key: db::api_keys::ApiKey) -> ApiKeyInfo {
@@ -122,7 +124,10 @@ fn to_api_key_info(api_key: db::api_keys::ApiKey) -> ApiKeyInfo {
     }
 }
 
-pub(crate) async fn create_api_key(user_db_id: DbId, name: &str) -> ApiKeyResult<CreatedApiKey> {
+pub(crate) async fn create_api_key(
+    principal: &Principal,
+    name: &str,
+) -> ApiKeyResult<CreatedApiKey> {
     let name = name.trim();
     if name.is_empty() {
         return Err(ApiKeyServiceError::BadRequest(
@@ -140,6 +145,7 @@ pub(crate) async fn create_api_key(user_db_id: DbId, name: &str) -> ApiKeyResult
     let created_at = db::users::now_secs();
 
     let mut db_write = STATE.db.write().await;
+    let user_db_id = principal.require(&db_write).map_err(anyhow::Error::from)?;
     if db::api_keys::count_for_user(&db_write, user_db_id)? >= MAX_API_KEYS_PER_USER {
         return Err(ApiKeyServiceError::BadRequest(format!(
             "api key limit reached ({MAX_API_KEYS_PER_USER} per user); revoke an existing key first"
@@ -159,16 +165,23 @@ pub(crate) async fn create_api_key(user_db_id: DbId, name: &str) -> ApiKeyResult
     })
 }
 
-pub(crate) async fn list_api_keys_for_user(user_db_id: DbId) -> anyhow::Result<Vec<ApiKeyInfo>> {
+pub(crate) async fn list_api_keys_for_user(
+    principal: &Principal,
+) -> anyhow::Result<Vec<ApiKeyInfo>> {
     let db_read = STATE.db.read().await;
+    let user_db_id = principal.require(&db_read)?;
     Ok(db::api_keys::list_for_user(&db_read, user_db_id)?
         .into_iter()
         .map(to_api_key_info)
         .collect())
 }
 
-pub(crate) async fn revoke_api_key_for_user(user_db_id: DbId, id: &str) -> anyhow::Result<bool> {
+pub(crate) async fn revoke_api_key_for_user(
+    principal: &Principal,
+    id: &str,
+) -> anyhow::Result<bool> {
     let mut db_write = STATE.db.write().await;
+    let user_db_id = principal.require(&db_write)?;
     let Some(api_key) = db::api_keys::get_by_public_id(&db_write, id)? else {
         return Ok(false);
     };
@@ -186,6 +199,8 @@ pub(crate) async fn revoke_api_key_for_user(user_db_id: DbId, id: &str) -> anyho
     Ok(deleted)
 }
 
+/// Resolves the key, its owner and the owner's principal under one guard, so a key can never
+/// authenticate as whoever holds its owner's `DbId` after that owner is deleted.
 pub(crate) async fn resolve_api_key(key: &str) -> anyhow::Result<Option<ResolvedApiKey>> {
     let key = key.trim();
     if key.is_empty() {
@@ -203,6 +218,10 @@ pub(crate) async fn resolve_api_key(key: &str) -> anyhow::Result<Option<Resolved
     let Some(user_db_id) = db::api_keys::get_owner_id(&db_read, api_key_id)? else {
         return Ok(None);
     };
+    let Some(user) = db::users::get_by_id(&db_read, user_db_id)? else {
+        return Ok(None);
+    };
+    let principal = resolve_principal(&db_read, user_db_id, user.id, user.username);
     let name = api_key.name;
     drop(db_read);
 
@@ -238,7 +257,7 @@ pub(crate) async fn resolve_api_key(key: &str) -> anyhow::Result<Option<Resolved
     Ok(Some(ResolvedApiKey {
         api_key_id,
         name,
-        user_db_id,
+        principal,
     }))
 }
 
@@ -256,6 +275,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn api_key_management_rejects_recycled_user_db_id() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        initialize_api_key_test_runtime().await?;
+
+        let alice_db_id = {
+            let mut db = STATE.db.write().await;
+            db::users::create(&mut db, &db::test_db::test_user("alice")?)?
+        };
+        let stale_alice = crate::testing::user_principal(alice_db_id).await?;
+        {
+            let mut db = STATE.db.write().await;
+            db::test_db::recycle_user(&mut db, alice_db_id, "bob")?;
+        }
+        let bob = crate::testing::user_principal(alice_db_id).await?;
+        let bob_key = create_api_key(&bob, "bob laptop").await?;
+
+        assert!(
+            create_api_key(&stale_alice, "stale").await.is_err(),
+            "a deleted user's principal must not create keys for the DbId's next owner"
+        );
+        assert!(list_api_keys_for_user(&stale_alice).await.is_err());
+        assert!(
+            revoke_api_key_for_user(&stale_alice, &bob_key.id)
+                .await
+                .is_err()
+        );
+
+        let bob_keys = list_api_keys_for_user(&bob).await?;
+        assert_eq!(
+            bob_keys
+                .iter()
+                .map(|key| key.id.as_str())
+                .collect::<Vec<_>>(),
+            [bob_key.id.as_str()]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn create_api_key_rejects_empty_name() -> anyhow::Result<()> {
         let _guard = crate::testing::runtime_test_lock().await;
         initialize_api_key_test_runtime().await?;
@@ -264,8 +323,9 @@ mod tests {
             let mut db = STATE.db.write().await;
             db::users::create(&mut db, &db::test_db::test_user("alice")?)?
         };
+        let principal = crate::testing::user_principal(user_db_id).await?;
 
-        let err = create_api_key(user_db_id, "   ")
+        let err = create_api_key(&principal, "   ")
             .await
             .expect_err("empty name should be rejected");
         assert!(
@@ -285,9 +345,10 @@ mod tests {
             let mut db = STATE.db.write().await;
             db::users::create(&mut db, &db::test_db::test_user("alice")?)?
         };
+        let principal = crate::testing::user_principal(user_db_id).await?;
 
         let long_name: String = "x".repeat(MAX_API_KEY_NAME_LEN + 1);
-        let err = create_api_key(user_db_id, &long_name)
+        let err = create_api_key(&principal, &long_name)
             .await
             .expect_err("overlong name should be rejected");
         assert!(
@@ -296,7 +357,7 @@ mod tests {
         );
 
         let boundary: String = "y".repeat(MAX_API_KEY_NAME_LEN);
-        create_api_key(user_db_id, &boundary)
+        create_api_key(&principal, &boundary)
             .await
             .expect("boundary-length name should succeed");
 
@@ -312,12 +373,13 @@ mod tests {
             let mut db = STATE.db.write().await;
             db::users::create(&mut db, &db::test_db::test_user("alice")?)?
         };
+        let principal = crate::testing::user_principal(user_db_id).await?;
 
         for i in 0..MAX_API_KEYS_PER_USER {
-            create_api_key(user_db_id, &format!("key-{i}")).await?;
+            create_api_key(&principal, &format!("key-{i}")).await?;
         }
 
-        let err = create_api_key(user_db_id, "one-too-many")
+        let err = create_api_key(&principal, "one-too-many")
             .await
             .expect_err("per-user cap should be enforced");
         assert!(
@@ -337,19 +399,20 @@ mod tests {
             let mut db = STATE.db.write().await;
             db::users::create(&mut db, &db::test_db::test_user("alice")?)?
         };
-        let created = create_api_key(user_db_id, "laptop").await?;
+        let principal = crate::testing::user_principal(user_db_id).await?;
+        let created = create_api_key(&principal, "laptop").await?;
 
         assert_eq!(
-            list_api_keys_for_user(user_db_id).await?[0].last_used_at,
+            list_api_keys_for_user(&principal).await?[0].last_used_at,
             None
         );
 
         let resolved = resolve_api_key(&created.key)
             .await?
             .ok_or_else(|| anyhow::anyhow!("api key should resolve"))?;
-        assert_eq!(resolved.user_db_id, user_db_id);
+        assert_eq!(resolved.principal.user_db_id, user_db_id);
 
-        let listed = list_api_keys_for_user(user_db_id).await?;
+        let listed = list_api_keys_for_user(&principal).await?;
         assert!(listed[0].last_used_at.is_some());
 
         Ok(())
@@ -364,9 +427,10 @@ mod tests {
             let mut db = STATE.db.write().await;
             db::users::create(&mut db, &db::test_db::test_user("alice")?)?
         };
-        let created = create_api_key(user_db_id, "laptop").await?;
+        let principal = crate::testing::user_principal(user_db_id).await?;
+        let created = create_api_key(&principal, "laptop").await?;
 
-        assert!(revoke_api_key_for_user(user_db_id, &created.id).await?);
+        assert!(revoke_api_key_for_user(&principal, &created.id).await?);
 
         let resolved = resolve_api_key(&created.key).await?;
         assert!(
@@ -386,12 +450,13 @@ mod tests {
             let mut db = STATE.db.write().await;
             db::users::create(&mut db, &db::test_db::test_user("alice")?)?
         };
-        let created = create_api_key(user_db_id, "laptop").await?;
+        let principal = crate::testing::user_principal(user_db_id).await?;
+        let created = create_api_key(&principal, "laptop").await?;
 
         resolve_api_key(&created.key)
             .await?
             .ok_or_else(|| anyhow::anyhow!("api key should resolve"))?;
-        let first_bump = list_api_keys_for_user(user_db_id).await?[0]
+        let first_bump = list_api_keys_for_user(&principal).await?[0]
             .last_used_at
             .expect("first resolve should persist last_used_at");
 
@@ -410,7 +475,7 @@ mod tests {
             .await?
             .ok_or_else(|| anyhow::anyhow!("api key should resolve"))?;
 
-        let after_second = list_api_keys_for_user(user_db_id).await?[0]
+        let after_second = list_api_keys_for_user(&principal).await?[0]
             .last_used_at
             .expect("last_used_at remains set after second resolve");
         assert_eq!(

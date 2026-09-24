@@ -244,11 +244,10 @@ fn resolve_auth_callback(
             Ok(None) | Err(AuthError::SessionExpired) => return Ok(luau::Value::Nil),
             Err(err) => return Err(crate::plugins::runtime_error(err)),
         };
-        {
-            let db = crate::STATE.db.read().await;
-            if !resolved.principal.revalidate(&db) {
-                return Ok(luau::Value::Nil);
-            }
+        match resolved.principal.require(&*crate::STATE.db.read().await) {
+            Ok(_) => {}
+            Err(AuthError::InvalidBearerCredential) => return Ok(luau::Value::Nil),
+            Err(err) => return Err(crate::plugins::runtime_error(err)),
         }
         if let Some(dispatch_auth) = &dispatch_auth {
             dispatch_auth.record(resolved.principal.clone());

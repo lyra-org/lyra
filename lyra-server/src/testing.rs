@@ -114,6 +114,29 @@ pub(crate) fn init_test_state_with_file_settings(
     })
 }
 
+/// Principal for an existing user, built the way request auth builds one.
+#[cfg(test)]
+pub(crate) async fn user_principal(user_db_id: DbId) -> anyhow::Result<services::auth::Principal> {
+    let db = STATE.db.read().await;
+    let user = crate::db::users::get_by_id(&db, user_db_id)?
+        .ok_or_else(|| anyhow::anyhow!("user {user_db_id:?} does not exist"))?;
+    Ok(services::auth::resolve_principal(
+        &db,
+        user_db_id,
+        user.id,
+        user.username,
+    ))
+}
+
+#[cfg(test)]
+pub(crate) async fn create_session(
+    user_db_id: DbId,
+    metadata: services::auth::sessions::SessionMetadata,
+) -> anyhow::Result<services::auth::sessions::CreatedSession> {
+    let principal = user_principal(user_db_id).await?;
+    Ok(services::auth::sessions::create_session_for_user(&principal, metadata).await?)
+}
+
 /// Publishes `config` in place of the current one, keeping the current
 /// provenance and file layer. For tests that poke typed config fields;
 /// the settings API tests resolve real values instead.

@@ -114,6 +114,26 @@ pub(crate) fn insert_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId
     super::users::create(db, &test_user(username)?)
 }
 
+/// Deletes a user the way the users route does and creates `replacement`, asserting agdb hands
+/// the replacement the deleted user's `DbId`.
+pub(crate) fn recycle_user(
+    db: &mut DbAny,
+    user_db_id: DbId,
+    replacement: &str,
+) -> anyhow::Result<DbId> {
+    db.transaction_mut(|t| -> anyhow::Result<()> {
+        super::api_keys::delete_all_for_user(t, user_db_id)?;
+        super::users::delete_user(t, user_db_id)?;
+        Ok(())
+    })?;
+    let replacement_db_id = insert_user(db, replacement)?;
+    anyhow::ensure!(
+        replacement_db_id == user_db_id,
+        "expected agdb to reuse DbId {user_db_id:?}, got {replacement_db_id:?}"
+    );
+    Ok(replacement_db_id)
+}
+
 pub(crate) fn insert_release(db: &mut DbAny, title: &str) -> anyhow::Result<DbId> {
     let release = super::releases::Release {
         db_id: None,

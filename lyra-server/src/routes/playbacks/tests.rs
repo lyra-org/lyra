@@ -114,9 +114,7 @@ async fn setup_admin_with_tracks() -> anyhow::Result<RouteFixture> {
             resolve_id(&*db, second_track_db_id)?,
         )
     };
-    let session =
-        crate::services::auth::sessions::create_session_for_user(user_db_id, Default::default())
-            .await?;
+    let session = crate::testing::create_session(user_db_id, Default::default()).await?;
     let mut headers = HeaderMap::new();
     headers.insert(AUTHORIZATION, format!("Bearer {}", session.token).parse()?);
     Ok(RouteFixture {
@@ -232,7 +230,7 @@ async fn queue_revision_conflict_body_is_machine_readable() {
 async fn response_keeps_initiating_and_controlling_client_names_distinct() -> anyhow::Result<()> {
     let _guard = crate::testing::runtime_test_lock().await;
     let mut fixture = setup_admin_with_tracks().await?;
-    let session = crate::services::auth::sessions::create_session_for_user(
+    let session = crate::testing::create_session(
         fixture.user_db_id,
         crate::services::auth::sessions::SessionMetadata {
             client_name: Some("Initiating Client".to_string()),
@@ -843,9 +841,7 @@ async fn reported_playback_shares_collection_and_rejects_queue_operations() -> a
         db::roles::ensure_user_has_role(&mut db, user_id, db::roles::BUILTIN_ADMIN_ROLE)?;
         user_id
     };
-    let other_session =
-        crate::services::auth::sessions::create_session_for_user(other_user_id, Default::default())
-            .await?;
+    let other_session = crate::testing::create_session(other_user_id, Default::default()).await?;
     let mut other_headers = HeaderMap::new();
     other_headers.insert(
         AUTHORIZATION,

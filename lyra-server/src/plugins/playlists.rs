@@ -302,6 +302,9 @@ fn list_callback(frame: luau::AsyncCallFrame<'_>) -> luau::runtime::Result<luau:
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
+        principal
+            .require(&db)
+            .map_err(crate::plugins::runtime_error)?;
         let playlists = playlist_service::list(&db)
             .map_err(crate::plugins::runtime_error)?
             .into_iter()
@@ -333,6 +336,9 @@ fn get_by_id_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
+        principal
+            .require(&db)
+            .map_err(crate::plugins::runtime_error)?;
         let query_id = id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
@@ -368,10 +374,14 @@ fn get_by_user_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        if owner_db_id != principal.user_db_id {
+        let db = db.read().await;
+        if principal
+            .require(&db)
+            .map_err(crate::plugins::runtime_error)?
+            != owner_db_id
+        {
             return harmony_luau::serializable_to_luau_owned(Vec::<PlaylistInfo>::new());
         }
-        let db = db.read().await;
         let playlists = playlist_service::get_by_user(&db, owner_db_id)
             .map_err(crate::plugins::runtime_error)?
             .into_iter()
@@ -396,6 +406,9 @@ fn get_owner_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
+        principal
+            .require(&db)
+            .map_err(crate::plugins::runtime_error)?;
         let Some(playlist_id) = playlist_id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
@@ -433,6 +446,9 @@ fn get_tracks_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
+        principal
+            .require(&db)
+            .map_err(crate::plugins::runtime_error)?;
         let playlist_id = playlist_id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
@@ -461,6 +477,9 @@ fn get_tracks_many_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
+        principal
+            .require(&db)
+            .map_err(crate::plugins::runtime_error)?;
         let result = playlist_service::get_tracks_many(&db, &playlist_ids)
             .map_err(crate::plugins::runtime_error)?;
         let mut table = luau::OwnedTable::with_entry_capacity(0, 0, playlist_ids.len());
@@ -500,11 +519,15 @@ fn create_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        if DbId(request.user_id) != principal.user_db_id {
+        let mut db = db.write().await;
+        if principal
+            .require(&db)
+            .map_err(crate::plugins::runtime_error)?
+            != DbId(request.user_id)
+        {
             return Err(crate::plugins::runtime_error("user not found"));
         }
         let request: playlist_service::CreatePlaylistRequest = request.into();
-        let mut db = db.write().await;
         let playlist_id =
             playlist_service::create(&mut db, &request).map_err(crate::plugins::runtime_error)?;
         Ok(luau::Value::from(playlist_id.0))
@@ -755,6 +778,9 @@ fn playlist_owned_by_principal(
     principal: &Principal,
     playlist_db_id: DbId,
 ) -> luau::runtime::Result<bool> {
+    let owner_db_id = principal
+        .require(db)
+        .map_err(crate::plugins::runtime_error)?;
     if playlist_service::get(db, QueryId::Id(playlist_db_id))
         .map_err(crate::plugins::runtime_error)?
         .is_none()
@@ -763,7 +789,7 @@ fn playlist_owned_by_principal(
     }
     Ok(playlist_service::get_owner(db, QueryId::Id(playlist_db_id))
         .map_err(crate::plugins::runtime_error)?
-        == Some(principal.user_db_id))
+        == Some(owner_db_id))
 }
 
 fn playlist_link_to_info(

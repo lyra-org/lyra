@@ -1690,3 +1690,205 @@ fn plugin_executor_reports_playback_acceptance_rejection_and_internal_failure() 
     assert!(format!("{error:#}").contains("updated_at_ms"));
     Ok(())
 }
+
+/// Deletes a user and creates another that reuses its `DbId`, returning the deleted user's
+/// principal alongside the new user's id.
+fn recycled_user_principal(
+    db: &mut agdb::DbAny,
+    accessible_library_ids: std::collections::HashSet<String>,
+) -> Result<(crate::services::auth::Principal, agdb::DbId)> {
+    let stale = crate::plugins::db::test_db::test_user("deleted-user")?;
+    let stale_public_id = stale.id.clone();
+    let stale_db_id = crate::plugins::db::users::create(db, &stale)?;
+    crate::plugins::db::users::delete_user(db, stale_db_id)?;
+    let current_db_id = crate::plugins::db::test_db::insert_user(db, "current-user")?;
+    assert_eq!(current_db_id, stale_db_id, "agdb reuses freed ids");
+    Ok((
+        crate::services::auth::Principal {
+            user_db_id: stale_db_id,
+            user_public_id: stale_public_id,
+            username: "deleted-user".to_string(),
+            permissions: Vec::new(),
+            role_name: None,
+            accessible_library_ids,
+        },
+        current_db_id,
+    ))
+}
+
+#[test]
+fn stale_principal_cannot_use_favorites_of_a_user_with_its_recycled_db_id() -> Result<()> {
+    let mut db = crate::plugins::db::test_db::new_test_db()?;
+    let library_db_id =
+        crate::plugins::db::test_db::insert_library(&mut db, "Stale Favorites", "/tmp/stale-fav")?;
+    let library_public_id = crate::plugins::db::lookup::find_id_by_db_id(&db, library_db_id)?
+        .context("inserted library has public id")?;
+    let track_db_id = crate::plugins::db::test_db::insert_track(&mut db, "Favored Track")?;
+    let other_track_db_id = crate::plugins::db::test_db::insert_track(&mut db, "Other Track")?;
+    crate::plugins::db::test_db::connect(&mut db, library_db_id, track_db_id)?;
+    crate::plugins::db::test_db::connect(&mut db, library_db_id, other_track_db_id)?;
+    let (stale, current_db_id) = recycled_user_principal(
+        &mut db,
+        std::collections::HashSet::from([library_public_id]),
+    )?;
+    crate::plugins::db::favorites::add(
+        &mut db,
+        current_db_id,
+        track_db_id,
+        crate::plugins::db::favorites::FavoriteKind::Track,
+        1,
+    )?;
+    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("demo", &["lyra.favorites"])]),
+        default_server_info(),
+        db.clone(),
+    )?;
+    let mut context = CallContext {
+        origin: plugin_origin("demo", "stale.luau"),
+        ..CallContext::default()
+    };
+    seed_caller_principal(&mut context, stale);
+    let values = runtime.eval_plugin_source_with_call_context(
+        format!(
+            r#"
+                local favorites = require("@lyra/favorites")
+                local user_id = {user_id}
+                local function rejects(f, ...)
+                    return not pcall(f, ...)
+                end
+                return rejects(favorites.has, user_id, {track}),
+                    rejects(favorites.has_many, user_id, {{ {track} }}),
+                    rejects(favorites.list_ids, user_id, "track"),
+                    rejects(favorites.add, user_id, {other}),
+                    rejects(favorites.remove, user_id, {track})
+            "#,
+            user_id = current_db_id.0,
+            track = track_db_id.0,
+            other = other_track_db_id.0,
+        )
+        .into_bytes(),
+        context,
+    )?;
+    assert_eq!(values, vec![luau::Value::Boolean(true); 5]);
+
+    let db = futures::executor::block_on(db.read());
+    assert!(crate::plugins::db::favorites::has(
+        &*db,
+        current_db_id,
+        track_db_id
+    )?);
+    assert!(!crate::plugins::db::favorites::has(
+        &*db,
+        current_db_id,
+        other_track_db_id
+    )?);
+    Ok(())
+}
+
+#[test]
+fn stale_principal_cannot_use_playlists_of_a_user_with_its_recycled_db_id() -> Result<()> {
+    let mut db = crate::plugins::db::test_db::new_test_db()?;
+    let (stale, current_db_id) =
+        recycled_user_principal(&mut db, std::collections::HashSet::new())?;
+    let playlist_db_id = crate::services::playlists::create(
+        &mut db,
+        &crate::services::playlists::CreatePlaylistRequest {
+            user_db_id: current_db_id,
+            name: "Private".to_string(),
+            description: None,
+            is_public: Some(false),
+            created_at: Some(1),
+            updated_at: Some(1),
+        },
+    )?;
+    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("demo", &["lyra.playlists"])]),
+        default_server_info(),
+        db.clone(),
+    )?;
+    let mut context = CallContext {
+        origin: plugin_origin("demo", "stale.luau"),
+        ..CallContext::default()
+    };
+    seed_caller_principal(&mut context, stale);
+    let values = runtime.eval_plugin_source_with_call_context(
+        format!(
+            r#"
+                local playlists = require("@lyra/playlists")
+                local user_id = {user_id}
+                local playlist_id = {playlist_id}
+                local function rejects(f, ...)
+                    return not pcall(f, ...)
+                end
+                return rejects(playlists.get_by_id, playlist_id),
+                    rejects(playlists.get_by_user, user_id),
+                    rejects(playlists.list),
+                    rejects(playlists.update, {{ playlist_id = playlist_id, name = "Taken" }}),
+                    rejects(playlists.delete, playlist_id),
+                    rejects(playlists.create, {{ user_id = user_id, name = "Stale" }})
+            "#,
+            user_id = current_db_id.0,
+            playlist_id = playlist_db_id.0,
+        )
+        .into_bytes(),
+        context,
+    )?;
+    assert_eq!(values, vec![luau::Value::Boolean(true); 6]);
+
+    let db = futures::executor::block_on(db.read());
+    let playlists = crate::services::playlists::get_by_user(&db, current_db_id)?;
+    assert_eq!(playlists.len(), 1);
+    assert_eq!(playlists[0].name, "Private");
+    Ok(())
+}
+
+#[test]
+fn stale_principal_cannot_report_playback_for_a_user_with_its_recycled_db_id() -> Result<()> {
+    let _guard = futures::executor::block_on(crate::testing::runtime_test_lock());
+    crate::testing::init_default_test_state()?;
+    let mut db = crate::plugins::db::test_db::new_test_db()?;
+    let track_db_id = crate::plugins::db::test_db::insert_track(&mut db, "Reported Track")?;
+    let (mut stale, current_db_id) = recycled_user_principal(&mut db, Default::default())?;
+    stale.permissions = vec![crate::plugins::db::Permission::Admin];
+    let db = Arc::new(tokio::sync::RwLock::new(db));
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("reporter", &["lyra.playback_sessions"])]),
+        default_server_info(),
+        db.clone(),
+    )?;
+    let mut context = CallContext {
+        origin: plugin_origin("reporter", "init.luau"),
+        ..CallContext::default()
+    };
+    seed_caller_principal(&mut context, stale);
+    let values = runtime.eval_plugin_source_with_call_context(
+        format!(
+            r#"
+                local sessions = require("@lyra/playback_sessions")
+                local ok, err = pcall(sessions.report_session, {{
+                    user_id = {user_id}, track_id = {track_id}, session_key = "player", state = "playing",
+                }})
+                return ok, string.find(tostring(err), "invalid bearer credential", 1, true) ~= nil
+            "#,
+            user_id = current_db_id.0,
+            track_id = track_db_id.0,
+        )
+        .into_bytes(),
+        context,
+    )?;
+    assert_eq!(
+        values,
+        vec![luau::Value::Boolean(false), luau::Value::Boolean(true)]
+    );
+    let reported = futures::executor::block_on(async {
+        let db = db.read().await;
+        let now = crate::services::playback_sessions::now_ms()?;
+        crate::plugins::db::playbacks::get_reported(&*db, current_db_id, "reporter", "player", now)
+    })?;
+    assert!(reported.is_none());
+    Ok(())
+}

@@ -676,7 +676,6 @@ mod tests {
             insert_track,
             new_test_db,
         },
-        services::auth::sessions,
         testing::{
             LibraryFixtureConfig,
             initialize_runtime,
@@ -708,7 +707,7 @@ mod tests {
     }
 
     async fn create_headers_for_user(user_db_id: DbId) -> anyhow::Result<HeaderMap> {
-        let session = sessions::create_session_for_user(user_db_id, Default::default()).await?;
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
         let mut headers = HeaderMap::new();
         headers.insert(
             AUTHORIZATION,
