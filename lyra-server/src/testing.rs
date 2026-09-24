@@ -609,31 +609,10 @@ fn snapshot_track(db: &DbAny, track_db_id: DbId) -> anyhow::Result<EntitySnapsho
 }
 
 fn snapshot_credits(db: &DbAny, owner_id: DbId) -> anyhow::Result<Vec<CreditSnapshot>> {
-    let credits: Vec<db::Credit> = db
-        .exec(
-            agdb::QueryBuilder::select()
-                .elements::<db::Credit>()
-                .search()
-                .from(owner_id)
-                .where_()
-                .neighbor()
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
-
     let mut snapshots = Vec::new();
-    for credit in credits {
-        let Some(credit_db_id) = credit.db_id.map(DbId::from) else {
-            continue;
-        };
-        let edges = db::graph::direct_edges_from(db, credit_db_id)?;
-        let credit_artist_db_id = match edges.iter().find_map(|e| (e.to.0 > 0).then_some(e.to)) {
-            Some(id) => id,
-            None => continue,
-        };
-        let credit_artist_ids = external_ids_map(db, credit_artist_db_id)?;
-        let artist = db::artists::get_by_id(db, credit_artist_db_id)?
+    for link in db::credits::links_for_owner(db, owner_id)? {
+        let credit_artist_ids = external_ids_map(db, link.artist_id)?;
+        let artist = db::artists::get_by_id(db, link.artist_id)?
             .context("credit artist disappeared during snapshot")?;
         let artist_ext_id = credit_artist_ids
             .first_key_value()
@@ -641,8 +620,8 @@ fn snapshot_credits(db: &DbAny, owner_id: DbId) -> anyhow::Result<Vec<CreditSnap
         snapshots.push(CreditSnapshot {
             artist_id: artist_ext_id,
             artist_name: artist.artist_name,
-            credit_type: credit.credit_type.to_string(),
-            detail: credit.detail,
+            credit_type: link.credit.credit_type.to_string(),
+            detail: link.credit.detail,
         });
     }
     snapshots.sort_by(|a, b| {

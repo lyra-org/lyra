@@ -43,7 +43,6 @@ pub(crate) const ROOT_COLLECTION_ALIASES: &[&str] = &[
     "entries",
     "releases",
     "covers",
-    "credits",
     "tracks",
     "track_sources",
     "cue_sheets",

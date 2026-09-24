@@ -9,13 +9,11 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use agdb::{
-    CountComparison,
     DbAny,
     DbAnyTransactionMut,
     DbElement,
     DbError,
     DbId,
-    DbType,
     DbTypeMarker,
     DbValue,
     QueryBuilder,
@@ -185,15 +183,8 @@ pub(crate) fn get(
     Ok(artists)
 }
 
-// Two paths: Credit intermediaries for owned entities, direct neighbors for root aliases.
 fn get_connected_artists(db: &impl super::DbAccess, from: &QueryId) -> anyhow::Result<Vec<Artist>> {
-    use super::Credit;
-
-    let mut seen = std::collections::HashSet::new();
-    let mut artists = Vec::new();
-
-    // Collect direct Artist neighbors (root alias paths).
-    let direct: Vec<Artist> = db
+    Ok(db
         .exec(
             QueryBuilder::select()
                 .elements::<Artist>()
@@ -204,55 +195,7 @@ fn get_connected_artists(db: &impl super::DbAccess, from: &QueryId) -> anyhow::R
                 .end_where()
                 .query(),
         )?
-        .try_into()?;
-    for entry in direct {
-        if let Some(id) = entry.db_id.clone().map(DbId::from)
-            && seen.insert(id)
-        {
-            artists.push(entry);
-        }
-    }
-
-    // Collect Artist nodes via Credit intermediaries (owner → Credit → Artist).
-    let credits: Vec<Credit> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<Credit>()
-                .search()
-                .from(from.clone())
-                .where_()
-                .neighbor()
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
-
-    for credit in &credits {
-        let Some(credit_db_id) = credit.db_id.clone().map(DbId::from) else {
-            continue;
-        };
-        let artists_batch: Vec<Artist> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<Artist>()
-                    .search()
-                    .from(credit_db_id)
-                    .where_()
-                    .neighbor()
-                    .end_where()
-                    .query(),
-            )?
-            .try_into()?;
-        for entry in artists_batch {
-            if let Some(id) = entry.db_id.clone().map(DbId::from)
-                && seen.insert(id)
-            {
-                artists.push(entry);
-            }
-        }
-    }
-
-    Ok(artists)
+        .try_into()?)
 }
 
 /// Returns all unique artists belonging to a library via its releases.
@@ -282,62 +225,77 @@ pub(crate) fn get_by_library(db: &DbAny, library_id: DbId) -> anyhow::Result<Vec
     Ok(artists)
 }
 
+/// Each owner's credited artists, once each, in credit order.
 pub(crate) fn get_many_by_owner(
     db: &DbAny,
     owner_db_ids: &[DbId],
 ) -> anyhow::Result<HashMap<DbId, Vec<Artist>>> {
-    let unique_owner_db_ids = super::dedup_positive_ids(owner_db_ids);
-
-    let mut related: HashMap<DbId, Vec<Artist>> = unique_owner_db_ids
-        .iter()
-        .copied()
-        .map(|owner_db_id| (owner_db_id, Vec::new()))
-        .collect();
-    if unique_owner_db_ids.is_empty() {
-        return Ok(related);
-    }
-
-    for owner_db_id in &unique_owner_db_ids {
-        let query_id = QueryId::from(*owner_db_id);
-        let mut artists = get_connected_artists(db, &query_id)?;
-        sort_artists_for_owner(db, Some(*owner_db_id), &mut artists)?;
-        related.insert(*owner_db_id, artists);
-    }
-
-    Ok(related)
+    Ok(get_credited_many_by_owner(db, owner_db_ids)?
+        .into_iter()
+        .map(|(owner_db_id, credited)| {
+            let mut seen = std::collections::HashSet::new();
+            let artists = credited
+                .into_iter()
+                .map(|credited| credited.artist)
+                .filter(|artist| {
+                    artist
+                        .db_id
+                        .clone()
+                        .is_some_and(|id| seen.insert(DbId::from(id)))
+                })
+                .collect();
+            (owner_db_id, artists)
+        })
+        .collect())
 }
 
 pub(crate) fn get_credited(
     db: &impl super::DbAccess,
     owner_db_id: DbId,
 ) -> anyhow::Result<Vec<CreditedArtist>> {
-    let mut credited = get_connected_credited_artists(db, owner_db_id)?;
-    sort_credited_artists(&mut credited);
-    Ok(credited
-        .into_iter()
-        .map(|(credited_artist, _)| credited_artist)
-        .collect())
+    Ok(get_credited_many_by_owner(db, &[owner_db_id])?
+        .remove(&owner_db_id)
+        .unwrap_or_default())
 }
 
 pub(crate) fn get_credited_many_by_owner(
-    db: &DbAny,
+    db: &impl super::DbAccess,
     owner_db_ids: &[DbId],
 ) -> anyhow::Result<HashMap<DbId, Vec<CreditedArtist>>> {
-    let unique_owner_db_ids = super::dedup_positive_ids(owner_db_ids);
-    let mut related: HashMap<DbId, Vec<CreditedArtist>> = unique_owner_db_ids
-        .iter()
-        .copied()
-        .map(|owner_db_id| (owner_db_id, Vec::new()))
-        .collect();
-    if unique_owner_db_ids.is_empty() {
-        return Ok(related);
+    let mut links_by_owner = HashMap::new();
+    let mut artist_ids = Vec::new();
+    for owner_db_id in super::dedup_positive_ids(owner_db_ids) {
+        let links = super::credits::links_for_owner(db, owner_db_id)?;
+        artist_ids.extend(links.iter().map(|link| link.artist_id));
+        links_by_owner.insert(owner_db_id, links);
     }
+    let artists_by_id: HashMap<DbId, Artist> =
+        super::graph::bulk_fetch_typed(db, super::dedup_positive_ids(&artist_ids), "Artist")?;
 
-    for owner_db_id in unique_owner_db_ids {
-        related.insert(owner_db_id, get_credited(db, owner_db_id)?);
-    }
-
-    Ok(related)
+    links_by_owner
+        .into_iter()
+        .map(|(owner_db_id, links)| {
+            let mut credited = links
+                .into_iter()
+                .map(|link| {
+                    let artist = artists_by_id.get(&link.artist_id).cloned().ok_or_else(|| {
+                        anyhow!(
+                            "credit {} on owner {} targets non-artist {}",
+                            link.edge_id.0,
+                            owner_db_id.0,
+                            link.artist_id.0
+                        )
+                    })?;
+                    Ok(CreditedArtist {
+                        artist,
+                        credit: link.credit,
+                    })
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            sort_credited_artists(&mut credited);
+            Ok((owner_db_id, credited))
+        })
+        .collect()
 }
 
 fn filter_artists_by_type(artists: Vec<Artist>, artist_type: Option<ArtistType>) -> Vec<Artist> {
@@ -408,229 +366,42 @@ fn resolve_owner_id(db: &impl super::DbAccess, from: &QueryId) -> Option<DbId> {
     }
 }
 
-fn edge_order_value(element: &DbElement) -> Option<u64> {
-    element.values.iter().find_map(|kv| {
-        if matches!(&kv.key, DbValue::String(key) if key == super::credits::EDGE_ORDER_KEY) {
-            match &kv.value {
-                DbValue::U64(value) => Some(*value),
-                DbValue::I64(value) if *value >= 0 => Some(*value as u64),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    })
-}
-
 fn artist_edge_orders(
     db: &impl super::DbAccess,
     owner_db_id: DbId,
 ) -> anyhow::Result<HashMap<DbId, u64>> {
     let mut orders: HashMap<DbId, u64> = HashMap::new();
-    // Owner edges point to Credit nodes.
-    let edge_ids: Vec<DbId> = super::graph::direct_edges_from(db, owner_db_id)?
-        .into_iter()
-        .map(|edge| edge.id)
-        .collect();
-    if edge_ids.is_empty() {
-        return Ok(orders);
-    }
-    let mut credit_orders: Vec<(DbId, u64)> = Vec::new();
-    for edge in db
-        .exec(QueryBuilder::select().ids(edge_ids).query())?
-        .elements
-    {
-        let credit_db_id = edge.to;
-        if credit_db_id.0 == 0 {
-            continue;
-        }
-        let Some(order) = edge_order_value(&edge) else {
-            continue;
-        };
-        credit_orders.push((credit_db_id, order));
-    }
-    // Follow each Credit→Artist edge to map order to artist.
-    for (credit_db_id, order) in credit_orders {
-        let credit_edges = super::graph::direct_edges_from(db, credit_db_id)?;
-        for edge in credit_edges {
-            let Some(artist_db_id) = (edge.to.0 > 0).then_some(edge.to) else {
-                continue;
-            };
-            orders
-                .entry(artist_db_id)
-                .and_modify(|existing: &mut u64| *existing = (*existing).min(order))
-                .or_insert(order);
-        }
+    for link in super::credits::links_for_owner(db, owner_db_id)? {
+        let order = link.credit.artist_order;
+        orders
+            .entry(link.artist_id)
+            .and_modify(|existing| *existing = (*existing).min(order))
+            .or_insert(order);
     }
     Ok(orders)
 }
 
-// Maps Credit node DbId to its owner edge order.
-pub(crate) fn credit_edge_orders_from_owner(
-    db: &impl super::DbAccess,
-    owner_db_id: DbId,
-) -> anyhow::Result<HashMap<DbId, u64>> {
-    let mut orders = HashMap::new();
-    let edge_ids: Vec<DbId> = super::graph::direct_edges_from(db, owner_db_id)?
-        .into_iter()
-        .map(|edge| edge.id)
-        .collect();
-    if edge_ids.is_empty() {
-        return Ok(orders);
-    }
-    for edge in db
-        .exec(QueryBuilder::select().ids(edge_ids).query())?
-        .elements
-    {
-        let target_db_id = edge.to;
-        if target_db_id.0 == 0 {
-            continue;
-        }
-        let Some(order) = edge_order_value(&edge) else {
-            continue;
-        };
-        orders.insert(target_db_id, order);
-    }
-    Ok(orders)
-}
-
-fn get_connected_credited_artists(
-    db: &impl super::DbAccess,
-    owner_db_id: DbId,
-) -> anyhow::Result<Vec<(CreditedArtist, Option<u64>)>> {
-    // BFS up to distance 4 (owner → edge → credit → edge → artist).
-    let search = db.exec(
-        QueryBuilder::search()
-            .from(owner_db_id)
-            .where_()
-            .distance(CountComparison::LessThanOrEqual(4))
-            .and()
-            .not()
-            .ids(owner_db_id)
-            .and()
-            .beyond()
-            .edge()
-            .or()
-            .key("db_element_id")
-            .value("Credit")
-            .end_where()
-            .query(),
-    )?;
-
-    let all_ids: Vec<DbId> = search.elements.iter().map(|e| e.id).collect();
-    if all_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Single bulk fetch for both edges (negative IDs) and nodes (positive IDs).
-    let elements = db
-        .exec(QueryBuilder::select().ids(&all_ids).query())?
-        .elements;
-
-    let mut credits_by_id: HashMap<DbId, Credit> = HashMap::new();
-    let mut artists_by_id: HashMap<DbId, Artist> = HashMap::new();
-    let mut edges: Vec<DbElement> = Vec::new();
-    for element in elements {
-        if element.id.0 < 0 {
-            edges.push(element);
-        } else if super::graph::is_element_type(&element, "Credit") {
-            credits_by_id.insert(element.id, Credit::from_db_element(&element)?);
-        } else if super::graph::is_element_type(&element, "Artist") {
-            artists_by_id.insert(element.id, Artist::from_db_element(&element)?);
-        }
-    }
-
-    if credits_by_id.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Classify edges: owner→credit edges carry order; credit→artist edges link pairs.
-    let mut order_by_credit: HashMap<DbId, Option<u64>> = HashMap::new();
-    let mut credit_artist_links: Vec<(DbId, DbId)> = Vec::new();
-    for edge in &edges {
-        let Some(to) = (edge.to.0 > 0).then_some(edge.to) else {
-            continue;
-        };
-        if edge.from == owner_db_id && credits_by_id.contains_key(&to) {
-            order_by_credit.insert(to, edge_order_value(edge));
-        } else if edge.from.0 != 0 && credits_by_id.contains_key(&edge.from) {
-            let from = edge.from;
-            if artists_by_id.contains_key(&to) {
-                credit_artist_links.push((from, to));
-            }
-        }
-    }
-
-    let mut credited = Vec::new();
-    for (credit_db_id, artist_db_id) in credit_artist_links {
-        let Some(credit) = credits_by_id.get(&credit_db_id) else {
-            continue;
-        };
-        let Some(artist) = artists_by_id.get(&artist_db_id) else {
-            continue;
-        };
-        credited.push((
-            CreditedArtist {
-                artist: artist.clone(),
-                credit: credit.clone(),
-            },
-            order_by_credit.get(&credit_db_id).copied().flatten(),
-        ));
-    }
-
-    Ok(credited)
-}
-
-struct CreditedArtistSortEntry {
-    credited: CreditedArtist,
-    artist: ArtistSortEntry,
-    order: Option<u64>,
-}
-
-fn sort_credited_artists(credited: &mut Vec<(CreditedArtist, Option<u64>)>) {
-    let mut entries: Vec<CreditedArtistSortEntry> = credited
+fn sort_credited_artists(credited: &mut Vec<CreditedArtist>) {
+    let mut entries: Vec<(ArtistSortEntry, CreditedArtist)> = credited
         .drain(..)
-        .map(|(credited, order)| CreditedArtistSortEntry {
-            artist: ArtistSortEntry::new(credited.artist.clone()),
-            credited,
-            order,
-        })
+        .map(|credited| (ArtistSortEntry::new(credited.artist.clone()), credited))
         .collect();
 
-    entries.sort_by(|left, right| match (left.order, right.order) {
-        (Some(left_order), Some(right_order)) if left_order != right_order => {
-            left_order.cmp(&right_order)
-        }
-        (Some(_), None) => Ordering::Less,
-        (None, Some(_)) => Ordering::Greater,
-        _ => {
-            let artist_ord = compare_artists_stably(&left.artist, &right.artist);
-            if artist_ord != Ordering::Equal {
-                artist_ord
-            } else {
-                let credit_type_ord = left
-                    .credited
-                    .credit
+    entries.sort_by(|(left_artist, left), (right_artist, right)| {
+        left.credit
+            .artist_order
+            .cmp(&right.credit.artist_order)
+            .then_with(|| compare_artists_stably(left_artist, right_artist))
+            .then_with(|| {
+                left.credit
                     .credit_type
                     .to_string()
-                    .cmp(&right.credited.credit.credit_type.to_string());
-                if credit_type_ord != Ordering::Equal {
-                    credit_type_ord
-                } else {
-                    left.credited
-                        .credit
-                        .detail
-                        .cmp(&right.credited.credit.detail)
-                }
-            }
-        }
+                    .cmp(&right.credit.credit_type.to_string())
+            })
+            .then_with(|| left.credit.detail.cmp(&right.credit.detail))
     });
 
-    credited.extend(
-        entries
-            .into_iter()
-            .map(|entry| (entry.credited, entry.order)),
-    );
+    credited.extend(entries.into_iter().map(|(_, credited)| credited));
 }
 
 fn compare_artists_stably(a: &ArtistSortEntry, b: &ArtistSortEntry) -> Ordering {
@@ -957,9 +728,6 @@ mod tests {
         let artist_id = insert_artist(&mut db, "Artist One")?;
         link(&mut db, release_id, artist_id)?;
 
-        // Attach tracks directly to the release — these are non-credit distance-2
-        // neighbors. beyond() prevents expansion past them, but they still appear
-        // in the search skeleton; is_element_type filters them out in post-processing.
         let track1 = insert_track(&mut db, "Track 1")?;
         let track2 = insert_track(&mut db, "Track 2")?;
         connect(&mut db, release_id, track1)?;
@@ -985,6 +753,42 @@ mod tests {
             credited[0].credit.credit_type,
             super::super::CreditType::Artist
         );
+        Ok(())
+    }
+
+    #[test]
+    fn credited_artists_follow_credit_order() -> anyhow::Result<()> {
+        use crate::db::{
+            CreditType,
+            test_db::connect_credit,
+        };
+
+        let mut db = new_test_db()?;
+        let release_id = insert_release(&mut db, "Album")?;
+        let zed = insert_artist(&mut db, "Zed")?;
+        let abe = insert_artist(&mut db, "Abe")?;
+        connect_credit(&mut db, release_id, zed, CreditType::Artist, None, 0)?;
+        connect_credit(&mut db, release_id, abe, CreditType::Artist, None, 1)?;
+        connect_credit(&mut db, release_id, zed, CreditType::Composer, None, 2)?;
+
+        let credited = get_credited(&db, release_id)?;
+        let credited: Vec<(&str, CreditType)> = credited
+            .iter()
+            .map(|c| (c.artist.artist_name.as_str(), c.credit.credit_type))
+            .collect();
+        assert_eq!(
+            credited,
+            [
+                ("Zed", CreditType::Artist),
+                ("Abe", CreditType::Artist),
+                ("Zed", CreditType::Composer),
+            ]
+        );
+        let names: Vec<String> = get(&db, release_id)?
+            .into_iter()
+            .map(|artist| artist.artist_name)
+            .collect();
+        assert_eq!(names, ["Zed", "Abe"]);
         Ok(())
     }
 
@@ -1203,9 +1007,8 @@ mod benches {
 
     #[bench]
     fn get_credited_realistic_release_with_tracks(b: &mut Bencher) {
-        // Release with 3 credits + 15 attached tracks (non-credit neighbors at
-        // distance 2). Exercises the inclusion filter's job of excluding
-        // non-credit nodes from the search skeleton.
+        // Release with 3 credits + 15 attached tracks, whose plain edges the
+        // credit edge filter must skip.
         let mut db = new_test_db().unwrap();
         let release_id = insert_release(&mut db, "Album").unwrap();
         for i in 0..3 {

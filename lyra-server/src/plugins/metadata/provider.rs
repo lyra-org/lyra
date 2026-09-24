@@ -937,69 +937,25 @@ fn link_credit_callback(
             return Ok(());
         }
 
-        let existing_credits: Vec<server_db::Credit> = db_write
-            .exec(
-                QueryBuilder::select()
-                    .elements::<server_db::Credit>()
-                    .search()
-                    .from(owner_id)
-                    .where_()
-                    .neighbor()
-                    .end_where()
-                    .query(),
-            )
-            .map_err(crate::plugins::runtime_error)?
-            .try_into()
-            .map_err(crate::plugins::runtime_error)?;
-
-        let already_linked = existing_credits.iter().any(|credit| {
-            if credit.credit_type != credit_type || credit.detail != detail {
-                return false;
-            }
-            let Some(credit_id) = credit.db_id.clone().map(DbId::from) else {
-                return false;
-            };
-            server_db::graph::direct_edges_from(&db_write, credit_id)
-                .ok()
-                .is_some_and(|edges| edges.iter().any(|edge| edge.to == artist_id))
-        });
-
-        if already_linked {
-            return Ok(());
-        }
-
         db_write
             .transaction_mut(|transaction| -> anyhow::Result<()> {
-                let credit = server_db::Credit {
-                    db_id: None,
-                    id: nanoid!(),
-                    credit_type,
-                    detail,
-                };
-                let credit_id = transaction
-                    .exec_mut(QueryBuilder::insert().element(&credit).query())?
-                    .ids()[0];
-                transaction.exec_mut(
-                    QueryBuilder::insert()
-                        .edges()
-                        .from("credits")
-                        .to(credit_id)
-                        .query(),
-                )?;
-                transaction.exec_mut(
-                    QueryBuilder::insert()
-                        .edges()
-                        .from(owner_id)
-                        .to(credit_id)
-                        .values_uniform([("owned", 1).into()])
-                        .query(),
-                )?;
-                transaction.exec_mut(
-                    QueryBuilder::insert()
-                        .edges()
-                        .from(credit_id)
-                        .to(artist_id)
-                        .query(),
+                let existing = server_db::credits::links_for_owner(transaction, owner_id)?;
+                if server_db::credits::CreditSet::new(&existing).contains(
+                    owner_id,
+                    artist_id,
+                    (credit_type, detail.as_deref()),
+                ) {
+                    return Ok(());
+                }
+                server_db::credits::link(
+                    transaction,
+                    owner_id,
+                    artist_id,
+                    &server_db::Credit {
+                        credit_type,
+                        detail,
+                        artist_order: server_db::credits::next_order(&existing),
+                    },
                 )?;
                 Ok(())
             })

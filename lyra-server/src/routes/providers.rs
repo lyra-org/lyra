@@ -925,52 +925,6 @@ mod tests {
         Ok(track_db_id)
     }
 
-    fn connect_artist_ordered(
-        db: &mut DbAny,
-        owner_db_id: DbId,
-        artist_db_id: DbId,
-        order: u64,
-    ) -> anyhow::Result<()> {
-        let credit = db::Credit {
-            db_id: None,
-            id: nanoid::nanoid!(),
-            credit_type: db::CreditType::Artist,
-            detail: None,
-        };
-        let insert_result = db.exec_mut(QueryBuilder::insert().element(&credit).query())?;
-        let credit_db_id = insert_result
-            .elements
-            .first()
-            .map(|e| e.id)
-            .ok_or_else(|| anyhow::anyhow!("credit insert missing id"))?;
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("credits")
-                .to(credit_db_id)
-                .query(),
-        )?;
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from(owner_db_id)
-                .to(credit_db_id)
-                .values_uniform([
-                    ("owned", 1).into(),
-                    (db::credits::EDGE_ORDER_KEY, order).into(),
-                ])
-                .query(),
-        )?;
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from(credit_db_id)
-                .to(artist_db_id)
-                .query(),
-        )?;
-        Ok(())
-    }
-
     fn connect_track_to_entry_source(
         db: &mut DbAny,
         track_db_id: DbId,
@@ -1224,8 +1178,22 @@ mod tests {
         let release_db_id = insert_release(&mut db, "Ordered Release")?;
         let alphabetic_artist_db_id = insert_artist(&mut db, "Alpha Artist")?;
         let lead_artist_db_id = insert_artist(&mut db, "Zulu Artist")?;
-        connect_artist_ordered(&mut db, release_db_id, lead_artist_db_id, 0)?;
-        connect_artist_ordered(&mut db, release_db_id, alphabetic_artist_db_id, 1)?;
+        db::test_db::connect_credit(
+            &mut db,
+            release_db_id,
+            lead_artist_db_id,
+            db::CreditType::Artist,
+            None,
+            0,
+        )?;
+        db::test_db::connect_credit(
+            &mut db,
+            release_db_id,
+            alphabetic_artist_db_id,
+            db::CreditType::Artist,
+            None,
+            1,
+        )?;
 
         let context = build_release_context(&db, release_db_id, None)?;
         let artists = context
@@ -1250,8 +1218,22 @@ mod tests {
         let alphabetic_artist_db_id = insert_artist(&mut db, "Alpha Artist")?;
         let lead_artist_db_id = insert_artist(&mut db, "Zulu Artist")?;
         connect(&mut db, release_db_id, track_db_id)?;
-        connect_artist_ordered(&mut db, track_db_id, lead_artist_db_id, 0)?;
-        connect_artist_ordered(&mut db, track_db_id, alphabetic_artist_db_id, 1)?;
+        db::test_db::connect_credit(
+            &mut db,
+            track_db_id,
+            lead_artist_db_id,
+            db::CreditType::Artist,
+            None,
+            0,
+        )?;
+        db::test_db::connect_credit(
+            &mut db,
+            track_db_id,
+            alphabetic_artist_db_id,
+            db::CreditType::Artist,
+            None,
+            1,
+        )?;
 
         let context = build_release_context(&db, release_db_id, None)?;
         let tracks = context
@@ -1280,8 +1262,22 @@ mod tests {
         let alphabetic_artist_db_id = insert_artist(&mut db, "Alpha Artist")?;
         let lead_artist_db_id = insert_artist(&mut db, "Zulu Artist")?;
         connect(&mut db, release_db_id, track_db_id)?;
-        connect_artist_ordered(&mut db, release_db_id, lead_artist_db_id, 0)?;
-        connect_artist_ordered(&mut db, release_db_id, alphabetic_artist_db_id, 1)?;
+        db::test_db::connect_credit(
+            &mut db,
+            release_db_id,
+            lead_artist_db_id,
+            db::CreditType::Artist,
+            None,
+            0,
+        )?;
+        db::test_db::connect_credit(
+            &mut db,
+            release_db_id,
+            alphabetic_artist_db_id,
+            db::CreditType::Artist,
+            None,
+            1,
+        )?;
 
         let context = build_release_context(&db, release_db_id, None)?;
         let tracks = context

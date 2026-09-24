@@ -238,48 +238,26 @@ pub(crate) fn connect(db: &mut DbAny, from: DbId, to: DbId) -> anyhow::Result<()
 }
 
 pub(crate) fn connect_artist(db: &mut DbAny, owner: DbId, artist: DbId) -> anyhow::Result<()> {
-    connect_artist_with_order(db, owner, artist, 0)
+    connect_credit(db, owner, artist, super::CreditType::Artist, None, 0)
 }
 
-pub(crate) fn connect_artist_with_order(
+pub(crate) fn connect_credit(
     db: &mut DbAny,
     owner: DbId,
     artist: DbId,
-    order: u64,
+    credit_type: super::CreditType,
+    detail: Option<&str>,
+    artist_order: u64,
 ) -> anyhow::Result<()> {
-    let credit = super::credits::Credit {
-        db_id: None,
-        id: nanoid!(),
-        credit_type: super::credits::CreditType::Artist,
-        detail: None,
-    };
-    let credit_id = db
-        .exec_mut(QueryBuilder::insert().element(&credit).query())?
-        .ids()[0];
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
-            .from("credits")
-            .to(credit_id)
-            .query(),
-    )?;
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
-            .from(owner)
-            .to(credit_id)
-            .values_uniform([
-                ("owned", 1).into(),
-                (super::credits::EDGE_ORDER_KEY, order).into(),
-            ])
-            .query(),
-    )?;
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
-            .from(credit_id)
-            .to(artist)
-            .query(),
+    super::credits::link(
+        db,
+        owner,
+        artist,
+        &super::Credit {
+            credit_type,
+            detail: detail.map(str::to_string),
+            artist_order,
+        },
     )?;
     Ok(())
 }

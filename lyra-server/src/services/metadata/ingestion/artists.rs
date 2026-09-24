@@ -5,7 +5,6 @@
 
 use std::collections::{
     BTreeMap,
-    HashMap,
     HashSet,
 };
 use std::time::{
@@ -21,122 +20,8 @@ use nanoid::nanoid;
 
 use crate::db::{
     Artist,
-    Credit,
-    CreditType,
     DbAccess,
-    credits,
 };
-
-pub(crate) fn sync_artist_edges(
-    db: &mut impl DbAccess,
-    owner_db_id: DbId,
-    desired_ids: &[DbId],
-    role: CreditType,
-) -> anyhow::Result<()> {
-    let mut ordered_desired = Vec::new();
-    let mut desired_set = HashSet::new();
-    for id in desired_ids {
-        if desired_set.insert(*id) {
-            ordered_desired.push(*id);
-        }
-    }
-
-    // Collect existing Credits for this role, mapping artist_db_id → credit_db_id.
-    let existing_credits: Vec<Credit> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<Credit>()
-                .search()
-                .from(owner_db_id)
-                .where_()
-                .neighbor()
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
-
-    let mut existing_by_artist: HashMap<DbId, DbId> = HashMap::new();
-    for credit in &existing_credits {
-        if credit.credit_type != role {
-            continue;
-        }
-        let Some(credit_db_id) = credit.db_id.clone().map(DbId::from) else {
-            continue;
-        };
-        let edges = crate::db::graph::direct_edges_from(db, credit_db_id)?;
-        if let Some(artist_db_id) = edges.iter().find_map(|e| (e.to.0 > 0).then_some(e.to)) {
-            existing_by_artist.insert(artist_db_id, credit_db_id);
-        }
-    }
-
-    let remove_ids: Vec<DbId> = existing_by_artist
-        .iter()
-        .filter(|(artist_id, _)| !desired_set.contains(artist_id))
-        .map(|(_, credit_id)| *credit_id)
-        .collect();
-    if !remove_ids.is_empty() {
-        db.exec_mut(QueryBuilder::remove().ids(remove_ids).query())?;
-    }
-
-    for (order, desired_id) in ordered_desired.iter().enumerate() {
-        if let Some(credit_db_id) = existing_by_artist.get(desired_id) {
-            // Update order on existing owner→credit edge.
-            let edge_ids = crate::db::graph::direct_edge_ids(db, owner_db_id, *credit_db_id)?;
-            if let Some(edge_id) = edge_ids.first() {
-                db.exec_mut(
-                    QueryBuilder::insert()
-                        .values_uniform([
-                            ("owned", 1).into(),
-                            (credits::EDGE_ORDER_KEY, order as u64).into(),
-                        ])
-                        .ids(*edge_id)
-                        .query(),
-                )?;
-            }
-        } else {
-            let credit = Credit {
-                db_id: None,
-                id: nanoid!(),
-                credit_type: role,
-                detail: None,
-            };
-            let insert_result = db.exec_mut(QueryBuilder::insert().element(&credit).query())?;
-            let credit_db_id = insert_result
-                .elements
-                .first()
-                .map(|e| e.id)
-                .ok_or_else(|| anyhow::anyhow!("credit insert missing id"))?;
-
-            db.exec_mut(
-                QueryBuilder::insert()
-                    .edges()
-                    .from("credits")
-                    .to(credit_db_id)
-                    .query(),
-            )?;
-            db.exec_mut(
-                QueryBuilder::insert()
-                    .edges()
-                    .from(owner_db_id)
-                    .to(credit_db_id)
-                    .values_uniform([
-                        ("owned", 1).into(),
-                        (credits::EDGE_ORDER_KEY, order as u64).into(),
-                    ])
-                    .query(),
-            )?;
-            db.exec_mut(
-                QueryBuilder::insert()
-                    .edges()
-                    .from(credit_db_id)
-                    .to(*desired_id)
-                    .query(),
-            )?;
-        }
-    }
-
-    Ok(())
-}
 
 pub(crate) fn resolve_artist_ids(
     db: &mut impl DbAccess,
@@ -243,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_artist_edges_preserves_desired_order() -> anyhow::Result<()> {
+    fn replace_primary_for_owner_preserves_desired_order() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_db_id = insert_release(&mut db, "Ordered Release")?;
         let mut artist_cache = BTreeMap::new();
@@ -253,7 +138,7 @@ mod tests {
             &mut artist_cache,
         )?;
 
-        sync_artist_edges(&mut db, release_db_id, &artist_ids, CreditType::Artist)?;
+        db::credits::replace_primary_for_owner(&mut db, release_db_id, &artist_ids)?;
 
         let artists = db::artists::get(&db, release_db_id)?;
         let names: Vec<&str> = artists

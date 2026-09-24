@@ -108,8 +108,6 @@ fn merge_release_into_inside_tx(
         db::genres::sync_release_genres(db, winner, &genres)?;
     }
 
-    // Migrate Credit nodes from loser to winner.
-    // First, collect artist IDs already credited on the winner to avoid duplicates.
     let winner_credits_are_manual = winner_manual_fields
         .contains(&db::metadata::manual_overrides::ManualMetadataField::Credits);
     let loser_credits_are_manual =
@@ -117,60 +115,14 @@ fn merge_release_into_inside_tx(
     if !winner_credits_are_manual && loser_credits_are_manual {
         db::credits::replace_for_owner(db, winner, &[])?;
     }
-    let winner_artists: HashSet<DbId> = db::artists::get(db, winner)?
-        .into_iter()
-        .filter_map(|p| p.db_id.map(Into::into))
-        .collect();
-
-    let loser_credits: Vec<db::Credit> = db
-        .exec(
-            agdb::QueryBuilder::select()
-                .elements::<db::Credit>()
-                .search()
-                .from(loser)
-                .where_()
-                .neighbor()
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
-
-    // Read loser→credit edge order values before removing edges.
-    let loser_edge_orders = db::artists::credit_edge_orders_from_owner(db, loser)?;
-
-    for credit in &loser_credits {
-        let Some(credit_db_id) = credit.db_id.clone().map(agdb::DbId::from) else {
-            continue;
-        };
-        let credit_targets = db::graph::direct_edges_from(db, credit_db_id)?;
-        let artist_db_id = credit_targets
-            .iter()
-            .find_map(|e| (e.to.0 > 0).then_some(e.to));
-
-        let should_migrate = !winner_credits_are_manual
-            && match artist_db_id {
-                Some(pid) => !winner_artists.contains(&pid),
-                None => false,
-            };
-
-        if should_migrate {
-            let order = loser_edge_orders.get(&credit_db_id).copied().unwrap_or(0);
-            db.exec_mut(
-                agdb::QueryBuilder::insert()
-                    .edges()
-                    .from(winner)
-                    .to(credit_db_id)
-                    .values_uniform([
-                        ("owned", 1).into(),
-                        (db::credits::EDGE_ORDER_KEY, order).into(),
-                    ])
-                    .query(),
-            )?;
-        }
-        // Remove loser→credit edge (credit itself is deleted if not migrated).
-        db::graph::remove_edges_between(db, loser, credit_db_id)?;
-        if !should_migrate {
-            db.exec_mut(agdb::QueryBuilder::remove().ids(credit_db_id).query())?;
+    // The loser's own credit edges are removed with the loser.
+    if !winner_credits_are_manual {
+        let winner_credits =
+            db::credits::CreditSet::new(&db::credits::links_for_owner(db, winner)?);
+        for link in db::credits::links_for_owner(db, loser)? {
+            if !winner_credits.contains(winner, link.artist_id, link.credit.role()) {
+                db::credits::link(db, winner, link.artist_id, &link.credit)?;
+            }
         }
     }
 
@@ -392,6 +344,8 @@ mod tests {
         labels::LabelInput,
         metadata::manual_overrides::ManualMetadataField,
         test_db::{
+            connect_credit,
+            insert_artist,
             insert_release,
             new_test_db,
         },
@@ -423,6 +377,27 @@ mod tests {
         let labels = db::labels::get_for_release(&db, winner)?;
         assert_eq!(labels.len(), 1);
         assert_eq!(labels[0].label.name, "Manual");
+        Ok(())
+    }
+
+    #[test]
+    fn release_merge_keeps_loser_credits_in_other_roles() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let winner = insert_release(&mut db, "Winner")?;
+        let loser = insert_release(&mut db, "Loser")?;
+        let artist = insert_artist(&mut db, "Artist")?;
+        connect_credit(&mut db, winner, artist, db::CreditType::Artist, None, 0)?;
+        connect_credit(&mut db, loser, artist, db::CreditType::Artist, None, 0)?;
+        connect_credit(&mut db, loser, artist, db::CreditType::Producer, None, 1)?;
+
+        merge_release_into(&mut db, winner, loser)?;
+
+        let mut roles: Vec<db::CreditType> = db::credits::links_for_owner(&db, winner)?
+            .into_iter()
+            .map(|link| link.credit.credit_type)
+            .collect();
+        roles.sort_by_key(ToString::to_string);
+        assert_eq!(roles, [db::CreditType::Artist, db::CreditType::Producer]);
         Ok(())
     }
 }
