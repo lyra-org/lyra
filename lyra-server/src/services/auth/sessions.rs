@@ -118,7 +118,7 @@ const LAST_SEEN_SWEEP_THRESHOLD: usize = 1024;
 // session-authed request. Only the in-memory mutex is taken on steady-state auth.
 fn last_seen_cache(
     generation: &crate::GenerationState,
-) -> std::sync::MutexGuard<'_, HashMap<DbId, i64>> {
+) -> std::sync::MutexGuard<'_, HashMap<String, i64>> {
     generation
         .auth_caches
         .session_last_seen
@@ -126,16 +126,16 @@ fn last_seen_cache(
         .expect("session last_seen cache poisoned")
 }
 
-fn should_persist_last_seen(session_id: DbId, now: i64) -> bool {
+fn should_persist_last_seen(session_public_id: &str, now: i64) -> bool {
     let generation = STATE.generation();
     let cache = last_seen_cache(&generation);
     !matches!(
-        cache.get(&session_id),
+        cache.get(session_public_id),
         Some(&last) if now.saturating_sub(last) < LAST_SEEN_DEBOUNCE_SECS
     )
 }
 
-fn record_persisted_last_seen(session_id: DbId, now: i64) {
+fn record_persisted_last_seen(session_public_id: &str, now: i64) {
     let generation = STATE.generation();
     let mut cache = last_seen_cache(&generation);
     if cache.len() >= LAST_SEEN_SWEEP_THRESHOLD {
@@ -144,18 +144,19 @@ fn record_persisted_last_seen(session_id: DbId, now: i64) {
     }
     if cache.len() >= LAST_SEEN_SWEEP_THRESHOLD {
         let overflow = cache.len() + 1 - LAST_SEEN_SWEEP_THRESHOLD;
-        let mut by_age: Vec<(DbId, i64)> = cache.iter().map(|(id, ts)| (*id, *ts)).collect();
-        by_age.sort_by_key(|&(_, ts)| ts);
+        let mut by_age: Vec<(String, i64)> =
+            cache.iter().map(|(id, ts)| (id.clone(), *ts)).collect();
+        by_age.sort_by_key(|(_, ts)| *ts);
         for (id, _) in by_age.into_iter().take(overflow) {
             cache.remove(&id);
         }
     }
-    cache.insert(session_id, now);
+    cache.insert(session_public_id.to_string(), now);
 }
 
-fn forget_last_seen(session_id: DbId) {
+fn forget_last_seen(session_public_id: &str) {
     let generation = STATE.generation();
-    last_seen_cache(&generation).remove(&session_id);
+    last_seen_cache(&generation).remove(session_public_id);
 }
 
 /// Creates a session for the principal's user, verifying the user under the write lock that
@@ -186,62 +187,74 @@ pub(crate) async fn create_session_for_user(
     };
     let mut db_write = STATE.db.write().await;
     let user_db_id = principal.require(&db_write)?;
-    let session_id = db::users::login(db_write.deref_mut(), user_db_id, &session)?;
+    db::users::login(db_write.deref_mut(), user_db_id, &session)?;
     drop(db_write);
     // Seed the cache so the next request inside the debounce window is a no-op.
-    record_persisted_last_seen(session_id, now);
+    record_persisted_last_seen(&session.id, now);
 
     Ok(CreatedSession { token })
 }
 
-pub(crate) async fn touch_last_seen(session_id: DbId) {
+pub(crate) async fn touch_last_seen(session_public_id: &str) {
     let now = db::users::now_secs();
-    if !should_persist_last_seen(session_id, now) {
+    if !should_persist_last_seen(session_public_id, now) {
         return;
     }
 
     let mut db_write = STATE.db.write().await;
-    // Re-verify under the write lock: the session may have been revoked between
-    // the cache check and acquiring the lock.
-    let exists = match db::users::find_session_by_id(&*db_write, session_id) {
-        Ok(session) => session.is_some(),
+    // Resolve under the write lock: the session may have been revoked since auth.
+    let session_id = match db::users::find_session_by_public_id(&*db_write, session_public_id) {
+        Ok(Some((session_id, _))) => session_id,
+        Ok(None) => {
+            drop(db_write);
+            forget_last_seen(session_public_id);
+            return;
+        }
         Err(err) => {
             tracing::warn!(
                 error = %err,
-                session_id = ?session_id,
+                session_public_id,
                 "failed to verify session before last_seen update",
             );
             return;
         }
     };
-    if !exists {
-        drop(db_write);
-        forget_last_seen(session_id);
-        return;
-    }
 
     match db::users::update_session_last_seen(&mut *db_write, session_id, now) {
         Ok(()) => {
             drop(db_write);
-            record_persisted_last_seen(session_id, now);
+            record_persisted_last_seen(session_public_id, now);
         }
         Err(err) => {
             drop(db_write);
             tracing::warn!(
                 error = %err,
-                session_id = ?session_id,
+                session_public_id,
                 "failed to persist session last_seen_at; continuing with successful auth",
             );
         }
     }
 }
 
-pub(super) async fn revoke_session_by_id(session_id: DbId) -> anyhow::Result<bool> {
+pub(crate) fn is_expired(session: &Session) -> bool {
+    session.expires_at > 0 && db::users::now_secs() >= session.expires_at
+}
+
+/// Revokes the session behind `token_hash` if it has expired, resolving it under the write lock
+/// that removes it.
+pub(super) async fn revoke_expired_session(token_hash: &str) -> anyhow::Result<bool> {
     let mut db = STATE.db.write().await;
+    let Some((_, session, session_id)) = db::users::find_by_session_token_hash(&*db, token_hash)?
+    else {
+        return Ok(false);
+    };
+    if !is_expired(&session) {
+        return Ok(false);
+    }
     let removed = db::users::revoke_session_by_id(&mut db, session_id)?;
     drop(db);
     if removed {
-        forget_last_seen(session_id);
+        forget_last_seen(&session.id);
     }
     Ok(removed)
 }
@@ -249,12 +262,12 @@ pub(super) async fn revoke_session_by_id(session_id: DbId) -> anyhow::Result<boo
 pub(crate) async fn revoke_session_by_token(token: &str) -> SessionServiceResult<bool> {
     let mut db = STATE.db.write().await;
     let token_hash = hash_secret(token.trim());
-    let session_id = db::users::find_by_session_token_hash(&*db, &token_hash)?
-        .map(|(_, _, session_id)| session_id);
+    let session_public_id =
+        db::users::find_by_session_token_hash(&*db, &token_hash)?.map(|(_, session, _)| session.id);
     let removed = db::users::revoke_session_by_token_hash(&mut db, &token_hash)?;
     drop(db);
-    if removed && let Some(session_id) = session_id {
-        forget_last_seen(session_id);
+    if removed && let Some(session_public_id) = session_public_id {
+        forget_last_seen(&session_public_id);
     }
     Ok(removed)
 }
@@ -265,7 +278,7 @@ fn live_session_id(db: &impl db::DbAccess, token: &str) -> anyhow::Result<DbId> 
     let (_, session, session_id) =
         db::users::find_by_session_token_hash(db, &hash_secret(token.trim()))?
             .ok_or_else(|| anyhow::anyhow!("invalid session token"))?;
-    if session.expires_at > 0 && db::users::now_secs() >= session.expires_at {
+    if is_expired(&session) {
         anyhow::bail!("session expired");
     }
     Ok(session_id)

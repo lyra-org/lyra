@@ -52,8 +52,9 @@ pub(crate) struct Principal {
 
 #[derive(Serialize)]
 pub(crate) struct AuthCredential {
-    pub(crate) session_id: Option<i64>,
-    pub(crate) api_key_id: Option<i64>,
+    pub(crate) kind: &'static str,
+    /// The session's or api key's public id.
+    pub(crate) id: Option<String>,
     pub(crate) api_key_name: Option<String>,
 }
 
@@ -144,19 +145,19 @@ pub(crate) fn to_plugin_principal(principal: ServicePrincipal) -> Principal {
 
 pub(crate) fn to_plugin_credential(credential: ServiceAuthCredential) -> AuthCredential {
     match credential {
-        ServiceAuthCredential::Session { session_id } => AuthCredential {
-            session_id: Some(session_id.0),
-            api_key_id: None,
+        ServiceAuthCredential::Session { public_id } => AuthCredential {
+            kind: "session",
+            id: Some(public_id),
             api_key_name: None,
         },
-        ServiceAuthCredential::ApiKey { api_key_id, name } => AuthCredential {
-            session_id: None,
-            api_key_id: Some(api_key_id.0),
+        ServiceAuthCredential::ApiKey { public_id, name } => AuthCredential {
+            kind: "api_key",
+            id: Some(public_id),
             api_key_name: Some(name),
         },
         ServiceAuthCredential::Default => AuthCredential {
-            session_id: None,
-            api_key_id: None,
+            kind: "default",
+            id: None,
             api_key_name: None,
         },
     }
@@ -488,14 +489,18 @@ impl DescribeInterface for AuthCredential {
         let mut descriptor = InterfaceDescriptor::new("AuthCredential", None);
         descriptor.fields.extend([
             FieldDescriptor {
-                name: "session_id",
-                ty: Option::<i64>::luau_type(),
+                name: "kind",
+                ty: LuauType::union(vec![
+                    LuauType::literal("\"session\""),
+                    LuauType::literal("\"api_key\""),
+                    LuauType::literal("\"default\""),
+                ]),
                 description: None,
             },
             FieldDescriptor {
-                name: "api_key_id",
-                ty: Option::<i64>::luau_type(),
-                description: None,
+                name: "id",
+                ty: Option::<String>::luau_type(),
+                description: Some("The session's or api key's public id."),
             },
             FieldDescriptor {
                 name: "api_key_name",
@@ -714,4 +719,36 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
         ],
         &[],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plugin_credentials_expose_kind_and_public_id_only() -> anyhow::Result<()> {
+        let session = serde_json::to_value(to_plugin_credential(ServiceAuthCredential::Session {
+            public_id: "session-public-id".to_string(),
+        }))?;
+        assert_eq!(
+            session,
+            serde_json::json!({ "kind": "session", "id": "session-public-id", "api_key_name": null })
+        );
+
+        let api_key = serde_json::to_value(to_plugin_credential(ServiceAuthCredential::ApiKey {
+            public_id: "key-public-id".to_string(),
+            name: "laptop".to_string(),
+        }))?;
+        assert_eq!(
+            api_key,
+            serde_json::json!({ "kind": "api_key", "id": "key-public-id", "api_key_name": "laptop" })
+        );
+
+        let default = serde_json::to_value(to_plugin_credential(ServiceAuthCredential::Default))?;
+        assert_eq!(
+            default,
+            serde_json::json!({ "kind": "default", "id": null, "api_key_name": null })
+        );
+        Ok(())
+    }
 }
