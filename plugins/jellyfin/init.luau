@@ -7,13 +7,11 @@
 local api = require("@lyra/api")
 local auth = require("@lyra/auth")
 local datastore = require("@lyra/datastore")
-local ids = require("@lyra/ids")
 local libraries = require("@lyra/libraries")
 local playback_sessions = require("@lyra/playback_sessions")
 local playlists = require("@lyra/playlists")
 local plugins = require("@lyra/plugins")
 local server = require("@lyra/server")
-local tracks = require("@lyra/tracks")
 local users = require("@lyra/users")
 
 local crypt = require("@harmony/crypt")
@@ -62,6 +60,7 @@ end
 
 constants.configure_root_item_id(resolve_root_item_id())
 
+local active_sessions = require("@self/protocol/active_sessions")
 local audio_routes = require("@self/routes/audio")
 local catalog = require("@self/protocol/items/catalog")
 local discovery = require("@self/protocol/discovery")
@@ -95,11 +94,6 @@ type PlaylistUpdateRequest = playlists.PlaylistUpdateRequest
 type PlaybackPayload = { [string]: string | number | boolean? }
 type PublicUser = users.PublicUser
 
-type UserIdentity = {
-	user_id: string,
-	username: string,
-}
-
 type PublicSystemInfo = {
 	ServerName: string,
 	Version: string,
@@ -129,23 +123,9 @@ type VirtualFolderInfo = {
 	RefreshStatus: string,
 }
 
-type SessionEntry = {
-	sender: api.ApiWebSocketSender,
-	session_id: string,
-	user_id: string,
-	is_admin: boolean,
-	device_id: string,
-	info: JsonObject,
-	capabilities: JsonObject?,
-	-- Keys set by the most recent /Capabilities/Full. Non-Full merges must
-	-- skip these so Full stays authoritative and removal-via-Full works.
-	full_capability_keys: { [string]: boolean },
-	subscribed_sessions: boolean,
-	last_activity: string,
-	last_playback_event_s: number?,
-}
+type SessionEntry = active_sessions.SessionEntry
 
-local sessions: { [string]: SessionEntry } = {}
+local sessions = active_sessions.entries
 
 local JELLYFIN_WS_REAUTH_INTERVAL_SECONDS = 60
 local JELLYFIN_WS_REAUTH_MAX_ERRORS = 5
@@ -156,6 +136,7 @@ local JELLYFIN_WS_KEEPALIVE_SECONDS = 60
 -- DB. Start / Stopped go through unthrottled. Mirrors Jellyfin's own ~10s
 -- progress cadence.
 local JELLYFIN_WS_PROGRESS_MIN_INTERVAL_SECONDS = 10
+local JELLYFIN_SESSIONS_PUSH_SECONDS = 2
 
 -- Returns nil on miss, scope mismatch, or closed sender (evicting the
 -- closed entry). Mismatch is logged so a hash collision is distinguishable
@@ -199,7 +180,7 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 		sender = sender,
 		session_id = session_id,
 		user_id = principal.user_id,
-		is_admin = session.is_admin(principal),
+		principal = principal,
 		device_id = identity.device_id,
 		info = info,
 		capabilities = nil,
@@ -257,7 +238,7 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 						sender:close()
 						break
 					end
-					entry.is_admin = session.is_admin(refreshed.principal)
+					entry.principal = refreshed.principal
 					entry.info.UserName = refreshed.principal.username
 					consecutive_errors = 0
 				else
@@ -279,6 +260,16 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 		end)
 	end)
 
+	-- Spawned from this socket's dispatch, so pushes act as its principal.
+	local sessions_thread = task.spawn(function()
+		while not sender:is_closed() do
+			task.wait(JELLYFIN_SESSIONS_PUSH_SECONDS)
+			if entry.subscribed_sessions and not sender:is_closed() then
+				active_sessions.push(entry)
+			end
+		end
+	end)
+
 	-- Keep cleanup reachable on handler throw.
 	xpcall(function()
 		while true do
@@ -298,6 +289,7 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 				end)
 			elseif mt == "SessionsStart" then
 				entry.subscribed_sessions = true
+				active_sessions.push(entry)
 			elseif mt == "SessionsStop" then
 				entry.subscribed_sessions = false
 			elseif mt == "PlaybackStart" then
@@ -340,6 +332,7 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 	end)
 
 	task.cancel(reauth_thread)
+	task.cancel(sessions_thread)
 
 	-- A concurrent reconnect may have replaced our slot; only clear it if
 	-- it still points at our sender.
@@ -1611,42 +1604,6 @@ end, "public", true)
 api.post(P .. "/Sessions/Capabilities/Full", function(ctx: ApiContext)
 	return handle_capabilities_post(ctx, true)
 end, "public", true)
-local JELLYFIN_COMMAND_MAP: { [string]: string } = {
-	play = "Play",
-	pause = "Pause",
-	unpause = "Unpause",
-	stop = "Stop",
-	seek = "Seek",
-	next_track = "NextTrack",
-	previous_track = "PreviousTrack",
-	set_volume = "SetVolume",
-}
-
-local function to_jellyfin_supported_commands(commands: { string }): { string }
-	local result = {}
-	for _, cmd in commands do
-		local mapped = JELLYFIN_COMMAND_MAP[cmd]
-		if mapped then
-			table.insert(result, mapped)
-		end
-	end
-	return result
-end
-
-type Track = tracks.Track
-
-local function resolve_track_name(track_id: number): string
-	local ok, result = pcall(tracks.get_by_ids, { track_id })
-	if not ok or not result then
-		return ""
-	end
-	local track: Track? = result[track_id]
-	if track then
-		return track.track_title
-	end
-	return ""
-end
-
 local function handle_send_command_error(err: unknown): ApiResponse
 	if string.find(tostring(err), "not found") then
 		return responses.not_found("session not found")
@@ -1700,175 +1657,6 @@ local function dispatch_to_ws(principal: session.Principal, session_id: string?,
 		return responses.not_found("session not found")
 	end
 	return api.response.empty(204)
-end
-
-local function build_now_playing(playback: playback_sessions.PlaybackInfo): (JsonObject, JsonObject)
-	local track_db_id = ids.get_db_id(playback.track_public_id)
-	local now_playing: JsonObject = {
-		Id = item_ids.encode_jellyfin_item_id(playback.track_public_id),
-		Name = if track_db_id then resolve_track_name(track_db_id) else "",
-		Type = "Audio",
-	}
-	if playback.duration_ms then
-		now_playing.RunTimeTicks = playback.duration_ms * 10000
-	end
-	local play_state: JsonObject = {
-		PositionTicks = playback.position_ms * 10000,
-		IsPaused = playback.state == "paused",
-		CanSeek = true,
-	}
-	return now_playing, play_state
-end
-
-local function build_sessions_dto_list(
-	user_id: string,
-	username: string,
-	connections: { playback_sessions.ConnectionInfo }
-): { JsonValue }
-	local conn_by_session_key: { [string]: playback_sessions.ConnectionInfo } = {}
-	for _, conn in connections do
-		conn_by_session_key[conn.session_key] = conn
-	end
-
-	local jellyfin_user_id = item_ids.encode_jellyfin_item_id(user_id)
-	local result: { JsonValue } = {}
-	local seen_session_keys: { [string]: boolean } = {}
-
-	for _, entry in sessions do
-		-- Skip foreign users and zombies (closed sender pre-cleanup).
-		if entry.user_id ~= user_id or entry.sender:is_closed() then
-			continue
-		end
-		-- Native clients opt into pairing by sending this Jellyfin session ID as their opaque session_key.
-		local join_key = entry.session_id
-		seen_session_keys[join_key] = true
-		local dto: JsonObject = table.clone(entry.info)
-		dto.LastActivityDate = entry.last_activity
-		dto.LastPlaybackCheckIn = entry.last_activity
-		if entry.capabilities then
-			dto.Capabilities = entry.capabilities
-		end
-		local conn = conn_by_session_key[join_key]
-		local conn_playback = if conn then conn.playback else nil
-		if conn_playback then
-			local now_playing, play_state = build_now_playing(conn_playback)
-			dto.NowPlayingItem = now_playing
-			dto.PlayState = play_state
-		end
-		table.insert(result, dto)
-	end
-
-	-- Non-WS clients (playback-only) still need to surface here.
-	for _, conn in connections do
-		if seen_session_keys[conn.session_key] then
-			continue
-		end
-		local playable_types: { JsonValue } = { "Audio" }
-		local legacy: JsonObject = {
-			Id = conn.token,
-			UserId = jellyfin_user_id,
-			UserName = username,
-			DeviceId = conn.session_key,
-			DeviceName = conn.session_key,
-			Client = "Lyra",
-			ServerId = SERVER_ID,
-			IsActive = true,
-			SupportsRemoteControl = #conn.supported_commands > 0,
-			PlayableMediaTypes = playable_types,
-		}
-		local conn_playback = conn.playback
-		if conn_playback then
-			local now_playing, play_state = build_now_playing(conn_playback)
-			legacy.NowPlayingItem = now_playing
-			legacy.PlayState = play_state
-		end
-		local supported_commands = to_jellyfin_supported_commands(conn.supported_commands)
-		local cmd_list: { JsonValue } = {}
-		for _, cmd in supported_commands do
-			table.insert(cmd_list, cmd)
-		end
-		legacy.Capabilities = {
-			SupportsMediaControl = #supported_commands > 0,
-			SupportedCommands = cmd_list,
-			PlayableMediaTypes = playable_types,
-		}
-		table.insert(result, legacy)
-	end
-
-	return result
-end
-
-local function list_all_user_identities(fallback: UserIdentity?): { UserIdentity }
-	local result: { UserIdentity } = {}
-	local seen: { [string]: boolean } = {}
-	for _, user: PublicUser in users.list() do
-		if not seen[user.user_id] then
-			seen[user.user_id] = true
-			table.insert(result, {
-				user_id = user.user_id,
-				username = user.username,
-			})
-		end
-	end
-	if fallback and not seen[fallback.user_id] then
-		table.insert(result, fallback)
-	end
-	return result
-end
-
-local function session_supports_remote_control(dto: JsonValue): boolean
-	if type(dto) ~= "table" then
-		return false
-	end
-	return (dto :: JsonObject).SupportsRemoteControl == true
-end
-
-local function append_sessions_for_user(
-	result: { JsonValue },
-	user_id: string,
-	username: string,
-	connections: { playback_sessions.ConnectionInfo },
-	require_remote_control: boolean
-)
-	for _, dto in build_sessions_dto_list(user_id, username, connections) do
-		if not require_remote_control or session_supports_remote_control(dto) then
-			table.insert(result, dto)
-		end
-	end
-end
-
--- The server lists only the dispatch principal's own native connections, so every other user's
--- sessions come from this plugin's WebSocket registry alone.
-local function list_all_sessions(
-	own: UserIdentity?,
-	own_connections: { playback_sessions.ConnectionInfo },
-	require_remote_control: boolean
-): { JsonValue }
-	local result: { JsonValue } = {}
-	for _, user in list_all_user_identities(own) do
-		local connections = if own and user.user_id == own.user_id then own_connections else {}
-		append_sessions_for_user(result, user.user_id, user.username, connections, require_remote_control)
-	end
-	return result
-end
-
-local function list_visible_sessions(principal: session.Principal, controllable_user_id: string?): { JsonValue }
-	if controllable_user_id and not session.can_control_user(principal, controllable_user_id) then
-		return {}
-	end
-
-	local require_remote_control = controllable_user_id ~= nil
-	local own_connections = playback_sessions.list_connections()
-	if session.is_admin(principal) then
-		return list_all_sessions({
-			user_id = principal.user_id,
-			username = principal.username,
-		}, own_connections, require_remote_control)
-	end
-
-	local result: { JsonValue } = {}
-	append_sessions_for_user(result, principal.user_id, principal.username, own_connections, require_remote_control)
-	return result
 end
 
 local function resolve_native_target(
@@ -1938,7 +1726,7 @@ api.get(P .. "/Sessions", function(ctx: ApiContext)
 		return api.response.json(200, {})
 	end
 
-	return api.response.json(200, list_visible_sessions(principal, controllable_user_id))
+	return api.response.json(200, active_sessions.list_visible(principal, controllable_user_id))
 end, "public", true)
 
 syncplay.register(sessions, get_owned_session)
@@ -2589,83 +2377,3 @@ for _, image_type in NON_PRIMARY_IMAGE_TYPES do
 end
 
 discovery.start(server_info)
-
-local JELLYFIN_SESSIONS_BROADCAST_SECONDS = 2
-local JELLYFIN_SESSIONS_BROADCAST_MAX_ERRORS = 5
-
--- One list per visibility bucket, shared across matching subscribers. Outer
--- xpcall covers task.wait; the consecutive-error counter stops a tight spin if
--- scheduling itself is the fault.
-task.spawn(function()
-	local consecutive_errors = 0
-	while true do
-		local tick_ok = xpcall(function()
-			task.wait(JELLYFIN_SESSIONS_BROADCAST_SECONDS)
-			local by_user: { [string]: { username: string, senders: { api.ApiWebSocketSender } } } = {}
-			local admin_senders: { api.ApiWebSocketSender } = {}
-			local admin_fallback: UserIdentity? = nil
-			for _, entry in sessions do
-				if not entry.subscribed_sessions or entry.sender:is_closed() then
-					continue
-				end
-				if entry.is_admin then
-					table.insert(admin_senders, entry.sender)
-					if not admin_fallback then
-						admin_fallback = {
-							user_id = entry.user_id,
-							username = tostring(entry.info.UserName or ""),
-						}
-					end
-					continue
-				end
-				local bucket = by_user[entry.user_id]
-				if not bucket then
-					bucket = { username = tostring(entry.info.UserName or ""), senders = {} }
-					by_user[entry.user_id] = bucket
-				end
-				table.insert(bucket.senders, entry.sender)
-			end
-			for user_id, bucket in by_user do
-				-- One user's render failure must not strand the rest; only
-				-- scheduler-level throws reach the outer counter.
-				xpcall(function()
-					-- Broadcasts run outside any request, so there is no principal to list native
-					-- connections for.
-					local list = build_sessions_dto_list(user_id, bucket.username, {})
-					local text = websocket.encode("Sessions", list, nil)
-					for _, sender in bucket.senders do
-						pcall(function()
-							sender:send(text)
-						end)
-					end
-				end, function(err)
-					warn(`sessions broadcast failed for user {user_id}: {tostring(err)}`)
-				end)
-			end
-			if #admin_senders > 0 then
-				xpcall(function()
-					local list = list_all_sessions(admin_fallback, {}, false)
-					local text = websocket.encode("Sessions", list, nil)
-					for _, sender in admin_senders do
-						pcall(function()
-							sender:send(text)
-						end)
-					end
-				end, function(err)
-					warn(`sessions broadcast failed for admins: {tostring(err)}`)
-				end)
-			end
-		end, function(err)
-			warn(`sessions broadcast tick failed: {tostring(err)}`)
-		end)
-		if tick_ok then
-			consecutive_errors = 0
-		else
-			consecutive_errors += 1
-			if consecutive_errors >= JELLYFIN_SESSIONS_BROADCAST_MAX_ERRORS then
-				warn(`sessions broadcast disabled after {consecutive_errors} consecutive failures`)
-				break
-			end
-		end
-	end
-end)

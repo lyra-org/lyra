@@ -27,7 +27,7 @@ export type SessionEntry = {
 	sender: api.ApiWebSocketSender,
 	session_id: string,
 	user_id: string,
-	is_admin: boolean,
+	principal: session.Principal,
 	device_id: string,
 	info: JsonObject,
 	capabilities: JsonObject?,
