@@ -201,7 +201,7 @@ async fn refresh_library(
         let library_db_id = db::lookup::find_node_id_by_id(&*db, &library_id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {library_id}")))?;
         db::libraries::get_by_id(&db, library_db_id)?
-            .ok_or_else(|| AppError::not_found(format!("Library not found: {library_id}")))?
+            .ok_or_else(|| library_not_found(&library_id))?
     };
 
     let options = LibraryRefreshRunOptions {
@@ -314,8 +314,8 @@ async fn update_library(
     let mut db = STATE.db.write().await;
     let library_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
         .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-    let library = db::libraries::get_by_id(&db, library_db_id)?
-        .ok_or_else(|| AppError::not_found(format!("Library not found: {}", id)))?;
+    let library =
+        db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
 
     let mut updated_name = library.name;
     let mut updated_language = library.language;
@@ -459,7 +459,10 @@ async fn get_library_sync_status(
     Path(id): Path<String>,
 ) -> Result<Json<crate::services::LibrarySyncStatus>, AppError> {
     let _principal = require_manage_libraries_on(&headers, &id).await?;
-    Ok(Json(get_library_sync_status_summary(&id).await))
+    get_library_sync_status_summary(&id)
+        .await?
+        .map(Json)
+        .ok_or_else(|| library_not_found(&id))
 }
 
 async fn start_library_sync_for_library(
@@ -471,8 +474,7 @@ async fn start_library_sync_for_library(
         let db = STATE.db.read().await;
         let library_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-        db::libraries::get_by_id(&db, library_db_id)?
-            .ok_or_else(|| AppError::not_found(format!("Library not found: {}", id)))?
+        db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?
     };
 
     Ok(Json(start_library_sync(STATE.db.get(), library).await?))

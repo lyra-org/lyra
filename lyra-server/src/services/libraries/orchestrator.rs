@@ -1202,30 +1202,29 @@ async fn mark_terminal(
     Some(summary)
 }
 
-pub(crate) async fn get_library_sync_status(library_id: &str) -> SyncRunSummary {
+/// The library's active or latest sync run, or `None` when the library does not exist.
+pub(crate) async fn get_library_sync_status(
+    library_id: &str,
+) -> anyhow::Result<Option<SyncRunSummary>> {
     let db = STATE.db.get();
     if let Err(err) = reconcile_interrupted_runs(&db).await {
         tracing::warn!(error = %err, "failed to reconcile interrupted sync runs");
     }
     let library = {
         let db_read = db.read().await;
-        db::lookup::find_node_id_by_id(&*db_read, library_id)
-            .ok()
-            .flatten()
-            .and_then(|library_db_id| db::libraries::get_by_id(&db_read, library_db_id).ok())
-            .flatten()
+        match db::lookup::find_node_id_by_id(&*db_read, library_id)? {
+            Some(library_db_id) => db::libraries::get_by_id(&db_read, library_db_id)?,
+            None => None,
+        }
     };
     let Some(library) = library else {
-        return SyncRunState::idle(String::new()).summary();
+        return Ok(None);
     };
-    match active_or_latest_run_for_library(&db, &library.id).await {
-        Ok(Some(summary)) => summary,
-        Ok(None) => SyncRunState::idle(library.id).summary(),
-        Err(err) => {
-            tracing::warn!(library_id = %library.id, error = %err, "failed to load library sync run");
-            SyncRunState::idle(library.id).summary()
-        }
-    }
+    Ok(Some(
+        active_or_latest_run_for_library(&db, &library.id)
+            .await?
+            .unwrap_or_else(|| SyncRunState::idle(library.id).summary()),
+    ))
 }
 
 async fn active_or_latest_run_for_library(
