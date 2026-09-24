@@ -61,6 +61,7 @@ type CoverCacheEntry = {
 
 type ProviderIdSpec = {
 	id_type: string,
+	field: string?,
 	entity: metadata.EntityType,
 	unique: boolean?,
 }
@@ -359,10 +360,11 @@ local id_specs: { ProviderIdSpec } = {
 	{ id_type = "release-group", entity = ET.Release },
 	{ id_type = "artist", entity = ET.Artist },
 	{ id_type = "recording", entity = ET.Track, unique = true },
+	{ id_type = "track", field = "release_track_id", entity = ET.Track, unique = true },
 }
 
 for _, id_spec in id_specs do
-	local field_name = string.gsub(id_spec.id_type, "-", "_") .. "_id"
+	local field_name = id_spec.field or string.gsub(id_spec.id_type, "-", "_") .. "_id"
 	provider:id({
 		id_type = field_name,
 		entity = id_spec.entity,

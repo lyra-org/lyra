@@ -275,6 +275,7 @@ local function normalize_release_medium_track(raw_track: JsonValue): ReleaseMedi
 		return nil
 	end
 	return {
+		id = json_string_field(track, "id"),
 		title = title,
 		position = json_number_field(track, "position"),
 		recording = normalize_release_recording(json_object_field(track, "recording")),
@@ -500,7 +501,7 @@ local function search_and_fetch_release(
 		for_each_local_artist(release_context, mark_artist_unmatched)
 		for _, track: LocalTrack in release_context.tracks do
 			if track.db_id then
-				provider:mark_unmatched(track.db_id, { "recording_id" })
+				provider:mark_unmatched(track.db_id, { "recording_id", "release_track_id" })
 			end
 		end
 		return false

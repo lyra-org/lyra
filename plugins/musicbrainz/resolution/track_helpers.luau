@@ -77,6 +77,7 @@ export type ReleaseGenre = {
 }
 
 export type ReleaseMediumTrack = {
+	id: string?,
 	title: string,
 	position: number?,
 	recording: ReleaseRecording?,
@@ -118,6 +119,7 @@ type FlattenedMbTrack = {
 	title: string,
 	disc: number?,
 	track: number?,
+	release_track_id: string?,
 	recording_id: string?,
 	recording_relations: { RecordingRelation }?,
 	duration_ms: number?,
@@ -239,6 +241,7 @@ function module.flatten_release_tracks(release: Release): { FlattenedMbTrack }
 				title = track.title,
 				disc = medium.position,
 				track = track.position,
+				release_track_id = track.id,
 				recording_id = recording and recording.id,
 				recording_relations = recording and recording.relations,
 				duration_ms = track.length,

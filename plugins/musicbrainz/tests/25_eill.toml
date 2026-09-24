@@ -24,4 +24,5 @@ fields = { release_title = "25", release_date = "2024-02-28" }
 fields = { artist_name = "eill", sort_name = "eill" }
 
 [expect.tracks."fce9e7fc-2b0e-4d48-8b23-1bd74828311b"]
+ids = { release_track_id = "48149149-8015-4e21-aa98-fd24888e5bf3" }
 fields = { disc = 1, track = 1, track_title = "25", work_id = "f0eda7a6-3b4c-4f30-b6d0-f0e0406d39f5" }

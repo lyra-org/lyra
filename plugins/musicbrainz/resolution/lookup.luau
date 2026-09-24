@@ -242,6 +242,7 @@ local function normalize_release_mediums(raw_media: { JsonValue }?): { ReleaseMe
 								then json_array_field(raw_recording, "relations") :: { Relation }?
 								else nil
 							table.insert(tracks, {
+								id = json_string_field(track, "id"),
 								title = title,
 								position = json_number_field(track, "position"),
 								recording = {
@@ -1976,6 +1977,9 @@ local function process_release(
 				end
 				if resolved_disc_total > 0 then
 					track_layer:set_field("disc_total", resolved_disc_total)
+				end
+				if mb_track.release_track_id then
+					track_layer:set_id("release_track_id", mb_track.release_track_id)
 				end
 				local recording_relations: { Relation }? = nil
 				if mb_track.recording_id then
