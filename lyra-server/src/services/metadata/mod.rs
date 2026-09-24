@@ -471,15 +471,28 @@ mod tests {
 
     use super::*;
 
-    fn fixture_with_comments(name: &str, comments: &[(&str, &str)]) -> anyhow::Result<PathBuf> {
-        let path = std::env::temp_dir().join(format!("lyra-{name}-{}.flac", std::process::id()));
-        std::fs::copy(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/assets/metadata/integration_track.flac"),
-            &path,
-        )?;
-        let flac = FlacFile::read_from(&mut std::fs::File::open(&path)?, ParseOptions::new())?;
-        let mut vorbis = flac.vorbis_comments().cloned().unwrap_or_default();
+    fn fixture_with_comments(
+        name: &str,
+        fixture: &str,
+        comments: &[(&str, &str)],
+    ) -> anyhow::Result<PathBuf> {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/assets/metadata")
+            .join(fixture);
+        let path =
+            std::env::temp_dir().join(format!("lyra-{name}-{}-{fixture}", std::process::id()));
+        std::fs::copy(&source, &path)?;
+        let mut file = std::fs::File::open(&path)?;
+        let mut vorbis = if fixture.ends_with(".opus") {
+            OpusFile::read_from(&mut file, ParseOptions::new())?
+                .vorbis_comments()
+                .clone()
+        } else {
+            FlacFile::read_from(&mut file, ParseOptions::new())?
+                .vorbis_comments()
+                .cloned()
+                .unwrap_or_default()
+        };
         for (key, value) in comments {
             vorbis.push((*key).to_string(), (*value).to_string());
         }
@@ -491,6 +504,7 @@ mod tests {
     fn read_audio_tags_falls_back_to_unmapped_vorbis_comments() -> anyhow::Result<()> {
         let path = fixture_with_comments(
             "vorbis-fallbacks",
+            "integration_track.flac",
             &[
                 ("SOURCEMEDIA", "CD"),
                 ("MEDIATYPE", "File"),
@@ -509,6 +523,7 @@ mod tests {
     fn read_audio_tags_prefers_mapped_vorbis_comments() -> anyhow::Result<()> {
         let path = fixture_with_comments(
             "vorbis-mapped",
+            "integration_track.flac",
             &[
                 ("MEDIA", "CD"),
                 ("MEDIATYPE", "File"),
@@ -525,7 +540,11 @@ mod tests {
     }
 
     fn processed_date(comments: &[(&str, &str)]) -> anyhow::Result<(Option<String>, Option<u32>)> {
-        let path = fixture_with_comments(&format!("date-{}", comments.len()), comments)?;
+        let path = fixture_with_comments(
+            &format!("date-{}", comments.len()),
+            "integration_track.flac",
+            comments,
+        )?;
         let (tag, properties) = read_audio_tags(path.clone())?;
         std::fs::remove_file(&path)?;
 
@@ -564,6 +583,7 @@ mod tests {
     fn gain_tags_resolve_to_replaygain_reference() -> anyhow::Result<()> {
         let path = fixture_with_comments(
             "gain-tags",
+            "integration_track.flac",
             &[
                 ("REPLAYGAIN_TRACK_GAIN", "-6.54 dB"),
                 ("R128_TRACK_GAIN", "-512"),
@@ -582,6 +602,29 @@ mod tests {
         let track = lyra_metadata::process_raw_tags(vec![raw]).remove(0);
         assert_eq!(track.track_gain_db, Some(-6.54));
         assert_eq!(track.album_gain_db, Some(3.0));
+        Ok(())
+    }
+
+    #[test]
+    fn read_audio_tags_reads_opus_comments() -> anyhow::Result<()> {
+        let path = fixture_with_comments(
+            "opus-comments",
+            "integration_track.opus",
+            &[("UPC", "0199957588430"), ("R128_TRACK_GAIN", "-512")],
+        )?;
+        let (tag, properties) = read_audio_tags(path.clone())?;
+        std::fs::remove_file(&path)?;
+
+        assert_eq!(tag.get_string(ItemKey::Barcode), Some("0199957588430"));
+        let raw = mapping::apply_mapping(
+            &tag,
+            &properties,
+            &path.to_string_lossy(),
+            &mapping::default_config(),
+        );
+        assert!(raw.duration_ms > 0);
+        let track = lyra_metadata::process_raw_tags(vec![raw]).remove(0);
+        assert_eq!(track.track_gain_db, Some(3.0));
         Ok(())
     }
 }
