@@ -716,7 +716,7 @@ end
 function module.ensure_payload_user_matches(auth_context: AuthContext, payload: PlaybackPayload?): boolean
 	local raw_user_id = scalar_field(payload, "UserId")
 	local payload_user_id = if type(raw_user_id) == "string" then module.trim(raw_user_id) else nil
-	if payload_user_id and module.decode_jellyfin_item_id(payload_user_id) ~= auth_context.principal.user_id then
+	if payload_user_id and item_ids.decode_jellyfin_user_id(payload_user_id) ~= auth_context.principal.user_id then
 		return false
 	end
 
@@ -772,7 +772,6 @@ function module.report_playback_event(
 		and not is_terminal_playback_state(normalized_state)
 	then
 		local _, stop_error = playbacks.report_session({
-			user_id = auth_context.principal.user_id,
 			session_key = session_key :: string,
 			track_id = prior_session_state.track_id,
 			position_ms = prior_session_state.position_ms,
@@ -786,7 +785,6 @@ function module.report_playback_event(
 	end
 
 	local _, report_error = playbacks.report_session({
-		user_id = auth_context.principal.user_id,
 		session_key = session_key :: string,
 		track_id = item_id,
 		position_ms = position_ms,

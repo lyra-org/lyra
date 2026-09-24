@@ -16,7 +16,7 @@ type JsonObject = { [string]: api.JsonValue }
 
 export type UserDataOpts = {
 	item_id: number?,
-	user_id: number?,
+	user_id: string?,
 	include_favorite: boolean?,
 	include_play_count: boolean?,
 	favorite_lookup: { [number]: boolean }?,
@@ -38,34 +38,35 @@ export type UserData = {
 
 local module = {}
 
-local function has_favorite(user_id: number?, item_id: number?): boolean
-	if not user_id or user_id <= 0 or not item_id or item_id <= 0 then
+-- Favorites belong to the dispatch principal; `user_id` only says a user is present.
+local function has_favorite(user_id: string?, item_id: number?): boolean
+	if not user_id or not item_id or item_id <= 0 then
 		return false
 	end
 
-	local ok, is_favorite = pcall(favorites.has, user_id, item_id)
+	local ok, is_favorite = pcall(favorites.has, item_id)
 	return ok and is_favorite == true
 end
 
-function module.has_favorite(user_id: number?, item_id: number?): boolean
+function module.has_favorite(user_id: string?, item_id: number?): boolean
 	return has_favorite(user_id, item_id)
 end
 
-function module.add_favorite(user_id: number?, item_id: number?): boolean
-	if not user_id or user_id <= 0 or not item_id or item_id <= 0 then
+function module.add_favorite(item_id: number?): boolean
+	if not item_id or item_id <= 0 then
 		return false
 	end
 
-	local ok, applied = pcall(favorites.add, user_id, item_id)
+	local ok, applied = pcall(favorites.add, item_id)
 	return ok and applied == true
 end
 
-function module.remove_favorite(user_id: number?, item_id: number?): boolean
-	if not user_id or user_id <= 0 or not item_id or item_id <= 0 then
+function module.remove_favorite(item_id: number?): boolean
+	if not item_id or item_id <= 0 then
 		return false
 	end
 
-	local ok, applied = pcall(favorites.remove, user_id, item_id)
+	local ok, applied = pcall(favorites.remove, item_id)
 	return ok and applied == true
 end
 
@@ -105,7 +106,6 @@ function module.get_user_data(opts: UserDataOpts?): UserData
 	end
 
 	local item_id = opts.item_id
-	local user_id = opts.user_id
 
 	local play_count = 0
 	local should_include_play_count = opts.include_play_count ~= false
@@ -118,7 +118,7 @@ function module.get_user_data(opts: UserDataOpts?): UserData
 		if lookup_count ~= nil then
 			play_count = tonumber(lookup_count) or 0
 		else
-			local ok, count = pcall(listens.get_count, item_id, user_id, RESOLVE_MERGE_TRACK_COUNT)
+			local ok, count = pcall(listens.get_count, item_id, RESOLVE_MERGE_TRACK_COUNT)
 			if ok then
 				play_count = count
 			end

@@ -36,7 +36,7 @@ type ResolvedAuth = auth.ResolvedAuth
 type PlaylistInfo = playlists.PlaylistInfo
 type PlaylistTrackLink = playlists.PlaylistTrackLink
 type UserIdentity = {
-	user_id: number,
+	user_id: string,
 	username: string,
 }
 type AuthenticateRequest = {
@@ -78,7 +78,7 @@ function module.is_admin(principal: Principal): boolean
 	return module.has_permission(principal, "admin")
 end
 
-function module.can_control_user(controller: Principal, target_user_id: number): boolean
+function module.can_control_user(controller: Principal, target_user_id: string): boolean
 	return controller.user_id == target_user_id or module.is_admin(controller)
 end
 
@@ -328,7 +328,7 @@ local function resolve_jellyfin_auth(ctx: ApiContext?): (ResolvedAuth?, string?)
 	local principal = resolved_auth.principal
 
 	if requested_user_id then
-		local decoded_user_id = item_ids.decode_jellyfin_item_id(requested_user_id)
+		local decoded_user_id = item_ids.decode_jellyfin_user_id(requested_user_id)
 		if decoded_user_id ~= principal.user_id then
 			return nil, token
 		end
@@ -371,7 +371,7 @@ function module.resolve_client_identity(
 		resolved_auth = resolved_auth or request_auth
 		token = token or request_token
 	end
-	local session_token = if resolved_auth and resolved_auth.credential.session_id then token else nil
+	local session_token = if resolved_auth and resolved_auth.credential.kind == "session" then token else nil
 	local saved = if session_token then auth.get_session_data(session_token) else nil
 	if type(saved) == "table" then
 		local fields = saved :: { [string]: auth.JsonValue }
@@ -384,7 +384,7 @@ function module.resolve_client_identity(
 			version = version or (if type(fields.version) == "string" then fields.version else nil)
 		end
 	end
-	if resolved_auth and resolved_auth.credential.api_key_id then
+	if resolved_auth and resolved_auth.credential.kind == "api_key" then
 		client = resolved_auth.credential.api_key_name
 		device_id = device_id or SERVER_ID
 		device = device or "Lyra"
@@ -492,13 +492,13 @@ end
 function module.require_matching_user_scope(ctx: ApiContext?, principal: Principal): boolean
 	local params = if ctx then ctx.params else nil
 	local path_user_id = if params then requests.trim(params.userId) else nil
-	if path_user_id and item_ids.decode_jellyfin_item_id(path_user_id) ~= principal.user_id then
+	if path_user_id and item_ids.decode_jellyfin_user_id(path_user_id) ~= principal.user_id then
 		return false
 	end
 
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local query_user_id = requests.parse_query_string(query, { "userId", "UserId", "userid" }, nil)
-	if query_user_id and item_ids.decode_jellyfin_item_id(query_user_id) ~= principal.user_id then
+	if query_user_id and item_ids.decode_jellyfin_user_id(query_user_id) ~= principal.user_id then
 		return false
 	end
 
@@ -508,7 +508,7 @@ end
 function module.require_matching_user_scope_from_id_param(ctx: ApiContext?, principal: Principal): boolean
 	local params = if ctx then ctx.params else nil
 	local path_user_id = if params then requests.trim(params.id) else nil
-	if path_user_id and item_ids.decode_jellyfin_item_id(path_user_id) ~= principal.user_id then
+	if path_user_id and item_ids.decode_jellyfin_user_id(path_user_id) ~= principal.user_id then
 		return false
 	end
 
@@ -576,7 +576,7 @@ function module.parse_playlist_query_entry_ids(query: ApiQueryParams?, playlist:
 end
 
 function module.ensure_user_scope_matches_principal(requested_user_id: string?, principal: Principal): boolean
-	if requested_user_id and item_ids.decode_jellyfin_item_id(requested_user_id) ~= principal.user_id then
+	if requested_user_id and item_ids.decode_jellyfin_user_id(requested_user_id) ~= principal.user_id then
 		return false
 	end
 
@@ -631,7 +631,7 @@ function module.to_playlist_info(playlist: PlaylistInfo): PlaylistResponseInfo
 	local shares: { PlaylistUserPermission } = {}
 	if owner_id then
 		table.insert(shares, {
-			UserId = tostring(owner_id),
+			UserId = item_ids.encode_jellyfin_item_id(owner_id) or "",
 			CanEdit = true,
 		})
 	end
@@ -671,7 +671,7 @@ function module.playlist_info_to_json(info: PlaylistResponseInfo): JsonObject
 	}
 end
 
-function module.to_playlist_user_permission(playlist: PlaylistInfo, user_id: number): PlaylistUserPermission
+function module.to_playlist_user_permission(playlist: PlaylistInfo, user_id: string): PlaylistUserPermission
 	local owner_id = playlist_access.owner_id(playlist)
 	return {
 		UserId = item_ids.encode_jellyfin_item_id(user_id) or "",
@@ -963,11 +963,11 @@ function module.current_iso_timestamp(): string
 	return os.date("!%Y-%m-%dT%H:%M:%SZ", os.time()) :: string
 end
 
-function module.devices_info_response(ctx: ApiContext?, user_id: number): ApiResponse
+function module.devices_info_response(ctx: ApiContext?, user_id: string): ApiResponse
 	local query = if ctx and ctx.request then ctx.request.query else nil
 	local requested_device_id = requests.parse_query_string(query, { "id", "Id" }, nil)
 
-	local ok, connections = pcall(playback_sessions.list_connections, user_id)
+	local ok, connections = pcall(playback_sessions.list_connections)
 	if not ok or type(connections) ~= "table" then
 		return api.response.empty(500)
 	end

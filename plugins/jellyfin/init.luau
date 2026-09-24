@@ -96,7 +96,7 @@ type PlaybackPayload = { [string]: string | number | boolean? }
 type PublicUser = users.PublicUser
 
 type UserIdentity = {
-	user_id: number,
+	user_id: string,
 	username: string,
 }
 
@@ -132,7 +132,7 @@ type VirtualFolderInfo = {
 type SessionEntry = {
 	sender: api.ApiWebSocketSender,
 	session_id: string,
-	user_id: number,
+	user_id: string,
 	is_admin: boolean,
 	device_id: string,
 	info: JsonObject,
@@ -143,11 +143,6 @@ type SessionEntry = {
 	subscribed_sessions: boolean,
 	last_activity: string,
 	last_playback_event_s: number?,
-}
-
-type NativeConnectionTarget = {
-	user_id: number,
-	connection: playback_sessions.ConnectionInfo,
 }
 
 local sessions: { [string]: SessionEntry } = {}
@@ -370,7 +365,7 @@ end
 
 local AUTH_PROVIDER_ID = "Lyra"
 
-local function find_public_user_by_id(user_id: number): PublicUser?
+local function find_public_user_by_id(user_id: string): PublicUser?
 	local listed_users = users.list()
 	if listed_users == nil then
 		return nil
@@ -385,7 +380,7 @@ local function find_public_user_by_id(user_id: number): PublicUser?
 	return nil
 end
 
-local function root_folder_json(user_id: number): JsonObject
+local function root_folder_json(user_id: string): JsonObject
 	local views = catalog.to_music_view_items()
 	return {
 		Id = constants.ROOT_ITEM_ID,
@@ -493,7 +488,7 @@ api.get(P .. "/Users/{id}", function(ctx: ApiContext): ApiResponse
 
 	local params = if ctx then ctx.params else nil
 	local raw_user_id = if params then params.id else nil
-	local user_id = item_ids.decode_jellyfin_item_id(raw_user_id)
+	local user_id = item_ids.decode_jellyfin_user_id(raw_user_id)
 	if not user_id then
 		return responses.not_found("user not found")
 	end
@@ -1093,8 +1088,8 @@ local function handle_favorite_item_route(ctx: ApiContext, should_favorite: bool
 	end
 
 	local update_ok = if should_favorite
-		then user_data.add_favorite(principal.user_id, target_id)
-		else user_data.remove_favorite(principal.user_id, target_id)
+		then user_data.add_favorite(target_id)
+		else user_data.remove_favorite(target_id)
 	if not update_ok then
 		return responses.bad_request(if should_favorite then "failed to add favorite" else "failed to remove favorite")
 	end
@@ -1163,7 +1158,6 @@ api.post(P .. "/Playlists", function(ctx: ApiContext)
 
 	local playlist_name = request_payload.name or "New Playlist"
 	local create_request: PlaylistCreateRequest = {
-		user_id = principal.user_id,
 		name = playlist_name,
 		is_public = if request_payload.is_public ~= nil then request_payload.is_public else false,
 		created_at = session.current_unix_seconds(),
@@ -1402,16 +1396,18 @@ api.get(P .. "/Playlists/{playlistId}/Users/{userId}", function(ctx: ApiContext)
 		return responses.bad_request("missing user id")
 	end
 
+	local target_user_id = item_ids.decode_jellyfin_user_id(requested_user_id)
+	if not target_user_id then
+		return responses.not_found("user not found")
+	end
 	local requester_can_edit = playlist_access.can_edit(playlist, principal.user_id)
-	if item_ids.decode_jellyfin_item_id(requested_user_id) ~= principal.user_id and not requester_can_edit then
+	if target_user_id ~= principal.user_id and not requester_can_edit then
 		return session.unauthorized()
 	end
 
 	return api.response.json(
 		200,
-		session.playlist_user_permission_to_json(
-			session.to_playlist_user_permission(playlist, item_ids.decode_jellyfin_item_id(requested_user_id) or 0)
-		)
+		session.playlist_user_permission_to_json(session.to_playlist_user_permission(playlist, target_user_id))
 	)
 end, "public", true)
 api.get(P .. "/Playlists/{playlistId}/Users", function(ctx: ApiContext)
@@ -1725,7 +1721,7 @@ local function build_now_playing(playback: playback_sessions.PlaybackInfo): (Jso
 end
 
 local function build_sessions_dto_list(
-	user_id: number,
+	user_id: string,
 	username: string,
 	connections: { playback_sessions.ConnectionInfo }
 ): { JsonValue }
@@ -1804,7 +1800,7 @@ end
 
 local function list_all_user_identities(fallback: UserIdentity?): { UserIdentity }
 	local result: { UserIdentity } = {}
-	local seen: { [number]: boolean } = {}
+	local seen: { [string]: boolean } = {}
 	for _, user: PublicUser in users.list() do
 		if not seen[user.user_id] then
 			seen[user.user_id] = true
@@ -1820,21 +1816,6 @@ local function list_all_user_identities(fallback: UserIdentity?): { UserIdentity
 	return result
 end
 
-local function visible_user_identities(principal: session.Principal): { UserIdentity }
-	if session.is_admin(principal) then
-		return list_all_user_identities({
-			user_id = principal.user_id,
-			username = principal.username,
-		})
-	end
-	return {
-		{
-			user_id = principal.user_id,
-			username = principal.username,
-		},
-	}
-end
-
 local function session_supports_remote_control(dto: JsonValue): boolean
 	if type(dto) ~= "table" then
 		return false
@@ -1844,11 +1825,11 @@ end
 
 local function append_sessions_for_user(
 	result: { JsonValue },
-	user_id: number,
+	user_id: string,
 	username: string,
+	connections: { playback_sessions.ConnectionInfo },
 	require_remote_control: boolean
 )
-	local connections = playback_sessions.list_connections(user_id)
 	for _, dto in build_sessions_dto_list(user_id, username, connections) do
 		if not require_remote_control or session_supports_remote_control(dto) then
 			table.insert(result, dto)
@@ -1856,64 +1837,56 @@ local function append_sessions_for_user(
 	end
 end
 
-local function list_all_sessions(fallback: UserIdentity?, require_remote_control: boolean): { JsonValue }
+-- The server lists only the dispatch principal's own native connections, so every other user's
+-- sessions come from this plugin's WebSocket registry alone.
+local function list_all_sessions(
+	own: UserIdentity?,
+	own_connections: { playback_sessions.ConnectionInfo },
+	require_remote_control: boolean
+): { JsonValue }
 	local result: { JsonValue } = {}
-	for _, user in list_all_user_identities(fallback) do
-		append_sessions_for_user(result, user.user_id, user.username, require_remote_control)
+	for _, user in list_all_user_identities(own) do
+		local connections = if own and user.user_id == own.user_id then own_connections else {}
+		append_sessions_for_user(result, user.user_id, user.username, connections, require_remote_control)
 	end
 	return result
 end
 
-local function list_visible_sessions(principal: session.Principal, controllable_user_id: number?): { JsonValue }
+local function list_visible_sessions(principal: session.Principal, controllable_user_id: string?): { JsonValue }
 	if controllable_user_id and not session.can_control_user(principal, controllable_user_id) then
 		return {}
 	end
 
 	local require_remote_control = controllable_user_id ~= nil
+	local own_connections = playback_sessions.list_connections()
 	if session.is_admin(principal) then
 		return list_all_sessions({
 			user_id = principal.user_id,
 			username = principal.username,
-		}, require_remote_control)
+		}, own_connections, require_remote_control)
 	end
 
 	local result: { JsonValue } = {}
-	append_sessions_for_user(result, principal.user_id, principal.username, require_remote_control)
+	append_sessions_for_user(result, principal.user_id, principal.username, own_connections, require_remote_control)
 	return result
-end
-
-local function find_native_connection_for_user(
-	user_id: number,
-	session_id: string,
-	session_key: string?
-): NativeConnectionTarget?
-	for _, conn in playback_sessions.list_connections(user_id) do
-		if conn.token == session_id or (session_key ~= nil and conn.session_key == session_key) then
-			return {
-				user_id = user_id,
-				connection = conn,
-			}
-		end
-	end
-	return nil
 end
 
 local function resolve_native_target(
 	principal: session.Principal,
 	session_id: string,
 	ws_entry: SessionEntry?
-): (NativeConnectionTarget?, ApiResponse?)
-	if ws_entry then
-		if not session.can_control_user(principal, ws_entry.user_id) then
-			return nil, session.unauthorized()
-		end
-		return find_native_connection_for_user(ws_entry.user_id, session_id, ws_entry.session_id), nil
+): (playback_sessions.ConnectionInfo?, ApiResponse?)
+	if ws_entry and not session.can_control_user(principal, ws_entry.user_id) then
+		return nil, session.unauthorized()
+	end
+	if ws_entry and ws_entry.user_id ~= principal.user_id then
+		return nil, nil
 	end
 
-	for _, user in visible_user_identities(principal) do
-		local target = find_native_connection_for_user(user.user_id, session_id, nil)
-		if target then
-			return target, nil
+	local session_key = if ws_entry then ws_entry.session_id else nil
+	for _, conn in playback_sessions.list_connections() do
+		if conn.token == session_id or (session_key ~= nil and conn.session_key == session_key) then
+			return conn, nil
 		end
 	end
 	return nil, nil
@@ -1935,8 +1908,7 @@ local function dispatch_to_native(
 	end
 
 	local cmd_request: playback_sessions.SendCommandRequest = {
-		user_id = target.user_id,
-		target_token = target.connection.token,
+		target_token = target.token,
 		action = action,
 	}
 	if position_ms ~= nil then
@@ -1961,7 +1933,7 @@ api.get(P .. "/Sessions", function(ctx: ApiContext)
 	local request = if ctx then ctx.request else nil
 	local query = if request then request.query else nil
 	local controllable = requests.parse_query_string(query, { "controllableByUserId", "ControllableByUserId" }, nil)
-	local controllable_user_id = if controllable then item_ids.decode_jellyfin_item_id(controllable) else nil
+	local controllable_user_id = if controllable then item_ids.decode_jellyfin_user_id(controllable) else nil
 	if controllable and not controllable_user_id then
 		return api.response.json(200, {})
 	end
@@ -1981,7 +1953,7 @@ local function resolve_play_pause(principal: session.Principal, session_id: stri
 	if target_err then
 		return nil, target_err
 	end
-	local playback_info = if target then target.connection.playback else nil
+	local playback_info = if target then target.playback else nil
 	if playback_info then
 		local resolved = if playback_info.state == "paused" then "Unpause" else "Pause"
 		return resolved, nil
@@ -2253,7 +2225,7 @@ api.post(P .. "/Items/{id}/PlaybackInfo", function(ctx: ApiContext)
 	local requested_user_id = if request_object then request_object.UserId else nil
 	if
 		type(requested_user_id) == "string"
-		and item_ids.decode_jellyfin_item_id(requested_user_id) ~= principal.user_id
+		and item_ids.decode_jellyfin_user_id(requested_user_id) ~= principal.user_id
 	then
 		return session.unauthorized()
 	end
@@ -2629,7 +2601,7 @@ task.spawn(function()
 	while true do
 		local tick_ok = xpcall(function()
 			task.wait(JELLYFIN_SESSIONS_BROADCAST_SECONDS)
-			local by_user: { [number]: { username: string, senders: { api.ApiWebSocketSender } } } = {}
+			local by_user: { [string]: { username: string, senders: { api.ApiWebSocketSender } } } = {}
 			local admin_senders: { api.ApiWebSocketSender } = {}
 			local admin_fallback: UserIdentity? = nil
 			for _, entry in sessions do
@@ -2657,8 +2629,9 @@ task.spawn(function()
 				-- One user's render failure must not strand the rest; only
 				-- scheduler-level throws reach the outer counter.
 				xpcall(function()
-					local connections = playback_sessions.list_connections(user_id)
-					local list = build_sessions_dto_list(user_id, bucket.username, connections)
+					-- Broadcasts run outside any request, so there is no principal to list native
+					-- connections for.
+					local list = build_sessions_dto_list(user_id, bucket.username, {})
 					local text = websocket.encode("Sessions", list, nil)
 					for _, sender in bucket.senders do
 						pcall(function()
@@ -2671,7 +2644,7 @@ task.spawn(function()
 			end
 			if #admin_senders > 0 then
 				xpcall(function()
-					local list = list_all_sessions(admin_fallback, false)
+					local list = list_all_sessions(admin_fallback, {}, false)
 					local text = websocket.encode("Sessions", list, nil)
 					for _, sender in admin_senders do
 						pcall(function()

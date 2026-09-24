@@ -26,7 +26,7 @@ type JsonObject = { [string]: JsonValue }
 export type SessionEntry = {
 	sender: api.ApiWebSocketSender,
 	session_id: string,
-	user_id: number,
+	user_id: string,
 	is_admin: boolean,
 	device_id: string,
 	info: JsonObject,
@@ -45,7 +45,7 @@ type SyncPlayQueueItem = {
 
 type SyncPlayParticipant = {
 	session_id: string,
-	user_id: number,
+	user_id: string,
 	username: string,
 	buffering: boolean,
 	ready: boolean,
@@ -73,7 +73,7 @@ type SyncPlayGroup = {
 
 local syncplay_groups: { [string]: SyncPlayGroup } = {}
 local syncplay_session_to_group: { [string]: SyncPlayGroup } = {}
-local syncplay_active_users: { [number]: number } = {}
+local syncplay_active_users: { [string]: number } = {}
 local syncplay_guid_counter = 0
 local sessions: { [string]: SessionEntry } = {}
 local get_owned_session: OwnedSessionResolver = function()
@@ -466,11 +466,11 @@ local function syncplay_broadcast_state(group: SyncPlayGroup, from_entry: Sessio
 	})
 end
 
-local function syncplay_increment_active_user(user_id: number)
+local function syncplay_increment_active_user(user_id: string)
 	syncplay_active_users[user_id] = (syncplay_active_users[user_id] or 0) + 1
 end
 
-local function syncplay_decrement_active_user(user_id: number)
+local function syncplay_decrement_active_user(user_id: string)
 	local count = syncplay_active_users[user_id]
 	if not count then
 		return
