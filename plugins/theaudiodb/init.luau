@@ -205,16 +205,6 @@ local function build_redirect_url(entity: string, id: string?): string
 	return BASE_URL
 end
 
-local function redirect_url_generator(entity: string): (...unknown) -> string
-	return function(...: unknown): string
-		local id = select(1, ...)
-		if type(id) == "string" then
-			return build_redirect_url(entity, id)
-		end
-		return build_redirect_url(entity, nil)
-	end
-end
-
 local function single_id_map(key: string, value: string?): JsonObject?
 	if value == nil or value == "" then
 		return nil
@@ -717,19 +707,19 @@ provider:id({
 	id_type = "artist_id",
 	entity = ET.Artist,
 	unique = true,
-}, redirect_url_generator("artist"))
+}, audiodb_url("artist/{id}"))
 
 provider:id({
 	id_type = "album_id",
 	entity = ET.Release,
 	unique = true,
-}, redirect_url_generator("album"))
+}, audiodb_url("album/{id}"))
 
 provider:id({
 	id_type = "track_id",
 	entity = ET.Track,
 	unique = true,
-}, redirect_url_generator("track"))
+}, audiodb_url("track/{id}"))
 
 provider:search(ET.Artist, function(query: string): { SearchResultItem }
 	return artist_search_results(query)
