@@ -25,6 +25,7 @@ use tokio::time::{
 use super::constants::{
     AUTH_CHECK_INTERVAL,
     CloseReason,
+    MAX_CONSECUTIVE_AUTH_ERRORS,
     PING_INTERVAL,
     PONG_TIMEOUT,
     RemoteAction,
@@ -285,8 +286,6 @@ enum AuthStatus {
     Revoked,
     Error,
 }
-
-const MAX_CONSECUTIVE_AUTH_ERRORS: u32 = 5;
 
 async fn check_auth(token: &Option<String>, expected_user_public_id: &str) -> AuthStatus {
     match auth::resolve_auth_from_bearer(token.as_deref()).await {

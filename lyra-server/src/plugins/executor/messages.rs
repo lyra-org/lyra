@@ -265,6 +265,9 @@ pub(crate) struct WebSocketStartRequest {
     pub(crate) query: HashMap<String, Vec<String>>,
     pub(crate) params: HashMap<String, String>,
     pub(crate) auth: Option<crate::services::auth::ResolvedAuth>,
+    /// The socket's acting-principal slot, shared by every task on the socket
+    /// and refreshed by the driver's re-auth for auth-required routes.
+    pub(crate) dispatch_auth: crate::plugins::auth::DispatchAuth,
     pub(crate) inbound: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<String>>>,
     pub(crate) outbound: tokio::sync::mpsc::Sender<String>,
     pub(crate) state: Arc<WebSocketState>,
