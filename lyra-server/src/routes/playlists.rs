@@ -460,18 +460,18 @@ fn playlist_summary(
         .unwrap_or_default())
 }
 
-async fn require_playlist_owner(
-    headers: &HeaderMap,
-    playlist_db_id: DbId,
-) -> Result<crate::services::auth::Principal, AppError> {
-    let principal = require_principal(headers).await?;
-    let db = STATE.db.read().await;
-    let user_db_id = principal.require(&db)?;
-    let owner_db_id = db::playlists::get_owner(&db, playlist_db_id)?;
-    if owner_db_id != Some(user_db_id) {
+/// Resolves `id` to a playlist the principal owns, under the guard that acts on it.
+fn require_owned_playlist(
+    db: &impl db::DbAccess,
+    principal: &Principal,
+    id: &str,
+) -> Result<DbId, AppError> {
+    let playlist_db_id = db::lookup::find_node_id_by_id(db, id)?
+        .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
+    if !crate::services::auth::access::playlist_owned(db, principal, playlist_db_id)? {
         return Err(AppError::forbidden("you do not own this playlist"));
     }
-    Ok(principal)
+    Ok(playlist_db_id)
 }
 
 fn build_track_response_unchecked(
@@ -750,14 +750,10 @@ async fn update_playlist(
     Path(id): Path<String>,
     Json(request): Json<UpdatePlaylistRequest>,
 ) -> Result<Json<PlaylistResponse>, AppError> {
-    let playlist_db_id = {
-        let db = STATE.db.read().await;
-        db::lookup::find_node_id_by_id(&*db, &id)?
-            .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?
-    };
-    let principal = require_playlist_owner(&headers, playlist_db_id).await?;
+    let principal = require_principal(&headers).await?;
 
     let mut db = STATE.db.write().await;
+    let playlist_db_id = require_owned_playlist(&db, &principal, &id)?;
     let playlist = playlists::update(
         &mut db,
         &playlists::UpdatePlaylistRequest {
@@ -785,14 +781,10 @@ async fn delete_playlist(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    let playlist_db_id = {
-        let db = STATE.db.read().await;
-        db::lookup::find_node_id_by_id(&*db, &id)?
-            .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?
-    };
-    let _principal = require_playlist_owner(&headers, playlist_db_id).await?;
+    let principal = require_principal(&headers).await?;
 
     let mut db = STATE.db.write().await;
+    let playlist_db_id = require_owned_playlist(&db, &principal, &id)?;
     playlists::delete(&mut db, QueryId::Id(playlist_db_id))?
         .ok_or_else(|| AppError::not_found(format!("Playlist not found: {}", id)))?;
 
@@ -804,12 +796,7 @@ async fn add_playlist_tracks(
     Path(id): Path<String>,
     Json(request): Json<AddPlaylistTracksRequest>,
 ) -> Result<Json<Vec<PlaylistTrackResponse>>, AppError> {
-    let playlist_db_id = {
-        let db = STATE.db.read().await;
-        db::lookup::find_node_id_by_id(&*db, &id)?
-            .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?
-    };
-    let principal = require_playlist_owner(&headers, playlist_db_id).await?;
+    let principal = require_principal(&headers).await?;
 
     if request.track_ids.is_empty() {
         return Err(AppError::bad_request("track_ids cannot be empty"));
@@ -821,24 +808,22 @@ async fn add_playlist_tracks(
         )));
     }
 
-    let track_query_ids = {
-        let db = STATE.db.read().await;
-        let mut ids = Vec::with_capacity(request.track_ids.len());
-        for track_id in request.track_ids {
-            let track_db_id = db::lookup::find_node_id_by_id(&*db, &track_id)?
-                .ok_or_else(|| AppError::not_found(format!("track not found: {track_id}")))?;
-            crate::services::auth::access::require_entity_accessible(
-                &*db,
-                &principal,
-                track_db_id,
-                || AppError::not_found(format!("track not found: {track_id}")),
-            )?;
-            ids.push(QueryId::Id(track_db_id));
-        }
-        ids
-    };
-
     let mut db = STATE.db.write().await;
+    let playlist_db_id = require_owned_playlist(&db, &principal, &id)?;
+
+    let mut track_query_ids = Vec::with_capacity(request.track_ids.len());
+    for track_id in request.track_ids {
+        let track_db_id = db::lookup::find_node_id_by_id(&*db, &track_id)?
+            .ok_or_else(|| AppError::not_found(format!("track not found: {track_id}")))?;
+        crate::services::auth::access::require_entity_accessible(
+            &*db,
+            &principal,
+            track_db_id,
+            || AppError::not_found(format!("track not found: {track_id}")),
+        )?;
+        track_query_ids.push(QueryId::Id(track_db_id));
+    }
+
     let results = playlists::add_tracks(&mut db, QueryId::Id(playlist_db_id), &track_query_ids)
         .map_err(|err| {
             let message = err.to_string();
@@ -872,12 +857,7 @@ async fn remove_playlist_entries(
     id: String,
     entry_ids: Vec<String>,
 ) -> Result<Json<Vec<PlaylistTrackResponse>>, AppError> {
-    let playlist_db_id = {
-        let db = STATE.db.read().await;
-        db::lookup::find_node_id_by_id(&*db, &id)?
-            .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?
-    };
-    let _principal = require_playlist_owner(&headers, playlist_db_id).await?;
+    let principal = require_principal(&headers).await?;
 
     if entry_ids.is_empty() {
         return Err(AppError::bad_request("entry_ids cannot be empty"));
@@ -890,6 +870,8 @@ async fn remove_playlist_entries(
     }
 
     let mut db = STATE.db.write().await;
+    let playlist_db_id = require_owned_playlist(&db, &principal, &id)?;
+
     let removed_tracks = playlists::remove_tracks(
         &mut db,
         QueryId::Id(playlist_db_id),
@@ -918,7 +900,7 @@ async fn remove_playlist_entries(
         })?;
         removed.push(build_track_response(
             &db,
-            &_principal,
+            &principal,
             track,
             playlist_track.track_db_id,
             playlist_track.entry_id,
@@ -950,14 +932,10 @@ async fn move_playlist_track(
     Path((id, entry_id)): Path<(String, String)>,
     Json(request): Json<MovePlaylistTrackRequest>,
 ) -> Result<Json<Vec<PlaylistTrackResponse>>, AppError> {
-    let playlist_db_id = {
-        let db = STATE.db.read().await;
-        db::lookup::find_node_id_by_id(&*db, &id)?
-            .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?
-    };
-    let _principal = require_playlist_owner(&headers, playlist_db_id).await?;
+    let principal = require_principal(&headers).await?;
 
     let mut db = STATE.db.write().await;
+    let playlist_db_id = require_owned_playlist(&db, &principal, &id)?;
     playlists::move_track(
         &mut db,
         QueryId::Id(playlist_db_id),
@@ -973,7 +951,7 @@ async fn move_playlist_track(
         }
     })?;
 
-    let items = build_tracks(&db, &_principal, playlist_db_id, PlaylistInc::TRACKS_ONLY)?;
+    let items = build_tracks(&db, &principal, playlist_db_id, PlaylistInc::TRACKS_ONLY)?;
     Ok(Json(items))
 }
 
@@ -1173,6 +1151,233 @@ mod tests {
             Some(crate::services::auth::AuthError::InvalidBearerCredential)
         ));
         Ok(())
+    }
+
+    async fn session_headers(user_db_id: DbId) -> anyhow::Result<HeaderMap> {
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {}", session.token).parse()?,
+        );
+        Ok(headers)
+    }
+
+    struct RecycleOutcome<T> {
+        playlist_db_id: DbId,
+        victim: Option<VictimPlaylist>,
+        output: T,
+    }
+
+    /// The playlist a victim creates in the attacker's recycled `DbId`, with its entry ids.
+    struct VictimPlaylist {
+        db_id: DbId,
+        entry_ids: Vec<String>,
+    }
+
+    /// What the attacker's request acts on: their own playlist and a track they may add.
+    struct AttackerRequest {
+        headers: HeaderMap,
+        playlist_id: String,
+        track_id: String,
+    }
+
+    /// Runs `request` as an attacker against their own playlist while, at gap `gap`, the
+    /// playlist is deleted and a victim creates one that takes its `DbId`.
+    async fn run_against_recycled_playlist<T>(
+        gap: Option<usize>,
+        request: impl AsyncFnOnce(AttackerRequest) -> T,
+    ) -> anyhow::Result<(bool, RecycleOutcome<T>)> {
+        crate::testing::init_default_test_state()?;
+        let (attacker, victim, track_db_id, playlist_db_id, request_input) = {
+            let mut db = STATE.db.write().await;
+            db::roles::ensure_builtin_roles(&mut db)?;
+            let attacker = db::test_db::insert_user(&mut db, "attacker")?;
+            db::roles::ensure_user_has_role(&mut db, attacker, db::roles::BUILTIN_ADMIN_ROLE)?;
+            let victim = db::test_db::insert_user(&mut db, "victim")?;
+            let track_db_id = insert_track(&mut db, "Shared Track")?;
+            let playlist_db_id = seed_playlist(&mut db, attacker, "Attacker's")?;
+            let public_id = |db_id| {
+                db::lookup::find_id_by_db_id(&*db, db_id)?
+                    .ok_or_else(|| anyhow!("public id missing for {db_id:?}"))
+            };
+            let playlist_id = public_id(playlist_db_id)?;
+            let track_id = public_id(track_db_id)?;
+            (
+                attacker,
+                victim,
+                track_db_id,
+                playlist_db_id,
+                (playlist_id, track_id),
+            )
+        };
+        let (playlist_id, track_id) = request_input;
+        let headers = session_headers(attacker).await?;
+
+        let mut victim_playlist = None;
+        let (reached, output) = crate::testing::run_with_recycle_at(
+            gap,
+            request(AttackerRequest {
+                headers,
+                playlist_id,
+                track_id,
+            }),
+            |db| {
+                playlists::delete(db, QueryId::Id(playlist_db_id))
+                    .expect("delete attacker playlist")
+                    .expect("attacker playlist exists");
+                let recycled = seed_playlist(db, victim, "Victim's").expect("seed victim playlist");
+                assert_eq!(
+                    recycled, playlist_db_id,
+                    "agdb must reuse the playlist DbId"
+                );
+                let entry =
+                    playlists::add_track(db, QueryId::Id(recycled), QueryId::Id(track_db_id))
+                        .expect("seed victim entry");
+                victim_playlist = Some(VictimPlaylist {
+                    db_id: recycled,
+                    entry_ids: vec![entry.entry_id],
+                });
+            },
+        )
+        .await;
+        Ok((
+            reached,
+            RecycleOutcome {
+                playlist_db_id,
+                victim: victim_playlist,
+                output,
+            },
+        ))
+    }
+
+    fn status_of<T>(result: Result<T, AppError>) -> Result<(), StatusCode> {
+        result
+            .map(|_| ())
+            .map_err(|error| axum::response::IntoResponse::into_response(error).status())
+    }
+
+    async fn rename(request: AttackerRequest) -> Result<(), StatusCode> {
+        status_of(
+            update_playlist(
+                request.headers,
+                Path(request.playlist_id),
+                Json(UpdatePlaylistRequest {
+                    name: Some("Renamed".to_string()),
+                    description: None,
+                    is_public: None,
+                }),
+            )
+            .await,
+        )
+    }
+
+    async fn delete(request: AttackerRequest) -> Result<(), StatusCode> {
+        status_of(delete_playlist(request.headers, Path(request.playlist_id)).await)
+    }
+
+    async fn add_track(request: AttackerRequest) -> Result<(), StatusCode> {
+        status_of(
+            add_playlist_tracks(
+                request.headers,
+                Path(request.playlist_id),
+                Json(AddPlaylistTracksRequest {
+                    track_ids: vec![request.track_id],
+                }),
+            )
+            .await,
+        )
+    }
+
+    /// Runs the recycle at every gap `request` has.
+    async fn for_each_recycled_gap(
+        request: impl AsyncFn(AttackerRequest) -> Result<(), StatusCode>,
+        check: impl Fn(usize, &agdb::DbAny, &VictimPlaylist) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        crate::testing::for_each_db_gap(
+            async |gap| run_against_recycled_playlist(gap, &request).await,
+            async |gap, outcome| {
+                let victim = outcome
+                    .victim
+                    .ok_or_else(|| anyhow!("victim playlist not created at gap {gap}"))?;
+                check(gap, &*STATE.db.read().await, &victim)
+            },
+        )
+        .await
+    }
+
+    fn entry_ids(db: &agdb::DbAny, playlist_db_id: DbId) -> anyhow::Result<Vec<String>> {
+        Ok(db::playlists::get_tracks(db, playlist_db_id)?
+            .into_iter()
+            .map(|track| track.entry_id)
+            .collect())
+    }
+
+    /// The victim's playlist keeps exactly the entries it was created with.
+    fn victim_entries_untouched(
+        gap: usize,
+        db: &agdb::DbAny,
+        victim: &VictimPlaylist,
+    ) -> anyhow::Result<()> {
+        assert_eq!(
+            entry_ids(db, victim.db_id)?,
+            victim.entry_ids,
+            "victim entries changed at gap {gap}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_playlist_never_renames_a_playlist_that_took_a_recycled_id() -> anyhow::Result<()>
+    {
+        let _guard = crate::testing::runtime_test_lock().await;
+        let (_, control) = run_against_recycled_playlist(None, rename).await?;
+        assert_eq!(control.output, Ok(()));
+        let renamed = db::playlists::get_by_id(&*STATE.db.read().await, control.playlist_db_id)?
+            .ok_or_else(|| anyhow!("control playlist missing"))?;
+        assert_eq!(renamed.name, "Renamed");
+
+        for_each_recycled_gap(rename, |gap, db, victim| {
+            let victim_playlist = db::playlists::get_by_id(db, victim.db_id)?
+                .ok_or_else(|| anyhow!("victim playlist missing after gap {gap}"))?;
+            assert_eq!(victim_playlist.name, "Victim's", "renamed at gap {gap}");
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn delete_playlist_never_deletes_a_playlist_that_took_a_recycled_id() -> anyhow::Result<()>
+    {
+        let _guard = crate::testing::runtime_test_lock().await;
+        let (_, control) = run_against_recycled_playlist(None, delete).await?;
+        assert_eq!(control.output, Ok(()));
+        assert!(
+            db::playlists::get_by_id(&*STATE.db.read().await, control.playlist_db_id)?.is_none()
+        );
+
+        for_each_recycled_gap(delete, |gap, db, victim| {
+            assert!(
+                db::playlists::get_by_id(db, victim.db_id)?.is_some(),
+                "deleted at gap {gap}"
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn add_playlist_tracks_never_adds_to_a_playlist_that_took_a_recycled_id()
+    -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        let (_, control) = run_against_recycled_playlist(None, add_track).await?;
+        assert_eq!(control.output, Ok(()));
+        assert_eq!(
+            entry_ids(&*STATE.db.read().await, control.playlist_db_id)?.len(),
+            1
+        );
+
+        for_each_recycled_gap(add_track, victim_entries_untouched).await
     }
 
     #[test]
