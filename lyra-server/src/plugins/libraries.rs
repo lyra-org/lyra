@@ -290,7 +290,7 @@ impl From<db::libraries::Library> for LibraryRecord {
 impl From<LibraryView> for LibraryRecord {
     fn from(library: LibraryView) -> Self {
         Self {
-            db_id: None,
+            db_id: library.db_id.map(|id| id.0),
             id: library.id,
             name: library.name,
             path: None,

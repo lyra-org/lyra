@@ -1353,6 +1353,82 @@ fn plugin_executor_exposes_db_backed_lyra_libraries_module() -> Result<()> {
 }
 
 #[test]
+fn libraries_expose_db_ids_of_accessible_libraries_to_a_dispatch_principal() -> Result<()> {
+    let mut db = crate::plugins::db::test_db::new_test_db()?;
+    let shared_db_id =
+        crate::plugins::db::test_db::insert_library(&mut db, "Shared Library", "/tmp/shared")?;
+    let hidden_db_id =
+        crate::plugins::db::test_db::insert_library(&mut db, "Hidden Library", "/tmp/hidden")?;
+    let shared_track_db_id = crate::plugins::db::test_db::insert_track(&mut db, "Shared Track")?;
+    let hidden_track_db_id = crate::plugins::db::test_db::insert_track(&mut db, "Hidden Track")?;
+    crate::plugins::db::test_db::connect(&mut db, shared_db_id, shared_track_db_id)?;
+    crate::plugins::db::test_db::connect(&mut db, hidden_db_id, hidden_track_db_id)?;
+    let shared_public_id = crate::plugins::db::lookup::find_id_by_db_id(&db, shared_db_id)?
+        .context("inserted library has public id")?;
+    let db = std::sync::Arc::new(tokio::sync::RwLock::new(db));
+
+    let runtime = PluginExecutor::with_database(
+        Arc::from(vec![manifest("demo", &["lyra.libraries"])]),
+        default_server_info(),
+        db,
+    )?;
+    let mut context = CallContext {
+        origin: plugin_origin("demo", "init.luau".to_string()),
+        ..CallContext::default()
+    };
+    seed_caller_principal(
+        &mut context,
+        crate::services::auth::Principal::from_parts(
+            agdb::DbId(7),
+            "user-public-id".to_string(),
+            "viewer".to_string(),
+            Vec::new(),
+            None,
+            std::collections::HashSet::from([shared_public_id]),
+        ),
+    );
+    let values = runtime.eval_plugin_source_with_call_context(
+        format!(
+            r#"
+                local libraries = require("@lyra/libraries")
+                local all = libraries.list()
+                local for_entity = libraries.get_for_entity({shared_track_db_id})
+                local many = libraries.get_for_entities({{ {shared_track_db_id}, {hidden_track_db_id} }})
+                return #all,
+                    all[1].db_id,
+                    all[1].path,
+                    for_entity[1].db_id,
+                    many[{shared_track_db_id}].db_id,
+                    many[{hidden_track_db_id}],
+                    #libraries.list({hidden_db_id}),
+                    #libraries.get_for_entity({hidden_track_db_id})
+            "#,
+            shared_track_db_id = shared_track_db_id.0,
+            hidden_track_db_id = hidden_track_db_id.0,
+            hidden_db_id = hidden_db_id.0,
+        )
+        .into_bytes(),
+        context,
+    )?;
+
+    let shared_db_id = luau::Value::Number(shared_db_id.0 as f64);
+    assert_eq!(
+        values,
+        vec![
+            luau::Value::Number(1.0),
+            shared_db_id.clone(),
+            luau::Value::Nil,
+            shared_db_id.clone(),
+            shared_db_id,
+            luau::Value::Nil,
+            luau::Value::Number(0.0),
+            luau::Value::Number(0.0),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
 fn libraries_refuse_a_client_dispatch_without_a_principal() -> Result<()> {
     let mut db = crate::plugins::db::test_db::new_test_db()?;
     let library_db_id =

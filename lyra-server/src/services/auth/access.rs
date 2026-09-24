@@ -35,6 +35,7 @@ pub(crate) enum AccessError {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LibraryView {
+    pub(crate) db_id: Option<DbId>,
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) language: Option<String>,
@@ -44,6 +45,7 @@ pub(crate) struct LibraryView {
 impl From<Library> for LibraryView {
     fn from(library: Library) -> Self {
         Self {
+            db_id: library.db_id,
             id: library.id,
             name: library.name,
             language: library.language,
