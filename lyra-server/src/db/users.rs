@@ -339,9 +339,7 @@ pub(crate) fn revoke_all_sessions_for_user(
 }
 
 pub(crate) fn delete_user(db: &mut impl super::DbAccess, user_db_id: DbId) -> anyhow::Result<()> {
-    if let Some(user) = get_by_id(db, user_db_id)? {
-        super::lyrics::delete_personal_for_owner_in_txn(db, &user.id)?;
-    }
+    super::lyrics::delete_personal_for_owner_in_txn(db, user_db_id)?;
     revoke_all_sessions_for_user(db, user_db_id)?;
     super::playbacks::delete_for_user(db, user_db_id)?;
     super::settings::plugins::remove_all_for_user(db, user_db_id)?;
@@ -563,9 +561,8 @@ mod tests {
     #[test]
     fn delete_user_cascades_personal_lyrics_and_children() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
-        let user = test_user("alice")?;
-        let owner_user_id = user.id.clone();
-        let user_db_id = create(&mut db, &user)?;
+        let user_db_id = crate::db::test_db::insert_user(&mut db, "alice")?;
+        let bob_db_id = crate::db::test_db::insert_user(&mut db, "bob")?;
         let track_db_id = crate::db::test_db::insert_track(&mut db, "song")?;
         let lyrics_db_id = crate::db::lyrics::upsert_personal(
             &mut db,
@@ -584,8 +581,20 @@ mod tests {
                 }],
                 last_checked_at: 1,
             },
-            &owner_user_id,
+            user_db_id,
             Some(2_000),
+        )?;
+        let bob_lyrics_db_id = crate::db::lyrics::upsert_personal(
+            &mut db,
+            track_db_id,
+            crate::db::lyrics::LyricsInput {
+                language: "eng".to_string(),
+                plain_text: "bob".to_string(),
+                lines: Vec::new(),
+                last_checked_at: 1,
+            },
+            bob_db_id,
+            None,
         )?;
         let detail = crate::db::lyrics::get_detail(&db, lyrics_db_id)?.expect("lyrics");
         let line_db_id: DbId = detail.lines[0]
@@ -615,6 +624,12 @@ mod tests {
                 .is_err()
         );
         assert!(get_by_id(&db, user_db_id)?.is_none());
+        assert_eq!(
+            crate::db::lyrics::find_personal(&db, track_db_id, bob_db_id)?
+                .and_then(|lyrics| lyrics.db_id)
+                .map(DbId::from),
+            Some(bob_lyrics_db_id)
+        );
         Ok(())
     }
 

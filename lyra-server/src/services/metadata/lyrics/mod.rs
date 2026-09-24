@@ -14,6 +14,7 @@ pub(crate) use selection::{
     has_meaningful_synced,
     normalize_language_hint,
     pick_preferred,
+    visible_for_track,
 };
 pub(crate) use upload::{
     LyricsUploadError,

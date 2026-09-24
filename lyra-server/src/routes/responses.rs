@@ -120,7 +120,7 @@ pub struct LyricsCandidatesResponse {
 
 impl LyricsScopeResponse {
     pub(crate) fn from_lyrics(lyrics: &db::Lyrics) -> Self {
-        match lyrics.kind() {
+        match lyrics.kind {
             LyricsKind::Personal => Self::Personal,
             LyricsKind::Shared | LyricsKind::Provider => Self::Shared,
         }
@@ -129,7 +129,7 @@ impl LyricsScopeResponse {
 
 impl LyricsSourceResponse {
     pub(crate) fn from_lyrics(lyrics: &db::Lyrics) -> Self {
-        match lyrics.kind() {
+        match lyrics.kind {
             LyricsKind::Personal | LyricsKind::Shared => Self::Manual,
             LyricsKind::Provider => Self::Provider,
         }

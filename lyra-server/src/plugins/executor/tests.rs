@@ -379,16 +379,18 @@ fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<
     )?;
     assert_eq!(deleted, vec![luau::Value::Boolean(true)]);
 
-    let remaining_personal_owners = futures::executor::block_on(async {
+    let (alice_remaining, bob_remaining) = futures::executor::block_on(async {
         let db = crate::STATE.db.read().await;
-        Ok::<_, anyhow::Error>(
-            crate::plugins::db::lyrics::get_for_track(&db, track_db_id)?
-                .into_iter()
-                .filter_map(|lyrics| lyrics.owner_user_id)
-                .collect::<Vec<_>>(),
-        )
+        Ok::<_, anyhow::Error>((
+            crate::plugins::db::lyrics::find_personal(&db, track_db_id, alice_db_id)?,
+            crate::plugins::db::lyrics::find_personal(&db, track_db_id, bob_db_id)?,
+        ))
     })?;
-    assert_eq!(remaining_personal_owners, vec![bob_public_id]);
+    assert!(alice_remaining.is_none());
+    assert_eq!(
+        bob_remaining.map(|lyrics| lyrics.plain_text).as_deref(),
+        Some("bob lyrics")
+    );
     Ok(())
 }
 
