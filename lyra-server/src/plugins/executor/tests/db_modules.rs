@@ -952,7 +952,7 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
                     is_public = true,
                     updated_at = 30,
                 }})
-                playlists.remove_track(executor_playlist_entry_id)
+                playlists.remove_track(executor_playlist_id, executor_playlist_entry_id)
                 executor_playlist_tracks_after_remove = playlists.get_tracks(executor_playlist_id)
             "#,
             track_db_id = track_db_id.0,

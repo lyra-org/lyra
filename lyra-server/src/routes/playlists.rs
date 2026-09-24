@@ -872,22 +872,15 @@ async fn remove_playlist_entries(
     let mut db = STATE.db.write().await;
     let playlist_db_id = require_owned_playlist(&db, &principal, &id)?;
 
-    let removed_tracks = playlists::remove_tracks(
-        &mut db,
-        QueryId::Id(playlist_db_id),
-        &entry_ids
-            .into_iter()
-            .map(QueryId::Alias)
-            .collect::<Vec<_>>(),
-    )
-    .map_err(|err| {
-        let message = err.to_string();
-        if message.starts_with("playlist entry not found") {
-            AppError::not_found(message)
-        } else {
-            AppError::from(err)
-        }
-    })?;
+    let removed_tracks =
+        playlists::remove_tracks(&mut db, playlist_db_id, &entry_ids).map_err(|err| {
+            let message = err.to_string();
+            if message.starts_with("playlist entry not found") {
+                AppError::not_found(message)
+            } else {
+                AppError::from(err)
+            }
+        })?;
 
     let mut removed = Vec::new();
     for playlist_track in removed_tracks {
@@ -936,20 +929,16 @@ async fn move_playlist_track(
 
     let mut db = STATE.db.write().await;
     let playlist_db_id = require_owned_playlist(&db, &principal, &id)?;
-    playlists::move_track(
-        &mut db,
-        QueryId::Id(playlist_db_id),
-        QueryId::Alias(entry_id.clone()),
-        request.new_position,
-    )
-    .map_err(|err| {
-        let message = err.to_string();
-        if message.contains("alias not found") {
-            AppError::not_found(format!("Playlist entry not found: {entry_id}"))
-        } else {
-            AppError::from(err)
-        }
-    })?;
+    playlists::move_track(&mut db, playlist_db_id, &entry_id, request.new_position).map_err(
+        |err| {
+            let message = err.to_string();
+            if message.starts_with("playlist entry not found") {
+                AppError::not_found(message)
+            } else {
+                AppError::from(err)
+            }
+        },
+    )?;
 
     let items = build_tracks(&db, &principal, playlist_db_id, PlaylistInc::TRACKS_ONLY)?;
     Ok(Json(items))
@@ -1165,6 +1154,8 @@ mod tests {
 
     struct RecycleOutcome<T> {
         playlist_db_id: DbId,
+        /// The attacker's entries before the request, in order.
+        entry_ids: Vec<String>,
         victim: Option<VictimPlaylist>,
         output: T,
     }
@@ -1175,11 +1166,23 @@ mod tests {
         entry_ids: Vec<String>,
     }
 
-    /// What the attacker's request acts on: their own playlist and a track they may add.
+    /// What the attacker's request acts on: their own playlist, a track they may add, and the
+    /// first of the playlist's two entries.
     struct AttackerRequest {
         headers: HeaderMap,
         playlist_id: String,
         track_id: String,
+        entry_id: String,
+    }
+
+    fn seed_entries(db: &mut DbAny, playlist_db_id: DbId, track_db_id: DbId) -> Vec<String> {
+        (0..2)
+            .map(|_| {
+                playlists::add_track(db, QueryId::Id(playlist_db_id), QueryId::Id(track_db_id))
+                    .expect("seed playlist entry")
+                    .entry_id
+            })
+            .collect()
     }
 
     /// Runs `request` as an attacker against their own playlist while, at gap `gap`, the
@@ -1189,7 +1192,7 @@ mod tests {
         request: impl AsyncFnOnce(AttackerRequest) -> T,
     ) -> anyhow::Result<(bool, RecycleOutcome<T>)> {
         crate::testing::init_default_test_state()?;
-        let (attacker, victim, track_db_id, playlist_db_id, request_input) = {
+        let (attacker, victim, track_db_id, playlist_db_id, entry_ids, request_input) = {
             let mut db = STATE.db.write().await;
             db::roles::ensure_builtin_roles(&mut db)?;
             let attacker = db::test_db::insert_user(&mut db, "attacker")?;
@@ -1197,6 +1200,7 @@ mod tests {
             let victim = db::test_db::insert_user(&mut db, "victim")?;
             let track_db_id = insert_track(&mut db, "Shared Track")?;
             let playlist_db_id = seed_playlist(&mut db, attacker, "Attacker's")?;
+            let entry_ids = seed_entries(&mut db, playlist_db_id, track_db_id);
             let public_id = |db_id| {
                 db::lookup::find_id_by_db_id(&*db, db_id)?
                     .ok_or_else(|| anyhow!("public id missing for {db_id:?}"))
@@ -1208,6 +1212,7 @@ mod tests {
                 victim,
                 track_db_id,
                 playlist_db_id,
+                entry_ids,
                 (playlist_id, track_id),
             )
         };
@@ -1221,6 +1226,7 @@ mod tests {
                 headers,
                 playlist_id,
                 track_id,
+                entry_id: entry_ids[0].clone(),
             }),
             |db| {
                 playlists::delete(db, QueryId::Id(playlist_db_id))
@@ -1231,12 +1237,9 @@ mod tests {
                     recycled, playlist_db_id,
                     "agdb must reuse the playlist DbId"
                 );
-                let entry =
-                    playlists::add_track(db, QueryId::Id(recycled), QueryId::Id(track_db_id))
-                        .expect("seed victim entry");
                 victim_playlist = Some(VictimPlaylist {
                     db_id: recycled,
-                    entry_ids: vec![entry.entry_id],
+                    entry_ids: seed_entries(db, recycled, track_db_id),
                 });
             },
         )
@@ -1245,6 +1248,7 @@ mod tests {
             reached,
             RecycleOutcome {
                 playlist_db_id,
+                entry_ids,
                 victim: victim_playlist,
                 output,
             },
@@ -1284,6 +1288,24 @@ mod tests {
                 Json(AddPlaylistTracksRequest {
                     track_ids: vec![request.track_id],
                 }),
+            )
+            .await,
+        )
+    }
+
+    async fn remove_entry(request: AttackerRequest) -> Result<(), StatusCode> {
+        status_of(
+            remove_playlist_entries(request.headers, request.playlist_id, vec![request.entry_id])
+                .await,
+        )
+    }
+
+    async fn move_entry(request: AttackerRequest) -> Result<(), StatusCode> {
+        status_of(
+            move_playlist_track(
+                request.headers,
+                Path((request.playlist_id, request.entry_id)),
+                Json(MovePlaylistTrackRequest { new_position: 1 }),
             )
             .await,
         )
@@ -1374,10 +1396,39 @@ mod tests {
         assert_eq!(control.output, Ok(()));
         assert_eq!(
             entry_ids(&*STATE.db.read().await, control.playlist_db_id)?.len(),
-            1
+            3
         );
 
         for_each_recycled_gap(add_track, victim_entries_untouched).await
+    }
+
+    #[tokio::test]
+    async fn remove_playlist_entries_never_removes_from_a_playlist_that_took_a_recycled_id()
+    -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        let (_, control) = run_against_recycled_playlist(None, remove_entry).await?;
+        assert_eq!(control.output, Ok(()));
+        assert_eq!(
+            entry_ids(&*STATE.db.read().await, control.playlist_db_id)?,
+            control.entry_ids[1..]
+        );
+
+        for_each_recycled_gap(remove_entry, victim_entries_untouched).await
+    }
+
+    #[tokio::test]
+    async fn move_playlist_track_never_moves_within_a_playlist_that_took_a_recycled_id()
+    -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        let (_, control) = run_against_recycled_playlist(None, move_entry).await?;
+        assert_eq!(control.output, Ok(()));
+        let moved = [control.entry_ids[1].clone(), control.entry_ids[0].clone()];
+        assert_eq!(
+            entry_ids(&*STATE.db.read().await, control.playlist_db_id)?,
+            moved
+        );
+
+        for_each_recycled_gap(move_entry, victim_entries_untouched).await
     }
 
     #[test]

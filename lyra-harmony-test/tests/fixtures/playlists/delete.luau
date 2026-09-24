@@ -1,4 +1,4 @@
-return function(fixture: { track_id: number, foreign_id: number, foreign_entry: number })
+return function(fixture: { track_id: number, foreign_id: number, foreign_entry: string })
 	local playlists = require("@lyra/playlists")
 	local id = playlists.create({ name = "Delete me" })
 	local entry = playlists.add_track(id, fixture.track_id)
@@ -11,7 +11,7 @@ return function(fixture: { track_id: number, foreign_id: number, foreign_entry: 
 	assert(playlists.delete(playlist.id) == true)
 	assert(playlists.get_by_id(id) == nil)
 	assert(playlists.delete(id) == false)
-	assert(entry ~= nil and playlists.remove_track(entry) == false)
+	assert(entry ~= nil and playlists.remove_track(id, entry) == false)
 	assert(playlists.get_by_id(fixture.foreign_id) ~= nil)
 	assert(not pcall(playlists.delete, {}))
 end

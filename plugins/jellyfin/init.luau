@@ -1275,7 +1275,7 @@ api.delete(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 	end
 
 	for _, entry_id in entry_ids do
-		local ok, removed = pcall(playlists.remove_track, entry_id)
+		local ok, removed = pcall(playlists.remove_track, playlist.id, entry_id)
 		if not ok or not removed then
 			return responses.bad_request("failed to remove playlist entry")
 		end

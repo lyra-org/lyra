@@ -3841,7 +3841,7 @@ function module.list_playlist_track_items(
 					table.insert(stubs, stub)
 					table.insert(
 						playlist_item_ids,
-						module.encode_jellyfin_item_id(if track_ref then track_ref.entry_public_id else nil)
+						module.encode_jellyfin_item_id(if track_ref then track_ref.entry_id else nil)
 					)
 				end
 			end

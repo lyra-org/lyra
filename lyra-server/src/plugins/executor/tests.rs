@@ -1968,10 +1968,10 @@ fn run_playlist_binding_test(source: &str) -> Result<()> {
         },
     )?;
     let foreign_entry =
-        playlists::add_track(&mut db, QueryId::Id(foreign_id), QueryId::Id(track_id))?.edge_id;
+        playlists::add_track(&mut db, QueryId::Id(foreign_id), QueryId::Id(track_id))?.entry_id;
     let fixture = format!(
-        "local fixture = {{track_id={}, foreign_id={}, foreign_entry={}}}\n",
-        track_id.0, foreign_id.0, foreign_entry.0
+        "local fixture = {{track_id={}, foreign_id={}, foreign_entry=\"{}\"}}\n",
+        track_id.0, foreign_id.0, foreign_entry
     );
     let runtime = PluginExecutor::with_database(
         Arc::from(vec![manifest("demo", &["lyra.playlists"])]),
