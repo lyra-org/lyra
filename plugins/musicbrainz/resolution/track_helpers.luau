@@ -141,7 +141,7 @@ type TrackAssignments = {
 }
 
 local function local_recording_id(local_track: LocalTrack): string?
-	local musicbrainz_ids = metadata.ids.for_provider(local_track.external_ids, "musicbrainz")
+	local musicbrainz_ids = local_track.external_ids and local_track.external_ids.musicbrainz
 	if musicbrainz_ids == nil then
 		return nil
 	end
