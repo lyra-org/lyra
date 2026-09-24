@@ -64,11 +64,6 @@ use serde::{
     Serialize,
 };
 
-/// Bumped whenever the shipped default metadata mapping rules change.
-/// Shared source of truth between the server extraction pipeline
-/// and the harmony-test fixture runner.
-pub const DEFAULT_MAPPING_VERSION: u64 = 1;
-
 /// Raw tag values read directly from audio files, before any processing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawTrackTags {

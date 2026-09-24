@@ -63,10 +63,6 @@ pub async fn run(options: RunOptions<'_>) -> anyhow::Result<RunResult> {
         max_release_requests,
     } = options;
 
-    fixture
-        .check_mapping_version()
-        .map_err(|err| anyhow::anyhow!("{test_name}: {err}"))?;
-
     let debug_timing = std::env::var_os("LYRA_HARMONY_TEST_TIMINGS").is_some();
     let total_started = Instant::now();
     let request_count = crate::cached_http::new_request_count();

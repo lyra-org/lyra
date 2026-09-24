@@ -199,38 +199,19 @@ pub(crate) async fn reingest_request_gate(
 pub(crate) struct ReingestSummary {
     pub(crate) libraries_reingested: usize,
     pub(crate) libraries_failed: Vec<(String, String)>,
-    pub(crate) new_version: u64,
 }
 
-/// Track and Entry node identities are preserved via
-/// `apply_metadata`'s `existing_tracks` reuse, so listens, playlists,
-/// and playback sessions keep pointing at the same tracks across a
-/// mapping change.
-///
-/// Not transactional across libraries. On any library failure the
-/// stored config is rolled back to the pre-commit snapshot so the
-/// server's advertised `mapping_version` never claims a state the
-/// data never reached. Tracks that were reingested before the
-/// failure remain in the graph — a subsequent scan or re-commit
-/// converges because ingestion is idempotent over existing tracks.
-///
-/// During the reingest window the persisted `mapping_version` is
-/// already N+1. `reingest_request_gate` fences HTTP writes, but
-/// internal readers (scheduled provider sync, future code stamping
-/// the version, etc.) see the bumped value transiently. On rollback
-/// the stamp returns to N, but any action taken by such a reader
-/// in the window remains. Single-transaction reingest across
-/// libraries (v1 spec R4) would close this; it's v2 scope.
+/// Stores `config` and reingests every library, restoring the previous
+/// rules if any library fails. Existing tracks keep their identities.
 pub(crate) async fn commit_and_reingest(
-    mut config: MetadataMappingConfig,
+    config: MetadataMappingConfig,
     _guard: ReingestGuard,
 ) -> anyhow::Result<ReingestSummary> {
-    let (previous, bumped_version) = {
+    let previous = {
         let mut db = STATE.db.write().await;
         let current = db::metadata::mapping_config::ensure(&mut db)?;
-        config.version = current.version.saturating_add(1);
         db::metadata::mapping_config::update(&mut db, &config)?;
-        (current, config.version)
+        current
     };
 
     let libraries = {
@@ -238,10 +219,7 @@ pub(crate) async fn commit_and_reingest(
         db::libraries::get(&db)?
     };
 
-    let mut summary = ReingestSummary {
-        new_version: bumped_version,
-        ..Default::default()
-    };
+    let mut summary = ReingestSummary::default();
     let db_async = STATE.db.get();
     for library in libraries {
         let name = library.name.clone();
@@ -261,17 +239,14 @@ pub(crate) async fn commit_and_reingest(
     } else {
         let rollback_result = {
             let mut db = STATE.db.write().await;
-            db::metadata::mapping_config::rollback_to(&mut db, &previous)
+            db::metadata::mapping_config::update(&mut db, &previous)
         };
         if let Err(rollback_err) = rollback_result {
             tracing::error!(error = %rollback_err, "failed to roll back metadata mapping config");
-        } else {
-            summary.new_version = previous.version;
         }
         Err(anyhow::anyhow!(
-            "reingest completed with {} library failure(s); rolled back to version {}",
+            "reingest completed with {} library failure(s); rolled back the mapping rules",
             summary.libraries_failed.len(),
-            previous.version,
         ))
         .with_context(|| format!("reingested {} libraries", summary.libraries_reingested))
     }

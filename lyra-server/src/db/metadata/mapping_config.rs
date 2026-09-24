@@ -36,7 +36,6 @@ pub(crate) struct MetadataMappingConfigNode {
     pub(crate) db_id: Option<NodeId>,
     pub(crate) id: String,
     pub(crate) rules_json: String,
-    pub(crate) version: u64,
 }
 
 pub(crate) fn ensure(db: &mut DbAny) -> anyhow::Result<MetadataMappingConfig> {
@@ -76,7 +75,6 @@ pub(crate) fn ensure(db: &mut DbAny) -> anyhow::Result<MetadataMappingConfig> {
             db_id: None,
             id: nanoid!(),
             rules_json,
-            version: default.version,
         };
         let result = t.exec_mut(QueryBuilder::insert().element(&node).query())?;
         let inserted_id = result.ids()[0];
@@ -100,8 +98,8 @@ pub(crate) fn get(db: &DbAny) -> anyhow::Result<Option<MetadataMappingConfig>> {
     decode(&node).map(Some)
 }
 
-/// Persist `config` if its version exceeds the stored one. Unknown
-/// `source_key`s are rejected here so no caller can bypass validation.
+/// Replaces the stored rules. Unknown `source_key`s are rejected here so
+/// no caller can bypass validation.
 pub(crate) fn update(db: &mut DbAny, config: &MetadataMappingConfig) -> anyhow::Result<()> {
     for rule in &config.rules {
         if resolve_item_key(&rule.source_key).is_none() {
@@ -149,13 +147,6 @@ pub(crate) fn update(db: &mut DbAny, config: &MetadataMappingConfig) -> anyhow::
             .into_iter()
             .next()
             .ok_or_else(|| anyhow!("metadata mapping config node missing; call ensure() first"))?;
-        if config.version <= existing.version {
-            anyhow::bail!(
-                "metadata mapping version must strictly increase: existing {}, new {}",
-                existing.version,
-                config.version
-            );
-        }
         let node_id: DbId = existing
             .db_id
             .map(DbId::from)
@@ -163,69 +154,7 @@ pub(crate) fn update(db: &mut DbAny, config: &MetadataMappingConfig) -> anyhow::
 
         t.exec_mut(
             QueryBuilder::insert()
-                .values_uniform([
-                    ("rules_json", rules_json.as_str()).into(),
-                    ("version", config.version).into(),
-                ])
-                .ids(node_id)
-                .query(),
-        )?;
-        Ok(())
-    })
-}
-
-/// Restore a previously-snapshotted config without enforcing
-/// monotonicity. Reserved for the reingest failure path so a
-/// bumped-then-failed commit doesn't leave users staring at a
-/// version number that claims a state the data never reached.
-///
-/// Does not undo per-track ingestion that already ran under the
-/// bumped rules; without a per-entry version stamp the inconsistent
-/// window is not directly observable. Subsequent scans converge.
-pub(crate) fn rollback_to(db: &mut DbAny, config: &MetadataMappingConfig) -> anyhow::Result<()> {
-    let rules_json = serde_json::to_string(&config.rules).context("serialising mapping rules")?;
-
-    db.transaction_mut(|t| -> anyhow::Result<()> {
-        let server_infos: Vec<server::ServerInfo> = t
-            .exec(
-                QueryBuilder::select()
-                    .elements::<server::ServerInfo>()
-                    .search()
-                    .from("server")
-                    .where_()
-                    .neighbor()
-                    .end_where()
-                    .query(),
-            )?
-            .try_into()?;
-        let server_db_id: DbId = server_infos
-            .into_iter()
-            .next()
-            .and_then(|s| s.db_id)
-            .ok_or_else(|| anyhow!("server info missing"))?;
-        let nodes: Vec<MetadataMappingConfigNode> = t
-            .exec(
-                QueryBuilder::select()
-                    .elements::<MetadataMappingConfigNode>()
-                    .search()
-                    .from(server_db_id)
-                    .where_()
-                    .neighbor()
-                    .end_where()
-                    .query(),
-            )?
-            .try_into()?;
-        let node_id: DbId = nodes
-            .into_iter()
-            .next()
-            .and_then(|n| n.db_id.map(DbId::from))
-            .ok_or_else(|| anyhow!("metadata mapping config node missing"))?;
-        t.exec_mut(
-            QueryBuilder::insert()
-                .values_uniform([
-                    ("rules_json", rules_json.as_str()).into(),
-                    ("version", config.version).into(),
-                ])
+                .values_uniform([("rules_json", rules_json.as_str()).into()])
                 .ids(node_id)
                 .query(),
         )?;
@@ -259,10 +188,7 @@ fn find_node(db: &DbAny) -> anyhow::Result<Option<MetadataMappingConfigNode>> {
 fn decode(node: &MetadataMappingConfigNode) -> anyhow::Result<MetadataMappingConfig> {
     let rules =
         serde_json::from_str(&node.rules_json).context("deserialising mapping rules from node")?;
-    Ok(MetadataMappingConfig {
-        rules,
-        version: node.version,
-    })
+    Ok(MetadataMappingConfig { rules })
 }
 
 #[cfg(test)]
@@ -275,23 +201,21 @@ mod tests {
         let mut db = new_test_db()?;
         let first = ensure(&mut db)?;
         let second = ensure(&mut db)?;
-        assert_eq!(first.version, second.version);
         assert_eq!(first.rules.len(), second.rules.len());
         assert!(!first.rules.is_empty());
         Ok(())
     }
 
     #[test]
-    fn update_bumps_version_and_replaces_rules() -> anyhow::Result<()> {
+    fn update_replaces_rules() -> anyhow::Result<()> {
         use crate::services::metadata::mapping::{
             FieldName,
             MappingRule,
         };
 
         let mut db = new_test_db()?;
-        let original = ensure(&mut db)?;
+        ensure(&mut db)?;
         let new_config = MetadataMappingConfig {
-            version: original.version + 1,
             rules: vec![MappingRule {
                 source_key: "AlbumTitle".to_string(),
                 destination: FieldName::Album,
@@ -300,30 +224,8 @@ mod tests {
         update(&mut db, &new_config)?;
 
         let loaded = get(&db)?.expect("config should exist");
-        assert_eq!(loaded.version, original.version + 1);
         assert_eq!(loaded.rules.len(), 1);
         assert_eq!(loaded.rules[0].source_key, "AlbumTitle");
-        Ok(())
-    }
-
-    #[test]
-    fn update_rejects_non_monotonic_version() -> anyhow::Result<()> {
-        use crate::services::metadata::mapping::{
-            FieldName,
-            MappingRule,
-        };
-
-        let mut db = new_test_db()?;
-        let original = ensure(&mut db)?;
-        let stale = MetadataMappingConfig {
-            version: original.version,
-            rules: vec![MappingRule {
-                source_key: "AlbumTitle".to_string(),
-                destination: FieldName::Album,
-            }],
-        };
-        let err = update(&mut db, &stale).unwrap_err();
-        assert!(format!("{err}").contains("strictly increase"));
         Ok(())
     }
 
@@ -335,9 +237,8 @@ mod tests {
         };
 
         let mut db = new_test_db()?;
-        let original = ensure(&mut db)?;
+        ensure(&mut db)?;
         let bogus = MetadataMappingConfig {
-            version: original.version + 1,
             rules: vec![MappingRule {
                 source_key: "NotARealKey".to_string(),
                 destination: FieldName::Album,
