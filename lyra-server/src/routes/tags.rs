@@ -189,9 +189,10 @@ async fn create_tag(
     }
 
     let mut db = STATE.db.write().await;
+    let user_db_id = principal.require(&db)?;
     let outcome = tag_service::create(
         &mut db,
-        principal.user_db_id,
+        user_db_id,
         &request.target_id,
         &request.tag,
         request.color.as_str(),
@@ -211,13 +212,14 @@ async fn list_tags(
     let snapshot_key = SnapshotKey::builder(&principal.user_public_id, "tags").finish();
 
     let db = STATE.db.read().await;
+    let user_db_id = principal.require(&db)?;
     let (tags, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
         (
-            tag_service::hydrate_tag_snapshot(&db, principal.user_db_id, &page.item_ids)?,
+            tag_service::hydrate_tag_snapshot(&db, user_db_id, &page.item_ids)?,
             page.next_cursor,
         )
     } else {
-        let mut tags = tag_service::list_for_user(&db, principal.user_db_id)?;
+        let mut tags = tag_service::list_for_user(&db, user_db_id)?;
         let page = page_request.start(
             &snapshot_key,
             tags.iter().map(|tag| tag.id.clone()).collect(),
@@ -242,7 +244,8 @@ async fn get_tag(
     }
 
     let db = STATE.db.read().await;
-    let tag = tag_service::get_by_public_id(&db, principal.user_db_id, &id)?;
+    let user_db_id = principal.require(&db)?;
+    let tag = tag_service::get_by_public_id(&db, user_db_id, &id)?;
     Ok(Json(tag_to_response(tag)))
 }
 
@@ -261,19 +264,15 @@ async fn list_tag_targets(
         .finish();
 
     let db = STATE.db.read().await;
-    let tag_db_id = tag_service::resolve_owned_tag_id(&db, principal.user_db_id, &id)?;
+    let user_db_id = principal.require(&db)?;
+    let tag_db_id = tag_service::resolve_owned_tag_id(&db, user_db_id, &id)?;
     let (targets, next_cursor) = if let Some(page) = page_request.resume(&snapshot_key)? {
         (
-            tag_service::hydrate_target_snapshot(
-                &db,
-                principal.user_db_id,
-                tag_db_id,
-                &page.item_ids,
-            )?,
+            tag_service::hydrate_target_snapshot(&db, user_db_id, tag_db_id, &page.item_ids)?,
             page.next_cursor,
         )
     } else {
-        let mut targets = tag_service::list_targets(&db, principal.user_db_id, tag_db_id)?;
+        let mut targets = tag_service::list_targets(&db, user_db_id, tag_db_id)?;
         let page = page_request.start(
             &snapshot_key,
             targets.iter().map(|target| target.snapshot_id()).collect(),
@@ -303,9 +302,9 @@ async fn get_tag_target_state(
     }
 
     let db = STATE.db.read().await;
-    let tag_db_id = tag_service::resolve_owned_tag_id(&db, principal.user_db_id, &id)?;
-    let tagged =
-        tag_service::has_target_by_tag_id(&db, principal.user_db_id, tag_db_id, &target_id)?;
+    let user_db_id = principal.require(&db)?;
+    let tag_db_id = tag_service::resolve_owned_tag_id(&db, user_db_id, &id)?;
+    let tagged = tag_service::has_target_by_tag_id(&db, user_db_id, tag_db_id, &target_id)?;
     Ok(Json(TargetStateResponse { tagged }))
 }
 
@@ -320,10 +319,11 @@ async fn update_tag(
     }
 
     let mut db = STATE.db.write().await;
-    let tag_db_id = tag_service::resolve_owned_tag_id(&db, principal.user_db_id, &id)?;
+    let user_db_id = principal.require(&db)?;
+    let tag_db_id = tag_service::resolve_owned_tag_id(&db, user_db_id, &id)?;
     let tag = tag_service::update(
         &mut db,
-        principal.user_db_id,
+        user_db_id,
         tag_db_id,
         request.tag.as_deref(),
         request.color.map(TagColor::as_str),
@@ -338,8 +338,9 @@ async fn delete_tag(headers: HeaderMap, Path(id): Path<String>) -> Result<Status
     }
 
     let mut db = STATE.db.write().await;
-    let tag_db_id = tag_service::resolve_owned_tag_id(&db, principal.user_db_id, &id)?;
-    tag_service::delete(&mut db, principal.user_db_id, tag_db_id)?;
+    let user_db_id = principal.require(&db)?;
+    let tag_db_id = tag_service::resolve_owned_tag_id(&db, user_db_id, &id)?;
+    tag_service::delete(&mut db, user_db_id, tag_db_id)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -358,8 +359,9 @@ async fn delete_tag_target(
     }
 
     let mut db = STATE.db.write().await;
-    let tag_db_id = tag_service::resolve_owned_tag_id(&db, principal.user_db_id, &id)?;
-    tag_service::remove_target_by_tag_id(&mut db, principal.user_db_id, tag_db_id, &target_id)?;
+    let user_db_id = principal.require(&db)?;
+    let tag_db_id = tag_service::resolve_owned_tag_id(&db, user_db_id, &id)?;
+    tag_service::remove_target_by_tag_id(&mut db, user_db_id, tag_db_id, &target_id)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -104,10 +104,10 @@ async fn render_mix_response(
     query: &MixQueryParams,
     tracks: Vec<db::Track>,
 ) -> Result<Json<Vec<TrackResponse>>, AppError> {
-    let tracks = filter_accessible_tracks(principal, tracks).await?;
     let includes = route_tracks::parse_inc(query.inc.clone())?;
     let responses: Vec<TrackResponse> = {
         let db = &*STATE.db.read().await;
+        let tracks = filter_accessible_tracks(db, principal, tracks)?;
         let details = track_service::list_details_for_tracks(db, includes.service, tracks)?;
         details
             .into_iter()
@@ -218,14 +218,9 @@ pub(crate) async fn get_me_mix(
     validate_limit(query.limit)?;
 
     let options = mix_options(&query, &principal);
-    let tracks = mix::from_seed(
-        MixSeed::Recent {
-            user_db_id: principal.user_db_id,
-        },
-        &options,
-    )
-    .await?
-    .ok_or_else(|| AppError::not_found("user not found".to_string()))?;
+    let tracks = mix::from_seed(MixSeed::Recent, &options)
+        .await?
+        .ok_or_else(|| AppError::not_found("user not found".to_string()))?;
     render_mix_response(&principal, &query, tracks).await
 }
 
@@ -250,17 +245,21 @@ async fn resolve_accessible_seed_id(
     Ok(db_id)
 }
 
-async fn filter_accessible_tracks(
+/// Keeps the mixer's tracks that still exist under their public id and that the principal can
+/// reach, checked under the guard that hydrates them.
+fn filter_accessible_tracks(
+    db: &agdb::DbAny,
     principal: &Principal,
     tracks: Vec<db::Track>,
 ) -> anyhow::Result<Vec<db::Track>> {
-    let db = &*STATE.db.read().await;
     let mut filtered = Vec::with_capacity(tracks.len());
     for track in tracks {
         let Some(track_db_id) = track.db_id.clone().map(agdb::DbId::from) else {
             continue;
         };
-        if crate::services::auth::access::entity_accessible(db, principal, track_db_id)? {
+        if db::lookup::find_node_id_by_id(db, &track.id)? == Some(track_db_id)
+            && crate::services::auth::access::entity_accessible(db, principal, track_db_id)?
+        {
             filtered.push(track);
         }
     }

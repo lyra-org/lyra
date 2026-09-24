@@ -63,7 +63,7 @@ pub(crate) fn search_accessible(
     let mut candidates = db::search::collect_candidates(db, library_ids)?;
     if !options.rating_filter.is_empty() {
         let matching =
-            db::ratings::target_ids_matching(db, principal.user_db_id, options.rating_filter)?;
+            db::ratings::target_ids_matching(db, principal.require(db)?, options.rating_filter)?;
         candidates
             .tracks
             .retain(|candidate| matching.contains(&candidate.db_id));
@@ -114,20 +114,15 @@ mod tests {
         new_test_db,
     };
     use crate::services::auth::Principal;
-    use agdb::QueryBuilder;
 
     fn admin_principal(db: &mut DbAny) -> anyhow::Result<Principal> {
-        let user_db_id = db
-            .exec_mut(QueryBuilder::insert().nodes().count(1).query())?
-            .ids()[0];
-        Ok(Principal {
+        let user_db_id = crate::db::test_db::insert_user(db, "search-user")?;
+        Ok(Principal::for_user(
+            db,
             user_db_id,
-            user_public_id: "test-search-user".to_string(),
-            username: "search-user".to_string(),
-            permissions: vec![db::Permission::Admin],
-            role_name: None,
-            accessible_library_ids: HashSet::new(),
-        })
+            vec![db::Permission::Admin],
+            HashSet::new(),
+        ))
     }
 
     #[test]
@@ -285,6 +280,7 @@ mod tests {
         let low_release = insert_release(&mut db, "Blue Low Release")?;
         let high_release = insert_release(&mut db, "Blue High Release")?;
 
+        let user_db_id = principal.require(&db)?;
         for (target, kind, value) in [
             (rated_track, db::ratings::RatingKind::Track, 4),
             (rated_artist, db::ratings::RatingKind::Artist, 3),
@@ -293,7 +289,7 @@ mod tests {
         ] {
             db::ratings::upsert(
                 &mut db,
-                principal.user_db_id,
+                user_db_id,
                 target,
                 kind,
                 db::ratings::RatingValue::new(value).unwrap(),
@@ -342,22 +338,17 @@ mod benches {
 
     fn fixture(track_count: usize, library_count: usize, admin: bool) -> (DbAny, Principal) {
         let mut db = new_test_db().unwrap();
-        let user_db_id = db
-            .exec_mut(agdb::QueryBuilder::insert().nodes().count(1).query())
-            .unwrap()
-            .ids()[0];
-        let mut principal = Principal {
+        let user_db_id = crate::db::test_db::insert_user(&mut db, "search-bench-user").unwrap();
+        let mut principal = Principal::for_user(
+            &db,
             user_db_id,
-            user_public_id: "search-bench-user".to_string(),
-            username: "search-bench-user".to_string(),
-            permissions: if admin {
+            if admin {
                 vec![db::Permission::Admin]
             } else {
                 Vec::new()
             },
-            role_name: None,
-            accessible_library_ids: HashSet::new(),
-        };
+            HashSet::new(),
+        );
         let libraries: Vec<_> = (0..library_count)
             .map(|i| {
                 let id = insert_library(

@@ -143,7 +143,8 @@ pub(crate) struct StartPlaybackRequest {
 #[derive(Clone, Debug)]
 pub(crate) struct ReportPlaybackRequest {
     pub(crate) playback_session_id: DbId,
-    pub(crate) user_db_id: Option<DbId>,
+    /// The playback's owner; reports against anyone else's playback are rejected.
+    pub(crate) user_db_id: DbId,
     pub(crate) mutation: PlaybackMutation,
     pub(crate) now_ms: u64,
     pub(crate) activity_policy: ActivityPolicy,
@@ -865,7 +866,7 @@ mod tests {
             &mut db,
             ReportPlaybackRequest {
                 playback_session_id: started.playback_session_id,
-                user_db_id: Some(user_db_id),
+                user_db_id,
                 mutation: PlaybackMutation {
                     position_ms: Some(1_000),
                     duration_ms: None,
@@ -2057,7 +2058,7 @@ mod tests {
             61_000,
         )?;
 
-        let counts_after_first = db::listens::get_counts(&db, &[track_db_id], Some(user_db_id))?;
+        let counts_after_first = db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
         assert_eq!(counts_after_first.get(&track_db_id).copied(), Some(1));
 
         // Explicit restart of the same track.
@@ -2086,7 +2087,7 @@ mod tests {
             122_000,
         )?;
 
-        let counts_after_replay = db::listens::get_counts(&db, &[track_db_id], Some(user_db_id))?;
+        let counts_after_replay = db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
         assert_eq!(counts_after_replay.get(&track_db_id).copied(), Some(2));
 
         let records = workflow::collect_playback_records(&db)?;
@@ -2126,7 +2127,7 @@ mod tests {
             61_000,
         )?;
 
-        let counts_after_first = db::listens::get_counts(&db, &[track_db_id], Some(user_db_id))?;
+        let counts_after_first = db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
         assert_eq!(counts_after_first.get(&track_db_id).copied(), Some(1));
 
         // No Started event — pure seek-to-zero replay within the same session.
@@ -2155,7 +2156,7 @@ mod tests {
             122_000,
         )?;
 
-        let counts_after_replay = db::listens::get_counts(&db, &[track_db_id], Some(user_db_id))?;
+        let counts_after_replay = db::listens::get_counts(&db, &[track_db_id], user_db_id)?;
         assert_eq!(counts_after_replay.get(&track_db_id).copied(), Some(2));
 
         // Heuristic resets in place; no second session.
@@ -2246,7 +2247,7 @@ mod tests {
             140_000,
         )?;
 
-        let counts = db::listens::get_counts(&db, &[track_a_id], Some(user_db_id))?;
+        let counts = db::listens::get_counts(&db, &[track_a_id], user_db_id)?;
         assert_eq!(counts.get(&track_a_id).copied(), Some(2));
         Ok(())
     }

@@ -46,14 +46,14 @@ use crate::{
 };
 
 fn principal(user_id: &str) -> Principal {
-    Principal {
-        user_db_id: DbId(1),
-        user_public_id: user_id.to_string(),
-        username: user_id.to_string(),
-        permissions: vec![Permission::Admin],
-        role_name: None,
-        accessible_library_ids: HashSet::new(),
-    }
+    Principal::from_parts(
+        DbId(1),
+        user_id.to_string(),
+        user_id.to_string(),
+        vec![Permission::Admin],
+        None,
+        HashSet::new(),
+    )
 }
 
 fn set(field: MetadataField, value: Value) -> MetadataChangeRequest {

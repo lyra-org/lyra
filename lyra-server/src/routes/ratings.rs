@@ -170,7 +170,8 @@ async fn delete_rating(
     validate_target_id(&target_id)?;
 
     let mut db = STATE.db.write().await;
-    match rating_service::remove(&mut db, principal.user_db_id, &target_id)? {
+    let user_db_id = principal.require(&db)?;
+    match rating_service::remove(&mut db, user_db_id, &target_id)? {
         rating_service::MutationOutcome::Applied(_) => Ok(StatusCode::NO_CONTENT),
         rating_service::MutationOutcome::NotTargetable => Err(AppError::not_found(format!(
             "rating target not found: {target_id}"

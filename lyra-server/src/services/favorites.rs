@@ -54,12 +54,13 @@ pub(crate) fn add_for_principal(
 ) -> anyhow::Result<MutationOutcome> {
     let now_ms = now_ms()?;
     db.transaction_mut(|t| -> anyhow::Result<MutationOutcome> {
+        let user_db_id = principal.require(t)?;
         let Some((target_db_id, kind)) =
-            resolve_targetable_for_principal(t, principal, public_target_id)?
+            resolve_targetable_for_principal(t, principal, user_db_id, public_target_id)?
         else {
             return Ok(MutationOutcome::NotTargetable);
         };
-        db::favorites::add(t, principal.user_db_id, target_db_id, kind, now_ms)?;
+        db::favorites::add(t, user_db_id, target_db_id, kind, now_ms)?;
         Ok(MutationOutcome::Applied(kind))
     })
 }
@@ -85,12 +86,13 @@ pub(crate) fn has_for_principal(
     principal: &Principal,
     public_target_id: &str,
 ) -> anyhow::Result<bool> {
+    let user_db_id = principal.require(db)?;
     let Some((target_db_id, _kind)) =
-        resolve_targetable_for_principal(db, principal, public_target_id)?
+        resolve_targetable_for_principal(db, principal, user_db_id, public_target_id)?
     else {
         return Ok(false);
     };
-    db::favorites::has(db, principal.user_db_id, target_db_id)
+    db::favorites::has(db, user_db_id, target_db_id)
 }
 
 pub(crate) fn has_many_for_principal(
@@ -110,10 +112,11 @@ pub(crate) fn has_many_for_principal(
         .map(|public_id| (public_id, false))
         .collect();
     let unique_public_ids: Vec<String> = response.keys().cloned().collect();
+    let user_db_id = principal.require(db)?;
     let mut resolved: Vec<(String, DbId)> = Vec::with_capacity(unique_public_ids.len());
     for public_id in unique_public_ids {
         if let Some((target_db_id, _)) =
-            resolve_targetable_for_principal(db, principal, &public_id)?
+            resolve_targetable_for_principal(db, principal, user_db_id, &public_id)?
         {
             resolved.push((public_id, target_db_id));
         }
@@ -121,7 +124,7 @@ pub(crate) fn has_many_for_principal(
 
     if !resolved.is_empty() {
         let db_ids: Vec<DbId> = resolved.iter().map(|(_, id)| *id).collect();
-        let states = db::favorites::has_many(db, principal.user_db_id, &db_ids)?;
+        let states = db::favorites::has_many(db, user_db_id, &db_ids)?;
         for (public_id, db_id) in resolved {
             let is_fav = states.get(&db_id).copied().unwrap_or(false);
             response.insert(public_id, is_fav);
@@ -137,13 +140,14 @@ pub(crate) fn list(
     principal: &Principal,
     kind: FavoriteKind,
 ) -> anyhow::Result<Vec<ListItem>> {
-    let edges = db::favorites::list(db, principal.user_db_id, kind)?;
+    let user_db_id = principal.require(db)?;
+    let edges = db::favorites::list(db, user_db_id, kind)?;
     let target_db_ids: Vec<DbId> = edges.iter().map(|edge| edge.target_db_id).collect();
     let target_ids = db::lookup::find_ids_by_db_ids(db, &target_db_ids)?;
 
     let mut items = Vec::with_capacity(edges.len());
     for edge in edges {
-        if target_visible_to_principal(db, principal, edge.target_db_id, edge.kind)?
+        if target_visible_to_principal(db, principal, user_db_id, edge.target_db_id, edge.kind)?
             && let Some(target_id) = target_ids.get(&edge.target_db_id)
         {
             items.push(ListItem {
@@ -175,7 +179,8 @@ pub(crate) fn hydrate_snapshot(
         .iter()
         .map(|(edge_db_id, _)| *edge_db_id)
         .collect::<Vec<_>>();
-    let mut edges = db::favorites::get_by_ids(db, principal.user_db_id, kind, &edge_ids)?;
+    let user_db_id = principal.require(db)?;
+    let mut edges = db::favorites::get_by_ids(db, user_db_id, kind, &edge_ids)?;
     let target_db_ids = edges
         .values()
         .map(|edge| edge.target_db_id)
@@ -187,7 +192,7 @@ pub(crate) fn hydrate_snapshot(
         let Some(edge) = edges.remove(&edge_db_id) else {
             continue;
         };
-        if !target_visible_to_principal(db, principal, edge.target_db_id, edge.kind)? {
+        if !target_visible_to_principal(db, principal, user_db_id, edge.target_db_id, edge.kind)? {
             continue;
         }
         let Some(target_id) = target_ids.get(&edge.target_db_id) else {
@@ -227,9 +232,11 @@ pub(crate) fn list_ids(
     }
 }
 
+/// `user_db_id` comes from [`Principal::require`] under the same guard as `db`.
 fn resolve_targetable_for_principal(
     db: &impl db::DbAccess,
     principal: &Principal,
+    user_db_id: DbId,
     public_target_id: &str,
 ) -> anyhow::Result<Option<(DbId, FavoriteKind)>> {
     let Some(target_db_id) = db::lookup::find_node_id_by_id(db, public_target_id)? else {
@@ -238,20 +245,22 @@ fn resolve_targetable_for_principal(
     let Some((target_db_id, kind)) = resolve_whitelisted_by_db_id(db, target_db_id)? else {
         return Ok(None);
     };
-    if !target_visible_to_principal(db, principal, target_db_id, kind)? {
+    if !target_visible_to_principal(db, principal, user_db_id, target_db_id, kind)? {
         return Ok(None);
     }
     Ok(Some((target_db_id, kind)))
 }
 
+/// `user_db_id` comes from [`Principal::require`] under the same guard as `db`.
 fn target_visible_to_principal(
     db: &impl db::DbAccess,
     principal: &Principal,
+    user_db_id: DbId,
     target_db_id: DbId,
     kind: FavoriteKind,
 ) -> anyhow::Result<bool> {
     match kind {
-        FavoriteKind::Playlist => playlist_is_visible(db, principal.user_db_id, target_db_id),
+        FavoriteKind::Playlist => playlist_is_visible(db, user_db_id, target_db_id),
         FavoriteKind::Track | FavoriteKind::Release | FavoriteKind::Artist => {
             Ok(db::libraries::get_for_entity(db, target_db_id)?
                 .into_iter()
@@ -431,15 +440,12 @@ mod tests {
         Ok(())
     }
 
-    fn principal_for(user_db_id: DbId, accessible_library_ids: HashSet<String>) -> Principal {
-        Principal {
-            user_db_id,
-            user_public_id: format!("user-{}", user_db_id.0),
-            username: format!("user-{}", user_db_id.0),
-            permissions: Vec::new(),
-            role_name: None,
-            accessible_library_ids,
-        }
+    fn principal_for(
+        db: &DbAny,
+        user_db_id: DbId,
+        accessible_library_ids: HashSet<String>,
+    ) -> Principal {
+        Principal::for_user(db, user_db_id, Vec::new(), accessible_library_ids)
     }
 
     #[test]
@@ -581,7 +587,7 @@ mod tests {
         let playlist_db_id = create_playlist(&mut db, owner, &pub_id, true)?;
 
         add(&mut db, other, &pub_id)?;
-        let other_principal = principal_for(other, HashSet::new());
+        let other_principal = principal_for(&db, other, HashSet::new());
         assert_eq!(
             list(&db, &other_principal, FavoriteKind::Playlist)?.len(),
             1,
@@ -605,7 +611,7 @@ mod tests {
             list(&db, &other_principal, FavoriteKind::Playlist)?.is_empty(),
             "flipped-to-private playlist must be dropped from non-owner's list",
         );
-        let owner_principal = principal_for(owner, HashSet::new());
+        let owner_principal = principal_for(&db, owner, HashSet::new());
         assert_eq!(
             list(&db, &owner_principal, FavoriteKind::Playlist)?.len(),
             0,
@@ -627,8 +633,8 @@ mod tests {
         let track_db_id = create_track(&mut db, &track_public_id)?;
         connect(&mut db, library_db_id, track_db_id)?;
 
-        let visible_principal = principal_for(user, HashSet::from([library_public_id]));
-        let hidden_principal = principal_for(user, HashSet::new());
+        let visible_principal = principal_for(&db, user, HashSet::from([library_public_id]));
+        let hidden_principal = principal_for(&db, user, HashSet::new());
 
         let added = add_for_principal(&mut db, &visible_principal, &track_public_id)?;
         assert!(matches!(
@@ -660,7 +666,7 @@ mod tests {
         let visible_library = insert_library(&mut db, "Visible", "/tmp/lyra-favorites-check")?;
         let hidden_library = insert_library(&mut db, "Hidden", "/tmp/lyra-favorites-check-hidden")?;
         let visible_library_id = db::lookup::find_id_by_db_id(&db, visible_library)?.unwrap();
-        let principal = principal_for(user, HashSet::from([visible_library_id]));
+        let principal = principal_for(&db, user, HashSet::from([visible_library_id]));
         let favorited_id = nanoid!();
         let unfavorited_id = nanoid!();
         let hidden_id = nanoid!();

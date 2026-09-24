@@ -103,7 +103,8 @@ type AuthResult<T> = std::result::Result<T, AuthError>;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Principal {
-    pub(crate) user_db_id: DbId,
+    /// Only [`Principal::require`] hands this out, verified under the caller's guard.
+    user_db_id: DbId,
     pub(crate) user_public_id: String,
     pub(crate) username: String,
     pub(crate) permissions: Vec<Permission>,
@@ -112,6 +113,46 @@ pub(crate) struct Principal {
 }
 
 impl Principal {
+    #[cfg(test)]
+    pub(crate) fn from_parts(
+        user_db_id: DbId,
+        user_public_id: String,
+        username: String,
+        permissions: Vec<Permission>,
+        role_name: Option<String>,
+        accessible_library_ids: HashSet<String>,
+    ) -> Self {
+        Self {
+            user_db_id,
+            user_public_id,
+            username,
+            permissions,
+            role_name,
+            accessible_library_ids,
+        }
+    }
+
+    /// A principal for an existing user with the given grants.
+    #[cfg(test)]
+    pub(crate) fn for_user(
+        db: &impl db::DbAccess,
+        user_db_id: DbId,
+        permissions: Vec<Permission>,
+        accessible_library_ids: HashSet<String>,
+    ) -> Self {
+        let user = db::users::get_by_id(db, user_db_id)
+            .expect("principal user lookup")
+            .expect("principal user exists");
+        Self {
+            user_db_id,
+            user_public_id: user.id,
+            username: user.username,
+            permissions,
+            role_name: None,
+            accessible_library_ids,
+        }
+    }
+
     /// The user's `DbId`, verified under the caller's guard. `DbId`s are recycled, so the stored
     /// id only counts while it still points at a User with this principal's public id. Call it
     /// under the same guard or transaction as the operation it authorizes.
@@ -285,19 +326,14 @@ fn resolve_accessible_library_ids(
     }
 }
 
-pub(crate) fn resolve_principal(
-    db: &agdb::DbAny,
-    user_db_id: DbId,
-    user_public_id: String,
-    username: String,
-) -> Principal {
+pub(crate) fn resolve_principal(db: &agdb::DbAny, user_db_id: DbId, user: db::User) -> Principal {
     let (permissions, role_name) = resolve_role_info(db, user_db_id);
     let accessible_library_ids = resolve_accessible_library_ids(db, user_db_id, &permissions);
 
     Principal {
         user_db_id,
-        user_public_id,
-        username,
+        user_public_id: user.id,
+        username: user.username,
         permissions,
         role_name,
         accessible_library_ids,
@@ -346,7 +382,7 @@ async fn resolve_auth_from_session_token(token: &str) -> AuthResult<Option<Resol
 
     let client_name = session.client_name;
     let session_public_id = session.id;
-    let principal = resolve_principal(&db, user_db_id, user.id, user.username);
+    let principal = resolve_principal(&db, user_db_id, user);
     drop(db);
 
     sessions::touch_last_seen(&session_public_id).await;
@@ -394,7 +430,7 @@ pub(crate) async fn resolve_auth_from_bearer(
         };
 
         if let Some(session_auth) = resolve_auth_from_session_token(bearer).await.ok().flatten() {
-            if session_auth.principal.user_db_id == default_principal.user_db_id {
+            if session_auth.principal.user_public_id == default_principal.user_public_id {
                 return Ok(Some(session_auth));
             }
             warn_auth_disabled_bearer_collapse(
@@ -405,7 +441,7 @@ pub(crate) async fn resolve_auth_from_bearer(
         }
 
         if let Some(api_key_auth) = resolve_auth_from_api_key(bearer).await.ok().flatten() {
-            if api_key_auth.principal.user_db_id == default_principal.user_db_id {
+            if api_key_auth.principal.user_public_id == default_principal.user_public_id {
                 return Ok(Some(api_key_auth));
             }
             warn_auth_disabled_bearer_collapse(
@@ -443,7 +479,7 @@ async fn resolve_default_principal() -> AuthResult<Principal> {
         .db_id
         .ok_or_else(|| anyhow::anyhow!("default user '{}' has no db_id", DEFAULT_USERNAME))?;
 
-    Ok(resolve_principal(&db, user_db_id, user.id, user.username))
+    Ok(resolve_principal(&db, user_db_id, user))
 }
 
 pub(crate) async fn logout_with_token(token: Option<&str>) -> AuthResult<bool> {
@@ -502,7 +538,7 @@ pub(crate) async fn login_with_password(
         let user_db_id = user
             .db_id
             .ok_or_else(|| anyhow::anyhow!("default user has no db_id"))?;
-        let principal = resolve_principal(&db, user_db_id, user.id, user.username);
+        let principal = resolve_principal(&db, user_db_id, user);
         drop(db);
 
         return create_login_result(principal, metadata).await.map(Some);
@@ -533,7 +569,7 @@ pub(crate) async fn login_with_password(
     let user_db_id = user
         .db_id
         .ok_or_else(|| anyhow::anyhow!("user has no db_id"))?;
-    let principal = resolve_principal(&db, user_db_id, user.id, user.username);
+    let principal = resolve_principal(&db, user_db_id, user);
     drop(db);
 
     create_login_result(principal, metadata).await.map(Some)
@@ -765,56 +801,69 @@ mod tests {
         Ok(())
     }
 
+    /// Resolves alice's expired session while, at gap `gap`, it is deleted and bob logs in with a
+    /// session that takes its `DbId`.
+    async fn resolve_expired_session_with_recycle(
+        gap: Option<usize>,
+    ) -> anyhow::Result<(bool, AuthResult<Option<ResolvedAuth>>)> {
+        initialize_auth_test_runtime().await?;
+        let mut config = STATE.config().as_ref().clone();
+        config.auth.enabled = true;
+        config.auth.session_ttl_seconds = 60;
+        crate::testing::publish_config(config);
+
+        let (alice_session_id, bob) = {
+            let mut db = STATE.db.write().await;
+            let alice = db::users::create(&mut db, &db::test_db::test_user("alice")?)?;
+            let bob = db::users::create(&mut db, &db::test_db::test_user("bob")?)?;
+            let mut expired = db::test_db::test_session(&hash_secret("alice-token"));
+            expired.expires_at = db::users::now_secs() - 1;
+            (db::users::login(&mut db, alice, &expired)?, bob)
+        };
+
+        Ok(crate::testing::run_with_recycle_at(
+            gap,
+            resolve_auth_from_bearer(Some("alice-token")),
+            |db| {
+                db.exec_mut(agdb::QueryBuilder::remove().ids(alice_session_id).query())
+                    .expect("remove alice session");
+                let recycled = db::users::login(db, bob, &db::test_db::test_session("bob-hash"))
+                    .expect("log bob in");
+                assert_eq!(
+                    recycled, alice_session_id,
+                    "agdb must reuse the session DbId"
+                );
+            },
+        )
+        .await)
+    }
+
     #[tokio::test]
     async fn expired_session_revoke_spares_a_session_that_took_its_id() -> anyhow::Result<()> {
         let _guard = crate::testing::runtime_test_lock().await;
-        for gap in 0.. {
-            initialize_auth_test_runtime().await?;
-            let mut config = STATE.config().as_ref().clone();
-            config.auth.enabled = true;
-            config.auth.session_ttl_seconds = 60;
-            crate::testing::publish_config(config);
+        let (_, control) = resolve_expired_session_with_recycle(None).await?;
+        assert!(
+            matches!(control, Err(AuthError::SessionExpired)),
+            "got {control:?}"
+        );
+        assert!(
+            db::users::find_by_session_token_hash(
+                &STATE.db.read().await,
+                &hash_secret("alice-token")
+            )?
+            .is_none(),
+            "the control run must revoke the expired session"
+        );
 
-            let (alice_session_id, bob) = {
-                let mut db = STATE.db.write().await;
-                let alice = db::users::create(&mut db, &db::test_db::test_user("alice")?)?;
-                let bob = db::users::create(&mut db, &db::test_db::test_user("bob")?)?;
-                let mut expired = db::test_db::test_session(&hash_secret("alice-token"));
-                expired.expires_at = db::users::now_secs() - 1;
-                (db::users::login(&mut db, alice, &expired)?, bob)
-            };
-
-            let mut reached = false;
-            crate::testing::run_with_db_gaps(
-                resolve_auth_from_bearer(Some("alice-token")),
-                |index, db| {
-                    if index != gap {
-                        return;
-                    }
-                    reached = true;
-                    db.exec_mut(agdb::QueryBuilder::remove().ids(alice_session_id).query())
-                        .expect("remove alice session");
-                    let recycled =
-                        db::users::login(db, bob, &db::test_db::test_session("bob-hash"))
-                            .expect("log bob in");
-                    assert_eq!(
-                        recycled, alice_session_id,
-                        "agdb must reuse the session DbId"
-                    );
-                },
-            )
-            .await
-            .ok();
-            if !reached {
-                break;
-            }
+        crate::testing::for_each_db_gap(resolve_expired_session_with_recycle, async |gap, _| {
             let db = STATE.db.read().await;
             assert!(
                 db::users::find_by_session_token_hash(&db, "bob-hash")?.is_some(),
                 "bob's session revoked at gap {gap}"
             );
-        }
-        Ok(())
+            Ok(())
+        })
+        .await
     }
 
     #[tokio::test]
@@ -1115,17 +1164,12 @@ mod tests {
         Ok(())
     }
 
-    async fn settle() {
-        for _ in 0..16 {
-            tokio::task::yield_now().await;
-        }
-    }
-
-    #[tokio::test]
-    async fn api_key_auth_does_not_bind_to_recycled_owner_db_id() -> anyhow::Result<()> {
-        let _guard = crate::testing::runtime_test_lock().await;
+    /// Authenticates with alice's api key while, at gap `gap`, alice is deleted and bob takes
+    /// her `DbId`.
+    async fn api_key_auth_with_recycled_owner(
+        gap: Option<usize>,
+    ) -> anyhow::Result<(bool, AuthResult<ResolvedAuth>)> {
         initialize_auth_test_runtime().await?;
-
         let mut config = STATE.config().as_ref().clone();
         config.auth.enabled = true;
         crate::testing::publish_config(config);
@@ -1137,30 +1181,31 @@ mod tests {
         let alice = crate::testing::user_principal(alice_db_id).await?;
         let api_key = api_keys::create_api_key(&alice, "laptop").await?;
         let headers = bearer_headers(&api_key.key);
+        Ok(
+            crate::testing::run_with_recycle_at(gap, require_auth(&headers), |db| {
+                db::test_db::recycle_user(db, alice_db_id, "bob").expect("recycle alice");
+            })
+            .await,
+        )
+    }
 
-        // The held read guard parks key resolution on its last_used write; the recycle then
-        // queues ahead of every guard the resolution takes after that write.
-        let reader = STATE.db.read().await;
-        let auth = tokio::spawn(async move { require_auth(&headers).await });
-        settle().await;
-        let recycle = tokio::spawn(async move {
-            let mut db = STATE.db.write().await;
-            db::test_db::recycle_user(&mut db, alice_db_id, "bob")
-        });
-        settle().await;
-        drop(reader);
-        recycle.await??;
+    #[tokio::test]
+    async fn api_key_auth_does_not_bind_to_recycled_owner_db_id() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        let (_, control) = api_key_auth_with_recycled_owner(None).await?;
+        assert_eq!(control?.principal.username, "alice");
 
-        match auth.await? {
-            Err(AuthError::InvalidBearerCredential) => {}
-            Ok(auth) => panic!(
-                "deleted user's api key authenticated as {}",
-                auth.principal.username
-            ),
-            Err(err) => panic!("unexpected error: {err:?}"),
-        }
-
-        Ok(())
+        crate::testing::for_each_db_gap(api_key_auth_with_recycled_owner, async |gap, auth| {
+            match auth {
+                Err(AuthError::InvalidBearerCredential) => Ok(()),
+                Ok(auth) => panic!(
+                    "deleted user's api key authenticated as {} at gap {gap}",
+                    auth.principal.username
+                ),
+                Err(err) => panic!("unexpected error at gap {gap}: {err:?}"),
+            }
+        })
+        .await
     }
 
     #[tokio::test]

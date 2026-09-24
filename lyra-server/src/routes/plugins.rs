@@ -54,6 +54,7 @@ use crate::{
     routes::AppError,
     services::{
         auth::{
+            Principal,
             require_authenticated,
             require_manage_plugins,
         },
@@ -664,13 +665,29 @@ async fn load_settings_response(
     Ok(Json(PluginSettingsResponse { groups }))
 }
 
+/// Whose stored settings a status reads: the server's, or one verified user's.
+#[derive(Clone, Copy)]
+enum SettingsTarget {
+    Server,
+    User(DbId),
+}
+
+impl SettingsTarget {
+    fn scope(self) -> SettingsScope {
+        match self {
+            Self::Server => SettingsScope::Global,
+            Self::User(_) => SettingsScope::User,
+        }
+    }
+}
+
 fn build_status(
     registry: &Registry,
     db: &DbAny,
     plugin_id: &str,
-    scope: SettingsScope,
-    user_db_id: Option<DbId>,
+    target: SettingsTarget,
 ) -> PluginSettingsStatus {
+    let scope = target.scope();
     let typed = match PluginId::new(plugin_id.to_string()) {
         Ok(id) => id,
         Err(_) => return PluginSettingsStatus::NotDeclared,
@@ -684,11 +701,13 @@ fn build_status(
         None => return PluginSettingsStatus::NotDeclared,
     };
 
-    let stored = match user_db_id {
-        Some(user_db_id) => {
+    let stored = match target {
+        SettingsTarget::User(user_db_id) => {
             settings_service::load_validated_user_stored_values(db, user_db_id, plugin_id, schema)
         }
-        None => settings_service::load_validated_stored_values(db, plugin_id, schema),
+        SettingsTarget::Server => {
+            settings_service::load_validated_stored_values(db, plugin_id, schema)
+        }
     };
     let stored = match stored {
         Ok(values) => values,
@@ -726,21 +745,36 @@ async fn list_plugins(headers: HeaderMap) -> Result<Json<Vec<PluginManifestRespo
     )))
 }
 
+/// Whose settings a listing reports, resolved under the guard that reads them.
+enum SettingsOwner<'a> {
+    Server,
+    User(&'a Principal),
+}
+
+impl SettingsOwner<'_> {
+    fn resolve(&self, db: &DbAny) -> Result<SettingsTarget, AppError> {
+        match self {
+            Self::Server => Ok(SettingsTarget::Server),
+            Self::User(principal) => Ok(SettingsTarget::User(principal.require(db)?)),
+        }
+    }
+}
+
 async fn collect_settings_entries(
-    scope: SettingsScope,
-    user_db_id: Option<DbId>,
-) -> Vec<PluginSettingsEntry> {
+    owner: SettingsOwner<'_>,
+) -> Result<Vec<PluginSettingsEntry>, AppError> {
     let manifests = STATE.generation().plugin_manifests.get();
     let registry = plugin_settings_registry::settings_registry()
         .read_owned()
         .await;
     let db = STATE.db.read().await;
+    let target = owner.resolve(&db)?;
 
-    manifests
+    Ok(manifests
         .as_ref()
         .iter()
         .filter_map(|manifest| {
-            let status = build_status(&registry, &db, &manifest.id, scope, user_db_id);
+            let status = build_status(&registry, &db, &manifest.id, target);
             (!matches!(status, PluginSettingsStatus::NotDeclared)).then(|| PluginSettingsEntry {
                 plugin_id: manifest.id.clone(),
                 name: manifest.name.clone(),
@@ -748,14 +782,12 @@ async fn collect_settings_entries(
                 status,
             })
         })
-        .collect()
+        .collect())
 }
 
 async fn list_all_settings(headers: HeaderMap) -> Result<Json<Vec<PluginSettingsEntry>>, AppError> {
     let _principal = require_manage_plugins(&headers).await?;
-    Ok(Json(
-        collect_settings_entries(SettingsScope::Global, None).await,
-    ))
+    Ok(Json(collect_settings_entries(SettingsOwner::Server).await?))
 }
 
 async fn list_all_user_settings(
@@ -763,7 +795,7 @@ async fn list_all_user_settings(
 ) -> Result<Json<Vec<PluginSettingsEntry>>, AppError> {
     let principal = require_authenticated(&headers).await?;
     Ok(Json(
-        collect_settings_entries(SettingsScope::User, Some(principal.user_db_id)).await,
+        collect_settings_entries(SettingsOwner::User(&principal)).await?,
     ))
 }
 
@@ -985,16 +1017,18 @@ async fn delete_settings(
 
 async fn load_user_settings_response(
     plugin_id: String,
-    user_db_id: agdb::DbId,
+    principal: &Principal,
     schema: Schema,
 ) -> Result<Json<PluginSettingsResponse>, AppError> {
+    let db = STATE.db.read().await;
     let stored = settings_service::load_validated_user_stored_values(
-        &*STATE.db.read().await,
-        user_db_id,
+        &db,
+        principal.require(&db)?,
         &plugin_id,
         &schema,
     )
     .map_err(map_settings_state_error)?;
+    drop(db);
     let groups = schema
         .groups
         .iter()
@@ -1010,7 +1044,7 @@ async fn get_user_settings(
 ) -> Result<Json<PluginSettingsResponse>, AppError> {
     let principal = require_authenticated(&headers).await?;
     let schema = load_registered_schema(&plugin_id, SettingsScope::User).await?;
-    load_user_settings_response(plugin_id, principal.user_db_id, schema).await
+    load_user_settings_response(plugin_id, &principal, schema).await
 }
 
 async fn update_user_settings(
@@ -1022,16 +1056,14 @@ async fn update_user_settings(
     let schema = load_registered_schema(&plugin_id, SettingsScope::User).await?;
     let changes = settings_service::validate_updates(&schema, &request.values)
         .map_err(|error| AppError::bad_request(error.to_string()))?;
-    settings_service::apply_user_updates(
-        &mut *STATE.db.write().await,
-        principal.user_db_id,
-        &plugin_id,
-        &schema,
-        &changes,
-    )
-    .map_err(map_settings_state_error)?;
+    {
+        let mut db = STATE.db.write().await;
+        let user_db_id = principal.require(&db)?;
+        settings_service::apply_user_updates(&mut db, user_db_id, &plugin_id, &schema, &changes)
+            .map_err(map_settings_state_error)?;
+    }
 
-    load_user_settings_response(plugin_id, principal.user_db_id, schema).await
+    load_user_settings_response(plugin_id, &principal, schema).await
 }
 
 async fn delete_user_settings(
@@ -1039,11 +1071,9 @@ async fn delete_user_settings(
     Path(plugin_id): Path<String>,
 ) -> Result<(), AppError> {
     let principal = require_authenticated(&headers).await?;
-    settings_service::clear_user_stored_values(
-        &mut *STATE.db.write().await,
-        principal.user_db_id,
-        &plugin_id,
-    )?;
+    let mut db = STATE.db.write().await;
+    let user_db_id = principal.require(&db)?;
+    settings_service::clear_user_stored_values(&mut db, user_db_id, &plugin_id)?;
     Ok(())
 }
 
@@ -1829,7 +1859,7 @@ mod tests {
         let db = db::test_db::new_test_db().expect("test db");
         let registry = Registry::default();
 
-        let status = build_status(&registry, &db, "demo", SettingsScope::Global, None);
+        let status = build_status(&registry, &db, "demo", SettingsTarget::Server);
 
         assert!(matches!(status, PluginSettingsStatus::Initializing));
     }
@@ -1840,7 +1870,7 @@ mod tests {
         let mut registry = Registry::default();
         registry.freeze();
 
-        let status = build_status(&registry, &db, "demo", SettingsScope::Global, None);
+        let status = build_status(&registry, &db, "demo", SettingsTarget::Server);
 
         assert!(matches!(status, PluginSettingsStatus::NotDeclared));
     }
@@ -1855,7 +1885,7 @@ mod tests {
             empty_schema(),
         )?;
 
-        let status = build_status(&registry, &db, "demo", SettingsScope::Global, None);
+        let status = build_status(&registry, &db, "demo", SettingsTarget::Server);
 
         match status {
             PluginSettingsStatus::Ready { groups } => assert!(groups.is_empty()),

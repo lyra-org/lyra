@@ -221,7 +221,7 @@ pub(crate) async fn resolve_api_key(key: &str) -> anyhow::Result<Option<Resolved
     let Some(user) = db::users::get_by_id(&db_read, user_db_id)? else {
         return Ok(None);
     };
-    let principal = resolve_principal(&db_read, user_db_id, user.id, user.username);
+    let principal = resolve_principal(&db_read, user_db_id, user);
     let name = api_key.name;
     let public_id = api_key.id;
     drop(db_read);

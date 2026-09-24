@@ -950,28 +950,34 @@ mod tests {
     use super::*;
 
     fn principal(permissions: Vec<db::Permission>) -> Principal {
-        Principal {
-            user_db_id: DbId(7),
-            user_public_id: "viewer".to_string(),
-            username: "viewer".to_string(),
+        Principal::from_parts(
+            DbId(7),
+            "viewer".to_string(),
+            "viewer".to_string(),
             permissions,
-            role_name: None,
-            accessible_library_ids: HashSet::from(["visible-library".to_string()]),
-        }
+            None,
+            HashSet::from(["visible-library".to_string()]),
+        )
     }
 
     #[test]
     fn consumer_options_take_viewer_and_libraries_from_principal() -> luau::runtime::Result<()> {
         let vm = luau::Vm::new()?;
         let options = parse_consumer_options(&vm, None, &principal(Vec::new()))?;
-        assert_eq!(options.viewer, Some(DbId(7)));
+        assert_eq!(
+            options
+                .viewer
+                .as_ref()
+                .map(|viewer| viewer.user_public_id.as_str()),
+            Some("viewer")
+        );
         assert_eq!(
             options.viewer_accessible_library_ids,
             Some(HashSet::from(["visible-library".to_string()]))
         );
 
         let admin = parse_consumer_options(&vm, None, &principal(vec![db::Permission::Admin]))?;
-        assert_eq!(admin.viewer, Some(DbId(7)));
+        assert!(admin.viewer.is_some());
         assert_eq!(admin.viewer_accessible_library_ids, None);
         Ok(())
     }

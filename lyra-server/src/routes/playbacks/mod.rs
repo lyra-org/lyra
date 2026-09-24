@@ -366,7 +366,7 @@ fn resolve_owned_playback_projection(
 ) -> Result<db::playbacks::PlaybackListProjection, AppError> {
     let playback_db_id = db::lookup::find_node_id_by_id(db, id)?
         .ok_or_else(|| AppError::not_found(format!("playback not found: {id}")))?;
-    playbacks::get_owned_projection(db, playback_db_id, principal.user_db_id, current_ms)
+    playbacks::get_owned_projection(db, playback_db_id, principal.require(db)?, current_ms)
         .map_err(map_playback_error)?
         .ok_or_else(|| AppError::not_found(format!("playback not found: {id}")))
 }
@@ -460,13 +460,14 @@ async fn create_playback(
     let auth = require_auth(&headers).await?;
     let current_ms = now_ms()?;
     let mut db = STATE.db.write().await;
+    let user_db_id = auth.principal.require(&db)?;
     let queue = playbacks::validate_queue(&*db, &auth.principal, request.queue)
         .map_err(map_playback_error)?;
     let update = playbacks::create_playback(
         &mut db,
         playbacks::CreatePlaybackRequest {
             id: nanoid!(),
-            user_db_id: auth.principal.user_db_id,
+            user_db_id,
             client_name: auth.client_name,
             queue,
             mutation: PlaybackMutation {

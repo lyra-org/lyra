@@ -364,14 +364,14 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
     };
     seed_caller_principal(
         &mut context,
-        crate::services::auth::Principal {
+        crate::services::auth::Principal::from_parts(
             user_db_id,
             user_public_id,
-            username: "listener".to_string(),
-            permissions: vec![crate::plugins::db::Permission::Admin],
-            role_name: Some("admin".to_string()),
-            accessible_library_ids: std::collections::HashSet::new(),
-        },
+            "listener".to_string(),
+            vec![crate::plugins::db::Permission::Admin],
+            Some("admin".to_string()),
+            std::collections::HashSet::new(),
+        ),
     );
     runtime.run_plugin_source_with_call_context(
         format!(
@@ -440,14 +440,14 @@ fn plugin_executor_exposes_db_backed_lyra_favorites_module() -> Result<()> {
     };
     seed_caller_principal(
         &mut context,
-        crate::services::auth::Principal {
+        crate::services::auth::Principal::from_parts(
             user_db_id,
             user_public_id,
-            username: "favorite-user".to_string(),
-            permissions: Vec::new(),
-            role_name: None,
-            accessible_library_ids: std::collections::HashSet::from([library_public_id]),
-        },
+            "favorite-user".to_string(),
+            Vec::new(),
+            None,
+            std::collections::HashSet::from([library_public_id]),
+        ),
     );
     runtime.run_plugin_source_with_call_context(
         format!(
@@ -819,17 +819,17 @@ fn plugin_executor_exposes_db_backed_lyra_playback_sources_module() -> Result<()
     };
     seed_caller_principal(
         &mut context,
-        crate::services::auth::Principal {
+        crate::services::auth::Principal::from_parts(
             user_db_id,
             user_public_id,
-            username: "playback-source-user".to_string(),
-            permissions: vec![
+            "playback-source-user".to_string(),
+            vec![
                 crate::plugins::db::Permission::Admin,
                 crate::plugins::db::Permission::ManageLibraries,
             ],
-            role_name: Some("admin".to_string()),
-            accessible_library_ids: std::collections::HashSet::new(),
-        },
+            Some("admin".to_string()),
+            std::collections::HashSet::new(),
+        ),
     );
     runtime.run_plugin_source_with_call_context(
         format!(
@@ -917,14 +917,14 @@ fn plugin_executor_exposes_db_backed_lyra_playlists_module() -> Result<()> {
     };
     seed_caller_principal(
         &mut context,
-        crate::services::auth::Principal {
+        crate::services::auth::Principal::from_parts(
             user_db_id,
             user_public_id,
-            username: "playlist-user".to_string(),
-            permissions: vec![crate::plugins::db::Permission::Admin],
-            role_name: Some("admin".to_string()),
-            accessible_library_ids: std::collections::HashSet::new(),
-        },
+            "playlist-user".to_string(),
+            vec![crate::plugins::db::Permission::Admin],
+            Some("admin".to_string()),
+            std::collections::HashSet::new(),
+        ),
     );
     runtime.run_plugin_source_with_call_context(
         format!(
@@ -1516,14 +1516,14 @@ fn plugin_executor_exposes_db_backed_lyra_tags_module() -> Result<()> {
     };
     seed_caller_principal(
         &mut context,
-        crate::services::auth::Principal {
+        crate::services::auth::Principal::from_parts(
             user_db_id,
             user_public_id,
-            username: "raw-tags".to_string(),
-            permissions: Vec::new(),
-            role_name: None,
-            accessible_library_ids: std::collections::HashSet::from([library.id.clone()]),
-        },
+            "raw-tags".to_string(),
+            Vec::new(),
+            None,
+            std::collections::HashSet::from([library.id.clone()]),
+        ),
     );
     runtime.run_plugin_source_with_call_context(
         format!(
@@ -1660,14 +1660,14 @@ fn plugin_executor_reports_playback_acceptance_rejection_and_internal_failure() 
     };
     seed_caller_principal(
         &mut context,
-        crate::services::auth::Principal {
+        crate::services::auth::Principal::from_parts(
             user_db_id,
-            user_public_id: user.id,
-            username: user.username,
-            permissions: vec![crate::plugins::db::Permission::Admin],
-            role_name: Some("admin".into()),
-            accessible_library_ids: Default::default(),
-        },
+            user.id,
+            user.username,
+            vec![crate::plugins::db::Permission::Admin],
+            Some("admin".into()),
+            Default::default(),
+        ),
     );
     runtime.run_plugin_source_with_call_context(
         format!(
@@ -1759,14 +1759,14 @@ fn recycled_user_principal(
     let current_db_id = crate::plugins::db::test_db::insert_user(db, "current-user")?;
     assert_eq!(current_db_id, stale_db_id, "agdb reuses freed ids");
     Ok((
-        crate::services::auth::Principal {
-            user_db_id: stale_db_id,
-            user_public_id: stale_public_id,
-            username: "deleted-user".to_string(),
-            permissions: Vec::new(),
-            role_name: None,
+        crate::services::auth::Principal::from_parts(
+            stale_db_id,
+            stale_public_id,
+            "deleted-user".to_string(),
+            Vec::new(),
+            None,
             accessible_library_ids,
-        },
+        ),
         current_db_id,
     ))
 }

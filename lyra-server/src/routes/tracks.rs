@@ -541,9 +541,9 @@ pub(crate) async fn list_track_responses(
                 accessible_tracks
             }
         };
+        let user_db_id = principal.require(db)?;
         if !rating_filter.is_empty() {
-            let rated_target_ids =
-                db::ratings::target_ids_matching(db, principal.user_db_id, rating_filter)?;
+            let rated_target_ids = db::ratings::target_ids_matching(db, user_db_id, rating_filter)?;
             accessible_tracks.retain(|track| {
                 track
                     .db_id
@@ -557,7 +557,7 @@ pub(crate) async fn list_track_responses(
             accessible_tracks,
             &sort,
             search_term.as_deref(),
-            principal.user_db_id,
+            user_db_id,
         )?;
         let page = page_request.start(
             &snapshot_key,
@@ -1002,15 +1002,15 @@ mod tests {
     };
     use nanoid::nanoid;
 
-    fn admin_principal(accessible_library_ids: HashSet<String>) -> Principal {
-        Principal {
-            user_db_id: DbId(1),
-            user_public_id: "admin".to_string(),
-            username: "admin".to_string(),
-            permissions: vec![db::Permission::Admin],
-            role_name: Some("admin".to_string()),
+    async fn admin_principal(accessible_library_ids: HashSet<String>) -> Principal {
+        let mut db = STATE.db.write().await;
+        let user_db_id = db::test_db::insert_user(&mut db, "admin").expect("insert admin");
+        Principal::for_user(
+            &*db,
+            user_db_id,
+            vec![db::Permission::Admin],
             accessible_library_ids,
-        }
+        )
     }
 
     fn update_track_position(
@@ -1198,7 +1198,7 @@ mod tests {
                 insert_track(&mut db, title)?;
             }
         }
-        let principal = admin_principal(HashSet::new());
+        let principal = admin_principal(HashSet::new()).await;
 
         let page = list_track_responses(
             &principal,
@@ -1252,7 +1252,8 @@ mod tests {
         let principal = admin_principal(HashSet::from([
             visible_library_id.clone(),
             hidden_library_id,
-        ]));
+        ]))
+        .await;
 
         let page = list_track_responses(
             &principal,
@@ -1273,6 +1274,71 @@ mod tests {
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].title, "Visible Track");
         assert!(page.next_cursor.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_track_responses_rejects_principal_whose_db_id_was_recycled() -> anyhow::Result<()>
+    {
+        use axum::{
+            http::StatusCode,
+            response::IntoResponse,
+        };
+
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let stale = {
+            let mut db = STATE.db.write().await;
+            let alice = db::test_db::insert_user(&mut db, "recycled-rater")?;
+            let library =
+                insert_library(&mut db, "Recycled Ratings", "/tmp/lyra-recycled-ratings")?;
+            let release = insert_release(&mut db, "Recycled Rating Release")?;
+            let track = insert_track(&mut db, "Rated By Replacement")?;
+            connect(&mut db, library, release)?;
+            connect(&mut db, release, track)?;
+            let library_id = db::libraries::get_by_id(&db, library)?
+                .ok_or_else(|| anyhow::anyhow!("library missing"))?
+                .id;
+            let stale = Principal::for_user(&*db, alice, Vec::new(), HashSet::from([library_id]));
+            let replacement = db::test_db::recycle_user(&mut db, alice, "replacement-rater")?;
+            db::ratings::upsert(
+                &mut *db,
+                replacement,
+                track,
+                db::ratings::RatingKind::Track,
+                db::ratings::RatingValue::new(5).unwrap(),
+                1,
+            )?;
+            stale
+        };
+
+        let result = list_track_responses(
+            &stale,
+            TrackListOptions {
+                inc: None,
+                query: None,
+                library_id: None,
+                release_id: None,
+                sort_by: None,
+                sort_order: None,
+                rating_filter: db::ratings::RatingFilter::new(
+                    db::ratings::RatingValue::new(5),
+                    db::ratings::RatingValue::new(5),
+                )
+                .unwrap(),
+                page_request: super::super::PageQuery {
+                    limit: None,
+                    cursor: None,
+                }
+                .resolve_snapshot(),
+            },
+        )
+        .await;
+        let Err(error) = result else {
+            anyhow::bail!("a deleted user's principal listed tracks by its replacement's ratings");
+        };
+        assert_eq!(error.into_response().status(), StatusCode::UNAUTHORIZED);
         Ok(())
     }
 
@@ -1343,14 +1409,12 @@ mod tests {
             let visible_library_id = db::libraries::get_by_id(&db, visible_library)?
                 .ok_or_else(|| anyhow::anyhow!("visible library missing"))?
                 .id;
-            let principal = Principal {
+            let principal = Principal::for_user(
+                &*db,
                 user_db_id,
-                user_public_id: "track-rating-user".to_string(),
-                username: "track-rating-user".to_string(),
-                permissions: Vec::new(),
-                role_name: Some("user".to_string()),
-                accessible_library_ids: HashSet::from([visible_library_id]),
-            };
+                Vec::new(),
+                HashSet::from([visible_library_id]),
+            );
             let four_star_id = db::tracks::get_by_id(&db, four_star)?.unwrap().id;
             let five_star_id = db::tracks::get_by_id(&db, five_star)?.unwrap().id;
             (principal, four_star_id, five_star_id)
@@ -1481,7 +1545,7 @@ mod tests {
             connect(&mut db, release, track)?;
             insert_cover_for(&mut db, release)?.id
         };
-        let principal = admin_principal(HashSet::new());
+        let principal = admin_principal(HashSet::new()).await;
 
         let page = list_track_responses(
             &principal,
@@ -1534,7 +1598,7 @@ mod tests {
                 .id;
             (track_public_id, cover_id)
         };
-        let principal = admin_principal(HashSet::new());
+        let principal = admin_principal(HashSet::new()).await;
 
         let track = get_track_response(
             &principal,
@@ -1574,7 +1638,7 @@ mod tests {
                 .id;
             (track_public_id, cover_id)
         };
-        let principal = admin_principal(HashSet::new());
+        let principal = admin_principal(HashSet::new()).await;
 
         let track = get_track_response(
             &principal,
@@ -1626,7 +1690,7 @@ mod tests {
                 .ok_or_else(|| anyhow::anyhow!("release missing"))?
                 .id
         };
-        let principal = admin_principal(HashSet::new());
+        let principal = admin_principal(HashSet::new()).await;
 
         let page = list_track_responses(
             &principal,

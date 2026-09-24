@@ -1202,15 +1202,17 @@ async fn mark_terminal(
     Some(summary)
 }
 
-pub(crate) async fn get_library_sync_status(library_db_id: DbId) -> SyncRunSummary {
+pub(crate) async fn get_library_sync_status(library_id: &str) -> SyncRunSummary {
     let db = STATE.db.get();
     if let Err(err) = reconcile_interrupted_runs(&db).await {
         tracing::warn!(error = %err, "failed to reconcile interrupted sync runs");
     }
     let library = {
         let db_read = db.read().await;
-        db::libraries::get_by_id(&db_read, library_db_id)
+        db::lookup::find_node_id_by_id(&*db_read, library_id)
             .ok()
+            .flatten()
+            .and_then(|library_db_id| db::libraries::get_by_id(&db_read, library_db_id).ok())
             .flatten()
     };
     let Some(library) = library else {

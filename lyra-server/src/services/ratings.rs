@@ -46,7 +46,7 @@ pub(crate) fn set_for_principal(
         else {
             return Ok(MutationOutcome::NotTargetable);
         };
-        db::ratings::upsert(t, principal.user_db_id, target_db_id, kind, value, now_ms)?;
+        db::ratings::upsert(t, principal.require(t)?, target_db_id, kind, value, now_ms)?;
         Ok(MutationOutcome::Applied(kind))
     })
 }
@@ -76,7 +76,7 @@ pub(crate) fn get_for_principal(
     else {
         return Ok(None);
     };
-    let Some(edge) = db::ratings::get(db, principal.user_db_id, target_db_id)? else {
+    let Some(edge) = db::ratings::get(db, principal.require(db)?, target_db_id)? else {
         return Ok(None);
     };
     if edge.kind != kind {
@@ -99,7 +99,7 @@ pub(crate) fn values_for_principal(
     let public_id_refs: Vec<&str> = unique_public_ids.iter().map(String::as_str).collect();
     let resolved_ids = db::lookup::find_node_ids_by_ids(db, &public_id_refs)?;
     let target_db_ids: Vec<DbId> = resolved_ids.values().copied().collect();
-    let stored = db::ratings::values_for_targets(db, principal.user_db_id, &target_db_ids)?;
+    let stored = db::ratings::values_for_targets(db, principal.require(db)?, &target_db_ids)?;
 
     for public_id in unique_public_ids {
         let Some(target_db_id) = resolved_ids.get(&public_id).copied() else {
@@ -182,15 +182,12 @@ mod tests {
         users,
     };
 
-    fn principal(user_db_id: DbId, accessible_library_ids: HashSet<String>) -> Principal {
-        Principal {
-            user_db_id,
-            user_public_id: format!("user-{}", user_db_id.0),
-            username: format!("user-{}", user_db_id.0),
-            permissions: Vec::new(),
-            role_name: None,
-            accessible_library_ids,
-        }
+    fn principal(
+        db: &DbAny,
+        user_db_id: DbId,
+        accessible_library_ids: HashSet<String>,
+    ) -> Principal {
+        Principal::for_user(db, user_db_id, Vec::new(), accessible_library_ids)
     }
 
     #[test]
@@ -202,7 +199,7 @@ mod tests {
         let track = insert_track(&mut db, "Track")?;
         let track_public_id = db::lookup::find_id_by_db_id(&db, track)?.unwrap();
         connect(&mut db, library, track)?;
-        let principal = principal(user, HashSet::from([library_public_id]));
+        let principal = principal(&db, user, HashSet::from([library_public_id]));
 
         let outcome = set_for_principal(
             &mut db,
@@ -248,7 +245,7 @@ mod tests {
         let visible_library = insert_library(&mut db, "Visible", "/tmp/lyra-ratings-check")?;
         let hidden_library = insert_library(&mut db, "Hidden", "/tmp/lyra-ratings-check-hidden")?;
         let visible_library_id = db::lookup::find_id_by_db_id(&db, visible_library)?.unwrap();
-        let principal = principal(user, HashSet::from([visible_library_id]));
+        let principal = principal(&db, user, HashSet::from([visible_library_id]));
 
         let track = insert_track(&mut db, "Rated Track")?;
         let release = insert_release(&mut db, "Rated Release")?;
@@ -370,7 +367,7 @@ mod tests {
         let track = insert_track(&mut db, "Track")?;
         let track_public_id = db::lookup::find_id_by_db_id(&db, track)?.unwrap();
         connect(&mut db, library, track)?;
-        let visible = principal(user, HashSet::from([library_public_id]));
+        let visible = principal(&db, user, HashSet::from([library_public_id]));
         set_for_principal(
             &mut db,
             &visible,
@@ -378,7 +375,7 @@ mod tests {
             RatingValue::new(4).unwrap(),
         )?;
 
-        let hidden = principal(user, HashSet::new());
+        let hidden = principal(&db, user, HashSet::new());
         assert!(get_for_principal(&db, &hidden, &track_public_id)?.is_none());
         assert_eq!(
             remove(&mut db, user, &track_public_id)?,
@@ -393,7 +390,7 @@ mod tests {
         let user = users::create(&mut db, &test_user("alice")?)?;
         let other_user = users::create(&mut db, &test_user("bob")?)?;
         let other_user_public_id = db::lookup::find_id_by_db_id(&db, other_user)?.unwrap();
-        let principal = principal(user, HashSet::new());
+        let principal = principal(&db, user, HashSet::new());
 
         assert_eq!(
             set_for_principal(

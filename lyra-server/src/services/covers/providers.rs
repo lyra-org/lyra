@@ -820,14 +820,16 @@ async fn provider_cover_cache_put(
 }
 
 pub(crate) async fn search_release_cover_candidates(
-    release_id: DbId,
+    release_public_id: &str,
     provider_filter: Option<&str>,
     force_refresh: bool,
 ) -> Result<Vec<super::ProviderCoverSearchResult>> {
-    let provider_contexts = {
+    let (release_id, provider_contexts) = {
         let db = STATE.db.read().await;
-        let release = db::releases::get_by_id(&db, release_id)?
-            .ok_or_else(|| anyhow!("release not found: {}", release_id.0))?;
+        let not_found = || anyhow!("release not found: {release_public_id}");
+        let release_id =
+            db::lookup::find_node_id_by_id(&*db, release_public_id)?.ok_or_else(not_found)?;
+        let release = db::releases::get_by_id(&db, release_id)?.ok_or_else(not_found)?;
         let tracks = db::tracks::get_direct(&db, release_id)?;
         let artists = db::artists::get(&db, release_id)?;
         let library = library_for_release(&db, release_id)?;
@@ -847,7 +849,7 @@ pub(crate) async fn search_release_cover_candidates(
             provider_contexts.push((provider_id, context));
         }
 
-        provider_contexts
+        (release_id, provider_contexts)
     };
 
     search_cover_candidates_for_contexts(
@@ -860,14 +862,16 @@ pub(crate) async fn search_release_cover_candidates(
 }
 
 pub(crate) async fn search_artist_cover_candidates(
-    artist_id: DbId,
+    artist_public_id: &str,
     provider_filter: Option<&str>,
     force_refresh: bool,
 ) -> Result<Vec<super::ProviderCoverSearchResult>> {
-    let provider_contexts = {
+    let (artist_id, provider_contexts) = {
         let db = STATE.db.read().await;
-        let artist = db::artists::get_by_id(&db, artist_id)?
-            .ok_or_else(|| anyhow!("artist not found: {}", artist_id.0))?;
+        let not_found = || anyhow!("artist not found: {artist_public_id}");
+        let artist_id =
+            db::lookup::find_node_id_by_id(&*db, artist_public_id)?.ok_or_else(not_found)?;
+        let artist = db::artists::get_by_id(&db, artist_id)?.ok_or_else(not_found)?;
 
         let providers = enabled_provider_configs_by_priority(&db, provider_filter)?;
         let mut provider_contexts = Vec::new();
@@ -878,7 +882,7 @@ pub(crate) async fn search_artist_cover_candidates(
             provider_contexts.push((provider_id, context));
         }
 
-        provider_contexts
+        (artist_id, provider_contexts)
     };
 
     search_cover_candidates_for_contexts(

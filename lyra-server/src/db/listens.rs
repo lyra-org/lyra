@@ -116,11 +116,18 @@ pub(crate) struct ListenSummary {
     pub(crate) last_played: Option<u64>,
 }
 
-/// Returns listen stats (count + last played) for each track.
+/// Whose listens a query counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ListenOwners {
+    User(DbId),
+    All,
+}
+
+/// Returns the user's listen stats (count + last played) for each track.
 pub(crate) fn get_stats(
     db: &DbAny,
     track_db_ids: &[DbId],
-    user_db_id: Option<DbId>,
+    user_db_id: DbId,
 ) -> anyhow::Result<Vec<ListenStats>> {
     let mut unique_ids = Vec::new();
     let mut seen = HashSet::new();
@@ -138,10 +145,9 @@ pub(crate) fn get_stats(
         return Ok(stats);
     }
 
-    let user_listen_ids: Option<HashSet<DbId>> = user_db_id
-        .map(|uid| get_listen_ids_for_target(db, uid))
-        .transpose()?
-        .map(|ids| ids.into_iter().collect());
+    let user_listen_ids: HashSet<DbId> = get_listen_ids_for_target(db, user_db_id)?
+        .into_iter()
+        .collect();
 
     let track_public_ids = super::lookup::find_ids_by_db_ids(db, &unique_ids)?;
 
@@ -168,13 +174,11 @@ pub(crate) fn get_stats(
             {
                 continue;
             }
-            if let Some(user_ids) = &user_listen_ids {
-                let Some(listen_id) = listen.db_id else {
-                    continue;
-                };
-                if !user_ids.contains(&listen_id) {
-                    continue;
-                }
+            if !listen
+                .db_id
+                .is_some_and(|listen_id| user_listen_ids.contains(&listen_id))
+            {
+                continue;
             }
             count = count.saturating_add(1);
             if listen.listened_at_ms > last_played.unwrap_or(0) {
@@ -254,7 +258,7 @@ pub(crate) fn get_stats_for_user_tracks(
 pub(crate) fn get_counts(
     db: &DbAny,
     track_db_ids: &[DbId],
-    user_db_id: Option<DbId>,
+    user_db_id: DbId,
 ) -> anyhow::Result<HashMap<DbId, u64>> {
     Ok(get_stats(db, track_db_ids, user_db_id)?
         .into_iter()
@@ -337,10 +341,10 @@ struct ListenSummaryAccumulator {
 
 pub(crate) fn list_summaries(
     db: &DbAny,
-    user_db_id: Option<DbId>,
+    owners: ListenOwners,
     track_public_ids: Option<&HashSet<String>>,
 ) -> anyhow::Result<Vec<ListenSummary>> {
-    let listens: Vec<Listen> = if let Some(user_db_id) = user_db_id {
+    let listens: Vec<Listen> = if let ListenOwners::User(user_db_id) = owners {
         let listen_ids = get_listen_ids_for_target(db, user_db_id)?;
         if listen_ids.is_empty() {
             return Ok(Vec::new());
@@ -362,39 +366,40 @@ pub(crate) fn list_summaries(
         return Ok(Vec::new());
     }
 
-    let owners_by_listen: HashMap<DbId, (DbId, String)> = if let Some(user_db_id) = user_db_id {
-        let Some(user) = super::users::get_by_id(db, user_db_id)? else {
-            return Ok(Vec::new());
-        };
-        listens
-            .iter()
-            .filter_map(|listen| {
-                listen
-                    .db_id
-                    .map(|listen_db_id| (listen_db_id, (user_db_id, user.id.clone())))
-            })
-            .collect()
-    } else {
-        let user_ids_by_listen = resolve_listen_user_ids(db, &listens)?;
-        let mut unique_user_ids = Vec::new();
-        let mut seen_user_ids = HashSet::new();
-        for user_db_id in user_ids_by_listen.values() {
-            if seen_user_ids.insert(*user_db_id) {
-                unique_user_ids.push(*user_db_id);
+    let owners_by_listen: HashMap<DbId, (DbId, String)> =
+        if let ListenOwners::User(user_db_id) = owners {
+            let Some(user) = super::users::get_by_id(db, user_db_id)? else {
+                return Ok(Vec::new());
+            };
+            listens
+                .iter()
+                .filter_map(|listen| {
+                    listen
+                        .db_id
+                        .map(|listen_db_id| (listen_db_id, (user_db_id, user.id.clone())))
+                })
+                .collect()
+        } else {
+            let user_ids_by_listen = resolve_listen_user_ids(db, &listens)?;
+            let mut unique_user_ids = Vec::new();
+            let mut seen_user_ids = HashSet::new();
+            for user_db_id in user_ids_by_listen.values() {
+                if seen_user_ids.insert(*user_db_id) {
+                    unique_user_ids.push(*user_db_id);
+                }
             }
-        }
 
-        let users =
-            super::graph::bulk_fetch_typed::<super::users::User>(db, unique_user_ids, "User")?;
-        user_ids_by_listen
-            .into_iter()
-            .filter_map(|(listen_db_id, user_db_id)| {
-                users
-                    .get(&user_db_id)
-                    .map(|user| (listen_db_id, (user_db_id, user.id.clone())))
-            })
-            .collect()
-    };
+            let users =
+                super::graph::bulk_fetch_typed::<super::users::User>(db, unique_user_ids, "User")?;
+            user_ids_by_listen
+                .into_iter()
+                .filter_map(|(listen_db_id, user_db_id)| {
+                    users
+                        .get(&user_db_id)
+                        .map(|user| (listen_db_id, (user_db_id, user.id.clone())))
+                })
+                .collect()
+        };
 
     let mut by_user_track: HashMap<(DbId, String), ListenSummaryAccumulator> = HashMap::new();
     for listen in listens {
@@ -453,7 +458,7 @@ pub(crate) fn list_summaries_for_user(
     db: &DbAny,
     user_db_id: DbId,
 ) -> anyhow::Result<Vec<ListenSummary>> {
-    list_summaries(db, Some(user_db_id), None)
+    list_summaries(db, ListenOwners::User(user_db_id), None)
 }
 
 #[cfg(test)]
@@ -619,7 +624,7 @@ mod tests {
         };
         create_and_mark_recorded(&mut db, &listen, track_db_id, user, &session)?;
 
-        let mut stats = get_stats(&db, &[track_db_id], Some(user))?;
+        let mut stats = get_stats(&db, &[track_db_id], user)?;
         anyhow::ensure!(stats.len() == 1, "expected exactly one stats row");
         Ok(stats.remove(0))
     }
@@ -680,7 +685,7 @@ mod tests {
         let other_user_public_id = crate::db::users::get_by_id(&db, other_user)?
             .expect("other user should exist")
             .id;
-        let summaries = list_summaries(&db, None, None)?;
+        let summaries = list_summaries(&db, ListenOwners::All, None)?;
         assert_eq!(summaries.len(), 3);
         let by_user_track = summaries
             .into_iter()

@@ -255,6 +255,7 @@ async fn create_library(
 
     let library = {
         let mut db_write = STATE.db.write().await;
+        let user_db_id = principal.require(&db_write)?;
         let outcome =
             db_write.transaction_mut(|t| -> Result<Library, db::libraries::LibraryCreateError> {
                 db::libraries::create_with_creator(
@@ -267,7 +268,7 @@ async fn create_library(
                         language,
                         country,
                     },
-                    principal.user_db_id,
+                    user_db_id,
                 )
             });
         match outcome {
@@ -381,13 +382,14 @@ async fn delete_library(
     }
     let track_ids = {
         let mut db = STATE.db.write().await;
+        let user_db_id = principal.require(&db)?;
         let library_db_id =
             db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
         let library =
             db::libraries::get_by_id(&*db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
         db.transaction_mut(|t| -> Result<_, AppError> {
             if !principal.permissions.contains(&Permission::Admin)
-                && !db::libraries::user_has_access_in_txn(t, principal.user_db_id, library_db_id)?
+                && !db::libraries::user_has_access_in_txn(t, user_db_id, library_db_id)?
             {
                 return Err(library_not_found(&id));
             }
@@ -457,18 +459,7 @@ async fn get_library_sync_status(
     Path(id): Path<String>,
 ) -> Result<Json<crate::services::LibrarySyncStatus>, AppError> {
     let _principal = require_manage_libraries_on(&headers, &id).await?;
-
-    let library_db_id = {
-        let db = STATE.db.read().await;
-        let library_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
-            .ok_or_else(|| AppError::not_found(format!("not found: {id}")))?;
-        db::libraries::get_by_id(&db, library_db_id)?
-            .ok_or_else(|| AppError::not_found(format!("Library not found: {}", id)))?;
-        library_db_id
-    };
-
-    let status = get_library_sync_status_summary(library_db_id).await;
-    Ok(Json(status))
+    Ok(Json(get_library_sync_status_summary(&id).await))
 }
 
 async fn start_library_sync_for_library(
@@ -533,6 +524,7 @@ async fn grant_library_access(
 ) -> Result<StatusCode, AppError> {
     let principal = require_manage_libraries_on(&headers, &id).await?;
     let mut db = STATE.db.write().await;
+    let user_db_id = principal.require(&db)?;
     let library_db_id =
         db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
     db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
@@ -550,9 +542,7 @@ async fn grant_library_access(
 
     let authorized = principal.permissions.contains(&Permission::Admin);
     let granted = db.transaction_mut(|t| -> anyhow::Result<bool> {
-        if !authorized
-            && !db::libraries::user_has_access_in_txn(t, principal.user_db_id, library_db_id)?
-        {
+        if !authorized && !db::libraries::user_has_access_in_txn(t, user_db_id, library_db_id)? {
             return Ok(false);
         }
         db::libraries::grant_access(t, target_user_db_id, library_db_id, request.kind.into())?;
@@ -570,6 +560,7 @@ async fn revoke_library_access(
 ) -> Result<StatusCode, AppError> {
     let principal = require_manage_libraries_on(&headers, &id).await?;
     let mut db = STATE.db.write().await;
+    let user_db_id = principal.require(&db)?;
     let library_db_id =
         db::lookup::find_node_id_by_id(&*db, &id)?.ok_or_else(|| library_not_found(&id))?;
     db::libraries::get_by_id(&db, library_db_id)?.ok_or_else(|| library_not_found(&id))?;
@@ -581,7 +572,7 @@ async fn revoke_library_access(
         .db_id
         .ok_or_else(|| AppError::not_found(format!("user has no db_id: {user_id}")))?;
 
-    if target_user_db_id == principal.user_db_id {
+    if target_user_db_id == user_db_id {
         tracing::warn!(
             user_public_id = %principal.user_public_id,
             library_public_id = %id,
@@ -591,9 +582,7 @@ async fn revoke_library_access(
 
     let authorized = principal.permissions.contains(&Permission::Admin);
     let revoked = db.transaction_mut(|t| -> anyhow::Result<bool> {
-        if !authorized
-            && !db::libraries::user_has_access_in_txn(t, principal.user_db_id, library_db_id)?
-        {
+        if !authorized && !db::libraries::user_has_access_in_txn(t, user_db_id, library_db_id)? {
             return Ok(false);
         }
         db::libraries::revoke_access(t, target_user_db_id, library_db_id)?;

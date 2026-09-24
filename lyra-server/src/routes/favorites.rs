@@ -169,7 +169,8 @@ async fn delete_favorite(
     }
 
     let mut db = STATE.db.write().await;
-    match favorite_service::remove(&mut db, principal.user_db_id, &target_id)? {
+    let user_db_id = principal.require(&db)?;
+    match favorite_service::remove(&mut db, user_db_id, &target_id)? {
         favorite_service::MutationOutcome::Applied(_) => Ok(StatusCode::NO_CONTENT),
         favorite_service::MutationOutcome::NotTargetable => Err(AppError::not_found(format!(
             "favorite target not found: {target_id}"
