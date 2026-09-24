@@ -53,6 +53,9 @@ pub(crate) fn get(db: &impl super::DbAccess) -> anyhow::Result<Vec<Library>> {
                 .elements::<Library>()
                 .search()
                 .from("libraries")
+                .where_()
+                .neighbor()
+                .end_where()
                 .query(),
         )?
         .try_into()?;

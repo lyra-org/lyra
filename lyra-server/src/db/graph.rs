@@ -222,6 +222,23 @@ pub(crate) fn fetch_typed_by_id<T: DbType<ValueType = T>>(
     Ok(Some(T::from_db_element(&element)?))
 }
 
+/// Fetch the first node of the expected `DbElement` discriminator type whose `index` key holds
+/// `value`, or `None` when no such node exists.
+pub(crate) fn fetch_typed_by_index<T: DbType<ValueType = T>>(
+    db: &impl DbAccess,
+    index: &str,
+    value: &str,
+    discriminator: &str,
+) -> anyhow::Result<Option<T>> {
+    let result = db.exec(QueryBuilder::search().index(index).value(value).query())?;
+    for id in result.ids().into_iter().filter(|id| id.0 > 0) {
+        if let Some(found) = fetch_typed_by_id(db, id, discriminator)? {
+            return Ok(Some(found));
+        }
+    }
+    Ok(None)
+}
+
 /// Bulk-fetch nodes by ID, filter to a single `DbElement` discriminator type,
 /// and deserialize using `from_db_element`. Returns a map from `DbId` to the
 /// deserialized value.

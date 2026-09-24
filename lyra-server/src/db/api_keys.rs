@@ -88,38 +88,18 @@ pub(crate) fn get_by_id(
     super::graph::fetch_typed_by_id(db, api_key_db_id, "ApiKey")
 }
 
-pub(crate) fn get_by_public_id(db: &DbAny, id: &str) -> anyhow::Result<Option<ApiKey>> {
-    let mut api_keys: Vec<ApiKey> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<ApiKey>()
-                .search()
-                .from("api_keys")
-                .where_()
-                .key("id")
-                .value(id)
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
-    Ok(api_keys.pop())
+pub(crate) fn get_by_public_id(
+    db: &impl super::DbAccess,
+    id: &str,
+) -> anyhow::Result<Option<ApiKey>> {
+    super::graph::fetch_typed_by_index(db, "id", id, "ApiKey")
 }
 
-pub(crate) fn find_by_key_hash(db: &DbAny, key_hash: &str) -> anyhow::Result<Option<ApiKey>> {
-    let index_result = db.exec(
-        QueryBuilder::search()
-            .index("key_hash")
-            .value(key_hash)
-            .query(),
-    )?;
-
-    for api_key_db_id in index_result.ids().into_iter().filter(|id| id.0 > 0) {
-        if let Some(api_key) = get_by_id(db, api_key_db_id)? {
-            return Ok(Some(api_key));
-        }
-    }
-
-    Ok(None)
+pub(crate) fn find_by_key_hash(
+    db: &impl super::DbAccess,
+    key_hash: &str,
+) -> anyhow::Result<Option<ApiKey>> {
+    super::graph::fetch_typed_by_index(db, "key_hash", key_hash, "ApiKey")
 }
 
 pub(crate) fn list_for_user(
@@ -170,7 +150,10 @@ pub(crate) fn count_for_user(db: &impl super::DbAccess, user_db_id: DbId) -> any
     Ok(result.elements.iter().filter(|el| el.id.0 > 0).count())
 }
 
-pub(crate) fn get_owner_id(db: &DbAny, api_key_db_id: DbId) -> anyhow::Result<Option<DbId>> {
+pub(crate) fn get_owner_id(
+    db: &impl super::DbAccess,
+    api_key_db_id: DbId,
+) -> anyhow::Result<Option<DbId>> {
     let result = db.exec(
         QueryBuilder::select()
             .search()
@@ -189,15 +172,11 @@ pub(crate) fn get_owner_id(db: &DbAny, api_key_db_id: DbId) -> anyhow::Result<Op
         .find_map(|element| (element.to.0 > 0).then_some(element.to)))
 }
 
-pub(crate) fn delete_by_id(db: &mut DbAny, api_key_db_id: DbId) -> anyhow::Result<bool> {
-    let existing = db.exec(
-        QueryBuilder::search()
-            .from("api_keys")
-            .where_()
-            .ids(api_key_db_id)
-            .query(),
-    )?;
-    if existing.elements.is_empty() {
+pub(crate) fn delete_by_id(
+    db: &mut impl super::DbAccess,
+    api_key_db_id: DbId,
+) -> anyhow::Result<bool> {
+    if get_by_id(db, api_key_db_id)?.is_none() {
         return Ok(false);
     }
 
@@ -251,6 +230,27 @@ mod tests {
 
     fn create_test_user(db: &mut DbAny, username: &str) -> anyhow::Result<DbId> {
         users::create(db, &test_user(username)?)
+    }
+
+    #[test]
+    fn get_by_public_id_rejects_other_element_types() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let user_db_id = create_test_user(&mut db, "alice")?;
+        let api_key_db_id = create(&mut db, user_db_id, "laptop", "hash-typed", 1)?;
+        let api_key = get_by_id(&db, api_key_db_id)?.ok_or_else(|| anyhow!("key must exist"))?;
+        let user = users::get_by_id(&db, user_db_id)?.ok_or_else(|| anyhow!("user must exist"))?;
+
+        assert_eq!(
+            get_by_public_id(&db, &api_key.id)?.map(|api_key| api_key.name),
+            Some("laptop".to_string())
+        );
+        assert!(get_by_public_id(&db, &user.id)?.is_none());
+        assert!(!delete_by_id(&mut db, user_db_id)?);
+        assert!(users::get_by_id(&db, user_db_id)?.is_some());
+        assert!(delete_by_id(&mut db, api_key_db_id)?);
+        assert!(get_by_public_id(&db, &api_key.id)?.is_none());
+
+        Ok(())
     }
 
     #[test]

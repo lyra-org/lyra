@@ -43,21 +43,7 @@ pub(crate) fn get(db: &impl DbAccess, release_db_id: DbId) -> anyhow::Result<Opt
 }
 
 pub(crate) fn get_by_public_id(db: &impl DbAccess, id: &str) -> anyhow::Result<Option<Cover>> {
-    let mut covers: Vec<Cover> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<Cover>()
-                .search()
-                .from("covers")
-                .where_()
-                .key("id")
-                .value(id)
-                .end_where()
-                .query(),
-        )?
-        .try_into()?;
-
-    Ok(covers.pop())
+    super::graph::fetch_typed_by_index(db, "id", id, "Cover")
 }
 
 pub(crate) fn get_many(
@@ -173,7 +159,7 @@ mod tests {
     use nanoid::nanoid;
 
     fn new_test_db() -> anyhow::Result<DbAny> {
-        Ok(TestDb::with_root_aliases(&["releases", "covers"])?.into_inner())
+        Ok(TestDb::initialized()?.into_inner())
     }
 
     fn upsert_cover(db: &mut DbAny, release_db_id: DbId, cover: Cover) -> anyhow::Result<Cover> {
