@@ -21,6 +21,7 @@ use crate::db::{
     Entry,
     Release,
     Track,
+    external_ids::ExternalId,
 };
 
 use super::{
@@ -230,28 +231,23 @@ pub(crate) fn lookup_hints_for_entries(
         .unwrap_or_default()
 }
 
-pub(crate) fn external_ids_for_entity(
-    db: &DbAny,
-    entity_id: DbId,
-) -> anyhow::Result<ExternalIdsByProvider> {
-    let ids = db::external_ids::get_for_entity(db, entity_id)?;
+pub(crate) fn external_ids_by_provider(ids: &[ExternalId]) -> ExternalIdsByProvider {
     let mut map = BTreeMap::new();
     for id in ids {
-        map.entry(id.provider_id)
+        map.entry(id.provider_id.clone())
             .or_insert_with(BTreeMap::new)
-            .insert(id.id_type, id.id_value);
+            .insert(id.id_type.clone(), id.id_value.clone());
     }
-
-    Ok(map)
+    map
 }
 
-pub(crate) fn external_ids_by_entity(
+pub(crate) fn external_id_rows_by_entity(
     db: &DbAny,
     entity_ids: &[DbId],
-) -> anyhow::Result<HashMap<DbId, ExternalIdsByProvider>> {
+) -> anyhow::Result<HashMap<DbId, Vec<ExternalId>>> {
     let mut external_ids = HashMap::new();
     for entity_id in dedupe_db_ids(entity_ids) {
-        external_ids.insert(entity_id, external_ids_for_entity(db, entity_id)?);
+        external_ids.insert(entity_id, db::external_ids::get_for_entity(db, entity_id)?);
     }
     Ok(external_ids)
 }

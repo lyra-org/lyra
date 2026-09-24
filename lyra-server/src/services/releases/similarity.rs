@@ -43,6 +43,7 @@ use crate::{
     services::{
         EntityType,
         providers::{
+            IdSchemes,
             MAX_SIMILAR_RELEASES_HANDLER_TIMEOUT,
             ProviderSimilarReleasesSpec,
             enabled_provider_configs_by_priority,
@@ -106,6 +107,7 @@ struct ProviderSnapshot {
     handlers: Vec<ProviderHandler>,
     release_id_pairs: HashSet<(String, String)>,
     unique_release_id_pairs: HashSet<(String, String)>,
+    id_schemes: IdSchemes,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -188,6 +190,7 @@ where
             seed_db_id,
             limit,
             &handlers,
+            &snapshot.id_schemes,
             options.accessible_library_ids.as_ref(),
         )?
     };
@@ -327,7 +330,7 @@ async fn provider_snapshot(generation: &crate::GenerationState) -> Result<Provid
 
     for _ in 0..3 {
         let before = generation.plugin_runtime.get();
-        let (handlers, release_id_pairs, unique_release_id_pairs) = {
+        let (handlers, release_id_pairs, unique_release_id_pairs, id_schemes) = {
             let registry = generation.providers.registry().read_owned().await;
             let handlers = configs
                 .iter()
@@ -345,6 +348,7 @@ async fn provider_snapshot(generation: &crate::GenerationState) -> Result<Provid
                 handlers,
                 registry.id_pairs(EntityType::Release),
                 registry.unique_id_pairs(EntityType::Release),
+                registry.id_schemes(),
             )
         };
         let after = generation.plugin_runtime.get();
@@ -359,6 +363,7 @@ async fn provider_snapshot(generation: &crate::GenerationState) -> Result<Provid
                 handlers,
                 release_id_pairs,
                 unique_release_id_pairs,
+                id_schemes,
             });
         }
     }
@@ -372,6 +377,7 @@ fn build_seed_context(
     seed_db_id: DbId,
     limit: usize,
     handlers: &[ProviderHandler],
+    schemes: &IdSchemes,
     accessible_library_ids: Option<&HashSet<String>>,
 ) -> Result<Option<SeedContext>> {
     let Some(release) = db::releases::get_by_id(db, seed_db_id)? else {
@@ -381,8 +387,10 @@ fn build_seed_context(
     if !libraries_are_accessible(&library_ids, accessible_library_ids) {
         return Ok(None);
     }
+    let id_rows = db::external_ids::get_for_entity(db, seed_db_id)?;
+    let identifiers = schemes.resolve(&id_rows);
     let mut external_ids: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
-    for external_id in db::external_ids::get_for_entity(db, seed_db_id)? {
+    for external_id in id_rows {
         let provider_id = external_id.provider_id.trim();
         let id_type = external_id.id_type.trim();
         let id_value = external_id.id_value.trim();
@@ -416,6 +424,7 @@ fn build_seed_context(
                 "release_date": release.release_date,
                 "ids": ids,
                 "external_ids": external_ids,
+                "identifiers": identifiers,
                 "artist_names": artist_names,
                 "genres": genres,
                 "limit": limit,
@@ -775,7 +784,17 @@ mod tests {
         let seed = insert_release(&mut db, "Private Seed")?;
         connect(&mut db, library, seed)?;
 
-        assert!(build_seed_context(&db, seed, 20, &[], Some(&HashSet::new()))?.is_none());
+        assert!(
+            build_seed_context(
+                &db,
+                seed,
+                20,
+                &[],
+                &IdSchemes::default(),
+                Some(&HashSet::new())
+            )?
+            .is_none()
+        );
         Ok(())
     }
 

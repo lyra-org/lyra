@@ -21,6 +21,8 @@ use harmony_luau::{
 
 use crate::plugins::db as server_db;
 use crate::services::EntityType;
+#[cfg(feature = "docgen")]
+use crate::services::providers::IDENTIFIERS_DOC;
 
 #[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
@@ -68,6 +70,11 @@ fn metadata_type_aliases() -> Vec<TypeAliasDescriptor> {
         alias(
             "ExternalIdsByProvider",
             map(string(), ty("ProviderExternalIdMap")),
+        ),
+        TypeAliasDescriptor::new(
+            "IdentifiersByScheme",
+            map(string(), string()),
+            Some(IDENTIFIERS_DOC),
         ),
         alias("ProviderCustomFieldMap", map(string(), ty("JsonValue"))),
         alias(
@@ -310,6 +317,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("track_total", opt(number())),
                 field("duration_ms", opt(number())),
                 field("external_ids", ty("ExternalIdsByProvider")),
+                field("identifiers", ty("IdentifiersByScheme")),
                 field("custom_fields", opt(ty("CustomFieldsByProvider"))),
                 field("artists", array(ty("ReleaseRefreshTrackArtist"))),
             ],
@@ -327,6 +335,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("ctime", opt(number())),
                 field("lookup_hints", opt(ty("ReleaseRefreshLookupHints"))),
                 field("external_ids", opt(ty("ExternalIdsByProvider"))),
+                field("identifiers", opt(ty("IdentifiersByScheme"))),
                 field("custom_fields", opt(ty("CustomFieldsByProvider"))),
                 field("artists", opt(array(ty("ReleaseRefreshArtist")))),
                 field("tracks", opt(array(ty("ReleaseRefreshTrack")))),
@@ -345,6 +354,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("description", opt(string())),
                 field("locked", opt(boolean())),
                 field("external_ids", opt(ty("ExternalIdsByProvider"))),
+                field("identifiers", opt(ty("IdentifiersByScheme"))),
                 field("custom_fields", opt(ty("CustomFieldsByProvider"))),
                 field("options", opt(map(string(), ty("OptionValue")))),
             ],
@@ -374,6 +384,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("track_total", opt(number())),
                 field("duration_ms", opt(number())),
                 field("external_ids", opt(ty("ExternalIdsByProvider"))),
+                field("identifiers", opt(ty("IdentifiersByScheme"))),
                 field("custom_fields", opt(ty("CustomFieldsByProvider"))),
                 field("artists", opt(array(ty("ReleaseRefreshTrackArtist")))),
                 field("releases", opt(array(ty("TrackRefreshRelease")))),
@@ -473,6 +484,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("release_date", opt(string())),
                 field("ids", ty("ProviderExternalIdMap")),
                 field("external_ids", ty("ExternalIdsByProvider")),
+                field("identifiers", ty("IdentifiersByScheme")),
                 field("artist_names", array(string())),
                 field("genres", array(string())),
                 field("limit", number()),
@@ -499,6 +511,7 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                 field("album_name", opt(string())),
                 field("duration_ms", opt(number())),
                 field("external_ids", opt(ty("ExternalIdsByProvider"))),
+                field("identifiers", opt(ty("IdentifiersByScheme"))),
                 field("force_refresh", boolean()),
             ],
         ),

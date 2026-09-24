@@ -59,6 +59,7 @@ use crate::{
         providers::{
             ProviderCallStage,
             ProviderCallbackHandle,
+            id_schemes,
             library_refresh_locks,
             provider_registry,
             with_provider_call,
@@ -118,14 +119,19 @@ pub(crate) async fn refresh_entity_metadata(
         EntityRefreshMode::WithReleaseArtifacts { options, .. } => options.clone(),
     };
 
+    let schemes = id_schemes().await;
     let (entity_type, context, library_db_id) = {
         let db = STATE.db.read().await;
         let library_db_id = resolve_library_id_for_entity(&db, node_id)?;
-        let (entity_type, context) = build_entity_provider_context(&db, node_id, library_db_id)
-            .map_err(|err| match err {
-                EntityContextError::EntityNotFound(id) => ProviderServiceError::EntityNotFound(id),
-                EntityContextError::Internal(err) => ProviderServiceError::Internal(err),
-            })?;
+        let (entity_type, context) =
+            build_entity_provider_context(&db, node_id, library_db_id, &schemes).map_err(
+                |err| match err {
+                    EntityContextError::EntityNotFound(id) => {
+                        ProviderServiceError::EntityNotFound(id)
+                    }
+                    EntityContextError::Internal(err) => ProviderServiceError::Internal(err),
+                },
+            )?;
         (entity_type, context, library_db_id)
     };
 
@@ -262,6 +268,7 @@ async fn refresh_release_metadata_inner_with_progress(
         options.apply_sync_filters,
     )
     .await;
+    let schemes = id_schemes().await;
     let mut providers_called = Vec::new();
     let mut context: Option<serde_json::Value> = None;
     let mut dirty = true;
@@ -275,7 +282,7 @@ async fn refresh_release_metadata_inner_with_progress(
         if dirty || context.is_none() {
             let rebuilt = {
                 let db = STATE.db.read().await;
-                match build_release_context(&db, release_id, Some(library_db_id)) {
+                match build_release_context(&db, release_id, Some(library_db_id), &schemes) {
                     Ok(context) => Some(context),
                     Err(err) => {
                         if providers_called.is_empty() {
@@ -419,6 +426,7 @@ async fn refresh_library_metadata_inner_with_progress(
         options.apply_sync_filters,
     )
     .await;
+    let schemes = id_schemes().await;
     let release_count = releases
         .iter()
         .filter(|release| release.db_id.is_some())
@@ -451,7 +459,7 @@ async fn refresh_library_metadata_inner_with_progress(
             let db = STATE.db.read().await;
             let public_id = db::lookup::find_id_by_db_id(&db, node_id)?;
             release_infos.insert(node_id, (public_id, Some(release.release_title.clone())));
-            build_release_context(&db, node_id, Some(library_db_id))?
+            build_release_context(&db, node_id, Some(library_db_id), &schemes)?
         };
         context_cache.insert(node_id, ctx);
     }
@@ -471,7 +479,7 @@ async fn refresh_library_metadata_inner_with_progress(
             if dirty_releases.remove(&node_id) {
                 let ctx = {
                     let db = STATE.db.read().await;
-                    build_release_context(&db, node_id, Some(library_db_id))?
+                    build_release_context(&db, node_id, Some(library_db_id), &schemes)?
                 };
                 context_cache.insert(node_id, ctx);
             }

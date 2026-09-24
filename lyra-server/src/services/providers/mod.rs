@@ -78,6 +78,7 @@ pub(crate) use registry::{
     ProviderRegistries,
     ProviderRequireSpec,
     ProviderSimilarReleasesSpec,
+    id_schemes,
     library_refresh_locks,
     provider_registry,
     sync_locks,
@@ -88,7 +89,13 @@ pub(crate) use requirements::{
     requirements_match,
     requirements_match_with,
 };
-pub(crate) use schemes::validate_id_scheme;
+#[cfg(feature = "docgen")]
+pub(crate) use schemes::IDENTIFIERS_DOC;
+pub(crate) use schemes::{
+    IdSchemes,
+    IdentifiersByScheme,
+    validate_id_scheme,
+};
 pub(crate) use sync::{
     run_provider_sync,
     run_provider_sync_loop,

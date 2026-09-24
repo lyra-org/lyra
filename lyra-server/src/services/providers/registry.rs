@@ -23,6 +23,7 @@ use anyhow::{
 use tokio::sync::RwLock;
 
 use super::super::options::OptionDeclaration;
+use super::schemes::IdSchemes;
 use crate::plugins::lifecycle::{
     PluginId,
     PluginScopedInner,
@@ -53,6 +54,10 @@ impl ProviderRegistries {
 
 pub(crate) fn provider_registry() -> Arc<RwLock<ProviderRegistry>> {
     crate::STATE.generation().providers.registry()
+}
+
+pub(crate) async fn id_schemes() -> IdSchemes {
+    provider_registry().read().await.id_schemes()
 }
 
 pub(crate) fn sync_locks() -> Arc<tokio::sync::Mutex<HashSet<String>>> {
@@ -350,6 +355,18 @@ impl ProviderRegistry {
             }
         }
         pairs
+    }
+
+    pub(crate) fn id_schemes(&self) -> IdSchemes {
+        let mut schemes = IdSchemes::default();
+        for (provider_id, state) in self.iter_states() {
+            for spec in state.id_specs.values() {
+                if let Some(scheme) = &spec.scheme {
+                    schemes.insert(provider_id, &spec.id_type, scheme);
+                }
+            }
+        }
+        schemes
     }
 
     pub(crate) fn unique_track_id_pairs(&self) -> HashSet<(String, String)> {
