@@ -309,6 +309,20 @@ pub(crate) fn playlist_accessible_as(
     Ok(db::playlists::get_owner(db, playlist_db_id)? == Some(user_db_id))
 }
 
+/// Whether the principal owns the playlist, verified under the guard of `db`. Anything but an
+/// existing playlist is unowned; a graph search from a missing id would fail.
+pub(crate) fn playlist_owned(
+    db: &impl db::DbAccess,
+    principal: &Principal,
+    playlist_db_id: DbId,
+) -> anyhow::Result<bool> {
+    let user_db_id = principal.require(db)?;
+    if db::playlists::get_by_id(db, playlist_db_id)?.is_none() {
+        return Ok(false);
+    }
+    Ok(db::playlists::get_owner(db, playlist_db_id)? == Some(user_db_id))
+}
+
 pub(crate) fn resolve_library_db_id(
     db: &impl db::DbAccess,
     principal: &Principal,

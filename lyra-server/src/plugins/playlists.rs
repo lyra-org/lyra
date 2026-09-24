@@ -337,7 +337,7 @@ fn get_by_id_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        crate::plugins::auth::require_user_db_id(&principal, &db)?;
+        let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let query_id = id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
@@ -350,8 +350,13 @@ fn get_by_id_callback(
         let Some(playlist_db_id) = playlist.db_id.clone().map(DbId::from) else {
             return Ok(luau::Value::Nil);
         };
-        if !crate::services::auth::access::playlist_accessible(&db, &principal, playlist_db_id)
-            .map_err(crate::plugins::runtime_error)?
+        if !crate::services::auth::access::playlist_accessible_as(
+            &db,
+            &principal,
+            user_db_id,
+            playlist_db_id,
+        )
+        .map_err(crate::plugins::runtime_error)?
         {
             return Ok(luau::Value::Nil);
         }
@@ -392,7 +397,7 @@ fn get_owner_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        crate::plugins::auth::require_user_db_id(&principal, &db)?;
+        let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let Some(playlist_id) = playlist_id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
@@ -402,8 +407,13 @@ fn get_owner_callback(
         let QueryId::Id(playlist_db_id) = playlist_id else {
             return Ok(luau::Value::Nil);
         };
-        if !crate::services::auth::access::playlist_accessible(&db, &principal, playlist_db_id)
-            .map_err(crate::plugins::runtime_error)?
+        if !crate::services::auth::access::playlist_accessible_as(
+            &db,
+            &principal,
+            user_db_id,
+            playlist_db_id,
+        )
+        .map_err(crate::plugins::runtime_error)?
         {
             return Ok(luau::Value::Nil);
         }
@@ -435,7 +445,7 @@ fn get_tracks_callback(
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        crate::plugins::auth::require_user_db_id(&principal, &db)?;
+        let user_db_id = crate::plugins::auth::require_user_db_id(&principal, &db)?;
         let playlist_id = playlist_id
             .to_query_id(&db)
             .map_err(crate::plugins::runtime_error)?
@@ -443,7 +453,7 @@ fn get_tracks_callback(
         let QueryId::Id(playlist_db_id) = playlist_id else {
             return harmony_luau::serializable_to_luau_owned(Vec::<PlaylistTrackLink>::new());
         };
-        let links = visible_track_links(&db, &principal, playlist_db_id)?;
+        let links = visible_track_links(&db, &principal, user_db_id, playlist_db_id)?;
         harmony_luau::serializable_to_luau_owned(links)
     }))
 }
@@ -538,7 +548,9 @@ fn update_callback(
         else {
             return Ok(luau::Value::Nil);
         };
-        if !playlist_owned_by_principal(&db, &principal, playlist_db_id)? {
+        if !crate::services::auth::access::playlist_owned(&db, &principal, playlist_db_id)
+            .map_err(crate::plugins::runtime_error)?
+        {
             return Ok(luau::Value::Nil);
         }
         let request = request.into_service_request(QueryId::Id(playlist_db_id));
@@ -566,7 +578,9 @@ fn delete_callback(
         else {
             return Ok(luau::Value::Boolean(false));
         };
-        if !playlist_owned_by_principal(&db, &principal, playlist_db_id)? {
+        if !crate::services::auth::access::playlist_owned(&db, &principal, playlist_db_id)
+            .map_err(crate::plugins::runtime_error)?
+        {
             return Ok(luau::Value::Boolean(false));
         }
         let deleted = playlist_service::delete(&mut db, QueryId::Id(playlist_db_id))
@@ -597,7 +611,9 @@ fn add_track_callback(
         else {
             return Ok(luau::Value::Nil);
         };
-        if !playlist_owned_by_principal(&db, &principal, playlist_db_id)? {
+        if !crate::services::auth::access::playlist_owned(&db, &principal, playlist_db_id)
+            .map_err(crate::plugins::runtime_error)?
+        {
             return Ok(luau::Value::Nil);
         }
         let Some(QueryId::Id(track_db_id)) = track_id
@@ -648,7 +664,9 @@ fn remove_track_callback(
         let Some(playlist_db_id) = playlist_for_track_entry(&db, entry_db_id)? else {
             return Ok(luau::Value::Boolean(false));
         };
-        if !playlist_owned_by_principal(&db, &principal, playlist_db_id)? {
+        if !crate::services::auth::access::playlist_owned(&db, &principal, playlist_db_id)
+            .map_err(crate::plugins::runtime_error)?
+        {
             return Ok(luau::Value::Boolean(false));
         }
         playlist_service::remove_track(&mut db, QueryId::Id(entry_db_id))
@@ -690,7 +708,8 @@ fn move_track_callback(
         else {
             return Ok(luau::Value::Boolean(false));
         };
-        if !playlist_owned_by_principal(&db, &principal, playlist_db_id)?
+        if !crate::services::auth::access::playlist_owned(&db, &principal, playlist_db_id)
+            .map_err(crate::plugins::runtime_error)?
             || playlist_for_track_entry(&db, entry_id)? != Some(playlist_db_id)
         {
             return Ok(luau::Value::Boolean(false));
@@ -739,10 +758,16 @@ fn playlist_for_track_entry(db: &DbAny, entry_id: DbId) -> luau::runtime::Result
 fn visible_track_links(
     db: &DbAny,
     principal: &Principal,
+    user_db_id: DbId,
     playlist_db_id: DbId,
 ) -> luau::runtime::Result<Vec<PlaylistTrackLink>> {
-    if !crate::services::auth::access::playlist_accessible(db, principal, playlist_db_id)
-        .map_err(crate::plugins::runtime_error)?
+    if !crate::services::auth::access::playlist_accessible_as(
+        db,
+        principal,
+        user_db_id,
+        playlist_db_id,
+    )
+    .map_err(crate::plugins::runtime_error)?
     {
         return Ok(Vec::new());
     }
@@ -752,25 +777,6 @@ fn visible_track_links(
         .into_iter()
         .filter_map(|link| playlist_link_to_info(db, principal, link).transpose())
         .collect()
-}
-
-fn playlist_owned_by_principal(
-    db: &DbAny,
-    principal: &Principal,
-    playlist_db_id: DbId,
-) -> luau::runtime::Result<bool> {
-    let owner_db_id = principal
-        .require(db)
-        .map_err(crate::plugins::runtime_error)?;
-    if playlist_service::get(db, QueryId::Id(playlist_db_id))
-        .map_err(crate::plugins::runtime_error)?
-        .is_none()
-    {
-        return Ok(false);
-    }
-    Ok(playlist_service::get_owner(db, QueryId::Id(playlist_db_id))
-        .map_err(crate::plugins::runtime_error)?
-        == Some(owner_db_id))
 }
 
 fn playlist_link_to_info(
