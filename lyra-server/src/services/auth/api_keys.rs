@@ -106,7 +106,7 @@ pub(crate) struct ApiKeyInfo {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedApiKey {
-    pub(crate) api_key_id: DbId,
+    pub(crate) public_id: String,
     pub(crate) name: String,
     pub(crate) principal: Principal,
 }
@@ -223,6 +223,7 @@ pub(crate) async fn resolve_api_key(key: &str) -> anyhow::Result<Option<Resolved
     };
     let principal = resolve_principal(&db_read, user_db_id, user.id, user.username);
     let name = api_key.name;
+    let public_id = api_key.id;
     drop(db_read);
 
     let now = db::users::now_secs();
@@ -255,7 +256,7 @@ pub(crate) async fn resolve_api_key(key: &str) -> anyhow::Result<Option<Resolved
     }
 
     Ok(Some(ResolvedApiKey {
-        api_key_id,
+        public_id,
         name,
         principal,
     }))

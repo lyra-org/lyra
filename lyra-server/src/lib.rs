@@ -142,7 +142,7 @@ pub(crate) type PluginRuntimeHandle = SwapHandle<Option<crate::plugins::bootstra
 #[derive(Default)]
 pub(crate) struct AuthCaches {
     pub(crate) api_key_last_used: StdMutex<HashMap<DbId, i64>>,
-    pub(crate) session_last_seen: StdMutex<HashMap<DbId, i64>>,
+    pub(crate) session_last_seen: StdMutex<HashMap<String, i64>>,
     pub(crate) media_tokens: MediaTokenStore,
 }
 

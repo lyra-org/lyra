@@ -516,8 +516,8 @@ async fn update_me(
     let principal = auth.principal;
 
     if let Some(new_password) = &body.new_password {
-        let session_id = match auth.credential {
-            AuthCredential::Session { session_id } => session_id,
+        let session_public_id = match auth.credential {
+            AuthCredential::Session { public_id } => public_id,
             AuthCredential::Default => {
                 return Err(AppError::forbidden(
                     "password change is not supported when authentication is disabled",
@@ -554,7 +554,7 @@ async fn update_me(
                 }
 
                 db::users::update_user_password(t, user_db_id, &new_hash)?;
-                db::users::revoke_sessions_for_user_except(t, user_db_id, session_id)?;
+                db::users::revoke_sessions_for_user_except(t, user_db_id, &session_public_id)?;
                 let revoked = db::api_keys::delete_all_for_user(t, user_db_id)?;
                 Ok(revoked)
             })

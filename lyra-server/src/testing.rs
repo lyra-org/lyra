@@ -150,6 +150,42 @@ pub(crate) fn publish_config(config: config::Config) {
     }));
 }
 
+/// Runs `operation` to completion, handing the DB write lock to `between` each time `operation`
+/// releases the lock and waits on it again. `between` gets the gap's index, starting at 0, so a
+/// test can mutate the DB between any two guards `operation` takes. The lock is FIFO, so a writer
+/// queued behind `operation`'s pending acquisition runs as soon as `operation` releases it.
+#[cfg(test)]
+pub(crate) async fn run_with_db_gaps<T>(
+    operation: impl std::future::Future<Output = T>,
+    mut between: impl FnMut(usize, &mut DbAny),
+) -> T {
+    use std::task::Poll;
+
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    let mut operation = std::pin::pin!(operation);
+    let mut held = Some(STATE.db.write().await);
+    for gap in 0.. {
+        if let Poll::Ready(output) = operation.as_mut().poll(&mut cx) {
+            return output;
+        }
+        let mut next = Box::pin(STATE.db.write());
+        assert!(next.as_mut().poll(&mut cx).is_pending());
+        drop(held.take());
+        loop {
+            if let Poll::Ready(output) = operation.as_mut().poll(&mut cx) {
+                return output;
+            }
+            if let Poll::Ready(mut guard) = next.as_mut().poll(&mut cx) {
+                between(gap, &mut guard);
+                held = Some(guard);
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    }
+    unreachable!("gap counter overflowed")
+}
+
 /// Boot config backed by a uniquely named in-memory DB so tests never touch
 /// the data directory or any on-disk database.
 fn memory_boot_config() -> anyhow::Result<config::BootConfig> {

@@ -125,8 +125,8 @@ impl Principal {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum AuthCredential {
-    Session { session_id: DbId },
-    ApiKey { api_key_id: DbId, name: String },
+    Session { public_id: String },
+    ApiKey { public_id: String, name: String },
     Default,
 }
 
@@ -327,7 +327,7 @@ async fn resolve_auth_from_session_token(token: &str) -> AuthResult<Option<Resol
 
     let db = STATE.db.read().await;
     let token_hash = hash_secret(token);
-    let Some((user, session, session_id)) =
+    let Some((user, session, _)) =
         db::users::find_by_session_token_hash(&db, &token_hash).map_err(AuthError::from)?
     else {
         return Ok(None);
@@ -336,23 +336,26 @@ async fn resolve_auth_from_session_token(token: &str) -> AuthResult<Option<Resol
         return Ok(None);
     };
 
-    if session.expires_at > 0 && db::users::now_secs() >= session.expires_at {
+    if sessions::is_expired(&session) {
         drop(db);
-        if let Err(e) = sessions::revoke_session_by_id(session_id).await {
+        if let Err(e) = sessions::revoke_expired_session(&token_hash).await {
             tracing::warn!(error = %e, "failed to revoke expired session");
         }
         return Err(AuthError::SessionExpired);
     }
 
     let client_name = session.client_name;
+    let session_public_id = session.id;
     let principal = resolve_principal(&db, user_db_id, user.id, user.username);
     drop(db);
 
-    sessions::touch_last_seen(session_id).await;
+    sessions::touch_last_seen(&session_public_id).await;
 
     Ok(Some(ResolvedAuth {
         principal,
-        credential: AuthCredential::Session { session_id },
+        credential: AuthCredential::Session {
+            public_id: session_public_id,
+        },
         client_name,
     }))
 }
@@ -368,7 +371,7 @@ async fn resolve_auth_from_api_key(key: &str) -> AuthResult<Option<ResolvedAuth>
     Ok(Some(ResolvedAuth {
         principal: api_key.principal,
         credential: AuthCredential::ApiKey {
-            api_key_id: api_key.api_key_id,
+            public_id: api_key.public_id,
             name: api_key.name,
         },
         client_name: None,
@@ -698,14 +701,6 @@ mod tests {
         };
         let principal = crate::testing::user_principal(user_db_id).await?;
         let api_key = api_keys::create_api_key(&principal, "laptop").await?;
-        let api_key_db_id = {
-            let db = STATE.db.read().await;
-            db::api_keys::get_by_public_id(&db, &api_key.id)?
-                .and_then(|api_key| api_key.db_id)
-                .map(Into::into)
-                .ok_or_else(|| anyhow::anyhow!("api key should have a db id"))?
-        };
-
         let auth = resolve_auth_from_bearer(Some(&api_key.key))
             .await?
             .ok_or_else(|| anyhow::anyhow!("api key should resolve"))?;
@@ -715,7 +710,7 @@ mod tests {
         assert_eq!(
             auth.credential,
             AuthCredential::ApiKey {
-                api_key_id: api_key_db_id,
+                public_id: api_key.id.clone(),
                 name: "laptop".to_string()
             }
         );
@@ -767,6 +762,58 @@ mod tests {
             );
         }
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn expired_session_revoke_spares_a_session_that_took_its_id() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        for gap in 0.. {
+            initialize_auth_test_runtime().await?;
+            let mut config = STATE.config().as_ref().clone();
+            config.auth.enabled = true;
+            config.auth.session_ttl_seconds = 60;
+            crate::testing::publish_config(config);
+
+            let (alice_session_id, bob) = {
+                let mut db = STATE.db.write().await;
+                let alice = db::users::create(&mut db, &db::test_db::test_user("alice")?)?;
+                let bob = db::users::create(&mut db, &db::test_db::test_user("bob")?)?;
+                let mut expired = db::test_db::test_session(&hash_secret("alice-token"));
+                expired.expires_at = db::users::now_secs() - 1;
+                (db::users::login(&mut db, alice, &expired)?, bob)
+            };
+
+            let mut reached = false;
+            crate::testing::run_with_db_gaps(
+                resolve_auth_from_bearer(Some("alice-token")),
+                |index, db| {
+                    if index != gap {
+                        return;
+                    }
+                    reached = true;
+                    db.exec_mut(agdb::QueryBuilder::remove().ids(alice_session_id).query())
+                        .expect("remove alice session");
+                    let recycled =
+                        db::users::login(db, bob, &db::test_db::test_session("bob-hash"))
+                            .expect("log bob in");
+                    assert_eq!(
+                        recycled, alice_session_id,
+                        "agdb must reuse the session DbId"
+                    );
+                },
+            )
+            .await
+            .ok();
+            if !reached {
+                break;
+            }
+            let db = STATE.db.read().await;
+            assert!(
+                db::users::find_by_session_token_hash(&db, "bob-hash")?.is_some(),
+                "bob's session revoked at gap {gap}"
+            );
+        }
         Ok(())
     }
 
@@ -866,10 +913,10 @@ mod tests {
             },
         )
         .await?;
-        let session_db_id = {
+        let session_public_id = {
             let db = STATE.db.read().await;
             db::users::find_by_session_token_hash(&db, &hash_secret(&session.token))?
-                .map(|(_, _, session_id)| session_id)
+                .map(|(_, stored, _)| stored.id)
                 .ok_or_else(|| anyhow::anyhow!("session should have a db id"))?
         };
         let key_hash = blake3::hash(session.token.as_bytes()).to_hex().to_string();
@@ -892,7 +939,7 @@ mod tests {
         assert_eq!(
             auth.credential,
             AuthCredential::Session {
-                session_id: session_db_id
+                public_id: session_public_id,
             }
         );
         assert_eq!(auth.client_name.as_deref(), Some("Lyra Web"));

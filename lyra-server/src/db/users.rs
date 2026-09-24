@@ -111,6 +111,20 @@ pub(crate) fn find_session_by_id(
     super::graph::fetch_typed_by_id(db, session_id, "Session")
 }
 
+pub(crate) fn find_session_by_public_id(
+    db: &impl super::DbAccess,
+    id: &str,
+) -> anyhow::Result<Option<(DbId, Session)>> {
+    Ok(
+        super::graph::fetch_typed_by_index::<Session>(db, "id", id, "Session")?.and_then(
+            |session| {
+                let session_id = session.db_id.clone()?.into();
+                Some((session_id, session))
+            },
+        ),
+    )
+}
+
 pub(crate) fn find_by_session_token_hash(
     db: &impl super::DbAccess,
     token_hash: &str,
@@ -320,12 +334,14 @@ pub(crate) fn find_sessions_for_user(
 pub(crate) fn revoke_sessions_for_user_except(
     db: &mut impl super::DbAccess,
     user_db_id: DbId,
-    keep: DbId,
+    keep_public_id: &str,
 ) -> anyhow::Result<u64> {
-    let session_ids: Vec<DbId> = find_sessions_for_user(db, user_db_id)?
-        .into_iter()
-        .filter(|id| *id != keep)
-        .collect();
+    let mut session_ids = Vec::new();
+    for session_id in find_sessions_for_user(db, user_db_id)? {
+        if find_session_by_id(db, session_id)?.is_none_or(|session| session.id != keep_public_id) {
+            session_ids.push(session_id);
+        }
+    }
     let count = session_ids.len() as u64;
     if !session_ids.is_empty() {
         db.exec_mut(QueryBuilder::remove().ids(session_ids).query())?;
