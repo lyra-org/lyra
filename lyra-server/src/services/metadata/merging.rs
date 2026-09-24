@@ -259,7 +259,7 @@ fn resolve_genres(merged: &MergedMetadata) -> Resolution<Vec<String>> {
 /// id_value }` (all three inner fields required when present).
 ///
 /// Fail-closed on schema violation is deliberate: silently treating malformed
-/// input as "zero labels" would wipe every ReleaseLabel and cascade-delete
+/// input as "zero labels" would unlink every label and cascade-delete
 /// orphan Labels on every ingestion.
 fn resolve_labels(merged: &MergedMetadata) -> Resolution<Vec<db::labels::LabelInput>> {
     resolve_graph_field(merged, ManualMetadataField::Labels, parse_label_inputs)

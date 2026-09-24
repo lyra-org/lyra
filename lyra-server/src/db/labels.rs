@@ -14,6 +14,8 @@ use agdb::{
     DbAnyTransactionMut,
     DbElement,
     DbId,
+    DbType,
+    DbValue,
     QueryBuilder,
 };
 use nanoid::nanoid;
@@ -31,14 +33,33 @@ pub(crate) struct Label {
     pub(crate) created_at: Option<u64>,
 }
 
-/// Intermediate node carrying the catalog number on the Release–Label link.
-/// Follows the `Credit` pattern for edge-metadata nodes.
+/// Values on a `release → label` edge.
 #[derive(DbElement, Clone, Debug)]
 pub(crate) struct ReleaseLabel {
-    pub(crate) db_id: Option<NodeId>,
-    pub(crate) id: String,
     pub(crate) catalog_number: Option<String>,
     pub(crate) scan_catalog_number: Option<String>,
+}
+
+impl ReleaseLabel {
+    fn new(catalog_number: Option<&str>) -> Self {
+        let catalog_number = catalog_number
+            .map(str::trim)
+            .filter(|trimmed| !trimmed.is_empty())
+            .map(str::to_string);
+        Self {
+            scan_catalog_number: catalog_number.as_deref().and_then(normalize_catalog_number),
+            catalog_number,
+        }
+    }
+}
+
+/// A stored `release → label` edge.
+#[derive(Debug, Clone)]
+struct ReleaseLabelLink {
+    edge_id: DbId,
+    release_id: DbId,
+    label_id: DbId,
+    catalog_number: Option<String>,
 }
 
 pub(crate) struct ResolveLabel<'a> {
@@ -206,35 +227,53 @@ pub(crate) fn resolve_inside_tx(
     Ok(label_id)
 }
 
-fn find_release_label(
+fn links_from(result: agdb::QueryResult) -> anyhow::Result<Vec<ReleaseLabelLink>> {
+    result
+        .elements
+        .iter()
+        .filter(|element| element.id.0 < 0)
+        .map(|element| {
+            Ok(ReleaseLabelLink {
+                edge_id: element.id,
+                release_id: element.from,
+                label_id: element.to,
+                catalog_number: ReleaseLabel::from_db_element(element)?.catalog_number,
+            })
+        })
+        .collect()
+}
+
+fn links_for_release(
     db: &impl DbAccess,
     release_id: DbId,
-    label_id: DbId,
-) -> anyhow::Result<Option<(DbId, ReleaseLabel)>> {
-    let rls: Vec<ReleaseLabel> = db
-        .exec(
+) -> anyhow::Result<Vec<ReleaseLabelLink>> {
+    links_from(
+        db.exec(
             QueryBuilder::select()
                 .elements::<ReleaseLabel>()
                 .search()
                 .from(release_id)
                 .where_()
-                .distance(CountComparison::Equal(2))
-                .and()
-                .key("db_element_id")
-                .value("ReleaseLabel")
+                .distance(CountComparison::Equal(1))
+                .end_where()
                 .query(),
-        )?
-        .try_into()?;
+        )?,
+    )
+}
 
-    for rl in rls {
-        let Some(rl_db_id) = rl.db_id.clone().map(DbId::from) else {
-            continue;
-        };
-        if super::graph::edge_exists(db, rl_db_id, label_id)? {
-            return Ok(Some((rl_db_id, rl)));
-        }
-    }
-    Ok(None)
+fn links_to_label(db: &impl DbAccess, label_id: DbId) -> anyhow::Result<Vec<ReleaseLabelLink>> {
+    links_from(
+        db.exec(
+            QueryBuilder::select()
+                .elements::<ReleaseLabel>()
+                .search()
+                .to(label_id)
+                .where_()
+                .distance(CountComparison::Equal(1))
+                .end_where()
+                .query(),
+        )?,
+    )
 }
 
 fn insert_release_label(
@@ -242,142 +281,80 @@ fn insert_release_label(
     release_id: DbId,
     label_id: DbId,
     catalog_number: Option<&str>,
-) -> anyhow::Result<DbId> {
-    let cat_trim = catalog_number.and_then(|c| {
-        let trimmed = c.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    });
-    let scan_cat = cat_trim.as_deref().and_then(normalize_catalog_number);
-
-    let rl = ReleaseLabel {
-        db_id: None,
-        id: nanoid!(),
-        catalog_number: cat_trim,
-        scan_catalog_number: scan_cat,
-    };
-    let result = db.exec_mut(QueryBuilder::insert().element(&rl).query())?;
-    let rl_id = result
-        .ids()
-        .first()
-        .copied()
-        .ok_or_else(|| anyhow::anyhow!("release_label creation returned no id"))?;
-
-    db.exec_mut(
-        QueryBuilder::insert()
-            .edges()
-            .from("release_labels")
-            .to(rl_id)
-            .query(),
-    )?;
+) -> anyhow::Result<()> {
     db.exec_mut(
         QueryBuilder::insert()
             .edges()
             .from(release_id)
-            .to(rl_id)
+            .to(label_id)
+            .values_uniform(ReleaseLabel::new(catalog_number).to_db_values())
+            .query(),
+    )?;
+    Ok(())
+}
+
+fn update_release_label(
+    db: &mut impl DbAccess,
+    edge_id: DbId,
+    catalog_number: Option<&str>,
+) -> anyhow::Result<()> {
+    db.exec_mut(
+        QueryBuilder::remove()
+            .values([
+                DbValue::from("catalog_number"),
+                DbValue::from("scan_catalog_number"),
+            ])
+            .ids(edge_id)
             .query(),
     )?;
     db.exec_mut(
         QueryBuilder::insert()
-            .edges()
-            .from(rl_id)
-            .to(label_id)
+            .values_uniform(ReleaseLabel::new(catalog_number).to_db_values())
+            .ids(edge_id)
             .query(),
     )?;
-
-    Ok(rl_id)
+    Ok(())
 }
 
-fn update_release_label_catalog(
-    db: &mut DbAnyTransactionMut<'_>,
-    rl_id: DbId,
-    catalog_number: Option<&str>,
-) -> anyhow::Result<()> {
-    let cat_trim = catalog_number.and_then(|c| {
-        let trimmed = c.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    });
-    let scan_cat = cat_trim.as_deref().and_then(normalize_catalog_number);
-
-    // `DbElement` requires every field — rewrite the node's values rather than
-    // trying to mutate individual keys. Keep `id` stable.
-    let existing: Vec<ReleaseLabel> = db
-        .exec(QueryBuilder::select().ids(rl_id).query())?
-        .try_into()?;
-    let Some(existing) = existing.into_iter().next() else {
-        anyhow::bail!("release_label {} disappeared mid-update", rl_id.0);
-    };
-
-    let updated = ReleaseLabel {
-        db_id: existing.db_id,
-        id: existing.id,
-        catalog_number: cat_trim,
-        scan_catalog_number: scan_cat,
-    };
-    super::replace_element_in_transaction(
-        db,
-        rl_id,
-        [
-            ("catalog_number", updated.catalog_number.is_none()),
-            ("scan_catalog_number", updated.scan_catalog_number.is_none()),
-        ],
-        &updated,
-    )
+fn label_has_releases(db: &impl DbAccess, label_id: DbId) -> anyhow::Result<bool> {
+    Ok(!release_ids_for_label(db, label_id, 1)?.is_empty())
 }
 
-/// Upsert the `(release_id, label_id)` pairing's catalog number.
-/// Caller-priority wins; policy (a) enforces one `ReleaseLabel` per pair.
-///
-/// Call through [`sync_release_labels`], which wraps this with label resolution
-/// under a single transaction. Calling it directly outside one risks half-built
-/// state on partial failure.
-fn upsert_release_label(
-    db: &mut DbAnyTransactionMut<'_>,
-    release_id: DbId,
-    label_id: DbId,
-    catalog_number: Option<&str>,
-) -> anyhow::Result<DbId> {
-    if let Some((rl_id, _existing)) = find_release_label(db, release_id, label_id)? {
-        update_release_label_catalog(db, rl_id, catalog_number)?;
-        Ok(rl_id)
-    } else {
-        insert_release_label(db, release_id, label_id, catalog_number)
-    }
-}
-
-fn label_has_other_release_labels(
+/// `limit` 0 returns every linked release.
+fn release_ids_for_label(
     db: &impl DbAccess,
     label_id: DbId,
-    excluding: DbId,
-) -> anyhow::Result<bool> {
-    let result = db.exec(
-        QueryBuilder::search()
-            .to(label_id)
-            .where_()
-            .distance(CountComparison::Equal(2))
-            .and()
-            .key("db_element_id")
-            .value("ReleaseLabel")
-            .query(),
-    )?;
-    for id in result.ids() {
-        if id != excluding && id.0 > 0 {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    limit: u64,
+) -> anyhow::Result<Vec<DbId>> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .to(label_id)
+                .limit(limit)
+                .where_()
+                .distance(CountComparison::Equal(1))
+                .and()
+                .element::<ReleaseLabel>()
+                .query(),
+        )?
+        .elements
+        .into_iter()
+        .map(|edge| edge.from)
+        .collect())
 }
 
-/// Move all `(label, catalog_number)` pairings from loser onto winner during
-/// release dedup. Winner's existing entries are preserved on conflict; the
-/// loser's stale RLs are left for the caller's cascade step.
+/// Remove a release's label link and GC the `Label` once no release links it.
+fn remove_release_label(db: &mut impl DbAccess, link: &ReleaseLabelLink) -> anyhow::Result<()> {
+    db.exec_mut(QueryBuilder::remove().ids(link.edge_id).query())?;
+    if !label_has_releases(db, link.label_id)? {
+        external_ids::remove_all_for_owner(db, link.label_id)?;
+        db.exec_mut(QueryBuilder::remove().ids(link.label_id).query())?;
+    }
+    Ok(())
+}
+
+/// Copy the loser's `(label, catalog_number)` pairings onto the winner during
+/// release dedup. Winner's existing entries are preserved on conflict.
 ///
 /// Call BEFORE the loser's cascade deletion so the shared Label isn't GC'd
 /// while we still need it.
@@ -399,70 +376,31 @@ pub(crate) fn migrate_release_labels_inside_tx(
         return Ok(());
     }
 
-    let loser_entries = get_release_label_entries(db, loser)?;
-    if loser_entries.is_empty() {
+    let loser_links = links_for_release(db, loser)?;
+    if loser_links.is_empty() {
         return Ok(());
     }
 
-    let winner_label_ids: HashSet<DbId> = get_release_label_entries(db, winner)?
+    let winner_label_ids: HashSet<DbId> = links_for_release(db, winner)?
         .into_iter()
-        .map(|e| e.label_id)
+        .map(|link| link.label_id)
         .collect();
 
-    for entry in loser_entries {
-        if winner_label_ids.contains(&entry.label_id) {
+    for link in loser_links {
+        if winner_label_ids.contains(&link.label_id) {
             continue;
         }
-        upsert_release_label(db, winner, entry.label_id, entry.catalog_number.as_deref())?;
+        insert_release_label(db, winner, link.label_id, link.catalog_number.as_deref())?;
     }
     Ok(())
 }
 
-/// Remove every `ReleaseLabel` owned by a release before the release node is
-/// deleted. agdb cascades the outgoing edges, but the `ReleaseLabel` nodes
-/// and their linked Labels would persist — blocking Label GC indefinitely.
-/// Call from the Release-cascade path only; use [`sync_release_labels`] for
-/// single-label unlinks.
-pub(crate) fn cascade_remove_release_labels_for_owner(
-    db: &mut impl DbAccess,
-    owner_id: DbId,
-) -> anyhow::Result<()> {
-    let entries = get_release_label_entries(db, owner_id)?;
-    for entry in entries {
-        remove_release_label(db, owner_id, entry.rl_id)?;
+/// Unlink every label from a release that is about to be deleted, collecting
+/// Labels left without releases.
+pub(crate) fn unlink_release(db: &mut impl DbAccess, release_id: DbId) -> anyhow::Result<()> {
+    for link in links_for_release(db, release_id)? {
+        remove_release_label(db, &link)?;
     }
-    Ok(())
-}
-
-/// Remove a `ReleaseLabel` and GC its `Label` if this was the last reference.
-/// The Label's `ExternalId`s cascade with it.
-fn remove_release_label(
-    db: &mut impl DbAccess,
-    release_id: DbId,
-    rl_id: DbId,
-) -> anyhow::Result<()> {
-    let label_candidates = db.exec(
-        QueryBuilder::search()
-            .from(rl_id)
-            .where_()
-            .distance(CountComparison::Equal(2))
-            .and()
-            .key("db_element_id")
-            .value("Label")
-            .query(),
-    )?;
-    let label_id = label_candidates.ids().into_iter().find(|id| id.0 > 0);
-
-    super::graph::remove_edges_between(db, release_id, rl_id)?;
-    db.exec_mut(QueryBuilder::remove().ids(rl_id).query())?;
-
-    if let Some(label_id) = label_id
-        && !label_has_other_release_labels(db, label_id, rl_id)?
-    {
-        external_ids::remove_all_for_owner(db, label_id)?;
-        db.exec_mut(QueryBuilder::remove().ids(label_id).query())?;
-    }
-
     Ok(())
 }
 
@@ -473,8 +411,8 @@ fn desired_diff_key(label_id: DbId, catalog_number: Option<&str>) -> (DbId, Opti
 
 /// Reconcile the labels on a release with the desired set. Wraps the entire
 /// diff, upsert, and orphan-GC sequence in a single `transaction_mut` so
-/// partial failures roll back cleanly. Policy (a): duplicate inputs collapse
-/// to one `ReleaseLabel` per `(release_id, label_id)` pair.
+/// partial failures roll back cleanly. Duplicate inputs collapse to one link
+/// per `(release_id, label_id)` pair.
 #[cfg(test)]
 pub(crate) fn sync_release_labels(
     db: &mut DbAny,
@@ -536,10 +474,9 @@ pub(crate) fn sync_release_label_links_inside_tx(
     release_id: DbId,
     inputs: &[LabelLinkInput],
 ) -> anyhow::Result<()> {
-    let existing = get_release_label_entries(db, release_id)?;
+    let existing = links_for_release(db, release_id)?;
 
-    // Policy (a): duplicate inputs for the same label collapse. Last-write
-    // wins on catalog number; the upsert loop runs once per unique label.
+    // Duplicate inputs for the same label collapse; the last catalog number wins.
     let mut desired_keys: HashSet<(DbId, Option<String>)> = HashSet::new();
     let mut desired_by_label: HashMap<DbId, Option<String>> = HashMap::new();
     for input in inputs {
@@ -549,86 +486,35 @@ pub(crate) fn sync_release_label_links_inside_tx(
         }
     }
 
+    let existing_by_label: HashMap<DbId, &ReleaseLabelLink> =
+        existing.iter().map(|link| (link.label_id, link)).collect();
     for (label_id, catalog_number) in &desired_by_label {
-        upsert_release_label(db, release_id, *label_id, catalog_number.as_deref())?;
+        let catalog_number = catalog_number.as_deref();
+        match existing_by_label.get(label_id) {
+            None => insert_release_label(db, release_id, *label_id, catalog_number)?,
+            Some(link)
+                if link.catalog_number != ReleaseLabel::new(catalog_number).catalog_number =>
+            {
+                update_release_label(db, link.edge_id, catalog_number)?;
+            }
+            Some(_) => {}
+        }
     }
 
-    for entry in existing {
-        if !desired_by_label.contains_key(&entry.label_id) {
-            remove_release_label(db, release_id, entry.rl_id)?;
+    for link in &existing {
+        if !desired_by_label.contains_key(&link.label_id) {
+            remove_release_label(db, link)?;
         }
     }
 
     Ok(())
 }
 
-/// Invariant: every `ReleaseLabel` has exactly one outbound edge to a `Label`.
-/// Enforced by [`insert_release_label`] plus the single `transaction_mut`
-/// wrapping sync; a missing edge means graph corruption — read path logs
-/// and skips.
-#[derive(Debug, Clone)]
-struct ReleaseLabelEntry {
-    rl_id: DbId,
-    label_id: DbId,
-    catalog_number: Option<String>,
-}
-
-fn get_release_label_entries(
-    db: &impl DbAccess,
-    release_id: DbId,
-) -> anyhow::Result<Vec<ReleaseLabelEntry>> {
-    let rls: Vec<ReleaseLabel> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<ReleaseLabel>()
-                .search()
-                .from(release_id)
-                .where_()
-                .distance(CountComparison::Equal(2))
-                .and()
-                .key("db_element_id")
-                .value("ReleaseLabel")
-                .query(),
-        )?
-        .try_into()?;
-
-    let mut entries = Vec::with_capacity(rls.len());
-    for rl in rls {
-        let Some(rl_db_id) = rl.db_id.clone().map(DbId::from) else {
-            continue;
-        };
-        let label_result = db.exec(
-            QueryBuilder::search()
-                .from(rl_db_id)
-                .where_()
-                .distance(CountComparison::Equal(2))
-                .and()
-                .key("db_element_id")
-                .value("Label")
-                .query(),
-        )?;
-        let Some(label_id) = label_result.ids().into_iter().find(|id| id.0 > 0) else {
-            tracing::warn!(
-                release_id = release_id.0,
-                release_label_id = rl_db_id.0,
-                "release label has no outbound Label edge; skipping (graph invariant violated)"
-            );
-            continue;
-        };
-        entries.push(ReleaseLabelEntry {
-            rl_id: rl_db_id,
-            label_id,
-            catalog_number: rl.catalog_number,
-        });
-    }
-    Ok(entries)
-}
-
 pub(crate) fn get_for_release(
     db: &impl DbAccess,
     release_id: DbId,
 ) -> anyhow::Result<Vec<LabelForRelease>> {
-    let entries = get_release_label_entries(db, release_id)?;
+    let entries = links_for_release(db, release_id)?;
     if entries.is_empty() {
         return Ok(Vec::new());
     }
@@ -664,12 +550,12 @@ pub(crate) fn get_for_releases_many(
         return Ok(result);
     }
 
-    let mut entries_by_release: HashMap<DbId, Vec<ReleaseLabelEntry>> = HashMap::new();
+    let mut entries_by_release: HashMap<DbId, Vec<ReleaseLabelLink>> = HashMap::new();
     let mut all_label_ids: Vec<DbId> = Vec::new();
     let mut seen = HashSet::new();
 
     for &release_id in &unique_release_ids {
-        let entries = get_release_label_entries(db, release_id)?;
+        let entries = links_for_release(db, release_id)?;
         for entry in &entries {
             if seen.insert(entry.label_id) {
                 all_label_ids.push(entry.label_id);
@@ -731,61 +617,15 @@ pub(crate) fn get_releases_with_catalog(
     db: &impl DbAccess,
     label_id: DbId,
 ) -> anyhow::Result<Vec<(DbId, Option<String>)>> {
-    let rls: Vec<ReleaseLabel> = db
-        .exec(
-            QueryBuilder::select()
-                .elements::<ReleaseLabel>()
-                .search()
-                .to(label_id)
-                .where_()
-                .distance(CountComparison::Equal(2))
-                .and()
-                .key("db_element_id")
-                .value("ReleaseLabel")
-                .query(),
-        )?
-        .try_into()?;
-
-    let mut result = Vec::with_capacity(rls.len());
-    for rl in rls {
-        let Some(rl_db_id) = rl.db_id.clone().map(DbId::from) else {
-            continue;
-        };
-        let release_result = db.exec(
-            QueryBuilder::search()
-                .to(rl_db_id)
-                .where_()
-                .distance(CountComparison::Equal(2))
-                .and()
-                .key("db_element_id")
-                .value("Release")
-                .query(),
-        )?;
-        let Some(release_id) = release_result.ids().into_iter().find(|id| id.0 > 0) else {
-            continue;
-        };
-        result.push((release_id, rl.catalog_number));
-    }
-    Ok(result)
+    Ok(links_to_label(db, label_id)?
+        .into_iter()
+        .map(|link| (link.release_id, link.catalog_number))
+        .collect())
 }
 
-/// Return the release IDs linked to a label via `ReleaseLabel` intermediates.
 pub(crate) fn get_releases(db: &impl DbAccess, label_id: DbId) -> anyhow::Result<Vec<DbId>> {
-    // Walk back from Label (distance=2 → ReleaseLabel, distance=4 → Release via
-    // the owning edge on ReleaseLabel).
-    let result = db.exec(
-        QueryBuilder::search()
-            .to(label_id)
-            .where_()
-            .distance(CountComparison::Equal(4))
-            .and()
-            .key("db_element_id")
-            .value("Release")
-            .query(),
-    )?;
-    let mut ids: Vec<DbId> = result.ids().into_iter().filter(|id| id.0 > 0).collect();
+    let mut ids = release_ids_for_label(db, label_id, 0)?;
     ids.sort_by_key(|id| id.0);
-    ids.dedup();
     Ok(ids)
 }
 
@@ -822,6 +662,13 @@ mod tests {
                 external_id: None,
             },
         )
+    }
+
+    fn link(label_id: DbId, catalog_number: &str) -> LabelLinkInput {
+        LabelLinkInput {
+            label_id,
+            catalog_number: Some(catalog_number.to_string()),
+        }
     }
 
     fn mb(id: &str) -> LabelExternalIdInput {
@@ -1020,14 +867,13 @@ mod tests {
     }
 
     #[test]
-    fn upsert_release_label_creates_on_first_call() -> anyhow::Result<()> {
+    fn sync_release_label_links_creates_on_first_call() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let label_id = resolve_simple(&mut db, "Blue Note")?;
         let release_id = insert_release(&mut db, "Blue Train")?;
 
         db.transaction_mut(|t| -> anyhow::Result<()> {
-            upsert_release_label(t, release_id, label_id, Some("BN-1577"))?;
-            Ok(())
+            sync_release_label_links_inside_tx(t, release_id, &[link(label_id, "BN-1577")])
         })?;
 
         let labels = get_for_release(&db, release_id)?;
@@ -1038,15 +884,14 @@ mod tests {
     }
 
     #[test]
-    fn upsert_release_label_updates_value_not_duplicates_edge() -> anyhow::Result<()> {
+    fn sync_release_label_links_updates_value_not_duplicates_edge() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let label_id = resolve_simple(&mut db, "Blue Note")?;
         let release_id = insert_release(&mut db, "Blue Train")?;
 
         db.transaction_mut(|t| -> anyhow::Result<()> {
-            upsert_release_label(t, release_id, label_id, Some("123"))?;
-            upsert_release_label(t, release_id, label_id, Some("BN-1577"))?;
-            Ok(())
+            sync_release_label_links_inside_tx(t, release_id, &[link(label_id, "123")])?;
+            sync_release_label_links_inside_tx(t, release_id, &[link(label_id, "BN-1577")])
         })?;
 
         let labels = get_for_release(&db, release_id)?;
@@ -1384,45 +1229,62 @@ mod tests {
         assert_eq!(winner_labels[1].label.name, "Impulse!");
         assert_eq!(winner_labels[1].catalog_number.as_deref(), Some("A-77"));
 
-        // Simulate the caller's cascade of the loser and verify that the
-        // Labels the winner now shares survive (winner is still a referrer).
-        cascade_remove_release_labels_for_owner(&mut db, loser)?;
+        // Deleting the loser leaves the Labels the winner now links.
+        db.transaction_mut(|t| crate::db::metadata::cascade_remove_entities_in_txn(t, &[loser]))?;
         assert!(find_by_name(&db, "Blue Note")?.is_some());
         assert!(find_by_name(&db, "Impulse!")?.is_some());
+        let label_id = find_by_name(&db, "Impulse!")?.expect("Impulse! exists");
+        assert_eq!(
+            get_releases_with_catalog(&db, label_id)?,
+            vec![(winner, Some("A-77".to_string()))]
+        );
         Ok(())
     }
 
     #[test]
-    fn cascade_remove_release_labels_for_owner_drops_rls_and_gcs_orphan_label() -> anyhow::Result<()>
-    {
-        // When a Release is about to be deleted (e.g. by the
-        // cleanup-orphaned-metadata sweep), its ReleaseLabels must be removed
-        // first — agdb only cascades edges, not the ReleaseLabel nodes, so
-        // without the explicit walk the RLs and their Labels would leak.
+    fn deleting_a_release_gcs_its_orphaned_labels() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_id = insert_release(&mut db, "Only")?;
+        let other_id = insert_release(&mut db, "Other")?;
         sync_release_labels(
             &mut db,
             release_id,
+            &[
+                LabelInput {
+                    name: "Blue Note".to_string(),
+                    catalog_number: Some("BN-1".to_string()),
+                    external_id: Some(mb("bn-1")),
+                },
+                LabelInput {
+                    name: "Impulse!".to_string(),
+                    catalog_number: None,
+                    external_id: None,
+                },
+            ],
+        )?;
+        sync_release_labels(
+            &mut db,
+            other_id,
             &[LabelInput {
-                name: "Blue Note".to_string(),
-                catalog_number: Some("BN-1".to_string()),
-                external_id: Some(mb("bn-1")),
+                name: "Impulse!".to_string(),
+                catalog_number: None,
+                external_id: None,
             }],
         )?;
-        assert!(find_by_name(&db, "Blue Note")?.is_some());
 
-        cascade_remove_release_labels_for_owner(&mut db, release_id)?;
+        db.transaction_mut(|t| {
+            crate::db::metadata::cascade_remove_entities_in_txn(t, &[release_id])
+        })?;
 
-        // No ReleaseLabel left for this release.
-        assert_eq!(get_for_release(&db, release_id)?.len(), 0);
-        // Label was the only reference — must be GC'd.
+        // The deleted release was the Label's only link — must be GC'd.
         assert!(find_by_name(&db, "Blue Note")?.is_none());
         // ExternalId cascaded with the Label.
         assert!(
             external_ids::get_owner(&db, "musicbrainz", "label_id", "bn-1", Some("Label"))?
                 .is_none()
         );
+        let shared = find_by_name(&db, "Impulse!")?.expect("shared label survives");
+        assert_eq!(get_releases(&db, shared)?, vec![other_id]);
         Ok(())
     }
 

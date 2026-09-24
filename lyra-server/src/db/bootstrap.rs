@@ -60,7 +60,6 @@ pub(crate) const ROOT_COLLECTION_ALIASES: &[&str] = &[
     "playlists",
     "genres",
     "labels",
-    "release_labels",
     "display_covers",
     "display_cover_repairs",
     "plugin_settings",
