@@ -217,9 +217,9 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 		sender:send(websocket.encode("ForceKeepAlive", JELLYFIN_WS_KEEPALIVE_SECONDS, nil))
 	end)
 
-	-- Public WS routes skip the driver's built-in reauth, so the plugin
-	-- owns revocation. Outer xpcall ensures a throw can't silently disable
-	-- enforcement for the rest of the connection.
+	-- The driver only re-auths auth-required WS routes; public routes like
+	-- this one own their re-auth. Outer xpcall ensures a throw can't silently
+	-- disable enforcement for the rest of the connection.
 	local reauth_thread = task.spawn(function()
 		xpcall(function()
 			local consecutive_errors = 0
