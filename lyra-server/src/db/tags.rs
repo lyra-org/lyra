@@ -36,11 +36,27 @@ const TAG_EDGE_KEY: &str = "tag_edge";
 /// can't wipe playlists as collateral damage.
 const TAG_OWNER_KEY: &str = "tag_owner";
 
-/// Composite `(owner, name)` key indexed in bootstrap for O(log N) tag lookup.
+/// Composite `(owner public id, name)` key indexed in bootstrap for O(log N) tag lookup. Keyed
+/// on the public id because agdb recycles the owner's `DbId` once the owner is deleted.
 const TAG_OWNER_NAME_KEY: &str = "tag_owner_name";
 
-fn tag_owner_name_key(owner_db_id: DbId, normalized_name: &str) -> String {
-    format!("{}:{}", owner_db_id.0, normalized_name)
+/// The owner's composite key, or `None` when `owner_db_id` is not a user.
+fn tag_owner_name_key(
+    db: &impl DbAccess,
+    owner_db_id: DbId,
+    normalized_name: &str,
+) -> anyhow::Result<Option<String>> {
+    Ok(super::users::get_by_id(db, owner_db_id)?
+        .map(|owner| format!("{}:{normalized_name}", owner.id)))
+}
+
+fn require_tag_owner_name_key(
+    db: &impl DbAccess,
+    owner_db_id: DbId,
+    normalized_name: &str,
+) -> anyhow::Result<String> {
+    tag_owner_name_key(db, owner_db_id, normalized_name)?
+        .ok_or_else(|| anyhow::anyhow!("tag owner {} is not a user", owner_db_id.0))
 }
 
 /// Strip Unicode `Cf` (Format) — zero-widths, bidi controls, SHY, BOM — plus U+034F CGJ,
@@ -111,7 +127,8 @@ pub(crate) fn create(
     color: &str,
     now_ms: i64,
 ) -> anyhow::Result<(DbId, CreateOutcome)> {
-    let existing = find_tag_id_by_owner_and_name(db, owner_db_id, normalized_name)?;
+    let owner_name_key = require_tag_owner_name_key(db, owner_db_id, normalized_name)?;
+    let existing = find_tag_id_by_owner_name_key(db, &owner_name_key)?;
     let (tag_id, outcome) = if let Some(existing_id) = existing {
         (existing_id, CreateOutcome::ReusedExisting)
     } else {
@@ -130,11 +147,7 @@ pub(crate) fn create(
             .ok_or_else(|| anyhow::anyhow!("tag creation missing id"))?;
         db.exec_mut(
             QueryBuilder::insert()
-                .values_uniform([(
-                    TAG_OWNER_NAME_KEY,
-                    tag_owner_name_key(owner_db_id, normalized_name).as_str(),
-                )
-                    .into()])
+                .values_uniform([(TAG_OWNER_NAME_KEY, owner_name_key.as_str()).into()])
                 .ids(tag_id)
                 .query(),
         )?;
@@ -196,20 +209,20 @@ pub(crate) fn update(
     normalized_name: Option<&str>,
     color: Option<&str>,
 ) -> anyhow::Result<Result<Tag, RenameConflict>> {
-    let owner_for_rename = if normalized_name.is_some() {
+    let owner_name_key = if let Some(new_name) = normalized_name {
         let owner = get_owner(db, tag_id)?.ok_or_else(|| {
             anyhow::anyhow!(
                 "tag {} has no owner edge; schema invariant violated",
                 tag_id.0
             )
         })?;
-        if let Some(new_name) = normalized_name
-            && let Some(colliding) = find_tag_id_by_owner_and_name(db, owner, new_name)?
+        let key = require_tag_owner_name_key(db, owner, new_name)?;
+        if let Some(colliding) = find_tag_id_by_owner_name_key(db, &key)?
             && colliding != tag_id
         {
             return Ok(Err(RenameConflict(new_name.to_string())));
         }
-        Some(owner)
+        Some(key)
     } else {
         None
     };
@@ -221,10 +234,10 @@ pub(crate) fn update(
             value: DbValue::from(new_name),
         });
         // Rewrite composite key so the index tracks the rename; see agdb_index_contract.
-        if let Some(owner) = owner_for_rename {
+        if let Some(key) = owner_name_key {
             values.push(agdb::DbKeyValue {
                 key: DbValue::from(TAG_OWNER_NAME_KEY),
-                value: DbValue::from(tag_owner_name_key(owner, new_name).as_str()),
+                value: DbValue::from(key),
             });
         }
     }
@@ -274,11 +287,17 @@ pub(crate) fn find_tag_id_by_owner_and_name(
     owner_db_id: DbId,
     normalized_name: &str,
 ) -> anyhow::Result<Option<DbId>> {
-    let key = tag_owner_name_key(owner_db_id, normalized_name);
+    match tag_owner_name_key(db, owner_db_id, normalized_name)? {
+        Some(key) => find_tag_id_by_owner_name_key(db, &key),
+        None => Ok(None),
+    }
+}
+
+fn find_tag_id_by_owner_name_key(db: &impl DbAccess, key: &str) -> anyhow::Result<Option<DbId>> {
     let result = db.exec(
         QueryBuilder::search()
             .index(TAG_OWNER_NAME_KEY)
-            .value(key.as_str())
+            .value(key)
             .query(),
     )?;
     Ok(result.ids().into_iter().find(|id| id.0 > 0))
@@ -646,22 +665,7 @@ mod tests {
     use agdb::DbAny;
 
     fn create_test_user(db: &mut DbAny) -> anyhow::Result<DbId> {
-        let user_db_id = db
-            .exec_mut(
-                QueryBuilder::insert()
-                    .nodes()
-                    .values([[("username", "testuser").into()]])
-                    .query(),
-            )?
-            .ids()[0];
-        db.exec_mut(
-            QueryBuilder::insert()
-                .edges()
-                .from("users")
-                .to(user_db_id)
-                .query(),
-        )?;
-        Ok(user_db_id)
+        crate::db::test_db::insert_user(db, &nanoid!())
     }
 
     fn create_test_track(db: &mut DbAny) -> anyhow::Result<DbId> {
@@ -875,6 +879,69 @@ mod tests {
         assert!(has_target(&db, bob, track_bob, "Chill")?);
         assert!(!has_target(&db, alice, track_bob, "Chill")?);
 
+        Ok(())
+    }
+
+    #[test]
+    fn owner_name_key_does_not_carry_over_to_a_recycled_owner_id() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let alice = create_test_user(&mut db)?;
+        let track = create_test_track(&mut db)?;
+        let (alice_tag, _) = create(&mut db, alice, track, "Chill", "blue", 1)?;
+
+        // Remove only the owner so its tag keeps the indexed key.
+        db.exec_mut(QueryBuilder::remove().ids(alice).query())?;
+        let bob = create_test_user(&mut db)?;
+        assert_eq!(bob, alice, "agdb must reuse the owner DbId");
+
+        assert_eq!(find_tag_id_by_owner_and_name(&db, bob, "Chill")?, None);
+        let (bob_tag, outcome) = create(&mut db, bob, track, "Chill", "red", 2)?;
+        assert_eq!(outcome, CreateOutcome::Created);
+        assert_ne!(bob_tag, alice_tag);
+        assert_eq!(
+            find_tag_id_by_owner_and_name(&db, bob, "Chill")?,
+            Some(bob_tag)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn owner_name_lookup_and_uniqueness_hold_per_owner() -> anyhow::Result<()> {
+        let mut db = new_test_db()?;
+        let alice = create_test_user(&mut db)?;
+        let bob = create_test_user(&mut db)?;
+        let track = create_test_track(&mut db)?;
+
+        let (alice_chill, created) = create(&mut db, alice, track, "Chill", "blue", 1)?;
+        let (again, reused) = create(&mut db, alice, track, "Chill", "red", 2)?;
+        let (bob_chill, _) = create(&mut db, bob, track, "Chill", "gray", 3)?;
+        let (alice_focus, _) = create(&mut db, alice, track, "Focus", "blue", 4)?;
+
+        assert_eq!(created, CreateOutcome::Created);
+        assert_eq!(
+            (again, reused),
+            (alice_chill, CreateOutcome::ReusedExisting)
+        );
+        assert_ne!(alice_chill, bob_chill);
+        assert_eq!(
+            find_tag_id_by_owner_and_name(&db, alice, "Chill")?,
+            Some(alice_chill)
+        );
+        assert_eq!(
+            find_tag_id_by_owner_and_name(&db, bob, "Chill")?,
+            Some(bob_chill)
+        );
+        assert_eq!(find_tag_id_by_owner_and_name(&db, bob, "Focus")?, None);
+        assert!(matches!(
+            update(&mut db, alice_focus, Some("Chill"), None)?,
+            Err(RenameConflict(_))
+        ));
+        assert!(update(&mut db, alice_focus, Some("Calm"), None)?.is_ok());
+        assert_eq!(
+            find_tag_id_by_owner_and_name(&db, alice, "Calm")?,
+            Some(alice_focus)
+        );
+        assert_eq!(find_tag_id_by_owner_and_name(&db, alice, "Focus")?, None);
         Ok(())
     }
 
@@ -1136,18 +1203,7 @@ mod benches {
     use agdb::DbAny;
 
     fn insert_user(db: &mut DbAny) -> DbId {
-        let id = db
-            .exec_mut(
-                QueryBuilder::insert()
-                    .nodes()
-                    .values([[("username", "bench").into()]])
-                    .query(),
-            )
-            .unwrap()
-            .ids()[0];
-        db.exec_mut(QueryBuilder::insert().edges().from("users").to(id).query())
-            .unwrap();
-        id
+        crate::db::test_db::insert_user(db, "bench").unwrap()
     }
 
     fn insert_track(db: &mut DbAny) -> DbId {
