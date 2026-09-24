@@ -10,7 +10,6 @@
     "harmony.serde",
     "lyra.entities",
     "lyra.playback_sessions",
-    "lyra.plugins",
-    "lyra.metadata"
+    "lyra.plugins"
   ]
 }

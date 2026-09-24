@@ -8,7 +8,6 @@ local entities = require("@lyra/entities")
 local http = require("@harmony/http")
 local serde = require("@harmony/serde")
 local json = serde.json
-local metadata = require("@lyra/metadata")
 local playbacks = require("@lyra/playback_sessions")
 local plugins = require("@lyra/plugins")
 
@@ -33,7 +32,7 @@ type ReleaseProjectionInfo = entities.ReleaseProjectionInfo
 type ArtistProjectionInfo = entities.ArtistProjectionInfo
 type TrackProjectionIncludes = entities.TrackProjectionIncludes
 type EntityQueryRequest = entities.EntityQueryRequest
-type ExternalIdsByProvider = metadata.ExternalIdsByProvider
+type IdentifiersByScheme = { [string]: string }
 
 type AdditionalInfo = {
 	submission_client: string,
@@ -74,8 +73,6 @@ local function require_non_empty_string(value: string?): string?
 	return nil
 end
 
-local provider_external_ids = metadata.ids.for_provider
-
 local function query_release_projection(entity_id: number, include: string | { string }): ReleaseProjectionInfo?
 	local request: EntityQueryRequest = {
 		id = entity_id,
@@ -103,7 +100,7 @@ end
 local function query_track_projection(track_public_id: string): (TrackProjection?, TrackProjectionIncludes?)
 	local request: EntityQueryRequest = {
 		id = track_public_id,
-		include = { "artists", "releases", "external_ids" },
+		include = { "artists", "releases", "identifiers" },
 	}
 	local ok, projection = pcall(entities.query_track, request)
 	if not ok or type(projection) ~= "table" then
@@ -135,11 +132,10 @@ local function resolve_release_metadata(releases_list: { ReleaseProjection }?): 
 		local release_db_id = release.db_id
 		local release_name = release.release_title
 		if release_db_id ~= nil then
-			local release_projection = query_release_projection(release_db_id, "external_ids")
-			local release_external_ids = if release_projection then release_projection.includes.external_ids else nil
-			local musicbrainz_ids = provider_external_ids(release_external_ids, "musicbrainz")
-			local release_mbid = if musicbrainz_ids ~= nil then musicbrainz_ids.release_id else nil
-			local release_group_mbid = if musicbrainz_ids ~= nil then musicbrainz_ids.release_group_id else nil
+			local release_projection = query_release_projection(release_db_id, "identifiers")
+			local identifiers = if release_projection then release_projection.includes.identifiers else nil
+			local release_mbid = if identifiers then identifiers["musicbrainz:release"] else nil
+			local release_group_mbid = if identifiers then identifiers["musicbrainz:release-group"] else nil
 
 			return release_name, release_mbid, release_group_mbid
 		end
@@ -158,14 +154,12 @@ local function collect_artist_mbids(artists_list: { ArtistProjection }?): { stri
 	for _, artist in artists_list do
 		local artist_id = artist.db_id
 		if artist_id ~= nil then
-			local artist_projection = query_artist_projection(artist_id, "external_ids")
-			local artist_external_ids = if artist_projection then artist_projection.includes.external_ids else nil
-			local musicbrainz_ids = provider_external_ids(artist_external_ids, "musicbrainz")
-			local artist_mbid = if musicbrainz_ids ~= nil then musicbrainz_ids.artist_id else nil
-			local resolved_artist_mbid = require_non_empty_string(artist_mbid)
-			if resolved_artist_mbid ~= nil and not seen[resolved_artist_mbid] then
-				seen[resolved_artist_mbid] = true
-				table.insert(mbids, resolved_artist_mbid)
+			local artist_projection = query_artist_projection(artist_id, "identifiers")
+			local identifiers = if artist_projection then artist_projection.includes.identifiers else nil
+			local artist_mbid = if identifiers then identifiers["musicbrainz:artist"] else nil
+			if artist_mbid ~= nil and not seen[artist_mbid] then
+				seen[artist_mbid] = true
+				table.insert(mbids, artist_mbid)
 			end
 		end
 	end
@@ -175,7 +169,7 @@ end
 
 local function build_additional_info(
 	track: TrackProjection?,
-	external_ids: ExternalIdsByProvider?,
+	identifiers: IdentifiersByScheme?,
 	artists_list: { ArtistProjection }?,
 	release_mbid: string?,
 	release_group_mbid: string?
@@ -197,18 +191,9 @@ local function build_additional_info(
 		additional_info.discnumber = tostring(track.disc)
 	end
 
-	local musicbrainz_ids = provider_external_ids(external_ids, "musicbrainz")
-	if musicbrainz_ids ~= nil and is_non_empty_string(musicbrainz_ids.recording_id) then
-		additional_info.recording_mbid = musicbrainz_ids.recording_id
-	end
-
-	if is_non_empty_string(release_mbid) then
-		additional_info.release_mbid = release_mbid
-	end
-
-	if is_non_empty_string(release_group_mbid) then
-		additional_info.release_group_mbid = release_group_mbid
-	end
+	additional_info.recording_mbid = if identifiers then identifiers["musicbrainz:recording"] else nil
+	additional_info.release_mbid = release_mbid
+	additional_info.release_group_mbid = release_group_mbid
 
 	local artist_mbids = collect_artist_mbids(artists_list)
 	if #artist_mbids > 0 then
@@ -222,7 +207,7 @@ local function build_track_metadata(update: PlaybackUpdatePayload): TrackMetadat
 	local track, includes = query_track_projection(update.track_public_id)
 	local artists_list = if includes then includes.artists else nil
 	local releases_list = if includes then includes.releases else nil
-	local external_ids = if includes then includes.external_ids else nil
+	local identifiers = if includes then includes.identifiers else nil
 	local artist_name = require_non_empty_string(resolve_artist_name(artists_list))
 	local track_name = require_non_empty_string(if track then track.track_title else nil)
 	local release_name, release_mbid, release_group_mbid = resolve_release_metadata(releases_list)
@@ -234,7 +219,7 @@ local function build_track_metadata(update: PlaybackUpdatePayload): TrackMetadat
 	local metadata: TrackMetadata = {
 		artist_name = artist_name,
 		track_name = track_name,
-		additional_info = build_additional_info(track, external_ids, artists_list, release_mbid, release_group_mbid),
+		additional_info = build_additional_info(track, identifiers, artists_list, release_mbid, release_group_mbid),
 	}
 
 	if is_non_empty_string(release_name) then
