@@ -1207,6 +1207,57 @@ mod tests {
         Ok(())
     }
 
+    /// Lists releases similar to a fresh seed as a fresh admin, deleted at gap `gap`.
+    async fn similar_releases_as_deleted_caller(
+        gap: Option<usize>,
+    ) -> anyhow::Result<(bool, axum::http::StatusCode)> {
+        let release_id = {
+            let mut db = STATE.db.write().await;
+            let library = insert_library(&mut db, "Similar", "/tmp/lyra-similar")?;
+            let release_db_id = insert_test_release(&mut db, "Seed Release")?;
+            connect(&mut db, library, release_db_id)?;
+            db::releases::get_by_id(&*db, release_db_id)?
+                .ok_or_else(|| anyhow::anyhow!("seed release missing"))?
+                .id
+        };
+        let (headers, user_db_id) =
+            create_admin_auth(&format!("similar-caller-{}", nanoid::nanoid!())).await?;
+        let (reached, result) = crate::testing::run_with_recycle_at(
+            gap,
+            similarity::get_similar_releases(
+                headers,
+                Path(release_id),
+                Query(similarity::SimilarReleasesQuery {
+                    limit: None,
+                    inc: None,
+                }),
+            ),
+            |db| {
+                db.transaction_mut(|t| db::users::delete_user(t, user_db_id))
+                    .expect("delete caller");
+            },
+        )
+        .await;
+        let status = result.map_or_else(
+            |error| axum::response::IntoResponse::into_response(error).status(),
+            |_| axum::http::StatusCode::OK,
+        );
+        Ok((reached, status))
+    }
+
+    #[tokio::test]
+    async fn get_similar_releases_rejects_a_caller_deleted_mid_request() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+        let (_, control) = similar_releases_as_deleted_caller(None).await?;
+        assert_eq!(control, axum::http::StatusCode::OK);
+        crate::testing::for_each_db_gap(similar_releases_as_deleted_caller, async |gap, status| {
+            assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED, "gap {gap}");
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn get_releases_filters_top_level_personal_rating() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;

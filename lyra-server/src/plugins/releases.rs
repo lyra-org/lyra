@@ -284,22 +284,10 @@ fn similar_callback(
     let request = parse_similar_options(frame.vm, frame.args.read_optional_named("opts")?)?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
     let provider_vm = frame.vm.clone();
-    let store = frame
-        .vm
-        .data()
-        .get::<ReleasesModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        crate::plugins::auth::require_user_db_id(&principal, &*db.read().await)?;
-        let accessible_library_ids = (!principal.permissions.contains(&db::Permission::Admin))
-            .then(|| principal.accessible_library_ids.clone());
-        let options = release_service::SimilarReleaseOptions {
-            limit: request.limit,
-            accessible_library_ids,
-        };
+        let options =
+            release_service::SimilarReleaseOptions::for_principal(&principal, request.limit);
         let releases = release_service::similar_in_vm(DbId(release_db_id), &options, provider_vm)
             .await
             .map_err(crate::plugins::runtime_error)?;

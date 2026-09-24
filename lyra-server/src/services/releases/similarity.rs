@@ -39,6 +39,7 @@ use crate::{
         SimilarReleaseExternalRef,
         SimilarReleasesDispatchRequest,
     },
+    services::auth::Principal,
     services::{
         EntityType,
         providers::{
@@ -61,6 +62,27 @@ pub(crate) struct SimilarReleaseOptions {
     pub(crate) limit: usize,
     /// `None` means all libraries are visible (server-internal/admin use).
     pub(crate) accessible_library_ids: Option<HashSet<String>>,
+    /// Verified under every guard the lookup takes, so a deleted viewer gets no releases.
+    pub(crate) viewer: Option<Principal>,
+}
+
+impl SimilarReleaseOptions {
+    /// Options for `principal`, limited to the libraries it can see.
+    pub(crate) fn for_principal(principal: &Principal, limit: usize) -> Self {
+        Self {
+            limit,
+            accessible_library_ids: (!principal.permissions.contains(&db::Permission::Admin))
+                .then(|| principal.accessible_library_ids.clone()),
+            viewer: Some(principal.clone()),
+        }
+    }
+
+    fn verify_viewer(&self, db: &DbAny) -> Result<()> {
+        if let Some(viewer) = &self.viewer {
+            viewer.require(db)?;
+        }
+        Ok(())
+    }
 }
 
 impl Default for SimilarReleaseOptions {
@@ -68,6 +90,7 @@ impl Default for SimilarReleaseOptions {
         Self {
             limit: DEFAULT_SIMILAR_RELEASE_LIMIT,
             accessible_library_ids: None,
+            viewer: None,
         }
     }
 }
@@ -159,6 +182,7 @@ where
     let handlers = snapshot.handlers;
     let seed = {
         let db = STATE.db.read().await;
+        options.verify_viewer(&db)?;
         build_seed_context(
             &db,
             seed_db_id,
@@ -242,6 +266,7 @@ where
         );
         let resolved = {
             let db = STATE.db.read().await;
+            options.verify_viewer(&db)?;
             if !release_identity_is_current(&db, seed_db_id, &seed.public_id)? {
                 return Ok(None);
             }
@@ -272,6 +297,7 @@ where
     }
 
     let db = STATE.db.read().await;
+    options.verify_viewer(&db)?;
     if !release_identity_is_current(&db, seed_db_id, &seed.public_id)? {
         return Ok(None);
     }
@@ -847,6 +873,7 @@ mod tests {
             &SimilarReleaseOptions {
                 limit: 5,
                 accessible_library_ids: None,
+                viewer: None,
             },
         )
         .await?
@@ -920,6 +947,7 @@ mod tests {
                 &SimilarReleaseOptions {
                     limit: 1,
                     accessible_library_ids: None,
+                    viewer: None,
                 },
             ),
         )
@@ -969,6 +997,7 @@ mod tests {
             &SimilarReleaseOptions {
                 limit: 1,
                 accessible_library_ids: None,
+                viewer: None,
             },
             None,
             move |_runtime, request| {
@@ -1029,6 +1058,7 @@ mod tests {
             &SimilarReleaseOptions {
                 limit: 1,
                 accessible_library_ids: None,
+                viewer: None,
             },
             Some(runtime.vm_id()),
             move |_runtime, request| {
