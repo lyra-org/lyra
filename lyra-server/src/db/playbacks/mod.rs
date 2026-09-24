@@ -8,7 +8,6 @@ use std::fmt;
 use agdb::{
     CountComparison,
     DbAny,
-    DbElement,
     DbError,
     DbId,
     DbTypeMarker,
@@ -121,40 +120,65 @@ struct PlaybackRecord {
     db_id: Option<DbId>,
     id: String,
     reported: Option<ReportedSource>,
+    queue_revision: Option<u64>,
+    queue_track_ids: Option<Vec<String>>,
+    queue_current_index: Option<u64>,
+    queue_repeat_mode: Option<RepeatMode>,
+    queue_shuffle_enabled: Option<bool>,
     created_at_ms: u64,
     updated_at_ms: u64,
 }
 
-#[derive(DbElement, Clone, Debug)]
-struct QueueRecord {
-    db_id: Option<DbId>,
-    revision: u64,
-    track_ids: Vec<String>,
-    current_index: u64,
-    repeat_mode: RepeatMode,
-    shuffle_enabled: bool,
-}
-
-impl QueueRecord {
-    fn from_queue(queue: &Queue, db_id: Option<DbId>) -> Self {
+impl PlaybackRecord {
+    fn from_playback(playback: &Playback) -> Self {
+        let queue = playback.queue.as_ref();
         Self {
-            db_id,
-            revision: queue.revision,
-            track_ids: queue.track_ids.clone(),
-            current_index: queue.current_index,
-            repeat_mode: queue.repeat_mode,
-            shuffle_enabled: queue.shuffle_enabled,
+            db_element_id: "Playback".to_owned(),
+            db_id: playback.db_id,
+            id: playback.id.clone(),
+            reported: playback.reported.clone(),
+            queue_revision: queue.map(|queue| queue.revision),
+            queue_track_ids: queue.map(|queue| queue.track_ids.clone()),
+            queue_current_index: queue.map(|queue| queue.current_index),
+            queue_repeat_mode: queue.map(|queue| queue.repeat_mode),
+            queue_shuffle_enabled: queue.map(|queue| queue.shuffle_enabled),
+            created_at_ms: playback.created_at_ms,
+            updated_at_ms: playback.updated_at_ms,
         }
     }
 
-    fn into_queue(self) -> Queue {
-        Queue {
-            revision: self.revision,
-            track_ids: self.track_ids,
-            current_index: self.current_index,
-            repeat_mode: self.repeat_mode,
-            shuffle_enabled: self.shuffle_enabled,
-        }
+    fn into_playback(self) -> anyhow::Result<Playback> {
+        let queue = match (
+            self.queue_revision,
+            self.queue_track_ids,
+            self.queue_current_index,
+            self.queue_repeat_mode,
+            self.queue_shuffle_enabled,
+        ) {
+            (
+                Some(revision),
+                Some(track_ids),
+                Some(current_index),
+                Some(repeat_mode),
+                Some(shuffle_enabled),
+            ) => Some(Queue {
+                revision,
+                track_ids,
+                current_index,
+                repeat_mode,
+                shuffle_enabled,
+            }),
+            (None, None, None, None, None) => None,
+            _ => anyhow::bail!("playback {} has incomplete queue fields", self.id),
+        };
+        Ok(Playback {
+            db_id: self.db_id,
+            id: self.id,
+            queue,
+            reported: self.reported,
+            created_at_ms: self.created_at_ms,
+            updated_at_ms: self.updated_at_ms,
+        })
     }
 }
 
@@ -166,8 +190,6 @@ pub(crate) struct PlaybackListProjection {
     pub(crate) updated_at_ms: u64,
     pub(crate) reported: bool,
 }
-
-const QUEUE_EDGE_KEY: &str = "queue";
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ReplaceQueueError {
@@ -208,27 +230,10 @@ pub(crate) fn insert(
         playback.queue.is_some() || playback.reported.is_some(),
         "playback requires a queue or reporting source"
     );
-    let record = PlaybackRecord {
-        db_element_id: "Playback".to_owned(),
-        db_id: playback.db_id,
-        id: playback.id.clone(),
-        reported: playback.reported.clone(),
-        created_at_ms: playback.created_at_ms,
-        updated_at_ms: playback.updated_at_ms,
-    };
+    let record = PlaybackRecord::from_playback(playback);
     let playback_db_id = db
         .exec_mut(QueryBuilder::insert().element(&record).query())?
         .ids()[0];
-    if let Some(queue) = &playback.queue {
-        let queue_id = db
-            .exec_mut(
-                QueryBuilder::insert()
-                    .element(QueueRecord::from_queue(queue, None))
-                    .query(),
-            )?
-            .ids()[0];
-        insert_tagged_edge(db, playback_db_id, queue_id, QUEUE_EDGE_KEY)?;
-    }
     db.exec_mut(
         QueryBuilder::insert()
             .edges()
@@ -293,37 +298,25 @@ pub(crate) fn get_by_id(
     db: &impl DbAccess,
     playback_db_id: DbId,
 ) -> anyhow::Result<Option<Playback>> {
-    let Some(record) =
-        super::graph::fetch_typed_by_id::<PlaybackRecord>(db, playback_db_id, "Playback")?
-    else {
-        return Ok(None);
-    };
-    let queue = match tagged_edge(db, playback_db_id, QUEUE_EDGE_KEY)? {
-        Some((_, queue_id)) => Some(
-            super::graph::fetch_typed_by_id::<QueueRecord>(db, queue_id, "QueueRecord")?
-                .ok_or_else(|| anyhow::anyhow!("playback {} has invalid queue edge", record.id))?
-                .into_queue(),
-        ),
-        None => None,
-    };
-    Ok(Some(Playback {
-        db_id: record.db_id,
-        id: record.id,
-        queue,
-        reported: record.reported,
-        created_at_ms: record.created_at_ms,
-        updated_at_ms: record.updated_at_ms,
-    }))
+    super::graph::fetch_typed_by_id::<PlaybackRecord>(db, playback_db_id, "Playback")?
+        .map(PlaybackRecord::into_playback)
+        .transpose()
 }
 
 pub(crate) fn list_projections_for_user(
     db: &impl DbAccess,
     user_db_id: DbId,
 ) -> anyhow::Result<Vec<PlaybackListProjection>> {
-    let keys = ["db_element_id", "id", "reported", "updated_at_ms"]
-        .into_iter()
-        .map(DbValue::from)
-        .collect::<Vec<_>>();
+    let keys = [
+        "db_element_id",
+        "id",
+        "reported",
+        "queue_revision",
+        "updated_at_ms",
+    ]
+    .into_iter()
+    .map(DbValue::from)
+    .collect::<Vec<_>>();
     let result = db.exec(
         QueryBuilder::select()
             .values(keys)
@@ -345,11 +338,6 @@ pub(crate) fn list_projections_for_user(
         if let Some(projection) = projection_from_element(&element)? {
             projections.push(projection);
         }
-    }
-    let ids = projections.iter().map(|p| p.db_id).collect::<Vec<_>>();
-    let revisions = queue_revisions(db, &ids)?;
-    for projection in &mut projections {
-        projection.queue_revision = revisions.get(&projection.db_id).copied();
     }
     Ok(projections)
 }
@@ -396,7 +384,12 @@ fn projection_from_element(
             .ok_or_else(|| anyhow::anyhow!("playback {} missing {key}", element.id.0))
     };
     let id = value("id")?.string()?.clone();
-    let queue_revision = None;
+    let queue_revision = element
+        .values
+        .iter()
+        .find(|kv| kv.key == DbValue::from("queue_revision"))
+        .map(|kv| kv.value.to_u64())
+        .transpose()?;
     let reported = element
         .values
         .iter()
@@ -443,30 +436,7 @@ pub(crate) fn get_projection_by_id(
     let Some(element) = result.elements.into_iter().next() else {
         return Ok(None);
     };
-    let mut projection = projection_from_element(&element)?;
-    if let Some(projection) = &mut projection {
-        projection.queue_revision = match tagged_edge(db, playback_db_id, QUEUE_EDGE_KEY)? {
-            Some((_, queue_id)) => {
-                let result = db.exec(
-                    QueryBuilder::select()
-                        .values(vec![DbValue::from("revision")])
-                        .ids(queue_id)
-                        .query(),
-                )?;
-                Some(
-                    result
-                        .elements
-                        .first()
-                        .and_then(|element| element.values.first())
-                        .ok_or_else(|| anyhow::anyhow!("queue missing revision"))?
-                        .value
-                        .to_u64()?,
-                )
-            }
-            None => None,
-        };
-    }
-    Ok(projection)
+    projection_from_element(&element)
 }
 
 pub(crate) fn current_session_ids(
@@ -520,48 +490,6 @@ fn tagged_targets(
                 .then_some((element.from, element.to))
         })
         .collect())
-}
-
-fn queue_revisions(
-    db: &impl DbAccess,
-    playback_ids: &[DbId],
-) -> anyhow::Result<std::collections::HashMap<DbId, u64>> {
-    let queue_ids = tagged_targets(db, playback_ids, QUEUE_EDGE_KEY)?;
-    if queue_ids.is_empty() {
-        return Ok(std::collections::HashMap::new());
-    }
-    let records = db.exec(
-        QueryBuilder::select()
-            .values(vec![DbValue::from("revision")])
-            .ids(queue_ids.values().copied().collect::<Vec<_>>())
-            .query(),
-    )?;
-    let revisions = records
-        .elements
-        .into_iter()
-        .map(|element| {
-            Ok((
-                element.id,
-                element
-                    .values
-                    .first()
-                    .ok_or_else(|| anyhow::anyhow!("queue missing revision"))?
-                    .value
-                    .to_u64()?,
-            ))
-        })
-        .collect::<anyhow::Result<std::collections::HashMap<_, _>>>()?;
-    queue_ids
-        .into_iter()
-        .map(|(playback_id, queue_id)| {
-            Ok((
-                playback_id,
-                *revisions
-                    .get(&queue_id)
-                    .ok_or_else(|| anyhow::anyhow!("queue missing revision"))?,
-            ))
-        })
-        .collect()
 }
 
 pub(crate) fn get_owner_id(
@@ -673,14 +601,11 @@ pub(crate) fn replace_queue_in_transaction(
     queue.repeat_mode = repeat_mode;
     queue.shuffle_enabled = shuffle_enabled;
     playback.updated_at_ms = updated_at_ms;
-    let (_, queue_id) = tagged_edge(db, playback_db_id, QUEUE_EDGE_KEY)?
-        .ok_or(ReplaceQueueError::QueueUnavailable)?;
     db.exec_mut(
         QueryBuilder::insert()
-            .element(QueueRecord::from_queue(queue, Some(queue_id)))
+            .element(PlaybackRecord::from_playback(&playback))
             .query(),
     )?;
-    touch(db, playback_db_id, updated_at_ms)?;
     if clear_current_session {
         remove_current_session_edge(db, playback_db_id)?;
     }
@@ -692,9 +617,6 @@ pub(crate) fn delete(db: &mut DbAny, playback_db_id: DbId) -> anyhow::Result<()>
 }
 
 fn delete_in_transaction(db: &mut impl DbAccess, playback_db_id: DbId) -> anyhow::Result<()> {
-    if let Some((_, queue_id)) = tagged_edge(db, playback_db_id, QUEUE_EDGE_KEY)? {
-        db.exec_mut(QueryBuilder::remove().ids(queue_id).query())?;
-    }
     db.exec_mut(QueryBuilder::remove().ids(playback_db_id).query())?;
     Ok(())
 }
@@ -906,15 +828,65 @@ mod tests {
     }
 
     #[test]
-    fn deleting_playback_removes_owned_queue_only() -> anyhow::Result<()> {
+    fn queue_is_stored_on_playback_node() -> anyhow::Result<()> {
+        let (mut db, user_id, session_id) = setup()?;
+        let playback_id = create(&mut db, &playback(), user_id, session_id)?;
+        let stored = get_by_id(&db, playback_id)?.unwrap();
+        let queue = stored.queue.unwrap();
+        assert_eq!(queue.revision, 1);
+        assert_eq!(queue.track_ids, vec!["track"]);
+        assert_eq!(queue.current_index, 0);
+        assert_eq!(queue.repeat_mode, RepeatMode::None);
+        assert!(!queue.shuffle_enabled);
+        let outgoing = db
+            .exec(
+                QueryBuilder::search()
+                    .from(playback_id)
+                    .where_()
+                    .edge()
+                    .and()
+                    .distance(CountComparison::Equal(1))
+                    .query(),
+            )?
+            .elements;
+        let mut targets = outgoing.iter().map(|edge| edge.to).collect::<Vec<_>>();
+        targets.sort();
+        let mut expected = vec![user_id, session_id];
+        expected.sort();
+        assert_eq!(targets, expected);
+        assert_eq!(
+            list_projections_for_user(&db, user_id)?[0].queue_revision,
+            Some(1)
+        );
+        assert_eq!(
+            get_projection_by_id(&db, playback_id)?
+                .unwrap()
+                .queue_revision,
+            Some(1)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn partial_queue_fields_are_rejected() -> anyhow::Result<()> {
+        let (mut db, user_id, session_id) = setup()?;
+        let playback_id = create(&mut db, &playback(), user_id, session_id)?;
+        db.exec_mut(
+            QueryBuilder::remove()
+                .values(["queue_track_ids".to_string()])
+                .ids(playback_id)
+                .query(),
+        )?;
+        assert!(get_by_id(&db, playback_id).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn deleting_playback_preserves_sessions() -> anyhow::Result<()> {
         let (mut db, user_id, session_id) = setup()?;
         let root_id = create(&mut db, &playback(), user_id, session_id)?;
-        let (_, queue_id) = tagged_edge(&db, root_id, QUEUE_EDGE_KEY)?.unwrap();
         delete(&mut db, root_id)?;
-        assert!(
-            super::super::graph::fetch_typed_by_id::<QueueRecord>(&db, queue_id, "QueueRecord")?
-                .is_none()
-        );
+        assert!(get_by_id(&db, root_id)?.is_none());
         assert!(crate::db::playback_sessions::get_by_id(&db, session_id)?.is_some());
         Ok(())
     }
@@ -952,20 +924,12 @@ mod tests {
     }
 
     #[test]
-    fn delete_for_user_removes_queues_and_preserves_sessions() -> anyhow::Result<()> {
+    fn delete_for_user_removes_playbacks_and_preserves_sessions() -> anyhow::Result<()> {
         let (mut db, user_id, session_id) = setup()?;
-        let valid_id = create(&mut db, &playback(), user_id, session_id)?;
-        let (_, valid_queue_id) = tagged_edge(&db, valid_id, QUEUE_EDGE_KEY)?.unwrap();
+        let playback_id = create(&mut db, &playback(), user_id, session_id)?;
         assert_eq!(delete_for_user(&mut db, user_id)?, 1);
         assert!(list_projections_for_user(&db, user_id)?.is_empty());
-        assert!(
-            super::super::graph::fetch_typed_by_id::<QueueRecord>(
-                &db,
-                valid_queue_id,
-                "QueueRecord"
-            )?
-            .is_none()
-        );
+        assert!(get_by_id(&db, playback_id)?.is_none());
         assert!(crate::db::playback_sessions::get_by_id(&db, session_id)?.is_some());
         Ok(())
     }
