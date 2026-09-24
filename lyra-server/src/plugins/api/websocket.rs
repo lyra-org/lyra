@@ -63,6 +63,29 @@ impl SocketReauth {
     }
 }
 
+/// Only auth-required routes act as the connect-time principal; public routes
+/// start with an empty slot and must resolve a credential to act.
+fn socket_auth(
+    auth_mode: &RouteAuthMode,
+    auth: Option<&crate::services::auth::ResolvedAuth>,
+    headers: &HeaderMap,
+) -> (crate::plugins::auth::DispatchAuth, Option<SocketReauth>) {
+    let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
+    let reauth = match (auth_mode, auth) {
+        (RouteAuthMode::Required, Some(auth)) => {
+            dispatch_auth.record(auth.principal.clone());
+            Some(SocketReauth {
+                headers: headers.clone(),
+                user_public_id: auth.principal.user_public_id.clone(),
+                dispatch_auth: dispatch_auth.clone(),
+                consecutive_errors: 0,
+            })
+        }
+        _ => None,
+    };
+    (dispatch_auth, reauth)
+}
+
 pub(super) async fn dispatch_websocket_route(
     request: WebSocketRouteRequest,
     ws: WebSocketUpgrade,
@@ -135,16 +158,7 @@ async fn run_plugin_websocket(socket: WebSocket, context: PluginWebSocketContext
     let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel::<String>(32);
     let (inbound_tx, inbound_rx) = tokio::sync::mpsc::channel::<String>(32);
     let state = crate::plugins::executor::WebSocketState::new();
-    let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
-    let reauth = match (&route.auth_mode, &auth) {
-        (RouteAuthMode::Required, Some(auth)) => Some(SocketReauth {
-            headers: headers.clone(),
-            user_public_id: auth.principal.user_public_id.clone(),
-            dispatch_auth: dispatch_auth.clone(),
-            consecutive_errors: 0,
-        }),
-        _ => None,
-    };
+    let (dispatch_auth, reauth) = socket_auth(&route.auth_mode, auth.as_ref(), &headers);
     let request = crate::plugins::executor::WebSocketStartRequest {
         handler_id: route.handler_id,
         plugin_id: route.plugin_id.to_string(),
@@ -558,6 +572,33 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(5), harness.driver).await??;
 
         assert!(dispatch_auth.principal().is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn only_auth_required_sockets_act_as_the_connect_time_principal() -> anyhow::Result<()> {
+        let _guard = crate::testing::runtime_test_lock().await;
+        crate::testing::init_default_test_state()?;
+        let (_, token) = session_user("socket-seeded").await?;
+        let seeded = socket_reauth(&token).await?;
+        let auth = resolve_optional_auth(&seeded.headers)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("credential should resolve"))?;
+
+        let (public_slot, public_reauth) =
+            socket_auth(&RouteAuthMode::Public, Some(&auth), &seeded.headers);
+        assert!(public_slot.principal().is_none());
+        assert!(public_reauth.is_none());
+
+        let (required_slot, required_reauth) =
+            socket_auth(&RouteAuthMode::Required, Some(&auth), &seeded.headers);
+        assert_eq!(
+            required_slot
+                .principal()
+                .map(|principal| principal.user_public_id),
+            Some(auth.principal.user_public_id)
+        );
+        assert!(required_reauth.is_some());
         Ok(())
     }
 }

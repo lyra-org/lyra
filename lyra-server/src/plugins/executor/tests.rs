@@ -1475,11 +1475,15 @@ async fn websocket_spawned_work_acts_as_the_verified_socket_principal() -> Resul
         query: HashMap::new(),
         params: HashMap::new(),
         auth: Some(crate::services::auth::ResolvedAuth {
-            principal,
+            principal: principal.clone(),
             credential: crate::services::auth::AuthCredential::Default,
             client_name: None,
         }),
-        dispatch_auth: crate::plugins::auth::DispatchAuth::default(),
+        dispatch_auth: {
+            let dispatch_auth = crate::plugins::auth::DispatchAuth::default();
+            dispatch_auth.record(principal);
+            dispatch_auth
+        },
         inbound: Arc::new(tokio::sync::Mutex::new(inbound_rx)),
         outbound: outbound_tx,
         state: state.clone(),
