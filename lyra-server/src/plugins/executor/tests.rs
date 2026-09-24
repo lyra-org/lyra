@@ -455,6 +455,7 @@ fn plugin_executor_declares_metadata_provider_ids_and_options() -> Result<()> {
     let (id_spec, has_generator) = crate::services::providers::registry_tests::id_registration(
         &registry,
         "raw-provider",
+        crate::services::EntityType::Release,
         "release_id",
     )
     .context("provider id registration")?;
@@ -467,6 +468,7 @@ fn plugin_executor_declares_metadata_provider_ids_and_options() -> Result<()> {
         crate::services::providers::registry_tests::id_url_template(
             &registry,
             "raw-provider",
+            crate::services::EntityType::Release,
             "release_id",
         )
         .as_deref(),
