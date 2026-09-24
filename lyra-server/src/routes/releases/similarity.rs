@@ -79,6 +79,7 @@ pub(super) async fn get_similar_releases(
 
     let seed_db_id = {
         let db = STATE.db.read().await;
+        principal.require(&*db)?;
         let seed_db_id = db::lookup::find_node_id_by_id(&*db, &id)?
             .ok_or_else(|| AppError::not_found(format!("Release not found: {id}")))?;
         crate::services::auth::access::require_entity_accessible(
@@ -92,16 +93,13 @@ pub(super) async fn get_similar_releases(
         }
         seed_db_id
     };
-    let options = releases::SimilarReleaseOptions {
-        limit,
-        accessible_library_ids: (!principal.permissions.contains(&Permission::Admin))
-            .then(|| principal.accessible_library_ids.clone()),
-    };
+    let options = releases::SimilarReleaseOptions::for_principal(&principal, limit);
     let found = releases::similar(seed_db_id, &options)
         .await?
         .ok_or_else(|| AppError::not_found(format!("Release not found: {id}")))?;
 
     let db = STATE.db.read().await;
+    principal.require(&*db)?;
     if db::lookup::find_node_id_by_id(&*db, &id)? != Some(seed_db_id)
         || db::releases::get_by_id(&*db, seed_db_id)?.is_none()
         || !crate::services::auth::access::entity_accessible(&*db, &principal, seed_db_id)?
