@@ -8,6 +8,7 @@ local api = require("@lyra/api")
 
 local crypt = require("@harmony/crypt")
 
+local active_sessions = require("../protocol/active_sessions")
 local constants = require("../constants")
 local item_ids = require("../protocol/items/identifiers")
 local playback = require("../protocol/items/playback")
@@ -23,19 +24,7 @@ type ApiResponse = api.ApiResponse
 type JsonValue = api.JsonValue
 type JsonObject = { [string]: JsonValue }
 
-export type SessionEntry = {
-	sender: api.ApiWebSocketSender,
-	session_id: string,
-	user_id: string,
-	principal: session.Principal,
-	device_id: string,
-	info: JsonObject,
-	capabilities: JsonObject?,
-	full_capability_keys: { [string]: boolean },
-	subscribed_sessions: boolean,
-	last_activity: string,
-	last_playback_event_s: number?,
-}
+type SessionEntry = active_sessions.SessionEntry
 
 type OwnedSessionResolver = (string?, session.Principal) -> SessionEntry?
 type SyncPlayQueueItem = {

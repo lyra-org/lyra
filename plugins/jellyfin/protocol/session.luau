@@ -434,6 +434,21 @@ function module.require_jellyfin_principal(ctx: ApiContext?): Principal?
 	return resolved_auth.principal
 end
 
+local function report_client_playback(
+	resolved_auth: ResolvedAuth,
+	payload: playback.PlaybackPayload,
+	event_name: string,
+	identity: ClientIdentity,
+	via_socket: boolean
+): (boolean, string?)
+	local principal = resolved_auth.principal
+	local session_id = module.build_session_id(principal, identity)
+	return playback.report_playback_event(resolved_auth, payload, event_name, session_id, {
+		session_info = module.build_session_info(session_id, principal, identity, module.current_iso_timestamp()),
+		via_socket = via_socket,
+	})
+end
+
 -- WS counterpart to handle_playback_report_route; auth and identity come
 -- from the socket handshake, not per-frame headers.
 function module.handle_ws_playback_event(
@@ -449,12 +464,7 @@ function module.handle_ws_playback_event(
 	if not playback.ensure_payload_user_matches(resolved_auth, payload) then
 		return false, "playback report user does not match authenticated user"
 	end
-	return playback.report_playback_event(
-		resolved_auth,
-		payload,
-		event_name,
-		module.build_session_id(resolved_auth.principal, identity)
-	)
+	return report_client_playback(resolved_auth, payload, event_name, identity, true)
 end
 
 function module.handle_playback_report_route(ctx: ApiContext?, event_name: string): ApiResponse
@@ -476,12 +486,7 @@ function module.handle_playback_report_route(ctx: ApiContext?, event_name: strin
 		return responses.bad_request(identity_err or "missing Client or DeviceId")
 	end
 
-	local ok, report_err = playback.report_playback_event(
-		resolved_auth,
-		payload,
-		event_name,
-		module.build_session_id(resolved_auth.principal, identity)
-	)
+	local ok, report_err = report_client_playback(resolved_auth, payload, event_name, identity, false)
 	if not ok then
 		return responses.bad_request(report_err or "failed to report playback event")
 	end

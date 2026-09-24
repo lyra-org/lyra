@@ -186,6 +186,7 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 		capabilities = nil,
 		full_capability_keys = {},
 		subscribed_sessions = false,
+		last_sessions_push_s = nil,
 		last_activity = iso_now,
 		last_playback_event_s = nil,
 	}
@@ -288,8 +289,14 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 					sender:send(websocket.encode("KeepAlive", JELLYFIN_WS_KEEPALIVE_SECONDS, envelope.MessageId))
 				end)
 			elseif mt == "SessionsStart" then
-				entry.subscribed_sessions = true
-				active_sessions.push(entry)
+				-- Only a new subscription gets an immediate list, and no sooner than the push interval.
+				if not entry.subscribed_sessions then
+					entry.subscribed_sessions = true
+					local last_push_s = entry.last_sessions_push_s
+					if not last_push_s or os.clock() - last_push_s >= JELLYFIN_SESSIONS_PUSH_SECONDS then
+						active_sessions.push(entry)
+					end
+				end
 			elseif mt == "SessionsStop" then
 				entry.subscribed_sessions = false
 			elseif mt == "PlaybackStart" then
@@ -339,6 +346,8 @@ api.websocket(P .. "/socket", function(reader, sender, ctx)
 	if sessions[session_id] and sessions[session_id].sender == sender then
 		syncplay.disconnect_entry(entry)
 		sessions[session_id] = nil
+		-- Nothing will report a stop for this device now, so its playback must not outlive it.
+		playback.forget_client_playback(session_id)
 	end
 end, "public")
 
