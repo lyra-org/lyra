@@ -25,10 +25,7 @@ use serde::{
     Serialize,
 };
 
-use super::super::{
-    DbAccess,
-    NodeId,
-};
+use super::super::DbAccess;
 
 #[harmony_macros::userdata(name = "ArtistRelationType")]
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -91,7 +88,6 @@ impl TryFrom<DbValue> for ArtistRelationType {
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(DbElement, Serialize, Deserialize, Clone, Debug)]
 pub(crate) struct ArtistRelation {
-    pub(crate) db_id: Option<NodeId>,
     pub(crate) relation_type: ArtistRelationType,
     pub(crate) attributes: Option<String>,
 }
@@ -102,17 +98,6 @@ pub(crate) struct ArtistRelationLinkInput {
     pub(crate) relation_type: ArtistRelationType,
     pub(crate) attributes: Option<String>,
 }
-
-impl_luau_record_userdata!(
-    ArtistRelation,
-    "ArtistRelation",
-    fields {
-        db_id: Option<NodeId> as "db_id",
-        relation_type: ArtistRelationType as "relation_type",
-        attributes: Option<String> as "attributes",
-    },
-    methods {}
-);
 
 pub(crate) fn link(
     db: &mut impl DbAccess,
@@ -153,7 +138,6 @@ pub(crate) fn link(
                 .from(from_artist_id)
                 .to(to_artist_id)
                 .values_uniform(ArtistRelation {
-                    db_id: None,
                     relation_type,
                     attributes: attributes.clone(),
                 })
@@ -176,7 +160,6 @@ pub(crate) fn link(
             .from(from_artist_id)
             .to(to_artist_id)
             .values_uniform(ArtistRelation {
-                db_id: None,
                 relation_type,
                 attributes,
             })
@@ -282,6 +265,28 @@ pub(crate) fn get_relations_to(
             .query(),
     )?;
     collect_relations(result, relation_type, |e| (e.from.0 != 0).then_some(e.from))
+}
+
+pub(crate) fn incoming_edge_ids(
+    db: &impl DbAccess,
+    artist_id: DbId,
+) -> anyhow::Result<HashSet<DbId>> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .to(artist_id)
+                .where_()
+                .edge()
+                .and()
+                .distance(CountComparison::Equal(1))
+                .and()
+                .key("db_element_id")
+                .value("ArtistRelation")
+                .query(),
+        )?
+        .ids()
+        .into_iter()
+        .collect())
 }
 
 pub(crate) fn get_relations_from(
@@ -402,7 +407,6 @@ mod tests {
                     .from(voice_actor_id)
                     .to(character_id)
                     .values_uniform(ArtistRelation {
-                        db_id: None,
                         relation_type: ArtistRelationType::VoiceActor,
                         attributes,
                     })
