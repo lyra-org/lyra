@@ -53,7 +53,6 @@ use crate::{
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Debug, Serialize)]
 struct MetadataMappingResponse {
-    version: u64,
     rules: Vec<MetadataMappingRule>,
     supported_source_keys: Vec<&'static str>,
     /// `true` while a committed config is still reingesting libraries.
@@ -129,7 +128,6 @@ async fn get_metadata_mapping(
         }
     };
     Ok(Json(MetadataMappingResponse {
-        version: config.version,
         rules: config
             .rules
             .into_iter()
@@ -144,8 +142,8 @@ async fn get_metadata_mapping(
 fn get_metadata_mapping_docs(op: TransformOperation) -> TransformOperation {
     op.summary("Get metadata mapping configuration")
         .description(
-            "Returns the currently active metadata mapping rules, the monotonic version \
-             counter, and the supported set of `ItemKey`-variant source key names.",
+            "Returns the currently active metadata mapping rules and the supported set of \
+             `ItemKey`-variant source key names.",
         )
 }
 
@@ -203,8 +201,9 @@ fn put_metadata_mapping_docs(op: TransformOperation) -> TransformOperation {
              dry-run shows any read failures or tracks that would fail the post-mapping \
              required-field check, unless `force_partial` is true. When accepted, returns \
              202 immediately and performs the persist + reingest in a background task; \
-             poll `GET /api/metadata/mapping` for `reingest_in_progress=false` and the new \
-             `version`. Returns 409 if a metadata mapping reingest is already running.",
+             poll `GET /api/metadata/mapping` for `reingest_in_progress=false`; a failed \
+             reingest restores the previous rules. Returns 409 if a metadata mapping \
+             reingest is already running.",
         )
         .response::<202, Json<PutMetadataMappingResponse>>()
 }
@@ -240,7 +239,6 @@ fn build_candidate(rules: Vec<MetadataMappingRule>) -> Result<MetadataMappingCon
     }
     Ok(MetadataMappingConfig {
         rules: rules.into_iter().map(MappingRule::from).collect(),
-        version: 0,
     })
 }
 

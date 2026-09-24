@@ -44,12 +44,9 @@ pub(crate) struct MappingRule {
     pub(crate) destination: FieldName,
 }
 
-/// `version` bumps on every commit so reingest jobs and capture
-/// files can pin to a known schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct MetadataMappingConfig {
     pub(crate) rules: Vec<MappingRule>,
-    pub(crate) version: u64,
 }
 
 /// Source keys a [`MappingRule`] may name: those that can populate a [`FieldName`].
@@ -235,7 +232,6 @@ fn fill_multi(slot: &mut Vec<String>, tag: &Tag, key: ItemKey) {
 /// fixture round-trip test or default behaviour drifts on upgrade.
 pub(crate) fn default_config() -> MetadataMappingConfig {
     MetadataMappingConfig {
-        version: lyra_metadata::DEFAULT_MAPPING_VERSION,
         rules: vec![
             MappingRule {
                 source_key: "AlbumTitle".to_string(),
