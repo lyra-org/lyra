@@ -244,7 +244,6 @@ fn plugin_executor_scopes_personal_lyrics_to_the_dispatch_principal() -> Result<
             &crate::plugins::db::ProviderConfig {
                 db_id: None,
                 provider_id: "test_provider".to_string(),
-                display_name: "Test Provider".to_string(),
                 priority: 10,
                 enabled: true,
             },

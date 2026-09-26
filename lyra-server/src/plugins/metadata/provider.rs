@@ -66,8 +66,8 @@ use super::{
 
 pub(super) fn provider_new_spec() -> FunctionSpec {
     FunctionSpec::async_fn("Provider.new")
-        .arg_name("id")
-        .args::<String>()
+        .named_arg::<String>("id")
+        .named_arg::<Option<luau::Table>>("options")
         .returns::<MetadataProvider>()
         .call_async(Arc::new(provider_new_callback))
 }
@@ -76,6 +76,13 @@ fn provider_new_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let provider_id: String = frame.args.read_named("id")?;
+    let options: Option<luau::Table> = frame.args.read_optional_named("options")?;
+    let display_name = match &options {
+        Some(options) => {
+            optional_table_string(frame.vm, options, "display_name", "metadata.Provider.new")?
+        }
+        None => None,
+    };
     let plugin_id = frame.context.origin.plugin.clone().ok_or_else(|| {
         crate::plugins::runtime_error("metadata.Provider.new must be called from plugin Lua code")
     })?;
@@ -98,7 +105,7 @@ fn provider_new_callback(
             .map_err(crate::plugins::runtime_error)?;
         let mut registry = provider_registry().write_owned().await;
         registry
-            .register(plugin_id.clone(), provider_id.clone())
+            .register(plugin_id.clone(), provider_id.clone(), display_name)
             .map_err(crate::plugins::runtime_error)?;
         drop(registry);
 
@@ -111,7 +118,6 @@ fn provider_new_callback(
                 let provider_config = ProviderConfig {
                     db_id: None,
                     provider_id: provider_id.clone(),
-                    display_name: provider_id.clone(),
                     priority: 50,
                     enabled: true,
                 };

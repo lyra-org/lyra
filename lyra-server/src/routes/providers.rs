@@ -333,7 +333,8 @@ async fn build_provider_responses(providers: Vec<db::ProviderConfig>) -> Vec<Pro
             .into_iter()
             .map(|config| {
                 let options = registry.get_options(&config.provider_id).to_vec();
-                (config, options)
+                let display_name = registry.display_name(&config.provider_id);
+                (config, options, display_name)
             })
             .collect::<Vec<_>>()
     };
@@ -341,7 +342,7 @@ async fn build_provider_responses(providers: Vec<db::ProviderConfig>) -> Vec<Pro
 
     providers
         .into_iter()
-        .map(|(config, options)| {
+        .map(|(config, options, display_name)| {
             let options = options
                 .iter()
                 .map(|opt| {
@@ -370,7 +371,7 @@ async fn build_provider_responses(providers: Vec<db::ProviderConfig>) -> Vec<Pro
                 .collect();
             ProviderResponse {
                 provider_id: config.provider_id,
-                display_name: config.display_name,
+                display_name,
                 priority: config.priority,
                 enabled: config.enabled,
                 options,
@@ -493,9 +494,13 @@ async fn update_provider_priority(
     let _principal = require_manage_providers(&headers).await?;
 
     let config = update_provider_priority_service(&provider_id, request.priority).await?;
+    let display_name = provider_registry()
+        .read()
+        .await
+        .display_name(&config.provider_id);
     Ok(Json(ProviderResponse {
         provider_id: config.provider_id,
-        display_name: config.display_name,
+        display_name,
         priority: config.priority,
         enabled: config.enabled,
         options: Vec::new(),
@@ -823,7 +828,11 @@ mod tests {
         let registry = provider_registry();
         {
             let mut registry = registry.write().await;
-            registry.register(plugin_id.clone(), provider_id.clone())?;
+            registry.register(
+                plugin_id.clone(),
+                provider_id.clone(),
+                Some("Lock Test Provider".to_string()),
+            )?;
             registry
                 .declare_option(
                     &provider_id,
@@ -843,7 +852,6 @@ mod tests {
         let response = build_provider_responses(vec![db::ProviderConfig {
             db_id: None,
             provider_id: provider_id.clone(),
-            display_name: "Test provider".into(),
             priority: 50,
             enabled: true,
         }]);
@@ -876,6 +884,7 @@ mod tests {
         let response = tokio::time::timeout(std::time::Duration::from_secs(1), response).await?;
         assert_eq!(response.len(), 1);
         assert_eq!(response[0].provider_id, provider_id);
+        assert_eq!(response[0].display_name, "Lock Test Provider");
         assert_eq!(response[0].options.len(), 1);
         assert_eq!(response[0].options[0].name, "cached");
         assert!(response[0].options[0].available);

@@ -55,7 +55,7 @@ pub(crate) use context::{
 pub(crate) use links::{
     IdLinkRows,
     apply_id_links,
-    id_link_request,
+    id_link_targets,
 };
 pub(crate) use projection::{
     IdIncludes,

@@ -2580,7 +2580,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &ProviderConfig {
                 db_id: None,
                 provider_id: "test".to_string(),
-                display_name: "Test".to_string(),
                 priority: 100,
                 enabled: true,
             },
@@ -2904,7 +2903,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &ProviderConfig {
                 db_id: None,
                 provider_id: "test".to_string(),
-                display_name: "Test".to_string(),
                 priority: 100,
                 enabled: true,
             },
@@ -3031,7 +3029,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &ProviderConfig {
                 db_id: None,
                 provider_id: provider_id.to_string(),
-                display_name: provider_id.to_string(),
                 priority: 100,
                 enabled,
             },
@@ -3339,7 +3336,6 @@ FILE \"04 Pi\u{f1}ata.flac\" WAVE
             &ProviderConfig {
                 db_id: None,
                 provider_id: "test".to_string(),
-                display_name: "Test".to_string(),
                 priority: 100,
                 enabled: true,
             },

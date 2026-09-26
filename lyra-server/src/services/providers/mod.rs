@@ -68,7 +68,6 @@ pub(crate) use links::{
     IdLinkCallResult,
     IdLinkGenerators,
     IdLinkLocale,
-    IdLinkRequest,
     IdLinkTarget,
     resolve_id_links,
     validate_id_link_template,

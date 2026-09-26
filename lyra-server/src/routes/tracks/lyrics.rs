@@ -712,7 +712,6 @@ mod tests {
                 &db::ProviderConfig {
                     db_id: None,
                     provider_id: "route-provider".to_string(),
-                    display_name: "Route Provider".to_string(),
                     priority: 50,
                     enabled: true,
                 },

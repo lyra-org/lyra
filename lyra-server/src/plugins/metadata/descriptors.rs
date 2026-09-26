@@ -40,7 +40,10 @@ fn metadata_module_descriptor() -> ModuleDescriptor {
     descriptor.functions.push(ModuleFunctionDescriptor {
         path: vec!["Provider", "new"],
         description: Some("Creates a metadata provider registration object."),
-        params: vec![param("id", string())],
+        params: vec![
+            param("id", string()),
+            param("options", opt(ty("ProviderOptions"))),
+        ],
         returns: vec![ty("Provider")],
         yields: true,
     });
@@ -247,6 +250,14 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
             ],
         ),
         interface(
+            "ProviderOptions",
+            vec![described_field(
+                "display_name",
+                opt(string()),
+                "Human-readable provider name, e.g. for id links. Defaults to the provider id.",
+            )],
+        ),
+        interface(
             "ProviderIdRegistration",
             vec![
                 field("id_type", string()),
@@ -256,6 +267,11 @@ fn metadata_interfaces() -> Vec<InterfaceDescriptor> {
                     "scheme",
                     opt(string()),
                     "What the identifier is, independent of who stores it: lowercase `namespace:kind` (issuing site and its own term, e.g. `example:release`) or a bare standard name (e.g. `isrc`). An `id_type` registered for several entities must use the same scheme on each.",
+                ),
+                described_field(
+                    "label",
+                    opt(string()),
+                    "Name of the site this id's links point to, when it isn't the provider itself. Defaults to the provider's display name.",
                 ),
             ],
         ),
