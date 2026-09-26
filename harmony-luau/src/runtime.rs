@@ -2968,6 +2968,9 @@ fn current_unix_seconds() -> i64 {
         .unwrap_or(0)
 }
 
+/// Error message raised in a thread that exceeds its `interrupt_after` budget.
+pub const INTERRUPTED_ERROR: &str = "Luau execution interrupted";
+
 fn current_unix_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -3023,7 +3026,11 @@ unsafe extern "C-unwind" fn interrupt(state: *mut sys::lua_State, gc: c_int) {
     if deadline != 0 && current_unix_millis() >= deadline {
         unsafe {
             sys::lua_checkstack(state, 1);
-            sys::lua_pushlstring(state, c"Luau execution interrupted".as_ptr(), 26);
+            sys::lua_pushlstring(
+                state,
+                INTERRUPTED_ERROR.as_ptr().cast(),
+                INTERRUPTED_ERROR.len(),
+            );
             sys::lua_error(state);
         }
     }

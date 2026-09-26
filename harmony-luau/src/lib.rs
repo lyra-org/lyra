@@ -36,6 +36,7 @@ pub use runtime::{
     Error,
     FromLuau,
     Function,
+    INTERRUPTED_ERROR,
     InterruptBudgetGuard,
     IntoLuauReturn,
     ModuleId,
