@@ -193,6 +193,10 @@ impl PluginExecutor {
     }
 
     pub(crate) fn restart_plugin(&self, plugin_id: &str) -> Result<()> {
+        self.vm
+            .data()
+            .get::<crate::plugins::metadata::MetadataCallbackRegistry>()?
+            .remove_plugin(plugin_id);
         self.runtime.restart_plugin(plugin_id)
     }
 
