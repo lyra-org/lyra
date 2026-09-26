@@ -51,6 +51,13 @@ impl MetadataCallbackRegistry {
         id
     }
 
+    /// Drops the plugin's callbacks so a restart can't dispatch into them.
+    pub(crate) fn remove_plugin(&self, plugin_id: &str) {
+        self.handlers
+            .borrow_mut()
+            .retain(|_, handler| handler.context.origin.plugin.as_deref() != Some(plugin_id));
+    }
+
     pub(crate) fn get(&self, id: u64) -> Option<MetadataCallback> {
         self.handlers.borrow().get(&id).cloned()
     }
