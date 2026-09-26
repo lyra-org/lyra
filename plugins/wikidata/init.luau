@@ -13,7 +13,7 @@ local artists = require("@self/resolution/artists")
 local shared = require("@self/resolution/shared")
 
 local ET = metadata.EntityType
-local provider = metadata.Provider.new("wikidata")
+local provider = metadata.Provider.new("wikidata", { display_name = "Wikidata" })
 
 local GENRE_CACHE_TTL = 30 * 24 * 60 * 60 -- 30 days for genre details
 local MAX_GENRES_PER_RELEASE = 20
