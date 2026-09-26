@@ -21,7 +21,6 @@ pub(crate) struct ProviderConfig {
     #[serde(skip)]
     pub(crate) db_id: Option<NodeId>,
     pub(crate) provider_id: String,
-    pub(crate) display_name: String,
     pub(crate) priority: u32,
     pub(crate) enabled: bool,
 }
@@ -130,7 +129,6 @@ mod tests {
         ProviderConfig {
             db_id: None,
             provider_id: id.to_string(),
-            display_name: id.to_string(),
             priority: 0,
             enabled: true,
         }
@@ -178,16 +176,16 @@ mod tests {
     fn upsert_provider_updates_fields() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let mut provider = make_provider("test-provider");
-        provider.display_name = "Original".to_string();
+        provider.priority = 1;
         upsert(&mut db, &provider)?;
 
-        provider.display_name = "Updated".to_string();
+        provider.enabled = false;
         provider.priority = 5;
         upsert(&mut db, &provider)?;
 
         let providers = get(&db)?;
         assert_eq!(providers.len(), 1);
-        assert_eq!(providers[0].display_name, "Updated");
+        assert!(!providers[0].enabled);
         assert_eq!(providers[0].priority, 5);
 
         Ok(())

@@ -21,7 +21,6 @@ use crate::services::providers::{
     IdLink,
     IdLinkGenerators,
     IdLinkLocale,
-    IdLinkRequest,
     IdLinkTarget,
 };
 
@@ -38,13 +37,13 @@ impl IdLinkRows {
 
 /// Link targets with their library locale: the `library_id` library when
 /// given, otherwise the entity's library with the lowest db id, as provider
-/// refresh does. Provider names come from the stored provider configs.
-pub(crate) fn id_link_request(
+/// refresh does.
+pub(crate) fn id_link_targets(
     db: &DbAny,
     rows: IdLinkRows,
     library_id: Option<DbId>,
     generators: &IdLinkGenerators,
-) -> anyhow::Result<IdLinkRequest> {
+) -> anyhow::Result<Vec<IdLinkTarget>> {
     let request_locale = library_id
         .map(|library_id| {
             db::libraries::get_by_id(db, library_id)
@@ -72,19 +71,7 @@ pub(crate) fn id_link_request(
             rows,
         });
     }
-
-    let provider_names = if targets.iter().any(|target| !target.rows.is_empty()) {
-        db::providers::get(db)?
-            .into_iter()
-            .map(|provider| (provider.provider_id, provider.display_name))
-            .collect()
-    } else {
-        HashMap::new()
-    };
-    Ok(IdLinkRequest {
-        targets,
-        provider_names,
-    })
+    Ok(targets)
 }
 
 /// Fills the `links` include of every projected entity, including release tracks.

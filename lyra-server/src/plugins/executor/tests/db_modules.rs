@@ -2071,8 +2071,8 @@ fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
             local metadata = require("@lyra/metadata")
             local entities = require("@lyra/entities")
             local ET = metadata.EntityType
-            local provider = metadata.Provider.new("link-provider")
-            provider:id({{ id_type = "thing_id", entity = ET.Release, scheme = "example:thing" }},
+            local provider = metadata.Provider.new("link-provider", {{ display_name = "Link Site" }})
+            provider:id({{ id_type = "thing_id", entity = ET.Release, scheme = "example:thing", label = "Thing Site" }},
                 "https://example.test/release/{{id}}")
             provider:id({{ id_type = "thing_id", entity = ET.Track, scheme = "example:thing" }},
                 "https://example.test/track/{{id}}")
@@ -2096,11 +2096,12 @@ fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
             local first = with.includes.links[1]
             return without.includes.links == nil,
                 table.concat(urls, " "),
-                first.provider_name,
+                first.label,
                 first.id_type,
                 first.id,
                 with.includes.tracks[1].links[1].url,
-                with.includes.links[2].scheme
+                with.includes.links[2].scheme,
+                with.includes.links[2].label
         "#,
         release = release.0,
     );
@@ -2115,11 +2116,12 @@ fn entities_links_include_resolves_templates_and_functions() -> Result<()> {
             text(
                 "https://example.test/jpn-JP/localized_id/l1?thing=r1 https://example.test/release/r1"
             ),
-            text("link-provider"),
+            text("Link Site"),
             text("localized_id"),
             text("l1"),
             text("https://example.test/track/t1"),
             text("example:thing"),
+            text("Thing Site"),
         ]
     );
     let seen = runtime.eval_plugin_source("demo", "seen.luau", &b"return seen_entity"[..])?;

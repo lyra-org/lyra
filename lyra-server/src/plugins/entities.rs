@@ -57,7 +57,7 @@ use crate::{
             EntityProjectionInfo,
             IdIncludes,
             apply_id_links,
-            id_link_request,
+            id_link_targets,
             project_entities,
             project_entity,
         },
@@ -339,16 +339,16 @@ async fn project_with_links(
         let projections = project(&db, &mut id_includes)?;
         let links = match (link_vm, generators, id_includes.into_link_rows()) {
             (Some(vm), Some(generators), Some(rows)) => {
-                let request = id_link_request(&db, rows, library_id, &generators)
+                let targets = id_link_targets(&db, rows, library_id, &generators)
                     .map_err(crate::plugins::runtime_error)?;
-                Some((vm, generators, request))
+                Some((vm, generators, targets))
             }
             _ => None,
         };
         (projections, links)
     };
-    if let Some((vm, generators, request)) = links {
-        let links = resolve_id_links(request, &generators, |provider_id, calls| {
+    if let Some((vm, generators, targets)) = links {
+        let links = resolve_id_links(targets, &generators, |provider_id, calls| {
             crate::plugins::executor::dispatch_id_links_in_vm(vm.clone(), provider_id, calls)
         })
         .await;

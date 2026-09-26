@@ -371,7 +371,6 @@ fn manual_clear_overrides_later_provider_values() -> anyhow::Result<()> {
         &db::ProviderConfig {
             db_id: None,
             provider_id: "test-provider".to_string(),
-            display_name: "Test provider".to_string(),
             priority: 100,
             enabled: true,
         },
@@ -474,7 +473,6 @@ fn inherit_relinquishes_ownership_and_restores_resolved_value() -> anyhow::Resul
         &db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
-            display_name: "Provider".to_string(),
             priority: 100,
             enabled: true,
         },
@@ -530,7 +528,6 @@ fn inherit_graph_field_restores_provider_resolved_value() -> anyhow::Result<()> 
         &db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
-            display_name: "Provider".to_string(),
             priority: 100,
             enabled: true,
         },
@@ -583,7 +580,6 @@ fn inherit_conflicts_when_provider_resolution_changes_after_preview() -> anyhow:
         &db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
-            display_name: "Provider".to_string(),
             priority: 100,
             enabled: true,
         },
@@ -769,7 +765,6 @@ fn inherit_labels_restores_resolvable_provider_labels() -> anyhow::Result<()> {
         &db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
-            display_name: "Provider".to_string(),
             priority: 100,
             enabled: true,
         },
@@ -859,7 +854,6 @@ fn inherit_labels_does_not_fall_back_by_name_for_an_external_identity() -> anyho
         &db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
-            display_name: "Provider".to_string(),
             priority: 100,
             enabled: true,
         },
@@ -927,7 +921,6 @@ fn unchanged_provider_refresh_rematerializes_a_manually_masked_label() -> anyhow
         &db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
-            display_name: "Provider".to_string(),
             priority: 100,
             enabled: true,
         },
@@ -1120,7 +1113,6 @@ fn inherited_label_disappearance_after_preview_is_rejected() -> anyhow::Result<(
         &db::ProviderConfig {
             db_id: None,
             provider_id: "provider".to_string(),
-            display_name: "Provider".to_string(),
             priority: 100,
             enabled: true,
         },

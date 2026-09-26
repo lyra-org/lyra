@@ -148,6 +148,8 @@ pub(crate) struct ProviderIdSpec {
     pub(crate) entity: EntityType,
     pub(crate) unique: bool,
     pub(crate) scheme: Option<String>,
+    /// Site the links point to, when it isn't the provider itself.
+    pub(crate) label: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -189,7 +191,12 @@ pub(crate) struct ProviderSimilarReleasesSpec {
 }
 
 impl ProviderRegistry {
-    pub(crate) fn register(&mut self, plugin_id: PluginId, id: String) -> Result<()> {
+    pub(crate) fn register(
+        &mut self,
+        plugin_id: PluginId,
+        id: String,
+        display_name: Option<String>,
+    ) -> Result<()> {
         if id == LOCAL_SOURCE_ID {
             bail!(
                 "provider id '{LOCAL_SOURCE_ID}' is reserved for file-derived metadata and cannot be registered by a plugin"
@@ -198,12 +205,22 @@ impl ProviderRegistry {
         if let Some(existing) = self.plugin_by_provider.get(&id) {
             bail!("provider '{id}' already registered by plugin '{existing}'");
         }
-        self.providers
-            .entry(plugin_id.clone())
-            .or_default()
-            .insert(id.clone(), ProviderState::default());
+        self.providers.entry(plugin_id.clone()).or_default().insert(
+            id.clone(),
+            ProviderState {
+                display_name,
+                ..ProviderState::default()
+            },
+        );
         self.plugin_by_provider.insert(id, plugin_id);
         Ok(())
+    }
+
+    /// Declared display name, else the provider id.
+    pub(crate) fn display_name(&self, provider_id: &str) -> String {
+        self.state(provider_id)
+            .and_then(|state| state.display_name.clone())
+            .unwrap_or_else(|| provider_id.to_string())
     }
 
     fn state(&self, provider_id: &str) -> Option<&ProviderState> {
@@ -406,16 +423,16 @@ impl ProviderRegistry {
                 }
             }
             for ((entity, id_type), generator) in &state.id_generators {
-                let scheme = state
-                    .id_specs
-                    .get(&(*entity, id_type.clone()))
-                    .and_then(|spec| spec.scheme.clone());
+                let spec = state.id_specs.get(&(*entity, id_type.clone()));
                 generators.insert(
                     provider_id,
                     *entity,
                     id_type,
                     IdLinkGenerator {
-                        scheme,
+                        scheme: spec.and_then(|spec| spec.scheme.clone()),
+                        label: spec
+                            .and_then(|spec| spec.label.clone())
+                            .unwrap_or_else(|| self.display_name(provider_id)),
                         generator: generator.clone(),
                     },
                 );
@@ -531,7 +548,7 @@ pub(crate) mod tests {
         let plugin_id = PluginId::new("demo").expect("valid plugin id");
 
         let err = registry
-            .register(plugin_id, LOCAL_SOURCE_ID.to_string())
+            .register(plugin_id, LOCAL_SOURCE_ID.to_string(), None)
             .expect_err("reserved source id must be rejected");
 
         assert!(err.to_string().contains(LOCAL_SOURCE_ID));
@@ -543,6 +560,7 @@ pub(crate) mod tests {
             entity,
             unique: entity == EntityType::Release,
             scheme: scheme.map(str::to_string),
+            label: None,
         }
     }
 
@@ -556,7 +574,7 @@ pub(crate) mod tests {
         let mut registry = ProviderRegistry::default();
         let plugin_id = PluginId::new("demo").expect("valid plugin id");
         registry
-            .register(plugin_id, "demo".to_string())
+            .register(plugin_id, "demo".to_string(), None)
             .expect("register provider");
 
         for (entity, url) in [
@@ -597,11 +615,53 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn id_link_labels_prefer_registration_then_display_name_then_id() {
+        let mut registry = ProviderRegistry::default();
+        let plugin_id = PluginId::new("demo").expect("valid plugin id");
+        registry
+            .register(
+                plugin_id.clone(),
+                "named".to_string(),
+                Some("Named Site".to_string()),
+            )
+            .expect("register named provider");
+        registry
+            .register(plugin_id, "plain".to_string(), None)
+            .expect("register plain provider");
+        let labelled = ProviderIdSpec {
+            label: Some("Other Site".to_string()),
+            ..id_spec("other_id", EntityType::Release, None)
+        };
+        for (provider_id, spec) in [
+            ("named", labelled),
+            ("named", id_spec("own_id", EntityType::Release, None)),
+            ("plain", id_spec("own_id", EntityType::Release, None)),
+        ] {
+            registry
+                .set_id_registration(provider_id, spec, template("https://example.test/{id}"))
+                .expect("registration");
+        }
+
+        let generators = registry.id_link_generators();
+        let label = |provider_id, id_type| {
+            generators
+                .get(provider_id, EntityType::Release, id_type)
+                .map(|generator| generator.label.clone())
+        };
+        assert_eq!(label("named", "other_id").as_deref(), Some("Other Site"));
+        assert_eq!(label("named", "own_id").as_deref(), Some("Named Site"));
+        assert_eq!(label("plain", "own_id").as_deref(), Some("plain"));
+        assert_eq!(registry.display_name("named"), "Named Site");
+        assert_eq!(registry.display_name("plain"), "plain");
+        assert_eq!(registry.display_name("missing"), "missing");
+    }
+
+    #[test]
     fn id_snapshots_follow_registrations_and_teardown() {
         let mut registry = ProviderRegistry::default();
         let plugin_id = PluginId::new("demo").expect("valid plugin id");
         registry
-            .register(plugin_id.clone(), "demo".to_string())
+            .register(plugin_id.clone(), "demo".to_string(), None)
             .expect("register provider");
         registry
             .set_id_registration(
@@ -653,7 +713,7 @@ pub(crate) mod tests {
         let mut registry = ProviderRegistry::default();
         let plugin_id = PluginId::new("demo").expect("valid plugin id");
         registry
-            .register(plugin_id, "demo".to_string())
+            .register(plugin_id, "demo".to_string(), None)
             .expect("register provider");
         registry
             .set_id_registration(
@@ -750,6 +810,7 @@ impl PluginScopedInner for ProviderRegistry {
 
 #[derive(Default)]
 struct ProviderState {
+    display_name: Option<String>,
     id_generators: HashMap<(EntityType, String), ProviderIdUrlGenerator>,
     id_specs: HashMap<(EntityType, String), ProviderIdSpec>,
     search_callbacks: HashMap<EntityType, ProviderCallbackHandle>,

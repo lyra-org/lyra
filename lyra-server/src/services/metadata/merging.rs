@@ -492,7 +492,6 @@ mod tests {
         ProviderConfig {
             db_id: None,
             provider_id: provider_id.to_string(),
-            display_name: provider_id.to_string(),
             priority,
             enabled,
         }

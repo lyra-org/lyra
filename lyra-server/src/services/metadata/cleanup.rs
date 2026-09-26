@@ -549,7 +549,6 @@ mod tests {
             &db::ProviderConfig {
                 db_id: None,
                 provider_id: "musicbrainz".to_string(),
-                display_name: "MusicBrainz".to_string(),
                 priority: 100,
                 enabled: true,
             },
@@ -620,7 +619,6 @@ mod tests {
             &db::ProviderConfig {
                 db_id: None,
                 provider_id: "provider-a".to_string(),
-                display_name: "Provider A".to_string(),
                 priority: 100,
                 enabled: true,
             },
@@ -630,7 +628,6 @@ mod tests {
             &db::ProviderConfig {
                 db_id: None,
                 provider_id: "provider-b".to_string(),
-                display_name: "Provider B".to_string(),
                 priority: 50,
                 enabled: true,
             },

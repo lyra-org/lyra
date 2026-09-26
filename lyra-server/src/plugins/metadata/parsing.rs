@@ -171,11 +171,13 @@ pub(super) fn parse_id_spec(
         validate_id_scheme(scheme)
             .map_err(|err| crate::plugins::runtime_error(format!("provider:id: {err}")))?;
     }
+    let label = optional_table_string(vm, spec, "label", "provider:id")?;
     Ok(ProviderIdSpec {
         id_type,
         entity,
         unique,
         scheme,
+        label,
     })
 }
 

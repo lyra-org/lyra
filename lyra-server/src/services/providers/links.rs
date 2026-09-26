@@ -99,6 +99,7 @@ fn parse_link_url(url: &str) -> Option<url::Url> {
 #[derive(Clone, Debug)]
 pub(crate) struct IdLinkGenerator {
     pub(crate) scheme: Option<String>,
+    pub(crate) label: String,
     pub(crate) generator: ProviderIdUrlGenerator,
 }
 
@@ -167,12 +168,6 @@ pub(crate) struct IdLinkTarget {
     pub(crate) rows: Vec<ExternalId>,
 }
 
-#[derive(Clone, Debug, Default)]
-pub(crate) struct IdLinkRequest {
-    pub(crate) targets: Vec<IdLinkTarget>,
-    pub(crate) provider_names: HashMap<String, String>,
-}
-
 /// One generator function call; the executor builds `IdLinkContext` from it.
 #[derive(Clone, Debug)]
 pub(crate) struct IdLinkCall {
@@ -211,7 +206,8 @@ pub(crate) type IdLinkCallResult = Result<Option<String>, IdLinkCallError>;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct IdLink {
     pub(crate) provider_id: String,
-    pub(crate) provider_name: String,
+    /// Name of the site the link points to.
+    pub(crate) label: String,
     pub(crate) scheme: Option<String>,
     pub(crate) id_type: String,
     pub(crate) id: String,
@@ -238,7 +234,13 @@ impl DescribeInterface for IdLink {
             ),
             fields: vec![
                 field("provider_id", String::luau_type(), None),
-                field("provider_name", String::luau_type(), None),
+                field(
+                    "label",
+                    String::luau_type(),
+                    Some(
+                        "Name of the site the link points to: the registration's `label`, else the provider's display name.",
+                    ),
+                ),
                 field("scheme", Option::<String>::luau_type(), None),
                 field("id_type", String::luau_type(), None),
                 field("id", String::luau_type(), None),
@@ -340,7 +342,7 @@ enum LinkSlot {
 /// Resolves links for every target, calling `dispatch` at most once per
 /// provider. Generator failures only drop the affected links.
 pub(crate) async fn resolve_id_links<F, Fut>(
-    request: IdLinkRequest,
+    targets: Vec<IdLinkTarget>,
     generators: &IdLinkGenerators,
     dispatch: F,
 ) -> HashMap<DbId, Vec<IdLink>>
@@ -349,12 +351,12 @@ where
     Fut: Future<Output = anyhow::Result<Vec<IdLinkCallResult>>>,
 {
     let cache = crate::STATE.generation().providers.id_link_cache();
-    resolve_with_cache(&cache, request, generators, dispatch).await
+    resolve_with_cache(&cache, targets, generators, dispatch).await
 }
 
 async fn resolve_with_cache<F, Fut>(
     cache: &Mutex<IdLinkCache>,
-    request: IdLinkRequest,
+    targets: Vec<IdLinkTarget>,
     generators: &IdLinkGenerators,
     dispatch: F,
 ) -> HashMap<DbId, Vec<IdLink>>
@@ -373,7 +375,7 @@ where
         let cache = lock();
         let now = Instant::now();
         let mut queued = HashSet::new();
-        for target in &request.targets {
+        for target in &targets {
             let mut rows = target
                 .rows
                 .iter()
@@ -389,11 +391,7 @@ where
                 let id = row.id_value.trim().to_string();
                 let mut link = IdLink {
                     provider_id: row.provider_id.clone(),
-                    provider_name: request
-                        .provider_names
-                        .get(&row.provider_id)
-                        .cloned()
-                        .unwrap_or_else(|| row.provider_id.clone()),
+                    label: generator.label.clone(),
                     scheme: generator.scheme.clone(),
                     id_type: row.id_type.clone(),
                     id: id.clone(),
@@ -570,6 +568,7 @@ mod tests {
     fn template(url: &str) -> IdLinkGenerator {
         IdLinkGenerator {
             scheme: Some("example:thing".to_string()),
+            label: "Alpha".to_string(),
             generator: ProviderIdUrlGenerator::Template(url.to_string()),
         }
     }
@@ -577,17 +576,11 @@ mod tests {
     fn function(handler_id: u64) -> IdLinkGenerator {
         IdLinkGenerator {
             scheme: None,
+            label: "Alpha".to_string(),
             generator: ProviderIdUrlGenerator::Function {
                 handler: ProviderCallbackHandle { handler_id },
                 vm_id: 1,
             },
-        }
-    }
-
-    fn request(targets: Vec<IdLinkTarget>) -> IdLinkRequest {
-        IdLinkRequest {
-            targets,
-            provider_names: HashMap::from([("alpha".to_string(), "Alpha".to_string())]),
         }
     }
 
@@ -668,7 +661,7 @@ mod tests {
 
         let links = resolve_with_cache(
             &Mutex::default(),
-            request(vec![
+            vec![
                 target(
                     1,
                     EntityType::Release,
@@ -679,7 +672,7 @@ mod tests {
                 ),
                 target(2, EntityType::Release, vec![row("alpha", "thing_id", "..")]),
                 target(3, EntityType::Release, vec![row("alpha", "thing_id", ".")]),
-            ]),
+            ],
             &generators,
             counting_dispatch(calls.clone()),
         )
@@ -690,7 +683,7 @@ mod tests {
             links[&DbId(1)],
             vec![IdLink {
                 provider_id: "alpha".to_string(),
-                provider_name: "Alpha".to_string(),
+                label: "Alpha".to_string(),
                 scheme: Some("example:thing".to_string()),
                 id_type: "thing_id".to_string(),
                 id: "a/b?c#d e".to_string(),
@@ -719,10 +712,10 @@ mod tests {
 
         let links = resolve_with_cache(
             &Mutex::default(),
-            request(vec![
+            vec![
                 target(1, EntityType::Release, vec![row("alpha", "item", "r")]),
                 target(2, EntityType::Artist, vec![row("alpha", "item", "a")]),
-            ]),
+            ],
             &generators,
             counting_dispatch(Arc::default()),
         )
@@ -757,7 +750,7 @@ mod tests {
 
         let links = resolve_with_cache(
             &cache,
-            request(targets()),
+            targets(),
             &generators,
             counting_dispatch(calls.clone()),
         )
@@ -774,7 +767,7 @@ mod tests {
 
         let cached = resolve_with_cache(
             &cache,
-            request(targets()),
+            targets(),
             &generators,
             counting_dispatch(calls.clone()),
         )
@@ -788,7 +781,7 @@ mod tests {
             .push(row("alpha", "sibling_id", "s1"));
         let refreshed = resolve_with_cache(
             &cache,
-            request(sibling_changed),
+            sibling_changed,
             &generators,
             counting_dispatch(calls.clone()),
         )
@@ -811,7 +804,7 @@ mod tests {
         reloaded.insert("alpha", EntityType::Release, "thing_id", function(4));
         resolve_with_cache(
             &cache,
-            request(targets()),
+            targets(),
             &reloaded,
             counting_dispatch(calls.clone()),
         )
@@ -837,14 +830,14 @@ mod tests {
 
         let english = resolve_with_cache(
             &cache,
-            request(localized("eng")),
+            localized("eng"),
             &generators,
             counting_dispatch(calls.clone()),
         )
         .await;
         let japanese = resolve_with_cache(
             &cache,
-            request(localized("jpn")),
+            localized("jpn"),
             &generators,
             counting_dispatch(calls.clone()),
         )
@@ -911,7 +904,7 @@ mod tests {
             })
         };
 
-        let links = resolve_with_cache(&cache, request(targets()), &generators, dispatch).await;
+        let links = resolve_with_cache(&cache, targets(), &generators, dispatch).await;
         assert_eq!(
             urls(&links, 1),
             vec!["https://example.test/ok/4", "https://example.test/6"]
@@ -920,7 +913,7 @@ mod tests {
         assert!(cache.lock().unwrap().suspended.is_empty());
 
         dispatched.lock().unwrap().clear();
-        let again = resolve_with_cache(&cache, request(targets()), &generators, dispatch).await;
+        let again = resolve_with_cache(&cache, targets(), &generators, dispatch).await;
         assert_eq!(again, links);
         assert_eq!(
             *dispatched.lock().unwrap(),
@@ -952,11 +945,11 @@ mod tests {
 
         let links = resolve_with_cache(
             &cache,
-            request(vec![target(
+            vec![target(
                 1,
                 EntityType::Release,
                 vec![row("alpha", "fast", "a"), row("alpha", "slow", "s")],
-            )]),
+            )],
             &generators,
             dispatch,
         )
@@ -966,7 +959,7 @@ mod tests {
         dispatched.lock().unwrap().clear();
         let later = resolve_with_cache(
             &cache,
-            request(vec![
+            vec![
                 target(
                     2,
                     EntityType::Release,
@@ -977,7 +970,7 @@ mod tests {
                     EntityType::Release,
                     vec![row("alpha", "fast", "b"), row("alpha", "slow", "t")],
                 ),
-            ]),
+            ],
             &generators,
             dispatch,
         )
@@ -995,11 +988,11 @@ mod tests {
         dispatched.lock().unwrap().clear();
         resolve_with_cache(
             &cache,
-            request(vec![target(
+            vec![target(
                 4,
                 EntityType::Release,
                 vec![row("alpha", "slow", "u")],
-            )]),
+            )],
             &reloaded,
             dispatch,
         )
