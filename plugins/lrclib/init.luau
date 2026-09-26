@@ -468,7 +468,7 @@ local function handle(ctx: ProviderLyricsContext): HandlerResult
 	return { kind = "hit", candidates = candidates }
 end
 
-local provider = metadata.Provider.new("lrclib")
+local provider = metadata.Provider.new("lrclib", { display_name = "LRCLIB" })
 
 provider:lyrics({
 	require = { all_of = { "track_name", "artist_name" } },
