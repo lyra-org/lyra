@@ -27,7 +27,7 @@ http.set_rate_limit({
 })
 
 local ET = metadata.EntityType
-local provider = metadata.Provider.new("musicbrainz")
+local provider = metadata.Provider.new("musicbrainz", { display_name = "MusicBrainz" })
 local BASE_URL = lookup.get_base_url()
 local API_BASE = `{BASE_URL}/ws/2`
 local COVER_CACHE_STORE_NAME = "musicbrainz"
@@ -524,12 +524,14 @@ provider:id({
 	id_type = "wikidata_qid",
 	entity = ET.Release,
 	scheme = "wikidata:item",
+	label = "Wikidata",
 }, "https://www.wikidata.org/wiki/{id}")
 
 provider:id({
 	id_type = "acoustid_track_id",
 	entity = ET.Track,
 	scheme = "acoustid:track",
+	label = "AcoustID",
 }, "https://acoustid.org/track/{id}")
 
 provider:declare_option({
