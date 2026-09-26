@@ -11,7 +11,7 @@ local metadata = require("@lyra/metadata")
 local plugins = require("@lyra/plugins")
 
 local ET = metadata.EntityType
-local provider = metadata.Provider.new("theaudiodb")
+local provider = metadata.Provider.new("theaudiodb", { display_name = "TheAudioDB" })
 
 local BASE_URL = "https://www.theaudiodb.com"
 local API_BASE = `{BASE_URL}/api/v1/json`
