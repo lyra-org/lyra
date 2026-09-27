@@ -228,7 +228,6 @@ fn parse_sort_specs(
                 | SortKey::DateCreated
                 | SortKey::ReleaseDate
                 | SortKey::DbId => Some(ReleaseRouteSortKey::Field(key)),
-                SortKey::TrackNumber | SortKey::DiscNumber | SortKey::Duration => None,
             }),
         },
         release_sort_supported_values(),
@@ -343,9 +342,6 @@ fn compare_release_route_field(
             db::compare_option(&a.last_played_at, &b.last_played_at)
         }
         ReleaseRouteSortKey::TotalDuration => a.total_duration.cmp(&b.total_duration),
-        ReleaseRouteSortKey::Field(
-            SortKey::TrackNumber | SortKey::DiscNumber | SortKey::Duration,
-        ) => Ordering::Equal,
     }
 }
 

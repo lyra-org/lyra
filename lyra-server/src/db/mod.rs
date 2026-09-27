@@ -264,9 +264,6 @@ pub(crate) enum SortKey {
     Name,
     DateCreated,
     ReleaseDate,
-    TrackNumber,
-    DiscNumber,
-    Duration,
     DbId,
 }
 
@@ -277,9 +274,6 @@ impl SortKey {
             "name" => Some(Self::Name),
             "date_created" => Some(Self::DateCreated),
             "release_date" => Some(Self::ReleaseDate),
-            "track" => Some(Self::TrackNumber),
-            "disc" => Some(Self::DiscNumber),
-            "duration" => Some(Self::Duration),
             "id" => Some(Self::DbId),
             _ => None,
         }

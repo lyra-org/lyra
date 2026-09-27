@@ -95,7 +95,6 @@ pub(crate) fn get_details(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::ListOptions;
     use crate::db::test_db::{
         connect,
         connect_artist,
@@ -106,21 +105,8 @@ mod tests {
     };
     use crate::services::entities::ArtistCreditSource;
 
-    fn default_options() -> ListOptions {
-        ListOptions {
-            sort: Vec::new(),
-            offset: None,
-            limit: None,
-            search_term: None,
-        }
-    }
-
-    fn list_details(
-        db: &DbAny,
-        includes: TrackIncludes,
-        options: &ListOptions,
-    ) -> anyhow::Result<Vec<TrackDetails>> {
-        let tracks = db::tracks::query(db, "tracks", options)?.entries;
+    fn list_details(db: &DbAny, includes: TrackIncludes) -> anyhow::Result<Vec<TrackDetails>> {
+        let tracks = db::tracks::get(db, "tracks")?;
         list_details_for_tracks(db, includes, tracks)
     }
 
@@ -138,7 +124,7 @@ mod tests {
             releases: true,
             artists: true,
         };
-        let details = list_details(&db, includes, &default_options())?;
+        let details = list_details(&db, includes)?;
 
         assert_eq!(details.len(), 1);
         assert_eq!(details[0].track.track_title, "Blue Train");
@@ -169,7 +155,7 @@ mod tests {
             releases: false,
             artists: false,
         };
-        let details = list_details(&db, includes, &default_options())?;
+        let details = list_details(&db, includes)?;
 
         assert_eq!(details.len(), 1);
         assert!(details[0].releases.is_none());

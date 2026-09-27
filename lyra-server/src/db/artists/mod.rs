@@ -298,6 +298,47 @@ pub(crate) fn get_credited_many_by_owner(
         .collect()
 }
 
+/// The name of each owner's first credited artist, in credit order.
+pub(crate) fn first_credited_names(
+    db: &impl super::DbAccess,
+    owner_db_ids: &[DbId],
+) -> anyhow::Result<HashMap<DbId, String>> {
+    let mut leading = HashMap::new();
+    for owner_db_id in super::dedup_positive_ids(owner_db_ids) {
+        let links = super::credits::links_for_owner(db, owner_db_id)?;
+        let Some(first_order) = links.iter().map(|link| link.credit.artist_order).min() else {
+            continue;
+        };
+        let artists = links
+            .into_iter()
+            .filter(|link| link.credit.artist_order == first_order)
+            .map(|link| link.artist_id)
+            .collect::<Vec<_>>();
+        leading.insert(owner_db_id, artists);
+    }
+
+    let artist_ids =
+        super::dedup_positive_ids(&leading.values().flatten().copied().collect::<Vec<_>>());
+    let names = super::graph::select_fields(db, &artist_ids, &["artist_name", "sort_name"])?;
+    let sort_key = |artist_id: &DbId| {
+        let fields = names.get(artist_id)?;
+        let name = fields.text("artist_name")?;
+        Some((
+            fields.text("sort_name").unwrap_or(name).to_lowercase(),
+            name.to_lowercase(),
+            artist_id.0,
+            name.to_string(),
+        ))
+    };
+    Ok(leading
+        .into_iter()
+        .filter_map(|(owner_db_id, artists)| {
+            let (_, _, _, name) = artists.iter().filter_map(sort_key).min()?;
+            Some((owner_db_id, name))
+        })
+        .collect())
+}
+
 fn filter_artists_by_type(artists: Vec<Artist>, artist_type: Option<ArtistType>) -> Vec<Artist> {
     let Some(artist_type) = artist_type else {
         return artists;
@@ -495,9 +536,7 @@ fn compare_artist_field(a: &ArtistSortEntry, b: &ArtistSortEntry, key: SortKey) 
         SortKey::Name => a.lower_name.cmp(&b.lower_name),
         SortKey::DateCreated => compare_option(&a.date_created, &b.date_created),
         SortKey::DbId => compare_option(&a.db_id, &b.db_id),
-        SortKey::ReleaseDate | SortKey::TrackNumber | SortKey::DiscNumber | SortKey::Duration => {
-            Ordering::Equal
-        }
+        SortKey::ReleaseDate => Ordering::Equal,
     }
 }
 

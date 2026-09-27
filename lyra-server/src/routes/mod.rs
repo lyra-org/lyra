@@ -66,7 +66,10 @@ pub use artists::artist_routes;
 pub use covers::cover_routes;
 pub(crate) use entity_metadata::entity_metadata_routes;
 pub use entries::entry_routes;
-pub(crate) use error::AppError;
+pub(crate) use error::{
+    AppError,
+    parse_catalog_sort,
+};
 pub use favorites::favorite_routes;
 pub use genres::genre_routes;
 pub use labels::label_routes;
@@ -76,6 +79,7 @@ pub use metadata::metadata_routes;
 pub(crate) use pagination::{
     SnapshotPageRequest,
     load_snapshot_items,
+    public_ids,
 };
 pub use playbacks::playback_routes;
 pub use playlists::playlist_routes;

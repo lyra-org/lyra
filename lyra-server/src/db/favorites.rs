@@ -251,6 +251,20 @@ pub(crate) fn list_ids(
     list_ids_with_cap(db, user_db_id, kind, LIST_IDS_CAP)
 }
 
+/// Every favorite target of `kind` for a user.
+pub(crate) fn target_ids(
+    db: &impl DbAccess,
+    user_db_id: DbId,
+    kind: FavoriteKind,
+) -> anyhow::Result<HashSet<DbId>> {
+    Ok(read_outbound_favorite_edges(db, user_db_id)?
+        .into_iter()
+        .filter_map(parse_favorite_edge)
+        .filter(|edge| edge.kind == kind)
+        .map(|edge| edge.target_db_id)
+        .collect())
+}
+
 fn list_ids_with_cap(
     db: &impl DbAccess,
     user_db_id: DbId,

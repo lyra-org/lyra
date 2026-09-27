@@ -183,6 +183,22 @@ pub(crate) fn get_stats(
         .collect())
 }
 
+/// The tracks the user has listened to at least once.
+pub(crate) fn listened_track_ids(db: &DbAny, user_db_id: DbId) -> anyhow::Result<HashSet<DbId>> {
+    let listen_ids = get_listen_ids_for_target(db, user_db_id)?;
+    let listens = super::graph::bulk_fetch_typed::<Listen>(db, listen_ids, "Listen")?;
+    let public_ids = listens
+        .values()
+        .map(|listen| listen.track_public_id.as_str())
+        .filter(|public_id| !public_id.is_empty())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    Ok(super::lookup::find_node_ids_by_ids(db, &public_ids)?
+        .into_values()
+        .collect())
+}
+
 pub(crate) fn get_counts(
     db: &DbAny,
     track_db_ids: &[DbId],

@@ -46,12 +46,35 @@ pub(crate) fn id_sequence(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::
             }
             other => Err(crate::plugins::runtime_error(format!(
                 "id entry {index} must be a positive integer, got {}",
-                match other {
-                    luau::Value::Integer(value) => value.to_string(),
-                    luau::Value::Number(value) => value.to_string(),
-                    other => other.type_name().to_string(),
-                }
+                describe(&other)
             ))),
+        })
+        .collect()
+}
+
+/// The integers of a Luau array in array order, each within the range of `T`.
+pub(crate) fn integers<T: TryFrom<i64>>(
+    vm: &luau::Vm,
+    table: &luau::Table,
+) -> luau::runtime::Result<Vec<T>> {
+    array_values(vm, table)?
+        .into_iter()
+        .map(|(index, value)| {
+            let integer = match value {
+                luau::Value::Integer(value) => Some(value),
+                luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 => {
+                    Some(value as i64)
+                }
+                _ => None,
+            };
+            integer
+                .and_then(|integer| T::try_from(integer).ok())
+                .ok_or_else(|| {
+                    crate::plugins::runtime_error(format!(
+                        "entry {index} must be an integer in range, got {}",
+                        describe(&value)
+                    ))
+                })
         })
         .collect()
 }
@@ -159,11 +182,7 @@ pub(crate) fn optional_u64(
         }
         other => Err(crate::plugins::runtime_error(format!(
             "{key} must be a non-negative integer when provided, got {}",
-            match other {
-                luau::Value::Integer(value) => value.to_string(),
-                luau::Value::Number(value) => value.to_string(),
-                other => other.type_name().to_string(),
-            }
+            describe(&other)
         ))),
     }
 }
@@ -204,6 +223,15 @@ pub(crate) fn page_table<T: Serialize>(
     table.set_field("total_count", luau::Value::from(total_count as i64));
     table.set_field("offset", luau::Value::from(offset as i64));
     Ok(table)
+}
+
+/// A value for an error message: numbers as themselves, anything else by type.
+fn describe(value: &luau::Value) -> String {
+    match value {
+        luau::Value::Integer(value) => value.to_string(),
+        luau::Value::Number(value) => value.to_string(),
+        other => other.type_name().to_string(),
+    }
 }
 
 /// The entries of a Luau array, each with its index. A table with any other key, or with a

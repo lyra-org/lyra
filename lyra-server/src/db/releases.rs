@@ -775,7 +775,6 @@ fn compare_release_field(a: &ReleaseSortEntry, b: &ReleaseSortEntry, key: SortKe
         SortKey::DateCreated => compare_option(&a.date_created, &b.date_created),
         SortKey::ReleaseDate => compare_option(&a.release_date, &b.release_date),
         SortKey::DbId => compare_option(&a.db_id, &b.db_id),
-        SortKey::TrackNumber | SortKey::DiscNumber | SortKey::Duration => Ordering::Equal,
     }
 }
 
