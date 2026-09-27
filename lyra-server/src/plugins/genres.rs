@@ -30,12 +30,25 @@ use serde::{
 };
 
 use crate::plugins::args;
+use crate::plugins::catalog;
 use crate::plugins::db::{
     self,
     DbAsync,
     genres::{
         ResolveExternalId,
         ResolveGenre,
+    },
+};
+#[cfg(feature = "docgen")]
+use crate::services::catalog::genres::GenreKey;
+use crate::services::{
+    self,
+    catalog::{
+        Page,
+        genres::{
+            GenreFilter,
+            Genres,
+        },
     },
 };
 
@@ -66,6 +79,7 @@ struct GenresModule;
 pub(crate) fn module_spec() -> ModuleSpec {
     ModuleSpec::new("lyra/genres")
         .capability("lyra.genres")
+        .function(query_spec())
         .function(resolve_spec())
         .function(add_parent_spec())
         .function(get_by_id_spec())
@@ -77,6 +91,44 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(get_for_release_spec())
         .function(get_for_releases_many_spec())
         .install(|_| Ok(ModuleExport::new(GenresModule)))
+}
+
+fn query_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("query")
+        .context::<crate::plugins::auth::DispatchAuth>()
+        .arg_name("query")
+        .args::<luau::Table>()
+        .returns::<luau::Value>()
+        .call_async(std::sync::Arc::new(query_callback))
+}
+
+fn query_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let opts: luau::Table = frame.args.read_named("query")?;
+    let filter = GenreFilter {
+        ids: catalog::optional_ids(frame.vm, &opts, "ids")?,
+        exclude_ids: args::optional_unique_ids(frame.vm, &opts, "exclude_ids")?,
+        library: args::optional_positive_id(frame.vm, &opts, "library_id")?,
+        releases: catalog::optional_ids(frame.vm, &opts, "release_ids")?,
+    };
+    let request = catalog::read_query::<Genres>(frame.vm, &opts, filter)?;
+    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
+    let db = frame.vm.data().get::<GenresModuleStore>()?.db()?;
+
+    Ok(luau::ScheduledFuture::new(async move {
+        let db = db.read().await;
+        let viewer = catalog::viewer(&*db, principal)?;
+        let page =
+            services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
+                .map_err(catalog::error)?;
+        catalog::page_table(Page {
+            items: page.items.into_iter().map(GenreRecord::from).collect(),
+            total: page.total,
+            offset: page.offset,
+        })
+        .map(luau::Value::TableData)
+    }))
 }
 
 fn resolve_spec() -> FunctionSpec {
@@ -606,6 +658,15 @@ fn module_descriptor() -> ModuleDescriptor {
         fields: Vec::new(),
         functions: vec![
             ModuleFunctionDescriptor {
+                path: vec!["query"],
+                description: Some(
+                    "The genres of the releases the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance and anything else is by name.",
+                ),
+                params: vec![param("query", LuauType::named("GenreQuery"))],
+                returns: vec![LuauType::named("GenrePage")],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
                 path: vec!["resolve"],
                 description: None,
                 params: vec![param("request", GenreResolveRequest::luau_type())],
@@ -687,10 +748,35 @@ fn module_descriptor() -> ModuleDescriptor {
 
 #[cfg(feature = "docgen")]
 pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::Error> {
+    let mut query = InterfaceDescriptor::new("GenreQuery", None);
+    query.fields.extend([
+        FieldDescriptor {
+            name: "ids",
+            ty: Option::<Vec<u64>>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "exclude_ids",
+            ty: Option::<Vec<u64>>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "library_id",
+            ty: Option::<u64>::luau_type(),
+            description: None,
+        },
+        FieldDescriptor {
+            name: "release_ids",
+            ty: Option::<Vec<u64>>::luau_type(),
+            description: Some("Genres of these releases."),
+        },
+    ]);
+    query.fields.extend(catalog::query_fields("GenreSortKey"));
     render_definition_file_with_support(
         &module_descriptor(),
-        &[],
+        &catalog::type_aliases::<GenreKey>("GenreSortKey", "GenrePage", "GenreInfo"),
         &[
+            query,
             GenreRecord::interface_descriptor(),
             GenreExternalId::interface_descriptor(),
             GenreAliasInput::interface_descriptor(),

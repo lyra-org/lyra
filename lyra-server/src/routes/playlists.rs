@@ -40,12 +40,12 @@ use std::{
     },
 };
 
+use crate::services::catalog::Direction;
 use crate::{
     STATE,
     db::{
         self,
         Playlist,
-        SortDirection,
     },
     routes::responses::{
         ArtistResponse,
@@ -272,7 +272,7 @@ type PlaylistRouteSortSpec = super::RouteSortSpec<PlaylistRouteSortKey>;
 fn default_playlist_sort() -> Vec<PlaylistRouteSortSpec> {
     vec![PlaylistRouteSortSpec {
         key: PlaylistRouteSortKey::Name,
-        direction: SortDirection::Ascending,
+        direction: Direction::Ascending,
     }]
 }
 
@@ -343,7 +343,9 @@ fn compare_playlist_route_entries(
     sort: &[PlaylistRouteSortSpec],
 ) -> Ordering {
     for spec in sort {
-        let ord = db::apply_direction(compare_playlist_route_field(a, b, spec.key), spec.direction);
+        let ord = spec
+            .direction
+            .apply(compare_playlist_route_field(a, b, spec.key));
         if ord != Ordering::Equal {
             return ord;
         }
@@ -1443,7 +1445,7 @@ mod tests {
         assert_eq!(specs.len(), 2);
         assert!(matches!(specs[0].key, PlaylistRouteSortKey::TrackCount));
         assert!(matches!(specs[1].key, PlaylistRouteSortKey::Name));
-        assert!(matches!(specs[0].direction, SortDirection::Descending));
+        assert!(matches!(specs[0].direction, Direction::Descending));
 
         let err = parse_playlist_sort_specs(Some(vec!["bogus".to_string()]), None)
             .expect_err("unknown sort key should be rejected");

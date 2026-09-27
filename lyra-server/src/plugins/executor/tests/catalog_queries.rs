@@ -6,7 +6,15 @@ use crate::plugins::db::{
 
 fn tracks_runtime(db: agdb::DbAny) -> Result<PluginExecutor> {
     PluginExecutor::with_database(
-        Arc::from(vec![manifest("demo", &["lyra.releases", "lyra.tracks"])]),
+        Arc::from(vec![manifest(
+            "demo",
+            &[
+                "lyra.artists",
+                "lyra.genres",
+                "lyra.releases",
+                "lyra.tracks",
+            ],
+        )]),
         default_server_info(),
         std::sync::Arc::new(tokio::sync::RwLock::new(db)),
     )
@@ -201,6 +209,12 @@ fn catalog() -> Result<Catalog> {
         }
         tracks.insert(title, track);
     }
+    db::genres::sync_release_genres(&mut db, album, &["Rock".to_string()])?;
+    db::genres::sync_release_genres(
+        &mut db,
+        other,
+        &["Rockabilly".to_string(), "Jazz".to_string()],
+    )?;
     db::favorites::add(
         &mut db,
         admin_db_id,
@@ -258,6 +272,16 @@ impl Catalog {
     /// The titles `tracks.query(<query>)` returns for the admin.
     fn titles(&self, query: &str) -> Result<Vec<String>> {
         self.names("tracks", "track_title", query)
+    }
+
+    /// The names `artists.query(<query>)` returns for the admin.
+    fn artist_names(&self, query: &str) -> Result<Vec<String>> {
+        self.names("artists", "artist_name", query)
+    }
+
+    /// The names `genres.query(<query>)` returns for the admin.
+    fn genre_names(&self, query: &str) -> Result<Vec<String>> {
+        self.names("genres", "name", query)
     }
 
     /// The titles `releases.query(<query>)` returns for the admin.
@@ -563,6 +587,47 @@ fn release_query_filters_and_sorts_by_its_tracks() -> Result<()> {
         catalog
             .release_titles(r#"{ sort = { { key = "listen_count", order = "descending" } } }"#)?,
         vec!["Album", "Other"]
+    );
+    Ok(())
+}
+
+#[test]
+fn artist_query_filters_by_credit_role() -> Result<()> {
+    let catalog = catalog()?;
+    assert_eq!(catalog.artist_names("{}")?, vec!["Amy", "Zed"]);
+    assert_eq!(
+        catalog.artist_names(r#"{ credit_role = "release" }"#)?,
+        vec!["Amy"]
+    );
+    assert_eq!(
+        catalog.artist_names(r#"{ credit_role = "track", exclude_credit_role = "release" }"#)?,
+        vec!["Zed"]
+    );
+    assert_eq!(
+        catalog.artist_names(r#"{ sort = { { key = "track_count", order = "descending" } } }"#)?,
+        vec!["Amy", "Zed"]
+    );
+    Ok(())
+}
+
+#[test]
+fn genre_query_follows_releases_and_ranks_searches() -> Result<()> {
+    let catalog = catalog()?;
+    assert_eq!(
+        catalog.genre_names("{}")?,
+        vec!["Jazz", "Rock", "Rockabilly"]
+    );
+    assert_eq!(
+        catalog.genre_names(&format!("{{ release_ids = {{ {} }} }}", catalog.album.0))?,
+        vec!["Rock"]
+    );
+    assert_eq!(
+        catalog.genre_names(r#"{ search = "rock" }"#)?,
+        vec!["Rock", "Rockabilly"]
+    );
+    assert_eq!(
+        catalog.genre_names(r#"{ sort = { { key = "track_count", order = "descending" } } }"#)?,
+        vec!["Rock", "Jazz", "Rockabilly"]
     );
     Ok(())
 }

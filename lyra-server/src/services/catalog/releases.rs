@@ -15,12 +15,12 @@ use agdb::{
 
 use super::{
     ArtistCredit,
-    Candidates,
     CatalogError,
     CreditRole,
     Direction,
     SortSpec,
     Viewer,
+    all_releases,
     credited_owners,
     pipeline::{
         Catalog,
@@ -30,6 +30,7 @@ use super::{
         SortValue,
     },
     releases_of_tracks,
+    scoped_releases,
     track_totals,
 };
 use crate::db::{
@@ -117,24 +118,13 @@ impl Catalog for Releases {
         viewer: &Viewer,
         filter: &ReleaseFilter,
     ) -> Result<Vec<DbId>, CatalogError> {
-        let mut releases = Candidates::default();
-        if let Some(visible) = viewer.visible_releases(db)? {
-            releases.restrict(visible);
-        }
-        if let Some(library) = filter.library {
-            let mut library_releases = Vec::new();
-            for library in db::graph::existing_ids(db, &[library], "Library")? {
-                library_releases.extend(db::graph::neighbor_ids(db, library, "Release")?);
-            }
-            releases.restrict(library_releases);
-        }
-        if let Some(ids) = &filter.ids {
-            releases.restrict(db::graph::existing_ids(db, ids, "Release")?);
-        }
-        if !filter.genres.is_empty() {
-            let genres = db::graph::existing_ids(db, &filter.genres, "Genre")?;
-            releases.restrict(db::genres::release_ids_matching_genre_ids(db, &genres)?);
-        }
+        let mut releases = scoped_releases(
+            db,
+            viewer,
+            filter.library,
+            filter.ids.as_deref(),
+            &filter.genres,
+        )?;
         if let Some(credit) = &filter.artists {
             releases.restrict(credit.matching(db, |artists, role| match role {
                 CreditRole::Track => releases_of_tracks(db, credited_owners::<Track>(db, artists)?),
@@ -283,8 +273,4 @@ fn date_order(date: &str) -> Option<u64> {
     let month = parts.next().transpose().ok()?.unwrap_or(0);
     let day = parts.next().transpose().ok()?.unwrap_or(0);
     Some(year * 10_000 + month * 100 + day)
-}
-
-fn all_releases(db: &DbAny) -> anyhow::Result<Vec<DbId>> {
-    db::graph::neighbor_ids(db, "releases", "Release")
 }

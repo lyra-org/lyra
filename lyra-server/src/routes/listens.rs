@@ -27,12 +27,12 @@ use std::{
     },
 };
 
+use crate::services::catalog::Direction;
 use crate::{
     STATE,
     db::{
         self,
         Permission,
-        SortDirection,
     },
     routes::{
         self,
@@ -188,18 +188,13 @@ enum ListenSortKey {
 
 fn parse_sort_order(
     sort_order: Option<String>,
-    default_direction: SortDirection,
-) -> Result<SortDirection, AppError> {
-    match sort_order {
-        None => Ok(default_direction),
-        Some(raw) => db::parse_sort_direction(Some(raw), true).map_err(|err| match err {
-            db::SortSpecParseError::UnsupportedSortOrder(raw) => AppError::bad_request(format!(
-                "Unsupported sort_order value: {}. Supported values: ascending, descending",
-                raw
-            )),
-            other => AppError::bad_request(other.to_string()),
-        }),
-    }
+    default_direction: Direction,
+) -> Result<Direction, AppError> {
+    Ok(sort_order
+        .as_deref()
+        .map(Direction::parse)
+        .transpose()?
+        .unwrap_or(default_direction))
 }
 
 fn supported_sort_values(include_user_id: bool) -> &'static str {
@@ -255,9 +250,9 @@ fn parse_sort_keys(
     Ok(keys)
 }
 
-fn compare_optional_ms(a: Option<u64>, b: Option<u64>, direction: SortDirection) -> Ordering {
+fn compare_optional_ms(a: Option<u64>, b: Option<u64>, direction: Direction) -> Ordering {
     match (a, b) {
-        (Some(a), Some(b)) => db::apply_direction(a.cmp(&b), direction),
+        (Some(a), Some(b)) => direction.apply(a.cmp(&b)),
         (Some(_), None) => Ordering::Less,
         (None, Some(_)) => Ordering::Greater,
         (None, None) => Ordering::Equal,
@@ -268,18 +263,16 @@ fn compare_listen_rows(
     a: &ListenRow,
     b: &ListenRow,
     keys: &[ListenSortKey],
-    direction: SortDirection,
+    direction: Direction,
 ) -> Ordering {
     for key in keys {
         let ord = match key {
-            ListenSortKey::ListenCount => {
-                db::apply_direction(a.listen_count.cmp(&b.listen_count), direction)
-            }
+            ListenSortKey::ListenCount => direction.apply(a.listen_count.cmp(&b.listen_count)),
             ListenSortKey::LastPlayedAt => {
                 compare_optional_ms(a.last_played_ms, b.last_played_ms, direction)
             }
-            ListenSortKey::UserId => db::apply_direction(a.user_id.cmp(&b.user_id), direction),
-            ListenSortKey::TrackId => db::apply_direction(a.track_id.cmp(&b.track_id), direction),
+            ListenSortKey::UserId => direction.apply(a.user_id.cmp(&b.user_id)),
+            ListenSortKey::TrackId => direction.apply(a.track_id.cmp(&b.track_id)),
         };
         if ord != Ordering::Equal {
             return ord;
@@ -297,9 +290,10 @@ fn sort_listen_rows(
 ) -> Result<(), AppError> {
     let keys = parse_sort_keys(sort_by, include_user_id)?;
     if keys.is_empty() {
-        let direction = parse_sort_order(sort_order, SortDirection::Descending)?;
+        let direction = parse_sort_order(sort_order, Direction::Descending)?;
         rows.sort_by(|a, b| {
-            db::apply_direction(a.listen_count.cmp(&b.listen_count), direction)
+            direction
+                .apply(a.listen_count.cmp(&b.listen_count))
                 .then_with(|| compare_optional_ms(a.last_played_ms, b.last_played_ms, direction))
                 .then_with(|| a.user_id.cmp(&b.user_id))
                 .then_with(|| a.track_id.cmp(&b.track_id))
@@ -307,7 +301,7 @@ fn sort_listen_rows(
         return Ok(());
     }
 
-    let direction = parse_sort_order(sort_order, SortDirection::Ascending)?;
+    let direction = parse_sort_order(sort_order, Direction::Ascending)?;
     rows.sort_by(|a, b| {
         compare_listen_rows(a, b, &keys, direction)
             .then_with(|| a.user_id.cmp(&b.user_id))

@@ -3,13 +3,7 @@
 // You can obtain one here:
 // www.meshiplaw.com/lyra.
 
-use std::{
-    cmp::Ordering,
-    collections::{
-        HashMap,
-        HashSet,
-    },
-};
+use std::collections::HashSet;
 
 use agdb::{
     DbAny,
@@ -38,7 +32,6 @@ use crate::{
     STATE,
     db::{
         self,
-        SortDirection,
         genres,
     },
     routes::{
@@ -53,6 +46,14 @@ use crate::{
     },
     services::{
         auth::require_authenticated,
+        catalog::{
+            self,
+            genres::{
+                GenreFilter,
+                Genres,
+            },
+            pipeline::Catalog,
+        },
         covers as cover_services,
         pagination::SnapshotKey,
     },
@@ -100,7 +101,7 @@ struct GenreListQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: name, last_played_at, listen_count, release_count, track_count, total_duration, id."
+            description = "Comma-separated or repeated values: name, release_count, track_count, total_duration, listen_count, last_played_at, relevance (with query), random, id."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -208,255 +209,6 @@ fn genre_accessible_to_principal(
     Ok(false)
 }
 
-#[derive(Clone, Copy, Debug)]
-enum GenreRouteSortKey {
-    Name,
-    ListenCount,
-    LastPlayedAt,
-    ReleaseCount,
-    TrackCount,
-    TotalDuration,
-    Id,
-}
-
-type GenreRouteSortSpec = super::RouteSortSpec<GenreRouteSortKey>;
-
-fn genre_sort_supported_values() -> &'static str {
-    "name, last_played_at, listen_count, release_count, track_count, total_duration, id"
-}
-
-fn default_genre_sort() -> Vec<GenreRouteSortSpec> {
-    vec![GenreRouteSortSpec {
-        key: GenreRouteSortKey::Name,
-        direction: SortDirection::Ascending,
-    }]
-}
-
-fn parse_genre_sort_specs(
-    sort_by: Option<Vec<String>>,
-    sort_order: Option<String>,
-) -> Result<Vec<GenreRouteSortSpec>, AppError> {
-    super::parse_route_sort_specs(
-        sort_by,
-        sort_order,
-        |token| match token {
-            "name" => Some(GenreRouteSortKey::Name),
-            "listen_count" => Some(GenreRouteSortKey::ListenCount),
-            "last_played_at" => Some(GenreRouteSortKey::LastPlayedAt),
-            "release_count" => Some(GenreRouteSortKey::ReleaseCount),
-            "track_count" => Some(GenreRouteSortKey::TrackCount),
-            "total_duration" => Some(GenreRouteSortKey::TotalDuration),
-            "id" => Some(GenreRouteSortKey::Id),
-            _ => None,
-        },
-        genre_sort_supported_values(),
-    )
-}
-
-struct GenreRouteSortEntry {
-    genre: genres::Genre,
-    release_count: u64,
-    track_count: u64,
-    listen_count: u64,
-    last_played_at: Option<u64>,
-    total_duration: u64,
-    match_score: u32,
-}
-
-fn compare_genre_route_field(
-    a: &GenreRouteSortEntry,
-    b: &GenreRouteSortEntry,
-    key: GenreRouteSortKey,
-) -> Ordering {
-    match key {
-        GenreRouteSortKey::Name => a
-            .genre
-            .scan_name
-            .cmp(&b.genre.scan_name)
-            .then_with(|| a.genre.name.cmp(&b.genre.name)),
-        GenreRouteSortKey::ListenCount => a.listen_count.cmp(&b.listen_count),
-        GenreRouteSortKey::LastPlayedAt => db::compare_option(&a.last_played_at, &b.last_played_at),
-        GenreRouteSortKey::ReleaseCount => a.release_count.cmp(&b.release_count),
-        GenreRouteSortKey::TrackCount => a.track_count.cmp(&b.track_count),
-        GenreRouteSortKey::TotalDuration => a.total_duration.cmp(&b.total_duration),
-        GenreRouteSortKey::Id => a.genre.id.cmp(&b.genre.id),
-    }
-}
-
-fn compare_genre_route_entries(
-    a: &GenreRouteSortEntry,
-    b: &GenreRouteSortEntry,
-    sort: &[GenreRouteSortSpec],
-) -> Ordering {
-    for spec in sort {
-        let ord = db::apply_direction(compare_genre_route_field(a, b, spec.key), spec.direction);
-        if ord != Ordering::Equal {
-            return ord;
-        }
-    }
-
-    b.match_score
-        .cmp(&a.match_score)
-        .then_with(|| a.genre.scan_name.cmp(&b.genre.scan_name))
-        .then_with(|| a.genre.name.cmp(&b.genre.name))
-        .then_with(|| a.genre.id.cmp(&b.genre.id))
-}
-
-fn genre_sort_needs_track_metrics(sort: &[GenreRouteSortSpec]) -> bool {
-    sort.iter().any(|spec| {
-        matches!(
-            spec.key,
-            GenreRouteSortKey::ListenCount
-                | GenreRouteSortKey::LastPlayedAt
-                | GenreRouteSortKey::TrackCount
-                | GenreRouteSortKey::TotalDuration
-        )
-    })
-}
-
-fn genre_sort_needs_listens(sort: &[GenreRouteSortSpec]) -> bool {
-    sort.iter().any(|spec| {
-        matches!(
-            spec.key,
-            GenreRouteSortKey::ListenCount | GenreRouteSortKey::LastPlayedAt
-        )
-    })
-}
-
-fn query_genre_route_items(
-    db: &DbAny,
-    release_ids: &[DbId],
-    sort: &[GenreRouteSortSpec],
-    search_term: Option<&str>,
-    user_db_id: DbId,
-) -> anyhow::Result<Vec<genres::Genre>> {
-    let genres_by_release = genres::get_for_releases_many(db, release_ids)?;
-    let needs_track_metrics = genre_sort_needs_track_metrics(sort);
-    let needs_listens = genre_sort_needs_listens(sort);
-    let tracks_by_release = if needs_track_metrics {
-        db::tracks::get_direct_many(db, release_ids)?
-    } else {
-        HashMap::new()
-    };
-    let mut genres_by_id = HashMap::new();
-    let mut release_ids_by_genre: HashMap<DbId, HashSet<DbId>> = HashMap::new();
-    let mut track_ids_by_genre: HashMap<DbId, HashSet<DbId>> = HashMap::new();
-    let mut track_count_by_genre: HashMap<DbId, u64> = HashMap::new();
-    let mut total_duration_by_genre: HashMap<DbId, u64> = HashMap::new();
-    let mut all_track_ids = Vec::new();
-    let mut seen_all_track_ids = HashSet::new();
-
-    for release_id in release_ids {
-        let Some(release_genres) = genres_by_release.get(release_id) else {
-            continue;
-        };
-        let mut release_genre_ids = Vec::new();
-        let mut seen_release_genre_ids = HashSet::new();
-        for genre in release_genres {
-            let Some(genre_db_id) = genre.db_id.clone().map(DbId::from) else {
-                continue;
-            };
-            genres_by_id
-                .entry(genre_db_id)
-                .or_insert_with(|| genre.clone());
-            release_ids_by_genre
-                .entry(genre_db_id)
-                .or_default()
-                .insert(*release_id);
-            if seen_release_genre_ids.insert(genre_db_id) {
-                release_genre_ids.push(genre_db_id);
-            }
-        }
-
-        if needs_track_metrics {
-            let Some(release_tracks) = tracks_by_release.get(release_id) else {
-                continue;
-            };
-            for genre_db_id in release_genre_ids {
-                for track in release_tracks {
-                    let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
-                        *track_count_by_genre.entry(genre_db_id).or_default() += 1;
-                        if let Some(duration) = track.duration_ms {
-                            let total_duration =
-                                total_duration_by_genre.entry(genre_db_id).or_default();
-                            *total_duration = total_duration.saturating_add(duration);
-                        }
-                        continue;
-                    };
-                    let genre_track_ids = track_ids_by_genre.entry(genre_db_id).or_default();
-                    if !genre_track_ids.insert(track_db_id) {
-                        continue;
-                    }
-                    *track_count_by_genre.entry(genre_db_id).or_default() += 1;
-                    if needs_listens && seen_all_track_ids.insert(track_db_id) {
-                        all_track_ids.push(track_db_id);
-                    }
-                    if let Some(duration) = track.duration_ms {
-                        let total_duration =
-                            total_duration_by_genre.entry(genre_db_id).or_default();
-                        *total_duration = total_duration.saturating_add(duration);
-                    }
-                }
-            }
-        }
-    }
-
-    let listen_stats: HashMap<DbId, db::listens::ListenStats> = if needs_listens {
-        db::listens::get_stats(db, &all_track_ids, user_db_id)?
-            .into_iter()
-            .map(|stats| (stats.db_id, stats))
-            .collect()
-    } else {
-        HashMap::new()
-    };
-
-    let mut entries = Vec::with_capacity(genres_by_id.len());
-    for (genre_db_id, genre) in genres_by_id {
-        let release_count = release_ids_by_genre
-            .get(&genre_db_id)
-            .map(|ids| ids.len() as u64)
-            .unwrap_or(0);
-        let track_count = track_count_by_genre.get(&genre_db_id).copied().unwrap_or(0);
-        let total_duration = total_duration_by_genre
-            .get(&genre_db_id)
-            .copied()
-            .unwrap_or(0);
-        let mut listen_count = 0u64;
-        let mut last_played_at = None;
-        if let Some(track_ids) = track_ids_by_genre.get(&genre_db_id) {
-            for track_db_id in track_ids {
-                let Some(stats) = listen_stats.get(track_db_id) else {
-                    continue;
-                };
-                listen_count = listen_count.saturating_add(stats.count);
-                last_played_at = last_played_at.max(stats.last_played);
-            }
-        }
-
-        entries.push(GenreRouteSortEntry {
-            genre,
-            release_count,
-            track_count,
-            listen_count,
-            last_played_at,
-            total_duration,
-            match_score: 0,
-        });
-    }
-
-    if let Some(term) = search_term {
-        db::search::fuzzy_filter(
-            &mut entries,
-            term,
-            |entry| entry.genre.name.as_str(),
-            |entry, score| entry.match_score = score,
-        );
-    }
-
-    entries.sort_by(|a, b| compare_genre_route_entries(a, b, sort));
-    Ok(entries.into_iter().map(|entry| entry.genre).collect())
-}
-
 async fn list_genres(
     headers: HeaderMap,
     Query(query): Query<GenreListQuery>,
@@ -486,10 +238,7 @@ async fn list_genres(
         &principal,
         library_id.as_deref(),
     )?;
-    let mut sort = parse_genre_sort_specs(sort_by, sort_order)?;
-    if sort.is_empty() {
-        sort = default_genre_sort();
-    }
+    let sort = super::parse_catalog_sort(sort_by, sort_order)?;
     let release_ids = || match library_scope {
         Some(library_db_id) => release_ids_for_library(db, library_db_id),
         None => release_ids_for_accessible_libraries(db, &principal.accessible_library_ids),
@@ -509,20 +258,22 @@ async fn list_genres(
             };
             (genres, page.next_cursor, cover_release_ids)
         } else {
-            let release_ids = release_ids()?;
-            let mut genres = query_genre_route_items(
-                db,
-                &release_ids,
-                &sort,
-                search_term.as_deref(),
-                principal.require(db)?,
-            )?;
-            let page = page_request.start(
-                &snapshot_key,
-                genres.iter().map(|genre| genre.id.clone()).collect(),
-            )?;
-            genres.truncate(page.item_ids.len());
-            let cover_release_ids = inc.covers.then_some(release_ids);
+            let viewer = catalog::Viewer::user(db, principal.clone())?;
+            let mut query = catalog::Query::<Genres>::new(GenreFilter {
+                library: library_scope,
+                ..GenreFilter::default()
+            });
+            query.search = search_term;
+            query.sort = sort;
+            query.seed = rand::random();
+            let ids = catalog::order(db, &viewer, &query)?;
+            let page = page_request.start(&snapshot_key, super::public_ids(db, &ids)?)?;
+            let genres = Genres::hydrate(db, &ids[..page.item_ids.len()])?;
+            let cover_release_ids = if inc.covers {
+                Some(release_ids()?)
+            } else {
+                None
+            };
             (genres, page.next_cursor, cover_release_ids)
         };
     let visible_release_ids = cover_release_ids
@@ -674,7 +425,6 @@ mod tests {
             insert_library,
             insert_release as insert_test_release,
             insert_track,
-            new_test_db,
         },
         testing::{
             LibraryFixtureConfig,
@@ -775,33 +525,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_genre_sort_specs_accepts_supported_values() -> anyhow::Result<()> {
-        let specs = parse_genre_sort_specs(
-            Some(vec![
-                "name,last_played_at,listen_count".to_string(),
-                "release_count,track_count,total_duration,id".to_string(),
-            ]),
-            Some("descending".to_string()),
-        )
-        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
-
-        assert_eq!(specs.len(), 7);
-        assert!(matches!(specs[0].key, GenreRouteSortKey::Name));
-        assert!(matches!(specs[1].key, GenreRouteSortKey::LastPlayedAt));
-        assert!(matches!(specs[2].key, GenreRouteSortKey::ListenCount));
-        assert!(matches!(specs[3].key, GenreRouteSortKey::ReleaseCount));
-        assert!(matches!(specs[4].key, GenreRouteSortKey::TrackCount));
-        assert!(matches!(specs[5].key, GenreRouteSortKey::TotalDuration));
-        assert!(matches!(specs[6].key, GenreRouteSortKey::Id));
-        assert!(
-            specs
-                .iter()
-                .all(|spec| matches!(spec.direction, SortDirection::Descending))
-        );
-        Ok(())
-    }
-
-    #[test]
     fn parse_genre_inc_accepts_covers() -> anyhow::Result<()> {
         let inc = parse_genre_inc(Some(vec!["parents,covers".to_string()]))
             .map_err(|err| anyhow::anyhow!("{err:?}"))?;
@@ -809,36 +532,6 @@ mod tests {
         assert!(inc.parents);
         assert!(inc.covers);
         assert!(!inc.children);
-        Ok(())
-    }
-
-    #[test]
-    fn query_genre_route_items_sorts_by_track_count() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        let rock_release = insert_test_release(&mut db, "Rock Release")?;
-        let jazz_release = insert_test_release(&mut db, "Jazz Release")?;
-        let rock_track_a = insert_track(&mut db, "Rock Track A")?;
-        let rock_track_b = insert_track(&mut db, "Rock Track B")?;
-        let jazz_track = insert_track(&mut db, "Jazz Track")?;
-        connect(&mut db, rock_release, rock_track_a)?;
-        connect(&mut db, rock_release, rock_track_b)?;
-        connect(&mut db, jazz_release, jazz_track)?;
-        db::genres::sync_release_genres(&mut db, rock_release, &["Rock".to_string()])?;
-        db::genres::sync_release_genres(&mut db, jazz_release, &["Jazz".to_string()])?;
-
-        let genres = query_genre_route_items(
-            &db,
-            &[rock_release, jazz_release],
-            &[GenreRouteSortSpec {
-                key: GenreRouteSortKey::TrackCount,
-                direction: SortDirection::Descending,
-            }],
-            None,
-            DbId(1),
-        )?;
-
-        let names: Vec<String> = genres.into_iter().map(|genre| genre.name).collect();
-        assert_eq!(names, vec!["Rock", "Jazz"]);
         Ok(())
     }
 
@@ -1022,7 +715,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_genres_breaks_name_ties_by_exact_name_then_public_id() -> anyhow::Result<()> {
+    async fn list_genres_breaks_name_ties_by_exact_name_then_id() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         setup_route_test().await?;
 
@@ -1072,12 +765,11 @@ mod tests {
         .await
         .map_err(|err| anyhow::anyhow!("{err:?}"))?;
         let ids: Vec<String> = genres.items.into_iter().map(|genre| genre.id).collect();
-        assert_eq!(ids, vec!["genre-tie-z", "genre-tie-a", "genre-tie-m"]);
+        assert_eq!(ids, vec!["genre-tie-z", "genre-tie-m", "genre-tie-a"]);
         Ok(())
     }
 
     #[tokio::test]
-    #[ignore = "genres still sort by name when searching"]
     async fn list_genres_orders_query_matches_by_relevance() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;
         setup_route_test().await?;
@@ -1482,11 +1174,11 @@ mod benches {
         new_test_db,
         test_user,
     };
+    use crate::services::catalog::genres::GenreKey;
 
     struct GenreSortBench {
         db: DbAny,
-        user_db_id: DbId,
-        release_ids: Vec<DbId>,
+        viewer: catalog::Viewer,
     }
 
     fn record_listen(db: &mut DbAny, user_db_id: DbId, track_db_id: DbId, listened_at_ms: u64) {
@@ -1530,7 +1222,6 @@ mod benches {
         let mut db = new_test_db().unwrap();
         let user_db_id =
             db::users::create(&mut db, &test_user("genre-sort-bench").unwrap()).unwrap();
-        let mut release_ids = Vec::with_capacity(genre_count * releases_per_genre);
         for genre_idx in 0..genre_count {
             let genre_name = format!("Genre {genre_idx:04}");
             for release_idx in 0..releases_per_genre {
@@ -1567,68 +1258,48 @@ mod benches {
                     }
                     connect(&mut db, release_db_id, track_db_id).unwrap();
                 }
-                release_ids.push(release_db_id);
             }
         }
 
-        GenreSortBench {
-            db,
+        let principal = crate::services::auth::Principal::for_user(
+            &db,
             user_db_id,
-            release_ids,
-        }
+            vec![db::Permission::Admin],
+            Default::default(),
+        );
+        let viewer = catalog::Viewer::user(&db, principal).unwrap();
+        GenreSortBench { db, viewer }
+    }
+
+    fn bench_order(b: &mut Bencher, setup: &GenreSortBench, sort: catalog::SortSpec<GenreKey>) {
+        let mut query = catalog::Query::<Genres>::new(GenreFilter::default());
+        query.sort = sort;
+        b.iter(|| catalog::order(&setup.db, &setup.viewer, black_box(&query)).unwrap());
     }
 
     #[bench]
     fn route_sort_genres_name_100(b: &mut Bencher) {
         let setup = seed_genre_sort_bench(100, 1, 0, 0);
-        let sort = default_genre_sort();
-        b.iter(|| {
-            query_genre_route_items(
-                &setup.db,
-                black_box(&setup.release_ids),
-                &sort,
-                None,
-                setup.user_db_id,
-            )
-            .unwrap()
-        });
+        bench_order(b, &setup, Vec::new());
     }
 
     #[bench]
     fn route_sort_genres_track_count_100_genres_4000_tracks(b: &mut Bencher) {
         let setup = seed_genre_sort_bench(100, 5, 8, 0);
-        let sort = vec![GenreRouteSortSpec {
-            key: GenreRouteSortKey::TrackCount,
-            direction: SortDirection::Descending,
-        }];
-        b.iter(|| {
-            query_genre_route_items(
-                &setup.db,
-                black_box(&setup.release_ids),
-                &sort,
-                None,
-                setup.user_db_id,
-            )
-            .unwrap()
-        });
+        bench_order(
+            b,
+            &setup,
+            vec![(GenreKey::TrackCount, catalog::Direction::Descending)],
+        );
     }
 
     #[bench]
     fn route_sort_genres_listen_count_100_genres_4000_listens(b: &mut Bencher) {
         let setup = seed_genre_sort_bench(100, 5, 8, 1);
-        let sort = vec![GenreRouteSortSpec {
-            key: GenreRouteSortKey::ListenCount,
-            direction: SortDirection::Descending,
-        }];
-        b.iter(|| {
-            query_genre_route_items(
-                &setup.db,
-                black_box(&setup.release_ids),
-                &sort,
-                None,
-                setup.user_db_id,
-            )
-            .unwrap()
-        });
+        bench_order(
+            b,
+            &setup,
+            vec![(GenreKey::ListenCount, catalog::Direction::Descending)],
+        );
     }
 }
