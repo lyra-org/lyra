@@ -11,14 +11,19 @@ type SortableItem = {
 	IndexNumber: number?,
 	Name: string?,
 	Artists: { string }?,
+	Artist: string?,
 	AlbumArtist: string?,
 	Album: string?,
 	Id: string?,
 	RunTimeTicks: number?,
 	DateCreated: string?,
 	PremiereDate: string?,
+	ProductionYear: number?,
 	CommunityRating: number?,
+	ChildCount: number?,
 	SortName: string?,
+	_play_count: number?,
+	_last_played: number?,
 }
 
 export type Options = {
@@ -73,10 +78,12 @@ local function sort_value_for_item(item: SortableItem?, sort_token: string): (So
 		-- Per-track Artists first; AlbumArtist would collapse compilation tracks under one credit.
 		local artists = if item then item.Artists else nil
 		local first_artist = if type(artists) == "table" then artists[1] else nil
-		return "string", lower_or_empty(if item then (first_artist or item.AlbumArtist or item.Name) else nil)
+		return "string",
+			lower_or_empty(if item then (first_artist or item.Artist or item.AlbumArtist or item.Name) else nil)
 	end
-	if sort_token == "release" then
-		return "string", lower_or_empty(if item then (item.Album or item.Name) else nil)
+	if sort_token == "album" or sort_token == "release" then
+		local album = if item then item.Album else nil
+		return "string", if album then string.lower(album) else nil
 	end
 	if sort_token == "id" then
 		return "string", lower_or_empty(if item then item.Id else nil)
@@ -90,17 +97,26 @@ local function sort_value_for_item(item: SortableItem?, sort_token: string): (So
 	if sort_token == "premieredate" then
 		return "string", if item then item.PremiereDate else nil
 	end
+	if sort_token == "productionyear" then
+		return "number", tonumber(if item then item.ProductionYear else nil)
+	end
+	if sort_token == "childcount" then
+		return "number", tonumber(if item then item.ChildCount else nil)
+	end
 	if sort_token == "random" then
 		return "number", 0
 	end
 	if sort_token == "communityrating" then
 		return "number", tonumber(if item then item.CommunityRating else nil)
 	end
+	if sort_token == "criticrating" then
+		return "number", nil
+	end
 	if sort_token == "dateplayed" then
-		return "string", if item then item.DateCreated else nil
+		return "number", if item then item._last_played else nil
 	end
 	if sort_token == "playcount" then
-		return "number", 0
+		return "number", if item then item._play_count else nil
 	end
 
 	return "string", lower_or_empty(if item then (item.SortName or item.Name) else nil)
@@ -239,6 +255,48 @@ function module.apply<T>(items: { T }, options: Options)
 	for i = 1, #sorted do
 		items[i] = sorted[i]
 	end
+end
+
+-- Maps Jellyfin sort tokens to the sort keys the server's queries accept.
+local SERVER_SORT_KEYS: { [string]: string? } = {
+	sortname = "sort_name",
+	name = "name",
+	datecreated = "date_created",
+	premieredate = "release_date",
+	indexnumber = "track",
+	parentindexnumber = "disc",
+	runtime = "duration",
+	id = "id",
+}
+
+-- The server compares these as equal for the entity type, so they must be sorted here.
+local SERVER_UNSORTABLE_TOKENS: { [string]: { [string]: boolean } } = {
+	release = { runtime = true },
+	artist = { runtime = true, premieredate = true },
+	track = { premieredate = true },
+	playlist = {},
+}
+
+function module.server_sortable(sort_tokens: { string }, entity_type: string): boolean
+	local unsortable = SERVER_UNSORTABLE_TOKENS[entity_type] or {}
+	for _, token: string in sort_tokens do
+		local normalized = lower_or_empty(token)
+		if SERVER_SORT_KEYS[normalized] == nil or unsortable[normalized] then
+			return false
+		end
+	end
+	return true
+end
+
+function module.server_sort_keys(sort_tokens: { string }): { string }
+	local mapped: { string } = {}
+	for _, token: string in sort_tokens do
+		local key = SERVER_SORT_KEYS[lower_or_empty(token)]
+		if key then
+			table.insert(mapped, key)
+		end
+	end
+	return mapped
 end
 
 return module
