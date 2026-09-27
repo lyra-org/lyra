@@ -131,6 +131,37 @@ function module.parse_jellyfin_ids_array(raw_ids: string | { string }?): { numbe
 	return batch_decode_hex_ids(raw_ids)
 end
 
+-- Keeps order and duplicates; nil when any id is not a known item.
+function module.resolve_jellyfin_ids_exact(raw_ids: string | { string }): { number }?
+	local values = if type(raw_ids) == "string" then requests.split_csv_preserving_quotes(raw_ids) else raw_ids
+	local nanoids: { string } = {}
+	for _, raw_id in values do
+		local nanoid = hex_to_nanoid_safe(requests.unquote(raw_id))
+		if not nanoid then
+			return nil
+		end
+		table.insert(nanoids, nanoid)
+	end
+	if #nanoids == 0 then
+		return {}
+	end
+
+	local ok, db_id_map = pcall(ids.get_db_ids, nanoids)
+	if not ok or type(db_id_map) ~= "table" then
+		return nil
+	end
+
+	local result: { number } = {}
+	for _, nanoid in nanoids do
+		local db_id = db_id_map[nanoid]
+		if not db_id then
+			return nil
+		end
+		table.insert(result, db_id)
+	end
+	return result
+end
+
 function module.encode_jellyfin_db_ids(db_ids: { number }): { [number]: string? }
 	if #db_ids == 0 then
 		return {}

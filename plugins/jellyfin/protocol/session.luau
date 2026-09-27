@@ -46,6 +46,8 @@ type AuthenticateRequest = {
 type PlaylistRouteRequest = {
 	name: string?,
 	ids: { number },
+	requested_ids: (string | { string })?,
+	has_invalid_ids: boolean,
 	user_id: string?,
 	is_public: boolean?,
 }
@@ -105,6 +107,27 @@ local function jellyfin_ids_input(value: JsonValue): (string | { string })?
 		end
 	end
 	return ids
+end
+
+local function has_non_string_ids(value: JsonValue): boolean
+	if value == nil or type(value) == "string" then
+		return false
+	end
+	if type(value) ~= "table" then
+		return true
+	end
+	for _, item: JsonValue in value :: { JsonValue } do
+		if type(item) ~= "string" then
+			return true
+		end
+	end
+	return false
+end
+
+-- Decoding drops null array elements, so `[null]` would otherwise read as an empty list.
+local function raw_ids_contain_null(body_raw: string?): boolean
+	local raw_ids = if body_raw then string.match(body_raw, '"[Ii]ds"%s*:%s*(%b[])') else nil
+	return raw_ids ~= nil and string.find(raw_ids, "%f[%w]null%f[%W]") ~= nil
 end
 
 local function parse_bearer_authorization(header_value: string): string?
@@ -550,9 +573,14 @@ function module.parse_playlist_request_body(ctx: ApiContext?): (PlaylistRouteReq
 		is_public = raw_is_public
 	end
 
+	local raw_ids = request_object.Ids or request_object.ids
+	local requested_ids = jellyfin_ids_input(raw_ids)
 	return {
 		name = json_text_value(request_object.Name or request_object.name),
-		ids = item_ids.parse_jellyfin_ids_array(jellyfin_ids_input(request_object.Ids or request_object.ids)),
+		ids = item_ids.parse_jellyfin_ids_array(requested_ids),
+		requested_ids = requested_ids,
+		has_invalid_ids = has_non_string_ids(raw_ids)
+			or raw_ids_contain_null(if request then request.body_raw else nil),
 		user_id = requested_user_id,
 		is_public = is_public,
 	},

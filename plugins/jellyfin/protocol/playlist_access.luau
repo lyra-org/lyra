@@ -6,7 +6,9 @@
 
 local constants = require("../constants")
 local item_ids = require("./items/identifiers")
+local libraries = require("@lyra/libraries")
 local playlists = require("@lyra/playlists")
+local tracks = require("@lyra/tracks")
 
 type PlaylistInfo = playlists.PlaylistInfo
 type PlaylistTrackLink = playlists.PlaylistTrackLink
@@ -64,16 +66,20 @@ function module.list_owned(): { PlaylistInfo }
 	return playlist_items
 end
 
-function module.track_refs(playlist: PlaylistInfo?): { PlaylistTrackLink }
+function module.load_track_refs(playlist: PlaylistInfo?): { PlaylistTrackLink }?
 	local playlist_id = if playlist then playlist.db_id else nil
 	if playlist_id == nil or playlist_id <= 0 then
-		return {}
+		return nil
 	end
 	local ok, track_links = pcall(playlists.get_tracks, playlist_id)
 	if not ok or type(track_links) ~= "table" then
-		return {}
+		return nil
 	end
 	return track_links
+end
+
+function module.track_refs(playlist: PlaylistInfo?): { PlaylistTrackLink }
+	return module.load_track_refs(playlist) or {}
 end
 
 function module.track_count(playlist: PlaylistInfo?): number
@@ -88,6 +94,49 @@ function module.track_ids(playlist: PlaylistInfo): { number }
 		end
 	end
 	return track_ids
+end
+
+function module.can_add_tracks(track_ids: { number }): boolean
+	if #track_ids == 0 then
+		return true
+	end
+	local tracks_ok, tracks_by_id = pcall(tracks.get_by_ids, track_ids)
+	local libraries_ok, libraries_by_entity = pcall(libraries.get_for_entities, track_ids)
+	if not tracks_ok or not libraries_ok then
+		return false
+	end
+	for _, track_id in track_ids do
+		if tracks_by_id[track_id] == nil or libraries_by_entity[track_id] == nil then
+			return false
+		end
+	end
+	return true
+end
+
+-- Not atomic: validate with `can_add_tracks` and load `current_links` first so only a storage
+-- failure can interrupt it.
+function module.replace_tracks(
+	playlist: PlaylistInfo,
+	current_links: { PlaylistTrackLink },
+	track_ids: { number }
+): boolean
+	local playlist_id = playlist.db_id
+	if playlist_id == nil then
+		return false
+	end
+	for _, link in current_links do
+		local ok, removed = pcall(playlists.remove_track, playlist_id, link.entry_id)
+		if not ok or not removed then
+			return false
+		end
+	end
+	for _, track_id in track_ids do
+		local ok, entry_id = pcall(playlists.add_track, playlist_id, track_id)
+		if not ok or entry_id == nil then
+			return false
+		end
+	end
+	return true
 end
 
 function module.resolve_entry_ids(playlist: PlaylistInfo, raw_ids: { string }): { string }?
