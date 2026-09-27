@@ -25,15 +25,24 @@ use harmony_luau::{
 };
 
 use crate::plugins::args;
+use crate::plugins::catalog;
+#[cfg(feature = "docgen")]
+use crate::services::catalog::releases::ReleaseKey;
 use crate::{
     plugins::db::{
         self,
         DbAsync,
-        ListOptions,
         Release,
         ResolveId,
     },
-    services::releases as release_service,
+    services::{
+        self,
+        catalog::releases::{
+            ReleaseFilter,
+            Releases,
+        },
+        releases as release_service,
+    },
 };
 
 #[derive(Clone, Default)]
@@ -84,7 +93,8 @@ fn list_spec() -> FunctionSpec {
 
 fn query_spec() -> FunctionSpec {
     FunctionSpec::async_fn("query")
-        .arg_name("opts")
+        .context::<crate::plugins::auth::DispatchAuth>()
+        .arg_name("query")
         .args::<luau::Table>()
         .returns::<luau::Value>()
         .call_async(std::sync::Arc::new(query_callback))
@@ -156,36 +166,19 @@ fn list_callback(
 fn query_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let opts: luau::Table = frame.args.read_named("opts")?;
-    let request = parse_query_options(frame.vm, &opts)?;
-    let store = frame
-        .vm
-        .data()
-        .get::<ReleasesModuleStore>()?
-        .as_ref()
-        .clone();
-    let db = store.db()?;
+    let opts: luau::Table = frame.args.read_named("query")?;
+    let filter = read_filter(frame.vm, &opts)?;
+    let request = catalog::read_query::<Releases>(frame.vm, &opts, filter)?;
+    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
+    let db = frame.vm.data().get::<ReleasesModuleStore>()?.db()?;
 
     Ok(luau::ScheduledFuture::new(async move {
         let db = db.read().await;
-        let scope = request
-            .scope
-            .map(|id| id.to_query_id(&db).map_err(crate::plugins::runtime_error))
-            .transpose()?
-            .flatten();
-        let result = if request.artist_ids.is_empty() {
-            release_service::query(&db, scope, &request.list_options)
-                .map_err(crate::plugins::runtime_error)
-        } else {
-            release_service::query_by_artists(
-                &db,
-                &request.artist_ids,
-                scope,
-                &request.list_options,
-            )
-            .map_err(crate::plugins::runtime_error)
-        }?;
-        args::page_table(result.entries, result.total_count, result.offset)?.into_luau_return()
+        let viewer = catalog::viewer(&*db, principal)?;
+        let page =
+            services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
+                .map_err(catalog::error)?;
+        catalog::page_table(page)?.into_luau_return()
     }))
 }
 
@@ -346,27 +339,17 @@ fn parse_optional_similar_positive_integer(
     Ok(Some(value))
 }
 
-struct ReleaseQueryRequest {
-    scope: Option<ResolveId>,
-    artist_ids: Vec<DbId>,
-    list_options: ListOptions,
-}
-
-fn parse_query_options(
-    vm: &luau::Vm,
-    opts: &luau::Table,
-) -> luau::runtime::Result<ReleaseQueryRequest> {
-    let scope = match opts.get_raw(vm, "scope")? {
-        luau::Value::Nil => None,
-        value => Some(args::resolve_id(value)?),
-    };
-    let artist_ids = args::optional_unique_ids(vm, opts, "artist_ids")?;
-    let list_options = args::list_options(vm, opts)?;
-
-    Ok(ReleaseQueryRequest {
-        scope,
-        artist_ids,
-        list_options,
+fn read_filter(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<ReleaseFilter> {
+    Ok(ReleaseFilter {
+        ids: catalog::optional_ids(vm, table, "ids")?,
+        exclude_ids: args::optional_unique_ids(vm, table, "exclude_ids")?,
+        library: args::optional_positive_id(vm, table, "library_id")?,
+        artists: catalog::read_artist_credit(vm, table)?,
+        genres: args::optional_unique_ids(vm, table, "genre_ids")?,
+        years: catalog::read_years(vm, table)?,
+        favorite: luau::table::optional_bool_field(vm, table, "favorite")?,
+        listened: luau::table::optional_bool_field(vm, table, "listened")?,
+        rating: Default::default(),
     })
 }
 
@@ -441,30 +424,37 @@ fn release_type_aliases() -> Vec<TypeAliasDescriptor> {
             None,
         ),
         TypeAliasDescriptor::new("Release", release_type(), None),
-        TypeAliasDescriptor::new(
-            "ReleaseQueryResult",
-            LuauType::object(vec![
-                field("entities", LuauType::array(LuauType::named("Release"))),
-                field("total_count", i64::luau_type()),
-                field("offset", i64::luau_type()),
-            ]),
-            None,
-        ),
+        catalog::credit_role_alias(),
     ]
+    .into_iter()
+    .chain(catalog::type_aliases::<ReleaseKey>(
+        "ReleaseSortKey",
+        "ReleasePage",
+        "Release",
+    ))
+    .collect()
 }
 
 #[cfg(feature = "docgen")]
-fn release_query_options() -> InterfaceDescriptor {
-    let mut descriptor = InterfaceDescriptor::new("ReleaseQueryOptions", None);
+fn release_query() -> InterfaceDescriptor {
+    let mut descriptor = InterfaceDescriptor::new("ReleaseQuery", None);
     descriptor.fields.extend([
-        field("scope", LuauType::optional(args::resolve_id_type())),
-        field("artist_ids", Option::<Vec<u64>>::luau_type()),
-        field("sort_by", Option::<Vec<String>>::luau_type()),
-        field("sort_order", LuauType::optional(args::sort_order_type())),
-        field("offset", Option::<i64>::luau_type()),
-        field("limit", Option::<i64>::luau_type()),
-        field("search_term", Option::<String>::luau_type()),
+        field("ids", Option::<Vec<u64>>::luau_type()),
+        field("exclude_ids", Option::<Vec<u64>>::luau_type()),
+        field("library_id", Option::<u64>::luau_type()),
+        field("genre_ids", Option::<Vec<u64>>::luau_type()),
+        field("years", Option::<Vec<u32>>::luau_type()),
+        field("favorite", Option::<bool>::luau_type()),
+        described_field(
+            "listened",
+            Option::<bool>::luau_type(),
+            "Whether the caller has listened to every one of the release's tracks.",
+        ),
     ]);
+    descriptor.fields.extend(catalog::credit_fields());
+    descriptor
+        .fields
+        .extend(catalog::query_fields("ReleaseSortKey"));
     descriptor
 }
 
@@ -496,9 +486,11 @@ fn module_descriptor() -> ModuleDescriptor {
             },
             ModuleFunctionDescriptor {
                 path: vec!["query"],
-                description: None,
-                params: vec![param("opts", LuauType::named("ReleaseQueryOptions"))],
-                returns: vec![LuauType::named("ReleaseQueryResult")],
+                description: Some(
+                    "The releases the caller can see that pass every filter, sorted and paged. Without `sort`, a search ranks by relevance and anything else is by sort name.",
+                ),
+                params: vec![param("query", LuauType::named("ReleaseQuery"))],
+                returns: vec![LuauType::named("ReleasePage")],
                 yields: true,
             },
             ModuleFunctionDescriptor {
@@ -551,7 +543,7 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
     render_definition_file_with_support(
         &module_descriptor(),
         &release_type_aliases(),
-        &[release_query_options(), similar_release_options()],
+        &[release_query(), similar_release_options()],
         &[],
     )
 }

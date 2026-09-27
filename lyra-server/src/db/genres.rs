@@ -387,23 +387,6 @@ pub(crate) fn get_names_for_release(
     Ok(Some(genres.into_iter().map(|g| g.name).collect()))
 }
 
-#[cfg(test)]
-pub(crate) fn release_ids_matching_genres(
-    db: &impl DbAccess,
-    genre_names: &[String],
-) -> anyhow::Result<HashSet<DbId>> {
-    let mut genre_ids = Vec::new();
-    for name in genre_names {
-        let genre_id = find_by_name(db, name)?.or(find_by_alias(db, name)?);
-        let Some(genre_id) = genre_id else {
-            continue;
-        };
-        genre_ids.push(genre_id);
-    }
-
-    release_ids_matching_genre_ids(db, &genre_ids)
-}
-
 pub(crate) fn release_ids_matching_genre_ids(
     db: &impl DbAccess,
     genre_ids: &[DbId],

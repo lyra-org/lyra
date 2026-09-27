@@ -21,6 +21,7 @@ use super::{
     Direction,
     SortSpec,
     Viewer,
+    credited_owners,
     pipeline::{
         Catalog,
         KeyKind,
@@ -28,6 +29,7 @@ use super::{
         SortKey,
         SortValue,
     },
+    tracks_of_releases,
 };
 use crate::db::{
     self,
@@ -49,6 +51,8 @@ pub(crate) enum TrackKey {
     ReleaseTitle,
     /// The first artist credited on the track.
     ArtistName,
+    /// The first artist credited on the track's release.
+    ReleaseArtistName,
     ListenCount,
     LastPlayedAt,
     Relevance,
@@ -67,6 +71,7 @@ impl SortKey for TrackKey {
         ("track", Self::Track),
         ("release_title", Self::ReleaseTitle),
         ("artist_name", Self::ArtistName),
+        ("release_artist_name", Self::ReleaseArtistName),
         ("listen_count", Self::ListenCount),
         ("last_played_at", Self::LastPlayedAt),
         ("relevance", Self::Relevance),
@@ -175,13 +180,12 @@ impl Catalog for Tracks {
             tracks.restrict(db::graph::existing_ids(db, ids, "Track")?);
         }
         if let Some(credit) = &filter.artists {
-            let artists = db::graph::existing_ids(db, &credit.artists, "Artist")?;
-            let mut credited = credited_tracks(db, &artists, credit.role)?;
-            if let Some(excluding) = credit.excluding {
-                let excluded = credited_tracks(db, &artists, excluding)?;
-                credited.retain(|id| !excluded.contains(id));
-            }
-            tracks.restrict(credited);
+            tracks.restrict(credit.matching(db, |artists, role| match role {
+                CreditRole::Release => {
+                    tracks_of_releases(db, credited_owners::<db::Release>(db, artists)?)
+                }
+                _ => credited_owners::<Track>(db, artists),
+            })?);
         }
         if !filter.years.is_empty() {
             let mut matching = HashSet::new();
@@ -233,6 +237,11 @@ impl Catalog for Tracks {
         } else {
             HashMap::new()
         };
+        let release_artist_names = if keys.contains(&TrackKey::ReleaseArtistName) {
+            release_artist_names(db, &ids)?
+        } else {
+            HashMap::new()
+        };
         let release_title = match filter.single_release() {
             Some(release) if keys.contains(&TrackKey::ReleaseTitle) => {
                 db::releases::get_by_id(db, release)?
@@ -260,6 +269,9 @@ impl Catalog for Tracks {
                         TrackKey::Track => number("track"),
                         TrackKey::ReleaseTitle => release_title.clone().map(SortValue::Text),
                         TrackKey::ArtistName => artist_names
+                            .get(&id)
+                            .map(|name| SortValue::Text(name.to_lowercase())),
+                        TrackKey::ReleaseArtistName => release_artist_names
                             .get(&id)
                             .map(|name| SortValue::Text(name.to_lowercase())),
                         TrackKey::ListenCount => Some(SortValue::Number(
@@ -304,37 +316,33 @@ fn track_fields(keys: &[TrackKey]) -> Vec<&'static str> {
     fields
 }
 
+/// The name each track's release credits first; the least such name when a track is on several.
+fn release_artist_names(db: &DbAny, tracks: &[DbId]) -> anyhow::Result<HashMap<DbId, String>> {
+    let mut releases_by_track = HashMap::new();
+    for track in tracks {
+        releases_by_track.insert(
+            *track,
+            db::graph::inbound_neighbor_ids(db, *track, "Release")?,
+        );
+    }
+    let release_ids = releases_by_track
+        .values()
+        .flatten()
+        .copied()
+        .collect::<Vec<_>>();
+    let names = db::artists::first_credited_names(db, &release_ids)?;
+    Ok(releases_by_track
+        .into_iter()
+        .filter_map(|(track, releases)| {
+            let name = releases
+                .iter()
+                .filter_map(|release| names.get(release))
+                .min_by_key(|name| name.to_lowercase())?;
+            Some((track, name.clone()))
+        })
+        .collect())
+}
+
 fn all_tracks(db: &DbAny) -> anyhow::Result<Vec<DbId>> {
     db::graph::neighbor_ids(db, "tracks", "Track")
-}
-
-fn tracks_of_releases(
-    db: &DbAny,
-    releases: impl IntoIterator<Item = DbId>,
-) -> anyhow::Result<HashSet<DbId>> {
-    let mut tracks = HashSet::new();
-    for release in releases {
-        tracks.extend(db::graph::neighbor_ids(db, release, "Track")?);
-    }
-    Ok(tracks)
-}
-
-fn credited_tracks(
-    db: &DbAny,
-    artists: &[DbId],
-    role: CreditRole,
-) -> anyhow::Result<HashSet<DbId>> {
-    let mut tracks = HashSet::new();
-    for artist in artists {
-        if matches!(role, CreditRole::Track | CreditRole::Any) {
-            tracks.extend(db::credits::owner_ids_by_artist::<Track>(
-                db, *artist, 0, 0,
-            )?);
-        }
-        if matches!(role, CreditRole::Release | CreditRole::Any) {
-            let releases = db::credits::owner_ids_by_artist::<db::Release>(db, *artist, 0, 0)?;
-            tracks.extend(tracks_of_releases(db, releases)?);
-        }
-    }
-    Ok(tracks)
 }

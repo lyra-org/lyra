@@ -6,11 +6,15 @@
 //! Catalog queries: every catalog entity is filtered, sorted and paged by [`pipeline`].
 
 pub(crate) mod pipeline;
+pub(crate) mod releases;
 pub(crate) mod tracks;
 
 use std::{
     cmp::Ordering,
-    collections::HashSet,
+    collections::{
+        HashMap,
+        HashSet,
+    },
 };
 
 use agdb::{
@@ -160,6 +164,132 @@ pub(crate) struct ArtistCredit {
     pub(crate) artists: Vec<DbId>,
     pub(crate) role: CreditRole,
     pub(crate) excluding: Option<CreditRole>,
+}
+
+impl ArtistCredit {
+    /// The entities the filter keeps, given the entities each single role reaches from a set of
+    /// existing artists.
+    pub(crate) fn matching(
+        &self,
+        db: &DbAny,
+        reach: impl Fn(&[DbId], CreditRole) -> anyhow::Result<HashSet<DbId>>,
+    ) -> anyhow::Result<HashSet<DbId>> {
+        let artists = db::graph::existing_ids(db, &self.artists, "Artist")?;
+        let reach_role = |role| -> anyhow::Result<HashSet<DbId>> {
+            match role {
+                CreditRole::Any => {
+                    let mut reached = reach(&artists, CreditRole::Track)?;
+                    reached.extend(reach(&artists, CreditRole::Release)?);
+                    Ok(reached)
+                }
+                role => reach(&artists, role),
+            }
+        };
+        let mut matching = reach_role(self.role)?;
+        if let Some(excluding) = self.excluding {
+            let excluded = reach_role(excluding)?;
+            matching.retain(|id| !excluded.contains(id));
+        }
+        Ok(matching)
+    }
+}
+
+/// The owners of kind `Owner` that credit any of `artists`.
+pub(crate) fn credited_owners<Owner: agdb::DbType>(
+    db: &DbAny,
+    artists: &[DbId],
+) -> anyhow::Result<HashSet<DbId>> {
+    let mut owners = HashSet::new();
+    for artist in artists {
+        owners.extend(db::credits::owner_ids_by_artist::<Owner>(
+            db, *artist, 0, 0,
+        )?);
+    }
+    Ok(owners)
+}
+
+pub(crate) fn tracks_of_releases(
+    db: &DbAny,
+    releases: impl IntoIterator<Item = DbId>,
+) -> anyhow::Result<HashSet<DbId>> {
+    let mut tracks = HashSet::new();
+    for release in releases {
+        tracks.extend(db::graph::neighbor_ids(db, release, "Track")?);
+    }
+    Ok(tracks)
+}
+
+pub(crate) fn releases_of_tracks(
+    db: &DbAny,
+    tracks: impl IntoIterator<Item = DbId>,
+) -> anyhow::Result<HashSet<DbId>> {
+    let mut releases = HashSet::new();
+    for track in tracks {
+        releases.extend(db::graph::inbound_neighbor_ids(db, track, "Release")?);
+    }
+    Ok(releases)
+}
+
+/// What an entity's tracks add up to.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct TrackTotals {
+    pub(crate) track_count: u64,
+    pub(crate) total_duration: u64,
+    pub(crate) listen_count: u64,
+    pub(crate) last_played_at: Option<u64>,
+}
+
+/// Totals over each owner's tracks. Durations and listens are read only when asked for.
+pub(crate) fn track_totals(
+    db: &DbAny,
+    viewer: &Viewer,
+    tracks_by_owner: &HashMap<DbId, HashSet<DbId>>,
+    durations: bool,
+    listens: bool,
+) -> Result<HashMap<DbId, TrackTotals>, CatalogError> {
+    let tracks = tracks_by_owner
+        .values()
+        .flatten()
+        .copied()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let durations = if durations {
+        db::graph::select_fields(db, &tracks, &["duration_ms"])?
+            .into_iter()
+            .filter_map(|(id, fields)| Some((id, fields.number("duration_ms")?)))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+    let listens = if listens {
+        let user = viewer.user_db_id("listen sort keys")?;
+        db::listens::get_stats(db, &tracks, user)?
+            .into_iter()
+            .map(|stats| (stats.db_id, stats))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+    Ok(tracks_by_owner
+        .iter()
+        .map(|(owner, tracks)| {
+            let mut totals = TrackTotals {
+                track_count: tracks.len() as u64,
+                ..TrackTotals::default()
+            };
+            for track in tracks {
+                if let Some(duration) = durations.get(track) {
+                    totals.total_duration = totals.total_duration.saturating_add(*duration);
+                }
+                if let Some(stats) = listens.get(track) {
+                    totals.listen_count = totals.listen_count.saturating_add(stats.count);
+                    totals.last_played_at = totals.last_played_at.max(stats.last_played);
+                }
+            }
+            (*owner, totals)
+        })
+        .collect())
 }
 
 #[derive(Debug, thiserror::Error)]
