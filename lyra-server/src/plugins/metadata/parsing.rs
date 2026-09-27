@@ -55,15 +55,6 @@ pub(super) fn core_call_context(context: &luau::CallContext) -> CallContext {
     }
 }
 
-pub(super) fn require_positive_id(value: i64, label: &str) -> luau::runtime::Result<DbId> {
-    if value <= 0 {
-        return Err(crate::plugins::runtime_error(format!(
-            "{label} must be a positive integer, got {value}"
-        )));
-    }
-    Ok(DbId(value))
-}
-
 pub(super) fn entity_type_for_node(
     db: &agdb::DbAny,
     node_id: DbId,

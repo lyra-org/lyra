@@ -22,6 +22,7 @@ use nanoid::nanoid;
 use serde_json::Value as JsonValue;
 
 use crate::STATE;
+use crate::plugins::args;
 use crate::plugins::db;
 use crate::plugins::db as server_db;
 use crate::plugins::db::ProviderConfig;
@@ -55,7 +56,6 @@ use super::parsing::{
     parse_lyrics_spec,
     parse_option_declaration,
     parse_similar_releases_spec,
-    require_positive_id,
     required_table_string,
     string_array_from_table,
 };
@@ -824,7 +824,7 @@ fn mark_unmatched_callback(
     id_types_table: luau::Table,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
-    let node_id = require_positive_id(node_id, "node_id")?;
+    let node_id = args::positive_id(node_id, "node_id")?;
     let id_types = string_array_from_table(vm, &id_types_table)?;
     let provider_id = provider.provider_id.clone();
     if id_types.is_empty() {
@@ -908,8 +908,8 @@ fn link_credit_callback(
     detail: Option<String>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
-    let owner_id = require_positive_id(owner_id, "owner_id")?;
-    let artist_id = require_positive_id(artist_id, "artist_id")?;
+    let owner_id = args::positive_id(owner_id, "owner_id")?;
+    let artist_id = args::positive_id(artist_id, "artist_id")?;
     let credit_type = credit_type.unwrap_or(server_db::CreditType::Artist);
     let detail = detail.and_then(|value| {
         let trimmed = value.trim().to_string();
@@ -988,7 +988,7 @@ fn reconcile_artist_credits_callback(
     credits: luau::Table,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
-    let owner_id = require_positive_id(owner_id, "owner_id")?;
+    let owner_id = args::positive_id(owner_id, "owner_id")?;
     let mut entries = Vec::new();
     for (key, value) in credits.pairs_raw(vm)? {
         let index = match key {
@@ -1010,9 +1010,9 @@ fn reconcile_artist_credits_callback(
             ));
         };
         let artist_id = match credit.get_raw(vm, "artist_id")? {
-            luau::Value::Integer(id) => require_positive_id(id, "artist_id")?,
+            luau::Value::Integer(id) => args::positive_id(id, "artist_id")?,
             luau::Value::Number(id) if id.is_finite() && id.fract() == 0.0 => {
-                require_positive_id(id as i64, "artist_id")?
+                args::positive_id(id as i64, "artist_id")?
             }
             _ => {
                 return Err(crate::plugins::runtime_error(
@@ -1082,8 +1082,8 @@ fn link_artist_relation_callback(
     attributes: Option<String>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
-    let from_artist_id = require_positive_id(from_artist_id, "from_artist_id")?;
-    let to_artist_id = require_positive_id(to_artist_id, "to_artist_id")?;
+    let from_artist_id = args::positive_id(from_artist_id, "from_artist_id")?;
+    let to_artist_id = args::positive_id(to_artist_id, "to_artist_id")?;
     let attributes = attributes.and_then(|value| {
         let trimmed = value.trim().to_string();
         if trimmed.is_empty() {
@@ -1148,7 +1148,7 @@ fn layer_callback(
     node_id: i64,
 ) -> luau::runtime::Result<luau::Value> {
     ensure_provider_owner(context, &provider.plugin_id, &provider.provider_id)?;
-    let node_id = require_positive_id(node_id, "node_id")?;
+    let node_id = args::positive_id(node_id, "node_id")?;
     let store = vm.data().get::<MetadataModuleStore>()?.as_ref().clone();
     MetadataLayer::new_value(vm, origin, store, node_id, provider.provider_id.clone())
 }

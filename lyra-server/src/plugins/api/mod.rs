@@ -161,6 +161,7 @@ use harmony_luau::{
 use tower::ServiceExt;
 use tower_http::services::ServeDir;
 
+use crate::plugins::args;
 #[cfg(feature = "docgen")]
 use crate::plugins::auth::{
     AuthCredential,
@@ -476,12 +477,7 @@ fn track_response_callback(
     frame: &mut luau::CallFrame<'_>,
     kind: &'static str,
 ) -> luau::runtime::Result<()> {
-    let track_id: i64 = frame.args.read_named("track_id")?;
-    if track_id <= 0 {
-        return Err(crate::plugins::runtime_error(
-            "track_id must be a positive id",
-        ));
-    }
+    let track_id = args::positive_id(frame.args.read_named("track_id")?, "track_id")?.0;
     let options = optional_value(frame.args.read_optional_named("options")?);
     let mut response = kind_table(kind);
     response.set_field("track_id", luau::Value::from(track_id));

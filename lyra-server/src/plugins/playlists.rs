@@ -808,18 +808,7 @@ fn remove_tracks_callback(
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
     let playlist_id = args::resolve_id(frame.args.read_named::<luau::Value>("playlist_id")?)?;
     let entry_ids: luau::Table = frame.args.read_named("entry_ids")?;
-    let entry_ids = args::array_values(frame.vm, &entry_ids)?
-        .into_iter()
-        .map(|(index, value)| match value {
-            luau::Value::String(bytes) => {
-                String::from_utf8(bytes).map_err(crate::plugins::runtime_error)
-            }
-            other => Err(crate::plugins::runtime_error(format!(
-                "entry id {index} must be a string, got {}",
-                other.type_name()
-            ))),
-        })
-        .collect::<luau::runtime::Result<Vec<_>>>()?;
+    let entry_ids = args::strings(frame.vm, &entry_ids)?;
     let db = frame.vm.data().get::<PlaylistsModuleStore>()?.db()?;
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
@@ -935,9 +924,9 @@ fn parse_create_request(
     table: luau::Table,
 ) -> luau::runtime::Result<PlaylistCreateRequest> {
     Ok(PlaylistCreateRequest {
-        name: parse_required_string_field(vm, &table, "name")?,
-        description: parse_optional_string_field(vm, &table, "description")?,
-        is_public: parse_optional_bool_field(vm, &table, "is_public")?,
+        name: luau::table::required_string_field(vm, &table, "name")?,
+        description: luau::table::optional_string_field(vm, &table, "description")?,
+        is_public: luau::table::optional_bool_field(vm, &table, "is_public")?,
         created_at: args::optional_u64(vm, &table, "created_at")?,
         updated_at: args::optional_u64(vm, &table, "updated_at")?,
         track_ids: args::optional_id_sequence(vm, &table, "track_ids")?,
@@ -990,62 +979,11 @@ fn parse_replace_request(
 
 fn parse_fields(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<PlaylistFields> {
     Ok(PlaylistFields {
-        name: parse_optional_string_field(vm, table, "name")?,
-        description: parse_optional_string_field(vm, table, "description")?,
-        is_public: parse_optional_bool_field(vm, table, "is_public")?,
+        name: luau::table::optional_string_field(vm, table, "name")?,
+        description: luau::table::optional_string_field(vm, table, "description")?,
+        is_public: luau::table::optional_bool_field(vm, table, "is_public")?,
         updated_at: args::optional_u64(vm, table, "updated_at")?,
     })
-}
-
-fn parse_required_string_field(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<String> {
-    match table.get_raw(vm, key)? {
-        luau::Value::String(bytes) => {
-            String::from_utf8(bytes).map_err(crate::plugins::runtime_error)
-        }
-        luau::Value::Nil => Err(crate::plugins::runtime_error(format!(
-            "missing required field: {key}"
-        ))),
-        other => Err(crate::plugins::runtime_error(format!(
-            "{key} must be a string, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
-fn parse_optional_string_field(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Option<String>> {
-    match table.get_raw(vm, key)? {
-        luau::Value::Nil => Ok(None),
-        luau::Value::String(bytes) => Ok(Some(
-            String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?,
-        )),
-        other => Err(crate::plugins::runtime_error(format!(
-            "{key} must be a string, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
-fn parse_optional_bool_field(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Option<bool>> {
-    match table.get_raw(vm, key)? {
-        luau::Value::Nil => Ok(None),
-        luau::Value::Boolean(value) => Ok(Some(value)),
-        other => Err(crate::plugins::runtime_error(format!(
-            "{key} must be a boolean, got {}",
-            other.type_name()
-        ))),
-    }
 }
 
 impl LuauTypeInfo for PlaylistInfo {
