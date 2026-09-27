@@ -47,6 +47,72 @@ local user_data = require("./user_data")
 -- Internal helpers table to reduce top-level local count.
 local helpers = {}
 
+-- Tracks credited to one artist list, in the role that list names; two different lists fall back.
+local function track_artist_credit(
+	track_artist_ids: { number },
+	release_artist_ids: { number }
+): ({ number }?, CreditRole?)
+	if #track_artist_ids == 0 and #release_artist_ids == 0 then
+		return nil, nil
+	end
+	if #release_artist_ids == 0 then
+		return track_artist_ids, "track"
+	end
+	if #track_artist_ids == 0 then
+		return release_artist_ids, "release"
+	end
+	if #track_artist_ids ~= #release_artist_ids then
+		return nil, nil
+	end
+	for index, artist_id in track_artist_ids do
+		if release_artist_ids[index] ~= artist_id then
+			return nil, nil
+		end
+	end
+	return track_artist_ids, "any"
+end
+
+local function normalize_sort_order(value: string?): "ascending" | "descending"
+	if value ~= nil and string.lower(value) == "descending" then
+		return "descending"
+	end
+	return "ascending"
+end
+
+-- Pairs each SortBy token with the SortOrder at its index; tokens past the orders take the first.
+local function track_sort(sort_tokens: { string }, sort_order: string?): { TrackSortTerm }
+	local orders: { string } = string.split(sort_order or "", ",")
+	local sort: { TrackSortTerm } = {}
+	for index, token in sort_tokens do
+		local key = sorting.server_sort_key(token)
+		if key then
+			local order: string? = if index <= #orders then orders[index] else orders[1]
+			local term: TrackSortTerm = {
+				key = key :: TrackSortKey,
+				order = normalize_sort_order(order),
+			}
+			table.insert(sort, term)
+		end
+	end
+	return sort
+end
+
+-- Scopes a track query to the parent library or release; false when the parent is neither.
+local function scope_track_query(parent_scope: ParentScopeInfo, query: TrackQuery): boolean
+	if parent_scope.db_id == nil then
+		return true
+	end
+	if parent_scope.entity_type == "Library" then
+		query.library_id = parent_scope.db_id
+		return true
+	end
+	if parent_scope.entity_type == "Release" then
+		query.release_ids = { parent_scope.db_id :: number }
+		return true
+	end
+	return false
+end
+
 function helpers.is_library_root(hex_id: string): boolean
 	local nanoid = item_ids.hex_to_nanoid(hex_id)
 	if not nanoid then
@@ -77,8 +143,10 @@ type ArtistQueryOptions = artists_module.ArtistQueryOptions
 type CreditedArtistQueryOptions = artists_module.CreditedArtistQueryOptions
 type ArtistQueryResult = artists_module.ArtistQueryResult
 type ArtistRelationInfo = artists_module.ArtistRelationInfo
-type TrackQueryOptions = tracks.TrackQueryOptions
-type TrackQueryResult = tracks.TrackQueryResult
+type TrackQuery = tracks.TrackQuery
+type TrackSortKey = tracks.TrackSortKey
+type CreditRole = tracks.CreditRole
+type TrackSortTerm = { key: TrackSortKey, order: ("ascending" | "descending")? }
 type Track = tracks.Track
 type Release = releases.Release
 type Artist = artists_module.Artist
@@ -596,13 +664,6 @@ function helpers.lower_or_empty(value: JsonValue): string
 	end
 
 	return string.lower(tostring(value))
-end
-
-function helpers.normalize_sort_order(value: string?): "ascending" | "descending"
-	if value ~= nil and string.lower(value) == "descending" then
-		return "descending"
-	end
-	return "ascending"
 end
 
 function helpers.resolve_release_genres(db_id: number?): { genres.GenreInfo }?
@@ -4032,7 +4093,7 @@ function helpers.query_person_artists(
 	local query_opts: CreditedArtistQueryOptions = {
 		scope = scope,
 		sort_by = if sort_tokens then sorting.server_sort_keys(sort_tokens) else nil,
-		sort_order = if sort_tokens then helpers.normalize_sort_order(options.sort_order) else nil,
+		sort_order = if sort_tokens then normalize_sort_order(options.sort_order) else nil,
 		offset = if paginated then options.start_index else nil,
 		limit = if paginated then options.limit else nil,
 		search_term = options.search_term,
@@ -4415,30 +4476,34 @@ function helpers.list_items_by_artist_ids(
 		and (release_query_allowed or track_query_allowed)
 	then
 		if entity_type == "track" then
-			local query_opts: TrackQueryOptions = {
-				scope = scope,
-				artist_ids = if has_track_artist_filter then decoded_track_artist_ids else nil,
-				release_artist_ids = if has_release_artist_filter then decoded_release_artist_ids else nil,
-				sort_by = sorting.server_sort_keys(sort_tokens),
-				sort_order = helpers.normalize_sort_order(options.sort_order),
+			local artist_ids, credit_role = track_artist_credit(
+				has_track_artist_filter and decoded_track_artist_ids or {},
+				has_release_artist_filter and decoded_release_artist_ids or {}
+			)
+			local query: TrackQuery = {
+				artist_ids = artist_ids,
+				credit_role = credit_role,
+				sort = track_sort(sort_tokens, options.sort_order),
 				offset = options.start_index,
 				limit = options.limit,
-				search_term = options.search_term,
+				search = options.search_term,
 			}
-			local ok, result = pcall(tracks.query, query_opts)
-			if ok and type(result) == "table" then
-				local stubs: { ItemInfo } = {}
-				helpers.append_track_stubs(stubs, result.entities)
+			if artist_ids ~= nil and scope_track_query(parent_scope, query) then
+				local ok, result = pcall(tracks.query, query)
+				if ok and type(result) == "table" then
+					local stubs: { ItemInfo } = {}
+					helpers.append_track_stubs(stubs, result.items)
 
-				local items = helpers.realize_stubs(stubs, options)
-				return items, result.total_count, result.offset
+					local items = helpers.realize_stubs(stubs, options)
+					return items, result.total, result.offset
+				end
 			end
 		elseif entity_type == "release" then
 			local query_opts: ReleaseQueryOptions = {
 				scope = scope,
 				artist_ids = decoded_artist_ids,
 				sort_by = sorting.server_sort_keys(sort_tokens),
-				sort_order = helpers.normalize_sort_order(options.sort_order),
+				sort_order = normalize_sort_order(options.sort_order),
 				offset = options.start_index,
 				limit = options.limit,
 				search_term = options.search_term,
@@ -4733,26 +4798,25 @@ function helpers.query_single_type_with_sort(
 		local items = helpers.realize_stubs(stubs, options)
 		return items, result.total_count, result.offset
 	elseif entity_type == "track" then
-		local query_opts: TrackQueryOptions = {
-			scope = scope,
-			artist_ids = nil,
-			release_artist_ids = nil,
-			sort_by = sort_by,
-			sort_order = sort_order,
+		local query: TrackQuery = {
+			sort = track_sort(sorting.tokens(options), options.sort_order),
 			offset = options.start_index,
 			limit = options.limit,
-			search_term = options.search_term,
+			search = options.search_term,
 		}
-		local ok, result = pcall(tracks.query, query_opts)
+		if not scope_track_query(parent_scope, query) then
+			return nil, nil, nil
+		end
+		local ok, result = pcall(tracks.query, query)
 		if not ok or type(result) ~= "table" then
 			return nil, nil, nil
 		end
 
 		local stubs: { ItemInfo } = {}
-		helpers.append_track_stubs(stubs, result.entities)
+		helpers.append_track_stubs(stubs, result.items)
 
 		local items = helpers.realize_stubs(stubs, options)
-		return items, result.total_count, result.offset
+		return items, result.total, result.offset
 	end
 
 	return nil, nil, nil
@@ -4783,7 +4847,7 @@ function helpers.try_query_single_type_items(
 		options,
 		parent_scope,
 		sorting.server_sort_keys(sort_tokens),
-		helpers.normalize_sort_order(options.sort_order)
+		normalize_sort_order(options.sort_order)
 	)
 end
 
@@ -5714,7 +5778,7 @@ function module.list_artist_items(options: ItemsQueryOptions): ({ ItemInfo }, nu
 		and not helpers.wants_favorite_only(options)
 		and helpers.can_use_paginated_query(options)
 	then
-		local sort_order = helpers.normalize_sort_order(options.sort_order)
+		local sort_order = normalize_sort_order(options.sort_order)
 		local query_opts: ArtistQueryOptions = {
 			scope = scope,
 			sort_by = sorting.server_sort_keys(sort_tokens),

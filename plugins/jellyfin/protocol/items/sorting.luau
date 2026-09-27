@@ -288,6 +288,10 @@ function module.server_sortable(sort_tokens: { string }, entity_type: string): b
 	return true
 end
 
+function module.server_sort_key(sort_token: string): string?
+	return SERVER_SORT_KEYS[lower_or_empty(sort_token)]
+end
+
 function module.server_sort_keys(sort_tokens: { string }): { string }
 	local mapped: { string } = {}
 	for _, token: string in sort_tokens do
