@@ -242,6 +242,11 @@ pub(crate) fn credit_fields() -> Vec<FieldDescriptor> {
         field("artist_ids", Option::<Vec<u64>>::luau_type()),
         field("credit_role", role.clone()),
         field("exclude_credit_role", role),
+        FieldDescriptor {
+            name: "exclude_artist_ids",
+            ty: Option::<Vec<u64>>::luau_type(),
+            description: Some("Leaves out items credited to these artists in either role."),
+        },
     ]
 }
 
