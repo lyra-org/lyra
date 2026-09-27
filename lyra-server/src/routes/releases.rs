@@ -1143,17 +1143,92 @@ mod tests {
             set_release_fields(&mut db, zulu, Some("Alpha"), None)?;
             insert_test_release(&mut db, "Beta")?;
             insert_test_release(&mut db, "beta")?;
+            for title in ["Mike", "Lima"] {
+                let release = insert_test_release(&mut db, title)?;
+                set_release_fields(&mut db, release, Some("Delta"), None)?;
+            }
         }
         let headers = create_admin_headers("release-default-admin").await?;
 
         assert_eq!(
             list_release_titles(headers.clone(), None, None).await?,
-            vec!["Zulu", "Beta", "beta", "Charlie"]
+            vec!["Zulu", "Beta", "beta", "Charlie", "Lima", "Mike"]
         );
         assert_eq!(
             list_release_titles(headers, Some("sort_name"), Some("descending")).await?,
-            vec!["Charlie", "Beta", "beta", "Zulu"]
+            vec!["Lima", "Mike", "Charlie", "Beta", "beta", "Zulu"]
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_releases_resume_rechecks_access() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let (user_db_id, library, releases) = {
+            let mut db = STATE.db.write().await;
+            let user_db_id = db::test_db::insert_user(&mut db, "release-resume")?;
+            let library = insert_library(&mut db, "Release Resume", "/tmp/lyra-release-resume")?;
+            db::libraries::grant_access(
+                &mut *db,
+                user_db_id,
+                library,
+                db::libraries::AccessKind::ReadWrite,
+            )?;
+            let mut releases = Vec::new();
+            for title in ["First", "Second"] {
+                let release = insert_test_release(&mut db, title)?;
+                connect(&mut db, library, release)?;
+                releases.push(release);
+            }
+            (user_db_id, library, releases)
+        };
+        let session = crate::testing::create_session(user_db_id, Default::default()).await?;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            format!("Bearer {}", session.token)
+                .parse()
+                .expect("valid auth header"),
+        );
+        let page = |cursor: Option<String>| {
+            Query(ReleaseListQuery {
+                inc: None,
+                query: None,
+                year: None,
+                library_id: None,
+                genre_id: None,
+                sort_by: None,
+                sort_order: None,
+                rating: RatingFilterQuery::default(),
+                page: super::super::PageQuery {
+                    limit: Some(1),
+                    cursor,
+                },
+            })
+        };
+
+        let Json(first) = get_releases(headers.clone(), page(None))
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert_eq!(first.items.len(), 1);
+        let cursor = first
+            .next_cursor
+            .ok_or_else(|| anyhow::anyhow!("expected a second page"))?;
+
+        {
+            let mut db = STATE.db.write().await;
+            for release in releases {
+                db::graph::remove_edges_between(&mut *db, library, release)?;
+            }
+        }
+
+        let Json(second) = get_releases(headers, page(Some(cursor)))
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert!(second.items.is_empty());
+        assert!(second.next_cursor.is_none());
         Ok(())
     }
 

@@ -1612,12 +1612,19 @@ mod tests {
             db::artists::update(&mut db, &artist)?;
             insert_artist(&mut db, "Beta")?;
             insert_artist(&mut db, "beta")?;
+            for name in ["Mike", "Lima"] {
+                let artist_db_id = insert_artist(&mut db, name)?;
+                let mut artist = db::artists::get_by_id(&db, artist_db_id)?
+                    .ok_or_else(|| anyhow::anyhow!("artist missing"))?;
+                artist.set_sort_name("Delta".to_string());
+                db::artists::update(&mut db, &artist)?;
+            }
         }
         let principal = admin_principal(HashSet::new());
 
         assert_eq!(
             list_artist_names(&principal, list_options(None, None)).await?,
-            vec!["Zulu", "Beta", "beta", "Charlie"]
+            vec!["Zulu", "Beta", "beta", "Charlie", "Lima", "Mike"]
         );
         assert_eq!(
             list_artist_names(
@@ -1625,8 +1632,58 @@ mod tests {
                 list_options(Some("sort_name"), Some("descending"))
             )
             .await?,
-            vec!["Charlie", "Beta", "beta", "Zulu"]
+            vec!["Lima", "Mike", "Charlie", "Beta", "beta", "Zulu"]
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_artist_responses_resume_rechecks_access() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        let _test_dir = initialize_test_runtime().await?;
+
+        let (library_id, library, release) = {
+            let mut db = STATE.db.write().await;
+            let library = insert_library(&mut db, "Artist Resume", "/tmp/lyra-artist-resume")?;
+            let release = insert_release(&mut db, "Resume Release")?;
+            connect(&mut db, library, release)?;
+            for name in ["First", "Second"] {
+                let artist = insert_artist(&mut db, name)?;
+                connect_artist(&mut db, release, artist)?;
+            }
+            let library_id = db::libraries::get_by_id(&db, library)?
+                .ok_or_else(|| anyhow::anyhow!("library missing"))?
+                .id;
+            (library_id, library, release)
+        };
+        let principal = user_principal(HashSet::from([library_id]));
+        let page = |cursor: Option<String>| ArtistListOptions {
+            page_request: super::super::PageQuery {
+                limit: Some(1),
+                cursor,
+            }
+            .resolve_snapshot(),
+            ..list_options(None, None)
+        };
+
+        let first = list_artist_responses(&principal, page(None))
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert_eq!(first.items.len(), 1);
+        let cursor = first
+            .next_cursor
+            .ok_or_else(|| anyhow::anyhow!("expected a second page"))?;
+
+        {
+            let mut db = STATE.db.write().await;
+            db::graph::remove_edges_between(&mut *db, library, release)?;
+        }
+
+        let second = list_artist_responses(&principal, page(Some(cursor)))
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert!(second.items.is_empty());
+        assert!(second.next_cursor.is_none());
         Ok(())
     }
 
