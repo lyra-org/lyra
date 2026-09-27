@@ -1279,10 +1279,8 @@ fn plugin_executor_exposes_db_backed_lyra_releases_module() -> Result<()> {
                 local appearances = releases.get_appearances(guest_artist_id)
                 local many = releases.list_many({{ track_db_id, track_db_id }})
                 local queried = releases.query({{
-                    scope = "releases",
-                    search_term = "Module",
-                    sort_by = {{ "name" }},
-                    sort_order = "ascending",
+                    search = "Module",
+                    sort = {{ {{ key = "name" }} }},
                     limit = 5,
                 }})
 
@@ -1291,8 +1289,8 @@ fn plugin_executor_exposes_db_backed_lyra_releases_module() -> Result<()> {
                     by_artist[1].release_title,
                     appearances[1].release_title,
                     many[track_db_id][1].release_title,
-                    queried.entities[1].release_title,
-                    queried.total_count,
+                    queried.items[1].release_title,
+                    queried.total,
                     queried.offset
             "#,
             release_db_id = release_db_id.0,

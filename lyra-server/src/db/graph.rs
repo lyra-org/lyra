@@ -143,6 +143,26 @@ pub(crate) fn neighbor_ids(
         .ids())
 }
 
+/// The `kind` nodes one incoming edge from `to`.
+pub(crate) fn inbound_neighbor_ids(
+    db: &impl DbAccess,
+    to: DbId,
+    kind: &str,
+) -> anyhow::Result<Vec<DbId>> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .to(to)
+                .where_()
+                .neighbor()
+                .and()
+                .key("db_element_id")
+                .value(kind)
+                .query(),
+        )?
+        .ids())
+}
+
 /// The ids that name an existing `kind` node, in order.
 pub(crate) fn existing_ids(
     db: &impl DbAccess,

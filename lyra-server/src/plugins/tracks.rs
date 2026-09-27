@@ -228,20 +228,13 @@ fn list_many_callback(
 
 fn read_filter(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<TrackFilter> {
     Ok(TrackFilter {
-        ids: luau::table::optional_table_field(vm, table, "ids")?
-            .map(|ids| args::unique_ids(vm, &ids))
-            .transpose()?,
+        ids: catalog::optional_ids(vm, table, "ids")?,
         exclude_ids: args::optional_unique_ids(vm, table, "exclude_ids")?,
         library: args::optional_positive_id(vm, table, "library_id")?,
-        releases: luau::table::optional_table_field(vm, table, "release_ids")?
-            .map(|ids| args::unique_ids(vm, &ids))
-            .transpose()?,
+        releases: catalog::optional_ids(vm, table, "release_ids")?,
         artists: catalog::read_artist_credit(vm, table)?,
         genres: args::optional_unique_ids(vm, table, "genre_ids")?,
-        years: luau::table::optional_table_field(vm, table, "years")?
-            .map(|years| args::integers(vm, &years))
-            .transpose()?
-            .unwrap_or_default(),
+        years: catalog::read_years(vm, table)?,
         favorite: luau::table::optional_bool_field(vm, table, "favorite")?,
         listened: luau::table::optional_bool_field(vm, table, "listened")?,
         rating: Default::default(),

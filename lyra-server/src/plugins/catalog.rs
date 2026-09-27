@@ -110,6 +110,24 @@ fn read_sort<K: SortKey>(
         .collect()
 }
 
+/// The ids of the optional array field `key`, or `None` when absent.
+pub(crate) fn optional_ids(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &str,
+) -> luau::runtime::Result<Option<Vec<agdb::DbId>>> {
+    luau::table::optional_table_field(vm, table, key)?
+        .map(|ids| args::unique_ids(vm, &ids))
+        .transpose()
+}
+
+pub(crate) fn read_years(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<u32>> {
+    Ok(luau::table::optional_table_field(vm, table, "years")?
+        .map(|years| args::integers(vm, &years))
+        .transpose()?
+        .unwrap_or_default())
+}
+
 /// The `artist_ids` filter with its `credit_role` and `exclude_credit_role`.
 pub(crate) fn read_artist_credit(
     vm: &luau::Vm,

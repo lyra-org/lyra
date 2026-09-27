@@ -6,7 +6,7 @@ use crate::plugins::db::{
 
 fn tracks_runtime(db: agdb::DbAny) -> Result<PluginExecutor> {
     PluginExecutor::with_database(
-        Arc::from(vec![manifest("demo", &["lyra.tracks"])]),
+        Arc::from(vec![manifest("demo", &["lyra.releases", "lyra.tracks"])]),
         default_server_info(),
         std::sync::Arc::new(tokio::sync::RwLock::new(db)),
     )
@@ -257,6 +257,15 @@ fn catalog() -> Result<Catalog> {
 impl Catalog {
     /// The titles `tracks.query(<query>)` returns for the admin.
     fn titles(&self, query: &str) -> Result<Vec<String>> {
+        self.names("tracks", "track_title", query)
+    }
+
+    /// The titles `releases.query(<query>)` returns for the admin.
+    fn release_titles(&self, query: &str) -> Result<Vec<String>> {
+        self.names("releases", "release_title", query)
+    }
+
+    fn names(&self, module: &str, name: &str, query: &str) -> Result<Vec<String>> {
         let mut context = CallContext {
             origin: plugin_origin("demo", "init.luau"),
             ..CallContext::default()
@@ -265,13 +274,13 @@ impl Catalog {
         let values = self.runtime.eval_plugin_source_with_call_context(
             format!(
                 r#"
-                    local tracks = require("@lyra/tracks")
-                    local page = tracks.query({query})
-                    local titles = {{}}
-                    for _, track in page.items do
-                        table.insert(titles, track.track_title)
+                    local catalog = require("@lyra/{module}")
+                    local page = catalog.query({query})
+                    local names = {{}}
+                    for _, item in page.items do
+                        table.insert(names, item.{name})
                     end
-                    return table.unpack(titles)
+                    return table.unpack(names)
                 "#
             )
             .into_bytes(),
@@ -356,6 +365,11 @@ fn track_query_sorts_each_key_in_its_own_direction() -> Result<()> {
         catalog.titles(r#"{ sort = { { key = "artist_name" } } }"#)?,
         vec!["Alpha", "Delta", "Echo", "Bravo", "Charlie"],
         "tracks without a credited artist sort last"
+    );
+    assert_eq!(
+        catalog.titles(r#"{ sort = { { key = "release_artist_name" } } }"#)?,
+        vec!["Alpha", "Bravo", "Charlie", "Delta", "Echo"],
+        "tracks sort by their release's artist, and a release without one sorts last"
     );
     assert_eq!(
         catalog.titles(&format!(
@@ -512,5 +526,43 @@ fn track_query_treats_missing_and_hidden_ids_alike() -> Result<()> {
             "missing {field}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn release_query_filters_and_sorts_by_its_tracks() -> Result<()> {
+    let catalog = catalog()?;
+    assert_eq!(
+        catalog.release_titles("{ listened = true }")?,
+        Vec::<String>::new(),
+        "a release is listened only once every track is"
+    );
+    assert_eq!(
+        catalog.release_titles("{ listened = false }")?,
+        vec!["Album", "Other"]
+    );
+    let amy = catalog.amy.0;
+    assert_eq!(
+        catalog.release_titles(&format!(
+            r#"{{ artist_ids = {{ {amy} }}, credit_role = "release" }}"#
+        ))?,
+        vec!["Album"]
+    );
+    assert_eq!(
+        catalog.release_titles(&format!(
+            r#"{{ artist_ids = {{ {amy} }}, credit_role = "track", exclude_credit_role = "release" }}"#
+        ))?,
+        vec!["Other"]
+    );
+    assert_eq!(
+        catalog
+            .release_titles(r#"{ sort = { { key = "track_count", order = "descending" } } }"#)?,
+        vec!["Album", "Other"]
+    );
+    assert_eq!(
+        catalog
+            .release_titles(r#"{ sort = { { key = "listen_count", order = "descending" } } }"#)?,
+        vec!["Album", "Other"]
+    );
     Ok(())
 }

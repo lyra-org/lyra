@@ -14,8 +14,6 @@ use agdb::{
 use crate::db::{
     self,
     Entry,
-    ListOptions,
-    PagedResult,
     Release,
     Track,
 };
@@ -73,69 +71,6 @@ pub(crate) fn get_many_by_track(
     track_ids: &[DbId],
 ) -> anyhow::Result<HashMap<DbId, Vec<Release>>> {
     db::releases::get_by_tracks(db, track_ids)
-}
-
-pub(crate) fn query(
-    db: &DbAny,
-    scope: Option<QueryId>,
-    list_options: &ListOptions,
-) -> anyhow::Result<PagedResult<Release>> {
-    let from = match scope {
-        None => QueryId::Alias("releases".to_string()),
-        Some(query_id) => query_id,
-    };
-
-    match from {
-        QueryId::Id(node_id) if db::tracks::get_by_id(db, node_id)?.is_some() => {
-            // Preserve releases-by-track behavior with manual search/pagination.
-            let mut releases = db::releases::get_by_track(db, node_id)?;
-            if let Some(ref term) = list_options.search_term {
-                db::search::fuzzy_filter(
-                    &mut releases,
-                    term,
-                    |release| release.release_title.as_str(),
-                    |_, _| {},
-                );
-            }
-            let total_count = releases.len() as u64;
-            let offset = list_options.offset.unwrap_or(0).min(total_count);
-            let entries = match list_options.limit {
-                Some(limit) => releases
-                    .into_iter()
-                    .skip(offset as usize)
-                    .take(limit as usize)
-                    .collect(),
-                None => releases.into_iter().skip(offset as usize).collect(),
-            };
-
-            Ok(PagedResult {
-                entries,
-                total_count,
-                offset,
-            })
-        }
-        other => db::releases::query(
-            db,
-            other,
-            list_options,
-            &db::releases::ReleaseQueryFilters::default(),
-        ),
-    }
-}
-
-pub(crate) fn query_by_artists(
-    db: &DbAny,
-    artist_ids: &[DbId],
-    scope: Option<QueryId>,
-    list_options: &ListOptions,
-) -> anyhow::Result<PagedResult<Release>> {
-    db::releases::query_by_artists(
-        db,
-        artist_ids,
-        scope,
-        list_options,
-        &db::releases::ReleaseQueryFilters::default(),
-    )
 }
 
 pub(crate) fn get_appearances(db: &DbAny, artist_id: DbId) -> anyhow::Result<Vec<Release>> {
@@ -240,51 +175,31 @@ mod tests {
     };
 
     use super::*;
+    use crate::db::Artist;
     use crate::db::test_db::{
         connect_artist,
         new_test_db,
     };
-    use crate::db::{
-        Artist,
-        SortDirection,
-        SortKey,
-        SortSpec,
+    use crate::services::catalog::{
+        self,
+        pipeline::Catalog,
+        releases::{
+            ReleaseFilter,
+            ReleaseKey,
+            Releases,
+        },
     };
     use crate::services::entities::ArtistCreditSource;
+    use anyhow::Context;
     use nanoid::nanoid;
 
-    #[derive(Clone, Debug, Default)]
-    struct ReleaseListFilters {
-        year: Option<u32>,
-        genres: Vec<String>,
-    }
-
-    fn list_details_with_options(
+    fn list_details_with_query(
         db: &DbAny,
         includes: ReleaseIncludes,
-        list_options: ListOptions,
-        filters: ReleaseListFilters,
+        query: &catalog::Query<Releases>,
     ) -> anyhow::Result<Vec<ReleaseDetails>> {
-        let ids = if !filters.genres.is_empty() {
-            Some(db::genres::release_ids_matching_genres(
-                db,
-                &filters.genres,
-            )?)
-        } else {
-            None
-        };
-
-        let query_filters = db::releases::ReleaseQueryFilters {
-            year: filters.year,
-            ids,
-        };
-        let releases = db::releases::query(
-            db,
-            QueryId::Alias("releases".to_string()),
-            &list_options,
-            &query_filters,
-        )?
-        .entries;
+        let ids = catalog::order(db, &catalog::Viewer::System, query)?;
+        let releases = Releases::hydrate(db, &ids)?;
         list_details_for_releases(db, includes, releases)
     }
 
@@ -333,7 +248,7 @@ mod tests {
     }
 
     #[test]
-    fn list_details_with_options_filters_by_query_year_and_genre() -> anyhow::Result<()> {
+    fn list_details_with_query_filters_by_search_year_and_genre() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         insert_release(
             &mut db,
@@ -357,18 +272,14 @@ mod tests {
             Some(vec!["Rock"]),
         )?;
 
-        let list_options = ListOptions {
-            sort: Vec::new(),
-            offset: None,
-            limit: None,
-            search_term: Some("blue".to_string()),
-        };
-        let filters = ReleaseListFilters {
-            year: Some(2010),
-            genres: vec!["rock".to_string()],
-        };
-        let details =
-            list_details_with_options(&db, ReleaseIncludes::default(), list_options, filters)?;
+        let rock = db::genres::find_by_name(&db, "rock")?.context("rock genre")?;
+        let mut query = catalog::Query::<Releases>::new(ReleaseFilter {
+            years: vec![2010],
+            genres: vec![rock],
+            ..ReleaseFilter::default()
+        });
+        query.search = Some("blue".to_string());
+        let details = list_details_with_query(&db, ReleaseIncludes::default(), &query)?;
 
         assert_eq!(details.len(), 1);
         assert_eq!(details[0].release.release_title, "Blue Sky Noise");
@@ -493,27 +404,15 @@ mod tests {
     }
 
     #[test]
-    fn list_details_with_options_applies_sorting() -> anyhow::Result<()> {
+    fn list_details_with_query_applies_sorting() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         insert_release(&mut db, "First", Some("alpha"), None, None)?;
         insert_release(&mut db, "Second", Some("charlie"), None, None)?;
         insert_release(&mut db, "Third", Some("bravo"), None, None)?;
 
-        let list_options = ListOptions {
-            sort: vec![SortSpec {
-                key: SortKey::SortName,
-                direction: SortDirection::Descending,
-            }],
-            offset: None,
-            limit: None,
-            search_term: None,
-        };
-        let details = list_details_with_options(
-            &db,
-            ReleaseIncludes::default(),
-            list_options,
-            ReleaseListFilters::default(),
-        )?;
+        let mut query = catalog::Query::<Releases>::new(ReleaseFilter::default());
+        query.sort = vec![(ReleaseKey::SortName, catalog::Direction::Descending)];
+        let details = list_details_with_query(&db, ReleaseIncludes::default(), &query)?;
         let titles: Vec<String> = details
             .into_iter()
             .map(|detail| detail.release.release_title)

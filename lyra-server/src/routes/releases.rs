@@ -28,22 +28,12 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use std::{
-    cmp::Ordering,
-    collections::{
-        HashMap,
-        HashSet,
-    },
-};
 
 use crate::{
     STATE,
     db::{
         self,
-        ListOptions,
         Permission,
-        SortDirection,
-        SortKey,
     },
     routes::AppError,
     routes::{
@@ -59,6 +49,14 @@ use crate::{
     },
     services::{
         auth::require_authenticated,
+        catalog::{
+            self,
+            pipeline::Catalog,
+            releases::{
+                ReleaseFilter,
+                Releases,
+            },
+        },
         covers,
         pagination::SnapshotKey,
         releases,
@@ -110,7 +108,7 @@ pub(crate) struct ReleaseListQuery {
     #[cfg_attr(
         feature = "docgen",
         schemars(
-            description = "Comma-separated or repeated values: sort_name, name, date_created, release_date, last_played_at, listen_count, total_duration, id."
+            description = "Comma-separated or repeated values: name, sort_name, date_created, release_date, year, total_duration, track_count, artist_name, listen_count, last_played_at, relevance (with query), random, id."
         )
     )]
     #[serde(default, deserialize_with = "deserialize_inc")]
@@ -201,50 +199,6 @@ pub(crate) fn parse_release_includes(
     Ok((includes, parsed.covers, parsed.genres, parsed.artist_covers))
 }
 
-#[derive(Clone, Copy, Debug)]
-enum ReleaseRouteSortKey {
-    Field(SortKey),
-    ListenCount,
-    LastPlayedAt,
-    TotalDuration,
-}
-
-type ReleaseRouteSortSpec = super::RouteSortSpec<ReleaseRouteSortKey>;
-
-fn parse_sort_specs(
-    sort_by: Option<Vec<String>>,
-    sort_order: Option<String>,
-) -> Result<Vec<ReleaseRouteSortSpec>, AppError> {
-    super::parse_route_sort_specs(
-        sort_by,
-        sort_order,
-        |token| match token {
-            "listen_count" => Some(ReleaseRouteSortKey::ListenCount),
-            "last_played_at" => Some(ReleaseRouteSortKey::LastPlayedAt),
-            "total_duration" => Some(ReleaseRouteSortKey::TotalDuration),
-            _ => SortKey::from_token(token).and_then(|key| match key {
-                SortKey::SortName
-                | SortKey::Name
-                | SortKey::DateCreated
-                | SortKey::ReleaseDate
-                | SortKey::DbId => Some(ReleaseRouteSortKey::Field(key)),
-            }),
-        },
-        release_sort_supported_values(),
-    )
-}
-
-fn release_sort_supported_values() -> &'static str {
-    "sort_name, name, date_created, release_date, last_played_at, listen_count, total_duration, id"
-}
-
-fn default_release_sort() -> Vec<ReleaseRouteSortSpec> {
-    vec![ReleaseRouteSortSpec {
-        key: ReleaseRouteSortKey::Field(SortKey::SortName),
-        direction: SortDirection::Ascending,
-    }]
-}
-
 fn parse_genre_id_filter(genre_id: Option<Vec<String>>) -> Vec<String> {
     let mut values = Vec::new();
     if let Some(entries) = genre_id {
@@ -274,200 +228,6 @@ fn resolve_genre_id_filter(
         resolved.push(genre_db_id);
     }
     Ok(resolved)
-}
-
-struct ReleaseRouteSortEntry {
-    release: db::Release,
-    lower_title: String,
-    lower_sort_title: Option<String>,
-    db_id: Option<i64>,
-    release_date: Option<String>,
-    date_created: Option<u64>,
-    listen_count: u64,
-    last_played_at: Option<u64>,
-    total_duration: u64,
-    match_score: u32,
-}
-
-impl ReleaseRouteSortEntry {
-    fn new(
-        release: db::Release,
-        listen_count: u64,
-        last_played_at: Option<u64>,
-        total_duration: u64,
-    ) -> Self {
-        Self {
-            lower_title: release.release_title.to_lowercase(),
-            lower_sort_title: release
-                .sort_title
-                .as_ref()
-                .map(|value| value.to_lowercase()),
-            db_id: release.db_id.as_ref().map(|id| DbId::from(id.clone()).0),
-            release_date: release.release_date.clone(),
-            date_created: release.ctime.or(release.created_at),
-            release,
-            listen_count,
-            last_played_at,
-            total_duration,
-            match_score: 0,
-        }
-    }
-}
-
-fn compare_release_route_field(
-    a: &ReleaseRouteSortEntry,
-    b: &ReleaseRouteSortEntry,
-    key: ReleaseRouteSortKey,
-) -> Ordering {
-    match key {
-        ReleaseRouteSortKey::Field(SortKey::SortName) => a
-            .lower_sort_title
-            .as_deref()
-            .unwrap_or(a.lower_title.as_str())
-            .cmp(
-                b.lower_sort_title
-                    .as_deref()
-                    .unwrap_or(b.lower_title.as_str()),
-            ),
-        ReleaseRouteSortKey::Field(SortKey::Name) => a.lower_title.cmp(&b.lower_title),
-        ReleaseRouteSortKey::Field(SortKey::DateCreated) => {
-            db::compare_option(&a.date_created, &b.date_created)
-        }
-        ReleaseRouteSortKey::Field(SortKey::ReleaseDate) => {
-            db::compare_option(&a.release_date, &b.release_date)
-        }
-        ReleaseRouteSortKey::Field(SortKey::DbId) => db::compare_option(&a.db_id, &b.db_id),
-        ReleaseRouteSortKey::ListenCount => a.listen_count.cmp(&b.listen_count),
-        ReleaseRouteSortKey::LastPlayedAt => {
-            db::compare_option(&a.last_played_at, &b.last_played_at)
-        }
-        ReleaseRouteSortKey::TotalDuration => a.total_duration.cmp(&b.total_duration),
-    }
-}
-
-fn compare_release_route_entries(
-    a: &ReleaseRouteSortEntry,
-    b: &ReleaseRouteSortEntry,
-    sort: &[ReleaseRouteSortSpec],
-) -> Ordering {
-    for spec in sort {
-        let ord = db::apply_direction(compare_release_route_field(a, b, spec.key), spec.direction);
-        if ord != Ordering::Equal {
-            return ord;
-        }
-    }
-
-    b.match_score
-        .cmp(&a.match_score)
-        .then_with(|| a.lower_title.cmp(&b.lower_title))
-        .then_with(|| db::compare_option(&a.db_id, &b.db_id))
-}
-
-fn release_sort_needs_tracks(sort: &[ReleaseRouteSortSpec]) -> bool {
-    sort.iter().any(|spec| {
-        matches!(
-            spec.key,
-            ReleaseRouteSortKey::ListenCount
-                | ReleaseRouteSortKey::LastPlayedAt
-                | ReleaseRouteSortKey::TotalDuration
-        )
-    })
-}
-
-fn release_sort_needs_listens(sort: &[ReleaseRouteSortSpec]) -> bool {
-    sort.iter().any(|spec| {
-        matches!(
-            spec.key,
-            ReleaseRouteSortKey::ListenCount | ReleaseRouteSortKey::LastPlayedAt
-        )
-    })
-}
-
-fn query_release_route_items(
-    db: &DbAny,
-    releases: Vec<db::Release>,
-    sort: &[ReleaseRouteSortSpec],
-    search_term: Option<&str>,
-    user_db_id: DbId,
-) -> anyhow::Result<Vec<db::Release>> {
-    let release_ids: Vec<DbId> = releases
-        .iter()
-        .filter_map(|release| release.db_id.clone().map(DbId::from))
-        .collect();
-    let needs_tracks = release_sort_needs_tracks(sort);
-    let needs_listens = release_sort_needs_listens(sort);
-    let tracks_by_release = if needs_tracks {
-        db::tracks::get_direct_many(db, &release_ids)?
-    } else {
-        HashMap::new()
-    };
-
-    let mut all_track_ids = Vec::new();
-    let mut seen_track_ids = HashSet::new();
-    if needs_listens {
-        for tracks in tracks_by_release.values() {
-            for track in tracks {
-                let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
-                    continue;
-                };
-                if seen_track_ids.insert(track_db_id) {
-                    all_track_ids.push(track_db_id);
-                }
-            }
-        }
-    }
-
-    let listen_stats: HashMap<DbId, db::listens::ListenStats> = if needs_listens {
-        db::listens::get_stats(db, &all_track_ids, user_db_id)?
-            .into_iter()
-            .map(|stats| (stats.db_id, stats))
-            .collect()
-    } else {
-        HashMap::new()
-    };
-
-    let mut entries: Vec<ReleaseRouteSortEntry> = releases
-        .into_iter()
-        .map(|release| {
-            let release_db_id = release.db_id.clone().map(DbId::from);
-            let mut seen_release_track_ids = HashSet::new();
-            let mut listen_count = 0u64;
-            let mut last_played_at = None;
-            let mut total_duration = 0u64;
-
-            if let Some(tracks) = release_db_id.and_then(|id| tracks_by_release.get(&id)) {
-                for track in tracks {
-                    let Some(track_db_id) = track.db_id.clone().map(DbId::from) else {
-                        continue;
-                    };
-                    if !seen_release_track_ids.insert(track_db_id) {
-                        continue;
-                    }
-                    if let Some(duration) = track.duration_ms {
-                        total_duration = total_duration.saturating_add(duration);
-                    }
-                    if let Some(stats) = listen_stats.get(&track_db_id) {
-                        listen_count = listen_count.saturating_add(stats.count);
-                        last_played_at = last_played_at.max(stats.last_played);
-                    }
-                }
-            }
-
-            ReleaseRouteSortEntry::new(release, listen_count, last_played_at, total_duration)
-        })
-        .collect();
-
-    if let Some(term) = search_term {
-        db::search::fuzzy_filter(
-            &mut entries,
-            term,
-            |entry| entry.release.release_title.as_str(),
-            |entry, score| entry.match_score = score,
-        );
-    }
-
-    entries.sort_by(|a, b| compare_release_route_entries(a, b, sort));
-    Ok(entries.into_iter().map(|entry| entry.release).collect())
 }
 
 pub(crate) fn detail_to_release_response(
@@ -576,11 +336,8 @@ async fn get_releases(
         .field(min_rating_context.as_deref())
         .field(max_rating_context.as_deref())
         .finish();
-    let mut sort = parse_sort_specs(sort_by, sort_order)?;
-    if sort.is_empty() && search_term.is_none() {
-        sort = default_release_sort();
-    }
-    let library_scope = crate::services::auth::access::resolve_optional_library_filter(
+    let sort = super::parse_catalog_sort(sort_by, sort_order)?;
+    let library = crate::services::auth::access::resolve_optional_library_filter(
         db,
         &principal,
         library_id.as_deref(),
@@ -597,90 +354,24 @@ async fn get_releases(
         )?;
         (release_items, page.next_cursor)
     } else {
-        let genre_filter = parse_genre_id_filter(genre_id);
-        let genre_db_ids = resolve_genre_id_filter(db, &genre_filter)?;
-        let query_filters = db::releases::ReleaseQueryFilters {
-            year,
-            ids: if genre_db_ids.is_empty() {
-                None
-            } else {
-                Some(db::genres::release_ids_matching_genre_ids(
-                    db,
-                    &genre_db_ids,
-                )?)
-            },
-        };
-        let mut accessible_releases = match library_scope {
-            Some(library_db_id) => {
-                db::releases::query(
-                    db,
-                    library_db_id,
-                    &ListOptions {
-                        sort: Vec::new(),
-                        offset: None,
-                        limit: None,
-                        search_term: None,
-                    },
-                    &query_filters,
-                )?
-                .entries
-            }
-            None => {
-                let releases = db::releases::query(
-                    db,
-                    "releases",
-                    &ListOptions {
-                        sort: Vec::new(),
-                        offset: None,
-                        limit: None,
-                        search_term: None,
-                    },
-                    &query_filters,
-                )?
-                .entries;
-                let mut accessible_releases = Vec::with_capacity(releases.len());
-                for release in releases {
-                    let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
-                        continue;
-                    };
-                    if crate::services::auth::access::entity_accessible(
-                        db,
-                        &principal,
-                        release_db_id,
-                    )? {
-                        accessible_releases.push(release);
-                    }
-                }
-                accessible_releases
-            }
-        };
-        let user_db_id = principal.require(db)?;
-        if !rating_filter.is_empty() {
-            let rated_target_ids = db::ratings::target_ids_matching(db, user_db_id, rating_filter)?;
-            accessible_releases.retain(|release| {
-                release
-                    .db_id
-                    .clone()
-                    .map(DbId::from)
-                    .is_some_and(|db_id| rated_target_ids.contains(&db_id))
-            });
-        }
-        let mut release_items = query_release_route_items(
-            db,
-            accessible_releases,
-            &sort,
-            search_term.as_deref(),
-            user_db_id,
-        )?;
-        let page = page_request.start(
-            &snapshot_key,
-            release_items
-                .iter()
-                .map(|release| release.id.clone())
-                .collect(),
-        )?;
-        release_items.truncate(page.item_ids.len());
-        (release_items, page.next_cursor)
+        let genres = resolve_genre_id_filter(db, &parse_genre_id_filter(genre_id))?;
+        let viewer = catalog::Viewer::user(db, principal.clone())?;
+        let mut query = catalog::Query::<Releases>::new(ReleaseFilter {
+            library,
+            genres,
+            years: year.into_iter().collect(),
+            rating: rating_filter,
+            ..ReleaseFilter::default()
+        });
+        query.search = search_term;
+        query.sort = sort;
+        query.seed = rand::random();
+        let ids = catalog::order(db, &viewer, &query)?;
+        let page = page_request.start(&snapshot_key, super::public_ids(db, &ids)?)?;
+        (
+            Releases::hydrate(db, &ids[..page.item_ids.len()])?,
+            page.next_cursor,
+        )
     };
     let details = releases::list_details_for_releases(db, includes, release_items)?;
 
@@ -840,7 +531,6 @@ mod tests {
         response::IntoResponse,
     };
 
-    use crate::db::SortDirection;
     use crate::db::test_db::{
         TestDb,
         connect,
@@ -897,17 +587,6 @@ mod tests {
         )?;
 
         Ok(())
-    }
-
-    fn update_track_duration(
-        db: &mut DbAny,
-        track_db_id: DbId,
-        duration_ms: u64,
-    ) -> anyhow::Result<()> {
-        let mut track = db::tracks::get_by_id(db, track_db_id)?
-            .ok_or_else(|| anyhow::anyhow!("track missing"))?;
-        track.duration_ms = Some(duration_ms);
-        db::tracks::update(db, &track)
     }
 
     async fn setup_route_test() -> anyhow::Result<()> {
@@ -972,69 +651,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_sort_specs_accepts_supported_values() -> anyhow::Result<()> {
-        let specs = match parse_sort_specs(
-            Some(vec![
-                "sort_name,name".to_string(),
-                "release_date,last_played_at,listen_count,total_duration".to_string(),
-            ]),
-            Some("descending".to_string()),
-        ) {
-            Ok(specs) => specs,
-            Err(_) => return Err(anyhow::anyhow!("expected valid sort specs")),
-        };
-        assert_eq!(specs.len(), 6);
-        assert!(matches!(
-            specs[0].key,
-            ReleaseRouteSortKey::Field(SortKey::SortName)
-        ));
-        assert!(matches!(
-            specs[1].key,
-            ReleaseRouteSortKey::Field(SortKey::Name)
-        ));
-        assert!(matches!(
-            specs[2].key,
-            ReleaseRouteSortKey::Field(SortKey::ReleaseDate)
-        ));
-        assert!(matches!(specs[3].key, ReleaseRouteSortKey::LastPlayedAt));
-        assert!(matches!(specs[4].key, ReleaseRouteSortKey::ListenCount));
-        assert!(matches!(specs[5].key, ReleaseRouteSortKey::TotalDuration));
-        assert!(
-            specs
-                .iter()
-                .all(|spec| matches!(spec.direction, SortDirection::Descending))
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn parse_sort_specs_rejects_unsupported_values() -> anyhow::Result<()> {
-        let err = parse_sort_specs(
-            Some(vec!["duration,unknown".to_string()]),
-            Some("ascending".to_string()),
-        )
-        .expect_err("expected sort parse error");
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let body = to_bytes(response.into_body(), usize::MAX).await?;
-        let text = std::str::from_utf8(&body)?;
-        assert!(text.contains(release_sort_supported_values()));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn parse_sort_specs_rejects_invalid_sort_order() -> anyhow::Result<()> {
-        let err = parse_sort_specs(Some(vec!["name".to_string()]), Some("upward".to_string()))
-            .expect_err("expected sort_order parse error");
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let body = to_bytes(response.into_body(), usize::MAX).await?;
-        let text = std::str::from_utf8(&body)?;
-        assert!(text.contains("Supported values: ascending, descending"));
-        Ok(())
-    }
-
-    #[test]
     fn parse_genre_id_filter_splits_and_trims_values() {
         let genre_ids = parse_genre_id_filter(Some(vec![
             "genre-rock, genre-jazz".to_string(),
@@ -1044,46 +660,6 @@ mod tests {
             genre_ids,
             vec!["genre-rock", "genre-jazz", "genre-electronic"]
         );
-    }
-
-    #[test]
-    fn query_release_route_items_sorts_by_total_duration() -> anyhow::Result<()> {
-        let mut db = crate::db::test_db::new_test_db()?;
-        let short_release_id = insert_test_release(&mut db, "Short Release")?;
-        let long_release_id = insert_test_release(&mut db, "Long Release")?;
-        let short_track = insert_track(&mut db, "Short Track")?;
-        let long_track_a = insert_track(&mut db, "Long Track A")?;
-        let long_track_b = insert_track(&mut db, "Long Track B")?;
-        update_track_duration(&mut db, short_track, 60_000)?;
-        update_track_duration(&mut db, long_track_a, 120_000)?;
-        update_track_duration(&mut db, long_track_b, 180_000)?;
-        connect(&mut db, short_release_id, short_track)?;
-        connect(&mut db, long_release_id, long_track_a)?;
-        connect(&mut db, long_release_id, long_track_b)?;
-        let releases = vec![
-            db::releases::get_by_id(&db, short_release_id)?
-                .ok_or_else(|| anyhow::anyhow!("short release missing"))?,
-            db::releases::get_by_id(&db, long_release_id)?
-                .ok_or_else(|| anyhow::anyhow!("long release missing"))?,
-        ];
-
-        let releases = query_release_route_items(
-            &db,
-            releases,
-            &[ReleaseRouteSortSpec {
-                key: ReleaseRouteSortKey::TotalDuration,
-                direction: SortDirection::Descending,
-            }],
-            None,
-            DbId(1),
-        )?;
-
-        let titles: Vec<String> = releases
-            .into_iter()
-            .map(|release| release.release_title)
-            .collect();
-        assert_eq!(titles, vec!["Long Release", "Short Release"]);
-        Ok(())
     }
 
     fn set_release_fields(
@@ -1260,7 +836,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "empty values still sort first when descending"]
     async fn get_releases_sorts_missing_release_dates_last_in_both_directions() -> anyhow::Result<()>
     {
         let _guard = runtime_test_lock().await;
