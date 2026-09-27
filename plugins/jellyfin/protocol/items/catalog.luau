@@ -80,37 +80,47 @@ local function normalize_sort_order(value: string?): "ascending" | "descending"
 end
 
 -- Pairs each SortBy token with the SortOrder at its index; tokens past the orders take the first.
-local function track_sort(sort_tokens: { string }, sort_order: string?): { TrackSortTerm }
+local function catalog_sort(sort_tokens: { string }, sort_order: string?): { SortTerm }
 	local orders: { string } = string.split(sort_order or "", ",")
-	local sort: { TrackSortTerm } = {}
+	local sort: { SortTerm } = {}
 	for index, token in sort_tokens do
 		local key = sorting.server_sort_key(token)
 		if key then
 			local order: string? = if index <= #orders then orders[index] else orders[1]
-			local term: TrackSortTerm = {
-				key = key :: TrackSortKey,
-				order = normalize_sort_order(order),
-			}
+			local term: SortTerm = { key = key, order = normalize_sort_order(order) }
 			table.insert(sort, term)
 		end
 	end
 	return sort
 end
 
--- Scopes a track query to the parent library or release; false when the parent is neither.
-local function scope_track_query(parent_scope: ParentScopeInfo, query: TrackQuery): boolean
+-- The library and release a parent scope limits a query to; false when it is neither.
+local function parent_filter(parent_scope: ParentScopeInfo): (boolean, number?, number?)
 	if parent_scope.db_id == nil then
-		return true
+		return true, nil, nil
 	end
 	if parent_scope.entity_type == "Library" then
-		query.library_id = parent_scope.db_id
-		return true
+		return true, parent_scope.db_id, nil
 	end
 	if parent_scope.entity_type == "Release" then
-		query.release_ids = { parent_scope.db_id :: number }
-		return true
+		return true, nil, parent_scope.db_id
 	end
-	return false
+	return false, nil, nil
+end
+
+-- Scopes a track query to the parent library or release; false when the parent is neither.
+local function scope_track_query(parent_scope: ParentScopeInfo, query: TrackQuery): boolean
+	local ok, library_id, release_id = parent_filter(parent_scope)
+	query.library_id = library_id
+	query.release_ids = if release_id then { release_id } else nil
+	return ok
+end
+
+-- Scopes a release query to the parent library; false when the parent is anything else.
+local function scope_release_query(parent_scope: ParentScopeInfo, query: ReleaseQuery): boolean
+	local ok, library_id, release_id = parent_filter(parent_scope)
+	query.library_id = library_id
+	return ok and release_id == nil
 end
 
 function helpers.is_library_root(hex_id: string): boolean
@@ -137,16 +147,14 @@ type ArtistCreditSource = entities.ArtistCreditSource
 local CreditType = entities.CreditType
 local ArtistCreditSource = entities.ArtistCreditSource
 type ApiQueryParams = api.ApiQueryParams
-type ReleaseQueryOptions = releases.ReleaseQueryOptions
-type ReleaseQueryResult = releases.ReleaseQueryResult
 type ArtistQueryOptions = artists_module.ArtistQueryOptions
 type CreditedArtistQueryOptions = artists_module.CreditedArtistQueryOptions
 type ArtistQueryResult = artists_module.ArtistQueryResult
 type ArtistRelationInfo = artists_module.ArtistRelationInfo
 type TrackQuery = tracks.TrackQuery
-type TrackSortKey = tracks.TrackSortKey
 type CreditRole = tracks.CreditRole
-type TrackSortTerm = { key: TrackSortKey, order: ("ascending" | "descending")? }
+type SortTerm = { key: string, order: ("ascending" | "descending")? }
+type ReleaseQuery = releases.ReleaseQuery
 type Track = tracks.Track
 type Release = releases.Release
 type Artist = artists_module.Artist
@@ -4483,7 +4491,7 @@ function helpers.list_items_by_artist_ids(
 			local query: TrackQuery = {
 				artist_ids = artist_ids,
 				credit_role = credit_role,
-				sort = track_sort(sort_tokens, options.sort_order),
+				sort = catalog_sort(sort_tokens, options.sort_order) :: any,
 				offset = options.start_index,
 				limit = options.limit,
 				search = options.search_term,
@@ -4499,22 +4507,23 @@ function helpers.list_items_by_artist_ids(
 				end
 			end
 		elseif entity_type == "release" then
-			local query_opts: ReleaseQueryOptions = {
-				scope = scope,
+			local query: ReleaseQuery = {
 				artist_ids = decoded_artist_ids,
-				sort_by = sorting.server_sort_keys(sort_tokens),
-				sort_order = normalize_sort_order(options.sort_order),
+				credit_role = "release",
+				sort = catalog_sort(sort_tokens, options.sort_order) :: any,
 				offset = options.start_index,
 				limit = options.limit,
-				search_term = options.search_term,
+				search = options.search_term,
 			}
-			local ok, result = pcall(releases.query, query_opts)
-			if ok and type(result) == "table" then
-				local stubs: { ItemInfo } = {}
-				helpers.append_release_stubs(stubs, result.entities)
+			if scope_release_query(parent_scope, query) then
+				local ok, result = pcall(releases.query, query)
+				if ok and type(result) == "table" then
+					local stubs: { ItemInfo } = {}
+					helpers.append_release_stubs(stubs, result.items)
 
-				local items = helpers.realize_stubs(stubs, options)
-				return items, result.total_count, result.offset
+					local items = helpers.realize_stubs(stubs, options)
+					return items, result.total, result.offset
+				end
 			end
 		end
 	end
@@ -4759,25 +4768,25 @@ function helpers.query_single_type_with_sort(
 	local scope = parent_scope.db_id
 
 	if entity_type == "release" then
-		local query_opts: ReleaseQueryOptions = {
-			scope = scope,
-			artist_ids = nil,
-			sort_by = sort_by,
-			sort_order = sort_order,
+		local query: ReleaseQuery = {
+			sort = catalog_sort(sorting.tokens(options), options.sort_order) :: any,
 			offset = options.start_index,
 			limit = options.limit,
-			search_term = options.search_term,
+			search = options.search_term,
 		}
-		local ok, result = pcall(releases.query, query_opts)
+		if not scope_release_query(parent_scope, query) then
+			return nil, nil, nil
+		end
+		local ok, result = pcall(releases.query, query)
 		if not ok or type(result) ~= "table" then
 			return nil, nil, nil
 		end
 
 		local stubs: { ItemInfo } = {}
-		helpers.append_release_stubs(stubs, result.entities)
+		helpers.append_release_stubs(stubs, result.items)
 
 		local items = helpers.realize_stubs(stubs, options)
-		return items, result.total_count, result.offset
+		return items, result.total, result.offset
 	elseif entity_type == "artist" then
 		local query_opts: ArtistQueryOptions = {
 			scope = scope,
@@ -4799,7 +4808,7 @@ function helpers.query_single_type_with_sort(
 		return items, result.total_count, result.offset
 	elseif entity_type == "track" then
 		local query: TrackQuery = {
-			sort = track_sort(sorting.tokens(options), options.sort_order),
+			sort = catalog_sort(sorting.tokens(options), options.sort_order) :: any,
 			offset = options.start_index,
 			limit = options.limit,
 			search = options.search_term,
