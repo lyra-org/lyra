@@ -15,7 +15,6 @@ pub(crate) use crate::db::{
     DataStore,
     DbAccess,
     Entry,
-    ListOptions,
     NodeId,
     Permission,
     PlaybackState,
@@ -25,8 +24,6 @@ pub(crate) use crate::db::{
     ResolveId,
     Tag,
     Track,
-    parse_sort_direction,
-    parse_sort_specs_tokens,
 };
 pub(crate) use crate::db::{
     artists,

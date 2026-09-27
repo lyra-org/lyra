@@ -374,25 +374,6 @@ pub(crate) fn get_by_artist(
         .collect())
 }
 
-pub(crate) fn get_by_artists(db: &DbAny, artist_db_ids: &[DbId]) -> anyhow::Result<Vec<Release>> {
-    let mut releases = Vec::new();
-    let mut seen = HashSet::new();
-
-    for artist_db_id in artist_db_ids {
-        for release in get_by_artist(db, *artist_db_id)? {
-            if let Some(release_db_id) = release.db_id.clone().map(DbId::from) {
-                if seen.insert(release_db_id) {
-                    releases.push(release);
-                }
-                continue;
-            }
-            releases.push(release);
-        }
-    }
-
-    Ok(releases)
-}
-
 pub(crate) fn get_appearances(db: &DbAny, artist_db_id: DbId) -> anyhow::Result<Vec<Release>> {
     let album_artist_releases = get_by_artist(db, artist_db_id)?;
     let album_artist_ids: HashSet<DbId> = album_artist_releases

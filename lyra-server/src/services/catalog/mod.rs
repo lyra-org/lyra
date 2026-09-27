@@ -5,6 +5,7 @@
 
 //! Catalog queries: every catalog entity is filtered, sorted and paged by [`pipeline`].
 
+pub(crate) mod artists;
 pub(crate) mod pipeline;
 pub(crate) mod releases;
 pub(crate) mod tracks;

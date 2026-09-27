@@ -17,20 +17,10 @@ use crate::db::{
     self,
     Artist,
     ArtistRelationType,
-    CreditType,
-    ListOptions,
-    PagedResult,
     Release,
-    ResolveId,
     Track,
 };
-use crate::services::entities::{
-    ResolvedCreditedArtist,
-    TrackCreditedArtistContext,
-    relations,
-    resolve_release_credited_artists_map,
-    resolve_track_credited_artists_with_context,
-};
+use crate::services::entities::relations;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ArtistIncludes {
@@ -58,157 +48,6 @@ pub(crate) struct ArtistDetails {
     pub(crate) releases: Option<Vec<Release>>,
     pub(crate) tracks: Option<Vec<Track>>,
     pub(crate) relations: Option<Vec<ResolvedRelation>>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub(crate) struct CreditedArtistFilters {
-    pub(crate) artist_type: Option<db::ArtistType>,
-    pub(crate) credit_types: Option<Vec<CreditType>>,
-    pub(crate) exclude_credit_types: Option<Vec<CreditType>>,
-}
-
-fn collect_scoped_credit_owner_ids(
-    db: &DbAny,
-    scope: Option<&ResolveId>,
-) -> anyhow::Result<(Vec<DbId>, Vec<DbId>)> {
-    let global_release_ids = || -> anyhow::Result<Vec<DbId>> {
-        Ok(db::releases::get(db, "releases")?
-            .into_iter()
-            .filter_map(|release| release.db_id.map(Into::into))
-            .collect())
-    };
-    let global_track_ids = || -> anyhow::Result<Vec<DbId>> {
-        Ok(db::tracks::get(db, "tracks")?
-            .into_iter()
-            .filter_map(|track| track.db_id.map(Into::into))
-            .collect())
-    };
-
-    let (release_ids, track_ids) = match scope {
-        None => (global_release_ids()?, global_track_ids()?),
-        Some(ResolveId::Alias(alias)) if matches!(alias.as_str(), "artists" | "libraries") => {
-            (global_release_ids()?, global_track_ids()?)
-        }
-        Some(ResolveId::Alias(alias)) if alias == "releases" => (global_release_ids()?, Vec::new()),
-        Some(ResolveId::Alias(alias)) if alias == "tracks" => (Vec::new(), global_track_ids()?),
-        Some(scope) => {
-            let Some(scope_db_id) = scope.to_db_id(db)? else {
-                return Ok((Vec::new(), Vec::new()));
-            };
-
-            if db::libraries::get_by_id(db, scope_db_id)?.is_some() {
-                (
-                    db::releases::get_direct(db, scope_db_id)?
-                        .into_iter()
-                        .filter_map(|release| release.db_id.map(Into::into))
-                        .collect(),
-                    db::tracks::get_by_library(db, scope_db_id)?
-                        .into_iter()
-                        .filter_map(|track| track.db_id.map(Into::into))
-                        .collect(),
-                )
-            } else if db::releases::get_by_id(db, scope_db_id)?.is_some() {
-                (vec![scope_db_id], Vec::new())
-            } else if db::tracks::get_by_id(db, scope_db_id)?.is_some() {
-                (Vec::new(), vec![scope_db_id])
-            } else {
-                (Vec::new(), Vec::new())
-            }
-        }
-    };
-
-    Ok((
-        db::dedup_positive_ids(&release_ids),
-        db::dedup_positive_ids(&track_ids),
-    ))
-}
-
-fn collect_scoped_credited_artists(
-    db: &DbAny,
-    scope: Option<&ResolveId>,
-) -> anyhow::Result<Vec<ResolvedCreditedArtist>> {
-    let (release_ids, track_ids) = collect_scoped_credit_owner_ids(db, scope)?;
-    if release_ids.is_empty() && track_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut release_credits_by_owner = if release_ids.is_empty() {
-        HashMap::new()
-    } else {
-        resolve_release_credited_artists_map(db, &release_ids)?
-    };
-
-    let mut track_credits_by_owner = if track_ids.is_empty() {
-        HashMap::new()
-    } else {
-        let ctx = TrackCreditedArtistContext {
-            releases_by_track: None,
-            credited_artists_by_release: Some(&release_credits_by_owner),
-            scope_release_id: None,
-        };
-        resolve_track_credited_artists_with_context(db, &track_ids, &ctx)?
-    };
-
-    let mut credited = Vec::new();
-    for release_id in release_ids {
-        if let Some(artists) = release_credits_by_owner.remove(&release_id) {
-            credited.extend(artists);
-        }
-    }
-    for track_id in track_ids {
-        if let Some(artists) = track_credits_by_owner.remove(&track_id) {
-            credited.extend(artists);
-        }
-    }
-
-    Ok(credited)
-}
-
-pub(crate) fn query_credited(
-    db: &DbAny,
-    scope: Option<&ResolveId>,
-    filters: &CreditedArtistFilters,
-    options: &ListOptions,
-) -> anyhow::Result<PagedResult<Artist>> {
-    let include_credit_types: Option<HashSet<CreditType>> = filters
-        .credit_types
-        .as_ref()
-        .map(|values| values.iter().copied().collect());
-    let exclude_credit_types: Option<HashSet<CreditType>> = filters
-        .exclude_credit_types
-        .as_ref()
-        .map(|values| values.iter().copied().collect());
-
-    let credited = collect_scoped_credited_artists(db, scope)?;
-    let mut seen_artist_ids = HashSet::new();
-    let mut artists = Vec::new();
-
-    for credited_artist in credited {
-        if let Some(ref include_credit_types) = include_credit_types
-            && !include_credit_types.contains(&credited_artist.credit.credit_type)
-        {
-            continue;
-        }
-        if let Some(ref exclude_credit_types) = exclude_credit_types
-            && exclude_credit_types.contains(&credited_artist.credit.credit_type)
-        {
-            continue;
-        }
-        if let Some(artist_type) = filters.artist_type
-            && credited_artist.artist.artist_type != Some(artist_type)
-        {
-            continue;
-        }
-
-        let Some(artist_db_id) = credited_artist.artist.db_id.clone().map(DbId::from) else {
-            continue;
-        };
-        if seen_artist_ids.insert(artist_db_id) {
-            artists.push(credited_artist.artist);
-        }
-    }
-
-    Ok(db::artists::query_items(artists, options))
 }
 
 pub(crate) fn get_relations(
@@ -338,7 +177,6 @@ pub(crate) fn get_details(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::ResolveId;
     use crate::db::artists::relations::link as link_artist_relation;
     use crate::db::test_db::{
         connect,
@@ -349,23 +187,24 @@ mod tests {
         insert_track,
         new_test_db,
     };
+    use crate::services::catalog::{
+        self,
+        artists::{
+            ArtistFilter,
+            Artists,
+        },
+        pipeline::Catalog,
+    };
 
-    fn default_options() -> ListOptions {
-        ListOptions {
-            sort: Vec::new(),
-            offset: None,
-            limit: None,
-            search_term: None,
-        }
+    fn list_details(db: &DbAny, includes: ArtistIncludes) -> anyhow::Result<Vec<ArtistDetails>> {
+        list_details_for_artists(db, includes, credited_names(db, ArtistFilter::default())?)
     }
 
-    fn list_details(
-        db: &DbAny,
-        includes: ArtistIncludes,
-        options: &ListOptions,
-    ) -> anyhow::Result<Vec<ArtistDetails>> {
-        let artists = db::artists::query(db, "artists", options, None)?.entries;
-        list_details_for_artists(db, includes, artists)
+    /// The artists a system query with `filter` returns.
+    fn credited_names(db: &DbAny, filter: ArtistFilter) -> anyhow::Result<Vec<Artist>> {
+        let query = catalog::Query::<Artists>::new(filter);
+        let ids = catalog::order(db, &catalog::Viewer::System, &query)?;
+        Artists::hydrate(db, &ids)
     }
 
     fn set_artist_type(
@@ -395,7 +234,7 @@ mod tests {
             tracks: true,
             ..Default::default()
         };
-        let details = list_details(&db, includes, &default_options())?;
+        let details = list_details(&db, includes)?;
 
         assert_eq!(details.len(), 1);
         assert_eq!(details[0].artist.artist_name, "Coltrane");
@@ -425,7 +264,7 @@ mod tests {
             tracks: false,
             ..Default::default()
         };
-        let details = list_details(&db, includes, &default_options())?;
+        let details = list_details(&db, includes)?;
 
         assert_eq!(details.len(), 1);
         assert!(details[0].releases.is_none());
@@ -530,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn query_credited_filters_by_credit_type_and_artist_type() -> anyhow::Result<()> {
+    fn catalog_filters_by_credit_type_and_artist_type() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_id = insert_release(&mut db, "Query Release")?;
 
@@ -560,31 +399,27 @@ mod tests {
             0,
         )?;
 
-        let scope = ResolveId::DbId(release_id);
-        let result = query_credited(
+        let artists = credited_names(
             &db,
-            Some(&scope),
-            &CreditedArtistFilters {
+            ArtistFilter {
+                releases: Some(vec![release_id]),
                 artist_type: Some(db::ArtistType::Person),
                 credit_types: None,
-                exclude_credit_types: Some(vec![db::CreditType::Artist]),
-            },
-            &ListOptions {
-                sort: vec![],
-                offset: None,
-                limit: None,
-                search_term: None,
+                exclude_credit_types: vec![db::CreditType::Artist],
+                ..ArtistFilter::default()
             },
         )?;
 
-        assert_eq!(result.total_count, 1);
-        assert_eq!(result.entries.len(), 1);
-        assert_eq!(result.entries[0].artist_name, "Composer Person");
+        let names: Vec<&str> = artists
+            .iter()
+            .map(|artist| artist.artist_name.as_str())
+            .collect();
+        assert_eq!(names, vec!["Composer Person"]);
         Ok(())
     }
 
     #[test]
-    fn query_credited_track_scope_falls_back_to_release_credits() -> anyhow::Result<()> {
+    fn catalog_track_scope_falls_back_to_release_credits() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let release_id = insert_release(&mut db, "Fallback Release")?;
         let track_id = insert_track(&mut db, "Fallback Track")?;
@@ -601,31 +436,27 @@ mod tests {
             0,
         )?;
 
-        let scope = ResolveId::DbId(track_id);
-        let result = query_credited(
+        let artists = credited_names(
             &db,
-            Some(&scope),
-            &CreditedArtistFilters {
+            ArtistFilter {
+                tracks: Some(vec![track_id]),
                 artist_type: Some(db::ArtistType::Person),
                 credit_types: Some(vec![db::CreditType::Composer]),
-                exclude_credit_types: None,
-            },
-            &ListOptions {
-                sort: vec![],
-                offset: None,
-                limit: None,
-                search_term: None,
+                exclude_credit_types: Vec::new(),
+                ..ArtistFilter::default()
             },
         )?;
 
-        assert_eq!(result.total_count, 1);
-        assert_eq!(result.entries.len(), 1);
-        assert_eq!(result.entries[0].artist_name, "Fallback Composer");
+        let names: Vec<&str> = artists
+            .iter()
+            .map(|artist| artist.artist_name.as_str())
+            .collect();
+        assert_eq!(names, vec!["Fallback Composer"]);
         Ok(())
     }
 
     #[test]
-    fn query_credited_library_scope_dedupes_artists() -> anyhow::Result<()> {
+    fn catalog_library_scope_dedupes_artists() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let library_id = insert_library(&mut db, "Music", "/music")?;
         let release_id = insert_release(&mut db, "Library Release")?;
@@ -652,26 +483,22 @@ mod tests {
             0,
         )?;
 
-        let scope = ResolveId::DbId(library_id);
-        let result = query_credited(
+        let artists = credited_names(
             &db,
-            Some(&scope),
-            &CreditedArtistFilters {
+            ArtistFilter {
+                library: Some(library_id),
                 artist_type: Some(db::ArtistType::Person),
                 credit_types: Some(vec![db::CreditType::Composer]),
-                exclude_credit_types: None,
-            },
-            &ListOptions {
-                sort: vec![],
-                offset: None,
-                limit: None,
-                search_term: None,
+                exclude_credit_types: Vec::new(),
+                ..ArtistFilter::default()
             },
         )?;
 
-        assert_eq!(result.total_count, 1);
-        assert_eq!(result.entries.len(), 1);
-        assert_eq!(result.entries[0].artist_name, "Shared Composer");
+        let names: Vec<&str> = artists
+            .iter()
+            .map(|artist| artist.artist_name.as_str())
+            .collect();
+        assert_eq!(names, vec!["Shared Composer"]);
         Ok(())
     }
 }

@@ -96,11 +96,6 @@ impl TryFrom<DbValue> for ArtistType {
 
 use super::{
     Credit,
-    ListOptions,
-    PagedResult,
-    SortKey,
-    SortSpec,
-    apply_direction,
     compare_option,
 };
 
@@ -298,6 +293,24 @@ pub(crate) fn get_credited_many_by_owner(
         .collect()
 }
 
+pub(crate) fn ids_with_type(
+    db: &impl super::DbAccess,
+    artist_type: ArtistType,
+) -> anyhow::Result<Vec<DbId>> {
+    Ok(db
+        .exec(
+            QueryBuilder::search()
+                .from("artists")
+                .where_()
+                .neighbor()
+                .and()
+                .key("artist_type")
+                .value(DbValue::from(artist_type))
+                .query(),
+        )?
+        .ids())
+}
+
 /// The name of each owner's first credited artist, in credit order.
 pub(crate) fn first_credited_names(
     db: &impl super::DbAccess,
@@ -337,17 +350,6 @@ pub(crate) fn first_credited_names(
             Some((owner_db_id, name))
         })
         .collect())
-}
-
-fn filter_artists_by_type(artists: Vec<Artist>, artist_type: Option<ArtistType>) -> Vec<Artist> {
-    let Some(artist_type) = artist_type else {
-        return artists;
-    };
-
-    artists
-        .into_iter()
-        .filter(|artist| artist.artist_type == Some(artist_type))
-        .collect()
 }
 
 pub(crate) fn get_by_id(
@@ -391,8 +393,6 @@ struct ArtistSortEntry {
     lower_name: String,
     lower_sort_name: Option<String>,
     db_id: Option<i64>,
-    date_created: Option<u64>,
-    match_score: u32,
 }
 
 fn resolve_owner_id(db: &impl super::DbAccess, from: &QueryId) -> Option<DbId> {
@@ -515,178 +515,9 @@ impl ArtistSortEntry {
             lower_name: artist.artist_name.to_lowercase(),
             lower_sort_name: artist.sort_name.as_ref().map(|value| value.to_lowercase()),
             db_id: artist.db_id.as_ref().map(|id| DbId::from(id.clone()).0),
-            date_created: artist.created_at,
             artist,
-            match_score: 0,
         }
     }
-}
-
-fn compare_artist_field(a: &ArtistSortEntry, b: &ArtistSortEntry, key: SortKey) -> Ordering {
-    match key {
-        SortKey::SortName => a
-            .lower_sort_name
-            .as_deref()
-            .unwrap_or(a.lower_name.as_str())
-            .cmp(
-                b.lower_sort_name
-                    .as_deref()
-                    .unwrap_or(b.lower_name.as_str()),
-            ),
-        SortKey::Name => a.lower_name.cmp(&b.lower_name),
-        SortKey::DateCreated => compare_option(&a.date_created, &b.date_created),
-        SortKey::DbId => compare_option(&a.db_id, &b.db_id),
-        SortKey::ReleaseDate => Ordering::Equal,
-    }
-}
-
-fn compare_artist_entries(a: &ArtistSortEntry, b: &ArtistSortEntry, sort: &[SortSpec]) -> Ordering {
-    for spec in sort {
-        let ord = apply_direction(compare_artist_field(a, b, spec.key), spec.direction);
-        if ord != Ordering::Equal {
-            return ord;
-        }
-    }
-
-    let score_ord = b.match_score.cmp(&a.match_score);
-    if score_ord != Ordering::Equal {
-        return score_ord;
-    }
-
-    let name_ord = a.lower_name.cmp(&b.lower_name);
-    if name_ord != Ordering::Equal {
-        return name_ord;
-    }
-
-    compare_option(&a.db_id, &b.db_id)
-}
-
-fn u64_to_usize_saturating(value: u64) -> usize {
-    usize::try_from(value).unwrap_or(usize::MAX)
-}
-
-fn paginate_artists(mut artists: Vec<Artist>, options: &ListOptions) -> PagedResult<Artist> {
-    let total_count = artists.len() as u64;
-    let offset = options.offset.unwrap_or(0).min(total_count);
-    let offset = u64_to_usize_saturating(offset).min(artists.len());
-    let limit = options.limit.map(u64_to_usize_saturating);
-
-    let entries = match limit {
-        Some(limit) => artists.drain(offset..).take(limit).collect(),
-        None => artists.drain(offset..).collect(),
-    };
-
-    PagedResult {
-        entries,
-        total_count,
-        offset: offset as u64,
-    }
-}
-
-fn sort_and_paginate_artists(
-    mut entries: Vec<ArtistSortEntry>,
-    options: &ListOptions,
-) -> PagedResult<Artist> {
-    let total_count = entries.len() as u64;
-    let offset = options.offset.unwrap_or(0).min(total_count);
-    let offset = u64_to_usize_saturating(offset).min(entries.len());
-    let limit = options.limit.map(u64_to_usize_saturating);
-
-    if entries.is_empty() {
-        return PagedResult {
-            entries: Vec::new(),
-            total_count,
-            offset: offset as u64,
-        };
-    }
-
-    if options.sort.is_empty() {
-        let entries = match limit {
-            Some(limit) => entries
-                .into_iter()
-                .skip(offset)
-                .take(limit)
-                .map(|entry| entry.artist)
-                .collect(),
-            None => entries
-                .into_iter()
-                .skip(offset)
-                .map(|entry| entry.artist)
-                .collect(),
-        };
-
-        return PagedResult {
-            entries,
-            total_count,
-            offset: offset as u64,
-        };
-    }
-
-    let page_end = match limit {
-        Some(limit) => offset.saturating_add(limit).min(entries.len()),
-        None => entries.len(),
-    };
-    if page_end == 0 || offset >= page_end {
-        return PagedResult {
-            entries: Vec::new(),
-            total_count,
-            offset: offset as u64,
-        };
-    }
-
-    if page_end < entries.len() {
-        let pivot = page_end - 1;
-        entries.select_nth_unstable_by(pivot, |a, b| compare_artist_entries(a, b, &options.sort));
-        entries.truncate(page_end);
-    }
-
-    entries.sort_by(|a, b| compare_artist_entries(a, b, &options.sort));
-    PagedResult {
-        entries: match limit {
-            Some(limit) => entries
-                .into_iter()
-                .skip(offset)
-                .take(limit)
-                .map(|entry| entry.artist)
-                .collect(),
-            None => entries
-                .into_iter()
-                .skip(offset)
-                .map(|entry| entry.artist)
-                .collect(),
-        },
-        total_count,
-        offset: offset as u64,
-    }
-}
-
-pub(crate) fn query_items(artists: Vec<Artist>, options: &ListOptions) -> PagedResult<Artist> {
-    if options.search_term.is_none() && options.sort.is_empty() {
-        return paginate_artists(artists, options);
-    }
-
-    let mut entries: Vec<ArtistSortEntry> = artists.into_iter().map(ArtistSortEntry::new).collect();
-
-    if let Some(ref term) = options.search_term {
-        super::search::fuzzy_filter(
-            &mut entries,
-            term,
-            |entry| entry.artist.artist_name.as_str(),
-            |entry, score| entry.match_score = score,
-        );
-    }
-
-    sort_and_paginate_artists(entries, options)
-}
-
-pub(crate) fn query(
-    db: &DbAny,
-    from: impl Into<QueryId>,
-    options: &ListOptions,
-    artist_type: Option<ArtistType>,
-) -> anyhow::Result<PagedResult<Artist>> {
-    let artists = filter_artists_by_type(get(db, from)?, artist_type);
-    Ok(query_items(artists, options))
 }
 
 #[cfg(test)]
@@ -852,7 +683,7 @@ mod tests {
     }
 
     #[test]
-    fn query_filters_by_artist_type() -> anyhow::Result<()> {
+    fn ids_with_type_finds_artists_of_that_type() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let person_id = insert_artist(&mut db, "Person Artist")?;
         let group_id = insert_artist(&mut db, "Group Artist")?;
@@ -865,21 +696,7 @@ mod tests {
         group.set_artist_type(ArtistType::Group);
         update(&mut db, &group)?;
 
-        let result = query(
-            &db,
-            "artists",
-            &ListOptions {
-                sort: vec![],
-                offset: None,
-                limit: None,
-                search_term: None,
-            },
-            Some(ArtistType::Person),
-        )?;
-
-        assert_eq!(result.total_count, 1);
-        assert_eq!(result.entries.len(), 1);
-        assert_eq!(result.entries[0].artist_name, "Person Artist");
+        assert_eq!(ids_with_type(&db, ArtistType::Person)?, vec![person_id]);
         Ok(())
     }
 
@@ -938,92 +755,6 @@ mod tests {
         let updated = get_by_id(&db, artist_id)?.expect("artist should exist");
         assert_eq!(updated.artist_name, "Updated");
         assert!(updated.verified);
-        Ok(())
-    }
-
-    #[test]
-    fn query_with_default_options_returns_all() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        insert_artist(&mut db, "Alpha")?;
-        insert_artist(&mut db, "Beta")?;
-
-        let options = super::super::ListOptions {
-            sort: vec![],
-            offset: None,
-            limit: None,
-            search_term: None,
-        };
-        let result = query(&db, "artists", &options, None)?;
-        assert_eq!(result.total_count, 2);
-        assert_eq!(result.entries.len(), 2);
-        Ok(())
-    }
-
-    #[test]
-    fn query_with_search_term_filters() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        insert_artist(&mut db, "Rock Band")?;
-        insert_artist(&mut db, "Jazz Trio")?;
-        insert_artist(&mut db, "Rock Duo")?;
-
-        let options = super::super::ListOptions {
-            sort: vec![],
-            offset: None,
-            limit: None,
-            search_term: Some("rock".to_string()),
-        };
-        let result = query(&db, "artists", &options, None)?;
-        assert_eq!(result.total_count, 2);
-        assert_eq!(result.entries.len(), 2);
-        Ok(())
-    }
-
-    #[test]
-    fn query_sort_by_name_ascending() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        insert_artist(&mut db, "Zephyr")?;
-        insert_artist(&mut db, "Apex")?;
-        insert_artist(&mut db, "Middle")?;
-
-        let options = super::super::ListOptions {
-            sort: vec![SortSpec {
-                key: SortKey::Name,
-                direction: super::super::SortDirection::Ascending,
-            }],
-            offset: None,
-            limit: None,
-            search_term: None,
-        };
-        let result = query(&db, "artists", &options, None)?;
-        let names: Vec<&str> = result
-            .entries
-            .iter()
-            .map(|a| a.artist_name.as_str())
-            .collect();
-        assert_eq!(names, vec!["Apex", "Middle", "Zephyr"]);
-        Ok(())
-    }
-
-    #[test]
-    fn query_with_limit_and_offset() -> anyhow::Result<()> {
-        let mut db = new_test_db()?;
-        insert_artist(&mut db, "A")?;
-        insert_artist(&mut db, "B")?;
-        insert_artist(&mut db, "C")?;
-
-        let options = super::super::ListOptions {
-            sort: vec![SortSpec {
-                key: SortKey::Name,
-                direction: super::super::SortDirection::Ascending,
-            }],
-            offset: Some(1),
-            limit: Some(1),
-            search_term: None,
-        };
-        let result = query(&db, "artists", &options, None)?;
-        assert_eq!(result.total_count, 3);
-        assert_eq!(result.entries.len(), 1);
-        assert_eq!(result.offset, 1);
         Ok(())
     }
 }
