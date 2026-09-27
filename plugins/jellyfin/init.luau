@@ -90,6 +90,7 @@ type JsonValue = api.JsonValue
 type JsonObject = { [string]: JsonValue }
 type ResolvedAuth = auth.ResolvedAuth
 type PlaylistCreateRequest = playlists.PlaylistCreateRequest
+type PlaylistTrackLink = playlists.PlaylistTrackLink
 type PlaylistUpdateRequest = playlists.PlaylistUpdateRequest
 type PlaybackPayload = { [string]: string | number | boolean? }
 type PublicUser = users.PublicUser
@@ -1344,6 +1345,21 @@ api.post(P .. "/Playlists/{playlistId}", function(ctx: ApiContext)
 	if playlist_db_id == nil then
 		return responses.bad_request("playlist not found")
 	end
+	if request_payload.has_invalid_ids then
+		return responses.bad_request("invalid playlist item ids")
+	end
+	local replacement_ids: { number }? = nil
+	local current_links: { PlaylistTrackLink }? = nil
+	if request_payload.requested_ids ~= nil then
+		replacement_ids = item_ids.resolve_jellyfin_ids_exact(request_payload.requested_ids)
+		if replacement_ids == nil or not playlist_access.can_add_tracks(replacement_ids) then
+			return responses.bad_request("invalid playlist item ids")
+		end
+		current_links = playlist_access.load_track_refs(playlist)
+		if current_links == nil then
+			return api.response.json(500, { Message = "failed to read playlist items" })
+		end
+	end
 
 	local update_request: PlaylistUpdateRequest = {
 		playlist_id = playlist_db_id,
@@ -1354,6 +1370,13 @@ api.post(P .. "/Playlists/{playlistId}", function(ctx: ApiContext)
 	local ok, updated = pcall(playlists.update, update_request)
 	if not ok or updated == nil then
 		return responses.bad_request("failed to update playlist")
+	end
+	if
+		replacement_ids
+		and current_links
+		and not playlist_access.replace_tracks(playlist, current_links, replacement_ids)
+	then
+		return responses.bad_request("failed to replace playlist items")
 	end
 
 	return api.response.empty(204)
