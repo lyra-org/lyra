@@ -90,7 +90,7 @@ type JsonValue = api.JsonValue
 type JsonObject = { [string]: JsonValue }
 type ResolvedAuth = auth.ResolvedAuth
 type PlaylistCreateRequest = playlists.PlaylistCreateRequest
-type PlaylistTrackLink = playlists.PlaylistTrackLink
+type PlaylistFields = playlists.PlaylistFields
 type PlaylistUpdateRequest = playlists.PlaylistUpdateRequest
 type PlaybackPayload = { [string]: string | number | boolean? }
 type PublicUser = users.PublicUser
@@ -1165,19 +1165,12 @@ api.post(P .. "/Playlists", function(ctx: ApiContext)
 		is_public = if request_payload.is_public ~= nil then request_payload.is_public else false,
 		created_at = session.current_unix_seconds(),
 		updated_at = session.current_unix_seconds(),
+		track_ids = request_payload.ids,
 	}
 
 	local ok, playlist_id = pcall(playlists.create, create_request)
 	if not ok then
 		return responses.bad_request("failed to create playlist")
-	end
-
-	local resolved_playlist_id: number = playlist_id :: number
-	for _, track_id in request_payload.ids do
-		local added, entry_id = pcall(playlists.add_track, resolved_playlist_id, track_id)
-		if not added or entry_id == nil then
-			return responses.bad_request("failed to add track to playlist")
-		end
 	end
 
 	local jellyfin_playlist_id = item_ids.encode_jellyfin_item_id(playlist_id)
@@ -1244,11 +1237,9 @@ api.post(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 	if playlist_db_id == nil then
 		return responses.not_found("playlist not found")
 	end
-	for _, track_id in track_ids do
-		local added, entry_id = pcall(playlists.add_track, playlist_db_id, track_id)
-		if not added or entry_id == nil then
-			return responses.bad_request("failed to add track to playlist")
-		end
+	local added, entry_ids = pcall(playlists.add_tracks, playlist_db_id, track_ids)
+	if not added or entry_ids == nil then
+		return responses.bad_request("failed to add track to playlist")
 	end
 
 	return api.response.empty(204)
@@ -1275,11 +1266,9 @@ api.delete(P .. "/Playlists/{playlistId}/Items", function(ctx: ApiContext)
 		return responses.bad_request("invalid or missing playlist entryIds")
 	end
 
-	for _, entry_id in entry_ids do
-		local ok, removed = pcall(playlists.remove_track, playlist.id, entry_id)
-		if not ok or not removed then
-			return responses.bad_request("failed to remove playlist entry")
-		end
+	local ok, removed = pcall(playlists.remove_tracks, playlist.id, entry_ids)
+	if not ok or not removed then
+		return responses.bad_request("failed to remove playlist entry")
 	end
 
 	return api.response.empty(204)
@@ -1348,35 +1337,29 @@ api.post(P .. "/Playlists/{playlistId}", function(ctx: ApiContext)
 	if request_payload.has_invalid_ids then
 		return responses.bad_request("invalid playlist item ids")
 	end
-	local replacement_ids: { number }? = nil
-	local current_links: { PlaylistTrackLink }? = nil
-	if request_payload.requested_ids ~= nil then
-		replacement_ids = item_ids.resolve_jellyfin_ids_exact(request_payload.requested_ids)
-		if replacement_ids == nil or not playlist_access.can_add_tracks(replacement_ids) then
-			return responses.bad_request("invalid playlist item ids")
-		end
-		current_links = playlist_access.load_track_refs(playlist)
-		if current_links == nil then
-			return api.response.json(500, { Message = "failed to read playlist items" })
-		end
-	end
-
-	local update_request: PlaylistUpdateRequest = {
-		playlist_id = playlist_db_id,
+	local fields: PlaylistFields = {
 		name = request_payload.name,
 		is_public = request_payload.is_public,
 		updated_at = session.current_unix_seconds(),
 	}
-	local ok, updated = pcall(playlists.update, update_request)
+	local ok, updated
+	if request_payload.requested_ids ~= nil then
+		local replacement_ids = item_ids.resolve_jellyfin_ids_exact(request_payload.requested_ids)
+		if replacement_ids == nil then
+			return responses.bad_request("invalid playlist item ids")
+		end
+		ok, updated = pcall(playlists.replace, playlist_db_id, { fields = fields, track_ids = replacement_ids })
+	else
+		local update_request: PlaylistUpdateRequest = {
+			playlist_id = playlist_db_id,
+			name = fields.name,
+			is_public = fields.is_public,
+			updated_at = fields.updated_at,
+		}
+		ok, updated = pcall(playlists.update, update_request)
+	end
 	if not ok or updated == nil then
 		return responses.bad_request("failed to update playlist")
-	end
-	if
-		replacement_ids
-		and current_links
-		and not playlist_access.replace_tracks(playlist, current_links, replacement_ids)
-	then
-		return responses.bad_request("failed to replace playlist items")
 	end
 
 	return api.response.empty(204)
