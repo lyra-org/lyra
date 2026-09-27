@@ -5,7 +5,10 @@
 
 //! The one sort, tie-break and page implementation for catalog queries.
 
-use std::cmp::Ordering;
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+};
 
 use agdb::{
     DbAny,
@@ -182,6 +185,31 @@ pub(crate) fn order<C: Catalog>(
 }
 
 /// One page of matching entities and the number that match.
+/// The numeric values of `keys` for each of `ids`, as the catalog computes them to sort by;
+/// a key with no value reads as zero.
+pub(crate) fn counts<C: Catalog>(
+    db: &DbAny,
+    viewer: &Viewer,
+    filter: &C::Filter,
+    ids: Vec<DbId>,
+    keys: &[C::Key],
+) -> Result<HashMap<DbId, Vec<u64>>, CatalogError> {
+    Ok(C::rows(db, viewer, filter, ids, keys)?
+        .into_iter()
+        .map(|row| {
+            let values = row
+                .values
+                .into_iter()
+                .map(|value| match value {
+                    Some(SortValue::Number(number)) => number,
+                    _ => 0,
+                })
+                .collect();
+            (row.id, values)
+        })
+        .collect())
+}
+
 pub(crate) fn page<C: Catalog>(
     db: &DbAny,
     viewer: &Viewer,

@@ -36,6 +36,7 @@ use crate::{
 pub(crate) use pipeline::{
     NameRange,
     Query,
+    counts,
     order,
     page,
 };
