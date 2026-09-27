@@ -413,7 +413,7 @@ fn query_artist_route_items(
     }
 
     let listen_stats: HashMap<DbId, db::listens::ListenStats> = if needs_listens {
-        db::listens::get_stats_for_user_tracks(db, &all_track_ids, principal.require(db)?)?
+        db::listens::get_stats(db, &all_track_ids, principal.require(db)?)?
             .into_iter()
             .map(|stats| (stats.db_id, stats))
             .collect()

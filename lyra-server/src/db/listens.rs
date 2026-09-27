@@ -123,80 +123,8 @@ pub(crate) enum ListenOwners {
     All,
 }
 
-/// Returns the user's listen stats (count + last played) for each track.
+/// The user's listen stats for each requested track, from one read of the user's listens.
 pub(crate) fn get_stats(
-    db: &DbAny,
-    track_db_ids: &[DbId],
-    user_db_id: DbId,
-) -> anyhow::Result<Vec<ListenStats>> {
-    let mut unique_ids = Vec::new();
-    let mut seen = HashSet::new();
-    for track_db_id in track_db_ids {
-        if track_db_id.0 <= 0 {
-            continue;
-        }
-        if seen.insert(*track_db_id) {
-            unique_ids.push(*track_db_id);
-        }
-    }
-
-    let mut stats: Vec<ListenStats> = Vec::with_capacity(unique_ids.len());
-    if unique_ids.is_empty() {
-        return Ok(stats);
-    }
-
-    let user_listen_ids: HashSet<DbId> = get_listen_ids_for_target(db, user_db_id)?
-        .into_iter()
-        .collect();
-
-    let track_public_ids = super::lookup::find_ids_by_db_ids(db, &unique_ids)?;
-
-    for track_id in unique_ids {
-        let track_public_id = track_public_ids.get(&track_id);
-        let listens: Vec<Listen> = db
-            .exec(
-                QueryBuilder::select()
-                    .elements::<Listen>()
-                    .search()
-                    .to(track_id)
-                    .where_()
-                    .neighbor()
-                    .end_where()
-                    .query(),
-            )?
-            .try_into()?;
-
-        let mut count: u64 = 0;
-        let mut last_played: Option<u64> = None;
-        for listen in &listens {
-            if listen.track_public_id.is_empty()
-                || track_public_id.map(String::as_str) != Some(listen.track_public_id.as_str())
-            {
-                continue;
-            }
-            if !listen
-                .db_id
-                .is_some_and(|listen_id| user_listen_ids.contains(&listen_id))
-            {
-                continue;
-            }
-            count = count.saturating_add(1);
-            if listen.listened_at_ms > last_played.unwrap_or(0) {
-                last_played = Some(listen.listened_at_ms);
-            }
-        }
-
-        stats.push(ListenStats {
-            db_id: track_id,
-            count,
-            last_played,
-        });
-    }
-
-    Ok(stats)
-}
-
-pub(crate) fn get_stats_for_user_tracks(
     db: &DbAny,
     track_db_ids: &[DbId],
     user_db_id: DbId,
@@ -749,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn get_stats_for_user_tracks_preserves_requested_track_rows() -> anyhow::Result<()> {
+    fn get_stats_preserves_requested_track_rows() -> anyhow::Result<()> {
         let mut db = new_test_db()?;
         let user = create_user(&mut db)?;
         let other_user = create_user(&mut db)?;
@@ -761,7 +689,7 @@ mod tests {
         record_listen(&mut db, user, track_two, "tr-old", 5_000)?;
         record_listen(&mut db, other_user, track_two, "tr-two", 7_000)?;
 
-        let stats = get_stats_for_user_tracks(&db, &[track_one, track_two, track_one], user)?;
+        let stats = get_stats(&db, &[track_one, track_two, track_one], user)?;
         assert_eq!(stats.len(), 2);
         let by_track = stats
             .into_iter()

@@ -384,7 +384,7 @@ fn query_track_route_items(
             .iter()
             .filter_map(|track| track.db_id.clone().map(DbId::from))
             .collect();
-        db::listens::get_stats_for_user_tracks(db, &track_ids, user_db_id)?
+        db::listens::get_stats(db, &track_ids, user_db_id)?
             .into_iter()
             .map(|stats| (stats.db_id, stats))
             .collect()
