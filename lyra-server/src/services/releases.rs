@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use agdb::{
     DbAny,
     DbId,
-    QueryId,
 };
 
 use crate::db::{
@@ -48,33 +47,6 @@ pub(crate) struct ReleaseDetails {
     pub(crate) tracks: Option<Vec<Track>>,
     pub(crate) track_artists: Option<HashMap<DbId, Vec<ResolvedCreditedArtist>>>,
     pub(crate) entries: Option<Vec<Entry>>,
-}
-
-pub(crate) fn get(db: &DbAny, id: Option<QueryId>) -> anyhow::Result<Vec<Release>> {
-    match id {
-        None => db::releases::get(db, "releases"),
-        Some(query_id) => match query_id {
-            QueryId::Id(node_id) => {
-                if db::tracks::get_by_id(db, node_id)?.is_some() {
-                    db::releases::get_by_track(db, node_id)
-                } else {
-                    db::releases::get(db, QueryId::Id(node_id))
-                }
-            }
-            other => db::releases::get(db, other),
-        },
-    }
-}
-
-pub(crate) fn get_many_by_track(
-    db: &DbAny,
-    track_ids: &[DbId],
-) -> anyhow::Result<HashMap<DbId, Vec<Release>>> {
-    db::releases::get_by_tracks(db, track_ids)
-}
-
-pub(crate) fn get_appearances(db: &DbAny, artist_id: DbId) -> anyhow::Result<Vec<Release>> {
-    db::releases::get_appearances(db, artist_id)
 }
 
 pub(crate) fn list_details_for_releases(

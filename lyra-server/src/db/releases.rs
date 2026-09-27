@@ -374,40 +374,6 @@ pub(crate) fn get_by_artist(
         .collect())
 }
 
-pub(crate) fn get_appearances(db: &DbAny, artist_db_id: DbId) -> anyhow::Result<Vec<Release>> {
-    let album_artist_releases = get_by_artist(db, artist_db_id)?;
-    let album_artist_ids: HashSet<DbId> = album_artist_releases
-        .iter()
-        .filter_map(|r| r.db_id.clone().map(DbId::from))
-        .collect();
-
-    let tracks = super::tracks::get_by_artist(db, artist_db_id)?;
-    let track_db_ids: Vec<DbId> = tracks
-        .iter()
-        .filter_map(|t| t.db_id.clone().map(DbId::from))
-        .collect();
-
-    let releases_by_track = get_by_tracks(db, &track_db_ids)?;
-    let mut seen = HashSet::new();
-    let mut appears_on = Vec::new();
-
-    for releases in releases_by_track.into_values() {
-        for release in releases {
-            let Some(release_db_id) = release.db_id.clone().map(DbId::from) else {
-                continue;
-            };
-            if album_artist_ids.contains(&release_db_id) {
-                continue;
-            }
-            if seen.insert(release_db_id) {
-                appears_on.push(release);
-            }
-        }
-    }
-
-    Ok(appears_on)
-}
-
 pub(crate) fn get_by_track(
     db: &impl super::DbAccess,
     track_db_id: DbId,

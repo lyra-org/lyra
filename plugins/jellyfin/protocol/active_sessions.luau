@@ -108,7 +108,7 @@ local function resolve_now_playing_names(listing: Listing)
 				table.insert(track_db_ids, db_id)
 			end
 		end
-		local ok, found = pcall(tracks.get_by_ids, track_db_ids)
+		local ok, found = pcall(tracks.get, track_db_ids)
 		if ok and found then
 			for _, track: Track? in found do
 				if track then

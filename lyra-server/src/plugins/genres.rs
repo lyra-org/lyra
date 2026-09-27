@@ -49,6 +49,7 @@ use crate::services::{
             GenreFilter,
             Genres,
         },
+        lookups,
     },
 };
 
@@ -82,14 +83,9 @@ pub(crate) fn module_spec() -> ModuleSpec {
         .function(query_spec())
         .function(resolve_spec())
         .function(add_parent_spec())
-        .function(get_by_id_spec())
+        .function(get_spec())
+        .function(by_release_spec())
         .function(find_by_name_spec())
-        .function(get_parents_spec())
-        .function(get_children_spec())
-        .function(get_releases_spec())
-        .function(get_releases_many_spec())
-        .function(get_for_release_spec())
-        .function(get_for_releases_many_spec())
         .install(|_| Ok(ModuleExport::new(GenresModule)))
 }
 
@@ -131,6 +127,56 @@ fn query_callback(
     }))
 }
 
+fn get_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("get")
+        .context::<crate::plugins::auth::DispatchAuth>()
+        .arg_name("ids")
+        .args::<Vec<u64>>()
+        .returns::<luau::Table>()
+        .call_async(std::sync::Arc::new(get_callback))
+}
+
+fn by_release_spec() -> FunctionSpec {
+    FunctionSpec::async_fn("by_release")
+        .context::<crate::plugins::auth::DispatchAuth>()
+        .arg_name("release_ids")
+        .args::<Vec<u64>>()
+        .returns::<luau::Table>()
+        .call_async(std::sync::Arc::new(by_release_callback))
+}
+
+fn get_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let db = frame.vm.data().get::<GenresModuleStore>()?.db()?;
+    catalog::keyed_lookup(&mut frame, db, "ids", |db, viewer, ids| {
+        Ok(lookups::get::<Genres>(db, viewer, ids)?
+            .into_iter()
+            .map(|(id, genre)| (id, GenreRecord::from(genre)))
+            .collect())
+    })
+}
+
+fn by_release_callback(
+    mut frame: luau::AsyncCallFrame<'_>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let db = frame.vm.data().get::<GenresModuleStore>()?.db()?;
+    catalog::keyed_lookup(&mut frame, db, "release_ids", |db, viewer, ids| {
+        Ok(lookups::genres_by_release(db, viewer, ids)?
+            .into_iter()
+            .map(|(id, genres)| {
+                (
+                    id,
+                    genres
+                        .into_iter()
+                        .map(GenreRecord::from)
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect())
+    })
+}
+
 fn resolve_spec() -> FunctionSpec {
     FunctionSpec::async_fn("resolve")
         .arg_name("request")
@@ -147,68 +193,12 @@ fn add_parent_spec() -> FunctionSpec {
         .call_async(std::sync::Arc::new(add_parent_callback))
 }
 
-fn get_by_id_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_by_id")
-        .arg_name("genre_id")
-        .args::<i64>()
-        .returns::<Option<GenreRecord>>()
-        .call_async(std::sync::Arc::new(get_by_id_callback))
-}
-
 fn find_by_name_spec() -> FunctionSpec {
     FunctionSpec::async_fn("find_by_name")
         .arg_name("name")
         .args::<String>()
         .returns::<Option<GenreRecord>>()
         .call_async(std::sync::Arc::new(find_by_name_callback))
-}
-
-fn get_parents_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_parents")
-        .arg_name("genre_id")
-        .args::<i64>()
-        .returns::<Vec<GenreRecord>>()
-        .call_async(std::sync::Arc::new(get_parents_callback))
-}
-
-fn get_children_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_children")
-        .arg_name("genre_id")
-        .args::<i64>()
-        .returns::<Vec<GenreRecord>>()
-        .call_async(std::sync::Arc::new(get_children_callback))
-}
-
-fn get_releases_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_releases")
-        .arg_name("genre_id")
-        .args::<i64>()
-        .returns::<Vec<i64>>()
-        .call_async(std::sync::Arc::new(get_releases_callback))
-}
-
-fn get_releases_many_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_releases_many")
-        .arg_name("genre_ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
-        .call_async(std::sync::Arc::new(get_releases_many_callback))
-}
-
-fn get_for_release_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_for_release")
-        .arg_name("release_id")
-        .args::<i64>()
-        .returns::<Vec<GenreRecord>>()
-        .call_async(std::sync::Arc::new(get_for_release_callback))
-}
-
-fn get_for_releases_many_spec() -> FunctionSpec {
-    FunctionSpec::async_fn("get_for_releases_many")
-        .arg_name("release_ids")
-        .args::<Vec<u64>>()
-        .returns::<luau::Table>()
-        .call_async(std::sync::Arc::new(get_for_releases_many_callback))
 }
 
 fn resolve_callback(
@@ -244,23 +234,6 @@ fn add_parent_callback(
     }))
 }
 
-fn get_by_id_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let genre_id: i64 = frame.args.read_named("genre_id")?;
-    let store = frame.vm.data().get::<GenresModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let genre = {
-            let db = db.read().await;
-            db::genres::get_by_id(&db, DbId(genre_id)).map_err(crate::plugins::runtime_error)
-        }?;
-
-        optional_genre_value(genre)
-    }))
-}
-
 fn find_by_name_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
@@ -285,156 +258,6 @@ fn find_by_name_callback(
         };
 
         optional_genre_value(genre)
-    }))
-}
-
-fn get_parents_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let genre_id: i64 = frame.args.read_named("genre_id")?;
-    let store = frame.vm.data().get::<GenresModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let genres = {
-            let db = db.read().await;
-            db::genres::get_parents(&db, DbId(genre_id)).map_err(crate::plugins::runtime_error)
-        }?;
-
-        harmony_luau::serializable_to_luau_owned(
-            genres
-                .into_iter()
-                .map(GenreRecord::from)
-                .collect::<Vec<_>>(),
-        )
-    }))
-}
-
-fn get_children_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let genre_id: i64 = frame.args.read_named("genre_id")?;
-    let store = frame.vm.data().get::<GenresModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let genres = {
-            let db = db.read().await;
-            db::genres::get_children(&db, DbId(genre_id)).map_err(crate::plugins::runtime_error)
-        }?;
-
-        harmony_luau::serializable_to_luau_owned(
-            genres
-                .into_iter()
-                .map(GenreRecord::from)
-                .collect::<Vec<_>>(),
-        )
-    }))
-}
-
-fn get_releases_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let genre_id: i64 = frame.args.read_named("genre_id")?;
-    let store = frame.vm.data().get::<GenresModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let release_ids = {
-            let db = db.read().await;
-            db::genres::get_releases(&db, DbId(genre_id)).map_err(crate::plugins::runtime_error)
-        }?;
-
-        harmony_luau::serializable_to_luau_owned(
-            release_ids.into_iter().map(|id| id.0).collect::<Vec<_>>(),
-        )
-    }))
-}
-
-fn get_releases_many_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let ids_table: luau::Table = frame.args.read_named("genre_ids")?;
-    let ids = args::unique_ids(frame.vm, &ids_table)?;
-    let store = frame.vm.data().get::<GenresModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let releases = {
-            let db = db.read().await;
-            db::genres::get_releases_many(&db, &ids).map_err(crate::plugins::runtime_error)
-        }?;
-
-        let mut table = luau::OwnedTable::with_capacity(0, ids.len());
-        for id in ids {
-            let release_ids = releases
-                .get(&id)
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|release_id| release_id.0)
-                .collect::<Vec<_>>();
-            table.set_key(
-                luau::Value::from(id.0),
-                harmony_luau::serializable_to_luau_owned(release_ids)?,
-            );
-        }
-        Ok(luau::Value::TableData(table))
-    }))
-}
-
-fn get_for_release_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let release_id: i64 = frame.args.read_named("release_id")?;
-    let store = frame.vm.data().get::<GenresModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let genres = {
-            let db = db.read().await;
-            db::genres::get_for_release(&db, DbId(release_id))
-                .map_err(crate::plugins::runtime_error)
-        }?;
-
-        harmony_luau::serializable_to_luau_owned(
-            genres
-                .into_iter()
-                .map(GenreRecord::from)
-                .collect::<Vec<_>>(),
-        )
-    }))
-}
-
-fn get_for_releases_many_callback(
-    mut frame: luau::AsyncCallFrame<'_>,
-) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let ids_table: luau::Table = frame.args.read_named("release_ids")?;
-    let ids = args::unique_ids(frame.vm, &ids_table)?;
-    let store = frame.vm.data().get::<GenresModuleStore>()?.as_ref().clone();
-    let db = store.db()?;
-
-    Ok(luau::ScheduledFuture::new(async move {
-        let genres = {
-            let db = db.read().await;
-            db::genres::get_for_releases_many(&db, &ids).map_err(crate::plugins::runtime_error)
-        }?;
-
-        let mut table = luau::OwnedTable::with_capacity(0, ids.len());
-        for id in ids {
-            let value = genres
-                .get(&id)
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .map(GenreRecord::from)
-                .collect::<Vec<_>>();
-            table.set_key(
-                luau::Value::from(id.0),
-                harmony_luau::serializable_to_luau_owned(value)?,
-            );
-        }
-        Ok(luau::Value::TableData(table))
     }))
 }
 
@@ -684,10 +507,24 @@ fn module_descriptor() -> ModuleDescriptor {
                 yields: true,
             },
             ModuleFunctionDescriptor {
-                path: vec!["get_by_id"],
-                description: None,
-                params: vec![param("genre_id", i64::luau_type())],
-                returns: vec![Option::<GenreRecord>::luau_type()],
+                path: vec!["get"],
+                description: Some(
+                    "The genres with these ids that the caller can see, keyed by id.",
+                ),
+                params: vec![param("ids", Vec::<u64>::luau_type())],
+                returns: vec![LuauType::map(u64::luau_type(), GenreRecord::luau_type())],
+                yields: true,
+            },
+            ModuleFunctionDescriptor {
+                path: vec!["by_release"],
+                description: Some(
+                    "The genres of each of these releases that the caller can see, keyed by release id.",
+                ),
+                params: vec![param("release_ids", Vec::<u64>::luau_type())],
+                returns: vec![LuauType::map(
+                    u64::luau_type(),
+                    Vec::<GenreRecord>::luau_type(),
+                )],
                 yields: true,
             },
             ModuleFunctionDescriptor {
@@ -695,51 +532,6 @@ fn module_descriptor() -> ModuleDescriptor {
                 description: None,
                 params: vec![param("name", String::luau_type())],
                 returns: vec![Option::<GenreRecord>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_parents"],
-                description: None,
-                params: vec![param("genre_id", i64::luau_type())],
-                returns: vec![Vec::<GenreRecord>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_children"],
-                description: None,
-                params: vec![param("genre_id", i64::luau_type())],
-                returns: vec![Vec::<GenreRecord>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_releases"],
-                description: None,
-                params: vec![param("genre_id", i64::luau_type())],
-                returns: vec![Vec::<i64>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_releases_many"],
-                description: None,
-                params: vec![param("genre_ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(u64::luau_type(), Vec::<i64>::luau_type())],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_for_release"],
-                description: None,
-                params: vec![param("release_id", i64::luau_type())],
-                returns: vec![Vec::<GenreRecord>::luau_type()],
-                yields: true,
-            },
-            ModuleFunctionDescriptor {
-                path: vec!["get_for_releases_many"],
-                description: None,
-                params: vec![param("release_ids", Vec::<u64>::luau_type())],
-                returns: vec![LuauType::map(
-                    u64::luau_type(),
-                    Vec::<GenreRecord>::luau_type(),
-                )],
                 yields: true,
             },
         ],

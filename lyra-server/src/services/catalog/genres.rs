@@ -91,6 +91,13 @@ impl Catalog for Genres {
     type Filter = GenreFilter;
     type Item = Genre;
 
+    fn id_filter(ids: Vec<DbId>) -> GenreFilter {
+        GenreFilter {
+            ids: Some(ids),
+            ..GenreFilter::default()
+        }
+    }
+
     fn default_sort(_filter: &GenreFilter) -> SortSpec<GenreKey> {
         vec![(GenreKey::Name, Direction::Ascending)]
     }
@@ -102,14 +109,27 @@ impl Catalog for Genres {
     ) -> Result<Vec<DbId>, CatalogError> {
         let releases = scoped_genre_releases(db, viewer, filter)?;
         let mut genres = Candidates::default();
-        genres.restrict(
-            db::genres::get_for_releases_many(db, &releases)?
-                .into_values()
-                .flatten()
-                .filter_map(|genre| genre.db_id.map(DbId::from)),
-        );
-        if let Some(ids) = &filter.ids {
-            genres.restrict(db::graph::existing_ids(db, ids, "Genre")?);
+        match &filter.ids {
+            Some(ids) => {
+                let releases = releases.into_iter().collect::<HashSet<_>>();
+                let ids = db::graph::existing_ids(db, ids, "Genre")?;
+                genres.restrict(
+                    db::genres::get_releases_many(db, &ids)?
+                        .into_iter()
+                        .filter(|(_, genre_releases)| {
+                            genre_releases
+                                .iter()
+                                .any(|release| releases.contains(release))
+                        })
+                        .map(|(genre, _)| genre),
+                );
+            }
+            None => genres.restrict(
+                db::genres::get_for_releases_many(db, &releases)?
+                    .into_values()
+                    .flatten()
+                    .filter_map(|genre| genre.db_id.map(DbId::from)),
+            ),
         }
         Ok(genres.resolve(&filter.exclude_ids, || Ok(Vec::new()))?)
     }

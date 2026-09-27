@@ -7,6 +7,7 @@
 
 pub(crate) mod artists;
 pub(crate) mod genres;
+pub(crate) mod lookups;
 pub(crate) mod pipeline;
 pub(crate) mod releases;
 pub(crate) mod tracks;

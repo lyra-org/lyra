@@ -5,6 +5,12 @@
 
 //! The Luau side of catalog queries, shared by the catalog modules.
 
+use std::collections::HashMap;
+
+use agdb::{
+    DbAny,
+    DbId,
+};
 use harmony_luau as luau;
 #[cfg(feature = "docgen")]
 use harmony_luau::{
@@ -15,11 +21,12 @@ use harmony_luau::{
 };
 use serde::Serialize;
 
+use crate::plugins::db::{
+    DbAccess,
+    DbAsync,
+};
 use crate::{
-    plugins::{
-        args,
-        db::DbAccess,
-    },
+    plugins::args,
     services::{
         auth::Principal,
         catalog::{
@@ -115,7 +122,7 @@ pub(crate) fn optional_ids(
     vm: &luau::Vm,
     table: &luau::Table,
     key: &str,
-) -> luau::runtime::Result<Option<Vec<agdb::DbId>>> {
+) -> luau::runtime::Result<Option<Vec<DbId>>> {
     luau::table::optional_table_field(vm, table, key)?
         .map(|ids| args::unique_ids(vm, &ids))
         .transpose()
@@ -154,6 +161,36 @@ pub(crate) fn read_artist_credit(
         artists: args::unique_ids(vm, &artists)?,
         role: role_filter.unwrap_or(CreditRole::Any),
         excluding,
+    }))
+}
+
+/// A catalog lookup of the entities with these ids that the viewer can see, keyed by id.
+pub(crate) type KeyedLookup<T> =
+    fn(&DbAny, &Viewer, &[DbId]) -> Result<HashMap<DbId, T>, CatalogError>;
+
+/// Reads the id array argument `name` and answers with `lookup`'s result for the dispatch's
+/// viewer, keyed by id.
+pub(crate) fn keyed_lookup<T: Serialize + 'static>(
+    frame: &mut luau::AsyncCallFrame<'_>,
+    db: DbAsync,
+    name: &'static str,
+    lookup: KeyedLookup<T>,
+) -> luau::runtime::Result<luau::ScheduledFuture> {
+    let ids: luau::Table = frame.args.read_named(name)?;
+    let ids = args::unique_ids(frame.vm, &ids)?;
+    let principal = crate::plugins::auth::dispatch_principal(&frame.context)?;
+    Ok(luau::ScheduledFuture::new(async move {
+        let db = db.read().await;
+        let viewer = viewer(&*db, principal)?;
+        let found = lookup(&db, &viewer, &ids).map_err(error)?;
+        let mut table = luau::OwnedTable::with_entry_capacity(0, 0, found.len());
+        for (id, value) in found {
+            table.set_key(
+                luau::Value::from(id.0),
+                harmony_luau::serializable_to_luau_owned(value)?,
+            );
+        }
+        Ok(luau::Value::TableData(table))
     }))
 }
 

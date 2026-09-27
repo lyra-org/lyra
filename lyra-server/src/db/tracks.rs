@@ -245,30 +245,6 @@ pub(crate) fn ids_with_year(db: &impl super::DbAccess, year: u32) -> anyhow::Res
         .ids())
 }
 
-/// Returns all tracks belonging to a library via its releases.
-pub(crate) fn get_by_library(db: &DbAny, library_id: DbId) -> anyhow::Result<Vec<Track>> {
-    let release_ids: Vec<DbId> = super::releases::get_direct(db, library_id)?
-        .into_iter()
-        .filter_map(|a| a.db_id.map(Into::into))
-        .collect();
-    if release_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let track_map = get_direct_many(db, &release_ids)?;
-    let mut tracks = Vec::new();
-    let mut seen = HashSet::new();
-    for track in track_map.into_values().flatten() {
-        if let Some(track_db_id) = track.db_id.clone().map(DbId::from) {
-            if seen.insert(track_db_id) {
-                tracks.push(track);
-            }
-            continue;
-        }
-        tracks.push(track);
-    }
-    Ok(tracks)
-}
-
 pub(crate) fn get_by_artist(
     db: &impl super::DbAccess,
     artist_db_id: DbId,

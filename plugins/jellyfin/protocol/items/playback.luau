@@ -1000,7 +1000,7 @@ function module.resolve_track_for_playback(item_id: number?): Track?
 	end
 
 	-- Typed-to-Track-node: release/artist db_ids resolve to nil, not the first related track.
-	local ok, result = pcall(tracks.get_by_ids, { item_id })
+	local ok, result = pcall(tracks.get, { item_id })
 	if not ok or type(result) ~= "table" then
 		return nil
 	end

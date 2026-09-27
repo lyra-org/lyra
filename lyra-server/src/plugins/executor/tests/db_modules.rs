@@ -405,8 +405,6 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
             r#"
                 local listens = require("@lyra/listens")
                 local track_db_id = {track_db_id}
-                executor_listen_count = listens.get_count(track_db_id)
-                executor_listen_counts = listens.get_counts({{ track_db_id, track_db_id }})
                 executor_listen_stats = listens.get_stats({{ track_db_id }})
             "#,
             track_db_id = track_db_id.0,
@@ -421,9 +419,7 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
         format!(
             r#"
                 local track_db_id = {track_db_id}
-                return executor_listen_count,
-                    executor_listen_counts[track_db_id],
-                    executor_listen_stats.counts[track_db_id],
+                return executor_listen_stats.counts[track_db_id],
                     executor_listen_stats.last_played[track_db_id]
             "#,
             track_db_id = track_db_id.0,
@@ -432,12 +428,7 @@ fn plugin_executor_exposes_db_backed_lyra_listens_module() -> Result<()> {
     )?;
     assert_eq!(
         values,
-        vec![
-            luau::Value::Number(2.0),
-            luau::Value::Number(2.0),
-            luau::Value::Number(2.0),
-            luau::Value::Number(2500.0),
-        ]
+        vec![luau::Value::Number(2.0), luau::Value::Number(2500.0)]
     );
     Ok(())
 }
@@ -571,10 +562,10 @@ fn plugin_executor_exposes_db_backed_lyra_artists_module() -> Result<()> {
                 local release_db_id = {release_db_id}
                 local actor_db_id = {actor_db_id}
 
-                local listed = artists.list()
-                local by_library = artists.list_by_library(library_db_id)
-                local many = artists.list_many({{ release_db_id }})
-                local relations = artists.list_relations_many({{ actor_db_id }})
+                local fetched = artists.get({{ {artist_db_id} }})
+                local by_library = artists.query({{ library_id = library_db_id }})
+                local many = artists.by_release({{ release_db_id }})
+                local relations = artists.relations({{ actor_db_id }})
                 local queried = artists.query({{
                     search = "Module",
                     artist_type = artists.ArtistType.Person,
@@ -589,8 +580,8 @@ fn plugin_executor_exposes_db_backed_lyra_artists_module() -> Result<()> {
                 return artists.ArtistType.Person,
                     artists.ArtistRelationType.VoiceActor,
                     artists.CreditType.Artist,
-                    listed[1] ~= nil,
-                    by_library[1].artist_name,
+                    fetched[{artist_db_id}].artist_name,
+                    by_library.items[1].artist_name,
                     many[release_db_id][1].artist_name,
                     relations[actor_db_id][1].relation_type,
                     relations[actor_db_id][1].direction,
@@ -603,6 +594,7 @@ fn plugin_executor_exposes_db_backed_lyra_artists_module() -> Result<()> {
             library_db_id = library_db_id.0,
             release_db_id = release_db_id.0,
             actor_db_id = actor_db_id.0,
+            artist_db_id = artist_db_id.0,
         )
         .into_bytes(),
     )?;
@@ -629,7 +621,7 @@ fn plugin_executor_exposes_db_backed_lyra_artists_module() -> Result<()> {
     assert_eq!(
         values,
         vec![
-            luau::Value::Boolean(true),
+            luau::Value::String(b"Raw Artist Module".to_vec()),
             luau::Value::String(b"Raw Artist Module".to_vec()),
             luau::Value::String(b"Raw Artist Module".to_vec()),
             luau::Value::String(b"voice_actor".to_vec()),
@@ -674,10 +666,9 @@ fn plugin_executor_exposes_db_backed_lyra_tracks_module() -> Result<()> {
                 local release_db_id = {release_db_id}
                 local track_db_id = {track_db_id}
 
-                local listed = tracks.list(release_db_id)
-                local all = tracks.list()
-                local fetched = tracks.get_by_ids({{ track_db_id, track_db_id }})
-                local related = tracks.list_many({{ release_db_id }})
+                local all = tracks.query({{}})
+                local fetched = tracks.get({{ track_db_id }})
+                local related = tracks.by_release({{ release_db_id }})
                 local queried = tracks.query({{
                     release_ids = {{ release_db_id }},
                     search = "Module",
@@ -685,8 +676,7 @@ fn plugin_executor_exposes_db_backed_lyra_tracks_module() -> Result<()> {
                     limit = 5,
                 }})
 
-                return listed[1].track_title,
-                    all[1] ~= nil,
+                return all.items[1] ~= nil,
                     fetched[track_db_id].id,
                     related[release_db_id][1].track_title,
                     queried.items[1].track_title,
@@ -702,7 +692,6 @@ fn plugin_executor_exposes_db_backed_lyra_tracks_module() -> Result<()> {
     assert_eq!(
         values,
         vec![
-            luau::Value::String(b"Raw Track Module Song".to_vec()),
             luau::Value::Boolean(true),
             luau::Value::String(track_public_id.as_bytes().to_vec()),
             luau::Value::String(b"Raw Track Module Song".to_vec()),
@@ -1272,21 +1261,28 @@ fn plugin_executor_exposes_db_backed_lyra_releases_module() -> Result<()> {
                 local album_artist_id = {album_artist_id}
                 local guest_artist_id = {guest_artist_id}
 
-                local listed = releases.list(track_db_id)
-                local all = releases.list()
-                local by_artist = releases.get_by_artist(album_artist_id)
-                local appearances = releases.get_appearances(guest_artist_id)
-                local many = releases.list_many({{ track_db_id, track_db_id }})
+                local fetched = releases.get({{ release_db_id }})
+                local all = releases.query({{}})
+                local by_artist = releases.query({{
+                    artist_ids = {{ album_artist_id }},
+                    credit_role = "release",
+                }})
+                local appearances = releases.query({{
+                    artist_ids = {{ guest_artist_id }},
+                    credit_role = "track",
+                    exclude_credit_role = "release",
+                }})
+                local many = releases.by_track({{ track_db_id }})
                 local queried = releases.query({{
                     search = "Module",
                     sort = {{ {{ key = "name" }} }},
                     limit = 5,
                 }})
 
-                return listed[1].release_title,
-                    all[1] ~= nil,
-                    by_artist[1].release_title,
-                    appearances[1].release_title,
+                return fetched[release_db_id].release_title,
+                    all.total,
+                    by_artist.items[1].release_title,
+                    appearances.items[1].release_title,
                     many[track_db_id][1].release_title,
                     queried.items[1].release_title,
                     queried.total,
@@ -1304,7 +1300,7 @@ fn plugin_executor_exposes_db_backed_lyra_releases_module() -> Result<()> {
         values,
         vec![
             luau::Value::String(b"Raw Release Module".to_vec()),
-            luau::Value::Boolean(true),
+            luau::Value::Number(2.0),
             luau::Value::String(b"Raw Release Module".to_vec()),
             luau::Value::String(b"Raw Release Module".to_vec()),
             luau::Value::String(b"Raw Release Module".to_vec()),
@@ -1533,24 +1529,17 @@ fn plugin_executor_exposes_db_backed_lyra_genres_module() -> Result<()> {
                 }})
                 genres.add_parent(child_id, parent_id)
 
-                local by_id = genres.get_by_id(child_id)
+                local by_id = genres.get({{ child_id, parent_id }})
                 local by_name = genres.find_by_name(" synthpop ")
-                local parents = genres.get_parents(child_id)
-                local children = genres.get_children(parent_id)
-                local releases = genres.get_releases(child_id)
-                local releases_many = genres.get_releases_many({{ child_id, parent_id, child_id }})
-                local for_release = genres.get_for_release(release_db_id)
-                local for_many = genres.get_for_releases_many({{ release_db_id }})
+                local queried = genres.query({{ search = "synth" }})
+                local for_release = genres.by_release({{ release_db_id }})
 
-                return by_id.name,
+                return by_id[child_id].name,
+                    by_id[parent_id] == nil,
                     by_name.name,
-                    parents[1].name,
-                    children[1].name,
-                    releases[1],
-                    releases_many[child_id][1],
-                    for_release[1].name,
-                    for_many[release_db_id][1].name,
-                    #releases_many[parent_id]
+                    queried.items[1].name,
+                    queried.total,
+                    for_release[release_db_id][1].name
             "#,
             release_db_id = release_db_id.0,
         )
@@ -1561,14 +1550,11 @@ fn plugin_executor_exposes_db_backed_lyra_genres_module() -> Result<()> {
         values,
         vec![
             luau::Value::String(b"Synthpop".to_vec()),
-            luau::Value::String(b"Synthpop".to_vec()),
-            luau::Value::String(b"Electronic".to_vec()),
-            luau::Value::String(b"Synthpop".to_vec()),
-            luau::Value::Number(release_db_id.0 as f64),
-            luau::Value::Number(release_db_id.0 as f64),
+            luau::Value::Boolean(true),
             luau::Value::String(b"Synthpop".to_vec()),
             luau::Value::String(b"Synthpop".to_vec()),
-            luau::Value::Number(0.0),
+            luau::Value::Number(1.0),
+            luau::Value::String(b"Synthpop".to_vec()),
         ]
     );
     Ok(())
