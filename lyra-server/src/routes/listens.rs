@@ -775,6 +775,31 @@ mod tests {
     }
 
     #[test]
+    fn sort_listen_rows_keeps_never_played_last_in_both_directions() {
+        for (direction, expected) in [
+            ("ascending", ["a", "b", "c"]),
+            ("descending", ["b", "a", "c"]),
+        ] {
+            let mut rows = vec![
+                row("user", "c", 1, None),
+                row("user", "b", 1, Some(2_000)),
+                row("user", "a", 1, Some(1_000)),
+            ];
+
+            sort_listen_rows(
+                &mut rows,
+                Some(vec!["last_played_at".to_string()]),
+                Some(direction.to_string()),
+                false,
+            )
+            .expect("sort should succeed");
+
+            let ids = rows.into_iter().map(|row| row.track_id).collect::<Vec<_>>();
+            assert_eq!(ids, expected, "{direction}");
+        }
+    }
+
+    #[test]
     fn sort_listen_rows_allows_user_id_for_managed_endpoint() {
         let mut rows = vec![
             row("user-b", "track", 1, Some(2_000)),

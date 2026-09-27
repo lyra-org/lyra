@@ -689,6 +689,93 @@ fn plugin_executor_exposes_db_backed_lyra_tracks_module() -> Result<()> {
     Ok(())
 }
 
+fn tracks_runtime(db: agdb::DbAny) -> Result<PluginExecutor> {
+    PluginExecutor::with_database(
+        Arc::from(vec![manifest("demo", &["lyra.tracks"])]),
+        default_server_info(),
+        std::sync::Arc::new(tokio::sync::RwLock::new(db)),
+    )
+}
+
+fn track_titles(values: Vec<luau::Value>) -> Vec<String> {
+    values
+        .into_iter()
+        .map(|value| match value {
+            luau::Value::String(bytes) => String::from_utf8(bytes).expect("utf-8 title"),
+            other => panic!("expected a title, got {other:?}"),
+        })
+        .collect()
+}
+
+#[test]
+fn plugin_track_query_sorts_a_release_in_album_order() -> Result<()> {
+    let mut db = crate::plugins::db::test_db::new_test_db()?;
+    let release_db_id = crate::plugins::db::test_db::insert_release(&mut db, "Album Order")?;
+    for (title, disc, track) in [("Third", 2, 1), ("Second", 1, 2), ("First", 1, 1)] {
+        let track_db_id = crate::plugins::db::test_db::insert_track(&mut db, title)?;
+        let mut stored = crate::plugins::db::tracks::get_by_id(&db, track_db_id)?
+            .context("inserted track exists")?;
+        stored.disc = Some(disc);
+        stored.track = Some(track);
+        crate::plugins::db::tracks::update(&mut db, &stored)?;
+        crate::plugins::db::test_db::connect(&mut db, release_db_id, track_db_id)?;
+    }
+
+    let runtime = tracks_runtime(db)?;
+    let values = runtime.eval_plugin_source(
+        "demo",
+        "init.luau",
+        format!(
+            r#"
+                local tracks = require("@lyra/tracks")
+                local result = tracks.query({{
+                    scope = {release_db_id},
+                    sort_by = {{ "disc", "track", "sort_name" }},
+                }})
+                local titles = {{}}
+                for _, track in result.entities do
+                    table.insert(titles, track.track_title)
+                end
+                return table.unpack(titles)
+            "#,
+            release_db_id = release_db_id.0,
+        )
+        .into_bytes(),
+    )?;
+
+    assert_eq!(track_titles(values), vec!["First", "Second", "Third"]);
+    Ok(())
+}
+
+#[test]
+#[ignore = "plugin track search without a sort keeps traversal order"]
+fn plugin_track_query_ranks_search_matches_by_relevance() -> Result<()> {
+    let mut db = crate::plugins::db::test_db::new_test_db()?;
+    for title in ["Blue", "A b l u e"] {
+        crate::plugins::db::test_db::insert_track(&mut db, title)?;
+    }
+
+    let runtime = tracks_runtime(db)?;
+    let values = runtime.eval_plugin_source(
+        "demo",
+        "init.luau",
+        r#"
+            local tracks = require("@lyra/tracks")
+            local result = tracks.query({ search_term = "blue" })
+            local titles = {}
+            for _, track in result.entities do
+                table.insert(titles, track.track_title)
+            end
+            return table.unpack(titles)
+        "#
+        .as_bytes()
+        .to_vec(),
+    )?;
+
+    assert_eq!(track_titles(values), vec!["Blue", "A b l u e"]);
+    Ok(())
+}
+
 #[test]
 fn plugin_executor_exposes_db_backed_lyra_track_sources_module() -> Result<()> {
     let mut db = crate::plugins::db::test_db::new_test_db()?;

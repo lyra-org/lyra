@@ -962,6 +962,87 @@ mod tests {
         Ok(())
     }
 
+    async fn list_genre_names(
+        headers: HeaderMap,
+        query: Option<&str>,
+        sort_by: Option<&str>,
+        sort_order: Option<&str>,
+    ) -> anyhow::Result<Vec<String>> {
+        let Json(genres) = list_genres(
+            headers,
+            Query(GenreListQuery {
+                inc: None,
+                query: query.map(str::to_string),
+                library_id: None,
+                sort_by: sort_by.map(|value| vec![value.to_string()]),
+                sort_order: sort_order.map(str::to_string),
+                page: Default::default(),
+            }),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        Ok(genres.items.into_iter().map(|genre| genre.name).collect())
+    }
+
+    fn insert_genre_release(
+        db: &mut DbAny,
+        library: DbId,
+        genre_name: &str,
+    ) -> anyhow::Result<DbId> {
+        let release = insert_test_release(db, &format!("{genre_name} Release"))?;
+        connect(db, library, release)?;
+        db::genres::sync_release_genres(db, release, &[genre_name.to_string()])?;
+        Ok(release)
+    }
+
+    #[tokio::test]
+    async fn list_genres_defaults_to_name_and_admins_see_every_library() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        {
+            let mut db = STATE.db.write().await;
+            let granted = insert_library(&mut db, "Granted Genres", "/tmp/lyra-granted-genres")?;
+            let other = insert_library(&mut db, "Other Genres", "/tmp/lyra-other-genres")?;
+            insert_genre_release(&mut db, granted, "Techno")?;
+            insert_genre_release(&mut db, other, "Ambient")?;
+            insert_genre_release(&mut db, other, "Jazz")?;
+        }
+        let headers = create_admin_headers("genre-default-admin").await?;
+
+        assert_eq!(
+            list_genre_names(headers.clone(), None, None, None).await?,
+            vec!["Ambient", "Jazz", "Techno"]
+        );
+        assert_eq!(
+            list_genre_names(headers, None, Some("name"), Some("descending")).await?,
+            vec!["Techno", "Jazz", "Ambient"]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "genres still sort by name when searching"]
+    async fn list_genres_orders_query_matches_by_relevance() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        {
+            let mut db = STATE.db.write().await;
+            let library = insert_library(&mut db, "Genre Relevance", "/tmp/lyra-genre-relevance")?;
+            for name in ["A b l u e", "Blue"] {
+                insert_genre_release(&mut db, library, name)?;
+            }
+        }
+        let headers = create_admin_headers("genre-relevance-admin").await?;
+
+        assert_eq!(
+            list_genre_names(headers, Some("blue"), None, None).await?,
+            vec!["Blue", "A b l u e"]
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn list_genres_without_library_id_uses_accessible_libraries() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;

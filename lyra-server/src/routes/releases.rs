@@ -1090,6 +1090,135 @@ mod tests {
         Ok(())
     }
 
+    fn set_release_fields(
+        db: &mut DbAny,
+        release_db_id: DbId,
+        sort_title: Option<&str>,
+        release_date: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let mut release = db::releases::get_by_id(db, release_db_id)?
+            .ok_or_else(|| anyhow::anyhow!("release missing"))?;
+        release.sort_title = sort_title.map(str::to_string);
+        release.release_date = release_date.map(str::to_string);
+        db::releases::update(db, &release)
+    }
+
+    async fn list_release_titles(
+        headers: HeaderMap,
+        sort_by: Option<&str>,
+        sort_order: Option<&str>,
+    ) -> anyhow::Result<Vec<String>> {
+        let Json(page) = get_releases(
+            headers,
+            Query(ReleaseListQuery {
+                inc: None,
+                query: None,
+                year: None,
+                library_id: None,
+                genre_id: None,
+                sort_by: sort_by.map(|value| vec![value.to_string()]),
+                sort_order: sort_order.map(str::to_string),
+                rating: RatingFilterQuery::default(),
+                page: super::super::PageQuery::default(),
+            }),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        Ok(page
+            .items
+            .into_iter()
+            .map(|release| release.title)
+            .collect())
+    }
+
+    #[tokio::test]
+    async fn get_releases_defaults_to_sort_name_then_name_then_id() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        {
+            let mut db = STATE.db.write().await;
+            insert_test_release(&mut db, "Charlie")?;
+            let zulu = insert_test_release(&mut db, "Zulu")?;
+            set_release_fields(&mut db, zulu, Some("Alpha"), None)?;
+            insert_test_release(&mut db, "Beta")?;
+            insert_test_release(&mut db, "beta")?;
+        }
+        let headers = create_admin_headers("release-default-admin").await?;
+
+        assert_eq!(
+            list_release_titles(headers.clone(), None, None).await?,
+            vec!["Zulu", "Beta", "beta", "Charlie"]
+        );
+        assert_eq!(
+            list_release_titles(headers, Some("sort_name"), Some("descending")).await?,
+            vec!["Charlie", "Beta", "beta", "Zulu"]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_releases_orders_partial_release_dates() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        {
+            let mut db = STATE.db.write().await;
+            for (title, date) in [
+                ("Day", "2004-05-06"),
+                ("Next Year", "2005"),
+                ("Year", "2004"),
+                ("Earlier", "1999-12-31"),
+                ("Month", "2004-05"),
+            ] {
+                let release = insert_test_release(&mut db, title)?;
+                set_release_fields(&mut db, release, None, Some(date))?;
+            }
+        }
+        let headers = create_admin_headers("release-date-admin").await?;
+
+        assert_eq!(
+            list_release_titles(headers.clone(), Some("release_date"), None).await?,
+            vec!["Earlier", "Year", "Month", "Day", "Next Year"]
+        );
+        assert_eq!(
+            list_release_titles(headers, Some("release_date"), Some("descending")).await?,
+            vec!["Next Year", "Day", "Month", "Year", "Earlier"]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "empty values still sort first when descending"]
+    async fn get_releases_sorts_missing_release_dates_last_in_both_directions() -> anyhow::Result<()>
+    {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        {
+            let mut db = STATE.db.write().await;
+            for (title, date) in [
+                ("Undated", None),
+                ("Old", Some("1990")),
+                ("New", Some("2020")),
+            ] {
+                let release = insert_test_release(&mut db, title)?;
+                set_release_fields(&mut db, release, None, date)?;
+            }
+        }
+        let headers = create_admin_headers("release-undated-admin").await?;
+
+        assert_eq!(
+            list_release_titles(headers.clone(), Some("release_date"), Some("ascending")).await?,
+            vec!["Old", "New", "Undated"]
+        );
+        assert_eq!(
+            list_release_titles(headers, Some("release_date"), Some("descending")).await?,
+            vec!["New", "Old", "Undated"]
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn get_releases_orders_query_matches_by_relevance() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;

@@ -1708,6 +1708,193 @@ mod tests {
         Ok(())
     }
 
+    fn set_sort_title(db: &mut DbAny, track_db_id: DbId, sort_title: &str) -> anyhow::Result<()> {
+        let mut track = db::tracks::get_by_id(db, track_db_id)?
+            .ok_or_else(|| anyhow::anyhow!("track missing"))?;
+        track.sort_title = Some(sort_title.to_string());
+        db::tracks::update(db, &track)
+    }
+
+    async fn list_titles(
+        principal: &Principal,
+        release_id: Option<String>,
+        sort_by: Option<&str>,
+        sort_order: Option<&str>,
+    ) -> anyhow::Result<Vec<String>> {
+        let page = list_track_responses(
+            principal,
+            TrackListOptions {
+                inc: None,
+                query: None,
+                library_id: None,
+                release_id,
+                sort_by: sort_by.map(|value| vec![value.to_string()]),
+                sort_order: sort_order.map(str::to_string),
+                rating_filter: db::ratings::RatingFilter::default(),
+                page_request: super::super::SnapshotPageRequest::first_page(100),
+            },
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        Ok(page.items.into_iter().map(|track| track.title).collect())
+    }
+
+    #[tokio::test]
+    async fn list_track_responses_defaults_to_sort_name_then_name_then_id() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        {
+            let mut db = STATE.db.write().await;
+            insert_track(&mut db, "Charlie")?;
+            let zulu = insert_track(&mut db, "Zulu")?;
+            set_sort_title(&mut db, zulu, "Alpha")?;
+            insert_track(&mut db, "Beta")?;
+            insert_track(&mut db, "beta")?;
+        }
+        let principal = admin_principal(HashSet::new()).await;
+
+        assert_eq!(
+            list_titles(&principal, None, None, None).await?,
+            vec!["Zulu", "Beta", "beta", "Charlie"]
+        );
+        assert_eq!(
+            list_titles(&principal, None, Some("sort_name"), Some("descending")).await?,
+            vec!["Charlie", "Beta", "beta", "Zulu"],
+            "ties keep ascending order when the requested key is descending"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "missing disc and track numbers still count as disc 1 and sort last"]
+    async fn list_track_responses_sorts_missing_disc_and_track_first() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let release_public_id = {
+            let mut db = STATE.db.write().await;
+            let release = insert_release(&mut db, "Positions")?;
+            for (title, disc, track_number) in [
+                ("Known", Some(1), Some(1)),
+                ("No Disc", None, Some(5)),
+                ("No Track", Some(1), None),
+            ] {
+                let track = insert_track(&mut db, title)?;
+                update_track_position(&mut db, track, disc, track_number)?;
+                connect(&mut db, release, track)?;
+            }
+            db::releases::get_by_id(&db, release)?
+                .ok_or_else(|| anyhow::anyhow!("release missing"))?
+                .id
+        };
+        let principal = admin_principal(HashSet::new()).await;
+
+        for direction in ["ascending", "descending"] {
+            let titles = list_titles(
+                &principal,
+                Some(release_public_id.clone()),
+                Some("disc,track"),
+                Some(direction),
+            )
+            .await?;
+            assert_eq!(titles[..2], ["No Disc", "No Track"], "{direction}");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "empty values still sort first when descending"]
+    async fn list_track_responses_sorts_never_played_last_in_both_directions() -> anyhow::Result<()>
+    {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let principal = {
+            let mut db = STATE.db.write().await;
+            let user_db_id = db::test_db::insert_user(&mut db, "never-played")?;
+            let early = insert_track(&mut db, "Early")?;
+            let late = insert_track(&mut db, "Late")?;
+            insert_track(&mut db, "Never")?;
+            record_listen(&mut db, user_db_id, early, 1_000)?;
+            record_listen(&mut db, user_db_id, late, 2_000)?;
+            Principal::for_user(
+                &*db,
+                user_db_id,
+                vec![db::Permission::Admin],
+                HashSet::new(),
+            )
+        };
+
+        assert_eq!(
+            list_titles(&principal, None, Some("last_played_at"), Some("ascending")).await?,
+            vec!["Early", "Late", "Never"]
+        );
+        assert_eq!(
+            list_titles(&principal, None, Some("last_played_at"), Some("descending")).await?,
+            vec!["Late", "Early", "Never"]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_track_responses_resume_rechecks_access() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        let (principal, library, release) = {
+            let mut db = STATE.db.write().await;
+            let user_db_id = db::test_db::insert_user(&mut db, "resume-access")?;
+            let library = insert_library(&mut db, "Resume Access", "/tmp/lyra-resume-access")?;
+            let release = insert_release(&mut db, "Resume Release")?;
+            connect(&mut db, library, release)?;
+            for title in ["First", "Second"] {
+                let track = insert_track(&mut db, title)?;
+                connect(&mut db, release, track)?;
+            }
+            let library_id = db::libraries::get_by_id(&db, library)?
+                .ok_or_else(|| anyhow::anyhow!("library missing"))?
+                .id;
+            let principal =
+                Principal::for_user(&*db, user_db_id, Vec::new(), HashSet::from([library_id]));
+            (principal, library, release)
+        };
+        let page_options = |cursor: Option<String>| TrackListOptions {
+            inc: None,
+            query: None,
+            library_id: None,
+            release_id: None,
+            sort_by: None,
+            sort_order: None,
+            rating_filter: db::ratings::RatingFilter::default(),
+            page_request: super::super::PageQuery {
+                limit: Some(1),
+                cursor,
+            }
+            .resolve_snapshot(),
+        };
+
+        let first = list_track_responses(&principal, page_options(None))
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert_eq!(first.items.len(), 1);
+        let cursor = first
+            .next_cursor
+            .ok_or_else(|| anyhow::anyhow!("expected a second page"))?;
+
+        {
+            let mut db = STATE.db.write().await;
+            db::graph::remove_edges_between(&mut *db, library, release)?;
+        }
+
+        let second = list_track_responses(&principal, page_options(Some(cursor)))
+            .await
+            .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        assert!(second.items.is_empty());
+        assert!(second.next_cursor.is_none());
+        Ok(())
+    }
+
     #[test]
     fn build_stream_url_encodes_media_token_and_options() {
         let query = PlaybackUrlQuery {
