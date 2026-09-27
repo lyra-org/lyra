@@ -5,7 +5,10 @@
 
 //! The Luau side of catalog queries, shared by the catalog modules.
 
-use std::collections::HashMap;
+use std::collections::{
+    BTreeMap,
+    HashMap,
+};
 
 use agdb::{
     DbAny,
@@ -28,6 +31,7 @@ use crate::plugins::db::{
 use crate::{
     plugins::args,
     services::{
+        self,
         auth::Principal,
         catalog::{
             ArtistCredit,
@@ -192,6 +196,53 @@ pub(crate) fn keyed_lookup<T: Serialize + 'static>(
         }
         Ok(luau::Value::TableData(table))
     }))
+}
+
+/// A page item with counts the catalog computed for it, flattened beside its fields.
+#[derive(Serialize)]
+pub(crate) struct Counted<T> {
+    #[serde(flatten)]
+    item: T,
+    #[serde(flatten)]
+    counts: BTreeMap<&'static str, u64>,
+}
+
+/// The page's items with the values of `counts` for each, named as given. The values are the
+/// ones the catalog sorts by, so they follow the viewer and the query's filter.
+pub(crate) fn counted<C: Catalog, T>(
+    db: &DbAny,
+    viewer: &Viewer,
+    query: &Query<C>,
+    page: Page<C::Item>,
+    counts: &[(&'static str, C::Key)],
+    id_of: impl Fn(&C::Item) -> Option<DbId>,
+    into: impl Fn(C::Item) -> T,
+) -> Result<Page<Counted<T>>, CatalogError> {
+    let ids = page.items.iter().filter_map(&id_of).collect::<Vec<_>>();
+    let keys = counts.iter().map(|(_, key)| *key).collect::<Vec<_>>();
+    let mut values = services::catalog::counts::<C>(db, viewer, &query.filter, ids, &keys)?;
+    let items = page
+        .items
+        .into_iter()
+        .map(|item| {
+            let item_values = id_of(&item)
+                .and_then(|id| values.remove(&id))
+                .unwrap_or_default();
+            Counted {
+                counts: counts
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (name, _))| (*name, item_values.get(index).copied().unwrap_or(0)))
+                    .collect(),
+                item: into(item),
+            }
+        })
+        .collect();
+    Ok(Page {
+        items,
+        total: page.total,
+        offset: page.offset,
+    })
 }
 
 pub(crate) fn page_table<T: Serialize>(page: Page<T>) -> luau::runtime::Result<luau::OwnedTable> {

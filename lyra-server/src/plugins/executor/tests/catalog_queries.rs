@@ -654,3 +654,24 @@ fn track_and_release_queries_leave_out_excluded_artists() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn artist_and_genre_pages_carry_their_counts() -> Result<()> {
+    let catalog = catalog()?;
+    assert_eq!(
+        catalog.names(
+            "artists",
+            r#"artist_name .. ":" .. item.release_count .. ":" .. item.track_count .. ":" .. item.total_duration"#,
+            "{}",
+        )?,
+        vec!["Amy:1:4:0", "Zed:0:1:0"]
+    );
+    assert_eq!(
+        catalog.names(
+            "genres",
+            r#"name .. ":" .. item.release_count .. ":" .. item.track_count"#,
+            "{}",
+        )?,
+        vec!["Jazz:1:2", "Rock:1:3", "Rockabilly:1:2"]
+    );
+    Ok(())
+}

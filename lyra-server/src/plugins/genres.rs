@@ -22,6 +22,7 @@ use harmony_luau::{
     ModuleDescriptor,
     ModuleFunctionDescriptor,
     ParameterDescriptor,
+    TypeAliasDescriptor,
     render_definition_file_with_support,
 };
 use serde::{
@@ -39,12 +40,10 @@ use crate::plugins::db::{
         ResolveGenre,
     },
 };
-#[cfg(feature = "docgen")]
 use crate::services::catalog::genres::GenreKey;
 use crate::services::{
     self,
     catalog::{
-        Page,
         genres::{
             GenreFilter,
             Genres,
@@ -118,12 +117,20 @@ fn query_callback(
         let page =
             services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
                 .map_err(catalog::error)?;
-        catalog::page_table(Page {
-            items: page.items.into_iter().map(GenreRecord::from).collect(),
-            total: page.total,
-            offset: page.offset,
-        })
-        .map(luau::Value::TableData)
+        let page = catalog::counted(
+            &db,
+            &viewer,
+            &request.query,
+            page,
+            &[
+                ("release_count", GenreKey::ReleaseCount),
+                ("track_count", GenreKey::TrackCount),
+            ],
+            |genre| genre.db_id.clone().map(DbId::from),
+            GenreRecord::from,
+        )
+        .map_err(catalog::error)?;
+        catalog::page_table(page).map(luau::Value::TableData)
     }))
 }
 
@@ -566,7 +573,31 @@ pub(crate) fn render_luau_definition() -> std::result::Result<String, std::fmt::
     query.fields.extend(catalog::query_fields("GenreSortKey"));
     render_definition_file_with_support(
         &module_descriptor(),
-        &catalog::type_aliases::<GenreKey>("GenreSortKey", "GenrePage", "GenreInfo"),
+        &std::iter::once(TypeAliasDescriptor::new(
+            "GenreSummary",
+            LuauType::intersection(vec![
+                LuauType::named("GenreInfo"),
+                LuauType::object(vec![
+                    FieldDescriptor {
+                        name: "release_count",
+                        ty: u64::luau_type(),
+                        description: Some("The visible releases in the genre."),
+                    },
+                    FieldDescriptor {
+                        name: "track_count",
+                        ty: u64::luau_type(),
+                        description: Some("The tracks on those releases."),
+                    },
+                ]),
+            ]),
+            None,
+        ))
+        .chain(catalog::type_aliases::<GenreKey>(
+            "GenreSortKey",
+            "GenrePage",
+            "GenreSummary",
+        ))
+        .collect::<Vec<_>>(),
         &[
             query,
             GenreRecord::interface_descriptor(),

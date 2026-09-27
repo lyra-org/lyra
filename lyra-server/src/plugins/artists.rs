@@ -34,7 +34,6 @@ use agdb::{
 
 use crate::plugins::args;
 use crate::plugins::catalog;
-#[cfg(feature = "docgen")]
 use crate::services::catalog::artists::ArtistKey;
 use crate::{
     plugins::db::{
@@ -216,6 +215,21 @@ fn query_callback(
         let viewer = catalog::viewer(&*db, principal)?;
         let page =
             services::catalog::page(&db, &viewer, &request.query, request.offset, request.limit)
+                .and_then(|page| {
+                    catalog::counted(
+                        &db,
+                        &viewer,
+                        &request.query,
+                        page,
+                        &[
+                            ("release_count", ArtistKey::ReleaseCount),
+                            ("track_count", ArtistKey::TrackCount),
+                            ("total_duration", ArtistKey::TotalDuration),
+                        ],
+                        |artist| artist.db_id.clone().map(DbId::from),
+                        |artist| artist,
+                    )
+                })
                 .map_err(catalog::error)?;
         catalog::page_table(page)?.into_luau_return()
     }))
@@ -367,13 +381,37 @@ fn artist_type() -> LuauType {
 fn artist_type_aliases() -> Vec<TypeAliasDescriptor> {
     vec![
         TypeAliasDescriptor::new("Artist", artist_type(), None),
+        TypeAliasDescriptor::new(
+            "ArtistSummary",
+            LuauType::intersection(vec![
+                LuauType::named("Artist"),
+                LuauType::object(vec![
+                    described_field(
+                        "release_count",
+                        u64::luau_type(),
+                        "The visible releases credited to the artist.",
+                    ),
+                    described_field(
+                        "track_count",
+                        u64::luau_type(),
+                        "The visible tracks credited to the artist or on its releases.",
+                    ),
+                    described_field(
+                        "total_duration",
+                        u64::luau_type(),
+                        "The total duration of those tracks, in milliseconds.",
+                    ),
+                ]),
+            ]),
+            None,
+        ),
         catalog::credit_role_alias(),
     ]
     .into_iter()
     .chain(catalog::type_aliases::<ArtistKey>(
         "ArtistSortKey",
         "ArtistPage",
-        "Artist",
+        "ArtistSummary",
     ))
     .collect()
 }
