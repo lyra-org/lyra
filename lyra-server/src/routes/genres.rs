@@ -1022,6 +1022,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_genres_breaks_name_ties_by_exact_name_then_public_id() -> anyhow::Result<()> {
+        let _guard = runtime_test_lock().await;
+        setup_route_test().await?;
+
+        {
+            let mut db = STATE.db.write().await;
+            let library = insert_library(&mut db, "Genre Ties", "/tmp/lyra-genre-ties")?;
+            let mut genres = Vec::new();
+            for genre_name in ["Jazz", "Metal", "Rock"] {
+                let release = insert_genre_release(&mut db, library, genre_name)?;
+                genres.push(
+                    db::genres::get_for_release(&*db, release)?
+                        .into_iter()
+                        .find_map(|genre| genre.db_id.map(DbId::from))
+                        .ok_or_else(|| anyhow::anyhow!("genre missing"))?,
+                );
+            }
+            for (genre_db_id, (name, id)) in genres.into_iter().zip([
+                ("Rock", "genre-tie-m"),
+                ("ROCK", "genre-tie-z"),
+                ("Rock", "genre-tie-a"),
+            ]) {
+                db.exec_mut(
+                    agdb::QueryBuilder::insert()
+                        .values_uniform([
+                            ("name", name).into(),
+                            ("scan_name", "rock").into(),
+                            ("id", id).into(),
+                        ])
+                        .ids(genre_db_id)
+                        .query(),
+                )?;
+            }
+        }
+        let headers = create_admin_headers("genre-tie-admin").await?;
+
+        let Json(genres) = list_genres(
+            headers,
+            Query(GenreListQuery {
+                inc: None,
+                query: None,
+                library_id: None,
+                sort_by: None,
+                sort_order: None,
+                page: Default::default(),
+            }),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("{err:?}"))?;
+        let ids: Vec<String> = genres.items.into_iter().map(|genre| genre.id).collect();
+        assert_eq!(ids, vec!["genre-tie-z", "genre-tie-a", "genre-tie-m"]);
+        Ok(())
+    }
+
+    #[tokio::test]
     #[ignore = "genres still sort by name when searching"]
     async fn list_genres_orders_query_matches_by_relevance() -> anyhow::Result<()> {
         let _guard = runtime_test_lock().await;

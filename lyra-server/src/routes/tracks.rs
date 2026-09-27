@@ -1751,16 +1751,20 @@ mod tests {
             set_sort_title(&mut db, zulu, "Alpha")?;
             insert_track(&mut db, "Beta")?;
             insert_track(&mut db, "beta")?;
+            for title in ["Mike", "Lima"] {
+                let track = insert_track(&mut db, title)?;
+                set_sort_title(&mut db, track, "Delta")?;
+            }
         }
         let principal = admin_principal(HashSet::new()).await;
 
         assert_eq!(
             list_titles(&principal, None, None, None).await?,
-            vec!["Zulu", "Beta", "beta", "Charlie"]
+            vec!["Zulu", "Beta", "beta", "Charlie", "Lima", "Mike"]
         );
         assert_eq!(
             list_titles(&principal, None, Some("sort_name"), Some("descending")).await?,
-            vec!["Charlie", "Beta", "beta", "Zulu"],
+            vec!["Lima", "Mike", "Charlie", "Beta", "beta", "Zulu"],
             "ties keep ascending order when the requested key is descending"
         );
         Ok(())
