@@ -39,6 +39,14 @@ local albums = {
 sorting.apply(albums, { sort_by = { "Album", "SortName" } })
 assert(ids(albums) == "y,z,x,w", ids(albums))
 
+local album_tracks = {
+	track("third", { SortName = "0002 - 0001 - Third" }),
+	track("second", { SortName = "0001 - 0002 - Second" }),
+	track("first", { SortName = "0001 - 0001 - First" }),
+}
+sorting.apply(album_tracks, { sort_by = { "SortName" } })
+assert(ids(album_tracks) == "first,second,third", ids(album_tracks))
+
 local years = {
 	track("p", { ProductionYear = 2001, ChildCount = 3, RunTimeTicks = 30 }),
 	track("q", { ProductionYear = 1999, ChildCount = 1, RunTimeTicks = 10 }),
