@@ -30,6 +30,13 @@ return function(fixture: { track_id: number, foreign_id: number, foreign_entry: 
 	local emptied = playlists.replace(id, { track_ids = {} })
 	assert(emptied ~= nil and emptied.name == "Replaced" and #playlists.get_tracks(id) == 0)
 
+	local before = #playlists.get_tracks(id)
+	for _, invalid in { { 0 }, { foo = 5 } } do
+		assert(not pcall(playlists.replace, id, { track_ids = invalid :: any }))
+		assert(not pcall(playlists.add_tracks, id, invalid :: any))
+		assert(#playlists.get_tracks(id) == before, "invalid ids changed the playlist")
+	end
+
 	local owned_before = #playlists.list_owned()
 	assert(not pcall(playlists.create, { name = "Broken", track_ids = { fixture.track_id, 999999999 } }))
 	assert(#playlists.list_owned() == owned_before, "a failed create left a playlist")

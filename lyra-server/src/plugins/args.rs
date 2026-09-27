@@ -93,10 +93,36 @@ fn optional_id_array(
 pub(crate) fn positive_id(value: i64, name: &str) -> luau::runtime::Result<DbId> {
     if value <= 0 {
         return Err(crate::plugins::runtime_error(format!(
-            "{name} must be a positive id"
+            "{name} must be a positive id, got {value}"
         )));
     }
     Ok(DbId(value))
+}
+
+pub(crate) fn optional_positive_id(
+    vm: &luau::Vm,
+    table: &luau::Table,
+    key: &str,
+) -> luau::runtime::Result<Option<DbId>> {
+    luau::table::optional_i64_field(vm, table, key)?
+        .map(|value| positive_id(value, key))
+        .transpose()
+}
+
+/// The strings of a Luau array in array order.
+pub(crate) fn strings(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
+    array_values(vm, table)?
+        .into_iter()
+        .map(|(index, value)| match value {
+            luau::Value::String(bytes) => {
+                String::from_utf8(bytes).map_err(crate::plugins::runtime_error)
+            }
+            other => Err(crate::plugins::runtime_error(format!(
+                "entry {index} must be a string, got {}",
+                other.type_name()
+            ))),
+        })
+        .collect()
 }
 
 pub(crate) fn resolve_id(value: luau::Value) -> luau::runtime::Result<ResolveId> {
@@ -131,77 +157,37 @@ pub(crate) fn optional_u64(
         luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value >= 0.0 => {
             Ok(Some(value as u64))
         }
-        _ => Err(crate::plugins::runtime_error(format!(
-            "{key} must be a non-negative integer when provided"
-        ))),
-    }
-}
-
-fn optional_string(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Option<String>> {
-    match table.get_raw(vm, key)? {
-        luau::Value::Nil => Ok(None),
-        luau::Value::String(bytes) => Ok(Some(
-            String::from_utf8(bytes).map_err(crate::plugins::runtime_error)?,
-        )),
         other => Err(crate::plugins::runtime_error(format!(
-            "{key} must be a string, got {}",
-            other.type_name()
+            "{key} must be a non-negative integer when provided, got {}",
+            match other {
+                luau::Value::Integer(value) => value.to_string(),
+                luau::Value::Number(value) => value.to_string(),
+                other => other.type_name().to_string(),
+            }
         ))),
     }
-}
-
-fn optional_strings(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Option<Vec<String>>> {
-    let table = match table.get_raw(vm, key)? {
-        luau::Value::Nil => return Ok(None),
-        luau::Value::Table(table) => table,
-        other => {
-            return Err(crate::plugins::runtime_error(format!(
-                "{key} must be an array of strings, got {}",
-                other.type_name()
-            )));
-        }
-    };
-    array_values(vm, &table)?
-        .into_iter()
-        .map(|(_, value)| match value {
-            luau::Value::String(bytes) => {
-                String::from_utf8(bytes).map_err(crate::plugins::runtime_error)
-            }
-            _ => Err(crate::plugins::runtime_error(format!(
-                "{key} entries must be strings"
-            ))),
-        })
-        .collect::<luau::runtime::Result<Vec<_>>>()
-        .map(Some)
 }
 
 pub(crate) fn list_options(
     vm: &luau::Vm,
     table: &luau::Table,
 ) -> luau::runtime::Result<ListOptions> {
-    let direction = parse_sort_direction(optional_string(vm, table, "sort_order")?, true)
-        .map_err(crate::plugins::runtime_error)?;
-    let sort = parse_sort_specs_tokens(
-        optional_strings(vm, table, "sort_by")?,
-        direction,
-        |_| true,
-        false,
+    let direction = parse_sort_direction(
+        luau::table::optional_string_field(vm, table, "sort_order")?,
+        true,
     )
     .map_err(crate::plugins::runtime_error)?;
+    let sort_by = luau::table::optional_table_field(vm, table, "sort_by")?
+        .map(|sort_by| strings(vm, &sort_by))
+        .transpose()?;
+    let sort = parse_sort_specs_tokens(sort_by, direction, |_| true, false)
+        .map_err(crate::plugins::runtime_error)?;
 
     Ok(ListOptions {
         sort,
         offset: optional_u64(vm, table, "offset")?,
         limit: optional_u64(vm, table, "limit")?,
-        search_term: optional_string(vm, table, "search_term")?,
+        search_term: luau::table::optional_string_field(vm, table, "search_term")?,
     })
 }
 
@@ -220,6 +206,8 @@ pub(crate) fn page_table<T: Serialize>(
     Ok(table)
 }
 
+/// The entries of a Luau array, each with its index. A table with any other key, or with a
+/// hole, is not an array.
 pub(crate) fn array_values(
     vm: &luau::Vm,
     table: &luau::Table,
@@ -227,9 +215,19 @@ pub(crate) fn array_values(
     let mut values = table
         .pairs_raw(vm)?
         .into_iter()
-        .filter_map(|(key, value)| Some((array_index(key)?, value)))
-        .collect::<Vec<_>>();
+        .map(|(key, value)| array_index(key).map(|index| (index, value)))
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| crate::plugins::runtime_error("expected an array, got a table with keys"))?;
     values.sort_by_key(|(index, _)| *index);
+    if values
+        .iter()
+        .enumerate()
+        .any(|(position, (index, _))| *index != position as i64 + 1)
+    {
+        return Err(crate::plugins::runtime_error(
+            "expected an array, got a table with holes",
+        ));
+    }
     Ok(values)
 }
 
@@ -285,6 +283,23 @@ mod tests {
             vec![DbId(3), DbId(1), DbId(3), DbId(2)]
         );
         assert_eq!(unique_ids(&vm, &table)?, vec![DbId(3), DbId(1), DbId(2)]);
+        Ok(())
+    }
+
+    #[test]
+    fn array_readers_reject_tables_that_are_not_arrays() -> luau::runtime::Result<()> {
+        let vm = luau::Vm::new()?;
+        let keyed = vm.create_table()?;
+        keyed.set_raw(&vm, "foo", luau::Value::Integer(5))?;
+        let mixed = array(&vm, vec![luau::Value::Integer(1)])?;
+        mixed.set_raw(&vm, "foo", luau::Value::Integer(5))?;
+        let holed = vm.create_table()?;
+        holed.set_key_raw(&vm, luau::Value::Integer(2), luau::Value::Integer(5))?;
+
+        for table in [keyed, mixed, holed] {
+            assert!(id_sequence(&vm, &table).is_err());
+        }
+        assert!(id_sequence(&vm, &vm.create_table()?)?.is_empty());
         Ok(())
     }
 

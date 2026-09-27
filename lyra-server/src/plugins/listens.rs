@@ -115,12 +115,7 @@ fn get_stats_spec() -> FunctionSpec {
 fn get_count_callback(
     mut frame: luau::AsyncCallFrame<'_>,
 ) -> luau::runtime::Result<luau::ScheduledFuture> {
-    let track_id: i64 = frame.args.read_named("track_id")?;
-    if track_id <= 0 {
-        return Err(crate::plugins::runtime_error(
-            "track_id must be a positive id",
-        ));
-    }
+    let track_db_id = args::positive_id(frame.args.read_named("track_id")?, "track_id")?;
     let merge = frame
         .args
         .read_optional_named::<bool>("merge_unique_external_ids")?
@@ -135,7 +130,6 @@ fn get_count_callback(
     let principal = crate::plugins::auth::require_dispatch_principal(&frame.context)?;
 
     Ok(luau::ScheduledFuture::new(async move {
-        let track_db_id = DbId(track_id);
         let stats = resolve_stats(db, &[track_db_id], &principal, merge).await?;
         let count = stats.counts.get(&track_db_id).copied().unwrap_or(0);
         Ok(luau::Value::from(count))

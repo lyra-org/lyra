@@ -286,26 +286,9 @@ fn optional_external_id(
 }
 
 fn required_string(vm: &luau::Vm, table: &luau::Table, key: &str) -> luau::runtime::Result<String> {
-    optional_string(vm, table, key)?
+    luau::table::optional_string_field(vm, table, key)?
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| crate::plugins::runtime_error(format!("{key} must be a non-empty string")))
-}
-
-fn optional_string(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Option<String>> {
-    match table.get_raw(vm, key)? {
-        luau::Value::Nil => Ok(None),
-        luau::Value::String(bytes) => String::from_utf8(bytes)
-            .map(Some)
-            .map_err(crate::plugins::runtime_error),
-        other => Err(crate::plugins::runtime_error(format!(
-            "{key} must be a string, got {}",
-            other.type_name()
-        ))),
-    }
 }
 
 fn caller_principal(context: &luau::CallContext) -> luau::runtime::Result<Option<Principal>> {

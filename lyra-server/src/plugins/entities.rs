@@ -370,7 +370,7 @@ fn parse_query_request(
 ) -> luau::runtime::Result<(ResolveId, Vec<EntityInclude>, Option<agdb::DbId>)> {
     let id = args::resolve_id(required_value(vm, request, "id")?)?;
     let includes = parse_includes(vm, request.get_raw(vm, "include")?)?;
-    let library_id = parse_optional_db_id(vm, request, "library_id")?;
+    let library_id = args::optional_positive_id(vm, request, "library_id")?;
     Ok((id, includes, library_id))
 }
 
@@ -406,7 +406,7 @@ fn parse_query_many_request(
         }
     };
     let includes = parse_includes(vm, request.get_raw(vm, "include")?)?;
-    let library_id = parse_optional_db_id(vm, request, "library_id")?;
+    let library_id = args::optional_positive_id(vm, request, "library_id")?;
     Ok((ids, includes, library_id))
 }
 
@@ -455,23 +455,6 @@ fn parse_includes(vm: &luau::Vm, value: luau::Value) -> luau::runtime::Result<Ve
         }
     }
     Ok(includes)
-}
-
-fn parse_optional_db_id(
-    vm: &luau::Vm,
-    table: &luau::Table,
-    key: &str,
-) -> luau::runtime::Result<Option<agdb::DbId>> {
-    match table.get_raw(vm, key)? {
-        luau::Value::Nil => Ok(None),
-        luau::Value::Integer(value) if value > 0 => Ok(Some(agdb::DbId(value))),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Ok(Some(agdb::DbId(value as i64)))
-        }
-        _ => Err(crate::plugins::runtime_error(format!(
-            "{key} must be a positive integer when provided"
-        ))),
-    }
 }
 
 fn required_value(

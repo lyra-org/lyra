@@ -207,38 +207,12 @@ impl IdsLookupModuleStore {
     }
 }
 fn parse_strings(vm: &luau::Vm, table: &luau::Table) -> luau::runtime::Result<Vec<String>> {
-    let mut entries = Vec::new();
-    for (key, value) in table.pairs_raw(vm)? {
-        let Some(index) = sequence_index(key) else {
-            continue;
-        };
-        let luau::Value::String(bytes) = value else {
-            continue;
-        };
-        let id = String::from_utf8(bytes)
-            .map_err(|error| luau::Error::Runtime(format!("id must be valid UTF-8: {error}")))?;
-        entries.push((index, id));
-    }
-    entries.sort_by_key(|(index, _)| *index);
-
-    let mut ids = Vec::new();
     let mut seen = HashSet::new();
-    for (_, id) in entries {
-        let trimmed = id.trim().to_string();
-        if !trimmed.is_empty() && seen.insert(trimmed.clone()) {
-            ids.push(trimmed);
-        }
-    }
-    Ok(ids)
-}
-fn sequence_index(value: luau::Value) -> Option<i64> {
-    match value {
-        luau::Value::Integer(value) if value > 0 => Some(value),
-        luau::Value::Number(value) if value.is_finite() && value.fract() == 0.0 && value > 0.0 => {
-            Some(value as i64)
-        }
-        _ => None,
-    }
+    Ok(args::strings(vm, table)?
+        .into_iter()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty() && seen.insert(id.clone()))
+        .collect())
 }
 
 #[cfg(feature = "docgen")]
